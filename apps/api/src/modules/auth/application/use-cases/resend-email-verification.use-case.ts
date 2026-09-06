@@ -4,6 +4,8 @@ import { generateRawToken, hashToken } from '../../domain/logic/secure-token.log
 import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../domain/ports/auth-mailer.port';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { AppConfigService } from '../../../../common/config/app-config.service';
+import { assertEmailDeliveryEnabled } from '../email-delivery.policy';
 
 const EMAIL_VERIFICATION_TTL_MS = 15 * 60 * 1000;
 
@@ -13,9 +15,13 @@ export class ResendEmailVerificationUseCase {
     private readonly prisma: PrismaService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
+    @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
   async execute(input: { userId: string; requestId?: string }): Promise<{ email: string; expiresAt: string }> {
+    // Refused before the pending token is revoked: a resend the environment cannot honour must
+    // not burn the link that was already sent.
+    assertEmailDeliveryEnabled(this.config);
     const now = new Date();
     const pending = await this.prisma.client.emailVerificationToken.findFirst({
       where: {

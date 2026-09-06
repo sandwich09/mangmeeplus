@@ -385,7 +385,12 @@ const CODE_LABELS: Record<string, string> = {
   // ต้องบอกกติกาให้ครบ เพราะคนไทยจะพิมพ์ชื่อไทยเป็นอย่างแรก
   invalid_username: 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)',
   // `username_taken` already has copy above, shared with the Flow B claim screen.
-  invalid_phone_number: 'เบอร์มือถือต้องเป็นตัวเลข 10 หลัก ขึ้นต้นด้วย 0',
+  // Same sentence the profile form shows before it submits (PHONE_ERROR_MESSAGE in
+  // features/company-profile/company-profile.logic.ts): one rule must not have two wordings.
+  invalid_phone_number: 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678',
+  // spec §15.4.1 C: EMAIL_PROVIDER=disabled — the request is refused before a token exists,
+  // rather than answering 202 over a letter that was never sent.
+  email_delivery_unavailable: 'ตอนนี้ระบบยังส่งอีเมลยืนยันไม่ได้ค่ะ ติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com',
 
   // ---- ตั้งค่าบริษัทและ VAT ----
   // จนถึง L-E ข้อความนี้ชี้ไปหน้าที่ยังไม่มีอยู่จริง ตอนนี้มีแล้วจึงเรียกชื่อเมนูตรง ๆ

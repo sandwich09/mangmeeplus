@@ -1,6 +1,6 @@
 import type { LineQuickReplyItem, LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { DRAFT_UPDATE_CANCEL_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND } from './line-draft-update-card.logic';
-import { FEATURE_CATALOG } from '@watchdog-bms/contracts';
+import { FEATURE_CATALOG, scrubRecordText } from '@watchdog-bms/contracts';
 
 /**
  * P10-L. The exact words on a button ARE the command, so the label and the matcher can never drift:
@@ -12,15 +12,23 @@ export const VIEW_PACKAGES_COMMAND = 'โปรโมชั่น';
 export const EMPLOYEE_DOOR_COMMAND = 'ฉันเป็นพนักงาน';
 export const STAFF_CONTACT_COMMAND = 'ติดต่อเจ้าหน้าที่';
 /**
- * The way BACK from a support pause (line-support-request-spec-th §2.4). Without it the only exit
- * from "a human is handling this" was waiting 24 hours — the customer had no button and no words.
+ * The way BACK from a support pause (line-support-request-spec-th §2.4, §2.2 delta รอบ 6 ข้อ 6).
+ * Without it the only exit from "a human is handling this" was waiting 24 hours — the customer had
+ * no button and no words.
  *
- * Two spellings because both are natural and both are printed in the reply the pause sends; exact
- * whole-string matches like every other command here, so a sentence that merely quotes one (a
- * pasted instruction, an OCR'd photo caption) cannot resume the assistant on the customer's behalf.
+ * Owner 2026-09-06: the way back is the "คุยกับน้องมั่งมี" tile itself, tapped or typed, and every
+ * paused reply prints these words. The tile and the resume command are therefore ONE string and one
+ * `talk` command — matched once, and routed by pause state in the use case — rather than two
+ * matches racing for the same text.
  */
-export const RESUME_AI_COMMAND = 'คุยกับ AI ต่อ';
-export const RESUME_AI_ALT_COMMAND = 'ให้ AI ตอบ';
+export const RESUME_AI_COMMAND = 'คุยกับน้องมั่งมี';
+/**
+ * The spellings people still type: the two the replies used to print, and the two short forms the
+ * Owner named. Whole-string matches like every other command here, so a sentence that merely quotes
+ * one (a pasted instruction, an OCR'd photo caption) cannot resume the assistant on the customer's
+ * behalf. The Latin "AI" is matched case-insensitively — see `menuCommandKey`, and UAT 2026-09-06.
+ */
+export const RESUME_AI_ALIASES = ['คุยกับ AI ต่อ', 'ให้ AI ตอบ', 'คุยกับ AI', 'คุยกับมั่งมี'] as const;
 export const PROFILE_GUARD_COMMAND = 'ใส่เลย';
 export const PROFILE_GUARD_LATER_COMMAND = 'ไว้ก่อน';
 /**
@@ -61,6 +69,26 @@ export type CompanyContextCard = {
    * no id, company or token ever travels in the URL (LINE-ONBOARD-01).
    */
   newShopSignupUrl?: string;
+  /**
+   * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
+   * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". Opening a shop is a shop-owner action, so the door above
+   * is gated on the viewer's role in the company THIS card is about — someone who owns their own shop
+   * and works at another sees the door on one card and the โปรโมชั่น pointer on the other. Spec §3.1
+   * built the "ฉันเป็นพนักงาน" door for the same trap ("พนักงานเผลอสมัครร้านซ้ำ") at the stranger end.
+   *
+   * Absent means employee: a caller that forgets the flag withholds the door rather than opening it.
+   */
+  isOwner?: boolean;
+  /**
+   * The shop named on the application this LINE account still has travelling, or `undefined` when
+   * it has none. UAT 2026-09-06 "สมัครแล้วแต่บริษัทหาย": a repeat trial always queues for review
+   * (§3.3), so the owner who had just used the button above came back to this card and found no
+   * trace of the shop they applied for. The card says where the request is, and the door above is
+   * withheld while it is open — the LIFF form could only answer `line_signup_already_pending`.
+   *
+   * Free text an applicant typed, so the card scrubs it like every other customer-supplied value.
+   */
+  pendingSignupName?: string;
 };
 
 /**
@@ -155,9 +183,24 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
   const companyName = boundedLabel(context.companyName, 'ไม่ระบุบริษัท');
   const displayName = boundedLabel(context.displayName, 'ผู้ใช้งาน');
   const roleLabel = boundedLabel(context.roleLabels.filter(Boolean).join(' · '), 'พนักงาน');
+  // Every state that keeps an application open also fences the applicant out of filing another one,
+  // `PROVISIONING_FAILED` included, so all of them get the one answer `buildSignupStatusCard` gives
+  // — "รอทีมงานตรวจสอบ". Two surfaces saying different things about one request is the bug this fixes.
+  const shop = scrubRecordText(context.pendingSignupName, 60);
+  const pendingLine = context.pendingSignupName === undefined ? undefined
+    : `🕒 คำขอเปิดร้าน${shop ? ` «${shop}»` : 'ใหม่'} รอทีมงานตรวจสอบ ปกติภายในวันทำการ`;
+  // Exactly one of these two, and only where the environment actually opens a door: the owner gets
+  // it, the employee gets the words for the route they already have in the menu. An open request
+  // silences both — the LIFF form behind either one could only answer `line_signup_already_pending`.
+  // The command name comes from the constant the tile and the matcher read, so the sentence cannot
+  // send an employee to words that stopped working.
+  const door = Boolean(context.newShopSignupUrl) && !pendingLine;
+  const promotionLine = door && !context.isOwner
+    ? `💡 อยากเปิดร้านของตัวเอง กดปุ่ม ${VIEW_PACKAGES_COMMAND} ในเมนูได้เลยค่ะ`
+    : undefined;
   return {
     type: 'flex',
-    altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}`,
+    altText: `บริษัทของฉัน: ${companyName} · คุณ${displayName} · ${roleLabel}${pendingLine ? `\n${pendingLine}` : ''}`,
     contents: {
       type: 'bubble', size: 'kilo',
       body: { type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px', contents: [
@@ -165,8 +208,10 @@ export function buildCompanyContextMessage(context: CompanyContextCard): LineRep
         { type: 'text', text: `🏢 ${companyName}`, weight: 'bold', size: 'md', color: '#101828', wrap: true },
         { type: 'text', text: `👤 คุณ${displayName}`, size: 'sm', color: '#475467', wrap: true },
         { type: 'text', text: `💼 ${roleLabel}`, size: 'sm', color: '#475467', wrap: true },
+        ...(pendingLine ? [{ type: 'text', text: pendingLine, size: 'sm', color: '#475467', wrap: true }] : []),
+        ...(promotionLine ? [{ type: 'text', text: promotionLine, size: 'sm', color: '#475467', wrap: true }] : []),
       ] },
-      ...(context.newShopSignupUrl ? {
+      ...(door && context.isOwner ? {
         footer: { type: 'box', layout: 'vertical', contents: [
           { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'เปิดร้านใหม่', uri: context.newShopSignupUrl } },
         ] },
@@ -492,32 +537,55 @@ export type StaffMenuCommand =
   // P10-L §3.7/§7. The four commands the LINE-first flow answers. All exact whole-string matches,
   // because every one of them is printed on a button — a customer never has to spell them.
   | 'package_change' | 'employee' | 'staff_contact' | 'profile_guard' | 'profile_guard_later'
-  // §2.4 delta: the customer's own way out of the support pause.
+  // §2.4 delta: the typed aliases of the way out of the support pause. The tile's own words are
+  // `talk`, which the use case routes by pause state.
   | 'resume_ai'
   // S-4 (draft-control spec §5.4): the two buttons on the draft-edit confirm card. Typed answers
   // work too, which is the point of SEC-04 — a postback may do nothing a message could not.
   | 'draft_update_confirm' | 'draft_update_cancel'
   | 'follow';
 
+/**
+ * The whole-string key a command is matched on: tile emoji stripped, inner whitespace collapsed,
+ * Latin case folded.
+ *
+ * UAT 2026-09-06. The pause reply printed พิมพ์ "คุยกับ AI ต่อ" (now a typed alias); the customer
+ * typed exactly that and the phone keyboard wrote "ai", so the way out of a 24-hour hold fell
+ * through to the hold and was filed as another message for the operator. "AI" is the only Latin
+ * word this table contains (audited: every other command is pure Thai), and Thai has no case, so
+ * the fold changes nothing else — and collapsing runs of spaces only touches the three aliases
+ * that have a space at all.
+ *
+ * Still a WHOLE-string match, which is the §3 property: a sentence that merely quotes a command —
+ * a pasted instruction, an OCR'd caption — resumes nothing.
+ */
+function menuCommandKey(text: string): string {
+  return text.trim().replace(/[📊✅📷🎁]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
+}
+
 export function staffMenuCommand(text: string): StaffMenuCommand | null {
-  const normalized = text.trim().replace(/[📊✅📷🎁]/gu, '').trim();
+  const normalized = menuCommandKey(text);
   if (normalized === 'เมนูหลัก') return 'main';
   if (normalized === 'ถามข้อมูล') return 'query';
   if (normalized === 'รายการรออนุมัติ') return 'approval';
   if (normalized === 'ถ่ายใบเสร็จ') return 'receipt';
   if (normalized === 'บริการของเรา') return 'services';
   if (normalized === 'ติดต่อเรา') return 'contact';
-  if (normalized === 'คุยกับน้องมั่งมี') return 'talk';
+  if (normalized === RESUME_AI_COMMAND) return 'talk';
   if (normalized === PACKAGE_CHANGE_COMMAND) return 'package_change';
   if (normalized === EMPLOYEE_DOOR_COMMAND) return 'employee';
   if (normalized === STAFF_CONTACT_COMMAND) return 'staff_contact';
-  if (normalized === RESUME_AI_COMMAND || normalized === RESUME_AI_ALT_COMMAND) return 'resume_ai';
+  if (RESUME_AI_ALIASES.some((alias) => normalized === menuCommandKey(alias))) return 'resume_ai';
   if (normalized === PROFILE_GUARD_COMMAND) return 'profile_guard';
   if (normalized === PROFILE_GUARD_LATER_COMMAND) return 'profile_guard_later';
   if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
   if (normalized === DRAFT_UPDATE_CANCEL_COMMAND) return 'draft_update_cancel';
   if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
-  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
+  // The CONSTANT, like every other command above. The employee hint on the บริษัทของฉัน card prints
+  // this word by interpolating `VIEW_PACKAGES_COMMAND`, so a literal re-typed here is the one way
+  // that sentence could come to name a word this matcher no longer answers. `แพ็กเกจ` stays a bare
+  // alias: nothing renders it, so nothing can drift from it.
+  if (normalized === VIEW_PACKAGES_COMMAND || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
 }
 
@@ -528,7 +596,7 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
  * anything — a forged `data` value can therefore reach no further than a typed message could.
  */
 const POSTBACK_ACTIONS: Readonly<Record<string, string>> = {
-  'line-rich-talk': 'คุยกับน้องมั่งมี',
+  'line-rich-talk': RESUME_AI_COMMAND,
   'package-change': PACKAGE_CHANGE_COMMAND,
   'profile-guard': PROFILE_GUARD_COMMAND,
   'profile-guard-later': PROFILE_GUARD_LATER_COMMAND,

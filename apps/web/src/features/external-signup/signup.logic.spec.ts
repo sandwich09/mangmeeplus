@@ -73,6 +73,15 @@ describe('signup form validation', () => {
     assert.equal(isThaiMobile('1912345678'), false);
   });
 
+  // §15.4.1 D: one rule, one sentence. "ขึ้นต้นด้วย 0" read to the Owner as "leave the 0 out", and
+  // the profile page, this form and the API's invalid_phone_number each said it differently.
+  it('states the mobile rule in the same plain sentence the rest of the product uses', () => {
+    assert.equal(
+      validateSignupForm({ ...validForm, phoneNumber: '0812345' }).phoneNumber,
+      'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678',
+    );
+  });
+
   // Owner UAT 2026-08-31: the field took an 11th digit and only complained at submit.
   it('caps what the phone field can hold at ten digits, whatever is typed or pasted', () => {
     assert.equal(clampMobileInput('0812345678'), '0812345678');

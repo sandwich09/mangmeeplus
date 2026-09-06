@@ -17,6 +17,8 @@ export type AccountProfileState = {
   lineLinked: boolean;
   phoneNumber: string | null;
   hasPassword: boolean;
+  /** False when `EMAIL_PROVIDER=disabled`: nothing can be sent, so nothing may be promised. */
+  emailDeliveryEnabled?: boolean;
 };
 
 export function getCompanyIdentity(companyId: string): Promise<CompanyIdentityResponse> {
@@ -55,6 +57,11 @@ export function setMyFirstPassword(password: string, username?: string): Promise
  * Reuses the existing verification route. `currentPassword` is omitted for a LINE-first account
  * that has none; the API demands it whenever a credential exists.
  */
+/** Re-sends the link for the pending request; 404 when there is none. */
+export function resendMyEmailVerification(): Promise<{ email: string; expiresAt: string }> {
+  return apiFetch('/v1/auth/account/email/resend', { method: 'POST', suppressErrorToast: true });
+}
+
 export function requestMyEmailVerification(newEmail: string, currentPassword?: string): Promise<{ email: string; expiresAt: string }> {
   return apiFetch('/v1/auth/account/email', {
     method: 'POST',

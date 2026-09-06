@@ -5,6 +5,8 @@ import {
   type CompanyIdentityControl,
   type CompanyIdentityReadiness,
   type UserLegalIdentityChangeKind,
+  type VatFactStatus,
+  type VatRegistrationStatus,
 } from '@watchdog-bms/contracts';
 
 export type IdentityField = 'taxId' | 'registeredName' | 'addressJson';
@@ -69,6 +71,12 @@ export function profileChecklist(input: {
   readiness: CompanyIdentityReadiness | undefined;
   emailVerified: boolean;
   hasPassword: boolean;
+  /**
+   * §15.4.1 C. On `EMAIL_PROVIDER=disabled` the อีเมลกันหลุด item can never be ticked, so the list
+   * could never finish and the card could never disappear. Only an explicit `false` drops it: an
+   * API that predates the field leaves the item where it was.
+   */
+  emailDeliveryEnabled?: boolean;
 }): ChecklistItem[] {
   const reasons = input.readiness?.identity?.reasons ?? [];
   const missing = (...keys: string[]) => keys.some((key) => reasons.includes(key as never));
@@ -81,7 +89,9 @@ export function profileChecklist(input: {
       done: !missing('tax_id_missing', 'tax_id_invalid', 'registered_name_missing'),
     },
     { key: 'address', label: 'ที่อยู่ร้าน', hash: COMPANY_PROFILE_SHOP_HASH, done: !missing('company_address_incomplete') },
-    { key: 'email', label: 'อีเมลกันหลุด', hash: COMPANY_PROFILE_ACCOUNT_HASH, done: input.emailVerified },
+    ...(input.emailDeliveryEnabled === false
+      ? []
+      : [{ key: 'email' as const, label: 'อีเมลกันหลุด', hash: COMPANY_PROFILE_ACCOUNT_HASH, done: input.emailVerified }]),
     { key: 'password', label: 'รหัสผ่านสำรอง', hash: COMPANY_PROFILE_ACCOUNT_HASH, done: input.hasPassword },
   ];
 }
@@ -207,8 +217,11 @@ export function clearChecklistCache(storage: StorageLike | undefined, companyId:
 }
 
 /**
- * `items` = render these without fetching. `'hidden'` = render nothing AND do not fetch.
- * `null` = nothing usable, go and read.
+ * `items` = render these without fetching. `null` = nothing usable, go and read.
+ *
+ * A complete list is served like any other and every reader asks `checklistIsComplete` for itself:
+ * the old `'hidden'` sentinel was a second spelling of the same answer, and it could not carry the
+ * items the sidebar indicator needs.
  *
  * Every access is wrapped: a browser in private mode throws on `getItem`, and a dashboard must
  * not fail to render because a cache it does not need was unavailable.
@@ -217,7 +230,7 @@ export function readChecklistCache(
   storage: StorageLike | undefined,
   companyId: string,
   now: number = Date.now(),
-): ChecklistItem[] | 'hidden' | null {
+): ChecklistItem[] | null {
   if (!storage) return null;
   try {
     const raw = storage.getItem(checklistCacheKey(companyId));
@@ -225,7 +238,7 @@ export function readChecklistCache(
     const entry = JSON.parse(raw) as CacheEntry;
     if (typeof entry?.at !== 'number' || now - entry.at > CHECKLIST_CACHE_TTL_MS) return null;
     if (!Array.isArray(entry.items)) return null;
-    return checklistIsComplete(entry.items) ? 'hidden' : [...entry.items];
+    return [...entry.items];
   } catch {
     return null;
   }
@@ -242,6 +255,9 @@ export function writeChecklistCache(
     storage.setItem(checklistCacheKey(companyId), JSON.stringify({ at: now, items } satisfies CacheEntry));
   } catch { /* private mode: the card simply refetches next time */ }
 }
+
+/** Exported so `buildShopSave` can tell "nothing to send" from a real validation problem. */
+export const NO_CHANGES_MESSAGE = 'ยังไม่มีอะไรเปลี่ยนค่ะ';
 
 export type ShopForm = { registeredName: string; taxId: string; address: Record<string, string | null | undefined> };
 export type CurrentIdentity = { registeredName: string | null; taxId: string | null; addressJson: Record<string, unknown> | null } | null;
@@ -270,7 +286,7 @@ export function buildIdentityPatch(
   if (registeredName !== (current?.registeredName ?? '')) fields.push('registeredName');
   if (addressChanged(form.address, current?.addressJson ?? null)) fields.push('addressJson');
 
-  if (fields.length === 0) return { error: 'ยังไม่มีอะไรเปลี่ยนค่ะ' };
+  if (fields.length === 0) return { error: NO_CHANGES_MESSAGE };
   if (fields.includes('taxId') && taxId !== '' && !isThaiTaxIdInput(taxId)) {
     return { error: 'เลขผู้เสียภาษีต้องเป็นตัวเลข 13 หลักค่ะ' };
   }
@@ -301,6 +317,63 @@ export function buildIdentityPatch(
     },
   };
 }
+
+/**
+ * Everything one press of "บันทึกข้อมูลร้าน" has to send, or the Thai reason it sends nothing.
+ *
+ * UAT 2026-09-06: the VAT `<select>` saved on change and then re-read the page's data, which
+ * re-seeded the identity boxes from the server — so answering the VAT question wiped the
+ * ชื่อจดทะเบียน / เลขภาษี / ที่อยู่ the owner had typed but not yet saved. The answer is now form
+ * state like any other and travels with the same button, which also means the
+ * "ยังไม่มีอะไรเปลี่ยนค่ะ" guard has to count it.
+ *
+ * `UNKNOWN` is never sent: the option is disabled because a shop cannot un-answer the question.
+ */
+export function buildShopSave(
+  control: Pick<CompanyIdentityControl, 'legalIdentityVersion' | 'captureWindowOpen' | 'authoritativeLatched' | 'fieldLatched'>,
+  current: CurrentIdentity,
+  form: ShopForm,
+  vat: { current: VatRegistrationStatus; chosen: VatRegistrationStatus },
+  today?: string,
+): { identityPatch: Record<string, unknown> | null; vatStatus: VatFactStatus | null } | { error: string } {
+  const vatStatus = vat.chosen !== 'UNKNOWN' && vat.chosen !== vat.current ? vat.chosen : null;
+  const patch = buildIdentityPatch(control, current, form, today);
+  if ('error' in patch) {
+    // A real validation problem stops the whole press: saving the VAT answer while telling the
+    // owner their tax id is wrong is the half-saved state this change exists to remove.
+    if (patch.error !== NO_CHANGES_MESSAGE) return patch;
+    return vatStatus ? { identityPatch: null, vatStatus } : { error: NO_CHANGES_MESSAGE };
+  }
+  return { identityPatch: patch.body, vatStatus };
+}
+
+export type EmailSectionMode = 'unavailable' | 'edit' | 'pending' | 'verified' | 'none';
+
+/**
+ * Which of the five email blocks to render (§15.4.1 B).
+ *
+ * A verified address used to sit in an open box under a "ส่งลิงก์ยืนยันอีเมล" button whose only
+ * possible answer was the API's 409 "already verified for your account". `unavailable` wins over
+ * everything because with no mailer there is no action to offer in any state; only an explicit
+ * `false` triggers it, so an API that predates the field leaves the page working.
+ */
+export function emailSectionMode(
+  account: { emailDeliveryEnabled?: boolean; pendingEmail: string | null; emailVerified: boolean } | null,
+  editing: boolean,
+): EmailSectionMode {
+  if (!account) return 'none';
+  if (account.emailDeliveryEnabled === false) return 'unavailable';
+  if (editing) return 'edit';
+  if (account.pendingEmail) return 'pending';
+  return account.emailVerified ? 'verified' : 'none';
+}
+
+/**
+ * §15.4.1 D. The old hint ended "เว้นว่างไว้ก็ได้ถ้าไม่อยากให้เก็บ", which the Owner read as an
+ * instruction to omit the leading 0. Say the rule, show one, and put the clear action on a button.
+ */
+export const PHONE_HINT = 'ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678';
+export const PHONE_ERROR_MESSAGE = 'เบอร์มือถือต้องมี 10 หลัก เช่น 0812345678';
 
 /** Mirrors `USERNAME_PATTERN` in `apps/api/.../account-profile.use-case.ts`; both reject `สมชาย`. */
 export const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;

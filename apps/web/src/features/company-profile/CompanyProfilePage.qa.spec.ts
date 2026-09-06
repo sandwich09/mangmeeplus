@@ -40,7 +40,7 @@ const MASKED_IDENTITY = {
 
 const LINE_ONLY_ACCOUNT = {
   email: null, emailVerified: false, emailVerifiedAt: null, pendingEmail: null, pendingEmailExpiresAt: null,
-  lineLinked: true, phoneNumber: null, hasPassword: false, username: null,
+  lineLinked: true, phoneNumber: null, hasPassword: false, username: null, emailDeliveryEnabled: true,
 };
 
 /**
@@ -147,7 +147,8 @@ describe('the account section asks for what a login actually needs', () => {
   });
 
   it('is honest that a mail may never arrive', () => {
-    assert.match(source, /ถ้าไม่ได้รับอีเมล ติดต่อทีมงาน/);
+    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, pendingEmail: 'new@example.com' } });
+    assert.match(html, /ถ้าไม่ได้รับอีเมล ติดต่อทีมงาน/);
   });
 });
 
@@ -162,8 +163,8 @@ describe('handlers that no static render reaches', () => {
   }
 
   it('builds the identity PATCH through the pinned pure builder, not inline in the handler', () => {
-    const saveShop = block('const saveShop = async () => {', 'const saveVat = async');
-    assert.match(saveShop, /buildIdentityPatch\(/, 'the request shape is tested in company-profile.logic.spec.ts');
+    const saveShop = block('const saveShop = async () => {', 'const saveEmail = async');
+    assert.match(saveShop, /buildShopSave\(/, 'the request shape is tested in company-profile.logic.spec.ts');
     assert.match(saveShop, /addressErrorMessages\(error\)/, 'the per-field 422 must not collapse to a generic reload');
     assert.doesNotMatch(saveShop, /addressJson:\s*\{\s*\.\.\.address/, 'the handler must not assemble an address of its own');
   });
@@ -189,30 +190,143 @@ describe('handlers that no static render reaches', () => {
   });
 
   it('omits the current password for an account that has none', () => {
-    const saveEmail = block('const saveEmail = async () => {', 'const savePhone = async');
+    const saveEmail = block('const saveEmail = async () => {', 'const savePhoneValue = async');
     assert.match(saveEmail, /account\?\.hasPassword \? emailPassword : undefined/);
+  });
+
+  /**
+   * UAT 2026-09-06 §15.4.1 A: "เลือก dropdown จดทะเบียนแล้ว ดันบันทึกทันทีและรีเฟรชจอ ทำให้ข้อมูล
+   * ที่กรอกไว้หาย". The select wrote on change and the reload that followed re-seeded the identity
+   * boxes from the server, so the ชื่อจดทะเบียน / เลขภาษี / ที่อยู่ typed but not yet saved were gone.
+   */
+  it('never saves the VAT answer on change', () => {
+    const select = block('id="vat-status"', '</ThemedSelect>');
+    assert.match(select, /onChange=\{\(event\) => setVatChoice\(event\.target\.value as VatRegistrationStatus\)\}/);
+    assert.doesNotMatch(select, /putVatRegistration|saveVat/, 'the answer travels with the save button, not the select');
+    assert.match(select, /<option value="UNKNOWN" disabled>/, 'a shop cannot un-answer the question');
+  });
+
+  it('seeds the form once, so a re-read after a save cannot wipe what is being typed', () => {
+    const load = block('const load = useCallback(async () => {', 'useEffect(() => { void load(); }', );
+    assert.match(load, /if \(seeded\.current\) return;/, 'the second read must not touch the boxes');
+    assert.match(load, /seeded\.current = true;/);
+    // Everything the owner types lives behind that guard.
+    for (const setter of ['setRegisteredName', 'setTaxId', 'setAddress', 'setVatChoice', 'setPhone', 'setEmail']) {
+      assert.ok(load.indexOf(setter) > load.indexOf('seeded.current = true;'), setter);
+    }
+  });
+
+  it('saves both halves under one press and keeps each failure to its own banner', () => {
+    const saveShop = block('const saveShop = async () => {', 'const saveEmail = async');
+    assert.match(saveShop, /if \('error' in plan\)/, 'a client-side problem must stop the press');
+    assert.match(saveShop, /patchCompanyIdentity\(/);
+    assert.match(saveShop, /putVatRegistration\(/);
+    assert.match(saveShop, /setVatError\(/, 'the VAT failure must not be reported in the identity banner');
+    assert.ok(saveShop.indexOf('patchCompanyIdentity(') < saveShop.indexOf('putVatRegistration('), 'sequential, identity first');
+    // §15.4.1 A: two independent writes behind one press. An identity 409 must not also swallow
+    // the VAT answer the owner just gave, and a half-failed press must not answer "บันทึกแล้ว".
+    assert.match(saveShop, /\n {6}if \(plan\.vatStatus && identity\?\.vatRegistration\) \{/, 'the VAT write must not be gated on the identity result');
+    assert.match(saveShop, /if \(!failed\) toast\.success\(/, 'a half-failed save must not report success');
+  });
+});
+
+/**
+ * §15.4.1 B. "ตรวจดูโฟลว์การกรอก ดูไม่ make sense เช่น email ถูก verify แล้วแต่เปิดให้แก้ไขได้" — a
+ * verified address in an open box under a send button whose only possible answer was the API's 409.
+ */
+describe('the email block matches the state the account is actually in', () => {
+  const VERIFIED = { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com', emailVerified: true };
+
+  it('shows a verified address as a fact with one way to change it', () => {
+    const html = renderLoaded({ permissions: OWNER, account: VERIFIED });
+    assert.match(html, /owner@example\.com/);
+    assert.match(html, /ยืนยันแล้ว/);
+    assert.match(html, /เปลี่ยนอีเมล/);
+    assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/, 'the only answer to that button is a 409');
+    assert.doesNotMatch(html, /id="account-email"/, 'no open box over a verified address');
+  });
+
+  it('reports a request already in flight, and offers a resend', () => {
+    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, pendingEmail: 'new@example.com' } });
+    assert.match(html, /new@example\.com/);
+    assert.match(html, /รอการยืนยัน/);
+    assert.match(html, /ลิงก์มีอายุ 15 นาที/);
+    assert.match(html, /ส่งลิงก์อีกครั้ง/);
+    assert.doesNotMatch(html, /id="account-email"/);
+  });
+
+  it('gives an account with no email the plain form, labelled once', () => {
+    const html = renderLoaded({ permissions: OWNER });
+    assert.match(html, /id="account-email"/);
+    assert.match(html, /ส่งลิงก์ยืนยันอีเมล/);
+    // The read-only blocks carry their own caption; with the box on screen that caption is the
+    // box's own label, and rendering both put "อีเมล" on two consecutive lines.
+    assert.equal(html.match(/>อีเมล</g)?.length, 1, 'one label for one field');
+  });
+
+  // §15.4.1 C: production runs EMAIL_PROVIDER=disabled, where the mailer is a silent no-op.
+  it('promises nothing on an environment that cannot send mail', () => {
+    for (const account of [LINE_ONLY_ACCOUNT, VERIFIED]) {
+      const html = renderLoaded({ permissions: OWNER, account: { ...account, emailDeliveryEnabled: false } });
+      assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/, 'no button that cannot work');
+      assert.doesNotMatch(html, /id="account-email"/);
+      assert.match(html, /ยังเปิดส่งอีเมลยืนยันไม่ได้/);
+      assert.match(html, /098-256-5628/);
+    }
+  });
+});
+
+/** §15.4.1 D. "จะมาบอกว่าเว้น 0 ทำไม" — the hint read as "leave the leading zero out". */
+describe('the phone block says the rule plainly', () => {
+  it('uses the shared copy and never mentions leaving the field blank', () => {
+    const html = renderLoaded({ permissions: OWNER });
+    assert.match(html, /ใส่เบอร์มือถือ 10 หลัก เช่น 0812345678/);
+    assert.doesNotMatch(html, /เว้นว่างไว้ก็ได้/);
+  });
+
+  it('offers "ลบเบอร์ออก" only when there is a number to remove', () => {
+    assert.doesNotMatch(renderLoaded({ permissions: OWNER }), /ลบเบอร์ออก/);
+    assert.match(
+      renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, phoneNumber: '0812345678' } }),
+      /ลบเบอร์ออก/,
+    );
+  });
+});
+
+/** F: the "optional username" branch promised a login by verified email that did not exist. */
+describe('the backup-password block tells the truth about the login name', () => {
+  it('states an existing username instead of offering to silently rename it', () => {
+    const html = renderLoaded({
+      permissions: OWNER,
+      account: { ...LINE_ONLY_ACCOUNT, username: 'mangmee.shop' },
+    });
+    assert.match(html, /mangmee\.shop/);
+    assert.doesNotMatch(html, /ถ้าไม่ตั้ง จะเข้าด้วยอีเมลที่ยืนยันแล้ว/, 'there is no verified email in this state');
+    assert.doesNotMatch(html, /id="ชื่อผู้ใช้ \(ถ้าต้องการ\)"/);
   });
 });
 
 describe('the completeness card stays out of the way', () => {
   const card = readFileSync(new URL('./ProfileCompletenessCard.tsx', import.meta.url), 'utf8');
+  const hook = readFileSync(new URL('./use-profile-checklist.ts', import.meta.url), 'utf8');
 
   it('renders nothing while loading, when complete, when dismissed, or when a read fails', () => {
-    assert.match(card, /if \(hidden \|\| !items \|\| checklistIsComplete\(items\)\) return null;/);
-    assert.match(card, /\.catch\(\(\) => \{ if \(!cancelled\) setItems\(null\); \}\)/);
+    assert.match(card, /if \(dismissed \|\| !items \|\| checklistIsComplete\(items\)\) return null;/);
+    assert.match(hook, /\.catch\(\(\) => \{ if \(!cancelled\) setItems\(null\); \}\)/);
   });
 
-  // L2: the dismissal must outlive the tab; the 10-minute answer cache need not.
+  // L2: the dismissal must outlive the tab; the 10-minute answer cache need not. Since §15.4.1 E
+  // the two live apart — the cache in the shared hook, the dismissal on the card alone.
   it('keeps the dismissal in localStorage and the answer cache in sessionStorage', () => {
     assert.match(card, /readChecklistDismissal\(typeof window === 'undefined' \? undefined : window\.localStorage, companyId\)/);
     assert.match(card, /dismissChecklistFor\(typeof window === 'undefined' \? undefined : window\.localStorage, companyId\)/);
-    assert.match(card, /const storage = typeof window === 'undefined' \? undefined : window\.sessionStorage;/);
+    assert.match(hook, /const storage = typeof window === 'undefined' \? undefined : window\.sessionStorage;/);
   });
 
-  // L1: a save makes the cached answer wrong.
+  // L1: a save makes the cached answer wrong. `saveShop` now carries the VAT answer too.
   it('is invalidated by every save on the profile page', () => {
     const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
-    for (const handler of ['const saveShop', 'const saveVat', 'const saveEmail', 'const savePassword']) {
+    for (const handler of ['const saveShop', 'const saveEmail', 'const savePassword']) {
       const start = page.indexOf(handler);
       assert.notEqual(start, -1, handler);
       const body = page.slice(start, page.indexOf('\n  };', start));
@@ -222,19 +336,21 @@ describe('the completeness card stays out of the way', () => {
   });
 
   it('reads the cache before it reaches for the network', () => {
-    const effect = card.slice(card.indexOf('useEffect(() => {'), card.indexOf('if (hidden ||'));
+    const effect = hook.slice(hook.indexOf('useEffect(() => {'));
     const cacheAt = effect.indexOf('readChecklistCache(');
-    const fetchAt = effect.indexOf('getCompanyIdentity(');
+    const fetchAt = effect.indexOf('loadChecklist(');
     assert.notEqual(cacheAt, -1, 'the cache read is what stops two GETs on every dashboard mount');
     assert.ok(cacheAt < fetchAt, 'the cache must be consulted first, or it saves nothing');
-    assert.match(effect, /if \(cached === 'hidden'\) \{ setHidden\(true\); return; \}/);
-    assert.match(effect, /writeChecklistCache\(storage, companyId, next\)/);
+    assert.match(effect, /if \(cached\) \{ setItems\(cached\); return undefined; \}/);
+    assert.match(hook, /writeChecklistCache\(storage, companyId, items\)/);
+    // Two consumers mount together on the settings page; without this they fire the same pair.
+    assert.match(hook, /inFlight\.set\(companyId, request\)/);
   });
 
   it('offers "ไว้ก่อน" and actually records it', () => {
     assert.match(card, /ไว้ก่อน/);
     const handler = card.slice(card.indexOf('const dismiss = () => {'), card.indexOf('return (', card.indexOf('const dismiss')));
     assert.match(handler, /^\s*dismissChecklistFor\(/m, 'the button must record the dismissal, not merely mention it');
-    assert.match(handler, /setHidden\(true\)/);
+    assert.match(handler, /setDismissed\(true\)/);
   });
 });

@@ -256,7 +256,10 @@ export const SIGNUP_QUEUE_TABS: { key: SignupQueueTab; label: string }[] = [
   // R13: a rejected, suspended or expired application appeared on no list at all, so "where did
   // that application go" had no answer anywhere in the console.
   { key: 'ARCHIVED', label: 'ปิดไปแล้ว' },
-  { key: 'AUTO_APPROVED', label: `อนุมัติอัตโนมัติ ${AUTO_APPROVED_REVIEW_DAYS} วัน` },
+  // Owner 2026-09-06 read "อนุมัติอัตโนมัติ 14 วัน" as "auto approval lasts 14 days". It never did: this
+  // tab is the after-the-fact review list of shops AUTO_FREE opened in the last 14 days; the mode
+  // itself stays on until the environment's deploy config turns it off.
+  { key: 'AUTO_APPROVED', label: `เปิดให้อัตโนมัติ (ย้อนหลัง ${AUTO_APPROVED_REVIEW_DAYS} วัน)` },
   { key: 'PACKAGE_CHANGE', label: 'คำขอเปลี่ยนแพ็กเกจ' },
 ];
 

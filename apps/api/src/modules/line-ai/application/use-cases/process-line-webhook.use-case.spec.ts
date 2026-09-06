@@ -64,6 +64,7 @@ describe('OCR governance LINE reply UX', () => {
     }
     // Governance refusals keep their own lead-in even though their status is also OCR_FAILED.
     assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED', true), /ปิดการอ่านเอกสารด้วย AI/);
+    assert.equal(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
   });
 });
 
@@ -210,12 +211,15 @@ function receiptClassification(amount: string) {
 // Builds a minimal prisma mock with controllable memberships + lineCompanyContext
 function makePrisma(opts: {
 	  identityUserId?: string | null;
+	  /** `User.status`. Anything but ACTIVE is treated as no account at all (§8.2, entry door). */
+	  identityStatus?: string;
 	  displayName?: string;
 	  /** Channel the stored identity was linked on; the lookup is channel-scoped first. */
 	  identityChannelId?: string;
 	  aiAssistantOptOutAt?: Date | null;
 	  memberships?: Array<{ companyId: string; company?: { name: string; brandName?: string | null }; roles?: Array<{ role: { key: string; name?: string } }> }>;
-	  lineCompanyContext?: { companyId: string } | null;
+	  /** `aiPausedUntil` in the future is a support hold (§8): the assistant stays out, the app does not. */
+	  lineCompanyContext?: { companyId: string; aiPausedUntil?: Date | null } | null;
 	  previousEventLog?: { webhookEventId: string; status: string; createdAt: Date } | null;
 	  recentTurns?: any[];
 	  entitlements?: Array<{ featureKey: string; enabled: boolean }>;
@@ -234,8 +238,12 @@ function makePrisma(opts: {
 	  planTerm?: { tierKey: string; monthlySlipLimit: number; warmupUntil?: Date | null; warmupSlipLimit?: number | null; quotaNoticeSentMonthKey?: string | null } | null;
 	  /** Document reads already admitted this Bangkok month (`CompanyOcrMonthlyUsage.usedCount`). */
 	  receiptsUsed?: number;
+	  /** A shop application this LINE account still has travelling (P10-L §5). The fake honours the
+	   *  caller's own state filter, so a fixture only surfaces where `OPEN_LINE_SIGNUP_STATES` says
+	   *  the request is still open — which is the thing under test, not a constant re-typed here. */
+	  openLineSignup?: { companyName: string; state: string } | null;
 	} = {}) {
-	  const { identityUserId = 'user-1', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0 } = opts;
+	  const { identityUserId = 'user-1', identityStatus = 'ACTIVE', displayName = 'พิม', identityChannelId = 'msg-channel-1', aiAssistantOptOutAt = null, memberships = [{ companyId: 'company-1' }], lineCompanyContext = null, previousEventLog = null, recentTurns = [], entitlements = [], branches = [], branchFindManyFn, turnOutcomeUnavailable = false, turnOutcomeFailAfter, termExpiredMemberships = [], planTerm = null, receiptsUsed = 0, openLineSignup = null } = opts;
   let quotaNoticeSentMonthKey = planTerm?.quotaNoticeSentMonthKey ?? null;
   const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
@@ -263,9 +271,16 @@ function makePrisma(opts: {
           findMany: async () => [],
         },
       }),
-      // P10-L: the unlinked path now answers with the door card, which first asks whether this
-      // LINE account already has an application travelling. These fixtures have none.
-      companySignupRequest: { findFirst: async () => null },
+      // P10-L: the unlinked path now answers with the door card, and the บริษัทของฉัน card asks the
+      // same question, so both first ask whether this LINE account has an application travelling.
+      // These fixtures have none unless `openLineSignup` supplies one.
+      companySignupRequest: {
+        findFirst: async (args: any) => {
+          if (!openLineSignup) return null;
+          const open = args?.where?.state?.in;
+          return Array.isArray(open) && !open.includes(openLineSignup.state) ? null : openLineSignup;
+        },
+      },
       // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06); these
       // fixtures have no support thread, so the answer is "nobody" and nothing is written.
       lineSupportRequest: { findFirst: async () => null },
@@ -294,7 +309,7 @@ function makePrisma(opts: {
           if (!identityUserId) return null;
           const scopedTo = args?.where?.providerChannelId;
           if (scopedTo && scopedTo !== identityChannelId) return null;
-          return { userId: identityUserId, user: { status: 'ACTIVE', displayName, aiAssistantOptOutAt } };
+          return { userId: identityUserId, user: { status: identityStatus, displayName, aiAssistantOptOutAt } };
         },
       },
       companyMembership: {
@@ -591,6 +606,134 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal((updates.at(-1) as any).data.status, 'staff_menu_talk');
   });
 
+  // ── Capability question, scoped to the asker (Owner 2026-09-06, review finding F1) ──
+  // The curated six-function card is PUBLIC marketing copy and stays the answer for a stranger. A
+  // LINKED caller must never see it: it names ยอดขาย and สรุปบัญชี to an expenses-only employee who
+  // can use neither, so their question continues into the ordinary turn and is answered by the
+  // permission/entitlement-scoped capability help (capability-help spec §8/§8.1).
+  const CAPABILITY_CARD_ALT = 'น้องมั่งมีช่วยอะไรได้บ้าง';
+  const EXPENSES_ONLY_ENTITLEMENTS = [
+    { featureKey: 'ai_line_assistant', enabled: true },
+    { featureKey: 'expenses', enabled: true },
+    { featureKey: 'expenses.list', enabled: true },
+    { featureKey: 'expenses.upload', enabled: true },
+    { featureKey: 'dashboard_notifications', enabled: true },
+  ];
+
+  it('answers an unlinked capability question with the curated card, before any model read', async () => {
+    const { prisma, updates } = makePrisma({ identityUserId: null });
+    const { useCase, sentMessages, legalChecks, getAiGatewayCalled, intakeRequests } =
+      makeUseCase(prisma, { legalAcceptanceRequired: true });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-unlinked', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
+    assert.match(JSON.stringify(sentMessages[0]), /ยอดขายวันนี้/, 'the public card is unchanged');
+    assert.equal(legalChecks.length, 0);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
+  });
+
+  // The guard is `!identity || status !== 'ACTIVE'`, and both halves carry the card: a suspended
+  // account has nothing to scope an answer to, so it gets the same public copy a stranger does —
+  // never the linked path, which would hand a disabled user an AI turn.
+  it('answers a linked-but-not-ACTIVE account with the same curated card', async () => {
+    const { prisma, updates } = makePrisma({ identityStatus: 'SUSPENDED' });
+    const { useCase, sentMessages, getAiGatewayCalled, intakeRequests } = makeUseCase(prisma, {});
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-suspended', messageText: 'ทำอะไรได้บ้าง' });
+
+    assert.equal(sentMessages[0]?.altText, CAPABILITY_CARD_ALT);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'staff_menu_capability');
+  });
+
+  for (const messageText of ['มั่งมีใช้ยังไง', 'ทำอะไรได้บ้าง']) {
+    it(`sends a linked caller's "${messageText}" to the scoped turn instead of the fixed card`, async () => {
+      const { prisma, updates } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
+      const { useCase, sentMessages, intakeRequests, aiGatewayRequests } = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'expense.read'],
+        entitledFeatureKeys: ['ai_line_assistant', 'expenses', 'expenses.list', 'expenses.upload', 'dashboard_notifications'],
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 0.9 }),
+        aiGatewayFn: () => ({
+          requestId: 'req-ai', replyText: 'น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ',
+          sourceRefs: [], sourceLabels: [], webLinks: [],
+          intent: 'capability_help', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [],
+          modelCallCount: 1, modelLineage: [], usage: [], durationMs: 8,
+        }),
+      });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-capability-${messageText}`, messageText });
+
+      const rendered = JSON.stringify(sentMessages);
+      assert.equal(rendered.includes(CAPABILITY_CARD_ALT), false, 'the unscoped card must not reach a linked caller');
+      for (const hidden of ['ยอดขายวันนี้', 'สรุปบัญชี']) {
+        assert.equal(rendered.includes(hidden), false, `must not advertise ${hidden}`);
+      }
+      assert.notEqual((updates.at(-1) as any).data.status, 'staff_menu_capability');
+      // The scoped path IS the ordinary turn: the intake router sees the question, and the gateway
+      // turn carries the caller's own permissions and this company's feature set, which is what
+      // `composeCapabilityHelp` derives the reply from.
+      assert.equal(intakeRequests.length, 1);
+      assert.equal(intakeRequests[0].messageText, messageText);
+      assert.deepEqual(aiGatewayRequests[0].userContext.permissions, ['line.ai.query', 'expense.read']);
+      assert.ok(aiGatewayRequests[0].entitledFeatureKeys.includes('expenses'));
+      assert.equal(aiGatewayRequests[0].entitledFeatureKeys.includes('sales_documents'), false);
+    });
+  }
+
+  it('lets the support pause swallow a linked caller\'s capability question like any other free text', async () => {
+    const { prisma, updates } = makePrisma({
+      entitlements: EXPENSES_ONLY_ENTITLEMENTS,
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, replies, sentMessages, intakeRequests, getAiGatewayCalled } =
+      makeUseCase(prisma, { permissions: ['line.ai.query', 'expense.read'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-paused', messageText: 'มั่งมีใช้ยังไง' });
+
+    assert.match(replies[0] ?? '', /ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่/);
+    assert.equal(JSON.stringify(sentMessages).includes(CAPABILITY_CARD_ALT), false);
+    assert.equal(intakeRequests.length, 0);
+    assert.equal(getAiGatewayCalled(), false);
+    assert.equal((updates.at(-1) as any).data.status, 'support_paused');
+  });
+
+  // §8.2 again, from the other side. Forwarding the question opened a lane it could not reach
+  // before: a router that answers ADVISOR_CONVERSATION hands back a social draft the API delivers
+  // ITSELF, without the gateway and therefore without `composeCapabilityHelp`. That draft is model
+  // prose about what น้องมั่งมี can do, so it can name exactly the features the scoping exists to
+  // hide — the prompt says it never routes this way, and prompt wording is not a trust boundary.
+  it('never lets an ADVISOR_CONVERSATION draft answer a capability question with an unscoped list', async () => {
+    const { prisma } = makePrisma({ entitlements: EXPENSES_ONLY_ENTITLEMENTS });
+    const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.read'],
+      config: { lineAiAdvisorMode: 'social' },
+      intakeRouteFn: () => ({
+        status: 'ROUTED', intent: 'ADVISOR_CONVERSATION', language: 'th', confidence: 0.95,
+        advisorAnswer: {
+          version: 1, mode: 'SOCIAL_CHAT', needsTools: false, confidence: 0.95,
+          knowledgeCardIds: [], companyProfileFieldsUsed: [],
+          answerText: 'น้องมั่งมีดูยอดขายวันนี้ สรุปบัญชี และภาษีให้ได้ค่ะ ถามมาได้เลยนะคะ 💚',
+        },
+      }),
+      aiGatewayFn: () => ({
+        requestId: 'req-ai', replyText: 'น้องมั่งมีช่วยเรื่องค่าใช้จ่ายได้ค่ะ',
+        sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'capability_help', agent: 'general', refused: false, toolsInvoked: [], toolCalls: [],
+        modelCallCount: 1, modelLineage: [], usage: [], durationMs: 8,
+      }),
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-advisor', messageText: 'มั่งมีทำอะไรได้บ้าง' });
+
+    assert.equal(replies.some((reply) => reply.includes('ยอดขายวันนี้')), false, 'the shortcut must not advertise ยอดขาย');
+    assert.equal(getAiGatewayCalled(), true, 'the turn falls through to the scoped composer instead');
+  });
+
   // Identities linked before providerChannelId was recorded must keep working without relinking.
   it('falls back to a channel-agnostic identity for legacy links', async () => {
     const { prisma, updates, identityQueries } = makePrisma({ identityChannelId: 'legacy-channel' });
@@ -684,6 +827,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
+    assert.equal((replies[0] ?? '').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
     assert.equal((updates.at(-1) as any).data.status, 'ai_opt_out');
   });
 
@@ -1595,6 +1739,92 @@ describe('ProcessLineWebhookUseCase', () => {
     }
   });
 
+  /**
+   * UAT 2026-09-06, build f2bd38ed, "สมัครแล้วแต่บริษัทหาย". The owner filed a second shop from the
+   * card's own button; a repeat trial always queues for review (§3.3), so `/companies` afterwards
+   * showed the picker and nothing else — the request existed, but no surface the owner used said so.
+   *
+   * Every state in `OPEN_LINE_SIGNUP_STATES` is fenced out of applying again, `PROVISIONING_FAILED`
+   * included, so all of them owe the same answer and none of them may re-offer the door.
+   */
+  it('replaces the เปิดร้านใหม่ door with the pending request while an application is travelling', async () => {
+    for (const state of ['PENDING_REVIEW', 'PROVISIONING_FAILED']) {
+      const { prisma } = makePrisma({
+        displayName: 'พิมพ์ชนก',
+        memberships: [{ companyId: 'co-1', company: { name: 'test sand' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+        openLineSignup: { companyName: 'ร้านใหม่', state },
+      });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+      });
+
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-pending-${state}`, messageText: '/companies' });
+
+      const card = JSON.stringify(sentMessageBatches[0]?.[0]);
+      assert.match(card, /🕒 คำขอเปิดร้าน «ร้านใหม่» รอทีมงานตรวจสอบ ปกติภายในวันทำการ/, state);
+      assert.equal((sentMessageBatches[0]?.[0] as any)?.contents?.footer, undefined, state);
+      assert.equal(card.includes('liff.line.me'), false, state);
+    }
+  });
+
+  it('keeps the เปิดร้านใหม่ door for an owner whose only application already settled', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'พิมพ์ชนก',
+      memberships: [{ companyId: 'co-1', company: { name: 'test sand' }, roles: [{ role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }] }],
+      // COMPLETED is not in OPEN_LINE_SIGNUP_STATES: the shop exists, so nothing is waiting and the
+      // owner is free to open another one.
+      openLineSignup: { companyName: 'ร้านเก่า', state: 'COMPLETED' },
+    });
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+    });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-settled-signup', messageText: '/companies' });
+
+    const card = sentMessageBatches[0]?.[0] as any;
+    assert.equal(card?.contents?.footer?.contents?.[0]?.action?.label, 'เปิดร้านใหม่');
+    assert.equal(JSON.stringify(card).includes('🕒'), false);
+  });
+
+  /**
+   * Owner 2026-09-06: "ปุ่มเปิดร้านใหม่โผล่ให้ STAFF ผ่าน /companies => staff ไม่ควรเห็น ถ้าเขาจะเปิดร้านเอง
+   * ต้องผ่าน promotion หากอยู่ในมุมมองพนักงาน". The gate reads the roles of the membership this card is
+   * ABOUT, so the same person is an owner on their own shop's card and an employee on their employer's
+   * — spec §3.1 built the "ฉันเป็นพนักงาน" door for exactly this trap ("พนักงานเผลอสมัครร้านซ้ำ").
+   */
+  it('hides เปิดร้านใหม่ from an employee of the current company and points at โปรโมชั่น instead', async () => {
+    const employeeOf = async (roles: Array<{ role: { key: string; name?: string } }>) => {
+      const { prisma } = makePrisma({
+        displayName: 'สมชาย',
+        memberships: [{ companyId: 'co-1', company: { name: 'บริษัทพนักงาน' }, roles }],
+      });
+      const { useCase, sentMessageBatches } = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        config: { lineLiffId: '2007891234-AbCdEf01', externalSignupEnabled: true, lineMessagingChannelId: 'msg-channel-1' },
+      });
+      await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-staff-door-${roles.map(({ role }) => role.key).join('-')}`, messageText: '/companies' });
+      return sentMessageBatches[0]?.[0] as any;
+    };
+
+    for (const roles of [
+      [{ role: { key: 'STAFF', name: 'พนักงาน' } }],
+      [{ role: { key: 'ACCOUNTANT', name: 'ฝ่ายบัญชี' } }, { role: { key: 'BRANCH_MANAGER', name: 'ผู้จัดการสาขา' } }],
+    ]) {
+      const card = await employeeOf(roles);
+      const rendered = JSON.stringify(card);
+      assert.equal(card?.contents?.footer, undefined, roles[0]!.role.key);
+      assert.equal(rendered.includes('เปิดร้านใหม่'), false, roles[0]!.role.key);
+      assert.equal(rendered.includes('liff.line.me'), false, roles[0]!.role.key);
+      assert.match(rendered, /อยากเปิดร้านของตัวเอง กดปุ่ม โปรโมชั่น ในเมนูได้เลยค่ะ/);
+    }
+
+    // An OWNER role alongside employee roles in the SAME company is still an owner of it.
+    const alsoOwner = await employeeOf([{ role: { key: 'ACCOUNTANT', name: 'ฝ่ายบัญชี' } }, { role: { key: 'OWNER', name: 'เจ้าของกิจการ' } }]);
+    assert.equal(alsoOwner?.contents?.footer?.contents?.[0]?.action?.label, 'เปิดร้านใหม่');
+  });
+
   it('returns only the current-company card to a non-owner', async () => {
     const { prisma } = makePrisma({
       displayName: 'สมชาย',
@@ -1632,6 +1862,25 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
+  });
+
+  // UAT 2026-09-06 (spec §2.2 delta รอบ 6). The support pause sits above every menu handler, so a
+  // customer waiting on a human got "ส่งข้อความถึงทีมงานแล้ว" for the menu button — the assistant
+  // was not the thing being silenced, the product was. A menu card costs no model call.
+  it('still opens the main menu while a support pause is running', async () => {
+    const { prisma } = makePrisma({
+      displayName: 'พิมพ์ชนก',
+      lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
+    });
+    const { useCase, sentMessages, getAiGatewayCalled } = makeUseCase(prisma, { permissions: ['line.ai.query'] });
+
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-main-menu-paused', messageText: 'เมนูหลัก' });
+
+    assert.equal(sentMessages[0]?.type, 'flex');
+    assert.match(sentMessages[0]?.altText ?? '', /พิมพ์ชนก/);
+    assert.equal(JSON.stringify(sentMessages).includes('ส่งข้อความถึงทีมงานแล้ว'), false);
+    assert.equal(JSON.stringify(sentMessages).includes('กำลังดูให้อยู่'), false);
+    assert.equal(getAiGatewayCalled(), false, 'and it is still a card, not a paid turn');
   });
 
   // UAT 2026-08-18: รายการรออนุมัติ only linked out, so an approver could not tell from LINE

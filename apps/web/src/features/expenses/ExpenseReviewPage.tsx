@@ -583,7 +583,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <div className="mt-1.5 flex flex-wrap gap-2">
       <StatusBadge status={detail.status} />
       <MangmeeBadge tone={TAX_TONE(detail.taxEvidenceStatus)}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, detail.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge>
-      {/* the 🤖 AI badge is gone: the AI strip on the data step already says it, in words */}
+      {/* the AI badge is gone: the AI strip on the data step already says it, in words */}
       <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, detail.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
     </div>
   );
@@ -883,7 +883,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const aiDataBox = aiMap && (
     <div className="space-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] p-3 text-xs text-[#3538CD]">
-      <p className="font-semibold">🤖 {t('expenses.ai_data_title', locale)}</p>
+      <p className="font-semibold">{t('expenses.ai_data_title', locale)}</p>
       <p>{t('expenses.status_label', locale)}: {expenseValueLabel(AI_SUMMARY_STATUS_LABELS, typeof aiMap['status'] === 'string' ? aiMap['status'] : null, 'รอตรวจสอบข้อมูล')}</p>
       {missingFields.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -899,7 +899,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const aiPrefillBanner = aiMap && (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[#C7D7FE] bg-[#EEF4FF] px-3 py-2.5 text-xs text-[#3538CD]">
       <p className="font-semibold">
-        🤖 {t(aiMissingDataFields.length > 0 ? 'expenses.ai_prefill_partial' : 'expenses.ai_prefill_complete', locale)}
+        {t(aiMissingDataFields.length > 0 ? 'expenses.ai_prefill_partial' : 'expenses.ai_prefill_complete', locale)}
       </p>
       {aiMissingDataFields.map((field, index) => (
         <span key={`${field}-${index}`} className="rounded-full border border-warning-100 bg-warning-50 px-2 py-0.5 font-medium text-warning-700">

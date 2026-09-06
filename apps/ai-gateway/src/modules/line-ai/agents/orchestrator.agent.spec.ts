@@ -99,7 +99,7 @@ function planFor(messageText: string) {
       refusals: [{ request: 'เม้าท์ว่าพี่เอแอบคบใคร', reason: 'privacy_rumor' }], requiresHumanReview: false,
     };
   }
-  if (/ทำอะไรได้บ้าง|ช่วยอะไรได้บ้าง/.test(messageText)) {
+  if (/ทำอะไรได้บ้าง|ช่วยอะไรได้บ้าง|สอนใช้งาน/.test(messageText)) {
     return { status: 'ROUTABLE', language: 'th', intents: [{ intent: 'capability_help', subject: 'unknown', agent: 'general', priority: 1, requiredTools: [], missingContext: [] }], refusals: [], requiresHumanReview: false };
   }
   if (/^สวัสดี|^วันนี้เหนื่อย|หวยแตกมาก|ต่อยกันไหม/.test(messageText) && !/ยอดขาย|รายได้|สต็อก|ค่าใช้จ่าย/.test(messageText)) {
@@ -234,6 +234,22 @@ describe('OrchestratorAgent', () => {
     assert.match(result.replyText, /การเงิน บัญชี และรายงาน/);
     assert.doesNotMatch(result.replyText, /ยอดขาย/);
     assert.match(result.replyText, /ขึ้นกับสิทธิ์และฟีเจอร์/);
+  });
+
+  // UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้น…" got the capability card, which lists WHAT and never HOW.
+  it('teaches a beginner from the same permission-derived set, still without reading any data (spec §8.1)', async () => {
+    let called = false;
+    const orchestrator = new OrchestratorAgent({ invoke: async () => { called = true; throw new Error('must not invoke'); } } as any, makeConfig());
+    const result = await orchestrator.run(makeReq('สอนใช้งานหน่อย มือใหม่'));
+    assert.equal(result.plan.intents[0]?.intent, 'capability_help');
+    assert.equal(called, false);
+    assert.match(result.replyText, /^น้องมั่งมีสอนใช้งานเบื้องต้น/u);
+    assert.match(result.replyText, /^1\) /mu, 'numbered steps');
+    assert.match(result.replyText, /ของอะไรใกล้หมด/, 'stock read permission → a stock step');
+    assert.match(result.replyText, /ขอสรุปการเงินเดือนนี้/, 'ledger read permission → a finance step');
+    assert.doesNotMatch(result.replyText, /ยอดขายวันนี้เท่าไหร่/, 'no sales permission → no sales step');
+    assert.match(result.replyText, /เมนูหลัก/);
+    assert.match(result.replyText, /ต้องทำบนเว็บค่ะ$/u, 'the same closing sentence as the card');
   });
 
   it('lets Nong Mangmee handle pure casual conversation without ERP tools', async () => {

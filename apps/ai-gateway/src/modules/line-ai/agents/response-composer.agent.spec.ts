@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isExplicitJokeAsk, isJokeRequest } from './response-composer.agent';
+import { LINE_CAPABILITY_REPLY_PREFIXES } from '@watchdog-bms/contracts';
+import { CASUAL_CONVERSATION_SYSTEM_PROMPT, ResponseComposerAgent, isExplicitJokeAsk, isJokeRequest, isTeachingRequest } from './response-composer.agent';
 import { MANGMEE_JOKE_BANK } from './mangmee-joke-bank';
 import type { IModelProvider, ProviderOutput } from '../infrastructure/provider/provider.port';
 
@@ -792,5 +793,97 @@ describe('ResponseComposerAgent – capability help', () => {
     const reply = agent.composeCapabilityHelp('ทำอะไรได้บ้าง', 'th', 'th-TH');
     assert.match(reply, /ยอดขายและเอกสารขาย/);
     assert.match(reply, /ส่งรูปใบเสร็จ/);
+  });
+
+  // ── Teaching mode (spec §8.1, UAT 2026-09-06): "สอนใช้งานหน่อย" gets a walkthrough over the SAME usable set ──
+  const teach = (permissions: string[], entitledFeatureKeys?: string[], text = 'สอนใช้งานหน่อย มือใหม่') =>
+    agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions, ...(entitledFeatureKeys && { entitledFeatureKeys }) });
+
+  it('walks an expenses-only owner through photo → draft → summary → alerts, and nothing hidden (AC-13)', () => {
+    const reply = teach(STAFF, EXPENSES_ONLY);
+    assert.deepEqual(reply.split('\n'), [
+      'น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ ทำตามนี้ได้เลยค่ะ',
+      '1) ถ่ายรูปใบเสร็จหรือสลิป แล้วส่งมาในแชทนี้ได้เลย',
+      '2) น้องมั่งมีอ่านให้แล้วทำร่างค่าใช้จ่าย คุณแค่ตรวจยอดกับวันที่แล้วกดยืนยัน',
+      '3) อยากดูสรุปค่าใช้จ่าย พิมพ์ว่า “ค่าใช้จ่ายเดือนนี้เท่าไหร่”',
+      '4) อยากรู้ว่ามีงานค้างไหม พิมพ์ว่า “มีงานค้างอะไรบ้าง”',
+      'อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ',
+      'ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ',
+    ]);
+    for (const hidden of ['ยอดขาย', 'ภาษี', 'สต็อก', 'นัดหมาย', 'ลูกค้า', 'จัดซื้อ', 'รายการรออนุมัติ']) {
+      assert.doesNotMatch(reply, new RegExp(hidden), `must not teach ${hidden}`);
+    }
+  });
+
+  it('drops the photo steps without an upload permission, and adds the approvals line only for an approver (AC-14)', () => {
+    const noUpload = teach(['expense.read'], EXPENSES_ONLY);
+    assert.doesNotMatch(noUpload, /ถ่ายรูปใบเสร็จ/);
+    assert.match(noUpload, /^1\) อยากดูสรุปค่าใช้จ่าย/mu, 'numbering restarts from the first rendered step');
+    const approver = teach(['expense.read', 'reimbursement.approve'], EXPENSES_ONLY);
+    assert.equal(approver.split('\n').filter((line) => line.includes('รายการรออนุมัติ')).length, 1);
+    assert.match(approver, /กดอนุมัติจริงทำในเว็บค่ะ/);
+    assert.doesNotMatch(teach(STAFF, EXPENSES_ONLY), /รายการรออนุมัติ/);
+    // Registry-derived, so a crm-on / sales-off company teaches customers and never sales (AC-6 shape).
+    const crmOnly = teach(['crm.report.read', 'crm.customer.read'], ['crm', 'crm.inbox', 'dashboard_notifications']);
+    assert.doesNotMatch(crmOnly, /ยอดขาย/);
+    assert.match(crmOnly, /ลูกค้าที่ต้องติดตามมีใครบ้าง/);
+  });
+
+  it('gives the R4 none reply to a zero-permission caller, mirrors Thai and English, and stays LINE-sized (AC-15)', () => {
+    assert.equal(teach([], ALL_ON), ask([], ALL_ON));
+    assert.doesNotMatch(teach([], ALL_ON), /^\d\) /mu);
+    const access = { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY };
+    const card = agent.composeCapabilityHelp('what can you do', 'th', 'th-TH', access);
+    const english = agent.composeCapabilityHelp('how do I start', 'th', 'th-TH', access);
+    assert.match(card, /^Nong Mangmee can find and summarize work data/u);
+    assert.match(english, /^Nong Mangmee will walk you through the basics/u);
+    assert.equal(english.split('\n').length, teach(STAFF, EXPENSES_ONLY).split('\n').length, 'line-for-line mirror');
+    assert.match(english, /What are this month’s expenses\?/);
+    assert.doesNotMatch(english, /today’s sales/);
+    // Legacy no-context caller: every group plus the photo steps, still inside the ≤ 15-line bound (T4).
+    const everything = agent.composeCapabilityHelp('สอนใช้งานหน่อย', 'th', 'th-TH');
+    assert.equal(everything.split('\n').length, 14);
+    assert.ok(everything.split('\n').length + 1 <= 15, 'one approvals line on top still fits');
+  });
+
+  // Review finding F1, Owner 2026-09-06. These are the messages the API's own `isCapabilityQuestion`
+  // lane used to answer with the unscoped six-function Flex card BEFORE it knew who was asking. It
+  // now forwards them for a linked caller, so every one of them must land on the scoped rendering.
+  it('scopes every short phrasing the API used to answer with the fixed card (F1)', () => {
+    for (const text of ['ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'มีฟีเจอร์อะไรบ้าง', 'มั่งมีใช้ยังไง', 'ระบบนี้ใช้ยังไง']) {
+      const reply = agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY });
+      assert.match(reply, /ค่าใช้จ่าย/, text);
+      for (const hidden of ['ยอดขาย', 'ภาษี', 'สต็อก', 'นัดหมาย', 'ลูกค้า', 'จัดซื้อ', 'สรุปบัญชี']) {
+        assert.doesNotMatch(reply, new RegExp(hidden), `"${text}" must not advertise ${hidden}`);
+      }
+    }
+  });
+
+  it('opens every rendering with a LINE_CAPABILITY_REPLY_PREFIXES entry, so the API recognises "ยังไง" after it (T6)', () => {
+    for (const text of ['ทำอะไรได้บ้าง', 'what can you do', 'สอนใช้งานหน่อย', 'how do I start']) {
+      const reply = agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY });
+      assert.ok(LINE_CAPABILITY_REPLY_PREFIXES.some((prefix) => reply.startsWith(prefix)), reply.split('\n')[0]);
+    }
+  });
+});
+
+describe('isTeachingRequest – deterministic teaching trigger (capability-help spec §8.1)', () => {
+  it('matches the UAT sentence and the literal phrasings, Thai and English, anywhere in the message', () => {
+    for (const text of [
+      'สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้',
+      'วิธีใช้ยังไงคะ', 'ใช้งานยังไง', 'ใช้ยังไง', 'เริ่มยังไงดี', 'เริ่มต้นใช้งานยังไง', 'มือใหม่ค่ะ ช่วยแนะนำการใช้หน่อย',
+      'How do I use this?', 'how to start', 'Getting started please', 'Teach me the basics',
+      'สอน', 'สอนหน่อย', 'ช่วยสอนใช้งานหน่อยค่ะ', 'อยากให้สอนหน่อย', 'รบกวนสอนที',
+    ]) assert.equal(isTeachingRequest(text), true, text);
+  });
+
+  it('leaves the ordinary capability question, business questions and small talk alone', () => {
+    for (const text of [
+      'ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'what can you do', 'ค่าใช้จ่ายเดือนนี้เท่าไหร่', 'สวัสดี', '',
+      // Review 2026-09-06: สอน inside a business noun is not "teach me" — it is a fee, a tutor, a course.
+      'ค่าสอนพิเศษเดือนนี้เท่าไหร่', 'ค่าจ้างครูสอนเดือนนี้จ่ายไปเท่าไหร่', 'รายได้จากการสอนเดือนนี้',
+    ]) {
+      assert.equal(isTeachingRequest(text), false, text);
+    }
   });
 });

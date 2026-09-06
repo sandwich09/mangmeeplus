@@ -140,6 +140,42 @@ Measured behaviour of `detectReplyLanguage` on mixed input (2026-08-19, real fun
 
 One Thai character anywhere wins for Thai; a message with no Thai characters and at least one Latin letter is answered in English. So "ไทยคำอังกฤษคำ" always produces a fully Thai reply — the mixed-language case never yields mixed-language copy. The one edge worth knowing (pre-existing, not introduced here): a Thai user who types only `help` or `ok` gets the English reply.
 
+### 8.1 Teaching mode (2026-09-06)
+
+Owner report, UAT 2026-09-06 (build f2bd38ed, new auto-approved company, its OWNER): `สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้` was answered with the §8 card, which lists WHAT and never HOW — "ควรสอนการใช้งาน user ได้ตามฟีเจอร์ที่เปิดอยู่ และตามขอบเขตของผู้ถาม". The card gains a second rendering, chosen deterministically from the message, over the SAME usable set.
+
+**Trigger.** `isTeachingRequest(messageText)` (`apps/ai-gateway/src/modules/line-ai/agents/response-composer.agent.ts`, exported pure function): the NFC-normalised, lower-cased whole message CONTAINS one of a small literal list — `วิธีใช้`, `ใช้งานยังไง`, `ใช้ยังไง`, `ใช้งานอย่างไร`, `เริ่มยังไง`, `เริ่มต้น`, `มือใหม่`, `แนะนำการใช้`, `how do i use`, `how to use`, `how do i start`, `how to start`, `getting started`, `teach me` — or `สอน` as the verb "teach (me)" only: message-initial, after a space or ช่วย/รบกวน/อยากให้/ขอให้, or followed by ใช้/ฉัน/ผม/หนู/เรา/ให้/หน่อย/วิธี/การใช้/ที/ด้วย; never inside a business noun such as ค่าสอน, ครูสอน, การสอน (review 2026-09-06: `ค่าสอนพิเศษเดือนนี้เท่าไหร่` is an expense question). The model never decides which rendering answers; it only decides that the turn is `capability_help` (the orchestrator router prompt lists the teaching phrasings, and the intake router's advisor section says a teaching request is never `ADVISOR_CONVERSATION` — advisor spec §8.1). Any other `capability_help` turn keeps the §8 card. `composeCapabilityHelp(messageText, …)` makes the choice, so every call site gets it.
+
+**Reply contract** (Thai; English mirrors it line for line):
+
+```
+น้องมั่งมีสอนใช้งานเบื้องต้นให้นะคะ ทำตามนี้ได้เลยค่ะ
+[1) ถ่ายรูปใบเสร็จหรือสลิป แล้วส่งมาในแชทนี้ได้เลย                                   — receipt predicate only]
+[2) น้องมั่งมีอ่านให้แล้วทำร่างค่าใช้จ่าย คุณแค่ตรวจยอดกับวันที่แล้วกดยืนยัน           — receipt predicate only]
+<one numbered line per usable group, §6.1 order: "อยาก… พิมพ์ว่า “<that group's §8 example question>”">
+[<one numbered role line: ถ้ามีรายการรอคุณอนุมัติ พิมพ์ว่า “รายการรออนุมัติ” … กดอนุมัติจริงทำในเว็บค่ะ — only when reimbursement.list_pending_approvals passes both gates>]
+อยากเห็นเมนูทั้งหมด กดปุ่ม “เมนูหลัก” ด้านล่างได้เลยค่ะ
+ความสามารถที่ใช้ได้ขึ้นกับสิทธิ์และฟีเจอร์ของบริษัท ส่วนการอนุมัติ จ่ายเงิน และลงบัญชีขั้นสุดท้ายต้องทำบนเว็บค่ะ
+```
+
+Rules:
+
+- **T1** Same derivation, same gates: the group lines come from `usableCapabilityGroupIds(permissions, entitled)` and the two photo steps from `canAdvertiseReceiptCapture` — R1–R5 and R7 apply unchanged. A hidden group never appears, and a caller without an upload permission never sees the photo steps.
+- **T2** The phrase each line teaches is that group's §8 `CAPABILITY_COPY` example question, so the walkthrough can never teach a question the card would not suggest (R2 by construction).
+- **T3** The role line is derived from the tool registry (`reimbursement.list_pending_approvals`: requires `reimbursement.approve`, no feature gate), never from a role name; nothing else role-specific is claimed, and the line says the approval itself happens in the web app.
+- **T4** Numbering is sequential over the rendered steps; the reply mentions the `เมนูหลัก` quick-reply tile once and always ends with the §8 closing sentence. Bound: ≤ 15 lines with every group and the role line on (a typical company renders 6–8).
+- **T5** Zero usable groups → the §8 R4 `none` reply, teaching or not. Receipt-only access keeps the §8 receipt+closing reply.
+- **T6** The API recognises a "ยังไง"/"how" follow-up after the walkthrough exactly as after the card: both intros start with a prefix listed in `LINE_CAPABILITY_REPLY_PREFIXES` (`packages/contracts/src/ai-tools.ts`), which `isDeliveredCapabilityFollowUp` reads and a gateway spec pins against the rendered copy.
+
+### 8.2 The fixed six-function card is for UNLINKED callers only (Owner 2026-09-06, review finding F1)
+
+The API carries a second, older capability lane: `isCapabilityQuestion` + `buildCapabilityCard` (`apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts`, Owner 2026-08-27, described in [[specs/line-rich-menu-v2-spec|rich menu v2 spec]]). It answered EVERY short capability question with a fixed six-function Flex card, before identity was resolved — so no linked caller ever reached §8 or §8.1 through it, and "every call site gets it" was not true end to end. Owner decision 2026-09-06 ("เห็นด้วย"), applying the same rule as §8.1: **"ควรสอนการใช้งาน user ได้ตามฟีเจอร์ที่เปิดอยู่ และตามขอบเขตของผู้ถาม"**.
+
+- **Unlinked caller, or one with no ACTIVE account — unchanged.** The card is public marketing copy: no tenant data, no model call, and the right answer to a stranger who has no account for anything to be scoped to. The intercept therefore moves INSIDE the unlinked branch of `process-line-webhook.use-case.ts`, immediately after `resolveLineIdentity` and before the entry-door card, so the same message gets the same card, the same `staff_menu_capability` event-log status, and still no legal, entitlement, permission or model read.
+- **Linked caller with an ACTIVE account — never the card.** Their message continues into the ordinary turn and is answered by §8 (card rendering) or §8.1 (walkthrough) over `usableCapabilityGroupIds(permissions, entitled)` + `canAdvertiseReceiptCapture`. A hidden feature or a permission the asker lacks is never advertised, which the fixed card could not promise: it names ยอดขาย and สรุปบัญชี to an expenses-only employee who can use neither.
+- **`staff_menu_capability` now means exactly one thing** — an unlinked caller was sent the public card. The scoped path keeps the ordinary turn outcomes (`completed`, `support_paused`, …); no new status is needed to tell the two apart.
+- **Deliberate consequences of the move.** (a) The linked lane is no longer zero-model: the COPY stays deterministic, but *reaching* `capability_help` is a model decision — the intake router's advisor section and `INTENT_ROUTER_SYSTEM_PROMPT` both list these phrasings (advisor spec §8.1), and a misroute answers something else rather than something wrong-scoped. (b) A capability question now sits BELOW every gate it used to jump: the support pause (it is free text, not a deterministic command — [[specs/line-support-request-spec-th|support-request spec]] §2.2 delta รอบ 6), the AI-feature entitlement, and the `line.ai.query`/capture/signature permission floor. A caller any of those refuses gets that gate's own reply — the same one every other message of theirs already gets, which is the consistent answer, not a regression. (c) The one lane the question may NOT reach is the advisor shortcut: a route of `ADVISOR_CONVERSATION` returns a social draft the API delivers itself, with no gateway turn and therefore no `composeCapabilityHelp`, and that draft is model prose about what น้องมั่งมี can do — a feature list, unscoped. `advisorDirectAnswerText` therefore declines on `capabilityQuestion`, the same matcher that keeps the card for strangers (review 2026-09-06; the router prompt says it never routes this way, and prompt wording is not a trust boundary).
+
 ## 9. Acceptance Criteria
 
 - AC-1 Expenses-only company, staff with receipt-upload permission: the reply names expenses and receipt capture and alerts, and contains none of ยอดขาย / ภาษี / สต็อก / นัดหมาย / ลูกค้า / รายงานการเงิน.
@@ -154,6 +190,10 @@ One Thai character anywhere wins for Thai; a message with no Thai characters and
 - AC-10 The quick-reply menu attached to the reply and the reply text name the same capabilities.
 - AC-11 Every rendered line is backed by ≥1 tool passing both gates — asserted by construction, over the real `LINE_TOOL_REGISTRY`, not a fixture registry.
 - AC-12 Mixed Thai/English input (`ช่วย summary sales ให้หน่อยว่าทำอะไรได้บ้าง`) returns a fully Thai reply with no English fragment, and the TH and EN tables render the same set of groups for the same caller (same ids, different words). R7.
+- AC-13 (teaching, §8.1) Owner of an expenses-only company (`STAFF` permissions incl. `expense.receipt.line_upload`, `expenses.upload` on) asking `สอนใช้งานหน่อย มือใหม่`: the walkthrough has the two photo steps, the expenses line (“ค่าใช้จ่ายเดือนนี้เท่าไหร่”), the alerts line (“มีงานค้างอะไรบ้าง”), the `เมนูหลัก` line and the closing sentence — and none of ยอดขาย / ภาษี / สต็อก / นัดหมาย / ลูกค้า / จัดซื้อ.
+- AC-14 (teaching) A caller holding none of `expense.receipt.line_upload` / `expense.receipt.upload` / `expense.create` never sees the photo steps; a caller with `reimbursement.approve` gets exactly one role line, everyone else none.
+- AC-15 (teaching) A zero-permission caller asking to be taught gets the R4 `none` reply; `what can you do` and `how do I start` on the same access set render the card and the walkthrough respectively, with the same group set, and the English walkthrough mirrors the Thai one line for line.
+- AC-16 (§8.2) An UNLINKED caller sending `ทำอะไรได้บ้าง` still gets the six-function card and `staff_menu_capability`, with no legal, entitlement or model read. A LINKED caller sending `มั่งมีใช้ยังไง` or `ทำอะไรได้บ้าง` gets neither the card nor its copy: the intake router sees the message, the gateway turn carries that caller's permissions and this company's `entitledFeatureKeys`, and every phrasing `isCapabilityQuestion` accepts renders scoped (nothing outside the usable set) when it reaches `composeCapabilityHelp`. Under a support pause the same linked message gets the pause reply, not the card, and a routed `ADVISOR_CONVERSATION` draft never answers it. A linked account whose `User.status` is not ACTIVE is a stranger for this rule and keeps the card.
 
 ## 10. Open Questions (owner)
 
