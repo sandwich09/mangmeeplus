@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { hashLineHandoffToken, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
+import { hashLineHandoffToken, isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 
@@ -70,16 +70,27 @@ export class ExchangeLineHandoffTokenUseCase {
     // 3. Re-resolve identity at exchange time. "Removing or inactivating a user from a company
     //    immediately blocks LINE AI, alerts, deep links" — line-ai-channel-auth-spec.md §4.
     const [lineIdentity, user, membership, company] = await Promise.all([
-      // The LINE link itself, matched exactly as `resolveLineIdentity` does (provider +
-      // providerUserId + ACTIVE) plus the token's own `userId`. Severing a link revokes the tokens
-      // already sent to that chat, but that revoke is one UPDATE that can fail — the employee
-      // relink sever proved it — so this is the second wall: a link is only exchangeable while the
-      // chat it was sent to still belongs to the user it names. `userId` in the WHERE is what
-      // covers the re-point case, where the identity is ACTIVE but now somebody else's.
-      // Channel-agnostic because the token row carries no channel, matching the fallback branch
-      // `resolveLineIdentity` already uses; served by the `[userId, provider, status]` index.
+      // The LINE link itself. Severing a link revokes the tokens already sent to that chat, but
+      // that revoke is one UPDATE that can fail — the employee relink sever proved it — so this is
+      // the second wall. Channel-agnostic because the token row carries no channel, matching the
+      // fallback branch `resolveLineIdentity` already uses; served by `[userId, provider, status]`,
+      // one indexed read in either mode.
+      //
+      // Two modes, because `record.lineUserId` is the CHAT the message went to, not always a
+      // person (`isLineGroupChatKey`):
+      //  - 1:1 — matched exactly as `resolveLineIdentity` does (provider + providerUserId + ACTIVE)
+      //    plus the token's own `userId`, which is what covers the re-point case where the identity
+      //    is ACTIVE but now somebody else's;
+      //  - group/room — the chat key is a group id, and no identity can hold one as
+      //    `providerUserId`, so requiring it would refuse EVERY link sent into a group. There the
+      //    wall is the part that still means something: this user has a live LINE link at all.
       this.prisma.client.externalIdentity.findFirst({
-        where: { userId: record.userId, provider: 'LINE', providerUserId: record.lineUserId, status: 'ACTIVE' },
+        where: {
+          userId: record.userId,
+          provider: 'LINE',
+          ...(isLineGroupChatKey(record.lineUserId) ? {} : { providerUserId: record.lineUserId }),
+          status: 'ACTIVE',
+        },
         select: { id: true },
       }),
       this.prisma.client.user.findUnique({

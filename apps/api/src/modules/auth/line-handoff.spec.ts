@@ -8,6 +8,9 @@ import { hashLineHandoffToken, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '
 const COMPANY = 'co-1';
 const USER = 'user-1';
 const LINE_USER = 'Uabc123';
+/** LINE chat keys for a group and a room: the kind is the first character, then 32 hex. */
+const LINE_GROUP = 'C0123456789abcdef0123456789abcdef';
+const LINE_ROOM = 'R0123456789abcdef0123456789abcdef';
 const TARGET = `/companies/${COMPANY}/expenses/exp-1`;
 const RAW_TOKEN = 'AbCdEfGhIjKlMnOpQrStUvWxYz012345';
 
@@ -134,16 +137,17 @@ function makeExchangePrisma(options: {
   updatedCount?: number;
   /** The LINE context write is best-effort: the web half must survive the LINE half failing. */
   contextUpsertThrows?: boolean;
-  /** The ACTIVE LINE identity behind this chat. Omitted = still this user's; `null` = severed
-   *  (UNLINKED or deleted); a different `userId` = the LINE account was re-pointed at somebody else. */
-  identity?: { userId: string; providerUserId: string } | null;
+  /** The LINE identity behind this chat. Omitted = an ACTIVE one still this user's; `null` = the
+   *  row is gone; `status: 'UNLINKED'` = severed; a different `userId` = re-pointed at somebody else. */
+  identity?: { userId: string; providerUserId: string; status?: string } | null;
 }) {
   const finds: any[] = [];
   const updates: any[] = [];
   const contextUpserts: any[] = [];
   const identityFinds: any[] = [];
-  // Applies the WHERE for real rather than recording the call: a guard that forgets `status`,
-  // `providerUserId` or `userId` must fail, not pass on a query nobody inspected.
+  // Filters the row by the WHERE the way Postgres would — an absent key filters nothing — rather
+  // than recording the call. A guard that forgets `status`, `providerUserId` or `userId` therefore
+  // returns the wrong row and fails, instead of passing on a query nobody inspected.
   const identityRow = options.identity === undefined ? { userId: USER, providerUserId: LINE_USER } : options.identity;
   const prisma = {
     client: {
@@ -153,9 +157,9 @@ function makeExchangePrisma(options: {
           const { where } = args;
           if (!identityRow) return null;
           const matches = where.provider === 'LINE'
-            && where.status === 'ACTIVE'
-            && where.providerUserId === identityRow.providerUserId
-            && where.userId === identityRow.userId;
+            && (where.status === undefined || where.status === (identityRow.status ?? 'ACTIVE'))
+            && (where.userId === undefined || where.userId === identityRow.userId)
+            && (where.providerUserId === undefined || where.providerUserId === identityRow.providerUserId);
           return matches ? { id: 'ei-1' } : null;
         },
       },
@@ -474,7 +478,7 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     }
   });
 
-  it('matches the identity on provider + LINE userId + ACTIVE + the token’s own user', async () => {
+  it('matches a 1:1 chat on provider + LINE userId + ACTIVE + the token’s own user', async () => {
     // Same keys `resolveLineIdentity` uses (channel-agnostic: the token row carries no channel),
     // plus the token's `userId` — without it a LINE account re-pointed at somebody else still opens
     // the previous holder's session.
@@ -485,6 +489,60 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     assert.equal(identityFinds.length, 1, 'exactly one identity lookup per exchange');
     assert.deepEqual(identityFinds[0].where, {
       userId: USER, provider: 'LINE', providerUserId: LINE_USER, status: 'ACTIVE',
+    });
+  });
+
+  /**
+   * A link sent into a group or room is minted with the CHAT key, never a person: the webhook sets
+   * `chatId = groupId ?? roomId ?? userId` (`line-webhook.controller.ts:75`) and the assistant reply
+   * and ledger-drain seams mint with that same key. No `ExternalIdentity` can hold a group id as
+   * `providerUserId`, so the per-person WHERE refused every group deep link outright. The guard
+   * keeps its teeth there by asking the question that still means something: does this user have a
+   * live LINE link at all?
+   */
+  describe('group and room chats', () => {
+    const groupProceeds = async (chatKey: string) => {
+      const calls: unknown[][] = [];
+      const { prisma, updates, contextUpserts, identityFinds } = makeExchangePrisma({
+        row: row({ lineUserId: chatKey }),
+        userStatus: 'ACTIVE',
+      });
+      const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+      const result = await uc.execute({ token: RAW_TOKEN });
+
+      assert.equal(result.targetPath, TARGET);
+      assert.deepEqual(calls, [[USER, 'line']], 'the session is still the token’s user, from LINE');
+      assert.equal(updates.length, 1, 'the row is still claimed exactly once');
+      assert.deepEqual(contextUpserts, [], 'a non-picker surface never moves the chat');
+      // Still ONE read, on the same `[userId, provider, status]` index; only `providerUserId` drops.
+      assert.equal(identityFinds.length, 1, 'exactly one identity lookup per exchange');
+      assert.deepEqual(identityFinds[0].where, { userId: USER, provider: 'LINE', status: 'ACTIVE' });
+    };
+
+    it('exchanges a group-minted link while the user’s LINE identity is ACTIVE', () => groupProceeds(LINE_GROUP));
+
+    it('treats a room-minted link exactly as a group one', () => groupProceeds(LINE_ROOM));
+
+    it('refuses a group-minted link once the user has no ACTIVE LINE identity, writing nothing', async () => {
+      const calls: unknown[][] = [];
+      const { prisma, updates, contextUpserts } = makeExchangePrisma({
+        row: row({ lineUserId: LINE_GROUP }),
+        userStatus: 'ACTIVE',
+        // The identity row survives a sever, as `UNLINKED` — so dropping `status` from the group
+        // branch's WHERE would match it and let a severed user back in.
+        identity: { userId: USER, providerUserId: LINE_USER, status: 'UNLINKED' },
+      });
+      const uc = new ExchangeLineHandoffTokenUseCase(prisma, issueToken(calls), legalAcceptance(false));
+
+      const body = (await refusal(uc)).getResponse() as Record<string, unknown>;
+      // Byte-identical to a used link: no oracle tells a severed chat from a spent token.
+      assert.equal(body['code'], 'line_handoff_unavailable');
+      assert.equal(body['message'], 'This link is expired or has already been used.');
+      assert.equal(body['targetPath'], TARGET);
+      assert.equal(updates.length, 0, 'a severed user must not claim the row');
+      assert.equal(calls.length, 0, 'a severed user must not mint a session');
+      assert.deepEqual(contextUpserts, []);
     });
   });
 

@@ -179,6 +179,53 @@ merged with this branch at `173ffcdc` (plain merge, never rebased).
 - `pnpm --filter @watchdog-bms/api typecheck` clean; `check-di-metadata.mjs` pass (no DI change, so
   `auth.module.ts` — a pinned file — was not touched); `sync-production-maintenance-release-pins.mjs`
   → `status=current`, `git status --porcelain` shows only the four intended files plus these docs.
+- Group/room fix (third session): red first — the pre-fix WHERE reds **2** leaf subtests (group and
+  room happy paths); green after: **122/122** across `line-handoff.spec.ts`,
+  `line-handoff.logic.spec.ts`, `complete-employee-line-link.use-case.spec.ts`,
+  `line-linking.spec.ts`, `link-line-identity.use-case.spec.ts`,
+  `partner-member-console.use-cases.spec.ts`, `spec-suite-coverage.spec.ts`. Mutation "drop `ACTIVE`
+  from the group branch" reds **3**, including "refuses a group-minted link once the user has no
+  ACTIVE LINE identity" — the one that matters. That mutation is only catchable because the spec
+  fake now models a **surviving `UNLINKED` row** rather than a missing one, and filters by the WHERE
+  the way Postgres would (an absent key filters nothing) instead of asserting literal keys.
+
+### Adversarial review of the guard, 2026-09-06 (third session) — one HIGH defect, fixed
+
+The guard's WHERE assumed `LineWebHandoffToken.lineUserId` names a **person**. It does not: it is
+the **chat key**. `line-webhook.controller.ts:75` sets `chatId = groupId ?? roomId ?? userId`, the
+assistant reply seam mints with `event.pushTargetId ?? event.lineUserId`
+(`process-line-webhook.use-case.ts:2606`) and the ledger drain with `entry.chatKey`
+(`drain-line-ledger.use-case.ts:208`) — in a group or room all three are the group/room id. No
+`ExternalIdentity` ever carries a group id as `providerUserId`, so `providerUserId = record.lineUserId`
+missed for **every** deep link sent into a group chat and the exchange refused it
+`line_identity_severed`; the customer bounced to `/login?line=handoff-expired`. The picker
+(`:4403`) and `exchange-liff-session.use-case.ts:83` mint with the person's id and were never
+affected.
+
+Fixed by branching the WHERE on the id's prefix — `isLineGroupChatKey` in `line-handoff.logic.ts`,
+`/^[CR][0-9a-fA-F]{32}$/`, unrecognised shapes falling to the stricter 1:1 mode. 1:1 keeps
+`providerUserId` + `userId` + ACTIVE; group/room requires any ACTIVE `LINE` identity for the token's
+`userId`. Same single `[userId, provider, status]` read, same refusal reason, same outward 403. Mint
+sites untouched.
+
+## Follow-ups (recorded here, deliberately NOT fixed on this branch)
+
+1. **#464's revoke is keyed `(lineUserId, userId)`, so it never matches a group/room-minted row.**
+   Severing a link revokes only the links sent to that 1:1 chat; links sent into a group survive the
+   sever as `PENDING`. The new guard covers the common case — once the user has no ACTIVE LINE
+   identity left, a group-minted link is refused — but **not** a re-pointed user who still holds an
+   ACTIVE `LINE` identity on a second channel: for the rest of the 15-minute TTL that user can still
+   exchange a group-minted link. Closing it properly means revoking on `userId` alone, or storing
+   the person's own LINE id on the row alongside the chat key.
+2. **The ledger drain mints with `entry.chatKey`** (`drain-line-ledger.use-case.ts:208`) — the same
+   root cause as (1)/the guard defect, listed separately because it is a second write path that
+   would need the same treatment if the row ever grows a person column.
+3. **Per-identity sever transactions are bounded only by ACTIVE identities per user.**
+   `severOtherLineIdentities` opens one interactive `$transaction` per severed identity; practically
+   ≤ the number of LINE channels, but nothing enforces that bound.
+4. **The identity match is channel-agnostic**, in both modes, because the token row has no channel
+   column. That is a residual of the data model, not a decision: a user linked on channel A can
+   satisfy the guard for a token minted from channel B.
 
 ## Next
 
