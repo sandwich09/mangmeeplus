@@ -2758,19 +2758,27 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'staff_menu_promotion');
       return;
     }
-    // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
-    // not exist, so a short capability question is answered by the curated card — deterministic,
-    // zero model calls, only the six real functions.
-    if (isCapabilityQuestion(event.messageText)) {
-      await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
-      await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
-      return;
-    }
-
     // 3. Resolve LINE user → internal user via ExternalIdentity, scoped to the webhook's channel.
     const identity = await this.resolveLineIdentity(event);
 
     if (!identity || identity.user.status !== 'ACTIVE') {
+      // "ทำอะไรได้บ้าง" (Owner 2026-08-27): a model-composed answer advertised features that do
+      // not exist, so a short capability question is answered by the curated card — deterministic,
+      // zero model calls, only the six real functions.
+      //
+      // For a STRANGER only (Owner 2026-09-06, "ควรสอนการใช้งาน user ได้ตามฟีเจอร์ที่เปิดอยู่ และตาม
+      // ขอบเขตของผู้ถาม"). The card is public marketing copy and carries no tenant data, which is
+      // exactly why it may be sent before an account exists — and exactly why it is the wrong
+      // answer once one does: it names ยอดขาย and สรุปบัญชี to an expenses-only employee who can
+      // use neither. A linked caller's question falls through to the ordinary turn, where
+      // `capability_help` is composed from the caller's own permissions and this company's
+      // entitlements (capability-help spec §8/§8.1) — including, below, the support pause, which
+      // this lane used to jump ahead of.
+      if (isCapabilityQuestion(event.messageText)) {
+        await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
+        await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
+        return;
+      }
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
       // has no account to link. The same card the door sends, so both entrances agree — and a
       // `follow` from a stranger lands here too, which is what makes G-03 an answer.
@@ -3510,6 +3518,9 @@ export class ProcessLineWebhookUseCase {
       hasActiveExpenseDrafts: activeExpenseDrafts.length > 0,
       hasPendingMediaCapsule: !!mediaResumeCapsule,
       hasSubstituteState: substituteContext.workflowState !== 'none' || substituteContext.hasPendingQuestion,
+      // §8.2: the same matcher that keeps the fixed card for strangers keeps the shortcut off a
+      // linked caller's capability question — the scoped composer owns that answer.
+      capabilityQuestion: isCapabilityQuestion(normalizedText),
     });
     if (advisorDirectText) {
       this.logger.log({ msg: 'line.ai.advisor_direct_served', requestId, companyId, context: 'ProcessLineWebhookUseCase' });

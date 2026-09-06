@@ -846,6 +846,19 @@ describe('ResponseComposerAgent – capability help', () => {
     assert.ok(everything.split('\n').length + 1 <= 15, 'one approvals line on top still fits');
   });
 
+  // Review finding F1, Owner 2026-09-06. These are the messages the API's own `isCapabilityQuestion`
+  // lane used to answer with the unscoped six-function Flex card BEFORE it knew who was asking. It
+  // now forwards them for a linked caller, so every one of them must land on the scoped rendering.
+  it('scopes every short phrasing the API used to answer with the fixed card (F1)', () => {
+    for (const text of ['ทำอะไรได้บ้าง', 'ช่วยอะไรได้บ้าง', 'มีฟีเจอร์อะไรบ้าง', 'มั่งมีใช้ยังไง', 'ระบบนี้ใช้ยังไง']) {
+      const reply = agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY });
+      assert.match(reply, /ค่าใช้จ่าย/, text);
+      for (const hidden of ['ยอดขาย', 'ภาษี', 'สต็อก', 'นัดหมาย', 'ลูกค้า', 'จัดซื้อ', 'สรุปบัญชี']) {
+        assert.doesNotMatch(reply, new RegExp(hidden), `"${text}" must not advertise ${hidden}`);
+      }
+    }
+  });
+
   it('opens every rendering with a LINE_CAPABILITY_REPLY_PREFIXES entry, so the API recognises "ยังไง" after it (T6)', () => {
     for (const text of ['ทำอะไรได้บ้าง', 'what can you do', 'สอนใช้งานหน่อย', 'how do I start']) {
       const reply = agent.composeCapabilityHelp(text, 'th', 'th-TH', { permissions: STAFF, entitledFeatureKeys: EXPENSES_ONLY });
