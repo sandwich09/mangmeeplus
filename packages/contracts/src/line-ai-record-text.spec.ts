@@ -127,6 +127,18 @@ describe('scrubRecordText', () => {
     assert.equal(scrubRecordText(undefined), '');
     assert.equal(scrubRecordText(42 as never), '');
   });
+
+  it('never cuts an emoji in half at the length bound — a lone surrogate is not a character LINE can send', () => {
+    // A LIFF shop name may run to 120 UTF-16 units and the cards bound it at 60, so a `slice` that
+    // lands between the two halves of an astral character left `\ud83d` alone at the end of a Flex
+    // text (review of codex/line-pending-shop-hint, 2026-09-06).
+    const cut = scrubRecordText('ก'.repeat(59) + '😀' + 'ข', 60);
+    assert.equal(cut, 'ก'.repeat(59));
+    // With the `u` flag this class matches only a lone surrogate, never a whole astral character.
+    assert.ok(!/[\ud800-\udfff]/u.test(cut));
+    // An emoji that fits whole is kept whole.
+    assert.equal(scrubRecordText('ก'.repeat(58) + '😀' + 'ข', 60), 'ก'.repeat(58) + '😀');
+  });
 });
 
 // B1 corpus. The host rules are two passes and their ORDER is the fix, so both ends are pinned in

@@ -110,6 +110,42 @@ Green after:
 
 `infra/docker/production-image-security.spec.sh` deliberately not run (out of scope for this change).
 
+## Review 2026-09-06 (adversarial pass on 6c857e94)
+
+Verdict: READY, with one root-cause fix committed on this branch.
+
+- **Fixed — half an emoji at the 60-unit bound.** `LINE_SIGNUP_COMPANY_NAME_MAX` is 120 UTF-16
+  units and `scrubRecordText(name, 60)` ended in `.slice(0, 60)`, so a name with an astral character
+  straddling units 59/60 (`'ก'.repeat(59) + '😀' + 'ข'`) put a lone `\ud83d` into the card's text
+  node and altText — not a character LINE can receive. Fixed once in the helper
+  (`packages/contracts/src/line-ai.ts`): the bound drops a trailing lone high surrogate, so every
+  caller (api draft cards, ai-gateway formatters) inherits it and a 60-unit emoji still fits whole.
+  Red then green on `line-ai-record-text.spec.ts`: 24 tests, 23 pass / 1 fail → 24/24.
+- **Open, wording only (Owner call) — an open state can coexist with a live membership.** The
+  onboarding transaction creates the company and its ACTIVE OWNER membership while the row is still
+  `PROVISIONING`; `READY` is stamped after the trial guards and VAT write, `COMPLETED` after the
+  audit transaction (`provision-signup.use-case.ts`, `company-signup-core.service.ts`). In that
+  window — sub-second normally, lasting when provisioning fails after the company commit
+  (`PROVISIONING_FAILED` with `companyId` set, the HIGH-A recovery case) — `/companies` lists the
+  new shop in the picker AND prints `🕒 คำขอเปิดร้าน «X» รอทีมงานตรวจสอบ` for the same X. The door
+  must stay withheld there (the partial unique index refuses a second application), so only the
+  sentence is off, and it is the sentence the door card and the LIFF page share.
+- Scope proof: `findOpenLineSignup` keys on `(source line-oa, lineProviderUserId = webhook userId,
+  lineChannelId = LINE_MESSAGING_CHANNEL_ID, state ∈ OPEN)` and answers null with no channel id;
+  the LIFF submit stores `LineIdTokenService.verify().channelId` (`lineMessagingChannelId ??
+  lineLoginChannelId`) and the token `sub` — the same pair on both sides.
+- Not a regression, worth knowing: `newShopSignupUrl()` is not role-gated on develop either — a
+  STAFF member who types `/companies` gets the door wherever signup is open (the menu only hides
+  the item). Whether an employee may open a shop of their own is a product call, unchanged here.
+- Cost: one extra indexed `companySignupRequest.findFirst` per `/companies` list render (2 → 3
+  reads); not on switch, menus, or message turns; nothing already loaded in a linked turn to reuse.
+- Mutations: dropping `pendingSignupName:` at the call site → use-case spec 207 tests, 206 pass,
+  1 fail; replacing the scrub with the raw name → logic spec 41 tests, 39 pass, 2 fail.
+- Gates re-run with the fix: api typecheck clean; contracts typecheck clean; contracts `test`
+  246/246; `line-staff-menu.logic.spec.ts` 41/41; `process-line-webhook.use-case.spec.ts` 207/207;
+  `line-draft-update-card.logic.spec.ts` + `line-draft-update.logic.spec.ts` 41/41; ai-gateway
+  `draft-update-formatter.spec.ts` + `expense-explain-record.spec.ts` 45/45; DI guard 795/870/820.
+
 ## Next
 
 - Owner reviews the copy; it rides the next UAT deploy with no flag and no config of its own.
