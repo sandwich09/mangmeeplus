@@ -311,10 +311,9 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await seed(client, tag, lineUserId);
       const h = wire(client);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
-      // UAT 2026-09-06: the customer typed the words the reply prints, with the "ai" their phone
-      // keyboard produced, and stayed muted for four more messages. Driven in the lowercase
-      // spelling here so the whole chain — command, pause, row — is pinned on real rows.
-      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND.toLowerCase()));
+      // Owner 2026-09-06: the way back is the "คุยกับน้องมั่งมี" tile itself, tapped or typed. Driven
+      // here so the whole chain — tile, pause state, row — is pinned on real rows.
+      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND));
 
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.aiPausedUntil, null, 'the pause is what the customer is living with');
@@ -440,7 +439,9 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const h = wire(client);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
-      await h.webhook.execute(event(lineUserId, RESUME_AI_COMMAND));
+      // UAT 2026-09-06: the phrase the reply used to print, in the lowercase a phone keyboard
+      // produces — kept as a typed alias of the tile.
+      await h.webhook.execute(event(lineUserId, 'คุยกับ ai ต่อ'));
       assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'CLOSED');
 
       // The pause is gone with it, so this is an ordinary assistant turn again — but re-arm it to

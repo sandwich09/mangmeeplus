@@ -1,7 +1,8 @@
 # Agent Memory: support-pause-commands
 
 Status: DONE (gates green, no PR, not deployed) — branch `codex/support-pause-commands` from
-`origin/develop` (f2bd38ed, live on UAT)
+`origin/develop` (f2bd38ed, live on UAT); Owner decisions 2026-09-06 (the tile resumes, "คุยกับน้องมั่งมี"
+wording with typed aliases, no 🤖, media stays un-gated) applied on top of 7608e3a4, gates green
 Owner: Owner (UAT screenshots 2026-09-06 15:42 ICT)
 Scope: the support pause must silence the ASSISTANT, not the product — and the words that lift it
 must match the words the reply prints.
@@ -40,8 +41,9 @@ was never extended to the menu commands that need company and permission resolut
 - **S-4's two phrases are only a command while its lane is lit.** With `draftUpdate.enabled` false
   they are ordinary text and stay under the pause — otherwise a rollback would silently open a paid
   AI turn to a paused chat. That is the one condition on the bypass.
-- **`talk` under the pause answers `SUPPORT_PAUSED_REPLY`** and records nothing. It costs one
-  indexed `findUnique` on a rich-menu tap.
+- **`talk` under the pause RESUMES** (Owner 2026-09-06, superseding the first cut's paused notice):
+  the tile's words are the way back, tapped or typed — `handleAssistantResume`, nothing recorded.
+  Without a pause the tile greets as before. Still one indexed `findUnique` on a rich-menu tap.
 - **`menuCommandKey`** folds the input once: tile emoji stripped, inner whitespace collapsed, Latin
   case folded. Still a WHOLE-string match, so §3 (a quoted command cannot resume the assistant on
   the customer's behalf) is untouched — the three injection strings in the spec stay non-matching.
@@ -60,17 +62,21 @@ Every string `staffMenuCommand` matches, checked one by one:
 | `PROFILE_GUARD_COMMAND` `ใส่เลย`, `PROFILE_GUARD_LATER_COMMAND` `ไว้ก่อน` | no |
 | `DRAFT_UPDATE_CONFIRM_COMMAND` `ยืนยันการแก้ไข`, `DRAFT_UPDATE_CANCEL_COMMAND` `ยกเลิกการแก้ไข` | no |
 | `LINE_FOLLOW_EVENT_TEXT` `เพิ่มเพื่อนใหม่` | no |
-| **`RESUME_AI_COMMAND` `คุยกับ AI ต่อ`** | **yes — "AI"** |
-| **`RESUME_AI_ALT_COMMAND` `ให้ AI ตอบ`** | **yes — "AI"** |
+| `RESUME_AI_COMMAND` `คุยกับน้องมั่งมี` (since 2026-09-06 the tile's own string, command `talk`) | no |
+| **`RESUME_AI_ALIASES` `คุยกับ AI ต่อ`, `ให้ AI ตอบ`, `คุยกับ AI`, `คุยกับมั่งมี`** | **yes — "AI" in three** |
 
-Two of nineteen, and they are also the only two containing a space at all — so collapsing inner
-whitespace and folding case changes nothing for the other seventeen. `parseLineCompanyCommand`
-(`/companies`, `/company`) already lowercased its own input before this change.
+Three of twenty-one (since 2026-09-06: the tile string replaced `คุยกับ AI ต่อ` as `RESUME_AI_COMMAND`
+and the old spellings became `RESUME_AI_ALIASES`), and they are also the only three containing a
+space at all — so collapsing inner whitespace and folding case changes nothing for the other
+eighteen. `parseLineCompanyCommand` (`/companies`, `/company`) already lowercased its own input
+before this change.
 
 The fold does create one footgun: the matcher folds its INPUT and compares against raw literals, so
 a future constant written with uppercase Latin or a double space would silently stop matching
 itself — exactly the resume bug, one level down. Pinned by a new case in
-`line-staff-menu.logic.spec.ts` that feeds all nineteen commands back through `staffMenuCommand`.
+`line-staff-menu.logic.spec.ts` that feeds all twenty-one commands back through `staffMenuCommand`
+(and asserts the twenty-one strings are distinct — the tile and the resume text being ONE string is
+the point, not a collision).
 
 ## Decisions
 
@@ -95,21 +101,52 @@ itself — exactly the resume bug, one level down. Pinned by a new case in
   `aiPausedUntil` for the LINE user and closes their `OPEN` request `customer_resumed`. An
   `ANSWERED` row is deliberately left alone — it is not on the รอตอบ tab, so it is not the reported
   defect, and the sweep closes it on age.
+- **Owner 2026-09-06 (after the first cut): the tile IS the way back.** "กดปุ่มคุยกับมั่งมี หรือ
+  พิมพ์คุยกับ AI" — under a pause the `talk` command runs `handleAssistantResume` instead of the paused
+  notice; without a pause it greets as before. The tile text and the new resume text are the same
+  string, so it is ONE command (`talk`), matched once and routed by pause state inside the one
+  handler — not a `talk` and a `resume_ai` match racing for `คุยกับน้องมั่งมี`. `resume_ai` is now the
+  typed-alias lane only (`RESUME_AI_ALIASES`: `คุยกับ AI ต่อ`, `ให้ AI ตอบ`, `คุยกับ AI`, `คุยกับมั่งมี`,
+  all through `menuCommandKey`), and keeps its §2.4 promise of resuming with no pause and no account.
+- **"คุยกับ AI" → "คุยกับน้องมั่งมี" everywhere a customer reads it.** The four paused-flow replies
+  share one `RESUME_HINT` built from `RESUME_AI_COMMAND` (`กดปุ่ม "คุยกับน้องมั่งมี" หรือพิมพ์
+  "คุยกับน้องมั่งมี" เมื่ออยากให้น้องมั่งมีตอบต่อ`), so the words and the matcher cannot drift. No
+  quick-reply button offers resuming today (the rich-menu tile is the button), so none was added.
+  `liff-page.security.ts`, the API-side support-inbox copy and the web app never had the phrase.
+- **No 🤖 in any LINE-facing string** ("ไม่ต้องใส่ icon robot"): dropped from `AI_OPT_OUT_REPLY` and
+  the `OCR_FEATURE_DISABLED` notice — the only two in `apps/api/src` outside specs. Existing
+  😊-style emoticons kept; none added.
+- **Media stays UN-gated during the pause (Owner 2026-09-06):** "คงเดิม รูปใบเสร็จยังถูกอ่านและทำร่าง
+  ค่าใช้จ่ายทันที แม้กำลังคุยกับเจ้าหน้าที่". No code change; recorded as spec §2.2 delta รอบ 6 ข้อ 9
+  so nobody proposes a media gate again.
 
 ## Artifacts
 
 - `apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts` — new `menuCommandKey()`;
-  `staffMenuCommand` folds through it and compares the two resume commands through it too.
+  `staffMenuCommand` folds through it and compares the resume aliases through it too. Since
+  2026-09-06: `RESUME_AI_COMMAND` = `คุยกับน้องมั่งมี` (the tile, command `talk`, also the
+  `line-rich-talk` postback text) and `RESUME_AI_ALIASES` replaces `RESUME_AI_ALT_COMMAND`.
 - `apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts` —
   `SUPPORT_FOLLOW_UP_REPEAT_REPLY`, `SUPPORT_FOLLOW_UP_REPLY_INTERVAL_MS`,
-  `SUPPORT_FOLLOW_UP_REPLIES` and `SupportFollowUpOutcome`; the `talk` branch's pause check; the
-  `deterministicCommand` guard on the pause gate; `findLiveSupportRequest` selects `lastMessageAt`;
-  `recordSupportFollowUp` returns the outcome.
+  `SUPPORT_FOLLOW_UP_REPLIES` and `SupportFollowUpOutcome`; the `talk` branch resumes under a pause
+  (2026-09-06; first cut answered the paused notice); `RESUME_HINT` shared by the four paused-flow
+  replies; 🤖 dropped from two replies; the `deterministicCommand` guard on the pause gate;
+  `findLiveSupportRequest` selects `lastMessageAt`; `recordSupportFollowUp` returns the outcome.
 - Specs: `line-staff-menu.logic.spec.ts` (case/whitespace cases + the whole-table round trip),
   `line-first-signup-webhook.spec.ts` (new รอบ 6 describe: `/companies`, the tile, lowercase resume,
   the throttle), `process-line-webhook.use-case.spec.ts` (`เมนูหลัก` under a pause, on the fuller
   harness that resolves permissions), `line-support-request.pg.spec.ts` (lowercase resume end to
   end; the throttle with real timestamps, backdated rather than waited for).
+- 2026-09-06 specs: `line-staff-menu.logic.spec.ts` (tile → `talk`, the four aliases, the new
+  injection strings, the 21-string distinct table), `line-first-signup-webhook.spec.ts` (the tile
+  lifts the pause and closes the request; the tile greets when nothing is paused; every accepted
+  spelling resumes; every reply that offers the way out prints the tile's words and no 🤖 — via a
+  `spoken()` helper that reads reply text unescaped), `process-line-webhook.use-case.spec.ts` (no 🤖 on
+  the opt-out and OCR-disabled replies), `line-support-request.pg.spec.ts` (the resume case drives
+  the TILE on real rows; the never-reopens case drives the lowercase alias).
+- Docs: spec §2.2 delta รอบ 6 ข้อ 6–9 and §2.4; one-line updates in
+  `docs/specs/mangmee-line-first-signup-spec-th.md` and
+  `docs/runbooks/line-first-signup-support-playbook.md` where they printed the old phrase.
 - No schema change, no migration, no contract change, no web change, no `package.json` change.
 
 ## Verification (2026-09-06, on the committed tree)
@@ -163,13 +200,35 @@ Command-table probe: 19 commands → 19 distinct keys, no collisions. The three 
 dotless-i all stay `null`; NFD/NFKC forms of every command still match (no canonical compositions in
 this table). Inherited, not new: the four tile emoji are stripped anywhere, so `📊คุยกับ AI ต่อ✅` resumes.
 
+### Owner decisions 2026-09-06 follow-up (fresh worktree at 7608e3a4)
+
+Red first — specs edited before the source: `line-staff-menu.logic` 37/**2** (the alias list, the
+tile→`talk` routing), `line-first-signup-webhook` 63/**4** (the tile resume, every spelling, the
+wording sweep, the staff-contact hint), `process-line-webhook.use-case` 204/**2** (🤖 on the
+opt-out and OCR-disabled replies).
+
+| Gate | Result |
+|---|---|
+| `line-staff-menu.logic.spec.ts` | 39 pass / 0 fail |
+| `line-first-signup-webhook.spec.ts` | 67 pass / 0 fail |
+| `process-line-webhook.use-case.spec.ts` | 206 pass / 0 fail |
+| `line-intake-dispatch.use-case.spec.ts` + `spec-suite-coverage.spec.ts` | 183 pass / 0 fail (no new spec file, no `package.json` edit) |
+| `line-support-request.pg.spec.ts` (isolated `postgres:18.3-alpine`, 127.0.0.1:15499, `migrate deploy` + `sync-permissions`, container removed) | 16 pass / 0 fail |
+| Mutation: `talk` under the pause back to `SUPPORT_PAUSED_REPLY` | signup 64/**3** ("lifts the pause from the rich-menu tile", "lets the customer bring the assistant back", "every accepted spelling"), pg 15/**1** (the tile on real rows); 67/0 and 16/0 again on restore |
+| `pnpm --filter @watchdog-bms/api typecheck` | clean |
+| `node apps/api/scripts/check-di-metadata.mjs` | 795 files, 870 decorated classes, 820 with deps — all carry `design:paramtypes` |
+| `grep -rn 🤖 apps/api/src` outside specs | none |
+
+Not run this round: the full `pnpm --filter @watchdog-bms/api test` list (the touched specs and the
+coverage guard were run individually), `test:boot`, web suites, UAT.
+
 ## Open questions / follow-ups (not in this change)
 
-- A receipt PHOTO under a pause is still OCR'd and answered by the assistant — the media lane has no
-  pause gate (carried over from `support-request-continuity`). Since round 3 the photo leaves a
-  `lastMediaAt` marker and nothing else, so it neither reopens the request nor extends the mute, but
-  the assistant does still speak into a thread a human is holding. That is the last place the pause
-  is not honoured.
+- **Decided, not open (Owner 2026-09-06): media stays un-gated by design.** A receipt PHOTO under a
+  pause is still OCR'd and answered by the assistant — the media lane has no pause gate (carried
+  over from `support-request-continuity`). Since round 3 the photo leaves a `lastMediaAt` marker and
+  nothing else, so it neither reopens the request nor extends the mute. The Owner wants exactly
+  this ("รูปใบเสร็จยังถูกอ่านและทำร่างค่าใช้จ่ายทันที แม้กำลังคุยกับเจ้าหน้าที่"); do not propose a media gate.
 - An UNLINKED prospect's follow-up text still hits the entry-door card above the pause gate (F8 in
   `support-request-continuity`), so it is never appended. Unchanged.
 - The 10-minute window is a constant, not config. If the Owner wants a different cadence it is one
@@ -181,8 +240,10 @@ this table). Inherited, not new: the four tile emoji are stripped anywhere, so `
 
 - Owner acceptance on UAT, in one paused chat: tap "ติดต่อเจ้าหน้าที่", then (a) `/companies` must
   answer the company card with no confirmation, (b) the rich-menu "คุยกับน้องมั่งมี" tile must answer
-  "ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ …" and not the welcome, (c) two messages a minute apart must
-  give the full card once then "📮 รับข้อความแล้วค่ะ" — with BOTH lines visible in
-  `/system/support-requests`, (d) `คุยกับ ai ต่อ` in lowercase must answer "น้องมั่งมีกลับมาแล้วค่ะ"
-  and drop the row off the รอตอบ tab, (e) `/companies` then a typed `2` must switch the shop with no
-  📮 line and nothing new in `/system/support-requests`.
+  "น้องมั่งมีกลับมาแล้วค่ะ" and drop the row off the รอตอบ tab (Owner 2026-09-06; tap it again with no
+  pause and it must greet as before), (c) two messages a minute apart must give the full card once
+  then "📮 รับข้อความแล้วค่ะ" — with BOTH lines visible in `/system/support-requests`, (d) after a
+  fresh tap, `คุยกับ ai ต่อ` in lowercase (an alias now) must also answer "น้องมั่งมีกลับมาแล้วค่ะ",
+  (e) `/companies` then a typed `2` must switch the shop with no 📮 line and nothing new in
+  `/system/support-requests`, (f) every reply in the flow must read `กดปุ่ม "คุยกับน้องมั่งมี" หรือพิมพ์
+  "คุยกับน้องมั่งมี"` — no "คุยกับ AI", no 🤖.

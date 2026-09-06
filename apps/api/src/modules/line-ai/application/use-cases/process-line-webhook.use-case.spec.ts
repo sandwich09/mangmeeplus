@@ -64,6 +64,7 @@ describe('OCR governance LINE reply UX', () => {
     }
     // Governance refusals keep their own lead-in even though their status is also OCR_FAILED.
     assert.match(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED', true), /ปิดการอ่านเอกสารด้วย AI/);
+    assert.equal(formatOcrGovernanceClarifyReply('OCR_FEATURE_DISABLED').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
   });
 });
 
@@ -685,6 +686,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ปิดการใช้งานผู้ช่วย AI/);
+    assert.equal((replies[0] ?? '').includes('🤖'), false, 'no robot icon (Owner 2026-09-06)');
     assert.equal((updates.at(-1) as any).data.status, 'ai_opt_out');
   });
 

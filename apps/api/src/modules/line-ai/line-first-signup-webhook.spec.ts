@@ -4,7 +4,7 @@ import { createHmac } from 'node:crypto';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 import {
   LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND,
-  STAFF_CONTACT_COMMAND, EMPLOYEE_DOOR_COMMAND, RESUME_AI_COMMAND,
+  STAFF_CONTACT_COMMAND, EMPLOYEE_DOOR_COMMAND, RESUME_AI_COMMAND, RESUME_AI_ALIASES,
   linePostbackCommandText, staffMenuCommand,
 } from './domain/logic/line-staff-menu.logic';
 import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessage } from './domain/logic/line-business-card.logic';
@@ -336,6 +336,8 @@ const event = (text: string) => ({
 }) as any;
 
 const rendered = (h: Harness) => JSON.stringify(h.replies);
+/** Every reply's text as the customer reads it — quotes unescaped, for pinning exact printed words. */
+const spoken = (h: Harness) => h.replies.flat().map((message: any) => message.text ?? '').join('\n');
 /** The status this turn settled on — the last write, after the claim's own CAS. */
 const outcome = (h: Harness) => h.eventLog.at(-1)!.data.status;
 
@@ -445,7 +447,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
 
     assert.match(rendered(h), /รับเรื่องแล้วค่ะ/);
     assert.match(rendered(h), /098-256-5628/, 'and the number for someone in a hurry');
-    assert.match(rendered(h), /คุยกับ AI ต่อ/, 'and the way back out of the pause');
+    assert.match(spoken(h), /กดปุ่ม "คุยกับน้องมั่งมี" หรือพิมพ์ "คุยกับน้องมั่งมี"/, 'and the way back out of the pause, in the tile\'s own words');
     assert.equal(h.supportRequests[0].data.companyId, 'co-now', 'membership decides, not the stale row');
     assert.equal(h.supportRequests[0].data.lastMessageText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
     assert.match(h.supportRequests[0].data.lineUserIdHash, /^[0-9a-f]{16}$/);
@@ -995,17 +997,64 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
     assert.equal(outcome(h), 'support_paused');
   });
 
-  // The rich-menu tile literally says "คุยกับน้องมั่งมี", so the greeting was the honest reply to
-  // it — and a flat contradiction of the line the same chat had just been sent.
-  it('keeps the rich-menu greeting out of a thread a human is holding', async () => {
+  // Owner 2026-09-06: "กดปุ่มคุยกับมั่งมี หรือ พิมพ์คุยกับ AI" — the tile's own words are the way
+  // back, tapped or typed. Under a pause the tile lifts it, exactly as the typed command does; the
+  // greeting, which contradicted the hold, is never sent into a thread a human is holding.
+  it('lifts the pause from the rich-menu tile, and closes the request with it', async () => {
     const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
     await h.useCase.execute(event('คุยกับน้องมั่งมี'));
 
-    assert.equal(rendered(h).includes('น้องมั่งมีมาแล้ว'), false, 'the welcome contradicted the pause');
-    assert.match(rendered(h), /กำลังดูให้อยู่/);
-    assert.match(rendered(h), /คุยกับ AI ต่อ/, 'and it still says the way out');
-    assert.deepEqual(h.supportUpdates, [], 'a tile tap is not a message to the team');
-    assert.equal(outcome(h), 'support_paused');
+    assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
+    assert.equal(rendered(h).includes('น้องมั่งมีมาแล้ว'), false, 'not the greeting');
+    assert.equal(rendered(h).includes('กำลังดูให้อยู่'), false, 'and not the pause notice either');
+    assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, 'the hold is lifted');
+    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
+    assert.equal(h.supportClosures[0].where.status, 'OPEN', 'and the inbox stops showing รอตอบ');
+    assert.deepEqual(h.supportUpdates, [], 'a tile tap is never filed as a message to the team');
+    assert.equal(outcome(h), 'support_resumed');
+  });
+
+  it('keeps the tile\'s greeting when nothing is paused', async () => {
+    const h = harness({ identity: linked, context: { companyId: 'co-1', aiPausedUntil: null } });
+    await h.useCase.execute(event('คุยกับน้องมั่งมี'));
+
+    assert.match(rendered(h), /น้องมั่งมีมาแล้ว/);
+    assert.deepEqual(h.contextUpdates, [], 'nothing to lift');
+    assert.deepEqual(h.supportClosures, [], 'nothing to close');
+    assert.equal(outcome(h), 'staff_menu_talk');
+  });
+
+  // The words people still type — the two the replies used to print, the two short forms the Owner
+  // named, and the lowercase a phone keyboard produces — are all the same promise as the tile.
+  it('brings the assistant back on every accepted spelling, tapped or typed', async () => {
+    for (const words of [RESUME_AI_COMMAND, ...RESUME_AI_ALIASES, 'คุยกับ ai']) {
+      const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
+      await h.useCase.execute(event(words));
+
+      assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/, words);
+      assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, words);
+      assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed', words);
+      assert.deepEqual(h.supportUpdates, [], words);
+      assert.equal(outcome(h), 'support_resumed', words);
+    }
+  });
+
+  // Owner 2026-09-06: "เปลี่ยนคำว่าคุยกับ AI เป็นคำว่าคุยกับน้องมั่งมี" and "ไม่ต้องใส่ icon robot". Every
+  // reply that offers the way out names the tile, and no line a customer reads carries 🤖.
+  it('names the tile as the way out in every reply that offers one, and never a robot', async () => {
+    const tap = harness({ identity: linked, memberships: [{ companyId: 'co-1', roles: [] }] });
+    await tap.useCase.execute(event(STAFF_CONTACT_COMMAND));
+    const again = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
+    await again.useCase.execute(event(STAFF_CONTACT_COMMAND));
+    await again.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+    const nothingLive = harness({ identity: linked, context: pausedContext, openSupportRequest: null });
+    await nothingLive.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
+
+    const hint = /กดปุ่ม "คุยกับน้องมั่งมี" หรือพิมพ์ "คุยกับน้องมั่งมี" เมื่ออยากให้น้องมั่งมีตอบต่อ/;
+    for (const h of [tap, again, nothingLive]) assert.match(spoken(h), hint);
+    const everything = [tap, again, nothingLive].map(spoken).join('\n');
+    assert.equal(everything.includes('คุยกับ AI'), false, 'the old phrase is gone from every reply');
+    assert.equal(everything.includes('🤖'), false, 'no robot icon');
   });
 
   it('brings the assistant back on the lowercase spelling its own reply advertises', async () => {
@@ -1035,7 +1084,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
     assert.equal(burst.supportUpdates.length, 1, 'still recorded — the operator reads every line');
     assert.match(rendered(burst), /รับข้อความแล้วค่ะ/);
     assert.equal(rendered(burst).includes('ทีมงานจะตอบกลับในแชทนี้'), false, 'said once, not to every line');
-    assert.equal(rendered(burst).includes('คุยกับ AI ต่อ'), false, 'and the menu hint least of all');
+    assert.equal(rendered(burst).includes('คุยกับน้องมั่งมี'), false, 'and the menu hint least of all');
 
     const later = harness({
       identity: linked, context: pausedContext,
