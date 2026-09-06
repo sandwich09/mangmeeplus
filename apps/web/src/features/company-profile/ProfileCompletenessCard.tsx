@@ -2,17 +2,13 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { getAccountProfile, getCompanyIdentity } from './company-profile.api';
 import {
   checklistIsComplete,
   companyProfileHref,
   dismissChecklistFor,
-  profileChecklist,
-  readChecklistCache,
   readChecklistDismissal,
-  writeChecklistCache,
-  type ChecklistItem,
 } from './company-profile.logic';
+import { useProfileChecklist } from './use-profile-checklist';
 
 /**
  * "What is still missing" for the owner of a shop opened from LINE (spec §15.4). Never blocks
@@ -20,47 +16,25 @@ import {
  * complete, nothing when either read fails — a dashboard is not the place to learn that a
  * settings API is down — and nothing for a week after "ไว้ก่อน".
  *
- * The 10-minute answer cache lives in `sessionStorage` (a per-tab convenience — the email item
- * cannot complete while SES is sandboxed, so without it the card fires two GETs on every dashboard
- * mount forever). The 7-day "ไว้ก่อน" lives in `localStorage`, because an answer that dies with the
- * tab is not an answer.
+ * The read and its 10-minute answer cache live in `useProfileChecklist`, shared with the sidebar
+ * and settings-hub indicators. The 7-day "ไว้ก่อน" is this card's alone and lives in
+ * `localStorage`, because an answer that dies with the tab is not an answer — and because
+ * snoozing the card must not switch the indicators off (§15.4.1 E).
  */
 export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
-  const [items, setItems] = useState<ChecklistItem[] | null>(null);
-  const [hidden, setHidden] = useState(false);
-
+  // In an effect, not a lazy initial state: this component is server-rendered, where there is no
+  // localStorage, so seeding from it during render is a hydration mismatch.
+  const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
-    let cancelled = false;
-    const storage = typeof window === 'undefined' ? undefined : window.sessionStorage;
-    if (readChecklistDismissal(typeof window === 'undefined' ? undefined : window.localStorage, companyId)) {
-      setHidden(true);
-      return;
-    }
-
-    const cached = readChecklistCache(storage, companyId);
-    if (cached === 'hidden') { setHidden(true); return; }
-    if (cached) { setItems(cached); return; }
-
-    void Promise.all([getCompanyIdentity(companyId), getAccountProfile()])
-      .then(([identity, account]) => {
-        if (cancelled) return;
-        const next = profileChecklist({
-          readiness: identity.readiness,
-          emailVerified: account.emailVerified,
-          hasPassword: account.hasPassword,
-        });
-        writeChecklistCache(storage, companyId, next);
-        setItems(next);
-      })
-      .catch(() => { if (!cancelled) setItems(null); });
-    return () => { cancelled = true; };
+    setDismissed(readChecklistDismissal(typeof window === 'undefined' ? undefined : window.localStorage, companyId));
   }, [companyId]);
+  const items = useProfileChecklist(companyId);
 
-  if (hidden || !items || checklistIsComplete(items)) return null;
+  if (dismissed || !items || checklistIsComplete(items)) return null;
 
   const dismiss = () => {
     dismissChecklistFor(typeof window === 'undefined' ? undefined : window.localStorage, companyId);
-    setHidden(true);
+    setDismissed(true);
   };
 
   return (

@@ -24,6 +24,8 @@ export type NavItem = {
   href?: string;
   subItems?: { key: string; label: string; href: string; icon?: React.ReactNode; tone?: MangmeeTone; badgeCount?: number }[];
   disabled?: boolean;
+  /** §15.4.1 E: an unfinished company setup, shown as one dot until the checklist is complete. */
+  attention?: boolean;
   group: string;
 };
 
@@ -93,6 +95,22 @@ const roleLabelKey: Record<string, DictionaryKey> = {
   AUDITOR_READONLY: 'role.AUDITOR_READONLY',
   COMPANY_VIEW: 'role.COMPANY_VIEW',
 };
+
+/**
+ * One amber dot on a module row whose setup is unfinished (§15.4.1 E). Rendered right after the
+ * label, so it lands next to the icon when the sidebar is collapsed and the label is not there.
+ */
+function AttentionDot() {
+  return (
+    <span
+      role="img"
+      aria-label="ตั้งค่ายังไม่ครบ"
+      title="ตั้งค่ายังไม่ครบ"
+      data-testid="nav-attention-dot"
+      className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+    />
+  );
+}
 
 const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, userRoles, userRoleNames, showAccountSecurity, footerExtras }) => {
   const { isExpanded, isMobileOpen, isHovered, openSubmenu, setIsHovered, setOpenSubmenu, toggleSidebar, toggleSubmenu, closeMobileSidebar } =
@@ -367,6 +385,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                           >
                             <MenuIcon icon={nav.icon} tone={tone} menuKey={nav.key} active={highlighted} />
                             {sidebarVisible && <span className="menu-item-text">{nav.label}</span>}
+                            {nav.attention && <AttentionDot />}
                             {sidebarVisible && (
                               <ChevronDownIcon
                                 className={`ml-auto w-5 h-5 transition-transform duration-200 ${
@@ -395,6 +414,7 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                             >
                               <MenuIcon icon={nav.icon} tone={tone} menuKey={nav.key} active={active} />
                               {sidebarVisible && <span className="menu-item-text">{nav.label}</span>}
+                              {nav.attention && <AttentionDot />}
                             </Link>
                           )
                         )}

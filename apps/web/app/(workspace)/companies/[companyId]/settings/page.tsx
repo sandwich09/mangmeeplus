@@ -3,6 +3,7 @@ import { GroupIcon, LockIcon, BellIcon, BoxIcon, DollarLineIcon } from '@/common
 import { MangmeeCard, MangmeeIconFrame, MangmeePage } from '@/common/components/mangmee';
 import { fetchServerSession } from '@/common/auth/server-session';
 import { filterSettingsMenuItems } from '@/features/web-core-workspace/settings-menu.logic';
+import { ProfileAttentionBadge } from '@/features/company-profile/ProfileAttentionBadge';
 
 const SETTINGS_MENU_ICONS = { BellIcon, BoxIcon, LockIcon, GroupIcon, DollarLineIcon };
 
@@ -14,6 +15,8 @@ export default async function SettingsPage({
   const { companyId } = await params;
   const session = await fetchServerSession(companyId);
   const items = filterSettingsMenuItems(session?.permissions ?? []);
+  // §15.4.1 E: only the people who can act on the answer, so nobody else pays for the read.
+  const showProfileAttention = session?.permissions?.includes('company.legal_identity.manage') ?? false;
   const primary = items.find((item) => item.section === 'primary');
   const advanced = items.filter((item) => item.section === 'advanced');
   const general = items.filter((item) => !item.section);
@@ -46,7 +49,10 @@ export default async function SettingsPage({
                   <div className="flex items-start gap-3">
                     <MangmeeIconFrame tone={item.tone}><Icon /></MangmeeIconFrame>
                     <div className="min-w-0">
-                      <div className="font-bold text-gray-900">{item.title}</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-gray-900">{item.title}</span>
+                        {item.key === 'company-profile' && showProfileAttention && <ProfileAttentionBadge companyId={companyId} />}
+                      </div>
                       <div className="mt-1 text-sm leading-6 text-gray-500">{item.desc}</div>
                     </div>
                   </div>

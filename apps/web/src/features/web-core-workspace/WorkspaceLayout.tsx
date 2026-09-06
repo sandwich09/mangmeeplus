@@ -24,6 +24,8 @@ import { accessContextFingerprint, fetchMyContext, type MyContext } from './work
 import { MenuFilterProvider } from './MenuFilterScope';
 import { NotificationBell } from '@/features/dashboard-notifications/NotificationBell';
 import { ACCESS_CONTEXT_STALE_EVENT } from '@/common/api/authed-fetch';
+import { checklistIsComplete } from '@/features/company-profile/company-profile.logic';
+import { useProfileChecklist } from '@/features/company-profile/use-profile-checklist';
 
 type Props = {
   children: React.ReactNode;
@@ -108,12 +110,20 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
     [filteredModules, companyId, locale, session.permissions],
   );
 
+  // §15.4.1 E: the Owner asked for a mark on ตั้งค่าบริษัท "จนกว่าจะตั้งครบ". Only the holder of the
+  // key that can actually fill the form is asked — nobody else pays for the read, and nobody else
+  // is shown a job they cannot do. `null` (unknown, or the read failed) shows nothing.
+  const canManageLegalIdentity = session.permissions.includes('company.legal_identity.manage');
+  const profileChecklistItems = useProfileChecklist(companyId, canManageLegalIdentity);
+  const setupIncomplete = profileChecklistItems !== null && !checklistIsComplete(profileChecklistItems);
+
   const navItems = useMemo(
     () => groupNavItems(allNavItems, NAV_GROUP_ORDER)
       .flatMap((g) => g.items)
       .filter((item) => DESIGN_HANDOFF_NAV_RANK.has(item.key))
-      .sort((a, b) => DESIGN_HANDOFF_NAV_RANK.get(a.key)! - DESIGN_HANDOFF_NAV_RANK.get(b.key)!),
-    [allNavItems],
+      .sort((a, b) => DESIGN_HANDOFF_NAV_RANK.get(a.key)! - DESIGN_HANDOFF_NAV_RANK.get(b.key)!)
+      .map((item) => (item.key === 'settings' && setupIncomplete ? { ...item, attention: true } : item)),
+    [allNavItems, setupIncomplete],
   );
 
   // Resolved from the full menu list, not the design-handoff subset above: a menu the sidebar
