@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { INTENT_ROUTER_SYSTEM_PROMPT, IntentRouterAgent, intakeRouterSystemPrompt, isCrisisMessage, isSubjectCompatible, LINE_INTAKE_ROUTER_SYSTEM_PROMPT, ROUTER_ENABLED_TOOLS } from './intent-router.agent';
+import { MANGMEE_PERSONA_LINES } from './mangmee-persona';
+import { RESPONSE_COMPOSER_SYSTEM_PROMPT } from './response-composer.agent';
 import { DisabledProvider } from '../infrastructure/provider/disabled.provider';
 import type { ProviderInput } from '../infrastructure/provider/provider.port';
 import { CACHE_MIN_CHARS } from '../infrastructure/provider/bedrock.provider';
@@ -1343,6 +1345,22 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.equal(P.includes('companyProfileFieldsUsed'), false, 'no company profile in Slice A');
   });
 
+  // UAT 2026-09-06 (build f2bd38ed): the draft for "คุณเป็นใคร" was a male-voiced "AI Assistant ของ
+  // MangmeePlus" — the section never said who she is. The persona lines are ONE constant shared with
+  // the composer prompt, appended only here, so the default prompt stays byte-identical to legacy.
+  it('carries the shared persona inside the advisor section only, and keeps teaching out of the route', () => {
+    for (const line of MANGMEE_PERSONA_LINES) {
+      assert.ok(P.includes(line), `advisor section carries: ${line.slice(0, 48)}`);
+      assert.ok(RESPONSE_COMPOSER_SYSTEM_PROMPT.includes(line), `composer shares: ${line.slice(0, 48)}`);
+      assert.equal(intakeRouterSystemPrompt().includes(line), false, 'default prompt stays legacy');
+      assert.equal(intakeRouterSystemPrompt({ fusedPlan: true }).includes(line), false, 'fused-only prompt stays persona-free');
+    }
+    assert.match(P, /ค่ะ\/คะ\/นะคะ/);
+    assert.match(P, /An identity question \("คุณเป็นใคร"/);
+    assert.match(P, /is NEVER ADVISOR_CONVERSATION: return "intent": "UNSUPPORTED" with NO advisorAnswer/);
+    assert.match(P, /never a list, numbered steps, or a tutorial/);
+  });
+
   it('parses the route plus its bounded advisor draft from ONE model response', async () => {
     let calls = 0;
     const router = new IntentRouterAgent({
@@ -1408,5 +1426,45 @@ describe('LINE intake router – advisor route under the trusted capability', ()
     assert.equal(seen!.maxTokens, 1000, 'social stays on the legacy budget');
     const payload = JSON.parse(seen!.messages[0]!.text);
     assert.ok(Array.isArray(payload.businessGlossary), 'payload shape unchanged');
+  });
+});
+
+// UAT 2026-09-06: "สอนฉันใช้งานเบื้องต้น…" made the router write a tutorial instead of JSON. The route
+// failed closed correctly, but the log carried only the code — nothing said WHAT the model had written.
+describe('LINE intake router – an unparseable answer is logged, bounded, model output only', () => {
+  const USER_TEXT = 'สอนฉันใช้งานเบื้องต้นแบบง่ายง่ายแบบมนุษย์แม่ป้าเข้าใจได้';
+  const intake = () => ({ requestId: 'r', companyId: 'c', userId: 'u', locale: 'th-TH', messageText: USER_TEXT, permissions: [] } as any);
+  const routerWriting = (text: string, stopReason: 'end_turn' | 'max_tokens') => {
+    const router = new IntentRouterAgent({ generateText: async () => ({ ok: true as const, text, stopReason }) } as any);
+    const warned: Array<Record<string, unknown>> = [];
+    (router as any).logger = { warn: (entry: Record<string, unknown>) => warned.push(entry) };
+    return { router, warned };
+  };
+
+  it('warns once with the code, the stop reason, the size and a 160-char whitespace-collapsed preview', async () => {
+    const tutorial = `ได้เลยค่ะ สอนให้นะคะ\n1) ${'ถ่ายรูปใบเสร็จแล้วส่งมา '.repeat(30)}\n\t2) กดยืนยัน`;
+    const { router, warned } = routerWriting(tutorial, 'end_turn');
+    const plan = await router.routeIntake(intake());
+    assert.equal(plan.status, 'UNAVAILABLE');
+    assert.equal(plan.errorCode, 'ROUTER_JSON_PARSE_FAILED');
+    assert.equal(warned.length, 1);
+    const entry = warned[0]!;
+    assert.equal(entry.msg, 'line.intake_route.unparseable');
+    assert.equal(entry.errorCode, 'ROUTER_JSON_PARSE_FAILED');
+    assert.equal(entry.stopReason, 'end_turn');
+    assert.equal(entry.outputChars, tutorial.length);
+    assert.equal((entry.outputPreview as string).length, 160);
+    assert.doesNotMatch(entry.outputPreview as string, /[\n\t]/, 'whitespace collapsed');
+    assert.equal(JSON.stringify(entry).includes(USER_TEXT), false, 'never the user message');
+  });
+
+  it('a truncated answer logs the truncation code with stopReason max_tokens, and a parsed one logs nothing', async () => {
+    const truncated = routerWriting('{"intent":"UNSUPPORTED","language":"th","confidence":0.9,"reason":"', 'max_tokens');
+    assert.equal((await truncated.router.routeIntake(intake())).errorCode, 'ROUTER_OUTPUT_TRUNCATED');
+    assert.equal(truncated.warned[0]?.errorCode, 'ROUTER_OUTPUT_TRUNCATED');
+    assert.equal(truncated.warned[0]?.stopReason, 'max_tokens');
+    const fine = routerWriting('{"intent":"UNSUPPORTED","language":"th","confidence":0.9,"reason":"สอนใช้งาน"}', 'end_turn');
+    assert.equal((await fine.router.routeIntake(intake())).status, 'ROUTED');
+    assert.equal(fine.warned.length, 0);
   });
 });
