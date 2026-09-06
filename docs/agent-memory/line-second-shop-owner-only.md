@@ -48,6 +48,11 @@ is a product call, unchanged here."*
   leading emoji because every other body line on this card has one (🏢 👤 💼 🕒), and with
   "โปรโมชั่น" interpolated from `VIEW_PACKAGES_COMMAND` — the constant the tile label and the command
   matcher both read, so the sentence cannot send an employee to words that stopped working. No URL,
+  (Review 2026-09-06: that claim was NOT true when it was written. `staffMenuCommand` re-typed
+  `'โปรโมชั่น'` as a literal — the only constant-backed command in the file that did — so renaming the
+  constant would have changed this sentence while the matcher kept answering the old word only.
+  Fixed in the same branch: the matcher now reads `VIEW_PACKAGES_COMMAND`, and the existing
+  "matches every command it publishes" case reads it too, so a rename is now caught.)
   no LIFF id, no id of any kind (LINE-ONBOARD-01); no `+` character (spec §3). It is a constant, so
   no scrubbing is required — `scrubRecordText` still guards the one customer-supplied value on this
   card (`pendingSignupName`), unchanged.
@@ -63,8 +68,8 @@ Reported to the Owner, not fixed here (the brief forbade widening anything, and 
 `buildPromotionCard` as untouched). Verified on this branch:
 
 - **The promotion card carries no signup link.** `buildPromotionCard`
-  (`line-staff-menu.logic.ts:242-270`) has exactly two URIs, both
-  `https://official.mangmeeplus.com/` (`:254` hero, `:262` "ทดลองใช้ฟรี"), plus two message actions:
+  (`line-staff-menu.logic.ts:262-290`) has exactly two URIs, both
+  `https://official.mangmeeplus.com/` (`:274` hero, `:282` "ทดลองใช้ฟรี"), plus two message actions:
   `ขอเปลี่ยนแพ็กเกจ` and `ติดต่อเรา`. The rich-menu runbook pins the same fact —
   `docs/runbooks/line-rich-menu-v2-console-setup.md:142-143`: the Promotion tile's ทดลองใช้ฟรี
   "opens only `https://official.mangmeeplus.com/`".

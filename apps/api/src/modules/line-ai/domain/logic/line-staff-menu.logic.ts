@@ -581,7 +581,11 @@ export function staffMenuCommand(text: string): StaffMenuCommand | null {
   if (normalized === DRAFT_UPDATE_CONFIRM_COMMAND) return 'draft_update_confirm';
   if (normalized === DRAFT_UPDATE_CANCEL_COMMAND) return 'draft_update_cancel';
   if (normalized === LINE_FOLLOW_EVENT_TEXT) return 'follow';
-  if (normalized === 'โปรโมชั่น' || normalized === 'แพ็กเกจ') return 'promotion';
+  // The CONSTANT, like every other command above. The employee hint on the บริษัทของฉัน card prints
+  // this word by interpolating `VIEW_PACKAGES_COMMAND`, so a literal re-typed here is the one way
+  // that sentence could come to name a word this matcher no longer answers. `แพ็กเกจ` stays a bare
+  // alias: nothing renders it, so nothing can drift from it.
+  if (normalized === VIEW_PACKAGES_COMMAND || normalized === 'แพ็กเกจ') return 'promotion';
   return null;
 }
 

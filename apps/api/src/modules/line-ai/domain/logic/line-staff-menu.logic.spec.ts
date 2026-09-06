@@ -447,7 +447,7 @@ describe('LINE staff menu', () => {
   it('matches every command it publishes, exactly as written', () => {
     const commands = [
       'เมนูหลัก', 'ถามข้อมูล', 'รายการรออนุมัติ', 'ถ่ายใบเสร็จ', 'บริการของเรา', 'ติดต่อเรา',
-      RESUME_AI_COMMAND, 'โปรโมชั่น', 'แพ็กเกจ', PACKAGE_CHANGE_COMMAND, EMPLOYEE_DOOR_COMMAND,
+      RESUME_AI_COMMAND, VIEW_PACKAGES_COMMAND, 'แพ็กเกจ', PACKAGE_CHANGE_COMMAND, EMPLOYEE_DOOR_COMMAND,
       STAFF_CONTACT_COMMAND, ...RESUME_AI_ALIASES, PROFILE_GUARD_COMMAND,
       PROFILE_GUARD_LATER_COMMAND, DRAFT_UPDATE_CONFIRM_COMMAND, DRAFT_UPDATE_CANCEL_COMMAND,
       LINE_FOLLOW_EVENT_TEXT,
