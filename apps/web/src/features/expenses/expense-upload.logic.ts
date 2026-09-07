@@ -1,5 +1,9 @@
 import { attachmentMimeTypeForFileName } from '@/common/files/upload-file.logic';
-import type { ExpenseExtractionResult } from '@watchdog-bms/contracts';
+import {
+  isReceiptOcrRetryableFailure,
+  type ExpenseExtractionResult,
+  type ReceiptOcrFieldResult,
+} from '@watchdog-bms/contracts';
 
 // The budget a re-encoded photo is compressed into. Every server-side limit on this path is
 // 10 MB — `UPLOAD_MAX_BYTES` (packages/config), the attachment gate, and `MAX_EXTRACTION_BYTES`
@@ -28,7 +32,7 @@ export function expenseExtractionRetryMode(
   result: ExpenseExtractionResult | null,
 ): 'same_request' | 'new_request' | 'none' {
   if (result === null) return 'same_request';
-  if (result.status === 'failed' && !result.errorCode?.startsWith('OCR_')) return 'new_request';
+  if (isReceiptOcrRetryableFailure(result)) return 'new_request';
   return 'none';
 }
 
@@ -37,6 +41,139 @@ export const expenseExtractionRetryRequestId = (
   originalRequestId: string,
   freshRequestId: string,
 ): string => mode === 'same_request' ? originalRequestId : freshRequestId;
+
+export type ExpenseExtractionAttempt = { requestId: string; attachmentId: string | null };
+type ExpenseExtractionRecoveryDetail = {
+  aiVerificationSummaryJson: Record<string, unknown> | null;
+  attachments: ReadonlyArray<{ id: string; purpose: string; status: string }>;
+};
+
+type ExpenseExtractionAttemptStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+const expenseExtractionAttemptKey = (companyId: string, expenseId: string) =>
+  `expense-extraction-attempt:${companyId}:${expenseId}`;
+
+export function availableExpenseSessionStorage(
+  source: { readonly sessionStorage: ExpenseExtractionAttemptStorage } | undefined,
+): ExpenseExtractionAttemptStorage | undefined {
+  try { return source?.sessionStorage; } catch { return undefined; }
+}
+
+export function readExpenseExtractionAttempt(
+  storage: ExpenseExtractionAttemptStorage | undefined,
+  companyId: string,
+  expenseId: string,
+  attachmentId: string | null,
+): ExpenseExtractionAttempt | null {
+  if (!storage) return null;
+  try {
+    const raw = JSON.parse(storage.getItem(expenseExtractionAttemptKey(companyId, expenseId)) ?? 'null') as Record<string, unknown> | null;
+    return raw
+      && typeof raw['requestId'] === 'string'
+      && raw['requestId'].length > 0
+      && raw['attachmentId'] === attachmentId
+      ? { requestId: raw['requestId'], attachmentId }
+      : null;
+  } catch { return null; }
+}
+
+export function writeExpenseExtractionAttempt(
+  storage: ExpenseExtractionAttemptStorage | undefined,
+  companyId: string,
+  expenseId: string,
+  attempt: ExpenseExtractionAttempt | null,
+): void {
+  if (!storage) return;
+  try {
+    const key = expenseExtractionAttemptKey(companyId, expenseId);
+    if (attempt) storage.setItem(key, JSON.stringify(attempt));
+    else storage.removeItem(key);
+  } catch { /* storage can be disabled */ }
+}
+
+export function activePrimaryReceiptAttachmentId(
+  attachments: ExpenseExtractionRecoveryDetail['attachments'],
+): string | null {
+  return attachments.find((attachment) =>
+    attachment.purpose === 'expense.receipt.primary' && attachment.status === 'ACTIVE')?.id ?? null;
+}
+
+/** Only the exact successful request against the still-current receipt can resolve a lost response. */
+export function recoveredExpenseExtraction(
+  detail: ExpenseExtractionRecoveryDetail,
+  attempt: ExpenseExtractionAttempt,
+): ExpenseExtractionResult | null {
+  const summary = detail.aiVerificationSummaryJson;
+  if (
+    summary?.['status'] !== 'OCR_EXTRACTED_NEEDS_REVIEW'
+    || summary['extractionRequestId'] !== attempt.requestId
+    || summary['extractionAttachmentId'] !== attempt.attachmentId
+    || activePrimaryReceiptAttachmentId(detail.attachments) !== attempt.attachmentId
+  ) return null;
+  const recognized = summary['recognizedFields'];
+  const fields = recognized && typeof recognized === 'object' && !Array.isArray(recognized)
+    ? { ...(recognized as ReceiptOcrFieldResult) }
+    : undefined;
+  const missingFields = Array.isArray(summary['missingFields'])
+    ? summary['missingFields'].filter((field): field is string => typeof field === 'string')
+    : undefined;
+  if (fields && missingFields) fields.missingFields = missingFields;
+  return { status: 'ok', ...(fields ? { fields } : {}), ...(missingFields ? { missingFields } : {}) };
+}
+
+export function expenseExtractionResponseIsUnknown(error: unknown): boolean {
+  const failure = error as { kind?: unknown; status?: unknown; statusCode?: unknown } | null;
+  const status = typeof failure?.statusCode === 'number'
+    ? failure.statusCode
+    : typeof failure?.status === 'number' ? failure.status : null;
+  return failure?.kind === 'network_error' || status === null || status === 408 || status >= 500;
+}
+
+/**
+ * Recover an unknown response from the saved expense before retrying the same request id. A second
+ * read covers the ordinary race where the first HTTP connection died while the server was writing.
+ */
+export async function requestExpenseExtractionWithRecovery<T extends ExpenseExtractionRecoveryDetail>(input: {
+  attempt: ExpenseExtractionAttempt;
+  request: (requestId: string) => Promise<ExpenseExtractionResult>;
+  read: () => Promise<T>;
+  wait: () => Promise<void>;
+  resume?: boolean;
+}): Promise<{ result: ExpenseExtractionResult; recoveredDetail: T | null; pending: boolean }> {
+  const recover = async () => {
+    const detail = await input.read().catch(() => null);
+    const result = detail ? recoveredExpenseExtraction(detail, input.attempt) : null;
+    return result && detail ? { result, recoveredDetail: detail, pending: false } : null;
+  };
+  const settleResult = async (result: ExpenseExtractionResult) => {
+    if (result.status !== 'failed' || result.errorCode !== 'OCR_REQUEST_ALREADY_ADMITTED') {
+      return { result, recoveredDetail: null, pending: false };
+    }
+    const recovered = await recover();
+    return recovered ?? { result, recoveredDetail: null, pending: true };
+  };
+  if (input.resume) {
+    const recovered = await recover();
+    if (recovered) return recovered;
+  }
+  try {
+    return settleResult(await input.request(input.attempt.requestId));
+  } catch (error) {
+    if (!expenseExtractionResponseIsUnknown(error)) throw error;
+    const immediate = await recover();
+    if (immediate) return immediate;
+    await input.wait();
+    const settled = await recover();
+    if (settled) return settled;
+    try {
+      return settleResult(await input.request(input.attempt.requestId));
+    } catch (retryError) {
+      if (!expenseExtractionResponseIsUnknown(retryError)) throw retryError;
+      const recovered = await recover();
+      if (recovered) return recovered;
+      throw retryError;
+    }
+  }
+}
 
 /**
  * P10-L §15.1: the shop's monthly AI image-read ceiling, latched on the upload panel.

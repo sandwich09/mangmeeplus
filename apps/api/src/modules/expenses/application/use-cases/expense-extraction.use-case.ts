@@ -4,12 +4,13 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../../data-mo
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { ReceiptOcrClient } from '../../infrastructure/receipt-ocr.client';
 import { isStaleOcrApply, ocrLineVatRateUnknown, ReceiptOcrApplyService } from '../services/receipt-ocr-apply.service';
-import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
+import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../domain/logic/expense-document.logic';
 import type { AiModelLineage, BusinessDocumentClassification, ExpenseExtractionResult, RequestContext } from '@watchdog-bms/contracts';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
-import { receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../../../line-ai/application/company-ocr-governance';
+import { safeLineErrorDetails } from '../../../line-ai/infrastructure/line-reply.adapter';
+import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, receiptQuotaSnapshot, RECEIPT_QUOTA_ERROR_CODE } from '../../../line-ai/application/company-ocr-governance';
 import { displayReceiptQuotaLimit, receiptQuotaExceededTextTh } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 
 const SUPPORTED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
@@ -63,7 +64,6 @@ export class RequestReceiptExtractionUseCase {
     private readonly client: ReceiptOcrClient,
     private readonly applyService: ReceiptOcrApplyService,
     private readonly audit: AuditService,
-    // Read-only here: the counter is owned by `admitCompanyOcr`, and this only names its numbers.
     private readonly prisma: PrismaService,
   ) {}
 
@@ -107,6 +107,8 @@ export class RequestReceiptExtractionUseCase {
       return this.finish(ctx, expenseId, 'unsupported', attachment.id);
     }
 
+    let admission: CompanyOcrAdmissionIdentity | undefined;
+    let usablePersisted = false;
     try {
       const object = await this.storage.getObject({
         bucket: attachment.bucket,
@@ -126,7 +128,7 @@ export class RequestReceiptExtractionUseCase {
           purpose: 'receipt',
           contentBase64: object.bytes.toString('base64'),
         },
-      });
+      }, { onAdmitted: (identity) => { admission = identity; } });
 
       // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` refused
       // before any provider ran, so nothing was spent and nothing needs releasing — this only has to
@@ -156,13 +158,16 @@ export class RequestReceiptExtractionUseCase {
       if (!response.classification) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
 
       if (!isExpenseExtractionEligible(response.classification, response.fields?.grandTotalAmount, true)) {
+        const nonReceipt = isSuccessfulNonReceiptClassification(response.classification);
         await this.repo.updateExpense({
           id: expenseId,
           companyId: ctx.companyId,
           updatedByUserId: ctx.userId,
           aiVerificationStatus: 'NEEDS_REVIEW',
           aiVerificationSummaryJson: {
-            status: 'NOT_EXPENSE_DOCUMENT',
+            status: nonReceipt ? 'NOT_EXPENSE_DOCUMENT' : 'OCR_FAILED',
+            ...(!nonReceipt ? { recognizedFields: response.fields ?? {}, missingFields: response.fields?.missingFields ?? DEFAULT_MISSING_FIELDS } : {}),
+            extractionRequestId: ctx.requestId, extractionAttachmentId: attachment.id,
             classification: boundedClassification(response.classification),
             // Read but deliberately NOT applied: the gate refuses to mutate the draft, so these
             // stay a reviewer-facing suggestion they choose to accept, never a silent write.
@@ -170,6 +175,8 @@ export class RequestReceiptExtractionUseCase {
             nextAction: 'review_attachment_or_upload_expense_evidence',
           },
         });
+        if (!nonReceipt) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage, 'OCR_UNUSABLE_RESULT');
+        usablePersisted = true;
         await this.auditOutcome(ctx, expenseId, 'not_expense_document', attachment.id, 0, response.classification, response.modelLineage);
         return {
           status: 'not_expense_document',
@@ -221,6 +228,7 @@ export class RequestReceiptExtractionUseCase {
         } : {}),
         aiVerificationSummaryJson: {
           status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+          extractionRequestId: ctx.requestId, extractionAttachmentId: attachment.id,
           recognizedFields: response.fields,
           classification: boundedClassification(response.classification),
           // Spec S1-R4: the resolved category suggestion, carried whether or not it was auto-filled,
@@ -242,14 +250,20 @@ export class RequestReceiptExtractionUseCase {
           nextAction: 'review_in_web',
         },
       });
+      usablePersisted = true;
       await this.auditOutcome(ctx, expenseId, 'ok', attachment.id, Object.keys(response.fields).length, response.classification, response.modelLineage);
       return { status: 'ok', fields: response.fields, missingFields, classification: response.classification };
     } catch (error) {
       // The quota answer is a decision, not a failure: letting it fall into `failed` below would
       // turn a 409 the upload screen acts on into "the read failed, try again".
       if (error instanceof ConflictException) throw error;
-      this.logger.warn({ msg: 'Receipt OCR extraction failed', expenseId, error: (error as Error).message });
+      this.logger.warn({ msg: 'Receipt OCR extraction failed', expenseId, ...safeLineErrorDetails(error) });
       return this.finish(ctx, expenseId, 'failed', attachment.id);
+    } finally {
+      if (admission && !usablePersisted) await releaseCompanyOcrAdmission(this.prisma, {
+        companyId: ctx.companyId, sourceRoute: 'receipt-ocr-web', requestId: ctx.requestId,
+        eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+      });
     }
   }
 

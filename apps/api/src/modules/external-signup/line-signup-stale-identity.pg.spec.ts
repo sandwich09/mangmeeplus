@@ -96,6 +96,7 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
   const claimEmail = { enqueue: async () => undefined, enqueueRejectionNotice: async () => undefined } as any;
   return {
     onboarding,
+    provision,
     submit: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminDirectory, provision, opsAlerts),
     queue: new SignupAdminQueueUseCase(prisma, core, { revokeAll: async () => 0 } as any, claimEmail, provision, lineNotify),
     unlink: new UnlinkLineIdentityUseCase(prisma),
@@ -116,6 +117,7 @@ const submitCmd = (correlationRequestId: string) => ({
   companyName: `ร้านใหม่ ${randomUUID().slice(0, 8)}`,
   // Required since Owner 2026-09-05 (spec §3.2); every real submit carries one.
   phoneNumber: '0812345678',
+  contactEmail: 'shop@example.test',
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId,
   ...URLS,
@@ -202,6 +204,126 @@ async function cleanup(
 }
 
 describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () => {
+  for (const scenario of ['new', 'attached', 'legacy-null', 'new-available', 'attached-empty', 'legacy-username'] as const) {
+    it(`keeps shop contact separate from account identity and preserves committed-company retry (${scenario})`, async () => {
+      const client = connect(), tag = `lineemail-${randomUUID().slice(0, 8)}`, lineUserId = `U${tag}`;
+      const rivalId = `${tag}-email-owner`, contactEmail = `${tag}@example.test`, verifiedAt = new Date('2026-08-01T00:00:00Z');
+      const attached = scenario === 'attached' || scenario === 'attached-empty';
+      const available = scenario === 'new-available' || scenario === 'attached-empty';
+      try {
+        const adminUserId = `${tag}-admin`;
+        let ownerBefore: Awaited<ReturnType<typeof client.user.findUniqueOrThrow>> | undefined;
+        if (attached) {
+          const old = await seedOldShop(client, tag, lineUserId);
+          ownerBefore = await client.user.update({ where: { id: old.oldUserId }, data: {
+            email: available ? null : `${tag}-login@example.test`, emailVerifiedAt: available ? null : verifiedAt, phoneNumber: '0899999999',
+          } });
+        } else await client.user.create({ data: { id: adminUserId, displayName: tag, status: 'ACTIVE' } });
+        const rivalBefore = await client.user.create({ data: { id: rivalId, displayName: 'Mailbox owner',
+          email: available || scenario === 'legacy-username' ? `${tag}-rival@example.test` : contactEmail,
+          ...(scenario === 'legacy-username' ? { username: contactEmail.toUpperCase() } : {}), emailVerifiedAt: verifiedAt, status: 'ACTIVE',
+        } });
+        const h = wire(client, { adminUserId, lineUserId });
+        const submitted = await h.submit.execute({ ...submitCmd(`${tag}-submit`), contactEmail: ` ${contactEmail.toUpperCase()} ` }, NOW);
+        assert.equal(submitted.existingAccount, attached);
+        const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.requestId } });
+        assert.equal(pending.contactEmail, contactEmail); assert.equal(pending.mxValid, null);
+        assert.equal(pending.attachUserId, ownerBefore?.id ?? null);
+        if (scenario === 'legacy-null') await client.companySignupRequest.update({ where: { id: submitted.requestId }, data: { contactEmail: null } });
+        else {
+          const queued = (await h.queue.list()).items.find((item) => item.requestId === submitted.requestId)!;
+          assert.equal(queued.contactEmail, contactEmail);
+          assert.equal(queued.attachesToExistingAccount ?? false, attached);
+        }
+        await assert.rejects(() => h.submit.execute({ ...submitCmd(`${tag}-duplicate`), contactEmail: 'changed@example.test' }, NOW), /line_signup_already_pending/);
+        await h.queue.decide(submitted.requestId, { action: 'APPROVE' }, adminUserId, `${tag}-approve`, URLS);
+        const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.requestId } });
+        assert.equal(request.state, 'COMPLETED');
+        const company = await client.company.findUniqueOrThrow({ where: { id: request.companyId! } });
+        assert.equal(company.email, scenario === 'legacy-null' ? null : contactEmail);
+        const owner = await client.user.findUniqueOrThrow({ where: { id: request.ownerUserId! } });
+        if (available) { assert.equal(owner.email, contactEmail); assert.equal(owner.emailVerifiedAt, null); }
+        else if (ownerBefore) assert.deepEqual(owner, ownerBefore);
+        else { assert.equal(owner.email, null); assert.equal(owner.emailVerifiedAt, null); assert.notEqual(owner.id, rivalId); }
+        assert.equal(await client.userCredential.count({ where: { userId: owner.id } }), 0);
+        assert.deepEqual(await client.user.findUniqueOrThrow({ where: { id: rivalId } }), rivalBefore);
+        assert.equal(await client.accountClaimToken.count({ where: { signupRequestId: request.id } }), 0);
+        assert.equal(await client.emailVerificationToken.count({ where: { userId: owner.id } }), 0);
+
+        // Reproduce a committed company with a failed provisioning tail. Adoption must preserve
+        // a contact edited after creation instead of replaying the original intake over it.
+        await client.company.update({ where: { id: company.id }, data: { email: 'edited@example.test' } });
+        const ownerAfterEdit = await client.user.update({ where: { id: owner.id }, data: { email: `${tag}-edited@example.test` } });
+        await client.companySignupRequest.update({ where: { id: request.id }, data: { state: 'PROVISIONING_FAILED' } });
+        await h.provision.execute({ requestId: request.id, actorUserId: adminUserId, correlationRequestId: `${tag}-retry`, ...URLS });
+        const retried = await client.companySignupRequest.findUniqueOrThrow({ where: { id: request.id } });
+        assert.equal(retried.companyId, company.id); assert.equal(retried.ownerUserId, owner.id); assert.equal(retried.state, 'COMPLETED');
+        assert.equal((await client.company.findUniqueOrThrow({ where: { id: company.id } })).email, 'edited@example.test');
+        assert.deepEqual(await client.user.findUniqueOrThrow({ where: { id: owner.id } }), ownerAfterEdit);
+      } finally {
+        await cleanup(client, tag, lineUserId, { userIds: [rivalId] });
+        await client.$disconnect();
+      }
+    });
+  }
+
+  it('commits both LINE shops when a concurrent email claim loses the real unique index', async () => {
+    const first = connect(), second = connect(), tag = `lineemail-race-${randomUUID().slice(0, 8)}`;
+    const contactEmail = `${tag}@example.test`, adminUserId = `${tag}-admin`, lineIds = [`U${tag}-1`, `U${tag}-2`];
+    let release!: () => void, arrivals = 0, rollbacks = 0;
+    const bothRead = new Promise<void>((resolve) => { release = resolve; });
+    const backstop = setTimeout(() => release(), 4_000);
+    const synchronize = (client: PrismaClient) => new Proxy(client, { get(target, property) {
+      if (property === '$transaction') return (fn: any, options?: any) => typeof fn !== 'function' ? target.$transaction(fn, options) : target.$transaction((tx) => fn(new Proxy(tx, { get(transaction, key) {
+        if (key === '$queryRaw') return async (...args: any[]) => {
+          const rows = await (transaction.$queryRaw as any)(...args);
+          if (String(args[0]).includes('lower("email")')) {
+            assert.deepEqual(rows, [], 'both independent transactions must see the address as available');
+            arrivals += 1; if (arrivals === 2) release(); await bothRead;
+          }
+          return rows;
+        };
+        if (key === '$executeRaw') return async (...args: any[]) => {
+          if (String(args[0]).includes('ROLLBACK TO SAVEPOINT unverified_owner_email')) rollbacks += 1;
+          return (transaction.$executeRaw as any)(...args);
+        };
+        const value = Reflect.get(transaction, key); return typeof value === 'function' ? value.bind(transaction) : value;
+      } })), options);
+      const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    try {
+      await first.user.create({ data: { id: adminUserId, displayName: tag, status: 'ACTIVE' } });
+      const harnesses = [wire(synchronize(first), { adminUserId, lineUserId: lineIds[0]! }), wire(synchronize(second), { adminUserId, lineUserId: lineIds[1]! })];
+      const requests = await Promise.all(harnesses.map((h, index) => h.submit.execute({ ...submitCmd(`${tag}-submit-${index}`), contactEmail }, NOW)));
+      const approvals = await Promise.allSettled(harnesses.map((h, index) => h.queue.decide(requests[index]!.requestId, { action: 'APPROVE' }, adminUserId, `${tag}-approve-${index}`, URLS)));
+      for (const result of approvals) if (result.status === 'rejected') throw result.reason;
+      assert.equal(arrivals, 2); assert.equal(rollbacks, 1, 'one actual unique violation is recovered with its savepoint');
+      const completed = await first.companySignupRequest.findMany({ where: { id: { in: requests.map((r) => r.requestId) } } });
+      assert.equal(completed.length, 2); assert.ok(completed.every((request) => request.state === 'COMPLETED'));
+      const owners = await first.user.findMany({ where: { id: { in: completed.map((r) => r.ownerUserId!) } }, include: { credential: true, externalIdentities: true } });
+      assert.equal(owners.length, 2); assert.equal(owners.filter((owner) => owner.email === contactEmail).length, 1);
+      for (const owner of owners) {
+        assert.equal(owner.emailVerifiedAt, null); assert.equal(owner.username, null); assert.equal(owner.credential, null);
+        assert.equal(owner.externalIdentities.filter((identity) => identity.provider === 'LINE' && identity.status === 'ACTIVE').length, 1);
+      }
+      const companies = await first.company.findMany({ where: { id: { in: completed.map((r) => r.companyId!) } } });
+      assert.equal(companies.length, 2); assert.ok(companies.every((company) => company.email === contactEmail));
+    } finally {
+      clearTimeout(backstop); release();
+      const requests = await first.companySignupRequest.findMany({ where: { lineProviderUserId: { in: lineIds } } });
+      const runs = await first.companyOnboardingRun.findMany({ where: { createdBySystemAdminUserId: adminUserId } });
+      const companyIds = [...requests.map((r) => r.companyId), ...runs.map((r) => r.companyId)].filter((id): id is string => !!id);
+      const userIds = [...requests.map((r) => r.ownerUserId), ...runs.map((r) => r.ownerUserId)].filter((id): id is string => !!id);
+      await first.lineCompanyContext.deleteMany({ where: { lineUserId: { in: lineIds } } });
+      await first.companySignupRequest.deleteMany({ where: { id: { in: requests.map((r) => r.id) } } });
+      await first.companyOnboardingRun.deleteMany({ where: { companyId: { in: companyIds } } });
+      await first.company.deleteMany({ where: { id: { in: companyIds } } });
+      await first.user.deleteMany({ where: { id: { in: [...userIds, adminUserId] } } });
+      await first.auditLog.deleteMany({ where: { requestId: { startsWith: tag } } });
+      await Promise.all([first.$disconnect(), second.$disconnect()]);
+    }
+  });
+
   it('link → unlink → apply → approve opens a NEW shop on the SAME identity row', async () => {
     const client = connect();
     const tag = `linesignup-${randomUUID().slice(0, 8)}`;

@@ -226,6 +226,9 @@ export class ProvisionSignupUseCase {
   ) {
     return this.onboarding.execute({
       companyName: request.companyName,
+      // Legacy queued applications may have none. Adopting a committed company never rewrites
+      // a later contact/account edit; the initial transaction adopts only an available address.
+      ...(lineOa && request.contactEmail ? { companyContactEmail: request.contactEmail, unverifiedOwnerEmail: request.contactEmail } : {}),
       // R10: the enum the reviewer chose wins over the free-text mapping, which reads "คลินิก" as
       // OTHER and leaves the PDPA health tripwire dead for anyone who answered in Thai.
       businessCategory: reviewedBusinessCategory(request.businessCategory)
@@ -319,8 +322,8 @@ export class ProvisionSignupUseCase {
   }
 
   /**
-   * P10-L §6: no username, no email, no credential. The verified LINE identity is the whole
-   * account, and the clickwrap the owner already gave on LIFF travels into the same transaction.
+   * P10-L §6: no username or password. Email is adopted separately without claiming verification.
+   * The verified LINE identity opens the account, and the LIFF clickwrap travels into the same transaction.
    */
   private lineOwnerShape(request: SignupRow) {
     if (!request.lineProviderUserId || !request.lineChannelId || !request.legalAcceptedAt) {
@@ -368,7 +371,7 @@ export class ProvisionSignupUseCase {
    * All idempotent, so a provisioning retry re-applies the same values.
    *
    * Owner 2026-09-05: keyed on `SIGNUP_TRIAL_TIER`, not on the source. Every shop this flow opens
-   * is on the same trial, so it gets the same first-week receipt ceiling and the same AI budget cap
+   * is on the same trial, so it gets the same term receipt allowance and the same AI budget cap
    * — a web-form shop used to get the tier and spend the PLATFORM default budget. The one guard
    * that stays source-specific is `LineCompanyContext`, which points a LINE conversation at a shop:
    * a web-form applicant has no LINE account yet, and its own `lineProviderUserId` says so.
@@ -382,8 +385,7 @@ export class ProvisionSignupUseCase {
     const now = new Date();
     const preset = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER];
     const warmup = {
-      // Anti-abuse: a brand-new free shop may read fewer slips in its first week than its tier
-      // allows, until the window passes or an admin marks it checked.
+      // Retain warmup metadata; FREE_TRIAL_15 uses its monthly allowance from the first day.
       warmupUntil: new Date(now.getTime() + WARMUP_DAYS * DAY_MS),
       warmupSlipLimit: this.config.lineSignupWarmupSlips,
     };
@@ -410,7 +412,7 @@ export class ProvisionSignupUseCase {
       });
       // The warm-up is stamped exactly once, on a term that has never had one — normally the row
       // onboarding created moments ago. An admin retry weeks later matches nothing here, so a shop
-      // whose first week is long past is not put back under the anti-abuse ceiling.
+      // retains its original warmup metadata. FREE_TRIAL_15 always uses the term's allowance.
       await this.prisma.client.companyPlanTerm.updateMany({
         where: { companyId, warmupUntil: null },
         data: warmup,

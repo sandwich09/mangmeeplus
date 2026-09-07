@@ -381,6 +381,45 @@ describe('AiGatewayClient OCR governance', () => {
     }
   });
 
+  for (const scenario of ['pre_provider_refusal', 'empty', 'json_failure', 'transport', 'generic_success'] as const) {
+    it(`settles the original route admission for second-stage ${scenario}`, async () => {
+      __resetCompanyAiBudgetCache();
+      const state = readyOcrPrisma();
+      const originalFetch = globalThis.fetch;
+      let identity: any;
+      let calls = 0;
+      globalThis.fetch = (async () => {
+        calls += 1;
+        if (calls === 1) return new Response(JSON.stringify({ status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 }));
+        if (scenario === 'transport') throw new Error('synthetic transport failure');
+        if (scenario === 'json_failure') return new Response('{malformed');
+        const result = scenario === 'pre_provider_refusal' ? { status: 'not_configured', errorCode: 'PROVIDER_CONFIG_MISSING' }
+          : scenario === 'empty' ? { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT', usage: [{ tag: 'receipt-ocr', modelId: 'anthropic.claude-sonnet-4-6', ok: true, inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }] }
+          : { status: 'ok', fields: {} };
+        return new Response(JSON.stringify(result));
+      }) as typeof fetch;
+      try {
+        const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://synthetic-gateway.test', aiGatewayInternalSecret: 'synthetic', aiMonthlyBudgetSatang: 1000000, aiThbPerUsd: 35, isProduction: false } as any,
+          { issue: () => 'synthetic' } as any, undefined, state.prisma);
+        const request = { requestId: `route-${scenario}`, companyId: 'company-1', userId: 'user-1', locale: 'th-TH', messageText: '', permissions: [], activeCategories: [],
+          attachments: [{ id: `image-${scenario}`, mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }] } as any;
+        await client.requestLineIntakeRoute(request, { onAdmitted: (value) => { identity = value; } });
+        assert.equal(state.usedCount(), 1);
+        assert.ok(identity.eventId);
+        await client.requestReceiptOcr({ requestId: `ocr-${scenario}`, companyId: 'company-1', userId: 'user-1', activeCategories: [],
+          attachment: { id: `image-${scenario}`, mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' } },
+          { ocrAlreadyAdmitted: true, admissionIdentity: identity }).catch(() => undefined);
+        assert.equal(state.usedCount(), scenario === 'generic_success' ? 1 : 0);
+        assert.equal(state.events.length, scenario === 'generic_success' ? 1 : 0);
+        assert.equal(calls, 2, 'second stage reuses the route admission');
+        if (scenario === 'empty') {
+          assert.equal(state.providerUsage.length, 1);
+          assert.ok(state.providerUsage[0].costSatang > 0, 'actual provider spend remains recorded after customer refund');
+        }
+      } finally { globalThis.fetch = originalFetch; }
+    });
+  }
+
   it('does not pre-admit a PDF that the intake router receives as metadata only', async () => {
     __resetCompanyAiBudgetCache();
     const state = readyOcrPrisma();

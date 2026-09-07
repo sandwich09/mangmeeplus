@@ -53,6 +53,19 @@ export function setMyFirstPassword(password: string, username?: string): Promise
   });
 }
 
+/** Save a LINE-linked account's login email without claiming that the mailbox was verified. */
+export function setMyUnverifiedEmail(
+  newEmail: string,
+  expectedEmail: string | null,
+  currentPassword?: string,
+): Promise<{ email: string; emailVerified: false }> {
+  return apiFetch('/v1/auth/me/email/unverified', {
+    method: 'POST',
+    body: JSON.stringify({ newEmail, expectedEmail, ...(currentPassword ? { currentPassword } : {}) }),
+    suppressErrorToast: true,
+  });
+}
+
 /**
  * Reuses the existing verification route. `currentPassword` is omitted for a LINE-first account
  * that has none; the API demands it whenever a credential exists.

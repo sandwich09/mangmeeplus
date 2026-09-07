@@ -17,6 +17,7 @@ import {
   normalizeLineCompanyName,
   normalizeReferralCode,
   requireThaiMobile,
+  requireLineContactEmail,
 } from '../domain/line-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
@@ -29,6 +30,8 @@ export type SubmitLineSignupCommand = {
   companyName: string;
   /** Required since Owner 2026-09-05; still checked here, because a type is not a trust boundary. */
   phoneNumber: string;
+  /** Owner email syntax is checked here; it is never proof of mailbox ownership. */
+  contactEmail: string;
   referralCode?: string;
   legal: {
     documentVersion: string;
@@ -79,16 +82,17 @@ export class SubmitLineSignupUseCase {
 
     let companyName: string;
     let phoneNumber: string;
+    let contactEmail: string;
     let referralCode: string | null;
     try {
       companyName = normalizeLineCompanyName(cmd.companyName);
       phoneNumber = requireThaiMobile(cmd.phoneNumber);
+      contactEmail = requireLineContactEmail(cmd.contactEmail);
       referralCode = normalizeReferralCode(cmd.referralCode);
     } catch (error) {
       const code = (error as Error).message;
-      // The phone is the one field the customer can see and correct, so it answers 400 with a code
-      // the LIFF page turns back into a sentence beside the field (Owner 2026-09-05).
-      if (code.startsWith('line_signup_phone_')) throw new BadRequestException(code);
+      // Contact errors answer 400 with a code the LIFF page renders beside the editable field.
+      if (code.startsWith('line_signup_phone_') || code.startsWith('line_signup_email_')) throw new BadRequestException(code);
       throw new UnprocessableEntityException(code);
     }
 
@@ -105,6 +109,7 @@ export class SubmitLineSignupUseCase {
       externalSignupId,
       companyName,
       phoneNumber,
+      contactEmail,
       referralCode,
       attachUserId,
       verified,
@@ -116,19 +121,22 @@ export class SubmitLineSignupUseCase {
     await this.rateLimit.recordLineSignupUser(verified.providerUserId);
 
     await this.core.advance(request.id, 'VALIDATED', cmd.correlationRequestId);
+    const emailPreviouslyUsed = await this.emailWasUsedBefore(request.id, contactEmail);
     await this.audit(request.id, 'signup.line.submitted', cmd.correlationRequestId, {
       source: SIGNUP_SOURCE_LINE_OA,
       existingAccount: attachUserId !== null,
       // No `hasPhoneNumber`: the field is required now, so the flag could only ever be true.
       hasReferralCode: referralCode !== null,
       repeatTrial,
+      emailPreviouslyUsed,
+      ...(emailPreviouslyUsed ? { manualReviewReason: 'email_previously_used' } : {}),
     });
 
     const businessHours = isBusinessHours(now, {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
     });
-    const state = await this.decideAndRun(request.id, cmd, now, repeatTrial);
+    const state = await this.decideAndRun(request.id, cmd, now, repeatTrial, emailPreviouslyUsed);
     return { requestId: request.id, state, existingAccount: attachUserId !== null, businessHours };
   }
 
@@ -138,22 +146,22 @@ export class SubmitLineSignupUseCase {
    * under the daily cap: either way it falls back to MANUAL rather than opening the spend tap
    * wider (spec §9 item 3).
    *
-   * Owner 2026-09-05 adds a third fallback with the same shape: a repeat trial. Nothing is blocked
-   * — the application still reaches the queue, where an operator can see the shop this LINE account
-   * had before and approve it anyway.
+   * Prior LINE ownership or reuse of an owner email also needs review. The application still
+   * reaches the queue, where an operator checks the earlier shop before approving another one.
    */
   private async decideAndRun(
     requestId: string,
     cmd: SubmitLineSignupCommand,
     now: Date,
     repeatTrial: boolean,
+    emailPreviouslyUsed: boolean,
   ): Promise<string> {
     if (repeatTrial && this.config.lineSignupApprovalMode === 'AUTO_FREE') {
       await this.audit(requestId, 'signup.line.auto_approve_repeat_trial', cmd.correlationRequestId, {
         reason: 'repeat_trial_manual_review',
       });
     }
-    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial) {
+    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial && !emailPreviouslyUsed) {
       // Resolved BEFORE a cap slot is taken: onboarding writes this id into two foreign keys, so
       // an installation with no SYSTEM_ADMIN cannot auto-provision at all and must not burn a slot
       // discovering that. `approvedByUserId` stays null on the row — the spec's record of "no admin
@@ -195,6 +203,21 @@ export class SubmitLineSignupUseCase {
     return 'PENDING_REVIEW';
   }
 
+  private async emailWasUsedBefore(requestId: string, email: string): Promise<boolean> {
+    // Our request has already committed. Two concurrent submits cannot both miss the other's
+    // committed request: the later commit sees the earlier one, even before it reaches approval.
+    // All states count; closing/rejecting an application does not erase this review signal.
+    const matches = await this.prisma.client.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "User" WHERE lower(btrim("email")) = ${email} OR lower(btrim("username")) = ${email}
+      UNION ALL
+      SELECT "id" FROM "Company" WHERE lower(btrim("email")) = ${email}
+      UNION ALL
+      SELECT "id" FROM "CompanySignupRequest" WHERE "id" <> ${requestId} AND lower(btrim("contactEmail")) = ${email}
+      LIMIT 1
+    `;
+    return matches.length > 0;
+  }
+
   /**
    * Counting and then marking in two statements lets N concurrent submits all read `cap - 1` and
    * all go through, which is exactly the day the free AI budget gets spent N times over. The same
@@ -224,6 +247,7 @@ export class SubmitLineSignupUseCase {
     externalSignupId: string;
     companyName: string;
     phoneNumber: string | null;
+    contactEmail: string;
     referralCode: string | null;
     attachUserId: string | null;
     verified: { providerUserId: string; channelId: string; displayName?: string };
@@ -239,6 +263,7 @@ export class SubmitLineSignupUseCase {
         payloadHash: canonicalFingerprint({
           companyName: input.companyName,
           phoneNumber: input.phoneNumber,
+          contactEmail: input.contactEmail,
           referralCode: input.referralCode,
           lineProviderUserId: verified.providerUserId,
           lineChannelId: verified.channelId,
@@ -247,7 +272,7 @@ export class SubmitLineSignupUseCase {
         // The LINE profile name is the only name this form ever learns. A token without one is
         // legal, so the owner gets a neutral label rather than an empty string.
         ownerDisplayName: verified.displayName ?? 'เจ้าของร้าน',
-        // `contactEmail` stays null: this flow never asks for an address (spec §5).
+        contactEmail: input.contactEmail,
         // The clickwrap IS the consent record for this source, so it names the version it accepted.
         consentVersion: evidence.documentVersion,
         ...(input.phoneNumber ? { phoneNumber: input.phoneNumber } : {}),

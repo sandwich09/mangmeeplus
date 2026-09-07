@@ -3,13 +3,14 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import type { AiModelPolicy, ReceiptOcrRequest, ReceiptOcrResponse } from '@watchdog-bms/contracts';
 import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } from '@watchdog-bms/contracts';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
+import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.adapter';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
 import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 import {
+  type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
   companyOcrErrorCode,
-  isOcrPreProviderHttpStatus,
   isOcrPreProviderRefusal,
   isOcrRetryableProviderFailure,
   releaseCompanyOcrAdmission,
@@ -31,7 +32,7 @@ export class ReceiptOcrClient {
     private readonly prisma: PrismaService,
   ) {}
 
-  async extract(request: ReceiptOcrRequest): Promise<ReceiptOcrResponse> {
+  async extract(request: ReceiptOcrRequest, options: { onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {}): Promise<ReceiptOcrResponse> {
     if (this.rateLimits) {
       const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
       if (!companyId) return { status: 'failed', errorCode: 'AI_RATE_LIMIT_COMPANY_REQUIRED' };
@@ -53,7 +54,7 @@ export class ReceiptOcrClient {
       this.config,
       this.rateLimits,
       request.companyId,
-      (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey),
+      (monthKey) => this.extractOcrAdmitted(request, modelPolicy, monthKey, options.onAdmitted),
     );
     if (admission.allowed) return admission.value;
     return {
@@ -68,28 +69,28 @@ export class ReceiptOcrClient {
     request: ReceiptOcrRequest,
     modelPolicy: AiModelPolicy | undefined,
     budgetMonthKey?: string,
+    onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
   ): Promise<ReceiptOcrResponse> {
     const admission = await admitCompanyOcr(this.prisma, {
       companyId: request.companyId,
       sourceRoute: 'receipt-ocr-web',
-      // TODO(P10-L follow-up): the LINE lane fences on `attachment.id`, so one photo is one read
-      // however often it is redelivered. The web lane deliberately fences on `requestId` instead,
-      // and it CANNOT simply switch: two live flows mint a fresh id for the same attachment on
-      // purpose — `expenseExtractionRetryMode` → 'new_request' (expense-upload.logic.ts:27, driven
-      // at ExpensesPages.tsx:321) retries a transient gateway failure, and the review screen's
-      // re-read (ExpenseReviewPage.tsx:392) sends no id at all. Fencing on the attachment would
-      // answer both with `OCR_REQUEST_ALREADY_ADMITTED` forever, turning one bad provider call into
-      // a receipt that can never be read. The gap that leaves is a shop re-pressing "อ่านใบเสร็จ"
-      // to spend its own monthly allowance — visible, self-inflicted and bounded by the ceiling.
-      // Closing it properly needs a per-attachment read budget (e.g. N re-reads per attachment,
-      // then duplicate), which is its own decision and its own slice.
+      // One explicit web extraction attempt, including a lost-response retry, uses one request id.
+      // A deliberate re-read or a failed provider retry gets a fresh id; fencing on the attachment
+      // would prevent the customer from ever retrying an unreadable source.
       requestId: request.requestId,
       monthKey: budgetMonthKey,
       // P10-L §15.1: the plan slip ceiling is always measured here; this flag decides whether it refuses.
       enforceReceiptQuota: this.config.receiptQuotaEnforced,
     });
     if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
-    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
+    onAdmitted?.(admission);
+    let result: ReceiptOcrResponse;
+    try {
+      result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
+    } catch (error) {
+      this.logger.warn({ msg: 'receipt OCR response invalid', requestId: request.requestId, ...safeLineErrorDetails(error) });
+      result = { status: 'failed', errorCode: 'OCR_JSON_PARSE_FAILED' };
+    }
     // Two reasons to hand the read back. `isOcrPreProviderRefusal` proves no provider ran.
     // `isOcrRetryableProviderFailure` does not — but the upload screen retries it under a fresh
     // request id, which buys a second admission, so keeping this one charges a 15-read trial twice
@@ -99,6 +100,8 @@ export class ReceiptOcrClient {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-web',
         requestId: request.requestId,
+        eventId: admission.eventId,
+        ...(isOcrPreProviderRefusal(result) ? {} : { reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' as const }),
       });
       // A pre-provider refusal that cannot be compensated must not look like a free read. A
       // retryable failure keeps its own error: the retry will admit afresh either way, and
@@ -127,20 +130,12 @@ export class ReceiptOcrClient {
         signal: AbortSignal.timeout(EXTRACT_TIMEOUT_MS),
       });
     } catch (err) {
-      this.logger.error({ msg: 'receipt OCR gateway unreachable', error: (err as Error).message, requestId: request.requestId });
+      this.logger.error({ msg: 'receipt OCR gateway unreachable', ...safeLineErrorDetails(err), requestId: request.requestId });
       return { status: 'failed', errorCode: 'AI_GATEWAY_UNREACHABLE' };
     }
 
     if (!response.ok) {
       this.logger.error({ msg: 'receipt OCR gateway error', status: response.status, requestId: request.requestId });
-      if (isOcrPreProviderHttpStatus(response.status)) {
-        const released = await releaseCompanyOcrAdmission(this.prisma, {
-          companyId: request.companyId,
-          sourceRoute: 'receipt-ocr-web',
-          requestId: request.requestId,
-        });
-        if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
-      }
       return { status: 'failed', errorCode: `AI_GATEWAY_ERROR_${response.status}` };
     }
 
@@ -154,7 +149,7 @@ export class ReceiptOcrClient {
         result.usage,
       );
     } catch (err) {
-      this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.requestId, error: (err as Error).message });
+      this.logger.warn({ msg: 'ai.usage.record_failed', requestId: request.requestId, ...safeLineErrorDetails(err) });
     }
     return result;
   }

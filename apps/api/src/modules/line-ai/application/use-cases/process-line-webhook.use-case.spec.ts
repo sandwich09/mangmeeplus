@@ -383,7 +383,7 @@ function makePrisma(opts: {
         update: async (args: unknown) => args,
       },
       // P10-L §15.1 — what `receiptQuotaSnapshot` and the once-a-month notice claim read.
-      companyOcrMonthlyUsage: { findUnique: async () => ({ usedCount: receiptsUsed }) },
+      companyOcrUsageEvent: { count: async () => receiptsUsed },
       companyPlanTerm: {
         findUnique: async () => planTerm && { warmupUntil: null, warmupSlipLimit: null, ...planTerm },
         updateMany: async ({ data }: any) => {
@@ -418,7 +418,7 @@ function makeUseCase(
       completeReceiptUpload?: any;
       initSignatureUpload?: any;
       createSignatureAsset?: any;
-      receiptOcrFn?: (req?: any) => any;
+      receiptOcrFn?: (req?: any, options?: any) => any;
       receiptOcrApply?: any;
       expenseRepo?: any;
       substituteReceiptContinuation?: any;
@@ -471,8 +471,8 @@ function makeUseCase(
 	        if (intakeRouteFn) return intakeRouteFn(req);
 	        throw new Error('LINE intake router not expected');
 	      },
-	      requestReceiptOcr: async (req: any) => {
-	        if (opts.receiptOcrFn) return opts.receiptOcrFn(req);
+	      requestReceiptOcr: async (req: any, options?: any) => {
+	        if (opts.receiptOcrFn) return opts.receiptOcrFn(req, options);
 	        throw new Error('receipt OCR not expected');
 	      },
 	    } as any,
@@ -2809,17 +2809,17 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.match(sentMessages[1].text, /ขอเปลี่ยนแพ็กเกจ/);
     });
 
-    it('names the WARM-UP ceiling, not the tier one, while the window is open', async () => {
+    it('names the full trial allowance despite a legacy warmup-ten window', async () => {
       const state = makePrisma({
         planTerm: { ...FREE_TRIAL, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
-        receiptsUsed: 10,
+        receiptsUsed: 15,
       });
       const { useCase, sentMessages } = captureUseCase(state.prisma, { intakeRouteFn: () => QUOTA_DENIED_ROUTE });
 
-      await sendReceipt(useCase, 'warmup-11');
+      await sendReceipt(useCase, 'warmup-16');
 
-      assert.match(sentMessages[0].altText, /10 ครั้ง/);
-      assert.doesNotMatch(sentMessages[0].altText, /15/);
+      assert.match(sentMessages[0].altText, /15 ครั้ง/);
+      assert.doesNotMatch(sentMessages[0].altText, /10 ครั้ง/);
     });
 
     it('never tells a PAYING tier it is on a trial', async () => {
@@ -2880,10 +2880,11 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.notEqual(admissionMonth, bangkokMonthKey(), 'the fixture must not be the current month');
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
       const monthsRead: Array<string | undefined> = [];
-      (state.prisma.client as any).companyOcrMonthlyUsage = {
-        findUnique: async ({ where }: any) => {
-          monthsRead.push(where.companyId_monthKey.monthKey);
-          return { usedCount: 15 };
+      (state.prisma.client as any).companyOcrUsageEvent = {
+        count: async ({ where }: any) => {
+          monthsRead.push(where.monthKey);
+          assert.deepEqual(where.sourceRoute.in, ['receipt-ocr-web', 'receipt-ocr-line']);
+          return 15;
         },
       };
       const { useCase, replies } = captureUseCase(state.prisma, {
@@ -2895,6 +2896,46 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.ok(monthsRead.includes(admissionMonth), `read ${JSON.stringify(monthsRead)}, wanted ${admissionMonth}`);
       assert.ok(!monthsRead.includes(bangkokMonthKey()), 'never the wall-clock month');
       assert.match(replies.join('\n'), /อ่านครั้งที่ 15 จาก 15 ในช่วงทดลอง/);
+    });
+
+    it('uses the fallback receipt admission month when routing did not admit the image', async () => {
+      const admissionMonth = '2026-08';
+      assert.notEqual(admissionMonth, bangkokMonthKey(), 'the reply is built after the admitted month');
+      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
+      const monthsRead: string[] = [];
+      state.prisma.client.companyOcrUsageEvent.count = async ({ where }: any) => {
+        monthsRead.push(where.monthKey);
+        return where.monthKey === admissionMonth ? 15 : 0;
+      };
+      let receiptAdmissions = 0;
+      const { useCase, replies } = captureUseCase(state.prisma, {
+        intakeRouteFn: () => ({ status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+          errorCode: 'PROVIDER_DISABLED', ocrAdmission: 'denied' }),
+        receiptOcrFn: (_request: any, options: any) => {
+          assert.equal(options.ocrAlreadyAdmitted, false);
+          receiptAdmissions += 1;
+          options.onAdmitted({ eventId: 'fallback-admission', monthKey: admissionMonth });
+          return { status: 'ok', classification: receiptClassification('500.00'), fields: { grandTotalAmount: '500.00' } };
+        },
+      });
+
+      await sendReceipt(useCase, 'fallback-month-boundary');
+
+      assert.equal(receiptAdmissions, 1);
+      assert.deepEqual(monthsRead, [admissionMonth], 'snapshot uses the receipt admission, never the reply clock');
+      assert.match(replies.join(' '), /อ่านครั้งที่ 15 จาก 15 ในช่วงทดลอง/);
+    });
+
+    it('does not announce a successful read counter for an uploaded source whose OCR application failed', async () => {
+      const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 3 });
+      let storedImages = 0;
+      const { useCase, replies } = captureUseCase(state.prisma, {
+        completeReceiptUpload: { execute: async () => { storedImages += 1; return { id: 'exp-1', duplicateStatus: 'NONE' }; } },
+        receiptOcrApply: { apply: async () => ({ candidatesCreated: 0, staleSkipped: true }) },
+      });
+      await sendReceipt(useCase, 'partial-no-counter');
+      assert.equal(storedImages, 1);
+      assert.doesNotMatch(replies.join(' '), /อ่านครั้งที่/);
     });
 
     it('says nothing about a counter for a legacy shop with no plan term', async () => {

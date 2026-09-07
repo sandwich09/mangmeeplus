@@ -349,8 +349,8 @@ export const workspaceDictionary = {
     'auth.hero.footer': '© {year} มั่งมี · ระบบบัญชีและจัดการสิทธิ์ร้านค้า',
     // Auth — forgot password
     'auth.forgot.title': 'ลืมรหัสผ่าน',
-    'auth.forgot.subtitle': 'กรอกชื่อผู้ใช้ ระบบจะส่งรหัสผ่านชั่วคราวไปยัง LINE ที่ผูกไว้',
-    'auth.forgot.username': 'ชื่อผู้ใช้',
+    'auth.forgot.subtitle': 'กรอกชื่อผู้ใช้หรืออีเมลบัญชี ระบบจะส่งรหัสผ่านชั่วคราวไปยัง LINE ที่ผูกไว้',
+    'auth.forgot.username': 'ชื่อผู้ใช้หรืออีเมลบัญชี',
     'auth.forgot.submit': 'ขอรหัสผ่านชั่วคราว',
     'auth.forgot.submitted.title': 'ตรวจสอบ LINE ของคุณ',
     'auth.forgot.submitted.body': 'หากบัญชีนี้พร้อมใช้งาน ระบบได้ส่งรหัสผ่านชั่วคราวไปยัง LINE ที่ผูกไว้',
@@ -1795,8 +1795,8 @@ export const workspaceDictionary = {
     'auth.hero.footer': '© {year} มั่งมี · Store accounting & permission system',
     // Auth — forgot password
     'auth.forgot.title': 'Forgot password',
-    'auth.forgot.subtitle': 'Enter your username to receive a temporary password through your linked LINE account.',
-    'auth.forgot.username': 'Username',
+    'auth.forgot.subtitle': 'Enter your username or account email to receive a temporary password through your linked LINE account.',
+    'auth.forgot.username': 'Username or account email',
     'auth.forgot.submit': 'Request temporary password',
     'auth.forgot.submitted.title': 'Check your LINE',
     'auth.forgot.submitted.body': 'If this account is eligible, a temporary password was sent to its linked LINE account.',

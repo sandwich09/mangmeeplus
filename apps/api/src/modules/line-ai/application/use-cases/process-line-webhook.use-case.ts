@@ -85,7 +85,7 @@ import {
   validateAttachmentMeta,
 } from '../../../data-model-core/domain/logic/attachment.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
-import { deriveTaxEvidence, isExpenseExtractionEligible, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
+import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
 import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
@@ -123,7 +123,7 @@ import {
   trialReceiptCounterLineTh,
   TRIAL_COUNTER_TIER_KEY,
 } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
-import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
+import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import { LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../../auth/domain/logic/line-handoff.logic';
@@ -267,6 +267,7 @@ class LineDeliveryError extends Error {
 }
 const SAVED_LINE_RECEIPT = Symbol('saved-line-receipt');
 type SavedLineReceipt = { expenseId: string; companyId: string; uploaded: boolean };
+type LineReceiptAdmissionAttempt = { identity?: CompanyOcrAdmissionIdentity; companyId?: string; receiptRequested: boolean; usablePersisted: boolean };
 
 const MEDIA_PROCESSING_FAILED_REPLY = '📷 ขออภัยค่ะ ระบบประมวลผลรูปนี้ไม่สำเร็จ รบกวนส่งรูปเดิมอีกครั้งนะคะ ถ้ารูปนี้เคยบันทึกไว้แล้ว ระบบจะแจ้งเตือนรายการซ้ำให้ค่ะ';
 const RATE_LIMIT_REPLY = '⏳ ระบบกำลังประมวลผลข้อความก่อนหน้า กรุณารอสักครู่แล้วลองใหม่อีกครั้งนะคะ';
@@ -1693,6 +1694,7 @@ export class ProcessLineWebhookUseCase {
   private async tryRouteIntake(input: {
     requestId: string;
     retryWebhookEventId?: string;
+    onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void;
     companyId: string;
     userId: string;
     permissions: string[];
@@ -1753,7 +1755,7 @@ export class ProcessLineWebhookUseCase {
               }],
             }
           : {}),
-      }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId });
+      }, { busyWaitDeadlineMs: input.busyWaitDeadlineMs, retryWebhookEventId: input.retryWebhookEventId, onAdmitted: input.onAdmitted });
     } catch (err) {
       this.logger.warn({ msg: 'LINE intake route unavailable', requestId: input.requestId, ...safeLineErrorDetails(err) });
       return { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'ROUTER_UNREACHABLE' };
@@ -4830,8 +4832,9 @@ export class ProcessLineWebhookUseCase {
     // A committed-stage marker belongs to this attempt, even if the caller reuses its input object.
     event = { ...event };
     delete (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT];
+    const admissionAttempt: LineReceiptAdmissionAttempt = { receiptRequested: false, usablePersisted: false };
     try {
-      return (await this.executeReceiptUploadInner(event, captionText)) ?? { outcome: 'done' };
+      return (await this.executeReceiptUploadInner(event, captionText, admissionAttempt)) ?? { outcome: 'done' };
     } catch (err) {
       let saved = (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT];
       if (!saved && event.handoff) {
@@ -4866,10 +4869,17 @@ export class ProcessLineWebhookUseCase {
       await this.deliverReply(event, MEDIA_PROCESSING_FAILED_REPLY).catch(() => {});
       await this.releaseWebhookEvent(event.webhookEventId, 'RETRYABLE_RECEIPT_UPLOAD_ERROR');
       return { outcome: 'done' };
+    } finally {
+      if (admissionAttempt.receiptRequested && !admissionAttempt.usablePersisted && admissionAttempt.identity && admissionAttempt.companyId) {
+        await releaseCompanyOcrAdmission(this.prisma, {
+          companyId: admissionAttempt.companyId, sourceRoute: 'receipt-ocr-line', requestId: event.lineMessageId,
+          eventId: admissionAttempt.identity.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+        });
+      }
     }
   }
 
-  private async executeReceiptUploadInner(event: LineReceiptUploadEvent, captionText?: string): Promise<LineMediaTurnOutcome | undefined> {
+  private async executeReceiptUploadInner(event: LineReceiptUploadEvent, captionText: string | undefined, admissionAttempt: LineReceiptAdmissionAttempt): Promise<LineMediaTurnOutcome | undefined> {
     const requestId = randomUUID();
     if (!await this.claimWebhookEvent(event.webhookEventId, event.lineUserId)) return { outcome: 'done' };
 
@@ -5056,6 +5066,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     const routePlan = await this.tryRouteIntake({
       requestId,
       retryWebhookEventId: event.webhookEventId,
+      onAdmitted: (identity) => { admissionAttempt.identity = identity; admissionAttempt.companyId = companyId; },
       companyId,
       userId: identity.userId,
       permissions: access.permissions,
@@ -5067,6 +5078,8 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       // way a text turn does, instead of failing the upload with a busy error.
       busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS,
     });
+
+    admissionAttempt.receiptRequested = routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE';
 
     // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
     // substitute workflow in this chat is parked at the issue decision — not only on the numbered
@@ -5215,7 +5228,11 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
             event, ctx, access, companyId, userId: identity.userId, requestId, caption, captionSuffix, media, context,
           })
           : undefined;
-        if (outcome) return outcome;
+        if (outcome) {
+          // Successful substitute handling is the existing general-image work, not a failed receipt read.
+          admissionAttempt.receiptRequested = false;
+          return outcome;
+        }
       } catch (error) {
         // Never let this branch sink a media turn: without it the photo is still capturable below.
         this.logger.warn({ msg: 'line_substitute_media_arrival_failed', requestId, ...safeLineErrorDetails(error) });
@@ -5247,6 +5264,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
 
     // JPEG/PNG classification runs once, before initReceiptUpload. PDF/unsupported media produces
     // NOT_REQUESTED and therefore fails closed unless a routed expense caption supplies purpose.
+    admissionAttempt.receiptRequested = true;
     const ocr = await this.tryExtractReceiptFields(
       ctx,
       event.lineMessageId,
@@ -5256,6 +5274,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       // The router already read this exact photo; forwarding that read keeps OCR from reading it
       // a second time (UAT 2026-08-28: a 16.6s duplicate read on every receipt).
       routePlan.documentText,
+      admissionAttempt,
     );
 
     // P10-L §15.1 (review G-01): the shop's plan ran out of receipts. `admitCompanyOcr` is the one
@@ -5275,6 +5294,9 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     }
 
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
+    if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
+      admissionAttempt.receiptRequested = false;
+    }
     // Every LINE OCR attempt is recorded here, before the outcome branches. A failed read routes to
     // `clarify` and returns below without ever creating an expense, so auditing further down (as this
     // once did, guarded on OCR_EXTRACTED_NEEDS_REVIEW) recorded successes only and left every
@@ -5413,6 +5435,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
 
 
     // ponytail: web and LINE share upload and post-OCR duplicate detection.
+    let ocrApplied = false;
     let hasDuplicate = completedExpense.duplicateStatus === 'POSSIBLE_DUPLICATE';
 
     // Route hints are AI suggestions; deterministic guards decide what is stored.
@@ -5464,6 +5487,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       }));
       // Stale means a correction landed during the OCR round trip; keep the draft as captured.
       const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
+      ocrApplied = duplicateResult !== null;
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
       reviewReasons = duplicateResult?.reviewReasons ?? [];
       dateVerified = duplicateResult?.dateVerified ?? false;
@@ -5548,6 +5572,8 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
         },
       },
     });
+    admissionAttempt.usablePersisted = ocrApplied && ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
+      && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields?.grandTotalAmount);
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
@@ -5588,8 +5614,8 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     // "อ่านครั้งที่ 1 จาก 15" to a shop that just spent its last read.
     // Swallowed on failure: the receipt is already captured and its reply is what the shop is waiting
     // for, so a counter that cannot be read loses its line, never the answer.
-    const trial = await receiptQuotaSnapshot(this.prisma, companyId, routePlan.ocrMonthKey).catch(() => null);
-    if (trial?.tierKey === TRIAL_COUNTER_TIER_KEY && trial.planLimit !== null) {
+    const trial = await receiptQuotaSnapshot(this.prisma, companyId, admissionAttempt.identity?.monthKey ?? routePlan.ocrMonthKey).catch(() => null);
+    if (admissionAttempt.usablePersisted && trial?.tierKey === TRIAL_COUNTER_TIER_KEY && trial.planLimit !== null) {
       const last = replyTexts.length - 1;
       replyTexts[last] = `${replyTexts[last]}\n${trialReceiptCounterLineTh(trial.usedCount, trial.planLimit)}`;
     }
@@ -6763,6 +6789,7 @@ ${link}`, ctx.companyId, access);
     ocrAlreadyAdmitted = false,
     routeOcrErrorCode?: string,
     intakeDocumentText?: string,
+    admissionAttempt?: LineReceiptAdmissionAttempt,
   ): Promise<ReceiptOcrPreflight> {
     if (!media.contentBase64 || (media.mimeType !== 'image/jpeg' && media.mimeType !== 'image/png' && media.mimeType !== 'application/pdf')) {
       return { status: 'NOT_REQUESTED', fields: null, classification: null };
@@ -6783,7 +6810,9 @@ ${link}`, ctx.companyId, access);
         ...(intakeDocumentText ? { documentText: intakeDocumentText } : {}),
         // The lease can now be held briefly by a chat turn that slipped into a gap between this
         // media turn's model calls (busy-wait lane) — wait it out instead of failing the OCR.
-      }, { ocrAlreadyAdmitted, busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
+      }, { ocrAlreadyAdmitted, admissionIdentity: admissionAttempt?.identity,
+        onAdmitted: (identity) => { if (admissionAttempt) { admissionAttempt.identity = identity; admissionAttempt.companyId = ctx.companyId; } },
+        busyWaitDeadlineMs: Date.now() + LINE_AI_LIVE_BUSY_WAIT_MS });
       if (result.status === 'not_configured') return { status: 'NOT_CONFIGURED', fields: null, classification: null };
       if (result.status !== 'ok') {
         return { status: 'OCR_FAILED', fields: null, classification: null, ...(result.errorCode ? { errorCode: result.errorCode } : {}) };

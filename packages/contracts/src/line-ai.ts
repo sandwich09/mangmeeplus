@@ -419,6 +419,14 @@ export type ReceiptOcrResponse = {
   usage?: AiUsageEntry[];
 };
 
+/** Governance decisions cannot be retried as a new read. Empty/malformed OCR is an extraction failure. */
+export function isReceiptOcrRetryableFailure(response: { status?: string; errorCode?: string }): boolean {
+  return response.status === 'failed' && ![
+    'OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED', 'OCR_REQUEST_ALREADY_ADMITTED',
+    'OCR_QUOTA_UNAVAILABLE', 'RECEIPT_QUOTA_EXCEEDED',
+  ].includes(response.errorCode ?? '');
+}
+
 // ─── LINE Intake Router (item 10B front-stage for item 09 intake) ────────────
 // The router classifies a LINE message semantically BEFORE any source-module
 // use case runs. It emits a route plan only: it must not answer users, call ERP

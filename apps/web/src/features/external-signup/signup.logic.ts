@@ -36,12 +36,8 @@ export const SIGNUP_TRIAL_DAYS = 30;
 export const SIGNUP_TRIAL_HEADLINE =
   `ทดลองใช้ฟรี ${SIGNUP_TRIAL_DAYS} วัน ให้ AI อ่านรูปใบเสร็จได้ ${TRIAL_PRESET.monthlySlipLimit} ครั้ง`;
 
-/**
- * Review F17. P10-L §9 holds a brand-new trial shop to a tighter receipt ceiling for its first
- * week. Telling people afterwards is how "the app is broken" support calls start, so the copy says
- * it up front — next to the monthly number it qualifies, not on a card that no longer exists.
- */
-export const SIGNUP_TRIAL_WARMUP = `สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`;
+/** The initial allowance equals the monthly trial limit from the shared preset. */
+export const SIGNUP_TRIAL_WARMUP = `อ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ครั้งต่อเดือนตั้งแต่วันแรก`;
 
 /** What happens at the end of it. Never implies a card, a renewal, or a charge. */
 export const SIGNUP_TRIAL_AFTER =

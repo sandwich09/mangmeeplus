@@ -169,24 +169,29 @@ describe('addressErrorMessages', () => {
 
 // F1: a password with no login identifier is a locked door.
 describe('the first password needs something to log in with', () => {
-  it('requires a username when there is no verified email', () => {
-    assert.equal(usernameFieldRequired({ username: null, emailVerified: false }), true);
-    assert.equal(usernameFieldRequired({ username: null, emailVerified: true }), false);
-    assert.equal(usernameFieldRequired({ username: 'somchai', emailVerified: false }), false);
+  it('requires a username only when there is no stored account email', () => {
+    assert.equal(usernameFieldRequired({ username: null, email: null, emailVerified: false }), true);
+    assert.equal(usernameFieldRequired({ username: null, email: 'owner@example.com', emailVerified: false }), false);
+    assert.equal(usernameFieldRequired({ username: null, email: 'owner@example.com', emailVerified: true }), false);
+    assert.equal(usernameFieldRequired({ username: 'somchai', email: null, emailVerified: false }), false);
     assert.equal(usernameFieldRequired(null), false);
   });
 
   it('blocks the submit that would create an unusable credential', () => {
-    const lineOnly = { username: null, emailVerified: false };
+    const lineOnly = { username: null, email: null, emailVerified: false };
     assert.match(
       passwordFormError(lineOnly, { password: 'backup-password', confirmPassword: 'backup-password', username: '  ' })!,
       /ชื่อผู้ใช้/,
     );
     assert.equal(passwordFormError(lineOnly, { password: 'backup-password', confirmPassword: 'backup-password', username: 'mangmee.shop' }), null);
+    assert.equal(passwordFormError(
+      { username: null, email: 'owner@example.com', emailVerified: false },
+      { password: 'backup-password', confirmPassword: 'backup-password', username: '' },
+    ), null, 'the saved account email is the login identifier before mailbox verification');
   });
 
   it('still checks length and confirmation first', () => {
-    const verified = { username: null, emailVerified: true };
+    const verified = { username: null, email: 'owner@example.com', emailVerified: true };
     assert.match(passwordFormError(verified, { password: 'short', confirmPassword: 'short', username: '' })!, /8 ตัว/);
     assert.match(passwordFormError(verified, { password: 'backup-password', confirmPassword: 'other-password', username: '' })!, /ไม่ตรงกัน/);
     assert.equal(passwordFormError(verified, { password: 'backup-password', confirmPassword: 'backup-password', username: '' }), null);
@@ -498,7 +503,7 @@ describe('buildShopSave — one press, both halves, nothing lost', () => {
  * "ส่งลิงก์ยืนยันอีเมล" button whose only possible answer was the API's 409.
  */
 describe('emailSectionMode', () => {
-  const BASE = { emailDeliveryEnabled: true, pendingEmail: null, emailVerified: false };
+  const BASE = { email: null, emailDeliveryEnabled: true, pendingEmail: null, emailVerified: false, lineLinked: false };
 
   it('shows a verified address as a fact, not a form', () => {
     assert.equal(emailSectionMode({ ...BASE, emailVerified: true }, false), 'verified');
@@ -518,6 +523,14 @@ describe('emailSectionMode', () => {
     assert.equal(emailSectionMode(null, false), 'none');
   });
 
+  it('shows a LINE account email truthfully and lets an empty LINE account save one directly', () => {
+    const line = { ...BASE, lineLinked: true };
+    assert.equal(emailSectionMode({ ...line, email: 'owner@example.com' }, false), 'unverified');
+    assert.equal(emailSectionMode({ ...line, email: 'owner@example.com', pendingEmail: 'owner@example.com' }, false), 'unverified');
+    assert.equal(emailSectionMode({ ...line, email: 'owner@example.com' }, true), 'edit');
+    assert.equal(emailSectionMode(line, false), 'edit');
+  });
+
   // C: with no mailer there is no action to offer, in any of the states above.
   it('offers nothing at all when the environment cannot send mail', () => {
     for (const account of [BASE, { ...BASE, emailVerified: true }, { ...BASE, pendingEmail: 'a@b.co' }]) {
@@ -526,6 +539,12 @@ describe('emailSectionMode', () => {
     // Only an explicit `false` counts: an older API that does not answer the field leaves the
     // page working, and the use-case gate is still the backstop.
     assert.equal(emailSectionMode({ ...BASE, emailDeliveryEnabled: undefined }, false), 'none');
+  });
+
+  it('keeps an unverified LINE account email visible and correctable without a mailer', () => {
+    const line = { ...BASE, email: 'owner@example.com', lineLinked: true, emailDeliveryEnabled: false };
+    assert.equal(emailSectionMode(line, false), 'unverified');
+    assert.equal(emailSectionMode(line, true), 'edit');
   });
 });
 

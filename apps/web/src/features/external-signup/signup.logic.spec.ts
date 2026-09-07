@@ -130,18 +130,12 @@ describe('what signing up gets you', () => {
     assert.equal(SELECTABLE_OFFER_KEY, 'FREE_TRIAL');
   });
 
-  /**
-   * Review F17. P10-L §9 caps a brand-new trial shop harder for its first week than its tier
-   * allows. Discovering that on day one reads as a broken app, so the copy says it in advance —
-   * the card it used to sit on is gone, the promise it corrects is not.
-   */
-  it('says what the first week actually allows, from the shared constant', () => {
-    assert.match(SIGNUP_TRIAL_WARMUP, new RegExp(`สัปดาห์แรกอ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ใบ`));
+  it('grants the shared monthly allowance from the first day', () => {
+    assert.match(SIGNUP_TRIAL_WARMUP, new RegExp(`อ่านได้ ${SIGNUP_TRIAL_WARMUP_SLIPS} ครั้งต่อเดือนตั้งแต่วันแรก`));
     // Owner copy rule: no plus sign anywhere in user-facing text.
     assert.equal(SIGNUP_TRIAL_WARMUP.includes('+'), false);
-    // The number is the warm-up ceiling, not the monthly quota — they differ, and saying the
-    // monthly one here would promise a month's receipts in a week that allows fewer.
-    assert.notEqual(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
+    // New provisioning and day-one copy use the same preset.
+    assert.equal(SIGNUP_TRIAL_WARMUP_SLIPS, PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit);
     // And the headline it qualifies still quotes the MONTHLY number, so the two do not blur.
     assert.match(SIGNUP_TRIAL_HEADLINE, new RegExp(`${PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit} ครั้ง`));
   });

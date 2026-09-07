@@ -63,6 +63,7 @@ function harness(options: Options = {}) {
         create: async (args: any) => { audits.push(args.data); return {}; },
       },
       companyOcrUsageEvent: {
+        count: async () => options.ocrUsage?.usedCount ?? 0,
         findFirst: async (args: any) => {
           const events = options.ocrEvents ?? [];
           if (events.length === 0) return null;
@@ -84,7 +85,6 @@ function harness(options: Options = {}) {
         findMany: async () => options.ownerIdentities ?? [{ providerUserId: 'Uowner-1' }],
       },
       companyMembership: { findMany: async () => options.ownerMemberships ?? [{ userId: 'owner-1' }] },
-      companyOcrMonthlyUsage: { findUnique: async () => options.ocrUsage ?? null },
       companyAiMonthlyUsage: { findUnique: async () => options.aiUsage ?? null },
       companyAiConfiguration: { findUnique: async () => options.aiConfig ?? null },
       user: { findUnique: async () => ({ displayName: 'พี่แอดมิน' }) },
@@ -209,12 +209,12 @@ describe('the timeline last line: why the assistant is refusing right now', () =
     assert.equal(await refusalOf({ planTerm: liveTerm, memberIdentity: null }), 'ยังไม่มีสมาชิกคนไหนผูก LINE');
   });
 
-  it('counts the warm-up ceiling, not the tier ceiling, while warm-up is on', async () => {
+  it('uses the actual trial allowance during a legacy warmup-ten window', async () => {
     const detail = await refusalOf({
       planTerm: { ...liveTerm, warmupUntil: new Date('2030-01-01T00:00:00.000Z'), warmupSlipLimit: 10 },
-      ocrUsage: { usedCount: 10 },
+      ocrUsage: { usedCount: 15 },
     });
-    assert.equal(detail, 'ให้ AI อ่านรูปครบ 10 ครั้งของเดือนนี้แล้ว');
+    assert.equal(detail, 'ให้ AI อ่านรูปครบ 15 ครั้งของเดือนนี้แล้ว');
   });
 
   it('names the AI budget, against the shop own override', async () => {

@@ -148,6 +148,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
       const request = { requestId: `${tag}-provider-original`, companyId, userId, messageText: '', locale: 'th-TH', permissions: [], activeCategories: [],
         attachments: [{ id: messageId, mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }] };
       await (gateway as any).requestLineIntakeRouteAdmitted(request, messageId, '2026-08');
+      const originalEvent = await client.companyOcrUsageEvent.findFirstOrThrow({ where: { companyId, requestId: messageId } });
       await client.companyOcrUsageEvent.updateMany({ where: { companyId, requestId: messageId }, data: { createdAt: new Date(Date.now() - LINE_RECEIPT_RETRY_LEASE_MS - 1000) } });
       const retryIds = [`${tag}-provider-retry-a`, `${tag}-provider-retry-b`];
       for (const webhookEventId of retryIds) await client.lineWebhookEventLog.create({ data: {
@@ -157,6 +158,13 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
       const retried = await Promise.all(retryIds.map((id) => (gateway as any).requestLineIntakeRouteAdmitted({ ...request, requestId: id }, messageId, '2026-09', id)));
       assert.equal(retried.filter((result: any) => result.ocrAdmission === 'admitted').length, 1);
       assert.equal(providerCalls, 2, 'one original provider call plus one recovery, despite overlapping retries');
+      const resumedEvent = await client.companyOcrUsageEvent.findFirstOrThrow({ where: { companyId, requestId: messageId } });
+      assert.notEqual(resumedEvent.id, originalEvent.id, 'resume has a distinct compensation generation');
+      assert.equal(await releaseCompanyOcrAdmission({ client } as any, {
+        companyId, sourceRoute: 'receipt-ocr-line', requestId: messageId, eventId: originalEvent.id,
+        reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+      }), true);
+      assert.ok(await client.companyOcrUsageEvent.findUnique({ where: { id: resumedEvent.id } }), 'delayed old worker cannot credit the resumed read');
       assert.equal(retried.find((result: any) => result.ocrAdmission === 'admitted').ocrMonthKey, '2026-08');
       assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: '2026-08' } } })).usedCount, 1);
       const usage = await client.aiUsageEvent.findMany({ where: { companyId, requestId: { in: [request.requestId, ...retryIds] } } });
@@ -208,10 +216,18 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
     const input = { companyId, sourceRoute: 'receipt-ocr-line' as const, requestId: `${tag}-quota-operation`, monthKey: '2026-09' };
     const admitted = await Promise.all([admitCompanyOcr({ client } as any, input), admitCompanyOcr({ client } as any, input)]);
     assert.equal(admitted.filter((result) => result.allowed).length, 1);
-    const credits = await Promise.all([1, 2].map(() => releaseCompanyOcrAdmission({ client } as any, { ...input, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' })));
+    const credits = await Promise.all([1, 2].map(() => releaseCompanyOcrAdmission({ client } as any, { ...input, eventId: (admitted.find((result) => result.allowed) as { eventId: string }).eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' })));
     assert.deepEqual(credits, [true, true]);
     assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: input.monthKey } } })).usedCount, 0);
     assert.equal(await client.auditLog.count({ where: { companyId, action: 'receipt.ocr.admission.compensated' } }), 1);
+    const replacement = await admitCompanyOcr({ client } as any, { ...input, monthKey: '2026-10' });
+    assert.ok(replacement.allowed);
+    const old = admitted.find((result) => result.allowed) as { eventId: string };
+    await releaseCompanyOcrAdmission({ client } as any, { ...input, eventId: old.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' });
+    assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: '2026-10' } } })).usedCount, 1);
+    assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: input.monthKey } } })).usedCount, 0);
+    await releaseCompanyOcrAdmission({ client } as any, { ...input, eventId: replacement.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' });
+    assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: '2026-10' } } })).usedCount, 0);
     const next = await Promise.all([1, 2].map((n) => admitCompanyOcr({ client } as any, { ...input, requestId: `${tag}-quota-new-${n}` })));
     assert.equal(next.filter((result) => result.allowed).length, 1);
     assert.equal((await client.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId, monthKey: input.monthKey } } })).usedCount, 1);

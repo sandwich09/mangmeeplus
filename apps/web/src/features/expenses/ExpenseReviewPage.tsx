@@ -49,6 +49,15 @@ import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
 import { ExpenseSourceDraftCard } from './ExpenseSourceDraftCard';
+import {
+  activePrimaryReceiptAttachmentId,
+  availableExpenseSessionStorage,
+  expenseExtractionResponseIsUnknown,
+  readExpenseExtractionAttempt,
+  requestExpenseExtractionWithRecovery,
+  writeExpenseExtractionAttempt,
+  type ExpenseExtractionAttempt,
+} from './expense-upload.logic';
 
 // Sticky offsets, measured against the running app — do not guess these.
 // AppHeader is `sticky top-0 z-[99999] h-[68px]`, so page-level sticky chrome must clear it or it
@@ -76,6 +85,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [extractionLoading, setExtractionLoading] = useState(false);
+  const extractionAttemptRef = useRef<ExpenseExtractionAttempt | null>(null);
+  const extractionRequestRunningRef = useRef(false);
+  const extractionRunIdRef = useRef(0);
   const [notice, setNotice] = useState<ExtractionNotice | null>(null);
   const [dataErrorCount, setDataErrorCount] = useState<number | null>(null);
   const [dataErrorMessage, setDataErrorMessage] = useState<string | null>(null);
@@ -230,6 +242,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   }, [companyId, expenseId]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
+    extractionRunIdRef.current += 1;
+    extractionAttemptRef.current = null;
+    extractionRequestRunningRef.current = false;
+    setExtractionLoading(false);
+  }, [companyId, expenseId]);
+  useEffect(() => {
     setNotice(null);
     try {
       const stored = window.sessionStorage.getItem(expenseNoticeKey(expenseId));
@@ -369,10 +387,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     const reread = shouldRereadReplacedReceipt({ status: detail?.status ?? '', canExtract });
     setReceiptUploading(true); setError(null);
     try {
-      await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.primary');
+      const attachmentId = await uploadExpenseEvidenceFile(companyId, expenseId, branchId, file, 'expense.receipt.primary');
+      extractionRunIdRef.current += 1;
+      extractionAttemptRef.current = null;
+      extractionRequestRunningRef.current = false;
+      writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, expenseId, null);
       await load(); onRefresh();
       toast.success(t('expenses.receipt_attached', locale));
-      if (reread) await extractAgain();
+      if (reread) await extractAgain(attachmentId);
     } catch (e) { setError(err(e)); } finally { setReceiptUploading(false); }
   };
 
@@ -387,14 +409,58 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     finally { setActionLoading(false); }
   };
 
-  const extractAgain = async () => {
+  const extractAgain = async (attachmentIdOverride?: string) => {
+    if (extractionRequestRunningRef.current || (receiptUploading && !attachmentIdOverride)) return;
+    extractionRequestRunningRef.current = true;
+    const runId = ++extractionRunIdRef.current;
     setExtractionLoading(true); setError(null);
     try {
-      setNotice(extractionNotice(await requestExpenseExtraction(companyId, expenseId), locale));
-      await load();
+      const attachmentId = attachmentIdOverride ?? activePrimaryReceiptAttachmentId(detail?.attachments ?? []);
+      const storage = availableExpenseSessionStorage(window);
+      const stored = readExpenseExtractionAttempt(storage, companyId, expenseId, attachmentId);
+      const previous = extractionAttemptRef.current?.attachmentId === attachmentId
+        ? extractionAttemptRef.current
+        : stored;
+      const attempt = previous?.attachmentId === attachmentId
+        ? previous
+        : { requestId: globalThis.crypto.randomUUID(), attachmentId };
+      extractionAttemptRef.current = attempt;
+      writeExpenseExtractionAttempt(storage, companyId, expenseId, attempt);
+      const outcome = await requestExpenseExtractionWithRecovery({
+        attempt,
+        request: (requestId) => requestExpenseExtraction(companyId, expenseId, requestId),
+        read: () => getExpense(companyId, expenseId),
+        wait: () => new Promise((resolve) => setTimeout(resolve, 1500)),
+        resume: previous !== null,
+      });
+      if (runId !== extractionRunIdRef.current) return;
+      setNotice(extractionNotice(outcome.result, locale));
+      if (outcome.recoveredDetail) setDetail(outcome.recoveredDetail);
+      else {
+        const refreshed = await getExpense(companyId, expenseId);
+        if (runId !== extractionRunIdRef.current) return;
+        setDetail(refreshed);
+      }
+      if (runId !== extractionRunIdRef.current) return;
       onRefresh();
-    } catch (e) { setError(err(e)); }
-    finally { setExtractionLoading(false); }
+      if (!outcome.pending) {
+        extractionAttemptRef.current = null;
+        writeExpenseExtractionAttempt(storage, companyId, expenseId, null);
+      }
+    } catch (e) {
+      if (runId !== extractionRunIdRef.current) return;
+      if (!expenseExtractionResponseIsUnknown(e)) {
+        extractionAttemptRef.current = null;
+        writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, expenseId, null);
+      }
+      setError(err(e));
+    }
+    finally {
+      if (runId === extractionRunIdRef.current) {
+        extractionRequestRunningRef.current = false;
+        setExtractionLoading(false);
+      }
+    }
   };
 
   useEffect(() => {
@@ -958,7 +1024,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         </span>
       )}
       {canExtract && (
-        <button className={cx(ghostClass, 'ml-auto')} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading}>
+        <button className={cx(ghostClass, 'ml-auto')} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading}>
           <span className="inline-flex items-center justify-center gap-2">
             {extractionLoading && <InlineSpinner />}
             {extractionLoading ? t('expenses.ai_reading', locale) : t('expenses.extract_again', locale)}
@@ -1273,7 +1339,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                           {noticesBlock}
                           {aiPrefillBanner}
                           {!aiMap && step === 'data' && canExtract && (
-                            <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading}>
+                            <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading}>
                               <span className="inline-flex items-center justify-center gap-2">
                                 {extractionLoading && <InlineSpinner />}
                                 {extractionLoading ? t('expenses.ai_reading', locale) : t('expenses.extract_again', locale)}

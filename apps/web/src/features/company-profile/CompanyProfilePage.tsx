@@ -18,6 +18,7 @@ import {
   resendMyEmailVerification,
   setMyFirstPassword,
   setMyPhoneNumber,
+  setMyUnverifiedEmail,
   type AccountProfileState,
 } from './company-profile.api';
 import {
@@ -131,7 +132,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       }
       setVatChoice(nextIdentity.vatRegistration?.status ?? 'UNKNOWN');
       setPhone(nextAccount.phoneNumber ?? '');
-      setEmail(nextAccount.pendingEmail ?? nextAccount.email ?? '');
+      setEmail(nextAccount.lineLinked && !nextAccount.emailVerified
+        ? nextAccount.email ?? ''
+        : nextAccount.pendingEmail ?? nextAccount.email ?? '');
     } catch (error) {
       setLoadError(apiErrorMessage(error));
     } finally {
@@ -171,10 +174,11 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const canEditShop = full !== null && canManageShop;
   const masked = identity?.identity && identity.identity.masked ? identity.identity : null;
   const serverVatStatus = identity?.vatRegistration?.status ?? 'UNKNOWN';
-  // `PasswordLoginUseCase` looks accounts up by username OR verified email. With neither, a
+  // `PasswordLoginUseCase` looks accounts up by username OR the stored account email. With neither, a
   // password would be unusable, so the username stops being optional.
   const usernameRequired = usernameFieldRequired(account);
   const emailMode = emailSectionMode(account, emailEditing);
+  const directEmailEdit = Boolean(account?.lineLinked && !account.emailVerified);
 
   const saveShop = async () => {
     if (!control || !canEditShop) return;
@@ -230,7 +234,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     setEmailError(null);
     setEmailErrorCode(null);
     setEmailSent(false);
-    setEmail(account?.pendingEmail ?? account?.email ?? '');
+    setEmail(directEmailEdit ? account?.email ?? '' : account?.pendingEmail ?? account?.email ?? '');
     setEmailEditing(true);
   };
 
@@ -249,10 +253,38 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     }
     setEmailSaving(true);
     try {
-      await requestMyEmailVerification(email.trim(), account?.hasPassword ? emailPassword : undefined);
+      if (directEmailEdit) {
+        const saved = await setMyUnverifiedEmail(
+          email.trim(),
+          account?.email ?? null,
+          account?.hasPassword ? emailPassword : undefined,
+        );
+        setEmail(saved.email);
+        toast.success('บันทึกอีเมลบัญชีแล้วค่ะ');
+      } else {
+        await requestMyEmailVerification(email.trim(), account?.hasPassword ? emailPassword : undefined);
+        setEmailSent(true);
+      }
       invalidateChecklist();
-      setEmailSent(true);
       setEmailEditing(false);
+      setEmailPassword('');
+      await load();
+    } catch (error) {
+      setEmailError(apiErrorMessage(error));
+      setEmailErrorCode(apiErrorCode(error));
+    } finally {
+      setEmailSaving(false);
+    }
+  };
+
+  const verifyAccountEmail = async () => {
+    if (!account?.email) return;
+    setEmailError(null);
+    setEmailErrorCode(null);
+    setEmailSaving(true);
+    try {
+      await requestMyEmailVerification(account.email, account.hasPassword ? emailPassword : undefined);
+      setEmailSent(true);
       setEmailPassword('');
       await load();
     } catch (error) {
@@ -365,6 +397,14 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
           เข้ากับบัญชีนั้น ระบบจะเสนอให้รวมบัญชีให้เอง{' '}
           <Link className="underline" href="/login">ไปหน้าเข้าสู่ระบบ</Link>
         </>
+      ) : emailErrorCode === 'account_email_conflict' ? (
+        <>อีเมลนี้มีบัญชีอื่นใช้อยู่แล้วค่ะ กรุณาใช้อีเมลอื่น อีเมลบัญชีของคุณยังไม่เปลี่ยน</>
+      ) : emailErrorCode === 'account_email_changed' ? (
+        <>อีเมลบัญชีถูกเปลี่ยนจากอีกหน้าหรืออุปกรณ์แล้วค่ะ โหลดหน้านี้ใหม่ก่อนแก้อีกครั้ง</>
+      ) : emailErrorCode === 'account_email_verified' ? (
+        <>อีเมลบัญชีนี้ยืนยันแล้วค่ะ โหลดหน้านี้ใหม่เพื่อใช้ขั้นตอนเปลี่ยนอีเมลที่ยืนยันแล้ว</>
+      ) : emailErrorCode === 'invalid_email' ? (
+        <>รูปแบบอีเมลไม่ถูกต้องค่ะ เช่น somchai@gmail.com</>
       ) : emailError}
     </Banner>
   );
@@ -483,7 +523,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
           <div className="grid gap-4">
             {/* The read-only blocks need a caption; the two form modes get theirs from the box. */}
             {emailMode !== 'edit' && emailMode !== 'none' && (
-              <div className="text-sm font-medium text-gray-700">อีเมล</div>
+              <div className="text-sm font-medium text-gray-700">
+                {emailMode === 'unverified' ? 'อีเมลบัญชี' : 'อีเมล'}
+              </div>
             )}
 
             {/* §15.4.1 C: with no mailer there is nothing to offer, so nothing is offered. */}
@@ -508,6 +550,66 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                   <MangmeeBadge tone="lime">ยืนยันแล้ว</MangmeeBadge>
                 </p>
                 <button type="button" className={LINK_BUTTON} onClick={startEmailEdit}>เปลี่ยนอีเมล</button>
+              </>
+            )}
+
+            {emailMode === 'unverified' && (
+              <>
+                <p className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
+                  <span className="font-medium">{account?.email}</span>
+                  <MangmeeBadge tone="amber">ยังไม่ยืนยัน</MangmeeBadge>
+                </p>
+                <p className="text-sm text-gray-600">
+                  {account?.hasPassword
+                    ? 'ใช้อีเมลนี้คู่กับรหัสผ่านเพื่อเข้าเว็บได้ แต่อีเมลยังใช้กู้บัญชีไม่ได้จนกว่าจะยืนยัน'
+                    : 'อีเมลนี้ใช้เข้าเว็บได้หลังจากตั้งรหัสผ่านสำรองด้านล่าง'}
+                </p>
+                <button type="button" className={LINK_BUTTON} onClick={startEmailEdit}>แก้ไขอีเมลบัญชี</button>
+                {account && account.emailDeliveryEnabled !== false && (
+                  <div className="mt-1 grid gap-3 rounded-lg border border-gray-200 p-3">
+                    <p className="text-sm font-semibold text-gray-900">ยืนยันอีเมลเพื่อกู้บัญชี</p>
+                    {account.pendingEmail ? (
+                      <>
+                        <Banner tone={emailSent ? 'ok' : 'note'}>
+                          ส่งลิงก์ยืนยันไปที่ {account.pendingEmail} แล้ว รอการยืนยัน (ลิงก์มีอายุ 15 นาที)
+                          {' '}ถ้าไม่ได้รับอีเมล {SUPPORT_CONTACT}
+                        </Banner>
+                        {emailErrorBanner}
+                        <button
+                          type="button"
+                          className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto sm:justify-self-start"
+                          disabled={emailSaving}
+                          onClick={() => void resendEmail()}
+                        >
+                          {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์อีกครั้ง'}
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-gray-600">ระบบจะส่งลิงก์ยืนยันไปที่อีเมลบัญชีนี้</p>
+                        {account?.hasPassword && (
+                          <TextField
+                            label="รหัสผ่านปัจจุบันสำหรับยืนยันอีเมล"
+                            type="password"
+                            value={emailPassword}
+                            autoComplete="current-password"
+                            disabled={emailSaving}
+                            onChange={(event) => setEmailPassword(event.target.value)}
+                          />
+                        )}
+                        {emailErrorBanner}
+                        <button
+                          type="button"
+                          className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto sm:justify-self-start"
+                          disabled={emailSaving}
+                          onClick={() => void verifyAccountEmail()}
+                        >
+                          {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์ยืนยัน'}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
@@ -536,11 +638,15 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <>
                 <TextField
                   id={EMAIL_FIELD_ID}
-                  label="อีเมล"
+                  label={directEmailEdit ? 'อีเมลบัญชี' : 'อีเมล'}
+                  aria-label={directEmailEdit ? 'อีเมลบัญชี' : 'อีเมล'}
                   type="email"
+                  maxLength={254}
                   value={email}
                   disabled={emailSaving}
-                  hint="เราจะส่งลิงก์ยืนยันไปที่อีเมลนี้"
+                  hint={directEmailEdit
+                    ? 'ใช้คู่กับรหัสผ่านสำรองเพื่อเข้าเว็บได้ การบันทึกนี้ยังไม่ใช่การยืนยันอีเมล'
+                    : 'เราจะส่งลิงก์ยืนยันไปที่อีเมลนี้'}
                   onChange={(event) => setEmail(event.target.value)}
                 />
                 {account?.hasPassword && (
@@ -562,9 +668,11 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                     disabled={emailSaving}
                     onClick={() => void saveEmail()}
                   >
-                    {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์ยืนยันอีเมล'}
+                    {emailSaving
+                      ? directEmailEdit ? 'กำลังบันทึก...' : 'กำลังส่ง...'
+                      : directEmailEdit ? 'บันทึกอีเมลบัญชี' : 'ส่งลิงก์ยืนยันอีเมล'}
                   </button>
-                  {emailMode === 'edit' && (
+                  {emailEditing && account?.email && (
                     <button type="button" className={LINK_BUTTON} disabled={emailSaving} onClick={() => setEmailEditing(false)}>
                       ยกเลิก
                     </button>
@@ -630,6 +738,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                   // was to rename the login the account already has.
                   <p className="text-sm text-gray-600">
                     ชื่อผู้ใช้สำหรับเข้าจากคอมพิวเตอร์คือ <strong className="text-gray-900">{account.username}</strong>
+                  </p>
+                ) : account?.email ? (
+                  <p className="text-sm text-gray-600">
+                    หลังตั้งรหัสผ่านแล้ว ใช้อีเมล <strong className="text-gray-900">{account.email}</strong> เข้าเว็บได้
                   </p>
                 ) : null}
                 <TextField

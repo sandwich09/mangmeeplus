@@ -7,7 +7,9 @@ import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { DenyByDefaultGuard } from '../../../../common/security/deny-by-default.guard';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
-import { AuthController } from '../../presentation/auth.controller';
+import { AuthController, PasswordResetRequestDto, SetUnverifiedEmailDto } from '../../presentation/auth.controller';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { verifyPassword } from '../../domain/logic/password-credential.logic';
 import { AccountProfileUseCase } from './account-profile.use-case';
 import { PasswordLoginUseCase } from './password-login.use-case';
@@ -51,6 +53,7 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
     user && { ...user, credential: credentials.find((row) => row['userId'] === user['id']) ?? null };
 
   const client: any = {
+    $executeRaw: async () => 1,
     user: {
       findUnique: async ({ where }: any) => withCredential(users.find((row) => match(row, where))) ?? null,
       findFirst: async ({ where, include }: any) => {
@@ -126,6 +129,7 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
    */
   client.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
+    if (sql.includes('FOR UPDATE')) return [];
     assert.match(sql, /lower\("username"\) = /, `unmodelled raw query: ${sql}`);
     const [callerId, desired] = values as [string, string];
     return users
@@ -328,16 +332,30 @@ describe('AccountProfileUseCase — first password', () => {
     assert.equal(credentials.length, 0);
   });
 
-  // L5: an unverified address cannot receive a reset, so it is not a login identifier.
-  it('does not let an unverified email stand in for a username', async () => {
-    const { prisma, credentials } = makePrisma({
+  it('uses unverified email as a login identifier without fabricating mailbox verification', async () => {
+    const { prisma, credentials, users } = makePrisma({
       users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: null }],
     });
-    await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current'),
-      (error: unknown) => error instanceof BadRequestException && (error.getResponse() as Row)['code'] === 'username_required',
-    );
-    assert.equal(credentials.length, 0);
+    await new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
+    assert.equal(credentials.length, 1);
+    assert.equal(users[0]!.emailVerifiedAt, null);
+    assert.equal(users[0]!.username, null);
+  });
+});
+
+describe('owner email HTTP contract', () => {
+  it('normalizes valid email, requires expectedEmail and preserves long email reset identifiers', async () => {
+    const dto = plainToInstance(SetUnverifiedEmailDto, { newEmail: ' Owner@Example.test ', expectedEmail: null });
+    assert.deepEqual(await validate(dto), []);
+    assert.equal(dto.newEmail, 'owner@example.test');
+    for (const body of [{ newEmail: 'owner@example.test' }, { newEmail: 'bad', expectedEmail: null }]) {
+      assert.ok((await validate(plainToInstance(SetUnverifiedEmailDto, body))).length > 0);
+    }
+    assert.deepEqual(await validate(plainToInstance(PasswordResetRequestDto, { username: 'a'.repeat(254) })), []);
+    assert.ok((await validate(plainToInstance(PasswordResetRequestDto, { username: 'a'.repeat(255) }))).length > 0);
+    const handler = AuthController.prototype.setMyUnverifiedEmail;
+    assert.equal(Reflect.getMetadata(PATH_METADATA, handler), 'me/email/unverified');
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, handler), ['account.password.change']);
   });
 });
 

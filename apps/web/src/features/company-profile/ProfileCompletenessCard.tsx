@@ -31,6 +31,7 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   const items = useProfileChecklist(companyId);
 
   if (dismissed || !items || checklistIsComplete(items)) return null;
+  const incompleteItems = items.filter((item) => !item.done);
 
   const dismiss = () => {
     dismissChecklistFor(typeof window === 'undefined' ? undefined : window.localStorage, companyId);
@@ -38,13 +39,16 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
   };
 
   return (
-    <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-[var(--shadow-theme-sm)]">
-      <h2 className="text-[15px] font-bold text-amber-900">ยังกรอกไม่ครบอีกนิดเดียวค่ะ</h2>
+    <section
+      aria-labelledby="profile-completeness-title"
+      className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow-[var(--shadow-theme-sm)]"
+    >
+      <h2 id="profile-completeness-title" className="text-[15px] font-bold text-amber-900">ยังกรอกไม่ครบอีกนิดเดียวค่ะ</h2>
       <p className="mt-1 text-sm text-amber-800">
         ใช้งานได้ตามปกติอยู่แล้วนะคะ กรอกเพิ่มไว้เผื่อต้องออกเอกสารภาษี และเผื่อ LINE หลุด
       </p>
       <ul className="mt-3 grid gap-2">
-        {items.filter((item) => !item.done).map((item) => (
+        {incompleteItems.map((item) => (
           <li key={item.key}>
             <Link
               href={companyProfileHref(companyId, item.hash)}
@@ -56,13 +60,21 @@ export function ProfileCompletenessCard({ companyId }: { companyId: string }) {
           </li>
         ))}
       </ul>
-      <button
-        type="button"
-        onClick={dismiss}
-        className="mt-4 text-sm font-medium text-amber-800 underline underline-offset-4 hover:text-amber-900"
-      >
-        ไว้ก่อน
-      </button>
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-3">
+        <button
+          type="button"
+          onClick={dismiss}
+          className="mangmee-btn mangmee-btn-secondary !min-h-12 w-full !text-base !font-bold"
+        >
+          ไว้ก่อน
+        </button>
+        <Link
+          href={companyProfileHref(companyId, incompleteItems[0]!.hash)}
+          className="mangmee-btn mangmee-btn-primary !min-h-12 w-full !text-base !font-bold"
+        >
+          กรอกข้อมูลให้ครบ
+        </Link>
+      </div>
     </section>
   );
 }
