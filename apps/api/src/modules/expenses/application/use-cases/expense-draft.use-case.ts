@@ -1,5 +1,9 @@
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { applyExpenseSourceDraftInput, sourceDraftState, projectExpenseSourceDraft, sourceDraftFinancialLines, sourceDraftSummary, bindSourceDraftLines, assertExpenseSourceDraftComplete, EXPENSE_SOURCE_DRAFT_KEY, SOURCE_DRAFT_MUTABLE_STATUSES } from '../../domain/logic/expense-source-draft.logic';
+import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, nextLineExpenseDraftItemRef } from '../../domain/logic/line-expense-draft-conversation.logic';
+import { withPurposeNote } from '../../domain/logic/line-correction.logic';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { PrismaExpenseRepository, requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -176,7 +180,7 @@ export class GetExpenseUseCase {
     const canRead = hasPerm(ctx, 'expense.read') || hasPerm(ctx, 'expense.review') || hasPerm(ctx, 'expense.confirm');
     const canReadOwn = hasPerm(ctx, 'expense.read_own');
     const canReadRelated = hasPerm(ctx, 'expense.read_related');
-    const canReadCreated = hasPerm(ctx, 'expense.create');
+    const canReadCreated = hasPerm(ctx, 'expense.create') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.receipt.line_upload');
     if (!canRead && !canReadOwn && !canReadRelated && !canReadCreated) throw new ForbiddenException('Missing permission to read expenses');
     const r = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
@@ -190,6 +194,16 @@ export class GetExpenseUseCase {
       throw new ForbiddenException('Access denied');
     }
     return r;
+  }
+
+  async sourceDraft(ctx: RequestContext, expense: ExpenseRecordWithRelations) {
+    if (expense.captureSource !== 'LINE_UPLOAD') return null;
+    const state = sourceDraftState(expense, await this.repo.listCategories(ctx.companyId));
+    if (!state) return null;
+    const permitted = hasPerm(ctx, 'expense.review') || (expense.createdByUserId === ctx.userId
+      && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission)));
+    const active = permitted && await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
+    return projectExpenseSourceDraft(state, Boolean(active) && SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status));
   }
 }
 
@@ -241,6 +255,9 @@ export class UpdateExpenseDraftUseCase {
       };
       /** Written in the same transaction as the LINE continuation CAS and replacement lines. */
       transactionalAudit?: AuditLogEntry;
+      /** Validated web source payload; never exposed as an HTTP option. */
+      webSourceDraft?: boolean;
+      sourceExpense?: ExpenseRecordWithRelations;
     } = {},
   ): Promise<ExpenseRecord> {
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -250,12 +267,43 @@ export class UpdateExpenseDraftUseCase {
 
     const canReview = hasPerm(ctx, 'expense.review');
     const isOwner = r.createdByUserId === ctx.userId;
+    if (input.sourceDraft !== undefined) {
+      if (Object.keys(input).some((key) => !['expectedUpdatedAt', 'sourceDraft'].includes(key))) {
+        throw new BadRequestException('sourceDraft must be sent alone with expectedUpdatedAt.');
+      }
+      if (r.captureSource !== 'LINE_UPLOAD' || !SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
+        || (!canReview && !(isOwner && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission))))
+        || !await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, r.branchId)) {
+        throw new ForbiddenException('Source draft editing requires an active originating uploader or reviewer.');
+      }
+      if (!input.expectedUpdatedAt) throw new BadRequestException({ code: 'EXPENSE_UPDATE_VERSION_REQUIRED', message: 'expectedUpdatedAt is required.' });
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {});
+      if (!expense) throw new NotFoundException();
+      const categories = await this.repo.listCategories(ctx.companyId);
+      const initial = sourceDraftState(expense, categories);
+      if (!initial) throw new BadRequestException('Source draft cannot be read safely.');
+      const changed = applyExpenseSourceDraftInput(initial, input.sourceDraft, categories);
+      changed.state = bindSourceDraftLines(changed.state, expense);
+      changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
+      const lines = sourceDraftFinancialLines(changed.state, expense, changed.acceptedFields, categories);
+      const nextUpdatedAt = new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1));
+      changed.state.targetRevision = nextUpdatedAt.toISOString();
+      const source = input.sourceDraft;
+      const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '') : undefined;
+      options = { ...options, requireExpectedUpdatedAt: true, webSourceDraft: true, sourceExpense: expense,
+        lineDraftCollection: { nextUpdatedAt, sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: changed.state },
+          aiVerificationSummaryJson: sourceDraftSummary(expense.aiVerificationSummaryJson, changed.state) } };
+      input = { expectedUpdatedAt: input.expectedUpdatedAt,
+        ...(source.expenseDate !== undefined && changed.state.header.expenseDate ? { expenseDate: changed.state.header.expenseDate } : {}),
+        ...(source.vendorName !== undefined ? { vendorNameSnapshot: changed.state.header.vendorName ?? '' } : {}),
+        ...(note !== undefined ? { note } : {}), ...(lines ? { lines } : {}) };
+    }
     const canCollectOwnLineDraft = Boolean(options.lineDraftCollection)
-      && ctx.authProvider === 'line'
+      && (ctx.authProvider === 'line' || options.webSourceDraft)
       && r.captureSource === 'LINE_UPLOAD'
-      && r.status === 'DRAFT'
-      && isOwner
-      && (hasPerm(ctx, 'expense.receipt.line_upload') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.create'));
+      && SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
+      && (isOwner || (options.webSourceDraft && canReview))
+      && ((options.webSourceDraft && canReview) || hasPerm(ctx, 'expense.receipt.line_upload') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.create'));
     if (options.lineDraftCollection && !canCollectOwnLineDraft) {
       throw new ForbiddenException('LINE draft collection is limited to the originating user and chat-authorized expense capability.');
     }
@@ -293,7 +341,40 @@ export class UpdateExpenseDraftUseCase {
       throw new BadRequestException({ code: 'EXPENSE_UPDATE_VERSION_INVALID', message: 'expectedUpdatedAt must be a valid timestamp.' });
     }
 
-    const lines = input.lines;
+    // A receipt can reach the web without a LINE continuation (OCR failure or collection off).
+    // Preserve that same source projection through review, and reopen incomplete legacy READY
+    // records so the existing source form provides the correction path.
+    const reviewSourceExpense = !canCollectOwnLineDraft && canReview && r.captureSource === 'LINE_UPLOAD'
+      && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
+      ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {}) : undefined;
+    const reviewSourceState = reviewSourceExpense ? sourceDraftState(reviewSourceExpense, await this.repo.listCategories(ctx.companyId)) : null;
+    const hasSourceDraft = Boolean(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY] || reviewSourceState);
+    const persistedSourceState = parseLineExpenseDraftContinuation(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]);
+    const reopenSourceReview = !canCollectOwnLineDraft && canReview && r.status === 'READY_FOR_CONFIRMATION'
+      && (reviewSourceState ? reviewSourceState.unresolvedQuestions.length > 0
+        : hasSourceDraft && (!persistedSourceState || collectLineExpenseDraftQuestions(persistedSourceState, []).length > 0));
+    let lines = input.lines;
+    const identityMode = Boolean(lines && (lines.some((line) => line.id !== undefined)
+      || (!canCollectOwnLineDraft && canReview && hasSourceDraft)));
+    const identityExpense = identityMode ? reviewSourceExpense ?? await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {}) : undefined;
+    if (identityMode && !identityExpense) throw new NotFoundException();
+    if (identityMode && lines) {
+      const used = new Set<string>();
+      lines = lines.map((line) => {
+        let id = line.id;
+        if (id !== undefined && (typeof id !== 'string' || !identityExpense!.lines.some((stored) => stored.id === id))) {
+          throw new BadRequestException('Expense line identity is outside this draft.');
+        }
+        if (!id) {
+          const matches = identityExpense!.lines.filter((stored) => stored.description === line.description && !used.has(stored.id));
+          if (matches.length > 1) throw new BadRequestException('Ambiguous expense row. Reload the draft to retain its row identity.');
+          if (matches.length === 1) id = matches[0]!.id;
+        }
+        if (id && used.has(id)) throw new BadRequestException('Repeated expense line identity.');
+        if (id) used.add(id);
+        return { ...line, ...(id ? { id } : {}) };
+      });
+    }
     const whtInputError = validateExpenseWhtInput(input.whtInput);
     if (whtInputError) throw new BadRequestException(whtInputError);
     const whtInput = input.whtInput ?? r.whtInputJson;
@@ -372,10 +453,27 @@ export class UpdateExpenseDraftUseCase {
       if (vatTreatmentError) throw new BadRequestException(vatTreatmentError);
       totals = vat.totals;
       vatCaptureSnapshotJson = vat.snapshot;
+      const preservedSourceLines = new Set<number>();
       const prepared = withChargeKinds.map((l, i) => {
         const reconciled = vat.lines[i]!;
         const t = reconciled.totals;
+        const sourceLineId = canCollectOwnLineDraft ? (l as typeof l & { sourceLineId?: string }).sourceLineId : l.id;
+        const stored = sourceLineId ? (canCollectOwnLineDraft ? options.sourceExpense : identityExpense)?.lines.find((line) => line.id === sourceLineId) : undefined;
+        if (sourceLineId && !stored) throw new BadRequestException('Source line identity changed; reload before editing.');
+        const unchangedMoney = stored && ['quantity', 'unitPrice', 'discountAmount', 'vatRate', 'whtRate'].every((key) => {
+          const a = (stored as unknown as Record<string, unknown>)[key];
+          const b = (l as unknown as Record<string, unknown>)[key];
+          return a == null && b == null || a != null && b != null && new Decimal(String(a)).eq(String(b));
+        });
+        if (canCollectOwnLineDraft && stored && unchangedMoney) {
+          preservedSourceLines.add(i);
+          return { ...stored, expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
+            expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null,
+            taxSnapshot: stored.taxSnapshot ?? undefined, taxComponents: stored.taxComponents ?? undefined,
+            preserveLineId: stored.id, sourceLineId: stored.id };
+        }
         return {
+          ...(stored ? { sourceLineText: stored.sourceLineText, aiLineConfidence: stored.aiLineConfidence, reviewStatus: stored.reviewStatus, preserveLineId: stored.id, sourceLineId: stored.id } : {}),
           expenseId, companyId: ctx.companyId, lineNumber: l.lineNumber, description: l.description,
           chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice, discountAmount: t.discountAmount,
           taxableAmount: t.taxableAmount, vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
@@ -385,18 +483,25 @@ export class UpdateExpenseDraftUseCase {
           ...taxSelection(l),
         };
       });
-      resolvedLines = await this.transactionTax.resolveLines(ctx, {
-        expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
-        expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency,
-      }, prepared, 'DRAFT', options.db);
+      const taxHeader = { expenseId, branchId: input.branchId ?? r.branchId ?? undefined,
+        expenseDate: input.expenseDate ?? r.expenseDate.toISOString(), currency: r.currency };
+      if (canCollectOwnLineDraft) {
+        resolvedLines = await Promise.all(prepared.map(async (line, index) => preservedSourceLines.has(index)
+          ? line : (await this.transactionTax.resolveLines(ctx, taxHeader, [line], 'DRAFT', options.db))[0]!));
+        if (preservedSourceLines.size === prepared.length && prepared.length === options.sourceExpense?.lines.length) {
+          totals = { subtotalAmount: r.subtotalAmount, discountAmount: r.discountAmount, taxableAmount: r.taxableAmount,
+            vatAmount: r.vatAmount, whtAmount: r.whtAmount, grandTotalAmount: r.grandTotalAmount, netPayableAmount: r.netPayableAmount };
+          vatCaptureSnapshotJson = undefined;
+        }
+      } else resolvedLines = await this.transactionTax.resolveLines(ctx, taxHeader, prepared, 'DRAFT', options.db);
       assertExpenseTotalsIdentity(vatMode, resolvedLines, totals);
     } else if (input.vatSource !== undefined || input.whtInput !== undefined
       || (whtInput && input.vatMode !== undefined && input.vatMode !== r.vatMode)) {
       throw new BadRequestException('lines are required when updating vatSource or whtInput.');
     }
 
-    const reviewedAt = canReview ? new Date() : undefined;
-    const reviewedByUserId = canReview ? ctx.userId : undefined;
+    const reviewedAt = canReview && !options.lineDraftCollection ? new Date() : undefined;
+    const reviewedByUserId = canReview && !options.lineDraftCollection ? ctx.userId : undefined;
     const classificationOverrideRequest = input.nonExpenseClassificationOverride;
     if (classificationOverrideRequest && !canReview) {
       throw new ForbiddenException('Missing permission: expense.review for non-expense classification override');
@@ -473,7 +578,9 @@ export class UpdateExpenseDraftUseCase {
     if (input.expenseDate) resolvedMissingFields.add('expenseDate');
     if (totals) {
       resolvedMissingFields.add('vatAmount');
-      if (Number(totals.grandTotalAmount) > 0) { resolvedMissingFields.add('grandTotalAmount'); resolvedMissingFields.add('amount'); }
+      if (new Decimal(totals.grandTotalAmount).gt(0) || (options.lineDraftCollection && lines?.length)) {
+        resolvedMissingFields.add('grandTotalAmount'); resolvedMissingFields.add('amount');
+      }
     }
     if (lines?.some((line) => line.expenseCategoryId) || input.expenseCategoryId) resolvedMissingFields.add('category');
     const nextMissingFields = priorMissingFields.filter((field) => !resolvedMissingFields.has(field));
@@ -509,13 +616,23 @@ export class UpdateExpenseDraftUseCase {
       nextSummaryJson = { ...(nextSummaryJson ?? r.aiVerificationSummaryJson), missingFields: nextMissingFields };
     }
 
+    if (options.lineDraftCollection) {
+      const summary = options.lineDraftCollection.aiVerificationSummaryJson;
+      if (Array.isArray(summary['missingFields'])) summary['missingFields'] = summary['missingFields'].filter((field) =>
+        typeof field === 'string' && !resolvedMissingFields.has(field));
+      const state = options.lineDraftCollection.sourceChannelMetadataJson[EXPENSE_SOURCE_DRAFT_KEY] as Record<string, unknown>;
+      state['materializedHeader'] = { expenseDate: input.expenseDate ?? r.expenseDate?.toISOString().slice(0, 10) ?? null,
+        vendorName: input.vendorNameSnapshot ?? r.vendorNameSnapshot,
+        businessPurpose: (input.note ?? r.note)?.split(' · ').find((part) => part.startsWith('วัตถุประสงค์: '))?.slice('วัตถุประสงค์: '.length).trim() || null };
+    }
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+      ...(reopenSourceReview && { status: 'NEEDS_REVIEW' }),
       ...(expectedUpdatedAt && { expectedUpdatedAt }),
       ...(input.branchId !== undefined && { branchId: input.branchId }),
       ...(input.expenseDate && { expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)) }),
       ...(input.vatMode && { vatMode: input.vatMode }),
-      ...((disallowsTaxCode || input.inputVatClaimStatus) && { inputVatClaimStatus: disallowsTaxCode ? 'NON_CLAIMABLE' : input.inputVatClaimStatus }),
+      ...((!options.lineDraftCollection && (disallowsTaxCode || input.inputVatClaimStatus)) && { inputVatClaimStatus: disallowsTaxCode ? 'NON_CLAIMABLE' : input.inputVatClaimStatus }),
       ...(input.vendorCounterpartyId !== undefined && { vendorCounterpartyId: input.vendorCounterpartyId }),
       ...(input.vendorNameSnapshot !== undefined && { vendorNameSnapshot: input.vendorNameSnapshot }),
       ...(input.vendorTaxIdSnapshot !== undefined && { vendorTaxIdSnapshot: input.vendorTaxIdSnapshot }),
@@ -551,9 +668,58 @@ export class UpdateExpenseDraftUseCase {
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
       ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
-    }, resolvedLines || options.transactionalAudit
+    }, resolvedLines || options.transactionalAudit || hasSourceDraft
       ? async (tx) => {
-        if (resolvedLines) await this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines, tx);
+        if (resolvedLines) {
+          await this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines, tx, canCollectOwnLineDraft || identityMode);
+          if (options.lineDraftCollection) {
+            const saved = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, tx, ctx.scopes ?? {});
+            if (!saved) throw new NotFoundException();
+            const metadata = options.lineDraftCollection.sourceChannelMetadataJson;
+            const state = metadata[EXPENSE_SOURCE_DRAFT_KEY] as import('../../domain/logic/line-expense-draft-conversation.logic').LineExpenseDraftContinuation;
+            const bound = bindSourceDraftLines(state, saved);
+            await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+              sourceChannelMetadataJson: { ...metadata, [EXPENSE_SOURCE_DRAFT_KEY]: bound }, updatedAt: options.lineDraftCollection.nextUpdatedAt }, undefined, tx);
+          }
+        }
+        if (!options.lineDraftCollection && hasSourceDraft) {
+          const saved = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, tx, ctx.scopes ?? {});
+          if (!saved) throw new NotFoundException();
+          const categories = await this.repo.listCategories(ctx.companyId);
+          let state = sourceDraftState(reviewSourceState
+            ? { ...saved, sourceChannelMetadataJson: { ...saved.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: reviewSourceState } } : saved, categories);
+          if (!state) throw new BadRequestException('Source draft cannot be read safely.');
+          if (input.expenseDate) state.header.expenseDate = input.expenseDate;
+          if (canReview && identityMode && lines) {
+            // A reviewer explicitly replaced the financial row set. Only its proven bound source
+            // items may disappear; unresolved source items without a line id remain staged.
+            const prior = reviewSourceState ?? parseLineExpenseDraftContinuation(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]);
+            if (!prior) throw new BadRequestException('Source draft cannot be read safely.');
+            const deleted = new Set(prior.items.filter((item) => item.lineId && !saved.lines.some((line) => line.id === item.lineId)).map((item) => item.itemRef));
+            state.items = state.items.filter((item) => !deleted.has(item.itemRef));
+            for (const item of state.items.filter((item) => !item.lineId)) {
+              const matches = saved.lines.filter((line) => !line.chargeKind && line.description === item.description);
+              if (matches.length !== 1) continue;
+              const line = matches[0]!;
+              // The full review explicitly supplies these facts, including correcting a summary
+              // row whose OCR quantity/price were missing. Unmatched source items stay staged.
+              item.lineId = line.id; item.quantity = line.quantity; item.unitPrice = line.unitPrice;
+              delete item.totalAmount;
+              if (line.expenseCategoryId) item.expenseCategoryId = line.expenseCategoryId;
+            }
+            for (const line of saved.lines.filter((line) => !line.chargeKind)) {
+              if (state.items.some((item) => item.lineId === line.id || (!item.lineId && item.description === line.description))) continue;
+              state.items.push({ itemRef: nextLineExpenseDraftItemRef(state.items), sourceText: line.description.slice(0, 200),
+                lineId: line.id, description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
+                ...(line.expenseCategoryId ? { expenseCategoryId: line.expenseCategoryId } : {}) });
+            }
+            state = bindSourceDraftLines(state, saved);
+          }
+          state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);
+          await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+            sourceChannelMetadataJson: { ...saved.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: state },
+            aiVerificationSummaryJson: sourceDraftSummary(saved.aiVerificationSummaryJson, state), updatedAt: saved.updatedAt }, undefined, tx);
+        }
         if (options.transactionalAudit) await this.audit.log(options.transactionalAudit, tx);
       }
       : undefined, options.db);
@@ -701,6 +867,7 @@ export class ConfirmExpenseUseCase {
       assertBranchInScope(ctx, r.branchId);
     }
     requireExpenseBranchId(r.branchId);
+    assertExpenseSourceDraftComplete(r.sourceChannelMetadataJson, r);
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
       throw new BadRequestException(NON_EXPENSE_CLASSIFICATION_REVIEW_REQUIRED);
     }
@@ -1191,9 +1358,14 @@ export class MarkExpenseReadyUseCase {
     // Same endpoint serves the web "เริ่มตรวจใหม่" action on a rejected record: reopening puts it back
     // in NEEDS_REVIEW to be corrected and re-submitted, never straight into the confirmable state.
     const target = r.status === 'REJECTED' ? 'NEEDS_REVIEW' : 'READY_FOR_CONFIRMATION';
+    if (target === 'READY_FOR_CONFIRMATION') {
+      const source = r.captureSource === 'LINE_UPLOAD' && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
+        ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId) : undefined;
+      assertExpenseSourceDraftComplete(r.sourceChannelMetadataJson, source ?? undefined);
+    }
     const err = validateStatusTransition(r.status, target);
     if (err) throw new BadRequestException(err);
-    return this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: target });
+    return this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId, status: target, expectedUpdatedAt: r.updatedAt });
   }
 }
 

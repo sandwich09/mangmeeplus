@@ -248,6 +248,7 @@ function makePrisma(opts: {
   const termExpiredRows = termExpiredMemberships.map((row) => ({ roles: [{ role: { key: 'OWNER' } }], ...row }));
   const turnOutcomeWrites: any[] = [];
   const turnOutcomeUpdates: any[] = [];
+  const outcomeStore = new Map<string, any>();
   const identityQueries: any[] = [];
   const createdLogs: unknown[] = [];
   const updates: unknown[] = [];
@@ -299,9 +300,18 @@ function makePrisma(opts: {
           if (turnOutcomeFailAfter !== undefined && turnOutcomeWrites.length > turnOutcomeFailAfter) {
             throw new Error('outcome store unavailable');
           }
-          return args;
+          const row = outcomeStore.get(args.where.webhookEventId) ?? { ...args.create, deliveredAt: null };
+          outcomeStore.set(args.where.webhookEventId, row);
+          return row;
         },
-        updateMany: async (args: any) => { turnOutcomeUpdates.push(args); return { count: 1 }; },
+        findUnique: async ({ where }: any) => outcomeStore.get(where.webhookEventId) ?? null,
+        updateMany: async (args: any) => {
+          turnOutcomeUpdates.push(args);
+          if (args.data.messagesJson && turnOutcomeFailAfter !== undefined) throw new Error('outcome store unavailable');
+          const row = outcomeStore.get(args.where.webhookEventId);
+          if (row) Object.assign(row, args.data);
+          return { count: 1 };
+        },
       },
       externalIdentity: {
         findFirst: async (args: any) => {
@@ -386,7 +396,7 @@ function makePrisma(opts: {
   } as any;
   return {
     prisma, createdLogs, updates, upserts, aiTurns, aiTurnUpdates, toolInvocations, markerWrites,
-    branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates,
+    branchFindManyCalls, identityQueries, turnOutcomeWrites, turnOutcomeUpdates, outcomeStore,
     quotaNoticeSentMonthKey: () => quotaNoticeSentMonthKey,
   };
 }
@@ -4766,17 +4776,17 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
   });
 
   it('records the fallback shape on the outcome row so a later replay sends the text, not the card', async () => {
-    const { run, turnOutcomeWrites } = makeDeliveryRun({
+    const { run, turnOutcomeWrites, turnOutcomeUpdates } = makeDeliveryRun({
       config: { lineAiFlexTextFallbackEnabled: true, lineAiTerminalOutcomeReplayEnabled: true },
       replyResults: ['failed_flex', 'ok'],
     });
     await run();
-    assert.equal(turnOutcomeWrites.length, 2, 'the re-render supersedes the payload of record');
+    assert.equal(turnOutcomeWrites.length, 1, 'initial payload is immutable to ordinary fallbacks');
     assert.equal(turnOutcomeWrites[0]!.create.presentationKind, 'flex');
-    assert.equal(turnOutcomeWrites[1]!.create.presentationKind, 'text_fallback');
-    assert.equal(turnOutcomeWrites[1]!.create.messagesJson[0].type, 'text');
-    // A different payload cannot inherit the previous one's delivery.
-    assert.equal(turnOutcomeWrites[1]!.update.deliveredAt, null);
+    assert.equal(turnOutcomeUpdates[0]!.data.presentationKind, 'text_fallback');
+    assert.equal(turnOutcomeUpdates[0]!.data.messagesJson[0].type, 'text');
+    assert.equal(turnOutcomeUpdates[0]!.where.deliveredAt, null);
+    assert.deepEqual(turnOutcomeUpdates[0]!.where.messagesJson.equals, turnOutcomeWrites[0]!.create.messagesJson);
   });
 
   it('FAILS CLOSED on the fallback too: an unrecordable replacement outcome is never sent', async () => {
@@ -4790,12 +4800,12 @@ describe('ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, d
     });
     await run();
 
-    assert.equal(turnOutcomeWrites.length, 2, 'the replacement upsert was attempted');
+    assert.equal(turnOutcomeWrites.length, 1, 'replacement uses conditional update');
     assert.equal(replyCalls.length, 1, 'the fallback text is NOT sent when its outcome is not durable');
     assert.equal(pushCalls.length, 0, 'and the rejected Flex is not pushed either');
     const pending = updates.map((update: any) => update.data).find((data: any) => data.status === 'delivery_pending');
     assert.ok(pending, 'the turn still owes the user an answer');
-    assert.equal(pending.errorCode, 'LINE_OUTCOME_NOT_RECORDED');
+    assert.equal(pending.errorCode, 'LINE_OUTCOME_REPRESENTATION_PENDING');
   });
 
   it('never retries a failure that is not a rejected Flex body', async () => {
@@ -5189,4 +5199,190 @@ describe('ProcessLineWebhookUseCase – expense draft card on the capture termin
 // Regression guard: passing a bare BASE_EVENT to execute() silently poisoned every later spread.
 it('keeps the shared event literals frozen so execute() cannot mutate them', () => {
   assert.ok(Object.isFrozen(BASE_EVENT) && Object.isFrozen(STATE_EVENT));
+});
+
+describe('receipt reliability: saved facts, notification and provider-input continuity', () => {
+  function receiptHarness(options: { replay?: boolean; draft?: boolean; applyFails?: boolean; sendFails?: boolean; completeFailsAfterCommit?: boolean } = {}) {
+    const base = makePrisma();
+    let expense: any = null;
+    let downloads = 0;
+    let uploads = 0;
+    let initialized = 0;
+    let completed = 0;
+    let applied = 0;
+    let routed = 0;
+    let ocrReads = 0;
+    let draftStarts = 0;
+    let sendFails = options.sendFails ?? false;
+    const sends: any[][] = [];
+    const logs: unknown[] = [];
+    const eventStore = new Map<string, any>();
+    base.prisma.client.lineWebhookEventLog = {
+      findUnique: async ({ where, select }: any) => select?.companyId ? { companyId: 'company-1' } : eventStore.get(where.webhookEventId) ?? null,
+      findFirst: async () => null,
+      create: async ({ data }: any) => { eventStore.set(data.webhookEventId, { ...data }); return data; },
+      updateMany: async ({ where, data }: any) => {
+        const row = eventStore.get(where.webhookEventId);
+        if (!row || (typeof where.status === 'string' && row.status !== where.status)
+          || (where.status?.not && row.status === where.status.not)) return { count: 0 };
+        Object.assign(row, Object.fromEntries(Object.entries(data).filter(([, value]) => value !== undefined)));
+        return { count: 1 };
+      },
+    };
+    base.prisma.client.expenseRecord.update = async ({ data }: any) => { Object.assign(expense, data); return { ...expense }; };
+    const run = makeUseCase(base.prisma, {
+      permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create', 'attachment.create'],
+      config: { lineAiTerminalOutcomeReplayEnabled: options.replay ?? false, lineExpenseDraftConversationEnabled: options.draft ?? false },
+      intakeRouteFn: async () => { routed += 1; return ROUTED_EXPENSE_DOCUMENT; },
+      receiptOcrFn: async () => { ocrReads += 1; return { status: 'ok', classification: receiptClassification('120.00'), fields: { grandTotalAmount: '120.00' } }; },
+      initReceiptUpload: { execute: async (_ctx: any, cmd: any) => {
+        initialized += 1;
+        assert.equal(typeof cmd.lineCapture.lineMessageId, 'string');
+        expense = { id: 'saved-expense', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1',
+          lineMessageId: cmd.lineCapture.lineMessageId, captureSource: 'LINE_UPLOAD', sourceDocumentType: 'NEEDS_REVIEW',
+          status: 'DRAFT', expenseDate: new Date('2026-09-07'), updatedAt: new Date('2026-09-07T08:00:00Z'),
+          note: null, vendorNameSnapshot: null, reviewedAt: null, primaryAttachmentId: null,
+          sourceChannelMetadataJson: { chatKeyHash: cmd.lineCapture.chatKeyHash }, grandTotalAmount: '0' };
+        return { expenseId: expense.id, attachmentId: 'original-attachment' };
+      } },
+      completeReceiptUpload: { execute: async () => { completed += 1; expense.primaryAttachmentId = 'original-attachment'; if (options.completeFailsAfterCommit) throw new Error('post-commit duplicate check unavailable'); return { ...expense }; } },
+      receiptOcrApply: { apply: async () => {
+        applied += 1;
+        if (options.applyFails) throw Object.assign(new Error('Invalid Prisma input raw-receipt-secret unitPrice NaN'), { code: 'P2009' });
+        expense.grandTotalAmount = '120.0000';
+        return { candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', charges: [] };
+      } },
+      expenseRepo: {
+        findByLineMessageId: async (_companyId: string, messageId: string) => expense?.lineMessageId === messageId ? { ...expense } : null,
+        findById: async () => expense ? { ...expense } : null,
+        findByIdWithRelations: async () => expense ? { ...expense, lines: [], attachments: [] } : null,
+        listCategories: async () => [],
+        findExpenseIdsByAttachmentChecksum: async (_company: string, _exclude: string, checksum: string) => expense && checksum === 'same-bytes' ? [expense.id] : [],
+      },
+      expenseDraftConversation: { startFromReceipt: async () => {
+        draftStarts += 1;
+        return { handled: true, status: 'UPDATED', expenseId: expense.id, replyTexts: ['เก็บร่างแล้ว ยังไม่ยืนยันรายการ\nกรุณาเติมวัตถุประสงค์และหมวดหมู่'] };
+      } },
+      sendReplyFn: async (_token: string, messages: any[]) => { sends.push(messages); return sendFails ? 'failed_other' : 'ok'; },
+    });
+    (run.useCase as any).logger = { log: (entry: unknown) => logs.push(entry), warn: (entry: unknown) => logs.push(entry), error: (entry: unknown) => logs.push(entry) };
+    (run.useCase as any).downloadLineMedia = async () => {
+      downloads += 1;
+      return { fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        checksumSha256: 'same-bytes', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES };
+    };
+    (run.useCase as any).uploadLineMedia = async () => { uploads += 1; };
+    const event = (id = 'receipt-event', messageId = 'receipt-message') => ({
+      webhookEventId: id, lineMessageId: messageId, lineUserId: 'line-user-secret', replyToken: `reply-${id}`,
+      messageType: 'image' as const, messagingChannelId: 'msg-channel-1',
+    });
+    return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
+      allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
+  }
+
+  it('delivery failure after commit preserves the one saved receipt with both runtime flags enabled and disabled', async () => {
+    for (const replay of [false, true]) for (const draft of [false, true]) {
+      const h = receiptHarness({ replay, draft, sendFails: true });
+      await h.useCase.executeReceiptUpload(h.event());
+      assert.equal(h.expense().grandTotalAmount, '120.0000');
+      assert.equal(h.expense().primaryAttachmentId, 'original-attachment');
+      assert.equal(h.counts().initialized, 1);
+      assert.equal(h.counts().applied, 1);
+      assert.equal(h.sends.length, 1, 'no generic error or extra fallback after the saved answer fails delivery');
+      assert.doesNotMatch(JSON.stringify(h.sends), /ประมวลผลรูปนี้ไม่สำเร็จ|ส่งรูปเดิมอีกครั้ง/);
+      assert.equal(h.eventStore.get('receipt-event').status, 'delivery_pending');
+      assert.equal(h.eventStore.get('receipt-event').errorCode, 'LINE_DELIVERY_FAILED_OTHER');
+      if (replay) assert.deepEqual(h.outcomeStore.get('receipt-event').messagesJson, h.sends[0]);
+      else assert.equal(h.outcomeStore.size, 0, 'default-off remains default-off');
+    }
+  });
+
+  it('a catch fallback cannot replace or re-send an already accepted terminal result', async () => {
+    const h = receiptHarness({ replay: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    const saved = structuredClone(h.outcomeStore.get('receipt-event').messagesJson);
+    await (h.useCase as any).deliverReply(h.event(), 'ระบบล้ม กรุณาส่งรูปใหม่');
+    assert.deepEqual(h.outcomeStore.get('receipt-event').messagesJson, saved);
+    assert.equal(h.sends.length, 1, 'API acceptance closes this logical notification');
+  });
+
+  it('replays a pending saved payload after restart without OCR, draft writes, or a new admission', async () => {
+    const h = receiptHarness({ replay: true, draft: true, sendFails: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    const counts = h.counts();
+    const stored = structuredClone(h.outcomeStore.get('receipt-event').messagesJson);
+    // Process died after result storage, before event terminal bookkeeping; the input is orphaned.
+    Object.assign(h.eventStore.get('receipt-event'), { status: 'received', processedAt: null });
+    h.allowSend();
+    await h.useCase.executeReceiptUpload(h.event());
+    assert.deepEqual(h.counts(), counts);
+    assert.deepEqual(h.sends[1], stored);
+    assert.equal(h.eventStore.get('receipt-event').status, 'completed');
+  });
+
+  it('new webhook identity for the same provider message recovers the saved capture before download or routing', async () => {
+    const h = receiptHarness({ sendFails: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    h.allowSend();
+    await h.useCase.executeReceiptUpload(h.event('redelivery-event'));
+    assert.deepEqual(h.counts(), { downloads: 1, uploads: 1, initialized: 1, completed: 1, applied: 1, routed: 1, ocrReads: 1, draftStarts: 0 });
+    assert.match(JSON.stringify(h.sends[1]), /saved-expense/);
+    assert.equal(h.eventStore.get('redelivery-event').status, 'completed');
+  });
+
+  it('a new message containing exact saved bytes opens the same scoped capture before a new OCR admission', async () => {
+    const h = receiptHarness();
+    await h.useCase.executeReceiptUpload(h.event());
+    await h.useCase.executeReceiptUpload(h.event('new-image-event', 'new-message-id'));
+    assert.equal(h.counts().downloads, 2, 'new media identity must verify its bytes');
+    assert.equal(h.counts().routed, 1);
+    assert.equal(h.counts().ocrReads, 1);
+    assert.equal(h.counts().initialized, 1);
+    assert.match(JSON.stringify(h.sends[1]), /รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
+  });
+
+  it('retains usable OCR source and same image when applying financial rows fails, without leaking raw Prisma inputs', async () => {
+    const h = receiptHarness({ applyFails: true, replay: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    assert.equal(h.expense().primaryAttachmentId, 'original-attachment');
+    assert.equal(h.expense().aiVerificationSummaryJson.recognizedFields.grandTotalAmount, '120.00');
+    assert.match(JSON.stringify(h.sends), /เก็บรูปและร่างแล้ว/);
+    assert.match(JSON.stringify(h.sends), /saved-expense/);
+    assert.match(JSON.stringify(h.sends), /ข้อมูลที่ยังต้องตอบทั้งหมด/);
+    assert.match(JSON.stringify(h.sends), /D-DATE|D-VENDOR/);
+    assert.match(JSON.stringify(h.sends), /D-PURPOSE/);
+    assert.match(JSON.stringify(h.sends), /D-ITEMS/);
+    assert.doesNotMatch(JSON.stringify(h.sends), /ส่งรูปเดิมอีกครั้ง/);
+    assert.doesNotMatch(JSON.stringify(h.logs), /raw-receipt-secret|unitPrice NaN/);
+    assert.match(JSON.stringify(h.logs), /receipt_ocr_apply|P2009/);
+    await h.useCase.executeReceiptUpload(h.event('retry-after-apply-failure'));
+    assert.equal(h.counts().applied, 1);
+    assert.equal(h.counts().ocrReads, 1);
+  });
+  it('re-reads the durable primary when upload completion fails after committing it', async () => {
+    const h = receiptHarness({ completeFailsAfterCommit: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    assert.equal(h.expense().primaryAttachmentId, 'original-attachment');
+    assert.equal(h.counts().applied, 0);
+    assert.match(JSON.stringify(h.sends), /เก็บรูปและร่างแล้ว/);
+    assert.doesNotMatch(JSON.stringify(h.sends), /ส่งรูปเดิมอีกครั้ง/);
+  });
+
+  it('names an existing finalized record truthfully and never promises a saved image without a primary', async () => {
+    const finalized = receiptHarness({ draft: true });
+    await finalized.useCase.executeReceiptUpload(finalized.event());
+    finalized.expense().status = 'CONFIRMED';
+    await finalized.useCase.executeReceiptUpload(finalized.event('confirmed-retry'));
+    assert.match(JSON.stringify(finalized.sends[1]), /สถานะปัจจุบัน/);
+    assert.doesNotMatch(JSON.stringify(finalized.sends[1]), /ยังไม่ยืนยัน|ร่างค่าใช้จ่าย/);
+    assert.equal(finalized.counts().draftStarts, 1);
+    const missing = receiptHarness({ draft: true });
+    await missing.useCase.executeReceiptUpload(missing.event());
+    missing.expense().primaryAttachmentId = null;
+    await missing.useCase.executeReceiptUpload(missing.event('missing-primary-retry'));
+    assert.match(JSON.stringify(missing.sends[1]), /ยังไม่มีรูปแนบ/);
+    assert.doesNotMatch(JSON.stringify(missing.sends[1]), /เก็บรูปและร่างแล้ว/);
+    assert.equal(missing.counts().draftStarts, 1);
+  });
+
 });

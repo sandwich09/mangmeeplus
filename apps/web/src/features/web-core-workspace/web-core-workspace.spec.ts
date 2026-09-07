@@ -559,6 +559,7 @@ describe('buildNavItems', () => {
       'expense.read',
       'expense.read_own',
       'expense.receipt.upload',
+      'expense.receipt.line_upload',
       'expense.create',
       'expense.category.manage',
       'expense.signature.self_manage',
@@ -631,6 +632,13 @@ describe('canAccessWorkspacePath', () => {
 
   it('allows a protected module URL with its read permission', () => {
     assert.equal(canAccessWorkspacePath(WORKSPACE_MODULES, ['accounting.document.read'], 'abc', '/companies/abc/sales-documents'), true);
+  });
+
+  it('lets a LINE receipt uploader return to an owned expense draft from its deep link', () => {
+    assert.equal(
+      canAccessWorkspacePath(WORKSPACE_MODULES, ['expense.receipt.line_upload'], 'abc', '/companies/abc/expenses/expense-1'),
+      true,
+    );
   });
 
   it('lets an income creator reach the dedicated mutation page without broad document read', () => {

@@ -135,6 +135,28 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.ok(outcome.reviewReasons.includes(RECEIPT_REVIEW_REASONS.whtWithCharges));
   });
 
+  it('commits paid and free OCR item rows as valid PostgreSQL Decimals (receipt reliability T01)', async (t) => {
+    if (unreachable) return t.skip(unreachable);
+    const expenseId = await draft();
+    const outcome = await apply().apply(ctx(), expenseId, {
+      vatMode: 'NO_VAT', expenseDate: TODAY,
+      subtotalAmount: '300.00', grandTotalAmount: '300.00',
+      lines: [
+        { description: 'สินค้า A', quantity: '1', amount: '100.00', evidenceSignal: 'สินค้า A 1 100.00' },
+        { description: 'สินค้า B', quantity: '2', amount: '200.00', evidenceSignal: 'สินค้า B 2 200.00' },
+        { description: 'รายการแถม', quantity: '1', unitPrice: '0.00', amount: '0.00', evidenceSignal: 'รายการแถม 1 0.00' },
+      ],
+    }, { todayIso: TODAY });
+    assert.equal(outcome.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+    const record = await client.expenseRecord.findUniqueOrThrow({
+      where: { id: expenseId }, include: { lines: { orderBy: { lineNumber: 'asc' } } },
+    });
+    assert.equal(record.lines.length, 3);
+    assert.deepEqual(record.lines.map((line) => line.unitPrice.toFixed(4)), ['100.0000', '100.0000', '0.0000']);
+    assert.equal(record.lines[2]!.lineTotalAmount.toFixed(4), '0.0000');
+    assert.equal(record.grandTotalAmount.toFixed(4), '300.0000');
+  });
+
   /**
    * UAT 2026-09-06 (cmtp9v5bc…): a bill printing `130.00 + ค่าบริการ 13.00 + VAT 10.01 = 153.01` was
    * labelled `VAT_INCLUDED` by the extractor and stored as ONE 153.01 line with `chargeKind` NULL,

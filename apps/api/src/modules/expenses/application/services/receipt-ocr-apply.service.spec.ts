@@ -455,6 +455,42 @@ describe('ReceiptOcrApplyService.apply', () => {
     assert.equal(applied.record.grandTotalAmount, '797.0000', 'the recorded total must not move');
   });
 
+  it('persists a printed zero-priced item through the shared LINE/web OCR apply without NaN', async () => {
+    for (const freeAmount of ['0', '0.00', '0.01']) {
+      const total = (300 + Number(freeAmount)).toFixed(2);
+      const applied = await applyFields({
+        vatMode: 'NO_VAT', subtotalAmount: total, grandTotalAmount: total,
+        lines: [
+          { description: 'สินค้า A', quantity: '1', amount: '100.00' },
+          { description: 'สินค้า B', quantity: '2', amount: '200.00' },
+          { description: 'รายการแถม', quantity: '1', unitPrice: freeAmount, amount: freeAmount },
+        ],
+      });
+      assert.equal(applied.result.chargeReconciliationStatus, 'RECONCILED_ITEM_LINES');
+      assert.equal(applied.lines.length, 3, 'a free item remains a real line');
+      assert.equal(applied.lines[2].unitPrice, Number(freeAmount).toFixed(4));
+      assert.equal(applied.lines[2].lineTotalAmount, Number(freeAmount).toFixed(4));
+      assert.equal(applied.record.grandTotalAmount, Number(total).toFixed(4));
+      assert.ok(applied.lines.every((line: any) => Number.isFinite(Number(line.unitPrice))),
+        'invalid Decimal strings must not reach the insert boundary');
+    }
+  });
+
+  it('does not manufacture a zero-priced item from an unreadable amount', async () => {
+    for (const amount of ['', 'NaN', 'Infinity', '-1', undefined]) {
+      const applied = await applyFields({
+        vatMode: 'NO_VAT', grandTotalAmount: '300.00',
+        lines: [
+          { description: 'สินค้า A', quantity: '1', amount: '300.00' },
+          { description: 'ราคาอ่านไม่ได้', quantity: '1', amount },
+        ],
+      });
+      assert.ok(applied.lines.every((line: any) => Number.isFinite(Number(line.unitPrice))));
+      assert.equal(applied.lines.some((line: any) => line.description === 'ราคาอ่านไม่ได้'), false);
+      assert.equal(applied.record.grandTotalAmount, '300.0000');
+    }
+  });
+
   it('keeps a printed per-unit price when it explains the row amount, and adds charges after the items', async () => {
     const applied = await applyFields({
       subtotalAmount: '822.00',

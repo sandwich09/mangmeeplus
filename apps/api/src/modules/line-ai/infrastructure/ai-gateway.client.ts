@@ -19,6 +19,7 @@ import {
   type ReceiptOcrRequest,
   type ReceiptOcrResponse,
 } from '@watchdog-bms/contracts';
+import { safeLineErrorDetails } from './line-reply.adapter';
 import { ActorDelegationService } from './actor-delegation.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -29,6 +30,7 @@ import {
   companyOcrErrorCode,
   isOcrPreProviderHttpStatus,
   isOcrPreProviderRefusal,
+  isOcrRetryableProviderFailure,
   releaseCompanyOcrAdmission,
 } from '../application/company-ocr-governance';
 
@@ -169,23 +171,25 @@ export class AiGatewayClient {
     } catch (error) {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
       const refusal = status !== undefined && isOcrPreProviderHttpStatus(status);
-      if (!ocrAlreadyAdmitted && refusal) {
+      if (refusal || error instanceof AiGatewayRequestError) {
         const released = await releaseCompanyOcrAdmission(this.prisma, {
           companyId: request.companyId,
           sourceRoute: 'receipt-ocr-line',
           requestId: request.attachment.id,
+          ...(refusal ? {} : { reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' as const }),
         });
         if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
       }
       throw error;
     }
-    // A prior media-router admission already paid for a provider inspection of this document; a
-    // later OCR-specific preflight refusal must not erase that truthful document-read count.
-    if (!ocrAlreadyAdmitted && isOcrPreProviderRefusal(result)) {
+    // A system failure before usable fields can release customer admission. Provider usage was
+    // recorded independently by postInternal and is never removed by this compensation.
+    if ((!ocrAlreadyAdmitted && isOcrPreProviderRefusal(result)) || isOcrRetryableProviderFailure(result)) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-line',
         requestId: request.attachment.id,
+        ...(isOcrRetryableProviderFailure(result) ? { reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' as const } : {}),
       });
       if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
     }
@@ -193,7 +197,7 @@ export class AiGatewayClient {
   }
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
-  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number } = {}): Promise<GovernedLineIntakeRoutePlan> {
+  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string } = {}): Promise<GovernedLineIntakeRoutePlan> {
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
     await this.assertRateLimit('llm', companyId);
     const media = request.attachments?.find((attachment) =>
@@ -212,7 +216,7 @@ export class AiGatewayClient {
     }
     const plan = await this.runBudgeted(
       companyId,
-      (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey),
+      (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId),
       options.busyWaitDeadlineMs,
       media ? 'media' : 'chat',
     );
@@ -227,6 +231,7 @@ export class AiGatewayClient {
     request: LineIntakeRouteRequest,
     mediaId: string | undefined,
     budgetMonthKey?: string,
+    retryWebhookEventId?: string,
   ): Promise<GovernedLineIntakeRoutePlan> {
     if (!mediaId) {
       return this.postInternal<LineIntakeRoutePlan>(
@@ -237,6 +242,7 @@ export class AiGatewayClient {
       companyId: request.companyId,
       sourceRoute: 'receipt-ocr-line',
       requestId: mediaId,
+      retryWebhookEventId,
       monthKey: budgetMonthKey,
       // The LINE lane's ONE document-read admission: the receipt OCR below runs with
       // `ocrAlreadyAdmitted`, so if the plan ceiling is not applied here it is not applied at all.
@@ -266,7 +272,11 @@ export class AiGatewayClient {
             ? { ...plan, ocrAdmission: 'denied', ocrErrorCode: undefined }
             : { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey };
         }
-        return { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_ROUTE_UNAVAILABLE', ocrMonthKey: admission.monthKey };
+        const released = await releaseCompanyOcrAdmission(this.prisma, {
+          companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+        });
+        return { ...plan, ocrAdmission: released ? 'denied' : 'admitted',
+          ocrErrorCode: released ? 'OCR_ROUTE_UNAVAILABLE' : 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey };
       }
       return { ...plan, ocrAdmission: 'admitted', ocrMonthKey: admission.monthKey };
     } catch (error) {
@@ -285,12 +295,17 @@ export class AiGatewayClient {
           ocrErrorCode: released ? 'AI_GATEWAY_UNAVAILABLE' : 'OCR_QUOTA_UNAVAILABLE',
         };
       }
-      // A timeout/5xx has unknown provider outcome. Keep the one truthful admission and stop the
-      // webhook from making a second image call under the same document-read count.
+      // Customer admission measures usable receipt reads. Transport failure supplies no result;
+      // release its fence exactly once, but do not fabricate or delete provider usage entries.
+      const released = await releaseCompanyOcrAdmission(this.prisma, {
+        companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+      });
+      this.logger.warn({ msg: 'line_ocr_no_usable_result', requestId: request.requestId,
+        providerCost: 'unknown', ...safeLineErrorDetails(error) });
       return {
         status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
-        errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'admitted', ocrErrorCode: 'OCR_ROUTE_UNAVAILABLE',
-        ocrMonthKey: admission.monthKey,
+        errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: released ? 'denied' : 'admitted',
+        ocrErrorCode: released ? 'OCR_ROUTE_UNAVAILABLE' : 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey,
       };
     }
   }
@@ -348,7 +363,7 @@ export class AiGatewayClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      this.logger.error({ msg: 'AI Gateway request failed', error: (err as Error).message, requestId });
+      this.logger.error({ msg: 'AI Gateway request failed', ...safeLineErrorDetails(err), requestId });
       const name = (err as { name?: string }).name;
       throw new AiGatewayRequestError(
         name === 'TimeoutError' || name === 'AbortError' ? 'AI_GATEWAY_TIMEOUT' : 'AI_GATEWAY_UNAVAILABLE',
@@ -391,7 +406,7 @@ export class AiGatewayClient {
     try {
       await recordCompanyAiUsage(this.prisma, this.config, { companyId, sourceRoute, requestId, monthKey }, usage);
     } catch (err) {
-      this.logger.warn({ msg: 'ai.usage.record_failed', sourceRoute, requestId, error: (err as Error).message });
+      this.logger.warn({ msg: 'ai.usage.record_failed', sourceRoute, requestId, ...safeLineErrorDetails(err) });
     }
   }
 }

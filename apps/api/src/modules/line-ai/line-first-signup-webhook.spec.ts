@@ -356,7 +356,7 @@ describe('P10-L webhook doors', () => {
     assert.equal(entry.result, 'SUCCESS');
     assert.equal(entry.metadataJson.entry, 'follow');
     assert.equal(entry.metadataJson.lineUserId, '[REDACTED]');
-    assert.equal(h.eventLog.at(-1)!.data.errorCode, undefined, 'and it is not an error outcome');
+    assert.equal(h.eventLog.at(-1)!.data.errorCode, null, 'the successful outcome explicitly clears any earlier error marker');
   });
 
   it('still records a DENIED attempt when an unlinked stranger MESSAGES the OA', async () => {

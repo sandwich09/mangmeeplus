@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   deriveExpenseReviewSteps, expenseAiMissingFields, initialExpenseReviewStep,
-  expenseClassificationConfirmBlocker, expenseEvidenceStepBlocker, shouldRereadReplacedReceipt,
+  expenseClassificationConfirmBlocker, expenseEvidenceStepBlocker, expenseSourceDraftViewState, shouldRereadReplacedReceipt,
 } from './expenses.model';
 
 type StepsInput = Parameters<typeof deriveExpenseReviewSteps>[0];
@@ -28,12 +28,56 @@ const stepState = (over: Partial<StepsInput>, key: string) =>
 const initialFor = (over: Partial<StepsInput>) =>
   initialExpenseReviewStep(deriveExpenseReviewSteps({ ...base, ...over }, true));
 
+describe('expenseSourceDraftViewState', () => {
+  const draft = {
+    status: 'PAUSED' as const,
+    canEdit: true,
+    header: { expenseDate: null, vendorName: null, businessPurpose: null },
+    items: [],
+    missingFields: [{ id: 'D-ITEMS', scope: 'DOCUMENT' as const, field: 'items', prompt: 'รายการ?' }],
+  };
+
+  it('gives a source-only editor a compact view and never presents an unknown total as zero', () => {
+    assert.deepEqual(expenseSourceDraftViewState({ status: 'DRAFT', sourceDraft: draft, lines: [] }, false), {
+      sourceDraft: draft, incomplete: true, sourceOnly: true, financialTotalUnknown: true,
+    });
+    assert.equal(expenseSourceDraftViewState({ status: 'DRAFT', sourceDraft: draft, lines: [{}] }, false).financialTotalUnknown, false);
+  });
+
+  it('hides stale source drafting state once the expense leaves its mutable source statuses', () => {
+    assert.deepEqual(expenseSourceDraftViewState({ status: 'CONFIRMED', sourceDraft: draft, lines: [] }, false), {
+      sourceDraft: null, incomplete: false, sourceOnly: false, financialTotalUnknown: false,
+    });
+  });
+
+  it('shows an incomplete READY source to its reviewer, but hides complete and terminal source state', () => {
+    const locked = { ...draft, canEdit: false };
+    assert.deepEqual(expenseSourceDraftViewState({ status: 'READY_FOR_CONFIRMATION', sourceDraft: locked, lines: [] }, true), {
+      sourceDraft: locked, incomplete: true, sourceOnly: false, financialTotalUnknown: true,
+    });
+    assert.equal(expenseSourceDraftViewState({
+      status: 'READY_FOR_CONFIRMATION', sourceDraft: { ...locked, missingFields: [] }, lines: [],
+    }, true).sourceDraft, null);
+    assert.equal(expenseSourceDraftViewState({ status: 'CONFIRMED', sourceDraft: locked, lines: [] }, true).sourceDraft, null);
+    assert.equal(expenseSourceDraftViewState({ status: 'READY_FOR_CONFIRMATION', sourceDraft: locked, lines: [] }, false).sourceOnly, true);
+  });
+});
+
 describe('deriveExpenseReviewSteps', () => {
   it('keeps the data step pending until vendor name, expense date, and one line exist', () => {
     assert.equal(stepState({ vendorNameSnapshot: null }, 'data'), 'pending');
     assert.equal(stepState({ vendorNameSnapshot: '   ' }, 'data'), 'pending');
     assert.equal(stepState({ lines: [] }, 'data'), 'pending');
     assert.equal(stepState({}, 'data'), 'done');
+  });
+
+  it('keeps review incomplete while the shared source draft still has missing facts', () => {
+    assert.equal(stepState({ sourceDraft: {
+      status: 'PAUSED', canEdit: true,
+      header: { expenseDate: '2026-07-01', vendorName: 'บริษัท ตัวอย่าง จำกัด', businessPurpose: null },
+      items: [{ itemRef: 'item-1', lineId: null, description: 'กาแฟ', quantity: null, unitPrice: '0', totalAmount: '0', expenseCategoryId: null }],
+      missingFields: [{ id: 'I-1-QUANTITY', scope: 'ITEM', itemRef: 'item-1', field: 'quantity', prompt: 'จำนวนเท่าไร' }],
+    } }, 'data'), 'pending');
   });
 
   it('marks complete data done without an AI summary', () => {

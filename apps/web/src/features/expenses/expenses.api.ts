@@ -21,6 +21,7 @@ import type {
   SubstituteReceiptPreview,
   UpdateSubstituteReceiptPolicyInput,
   UpdateExpenseDraftInput,
+  ExpenseSourceDraftInput,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -127,6 +128,19 @@ export async function updateExpenseDraft(
   body: UpdateExpenseDraftInput & { expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+/** Source-fact saves stay on the narrow contract; they cannot carry financial review fields. */
+export async function updateExpenseSourceDraft(
+  companyId: string,
+  expenseId: string,
+  expectedUpdatedAt: string,
+  sourceDraft: ExpenseSourceDraftInput,
+): Promise<ExpenseSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ expectedUpdatedAt, sourceDraft }),
+  });
 }
 
 export async function updateExpenseReviewFields(

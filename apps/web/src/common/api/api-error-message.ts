@@ -113,6 +113,9 @@ const CODE_LABELS: Record<string, string> = {
   EXPENSE_UPDATE_VERSION_REQUIRED: 'ข้อมูลเวอร์ชันเอกสารหายไป กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_VERSION_INVALID: 'ข้อมูลเวอร์ชันเอกสารไม่ถูกต้อง กรุณาโหลดรายการใหม่ก่อนบันทึก',
   EXPENSE_UPDATE_CONFLICT: 'รายการถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดข้อมูลใหม่ ตรวจสอบ แล้วจึงบันทึกอีกครั้ง',
+  EXPENSE_SOURCE_DRAFT_INCOMPLETE: 'ยังส่งตรวจหรือยืนยันไม่ได้ กรุณาเติมข้อมูลบิลที่ยังขาดแล้วเก็บร่างก่อน',
+  EXPENSE_SOURCE_DRAFT_INVALID: 'ข้อมูลร่างบางช่องไม่ถูกต้อง กรุณาตรวจวันที่ จำนวน ราคา และหมวดค่าใช้จ่ายแล้วลองอีกครั้ง',
+  expense_source_line_identity_changed: 'รายการในบิลถูกแก้ไขระหว่างทำรายการ กรุณาเปิดรายการใหม่ ตรวจสอบ แล้วจึงเก็บร่างอีกครั้ง',
   // Plan 13.11.B: a 400 body reaches the client as `code` only, so the amounts and the line to open
   // are shown on the VAT card itself (`expenseVatReconciliationMessage`). This says where to look.
   EXPENSE_VAT_RECONCILIATION_REQUIRED:

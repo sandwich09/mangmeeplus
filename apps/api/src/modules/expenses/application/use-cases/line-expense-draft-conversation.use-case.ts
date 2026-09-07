@@ -1,3 +1,4 @@
+import { bindSourceDraftLines, refreshExpenseSourceDraft, sourceDraftFinancialLines, SOURCE_DRAFT_MUTABLE_STATUSES } from '../../domain/logic/expense-source-draft.logic';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { ExpenseCategorySummary, LineExpenseDraftRouteContext, LineIntakeCaptureHints, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
@@ -6,10 +7,10 @@ import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.rep
 import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import {
   applyLineExpenseDraftAnswer,
+  collectLineExpenseDraftQuestions,
   buildInitialLineExpenseDraftContinuation,
   formatLineExpenseDraftReply,
   lineExpenseDraftControl,
-  materializedLineExpenseDraftItems,
   parseLineExpenseDraftContinuation,
   splitLineExpenseDraftReply,
   transitionLineExpenseDraft,
@@ -42,7 +43,8 @@ function ordinal(text: string, count: number): number | null {
 }
 
 function label(row: ContinuationRow): string {
-  const amount = Number(row.grandTotalAmount) > 0 ? ` · ${Number(row.grandTotalAmount).toLocaleString('th-TH')} บาท` : '';
+  const incomplete = row.state.items.some((item) => !item.lineId || !item.quantity || (!item.unitPrice && !item.totalAmount) || item.reviewRequired);
+  const amount = incomplete ? ' · ยอดรายการยังไม่ครบ' : Number.isFinite(Number(row.grandTotalAmount)) ? ` · ยอดในร่าง ${Number(row.grandTotalAmount).toLocaleString('th-TH')} บาท` : '';
   const date = row.expenseDate ? ` · ${row.expenseDate.toISOString().slice(0, 10)}` : '';
   const subject = row.vendorNameSnapshot ?? row.note;
   return `${row.expenseNumber ?? row.id}${date}${subject ? ` · ${subject.slice(0, 60)}` : ''}${amount}`;
@@ -80,7 +82,7 @@ export class LineExpenseDraftConversationUseCase {
     });
     return rows.flatMap((row) => {
       const state = parseLineExpenseDraftContinuation(row.sourceChannelMetadataJson?.[STATE_KEY]);
-      return state && state.companyId === ctx.companyId && state.userId === ctx.userId
+      return state && state.expenseId === row.id && state.companyId === ctx.companyId && state.userId === ctx.userId
         && state.chatKeyHash === chatKeyHash && RESUMABLE.has(state.status)
         ? [{ ...row, state }]
         : [];
@@ -95,7 +97,7 @@ export class LineExpenseDraftConversationUseCase {
       expenseId: row.id,
       label: label(row),
       status: row.state.status as LineExpenseDraftRouteContext['status'],
-      questions: (row.id === focusedExpenseId ? row.state.unresolvedQuestions : []).slice(0, 64).map((question) => ({
+      questions: (row.id === focusedExpenseId ? row.state.unresolvedQuestions : []).map((question) => ({
         id: question.id,
         prompt: question.prompt.slice(0, 200),
         ...(question.itemRef ? { itemRef: question.itemRef } : {}),
@@ -115,7 +117,7 @@ export class LineExpenseDraftConversationUseCase {
     if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD') {
       return { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
     }
-    if (expense.status !== 'DRAFT') {
+    if (!SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status)) {
       // An idempotent redelivery may find a legacy or already-progressed expense. Let the caller
       // use the proven receipt summary instead of attaching a collection workflow to a closed row.
       return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
@@ -130,7 +132,7 @@ export class LineExpenseDraftConversationUseCase {
         workflowId: existing.workflowId,
         acceptedFields: [],
         replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({
-          state: { ...existing, targetRevision: expense.updatedAt.toISOString() },
+          state: refreshExpenseSourceDraft(existing, expense, categories),
           categories,
           label: expense.expenseNumber ?? expense.id,
         })),
@@ -167,7 +169,7 @@ export class LineExpenseDraftConversationUseCase {
         ...(line.expenseCategoryId ? { expenseCategoryId: line.expenseCategoryId } : input.suggestedCategoryId ? { expenseCategoryId: input.suggestedCategoryId } : {}),
       })) ?? []);
     sourceParts.push(...itemHints.map((item) => item.sourceText));
-    const state = buildInitialLineExpenseDraftContinuation({
+    let state = buildInitialLineExpenseDraftContinuation({
       workflowId: randomUUID(),
       companyId: ctx.companyId,
       userId: ctx.userId,
@@ -186,8 +188,10 @@ export class LineExpenseDraftConversationUseCase {
       },
       categories,
     });
+    state = bindSourceDraftLines(state, expense);
+    state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);
     for (const provenance of Object.values(state.provenance)) provenance.source = 'LINE_MEDIA_OCR';
-    const updated = await this.persist(ctx, expense, state, categories, [], [], false);
+    const updated = await this.persist(ctx, expense, state, categories, input.businessPurpose ? ['D-PURPOSE'] : [], [], false);
     const saved = { ...state, targetRevision: updated.updatedAt.toISOString() };
     return {
       handled: true,
@@ -206,25 +210,38 @@ export class LineExpenseDraftConversationUseCase {
     captureHints?: LineIntakeCaptureHints;
   }): Promise<LineExpenseDraftConversationResult> {
     const rows = await this.rows(ctx, input.chatKeyHash);
-    if (rows.length === 0) return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
     const requestedId = input.captureHints?.targetExpenseId;
     const selectedIndex = ordinal(input.messageText, rows.length);
     const openRows = rows.filter((row) => row.state.status === 'OPEN');
+    // Explicit identity is a scoped lookup, independent of the recent-five discovery list.
+    const requestedExpense = requestedId ? await this.repo.findByIdWithRelations(ctx.companyId, requestedId, undefined, ctx.scopes ?? {}) : null;
+    const requestedState = parseLineExpenseDraftContinuation(requestedExpense?.sourceChannelMetadataJson?.[STATE_KEY]);
+    const requested = requestedExpense && requestedState && requestedExpense.createdByUserId === ctx.userId
+      && requestedState.expenseId === requestedExpense.id && requestedState.companyId === ctx.companyId && requestedState.userId === ctx.userId
+      && requestedState.chatKeyHash === input.chatKeyHash && RESUMABLE.has(requestedState.status)
+      ? { ...requestedExpense, state: requestedState } : undefined;
+    if (!rows.length && !requested) return { handled: Boolean(requestedId), status: 'NOT_FOUND', replyTexts: requestedId ? ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'] : [], acceptedFields: [] };
     const selected = requestedId
-      ? rows.find((row) => row.id === requestedId)
+      ? requested
       : selectedIndex !== null ? rows[selectedIndex]
         : rows.length === 1 ? rows[0]
           : openRows.length === 1 ? openRows[0]
             : undefined;
-    if (!selected) return targetRequired(rows);
+    if (!selected) return requestedId ? { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] } : targetRequired(rows);
 
     const expense = await this.repo.findByIdWithRelations(ctx.companyId, selected.id, undefined, ctx.scopes ?? {});
-    if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD' || expense.status !== 'DRAFT') {
+    if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD' || !SOURCE_DRAFT_MUTABLE_STATUSES.includes(expense.status)) {
       return { handled: true, status: 'NOT_FOUND', replyTexts: ['ไม่พบร่างนี้ในสิทธิ์หรือสาขาปัจจุบันค่ะ'], acceptedFields: [] };
     }
     const categories = await this.repo.listCategories(ctx.companyId);
     const control = lineExpenseDraftControl(input.messageText);
-    if (['INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(selected.state.status) && control !== 'resume') {
+    selected.state = control === 'resume' || selectedIndex !== null
+      ? refreshExpenseSourceDraft(selected.state, expense, categories)
+      : bindSourceDraftLines(selected.state, expense);
+    if (['INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(selected.state.status) && control !== 'resume' && !control) {
+      return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
+    }
+    if (['INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(selected.state.status) && control === 'end') {
       const text = `${formatLineExpenseDraftReply({ state: selected.state, categories, label: label(selected) })}\n\nพิมพ์ “ต่อ” ก่อนหากต้องการแก้หรือเติมร่างนี้`;
       return { handled: true, status: 'ENDED', replyTexts: splitLineExpenseDraftReply(text), expenseId: expense.id, workflowId: selected.state.workflowId, acceptedFields: [] };
     }
@@ -241,6 +258,11 @@ export class LineExpenseDraftConversationUseCase {
           webhookEventId: input.webhookEventId,
         });
 
+    changed.state = bindSourceDraftLines(changed.state, expense);
+    changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
+    if (!control && selectedIndex === null && changed.acceptedFields.length === 0 && changed.rejectedCandidates.length === 0) {
+      return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
+    }
     try {
       if ((requestedId || selectedIndex !== null) && rows.length > 1) {
         const categories = await this.repo.listCategories(ctx.companyId);
@@ -350,27 +372,24 @@ export class LineExpenseDraftConversationUseCase {
       ...existingMissing.filter((field) => !collectionFields.has(field)),
       ...state.unresolvedQuestions.map((question) => question.field),
     ])];
-    const lines = materializedLineExpenseDraftItems(state).map((line) => {
-      const category = line.expenseCategoryId ? categories.find((candidate) => candidate.id === line.expenseCategoryId) : undefined;
-      return { ...line, ...(category ? { accountHintKey: category.accountHintKey } : {}) };
-    });
+    const lines = materialize ? sourceDraftFinancialLines(state, expense, acceptedFields, categories) : undefined;
     return this.updateDraft.execute(ctx, expense!.id, {
       expectedUpdatedAt: expectedRevision,
-      ...(state.header.expenseDate ? { expenseDate: state.header.expenseDate } : {}),
-      ...(state.header.vendorName ? { vendorNameSnapshot: state.header.vendorName } : {}),
+      ...(acceptedFields.includes('D-DATE') && state.header.expenseDate ? { expenseDate: state.header.expenseDate } : {}),
+      ...(acceptedFields.includes('D-VENDOR') && state.header.vendorName ? { vendorNameSnapshot: state.header.vendorName } : {}),
       // Spec §5.3: the purpose gets its OWN segment and replaces the previous one, so refining the
       // answer never stacks and never takes the provenance note ("LINE receipt upload") with it.
-      ...(state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose) } : {}),
-      ...(materialize ? { lines } : {}),
+      ...(acceptedFields.includes('D-PURPOSE') && state.header.businessPurpose ? { note: withPurposeNote(expense!.note, state.header.businessPurpose) } : {}),
+      ...(lines ? { lines } : {}),
     }, {
       requireExpectedUpdatedAt: true,
       suppressGenericAudit: true,
+      sourceExpense: expense,
       lineDraftCollection: {
         sourceChannelMetadataJson: metadata,
         nextUpdatedAt,
         aiVerificationSummaryJson: {
           ...(expense!.aiVerificationSummaryJson ?? {}),
-          status: 'LINE_DRAFT_COLLECTION',
           missingFields,
           lineDraftQuestionIds: state.unresolvedQuestions.map((question) => question.id),
           collectionState: state.status,

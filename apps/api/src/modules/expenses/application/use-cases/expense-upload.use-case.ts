@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -23,6 +23,9 @@ export type InitReceiptUploadResult = {
   uploadMethod: string;
   uploadHeaders: Record<string, string>;
   expiresAt: Date;
+  /** False when durable bytes from the original attempt are already present. */
+  uploadRequired?: boolean;
+  reusedCapture?: boolean;
 };
 
 @Injectable()
@@ -33,6 +36,7 @@ export class InitReceiptUploadUseCase {
     private readonly audit: AuditService,
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
     private readonly launchGate: LaunchGateGuardService,
+    @Optional() private readonly prisma?: PrismaService,
   ) {}
 
   async execute(
@@ -45,6 +49,8 @@ export class InitReceiptUploadUseCase {
       branchId?: string;
       note?: string;
       captureSource?: 'WEB_UPLOAD' | 'LINE_UPLOAD';
+      /** Internal LINE identity; never populated from the public upload DTO. */
+      lineCapture?: { lineMessageId: string; lineEventId: string; chatKeyHash: string };
     },
   ): Promise<InitReceiptUploadResult> {
     if (!ctx.permissions.includes('expense.receipt.upload') && !ctx.permissions.includes('expense.receipt.line_upload') && !ctx.permissions.includes('expense.create')) {
@@ -59,13 +65,14 @@ export class InitReceiptUploadUseCase {
     const branchId = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
     const expenseDate = civilDateToUtcDate(coerceCivilDate(cmd.expenseDate));
 
-    // Create the attachment upload intent via shared data-model-core
-    const intent = await this.createIntent.execute(ctx, {
-      originalFileName: cmd.originalFileName,
-      mimeType: cmd.mimeType,
-      byteSize: cmd.byteSize,
+    // LINE reserves the unique expense identity before storage. Web preserves its existing order.
+    const createAttachment = (expenseId?: string) => this.createIntent.execute(ctx, {
+      originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize,
       ...(branchId ? { branchId } : {}),
+      ...(expenseId ? { metadataJson: { lineReceiptExpenseId: expenseId } } : {}),
     });
+    if (cmd.lineCapture && (cmd.captureSource !== 'LINE_UPLOAD' || ctx.authProvider !== 'line')) throw new BadRequestException('Invalid LINE capture identity.');
+    const webIntent = cmd.lineCapture ? undefined : await createAttachment();
 
     // A company that is not asked Thai VAT questions cannot answer a claimability review either,
     // so its uploads land NON_CLAIMABLE instead of filling the review queue with a decision
@@ -73,10 +80,15 @@ export class InitReceiptUploadUseCase {
     const { mode } = await this.capturePolicy.execute(ctx, cmd.expenseDate);
 
     // Create the expense draft with NO_VAT default and empty totals until review
-    const expense = await this.repo.createExpense({
+    const createExpense = () => this.repo.createExpense({
       companyId: ctx.companyId,
       branchId: branchId ?? undefined,
       captureSource: cmd.captureSource ?? 'WEB_UPLOAD',
+      ...(cmd.lineCapture ? {
+        lineMessageId: cmd.lineCapture.lineMessageId, lineEventId: cmd.lineCapture.lineEventId,
+        sourceChannelMetadataJson: { channel: 'LINE', kind: 'media', chatKeyHash: cmd.lineCapture.chatKeyHash, receiptCapturePending: true,
+          receiptUpload: { originalFileName: cmd.originalFileName, mimeType: cmd.mimeType, byteSize: cmd.byteSize } },
+      } : {}),
       // Date-only after shared validation/coercion. An instant from the LINE path must never put a
       // time into the column, or the list's day filter cannot see the row.
       expenseDate,
@@ -95,6 +107,18 @@ export class InitReceiptUploadUseCase {
       outstandingAmount: '0',
     });
 
+    const existing = cmd.lineCapture ? await this.repo.findByLineMessageId(ctx.companyId, cmd.lineCapture.lineMessageId) : null;
+    let reusedCapture = Boolean(existing);
+    const expense = existing ?? await createExpense().catch(async (error) => {
+      if (!cmd.lineCapture || (error as { code?: string }).code !== 'P2002') throw error;
+      const winner = await this.repo.findByLineMessageId(ctx.companyId, cmd.lineCapture.lineMessageId);
+      if (!winner) throw error;
+      reusedCapture = true;
+      return winner;
+    });
+    if (cmd.lineCapture && (expense.createdByUserId !== ctx.userId || !isBranchInScope(ctx.scopes ?? {}, expense.branchId))) throw new ForbiddenException();
+    const intent: Omit<InitReceiptUploadResult, 'expenseId'> = webIntent ?? await this.reserveLineAttachment(ctx, expense.id, createAttachment);
+
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
       action: 'expense.upload_intent.create', targetType: 'expense_record', targetId: expense.id,
@@ -104,13 +128,34 @@ export class InitReceiptUploadUseCase {
 
     return {
       expenseId: expense.id,
+      ...(cmd.lineCapture ? { reusedCapture } : {}),
       attachmentId: intent.attachmentId,
       uploadUrl: intent.uploadUrl,
       uploadMethod: intent.uploadMethod,
       uploadHeaders: intent.uploadHeaders,
       expiresAt: intent.expiresAt,
+      ...(intent.uploadRequired !== undefined ? { uploadRequired: intent.uploadRequired } : {}),
     };
   }
+  private async reserveLineAttachment(
+    ctx: RequestContext, expenseId: string,
+    createAttachment: (expenseId: string) => Promise<Omit<InitReceiptUploadResult, 'expenseId'>>,
+  ): Promise<Omit<InitReceiptUploadResult, 'expenseId'>> {
+    if (!this.prisma) throw new Error('LINE_RECEIPT_STORAGE_UNAVAILABLE');
+    // Serialize only this receipt's reservation. Existing storage helper creates short-lived URLs;
+    // no upload or OCR runs while the lock is held.
+    return this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`line-receipt-attachment:${expenseId}`}))`;
+      const attachment = await tx.attachmentObject.findFirst({
+        where: { companyId: ctx.companyId, uploadedByUserId: ctx.userId,
+          metadataJson: { path: ['lineReceiptExpenseId'], equals: expenseId },
+          status: { in: ['PENDING_UPLOAD', 'ACTIVE'] } },
+        select: { id: true }, orderBy: { createdAt: 'asc' },
+      });
+      return attachment ? this.createIntent.resume(ctx, attachment.id) : createAttachment(expenseId);
+    });
+  }
+
 }
 
 @Injectable()
@@ -150,11 +195,13 @@ export class CompleteReceiptUploadUseCase {
     const canReview = ctx.permissions.includes('expense.review');
     if (!canUpload && !canReview) throw new ForbiddenException('Missing permission: expense.receipt.upload');
 
-    // Complete the shared attachment
-    await this.completeUpload.execute(ctx, {
-      attachmentId: cmd.attachmentId,
-      checksumSha256: cmd.checksumSha256,
-      byteSize: cmd.byteSize,
+    const reserved = expense.captureSource === 'LINE_UPLOAD' && expense.lineMessageId
+      ? await this.attachments.findById({ id: cmd.attachmentId, companyId: ctx.companyId }) : null;
+    const resumed = reserved?.status === 'ACTIVE' && reserved.uploadedByUserId === ctx.userId
+      && reserved.metadataJson?.lineReceiptExpenseId === expense.id;
+    if (resumed && cmd.checksumSha256 && reserved.checksumSha256 !== cmd.checksumSha256) throw new BadRequestException('Receipt checksum changed.');
+    if (!resumed) await this.completeUpload.execute(ctx, {
+      attachmentId: cmd.attachmentId, checksumSha256: cmd.checksumSha256, byteSize: cmd.byteSize,
     });
 
     const purpose = cmd.purpose ?? 'expense.receipt.primary';
@@ -338,7 +385,9 @@ export class ListExpenseCategoriesUseCase {
 
   async execute(ctx: RequestContext) {
     if (!ctx.permissions.includes('expense.read') && !ctx.permissions.includes('expense.read_related')
-      && !ctx.permissions.includes('expense.read_own') && !ctx.permissions.includes('expense.review')) {
+      && !ctx.permissions.includes('expense.read_own') && !ctx.permissions.includes('expense.review')
+      && !ctx.permissions.includes('expense.create') && !ctx.permissions.includes('expense.receipt.upload')
+      && !ctx.permissions.includes('expense.receipt.line_upload')) {
       throw new ForbiddenException('Missing permission: expense.read');
     }
     return this.repo.listCategories(ctx.companyId);
