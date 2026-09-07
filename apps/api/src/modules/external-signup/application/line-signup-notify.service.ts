@@ -9,6 +9,7 @@ import { pushLineMessages } from '../../auth/infrastructure/system-line-push';
 import { buildProfileGuardNudgeCard } from '../../line-ai/domain/logic/line-business-card.logic';
 import { AUTH_MAILER_TOKEN, type AuthMailerPort } from '../../auth/domain/ports/auth-mailer.port';
 import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import type { Prisma } from '../../../generated/prisma/client';
 import {
   SUPPORT_MAILBOX_EMAIL, SUPPORT_QUEUE_PATH, SignupAdminNotifyService,
 } from './signup-admin-notify.service';
@@ -34,14 +35,12 @@ export class LinePushThrottledError extends Error {
 }
 
 /** Which message the queued push is. Also the audit/telemetry name L-D counts by. */
-export type LineSignupPushKind = 'approved' | 'attached' | 'rejected' | 'profile_guard';
+export type LineSignupPushKind = 'approved' | 'attached' | 'rejected' | 'profile_guard' | 'requested_info';
 
 /** §3.6: seven days of real use, or five successful reads — whichever comes first. */
 export const PROFILE_GUARD_AFTER_DAYS = 7;
 export const PROFILE_GUARD_AFTER_READS = 5;
 
-/** line-support-request-spec-th §2.4: the same 24 hours the assistant pause runs for. */
-export const SUPPORT_REQUEST_EXPIRY_MS = 24 * 60 * 60 * 1000;
 /** §3 PDPA: a settled request is deleted 90 days after it settled, message text and all. */
 export const SUPPORT_REQUEST_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -60,6 +59,10 @@ export function rejectedMessageTh(displayName: string | null, companyName: strin
   return `${greeting}ขอบคุณที่สนใจมั่งมีพลัสค่ะ ตอนนี้เรายังไม่สามารถเปิดร้าน ${companyName} ให้ได้ ต้องขออภัยด้วยนะคะ `
     + 'หากต้องการสอบถามหรือส่งข้อมูลเพิ่มเติม ติดต่อทีมงานได้ที่ โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com '
     + '(จันทร์–เสาร์ 9:00–18:00) ทีมงานยินดีพิจารณาให้อีกครั้งค่ะ';
+}
+
+export function requestedInfoMessageTh(companyName: string, requestedInformation: string): string {
+  return `ทีมงานขอข้อมูลเพิ่มสำหรับร้าน ${companyName}: ${requestedInformation}`;
 }
 
 /**
@@ -92,20 +95,29 @@ export class LineSignupNotifyService {
    * sides, so they share a key: a request cannot be both, and if the source ever disagreed with
    * itself the shop would still get one message.
    */
-  async enqueue(signupRequestId: string, kind: LineSignupPushKind, now = new Date()): Promise<void> {
+  async enqueue(
+    signupRequestId: string,
+    kind: LineSignupPushKind,
+    now = new Date(),
+    options: { reviewVersion?: number; tx?: Prisma.TransactionClient } = {},
+  ): Promise<void> {
     await this.outbox.append({
       eventType: LINE_SIGNUP_PUSH_EVENT_TYPE,
       aggregateType: 'CompanySignupRequest',
       aggregateId: signupRequestId,
-      eventKey: lineSignupPushEventKey(signupRequestId, kind),
+      eventKey: lineSignupPushEventKey(signupRequestId, kind, options.reviewVersion),
       priority: 'HIGH',
       payloadJson: {
         schemaVersion: 1,
         occurredAt: now.toISOString(),
         // No name, no LINE id, no phone: the consumer reads the row (P11 F-EM-3, evidence PII-free).
-        data: { signupRequestId, kind },
+        data: {
+          signupRequestId,
+          kind,
+          ...(options.reviewVersion === undefined ? {} : { reviewVersion: options.reviewVersion }),
+        },
       },
-    });
+    }, options.tx);
   }
 
   /**
@@ -115,19 +127,24 @@ export class LineSignupNotifyService {
    * stale promise. A LINE failure throws, which the drain records as a FAILED outbox row — this is
    * the one message a customer is owed, so it must be visible when it does not arrive.
    */
-  async deliver(signupRequestId: string, kind: LineSignupPushKind): Promise<void> {
+  async deliver(signupRequestId: string, kind: LineSignupPushKind, reviewVersion?: number): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
       select: {
         state: true, source: true, companyName: true, companyId: true,
         lineProviderUserId: true, lineDisplayName: true, attachUserId: true,
+        reviewResolution: true, resolutionNote: true, version: true,
       },
     });
     if (!request) throw new Error('signup_request_not_found');
     if (request.source !== SIGNUP_SOURCE_LINE_OA || !request.lineProviderUserId) return;
     // The decision moved on. Nothing to send and nothing to retry: a rejected application that was
     // reopened must not receive its rejection, and vice versa.
-    if (kind === 'rejected' ? request.state !== 'REJECTED' : request.state !== 'COMPLETED') return;
+    if (kind === 'requested_info') {
+      if (!['RECEIVED', 'VALIDATED', 'PENDING_REVIEW'].includes(request.state)
+        || request.reviewResolution !== 'REQUEST_INFO'
+        || request.version !== reviewVersion || !request.resolutionNote) return;
+    } else if (kind === 'rejected' ? request.state !== 'REJECTED' : request.state !== 'COMPLETED') return;
 
     const token = this.config.lineMessagingChannelAccessToken;
     if (!token) {
@@ -136,7 +153,9 @@ export class LineSignupNotifyService {
       return;
     }
 
-    const messages = kind === 'rejected'
+    const messages = kind === 'requested_info'
+      ? [{ type: 'text', text: requestedInfoMessageTh(request.companyName, request.resolutionNote!) }]
+      : kind === 'rejected'
       ? [{ type: 'text', text: rejectedMessageTh(request.lineDisplayName, request.companyName) }]
       : kind === 'profile_guard'
         ? [buildProfileGuardNudgeCard()]
@@ -148,7 +167,7 @@ export class LineSignupNotifyService {
       messages,
       // Same key on every redelivery of this row, so a network retry LINE already accepted does not
       // become a second message in the shop's chat.
-      retryKey: lineSignupPushRetryKey(signupRequestId, kind),
+      retryKey: lineSignupPushRetryKey(signupRequestId, kind, reviewVersion),
     });
     if (!outcome.ok) {
       this.logger.error({
@@ -298,48 +317,9 @@ export class LineSignupNotifyService {
     }
   }
 
-  /**
-   * §2.4. The 24-hour pause expires by itself, but the REQUEST used to outlive it — an operator's
-   * inbox slowly filling with rows nobody is waiting on any more. Closed on the sweep that already
-   * runs, never before the pause has actually lapsed.
-   *
-   * A request with no pause at all (an unlinked asker: nothing to stop) is timed from its newest
-   * customer message alone, or it would sit OPEN for ever.
-   *
-   * That stamp — not `requestedAt` — is the whole window (review 2026-09-06): every follow-up moves
-   * it, and every follow-up re-arms the matching 24 h pause, so the two clocks cannot disagree.
-   */
-  async sweepExpiredSupportRequests(now = new Date(), take = 200): Promise<{ expired: number }> {
-    // ponytail: one page of live pauses, oldest first, as an exclusion list. Ceiling = 1000 people
-    // inside a 24h pause at the same moment; beyond that the 1001st would have its request expired
-    // an hour early, which is a wrong label on a row nobody is reading rather than a lost request.
-    // Upgrade path if the platform ever gets there: drop the list and join in SQL with a raw query,
-    // or add `pausedUntil` to `LineSupportRequest` and make this a pure `where` clause.
-    const paused = await this.prisma.client.lineCompanyContext.findMany({
-      where: { aiPausedUntil: { gt: now } },
-      orderBy: { aiPausedUntil: 'asc' },
-      select: { lineUserId: true },
-      take: 1000,
-    });
-    const stillPaused = paused.map((row) => row.lineUserId);
-    const due = await this.prisma.client.lineSupportRequest.findMany({
-      where: {
-        status: 'OPEN',
-        // From the customer's LAST message, not from the tap (review 2026-09-06). Timed from
-        // `requestedAt`, a thread reopened at hour 23 was swept at hour 24 with an unanswered
-        // question on it — moments after being told "ทีมงานจะตอบกลับในแชทนี้นะคะ".
-        lastMessageAt: { lte: new Date(now.getTime() - SUPPORT_REQUEST_EXPIRY_MS) },
-        ...(stillPaused.length > 0 ? { lineUserId: { notIn: stillPaused } } : {}),
-      },
-      select: { id: true },
-      take,
-    });
-    if (due.length === 0) return { expired: 0 };
-    const closed = await this.prisma.client.lineSupportRequest.updateMany({
-      where: { id: { in: due.map((row) => row.id) }, status: 'OPEN' },
-      data: { status: 'CLOSED', closedAt: now, closedReason: 'expired' },
-    });
-    return { expired: closed.count };
+  /** Assistant-pause expiry is not evidence that a person's support issue was resolved. */
+  async sweepExpiredSupportRequests(_now = new Date(), _take = 200): Promise<{ expired: number }> {
+    return { expired: 0 };
   }
 
   /**
@@ -348,19 +328,13 @@ export class LineSignupNotifyService {
    * ended. The whole row goes: there is nothing left in it worth keeping without them, and a
    * scrubbed shell would only be a slower way to reach the same state.
    *
-   * Counts from `closedAt`/`answeredAt`, not `requestedAt`: the retention clock the notice promises
-   * runs from when the matter was settled. OPEN rows are never touched, however old — one of those
-   * is somebody still waiting.
+   * Counts from `closedAt`, not `requestedAt`: only an explicitly closed case is settled. OPEN and
+   * ANSWERED rows are never touched, however old — either can still be somebody waiting.
    */
   async purgeSettledSupportRequests(now = new Date(), take = 500): Promise<{ purged: number }> {
     const cutoff = new Date(now.getTime() - SUPPORT_REQUEST_RETENTION_MS);
     const due = await this.prisma.client.lineSupportRequest.findMany({
-      where: {
-        OR: [
-          { status: 'CLOSED', closedAt: { lte: cutoff } },
-          { status: 'ANSWERED', answeredAt: { lte: cutoff } },
-        ],
-      },
+      where: { status: 'CLOSED', closedAt: { lte: cutoff } },
       orderBy: { requestedAt: 'asc' },
       select: { id: true },
       take,
@@ -495,10 +469,14 @@ export function supportAskerLabelTh(companyName: string | null, appliedCompanyNa
   return 'ผู้ที่ยังไม่ได้เปิดร้าน';
 }
 
-export function lineSignupPushEventKey(signupRequestId: string, kind: LineSignupPushKind): string {
+export function lineSignupPushEventKey(
+  signupRequestId: string,
+  kind: LineSignupPushKind,
+  reviewVersion?: number,
+): string {
   // `approved` and `attached` share a slot: one provisioning, one "your shop is ready" message.
   const slot = kind === 'attached' ? 'approved' : kind;
-  return `push:line_signup:${slot}:${signupRequestId}`;
+  return `push:line_signup:${slot}:${signupRequestId}${kind === 'requested_info' ? `:v${reviewVersion ?? 'missing'}` : ''}`;
 }
 
 /**
@@ -506,8 +484,12 @@ export function lineSignupPushEventKey(signupRequestId: string, kind: LineSignup
  * event is redelivered — so it is derived from the event key rather than generated. Same shape as
  * an RFC 4122 v5 name-based uuid: sha256 of the name, with the version and variant bits stamped in.
  */
-export function lineSignupPushRetryKey(signupRequestId: string, kind: LineSignupPushKind): string {
-  const bytes = createHash('sha256').update(lineSignupPushEventKey(signupRequestId, kind), 'utf8').digest();
+export function lineSignupPushRetryKey(
+  signupRequestId: string,
+  kind: LineSignupPushKind,
+  reviewVersion?: number,
+): string {
+  const bytes = createHash('sha256').update(lineSignupPushEventKey(signupRequestId, kind, reviewVersion), 'utf8').digest();
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
   const hex = bytes.subarray(0, 16).toString('hex');

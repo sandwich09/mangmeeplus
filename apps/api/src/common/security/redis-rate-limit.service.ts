@@ -41,6 +41,19 @@ local ttl = redis.call('TTL', KEYS[1])
 return {count, ttl}
 `;
 
+const CONSUME_ONCE_LUA = `
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  local count = tonumber(redis.call('GET', KEYS[1]) or '0')
+  local ttl = redis.call('TTL', KEYS[1])
+  return {count, ttl, 1}
+end
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+redis.call('SET', KEYS[2], '1', 'EX', ARGV[1])
+local ttl = redis.call('TTL', KEYS[1])
+return {count, ttl, 0}
+`;
+
 const RELEASE_LEASE_LUA = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
@@ -52,6 +65,7 @@ return 0
 export class RedisRateLimitService implements OnModuleDestroy {
   private client?: RedisCounter;
   private readonly local = new Map<string, LocalBucket>();
+  private readonly localOnce = new Map<string, number>();
   private readonly localLeases = new Map<string, LocalLease>();
 
   // The token has to be stated explicitly: a `Pick<>` annotation emits no runtime type, so Nest
@@ -80,6 +94,36 @@ export class RedisRateLimitService implements OnModuleDestroy {
     onStoreFailure: StoreFailurePolicy = 'fail-closed',
   ): Promise<RateLimitDecision> {
     return this.run(scope, rawKey, maxRequests, windowSeconds, false, onStoreFailure);
+  }
+
+  /** Atomically spends one bucket slot for one durable operation, even after a lost response. */
+  async consumeOnce(
+    scope: string,
+    rawKey: string,
+    idempotencyKey: string,
+    maxRequests: number,
+    windowSeconds: number,
+  ): Promise<RateLimitDecision & { replayed: boolean }> {
+    const counterKey = this.key('rate-limit', scope, rawKey);
+    const onceKey = this.key('idempotency', scope, `${rawKey}:${idempotencyKey}`);
+    try {
+      if (!this.client && this.config.redisUrl) this.client = this.createClient();
+      if (!this.client) return this.localConsumeOnce(counterKey, onceKey, maxRequests, windowSeconds);
+      const [count, ttl, replayed] = await this.client.eval(
+        CONSUME_ONCE_LUA, 2, counterKey, onceKey, String(windowSeconds),
+      ) as [number, number, number];
+      return {
+        allowed: count <= maxRequests,
+        count,
+        retryAfterSeconds: Math.max(1, ttl),
+        replayed: replayed === 1,
+      };
+    } catch (error) {
+      if (this.config.isProduction) {
+        throw new ServiceUnavailableException('Abuse-control store is unavailable.', { cause: error });
+      }
+      return { ...this.localConsumeOnce(counterKey, onceKey, maxRequests, windowSeconds), degraded: true };
+    }
   }
 
   /**
@@ -155,7 +199,7 @@ export class RedisRateLimitService implements OnModuleDestroy {
     });
   }
 
-  private key(prefix: 'rate-limit' | 'lease', scope: string, rawKey: string): string {
+  private key(prefix: 'rate-limit' | 'lease' | 'idempotency', scope: string, rawKey: string): string {
     const hash = createHash('sha256').update(rawKey.trim().toLowerCase().slice(0, 512)).digest('hex');
     return `${prefix}:v1:${scope}:${hash}`;
   }
@@ -180,6 +224,21 @@ export class RedisRateLimitService implements OnModuleDestroy {
       count: bucket.count,
       retryAfterSeconds: Math.max(1, Math.ceil((bucket.expiresAt - now) / 1_000)),
     };
+  }
+
+  private localConsumeOnce(
+    counterKey: string,
+    onceKey: string,
+    max: number,
+    windowSeconds: number,
+  ): RateLimitDecision & { replayed: boolean } {
+    const now = Date.now();
+    const existing = this.localOnce.get(onceKey);
+    if (existing && existing > now) {
+      return { ...this.localDecision(counterKey, max, windowSeconds, false), replayed: true };
+    }
+    this.localOnce.set(onceKey, now + windowSeconds * 1_000);
+    return { ...this.localDecision(counterKey, max, windowSeconds, true), replayed: false };
   }
 
   private localLeaseDecision(key: string, token: string, ttlSeconds: number): LeaseDecision {

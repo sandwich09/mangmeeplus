@@ -1,5 +1,7 @@
 # ร่างกฎธุรกิจและความคุ้มค่า: สมัครร้าน กลับร้านเดิม และ support
 
+หมายเหตุหลัง brainstorm: Owner อนุมัติทำ spec/plan/coding ในรอบถัดมา ขอบเขตที่นำไปทำและข้อจำกัดอยู่ใน [spec recovery/resolution](../specs/line-signup-recovery-and-resolution-spec-th.md) ตัวเลขสมมติด้านล่างยังไม่ใช่ SLA หรือผลธุรกิจที่วัดจริง
+
 สถานะ: Owner เห็นด้วยกับทิศทางเมื่อ 2026-09-07 และขอ brainstorm ความคุ้มค่า/กฎ/การช่วยเหลือที่เร็ว ตัวเลขเป้าหมายและกฎย่อยในเอกสารนี้เป็นข้อเสนอสำหรับตัดสินใจ ยังไม่ใช่การอนุมัติให้เปลี่ยนโค้ด กฎ production หรือสิทธิ์ลูกค้า
 
 ต่อจาก [ข้อเสนอการเลือกทางตามตัวตนและเจตนา](line-signup-identity-and-shop-resolution-proposal-2026-09-07-th.md) และ [กฎ auto ปัจจุบัน](line-signup-auto-approval-conditions-2026-09-07-th.md)

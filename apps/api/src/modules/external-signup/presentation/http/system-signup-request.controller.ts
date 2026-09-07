@@ -1,13 +1,14 @@
 import { Body, Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
-  IsBoolean, IsIn, IsNumberString, IsOptional, IsString, Matches, MaxLength,
+  IsBoolean, IsIn, IsInt, IsNumberString, IsOptional, IsString, Matches, MaxLength, Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
   COMPANY_BUSINESS_CATEGORIES,
-  SIGNUP_REJECTION_REASON_MAX_LENGTH,
-  type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
+  SIGNUP_REJECTION_REASON_MAX_LENGTH, SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
+  type AdminSignupDecisionBody, type AdminSignupDecisionDto, type AdminSignupQueueDto, type AdminSignupReissueDto,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import { requiredWebAppBase, trustedPublicApiBase } from '../../../../common/http/public-api-base';
@@ -18,7 +19,15 @@ import { SignupAdminQueueUseCase } from '../../application/signup-admin-queue.us
 export class SignupDecisionRequestDto {
   // SUSPEND (P10-L §3.7) stops an application an admin does not want to keep, most often one
   // AUTO_FREE let through.
-  @IsIn(['APPROVE', 'REJECT', 'SUSPEND']) action!: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  @IsIn(['APPROVE', 'CREATE_NEW_SHOP', 'RETURN_EXISTING', 'REQUEST_INFO', 'RETRY_INTAKE', 'REJECT', 'SUSPEND'])
+  action!: AdminSignupDecisionBody['action'];
+  @Type(() => Number) @IsInt() @Min(0) @IsOptional() version?: number;
+  @IsString() @MaxLength(128) @IsOptional() targetCompanyId?: string;
+  @IsBoolean() @IsOptional() grantRepeatTrial?: boolean;
+  @IsString() @MaxLength(SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) @IsOptional() trialGrantNote?: string;
+  @IsBoolean() @IsOptional() acknowledgeSharedContact?: boolean;
+  @IsString() @MaxLength(SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) @IsOptional() sharedContactNote?: string;
+  @IsString() @MaxLength(SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) @IsOptional() resolutionNote?: string;
   // R10, APPROVE only: the enum the reviewer picked, because the form's free text ("คลินิก") maps
   // to OTHER and left the PDPA health tripwire dead. Bounded to the closed enum here, and checked
   // again in the use case — the value decides whether a safeguard fires.
@@ -93,7 +102,7 @@ export class SystemSignupRequestController {
     // SUSPEND is the emergency stop, which must never depend on a link being configurable.
     // The base is the configured one, never the caller's Origin (review L-1): this URL is
     // PERSISTED as the owner's way back into their shop, and the header is client-suppliable.
-    const urls = dto.action === 'APPROVE'
+    const urls = ['APPROVE', 'CREATE_NEW_SHOP', 'RETRY_INTAKE'].includes(dto.action)
       ? { webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl), apiBaseUrl: trustedPublicApiBase(req) }
       : undefined;
     return this.queue.decide(requestId, dto, req.context.userId, req.context.requestId, urls);

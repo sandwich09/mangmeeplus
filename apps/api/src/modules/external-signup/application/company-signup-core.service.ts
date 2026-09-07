@@ -96,11 +96,21 @@ export class CompanySignupCoreService {
   async receiveNormalized(
     data: Prisma.CompanySignupRequestUncheckedCreateInput,
     correlationRequestId: string,
-  ): Promise<CompanySignupRequest> {
+  ): Promise<ReceiveResult> {
     return this.prisma.client.$transaction(async (tx) => {
+      await this.lock(tx, data.externalSignupId);
+      const existing = await tx.companySignupRequest.findUnique({
+        where: { externalSignupId: data.externalSignupId },
+      });
+      if (existing) {
+        if (existing.payloadHash !== data.payloadHash) {
+          throw new ConflictException('external_signup_payload_conflict');
+        }
+        return { request: existing, replayed: true };
+      }
       const request = await tx.companySignupRequest.create({ data });
       await this.appendEvidence(tx, request, null, 'RECEIVED', correlationRequestId);
-      return request;
+      return { request, replayed: false };
     });
   }
 

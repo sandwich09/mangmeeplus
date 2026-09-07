@@ -98,7 +98,9 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       findFirst: async () => [...requests.values()][0] ?? null,
       count: async ({ where }: any) => [...requests.values()].filter((row) =>
         row.autoApproved === where.autoApproved && row.source === where.source
-        && row.createdAt >= where.createdAt.gte).length,
+        && (row.approvedAt
+          ? row.approvedAt >= where.OR[0].approvedAt.gte
+          : row.createdAt >= where.OR[1].createdAt.gte)).length,
       update: async ({ where, data }: any) => {
         willWrite(requests, where.id);
         return Object.assign(requests.get(where.id), data);
@@ -144,7 +146,8 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       // fake has to remember it — otherwise a passing retry test would prove nothing.
       findFirst: async ({ where }: any) => memberships.find((m) => m.companyId === where.companyId) ?? null,
       // The repeat-trial read: any membership in any status, because a closed shop still counts.
-      count: async ({ where }: any) => memberships.filter((m) => m.userId === where.userId).length,
+      count: async ({ where }: any) => memberships.filter((m) => m.userId === where.userId
+        && (!where.companyId?.not || m.companyId !== where.companyId.not)).length,
     }),
     /**
      * Modelled as the unique `(provider, channel, providerUserId)` slot it really is. A fake that
@@ -282,6 +285,8 @@ const CONFIG = {
 
 const CMD = {
   idToken: 'aaaa.bbbb.cccc',
+  submissionId: '11111111-1111-4111-8111-111111111111',
+  intent: 'FIRST_SHOP' as const,
   companyName: 'ร้านมั่งมี',
   phoneNumber: '0812345678',
   contactEmail: 'shop@example.test',
@@ -337,7 +342,7 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
 
     // Before the fix this threw P2003 from the onboarding run insert and every AUTO_FREE
     // application landed in PROVISIONING_FAILED instead of opening a shop.
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.progress!.state, 'COMPLETED');
     assert.equal(h.store.onboardingRuns[0].createdBySystemAdminUserId, 'sysadmin-1');
     const request = [...h.store.requests.values()][0];
     assert.equal(request.state, 'COMPLETED');
@@ -379,7 +384,7 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     const h = harness({ systemAdmins: [] });
     const result = await h.submit.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.notified, [[...h.store.requests.values()][0].id]);
     assert.deepEqual(h.store.onboardingRuns, [], 'nothing may be provisioned with no operator');
     // The slot is not burned either: nothing was auto-approved.
@@ -391,7 +396,7 @@ describe('AUTO_FREE end to end (review HIGH-1)', () => {
     const h = harness({ config: { lineSignupAutoDailyCap: 0 } });
     const result = await h.submit.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.store.onboardingRuns, []);
     assert.ok(h.store.audits.some((a) => a.action === 'signup.line.auto_approve_capped'));
     // §15.6 (a), driven end to end through submit rather than from a stubbed decision.
@@ -659,8 +664,8 @@ describe('a LINE account that was unlinked can open a new shop', () => {
 
     const result = await h.submit.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED', 'this used to be PROVISIONING_FAILED, forever');
-    assert.equal(result.existingAccount, false, 'a new account, not the one that walked away');
+    assert.equal(result.progress!.state, 'COMPLETED', 'this used to be PROVISIONING_FAILED, forever');
+    assert.equal(result.progress!.existingAccount, true, 'the completed response reflects the newly active account');
     assert.equal(h.store.identities.length, 1, 'the slot holds ONE row, as its unique index says');
     const identity = h.store.identities[0];
     assert.equal(identity.id, 'ext-old', 'the same row, re-pointed');
@@ -740,7 +745,7 @@ describe('trial guards survive a missing plan term (review HIGH-3)', () => {
 
     const result = await h.submit.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.progress!.state, 'COMPLETED');
     const term = h.store.planTerms.get('co-1');
     assert.equal(term.tierKey, 'FREE_TRIAL_15', 'the guard creates the term it could not find');
     assert.equal(term.monthlySlipLimit, 15);
@@ -756,7 +761,7 @@ describe('trial guards survive a missing plan term (review HIGH-3)', () => {
 
     const result = await h.submit.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED', 'the company exists; a guard failure must not undo it');
+    assert.equal(result.progress!.state, 'COMPLETED', 'the company exists; a guard failure must not undo it');
     assert.ok(
       h.store.audits.some((a) => a.action === 'signup.line.trial_guards_failed' && a.metadataJson.step === 'ai_budget'),
       'and it is recorded as evidence an operator can act on',

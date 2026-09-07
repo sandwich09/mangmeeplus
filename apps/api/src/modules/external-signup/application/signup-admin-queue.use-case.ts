@@ -1,19 +1,22 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type {
   AdminSignupDecisionBody,
   AdminSignupDecisionDto,
   AdminSignupQueueDto,
   AdminSignupQueueItemDto,
   AdminSignupReissueDto,
+  LineSignupEligibleCompanyDto,
 } from '@watchdog-bms/contracts';
-import { COMPANY_BUSINESS_CATEGORIES } from '@watchdog-bms/contracts';
-import type { CompanySignupRequest } from '../../../generated/prisma/client';
+import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_RESOLUTION_NOTE_MAX_LENGTH } from '@watchdog-bms/contracts';
+import type { CompanySignupRequest, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { AccountClaimTokenService } from './account-claim-token.service';
 import { SignupClaimEmailService } from './signup-claim-email.service';
 import { ProvisionSignupUseCase, mapBusinessCategory, reviewedBusinessCategory } from './provision-signup.use-case';
 import { LineSignupNotifyService } from './line-signup-notify.service';
+import { shortLineIdHash } from './signup-admin-notify.service';
+import { lineSignupContactEmailConflict, SubmitLineSignupUseCase } from './submit-line-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
 import {
   OWNED_COMPANY_MEMBERSHIP,
@@ -42,6 +45,8 @@ const QUEUE_STATES: readonly CompanySignupState[] = [
  * admin could take — its close-out is the applicant's own welcome page.
  */
 const LINE_ONLY_QUEUE_STATES: readonly CompanySignupState[] = ['READY', 'PROVISIONING'];
+/** Committed LINE intake that needs the explicit RETRY_INTAKE action, never APPROVE. */
+const LINE_INTAKE_QUEUE_STATES: readonly CompanySignupState[] = ['RECEIVED', 'VALIDATED'];
 
 /** Spec §4D ④: an approved request never dead-ends, so reissue has no age limit. */
 const REISSUABLE_STATES: readonly CompanySignupState[] = ['EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED'];
@@ -103,6 +108,7 @@ export class SignupAdminQueueUseCase {
     private readonly claimEmail: SignupClaimEmailService,
     private readonly provision: ProvisionSignupUseCase,
     private readonly lineNotify: LineSignupNotifyService,
+    @Optional() private readonly lineSubmit?: SubmitLineSignupUseCase,
   ) {}
 
   /**
@@ -140,7 +146,7 @@ export class SignupAdminQueueUseCase {
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
     const phones = [...new Set(requests.map((r) => r.phoneNumber).filter((phone): phone is string => !!phone))];
     const lineRequestIds = requests.filter((request) => request.source === SIGNUP_SOURCE_LINE_OA).map((request) => request.id);
-    const [users, companies, phoneMatches, priorCompanies, emailReviewEvidence] = await Promise.all([
+    const [users, companies, phoneMatches, priorCompanies, emailReviewEvidence, eligibleCompanies] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
       taxIds.length
         ? this.prisma.client.company.findMany({ where: { taxId: { in: taxIds } }, select: { taxId: true, name: true } })
@@ -154,6 +160,7 @@ export class SignupAdminQueueUseCase {
           metadataJson: { path: ['emailPreviouslyUsed'], equals: true } },
         select: { targetId: true },
       }) : Promise.resolve([]),
+      this.eligibleCompaniesForRequests(requests),
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
@@ -161,7 +168,7 @@ export class SignupAdminQueueUseCase {
 
     return {
       items: requests.map((request) =>
-        ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now),
+        ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, eligibleCompanies, now),
           ...(reusedEmailRequests.has(request.id) ? { emailPreviouslyUsed: true } : {}) })),
       nextCursor,
       counts,
@@ -179,7 +186,9 @@ export class SignupAdminQueueUseCase {
         by: ['state', 'source'],
         where: {
           state: {
-            in: [...new Set([...QUEUE_STATES, ...LINE_ONLY_QUEUE_STATES, ...ARCHIVED_STATES])] as CompanySignupState[],
+            in: [...new Set([
+              ...QUEUE_STATES, ...LINE_ONLY_QUEUE_STATES, ...LINE_INTAKE_QUEUE_STATES, ...ARCHIVED_STATES,
+            ])] as CompanySignupState[],
           },
         },
         _count: { _all: true },
@@ -198,6 +207,7 @@ export class SignupAdminQueueUseCase {
     // list cannot show: F2 made PROVISIONING_FAILED every-source, READY is still LINE-only.
     const problem = total('EMAIL_FAILED') + total('EXPIRED')
       + total('PROVISIONING_FAILED') + total('READY', true)
+      + total('RECEIVED', true) + total('VALIDATED', true)
       + staleProvisioning;
     return {
       // Everything actionable: the same set `queueWhere(undefined)` returns, counted whole. A live
@@ -274,6 +284,53 @@ export class SignupAdminQueueUseCase {
     return byRequest;
   }
 
+  /** Current proof targets only: ACTIVE identity/user/membership/role and an ACTIVE company. */
+  private async eligibleCompaniesForRequests(
+    requests: CompanySignupRequest[],
+  ): Promise<Map<string, LineSignupEligibleCompanyDto[]>> {
+    const lineRows = requests.filter((request) => request.lineProviderUserId && request.lineChannelId);
+    if (lineRows.length === 0) return new Map();
+    const identities = await this.prisma.client.externalIdentity.findMany({
+      where: {
+        provider: 'LINE',
+        status: 'ACTIVE',
+        user: { status: 'ACTIVE' },
+        providerUserId: { in: [...new Set(lineRows.map((request) => request.lineProviderUserId!))] },
+      },
+      select: { providerUserId: true, providerChannelId: true, userId: true },
+    });
+    const requestIdsByUser = new Map<string, string[]>();
+    for (const request of lineRows) {
+      const identity = identities.find((candidate) => candidate.providerUserId === request.lineProviderUserId
+        && candidate.providerChannelId === request.lineChannelId);
+      if (!identity) continue;
+      requestIdsByUser.set(identity.userId, [...(requestIdsByUser.get(identity.userId) ?? []), request.id]);
+    }
+    const memberships = await this.prisma.client.companyMembership.findMany({
+      where: {
+        userId: { in: [...requestIdsByUser.keys()] },
+        status: 'ACTIVE',
+        company: { status: 'ACTIVE' },
+        roles: { some: { role: { status: 'ACTIVE' } } },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { userId: true, companyId: true, company: { select: { name: true } } },
+    });
+    const result = new Map<string, LineSignupEligibleCompanyDto[]>();
+    for (const membership of memberships) {
+      const target = {
+        companyId: membership.companyId,
+        companyName: membership.company.name,
+        status: 'ACTIVE' as const,
+        canEnter: true,
+      };
+      for (const requestId of requestIdsByUser.get(membership.userId) ?? []) {
+        result.set(requestId, [...(result.get(requestId) ?? []), target]);
+      }
+    }
+    return result;
+  }
+
   /**
    * Review A-01: the number on the form already reaches a shop we opened. The commonest shape is a
    * customer an admin set up by hand who then applies from LINE as if they were new — approving
@@ -319,7 +376,7 @@ export class SignupAdminQueueUseCase {
     // These rows are all COMPLETED, so none of the queue's dedupe hints apply to them.
     return {
       items: requests.map((request) =>
-        toQueueItem(request, new Set<string | null>(), new Map(), new Map(), new Map(), now)),
+        toQueueItem(request, new Set<string | null>(), new Map(), new Map(), new Map(), new Map(), now)),
     };
   }
 
@@ -339,6 +396,33 @@ export class SignupAdminQueueUseCase {
   ): Promise<AdminSignupDecisionDto> {
     const request = await this.findOrThrow(requestId);
     const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
+
+    if (lineOa) {
+      if (body.version === undefined) throw new ConflictException('line_signup_version_required');
+      if (request.version !== body.version) throw new ConflictException('line_signup_version_conflict');
+      if (body.action === 'APPROVE') throw new ConflictException('line_signup_resolution_required');
+      if (body.action === 'RETRY_INTAKE') {
+        if (!urls) throw new ConflictException('signup_provisioning_urls_required');
+        if (!LINE_INTAKE_QUEUE_STATES.includes(request.state as CompanySignupState)) {
+          throw new ConflictException(`invalid_signup_retry:${request.state}`);
+        }
+        if (!this.lineSubmit) throw new ConflictException('line_signup_retry_unavailable');
+        const current = await this.lineSubmit.retryIntake(request.id, body.version, correlationRequestId, urls, now);
+        return this.lineDecisionResult(current);
+      }
+      if (body.action === 'REQUEST_INFO') {
+        return this.requestLineInformation(request, body, adminUserId, correlationRequestId, now);
+      }
+      if (body.action === 'RETURN_EXISTING') {
+        return this.returnToExistingCompany(request, body, adminUserId, correlationRequestId, now);
+      }
+      if (body.action === 'CREATE_NEW_SHOP') {
+        if (!urls) throw new ConflictException('signup_provisioning_urls_required');
+        return this.createNewLineShop(request, body, adminUserId, correlationRequestId, urls, now);
+      }
+    } else if (['CREATE_NEW_SHOP', 'RETURN_EXISTING', 'REQUEST_INFO', 'RETRY_INTAKE'].includes(body.action)) {
+      throw new ConflictException('line_signup_action_not_available');
+    }
 
     if (body.action === 'SUSPEND') return this.suspend(request, adminUserId, correlationRequestId, now);
 
@@ -487,6 +571,322 @@ export class SignupAdminQueueUseCase {
     return { requestId, state: 'REJECTED' };
   }
 
+  private async requestLineInformation(
+    request: CompanySignupRequest,
+    body: AdminSignupDecisionBody,
+    adminUserId: string,
+    correlationRequestId: string,
+    now: Date,
+  ): Promise<AdminSignupDecisionDto> {
+    const note = requiredNote(body.resolutionNote, 'line_signup_resolution_note_required');
+    const result = await this.prisma.client.$transaction(async (tx) => {
+      await lockSignupRequest(tx, request.id);
+      const current = await tx.companySignupRequest.findUnique({ where: { id: request.id } });
+      if (!current) throw new NotFoundException('company_signup_request_not_found');
+      this.assertLineVersion(current, body.version);
+      if (!current.lineProviderUserId) throw new ConflictException('line_signup_identity_missing');
+      if (!['RECEIVED', 'VALIDATED', 'PENDING_REVIEW'].includes(current.state)
+        || current.companyId || current.resolvedExistingCompanyId || current.provisioningAttemptId
+        || current.autoApproved || current.reviewResolution === 'NEW_SHOP') {
+        throw new ConflictException(`invalid_signup_request_info:${current.state}`);
+      }
+      const nextVersion = current.version + 1;
+      const changed = await tx.companySignupRequest.update({
+        where: { id: current.id },
+        data: {
+          reviewResolution: 'REQUEST_INFO',
+          resolutionNote: note,
+          resolvedAt: now,
+          resolvedByUserId: adminUserId,
+          version: { increment: 1 },
+        },
+      });
+      await this.audit(current.id, adminUserId, correlationRequestId, 'signup.line.information_requested', {
+        fromState: current.state,
+        reviewVersion: nextVersion,
+      }, tx);
+      const existingCase = await tx.lineSupportRequest.findFirst({
+        where: { lineUserId: current.lineProviderUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+        orderBy: { requestedAt: 'desc' },
+        select: { id: true, assignedToUserId: true },
+      });
+      const supportRequest = existingCase
+        ? await tx.lineSupportRequest.update({
+            where: { id: existingCase.id },
+            data: {
+              signupRequestId: current.id,
+              ...(existingCase.assignedToUserId ? {} : { assignedToUserId: adminUserId, assignedAt: now }),
+            },
+            select: { id: true },
+          })
+        : await tx.lineSupportRequest.create({
+            data: {
+              companyId: null,
+              signupRequestId: current.id,
+              lineUserId: current.lineProviderUserId,
+              lineUserIdHash: shortLineIdHash(current.lineProviderUserId),
+              assignedToUserId: adminUserId,
+              assignedAt: now,
+            },
+            select: { id: true },
+          });
+      await this.lineNotify.enqueue(current.id, 'requested_info', now, { reviewVersion: nextVersion, tx });
+      return { request: changed, supportRequestId: supportRequest.id };
+    });
+    return {
+      ...this.lineDecisionResult(result.request),
+      customerNotification: 'QUEUED',
+      supportRequestId: result.supportRequestId,
+    };
+  }
+
+  private async returnToExistingCompany(
+    request: CompanySignupRequest,
+    body: AdminSignupDecisionBody,
+    adminUserId: string,
+    correlationRequestId: string,
+    now: Date,
+  ): Promise<AdminSignupDecisionDto> {
+    const targetCompanyId = body.targetCompanyId?.trim();
+    if (!targetCompanyId) throw new ConflictException('line_signup_existing_shop_target_required');
+    const updated = await this.prisma.client.$transaction(async (tx) => {
+      await lockSignupRequest(tx, request.id);
+      const current = await tx.companySignupRequest.findUnique({ where: { id: request.id } });
+      if (!current) throw new NotFoundException('company_signup_request_not_found');
+      this.assertLineVersion(current, body.version);
+      if (current.state === 'COMPLETED' && current.reviewResolution === 'RETURN_EXISTING'
+        && current.resolvedExistingCompanyId === targetCompanyId) return current;
+      if (current.state !== 'PENDING_REVIEW' || current.companyId || current.provisioningAttemptId) {
+        throw new ConflictException(`invalid_signup_return_existing:${current.state}`);
+      }
+      const proof = await tx.externalIdentity.findFirst({
+        where: {
+          provider: 'LINE',
+          providerUserId: current.lineProviderUserId ?? '',
+          providerChannelId: current.lineChannelId ?? '',
+          status: 'ACTIVE',
+          user: { status: 'ACTIVE' },
+        },
+        select: { userId: true },
+      });
+      const membership = proof ? await tx.companyMembership.findFirst({
+        where: {
+          userId: proof.userId,
+          companyId: targetCompanyId,
+          status: 'ACTIVE',
+          company: { status: 'ACTIVE' },
+          roles: { some: { role: { status: 'ACTIVE' } } },
+        },
+        select: { id: true },
+      }) : null;
+      if (!proof || !membership) throw new ConflictException('line_signup_existing_shop_proof_required');
+      const changed = await tx.companySignupRequest.update({
+        where: { id: current.id },
+        data: {
+          state: 'COMPLETED',
+          reviewResolution: 'RETURN_EXISTING',
+          resolutionNote: body.resolutionNote?.trim() || null,
+          resolvedExistingCompanyId: targetCompanyId,
+          resolvedAt: now,
+          resolvedByUserId: adminUserId,
+          approvedAt: now,
+          approvedByUserId: adminUserId,
+          version: { increment: 1 },
+        },
+      });
+      await tx.lineCompanyContext.upsert({
+        where: { lineUserId: current.lineProviderUserId! },
+        create: { lineUserId: current.lineProviderUserId!, companyId: targetCompanyId, selectedAt: now },
+        update: { companyId: targetCompanyId, selectedAt: now },
+      });
+      await this.audit(current.id, adminUserId, correlationRequestId, 'signup.line.returned_existing', {
+        companyId: targetCompanyId,
+        fromState: current.state,
+      }, tx);
+      return changed;
+    });
+    return this.lineDecisionResult(updated);
+  }
+
+  private async createNewLineShop(
+    request: CompanySignupRequest,
+    body: AdminSignupDecisionBody,
+    adminUserId: string,
+    correlationRequestId: string,
+    urls: { webBaseUrl: string; apiBaseUrl: string },
+    now: Date,
+  ): Promise<AdminSignupDecisionDto> {
+    const decision = await this.prisma.client.$transaction(async (tx) => {
+      await lockSignupRequest(tx, request.id);
+      const current = await tx.companySignupRequest.findUnique({ where: { id: request.id } });
+      if (!current) throw new NotFoundException('company_signup_request_not_found');
+      this.assertLineVersion(current, body.version);
+      const recoverable = current.state === 'PROVISIONING_FAILED' || current.state === 'READY'
+        || isStaleProvisioning(current, now);
+      if (recoverable && current.reviewResolution === 'NEW_SHOP') {
+        await this.assertLineAccountNotBlocked(tx, current);
+        return { request: current, provision: true };
+      }
+      if (current.state !== 'PENDING_REVIEW' && !recoverable) {
+        if (current.state === 'COMPLETED' && current.reviewResolution === 'NEW_SHOP') {
+          return { request: current, provision: false };
+        }
+        throw new ConflictException(`invalid_signup_create_new_shop:${current.state}`);
+      }
+
+      const identity = await this.assertLineAccountNotBlocked(tx, current);
+      const repeatTrial = identity.userId !== null && await this.hasPriorOwnedCompany(
+        tx,
+        identity.userId,
+        current.companyId,
+      );
+      const contactEmailConflict = await lineSignupContactEmailConflict(
+        tx,
+        current.id,
+        current.contactEmail ?? '',
+        identity.attachUserId,
+      );
+      const newSharedNote = body.acknowledgeSharedContact
+        ? requiredNote(body.sharedContactNote, 'line_signup_shared_contact_note_required')
+        : null;
+      const sharedContactReviewed = current.sharedContactReviewedAt !== null || newSharedNote !== null;
+      if (contactEmailConflict && !sharedContactReviewed) {
+        throw new ConflictException('line_signup_shared_contact_review_required');
+      }
+      const newTrialNote = body.grantRepeatTrial
+        ? requiredNote(body.trialGrantNote, 'line_signup_trial_grant_note_required')
+        : null;
+      const repeatTrialGranted = current.repeatTrialGrantedAt !== null || newTrialNote !== null;
+      const chosenCategory = (COMPANY_BUSINESS_CATEGORIES as readonly string[])
+        .includes(body.businessCategory ?? '') ? body.businessCategory! : null;
+
+      if (repeatTrial && !repeatTrialGranted) {
+        const changed = await tx.companySignupRequest.update({
+          where: { id: current.id },
+          data: {
+            contactEmailConflict,
+            reviewResolution: 'PLAN_REVIEW',
+            resolutionNote: body.resolutionNote?.trim() || null,
+            resolvedAt: now,
+            resolvedByUserId: adminUserId,
+            ...(newSharedNote ? {
+              sharedContactReviewedAt: now,
+              sharedContactReviewedByUserId: adminUserId,
+              sharedContactReviewNote: newSharedNote,
+            } : {}),
+            version: { increment: 1 },
+          },
+        });
+        await this.audit(current.id, adminUserId, correlationRequestId, 'signup.line.plan_review_required', {
+          repeatTrial: true,
+          contactEmailConflict,
+        }, tx);
+        return { request: changed, provision: false };
+      }
+
+      const changed = await tx.companySignupRequest.update({
+        where: { id: current.id },
+        data: {
+          contactEmailConflict,
+          reviewResolution: 'NEW_SHOP',
+          resolutionNote: body.resolutionNote?.trim() || null,
+          resolvedExistingCompanyId: null,
+          resolvedAt: now,
+          resolvedByUserId: adminUserId,
+          approvedAt: current.approvedAt ?? now,
+          approvedByUserId: current.approvedByUserId ?? adminUserId,
+          ...(chosenCategory ? { businessCategory: chosenCategory } : {}),
+          ...(repeatTrial && newTrialNote ? {
+            repeatTrialGrantedAt: now,
+            repeatTrialGrantedByUserId: adminUserId,
+            repeatTrialGrantNote: newTrialNote,
+          } : {}),
+          ...(contactEmailConflict && newSharedNote ? {
+            sharedContactReviewedAt: now,
+            sharedContactReviewedByUserId: adminUserId,
+            sharedContactReviewNote: newSharedNote,
+          } : {}),
+          version: { increment: 1 },
+        },
+      });
+      await this.audit(current.id, adminUserId, correlationRequestId, 'signup.request.approved', {
+        source: current.source,
+        resolution: 'NEW_SHOP',
+        repeatTrial,
+        repeatTrialGranted,
+        contactEmailConflict,
+        sharedContactReviewed,
+      }, tx);
+      return { request: changed, provision: true };
+    });
+
+    if (!decision.provision) return this.lineDecisionResult(decision.request);
+    await this.provision.execute({
+      requestId: request.id,
+      actorUserId: adminUserId,
+      operatorFromDirectory: false,
+      correlationRequestId,
+      ...urls,
+    });
+    return this.lineDecisionResult(await this.findOrThrow(request.id));
+  }
+
+  private async assertLineAccountNotBlocked(
+    tx: Prisma.TransactionClient,
+    request: CompanySignupRequest,
+  ): Promise<{ userId: string | null; attachUserId: string | null }> {
+    const identity = await tx.externalIdentity.findFirst({
+      where: {
+        provider: 'LINE',
+        providerUserId: request.lineProviderUserId ?? '',
+        providerChannelId: request.lineChannelId ?? '',
+      },
+      select: { userId: true, status: true, user: { select: { status: true } } },
+    });
+    if (!identity) return { userId: null, attachUserId: null };
+    if (identity.status === 'DISABLED') throw new ConflictException('line_signup_identity_disabled');
+    if (identity.user.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
+    if (request.attachUserId && (identity.status !== 'ACTIVE' || identity.userId !== request.attachUserId)) {
+      throw new ConflictException('line_signup_existing_account_proof_changed');
+    }
+    return {
+      userId: identity.userId,
+      attachUserId: identity.status === 'ACTIVE' ? identity.userId : null,
+    };
+  }
+
+  private async hasPriorOwnedCompany(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    excludeCompanyId: string | null,
+  ): Promise<boolean> {
+    return (await tx.companyMembership.count({
+      where: {
+        userId,
+        ...OWNED_COMPANY_MEMBERSHIP,
+        ...(excludeCompanyId ? { companyId: { not: excludeCompanyId } } : {}),
+      },
+    })) > 0;
+  }
+
+  private assertLineVersion(request: CompanySignupRequest, version: number | undefined): void {
+    if (version === undefined) throw new ConflictException('line_signup_version_required');
+    if (request.version !== version) throw new ConflictException('line_signup_version_conflict');
+  }
+
+  private lineDecisionResult(request: CompanySignupRequest): AdminSignupDecisionDto {
+    const entryCompanyId = request.reviewResolution === 'RETURN_EXISTING'
+      ? request.resolvedExistingCompanyId
+      : request.companyId;
+    return {
+      requestId: request.id,
+      state: request.state,
+      version: request.version,
+      ...(request.reviewResolution ? { resolution: request.reviewResolution as any } : {}),
+      ...(entryCompanyId ? { entryCompanyId } : {}),
+    };
+  }
+
   /**
    * Spec §4D ④: "he already applied, and one day may already have paid" — an admin can always put a
    * fresh link in front of an approved applicant, at any age, without a second application.
@@ -538,6 +938,9 @@ export class SignupAdminQueueUseCase {
     now: Date,
   ): Promise<AdminSignupDecisionDto> {
     if (request.state === 'SUSPENDED') return { requestId: request.id, state: request.state };
+    if (request.resolvedExistingCompanyId) {
+      throw new ConflictException('line_signup_resolved_existing_suspend_not_allowed');
+    }
     // Never mid-provisioning while anything could still exist behind it. SUSPENDED is terminal, so
     // suspending a row whose company may already exist but whose trial guards have not run leaves
     // an UNLIMITED shop with its application shut behind it — and against a live attempt it races
@@ -615,6 +1018,19 @@ export class SignupAdminQueueUseCase {
   }
 }
 
+function requiredNote(value: string | undefined, missingCode: string): string {
+  const note = value?.trim() ?? '';
+  if (!note) throw new ConflictException(missingCode);
+  if (note.length > SIGNUP_RESOLUTION_NOTE_MAX_LENGTH) {
+    throw new ConflictException('line_signup_resolution_note_too_long');
+  }
+  return note;
+}
+
+async function lockSignupRequest(tx: Prisma.TransactionClient, requestId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`;
+}
+
 /**
  * F10: one page boundary, as the two values the ordering is made of. Base64url so it survives a
  * query string, and opaque so nobody starts building one by hand.
@@ -675,6 +1091,7 @@ function queueWhere(tab: string | undefined, now: Date) {
       OR: [
         { state: { in: PROBLEM_STATES as CompanySignupState[] } },
         { state: { in: LINE_PROBLEM_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+        { state: { in: LINE_INTAKE_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
         staleProvisioningWhere(now),
       ],
     };
@@ -683,6 +1100,7 @@ function queueWhere(tab: string | undefined, now: Date) {
     OR: [
       { state: { in: QUEUE_STATES as CompanySignupState[] } },
       { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+      { state: { in: LINE_INTAKE_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
     ],
   };
 }
@@ -698,6 +1116,7 @@ function toQueueItem(
   companyByTaxId: Map<string | null, string>,
   companyByPhone: Map<string, string>,
   priorCompanies: Map<string, PriorCompany>,
+  eligibleCompanies: Map<string, LineSignupEligibleCompanyDto[]>,
   now: Date,
 ): AdminSignupQueueItemDto {
   const priorCompany = priorCompanies.get(request.id);
@@ -706,12 +1125,16 @@ function toQueueItem(
   const approvalAge = daysSinceApproval(request.approvedAt, now);
   return {
     requestId: request.id,
+    version: request.version,
     state: request.state,
     companyName: request.companyName,
     ownerDisplayName: request.ownerDisplayName,
     // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
     // reader can mistake an empty string for a real address (review B-03).
     ...(request.contactEmail ? { contactEmail: request.contactEmail } : {}),
+    ...(request.source === SIGNUP_SOURCE_LINE_OA
+      ? { contactEmailConflict: request.contactEmailConflict === true }
+      : {}),
     ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
     ...(request.businessType ? { businessType: request.businessType } : {}),
     ...(request.vatRegistered !== null ? { vatRegistered: request.vatRegistered } : {}),
@@ -750,6 +1173,15 @@ function toQueueItem(
     // Owner 2026-09-05: the repeat-trial hint. Nothing is blocked — the operator is simply told
     // which shop this LINE account had before, and whether it is closed, expired or still running.
     ...(priorCompany ? { priorCompanyName: priorCompany.name, priorCompanyState: priorCompany.state } : {}),
+    ...(request.reviewResolution ? { reviewResolution: request.reviewResolution as any } : {}),
+    ...(request.resolvedExistingCompanyId ? { resolvedExistingCompanyId: request.resolvedExistingCompanyId } : {}),
+    ...(eligibleCompanies.get(request.id)?.length
+      ? { eligibleExistingCompanies: eligibleCompanies.get(request.id) }
+      : {}),
+    ...(request.source === SIGNUP_SOURCE_LINE_OA ? {
+      requiresRepeatTrialGrant: priorCompany !== undefined,
+      repeatTrialGranted: request.repeatTrialGrantedAt !== null,
+    } : {}),
     // Why the last provisioning stopped, so "เปิดร้านไม่สำเร็จ" can name a cause an admin can act on.
     ...(request.failureCode ? { failureCode: request.failureCode } : {}),
   };

@@ -52,7 +52,7 @@ test('only the newest read may write state', () => {
   // rows, so a guard present only in `catch` would still let a stale response repaint the table.
   assert.match(
     page,
-    /await listSupportRequests\(next, \{ signal: controller\.signal \}\);\s*\n\s*if \(seq !== readSeq\.current\) return;/,
+    /await listSupportRequests\(next, cursor, \{ signal: controller\.signal \}\);\s*\n\s*if \(seq !== readSeq\.current\) return;/,
     'the resolved read checks its own sequence before setting any state',
   );
   assert.match(page, /\} catch \(err\) \{\s*\n\s*if \(seq !== readSeq\.current\) return;/);

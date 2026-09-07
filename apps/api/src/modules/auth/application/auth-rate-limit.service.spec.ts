@@ -58,7 +58,7 @@ describe('AuthRateLimitService LINE-first signup buckets', () => {
 
     for (let created = 0; created < 3; created += 1) {
       await service.assertLineSignupUserAllowed('Uline-1');
-      await service.recordLineSignupUser('Uline-1');
+      await service.recordLineSignupUser('Uline-1', `signup-${created}`);
     }
     await assert.rejects(service.assertLineSignupUserAllowed('Uline-1'), /Too many requests/);
     // Another LINE account behind the same NAT is untouched.

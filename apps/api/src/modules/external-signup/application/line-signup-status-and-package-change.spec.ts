@@ -8,12 +8,38 @@ const NOW = new Date('2026-09-03T10:00:00+07:00');
 
 const CONFIG = { lineSignupBusinessDays: 'MON-SAT', lineSignupBusinessHours: '09:00-18:00' } as any;
 
-function statusHarness(row: any, verifyThrows?: Error, attemptBucketFull = false) {
+function statusHarness(
+  row: any,
+  verifyThrows?: Error,
+  attemptBucketFull = false,
+  account = false,
+  membershipRows?: Array<{ companyId: string; company: { name: string; status: string } }>,
+) {
   const queries: any[] = [];
+  const saved = row ? {
+    version: 1,
+    externalSignupId: 'line:channel-1:Uline-1:11111111-1111-4111-8111-111111111111',
+    phoneNumber: '0812345678',
+    contactEmail: 'shop@example.test',
+    referralCode: null,
+    lineSignupIntent: 'FIRST_SHOP',
+    reviewResolution: null,
+    resolutionNote: null,
+    resolvedExistingCompanyId: null,
+    provisioningAttemptId: null,
+    autoApproved: false,
+    ...row,
+  } : null;
   const prisma = {
     client: {
+      externalIdentity: { findFirst: async () => account ? { userId: 'user-1' } : null },
+      companyMembership: {
+        findMany: async () => !account ? [] : membershipRows ?? (saved?.companyId
+          ? [{ companyId: saved.companyId, company: { name: saved.companyName, status: 'ACTIVE' } }]
+          : []),
+      },
       companySignupRequest: {
-        findFirst: async (args: any) => { queries.push(args); return row; },
+        findFirst: async (args: any) => { queries.push(args); return saved; },
       },
     },
   } as any;
@@ -41,9 +67,10 @@ describe('GetLineSignupStatusUseCase', () => {
     const h = statusHarness({ id: 'signup-1', state: 'PENDING_REVIEW', companyName: 'ร้านมั่งมี', companyId: null });
     const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
 
-    assert.deepEqual(status, {
-      requestId: 'signup-1', state: 'PENDING_REVIEW', companyName: 'ร้านมั่งมี', businessHours: true,
-    });
+    assert.equal(status.progress?.requestId, 'signup-1');
+    assert.equal(status.progress?.state, 'PENDING_REVIEW');
+    assert.equal(status.progress?.businessHours, true);
+    assert.deepEqual(status.eligibleCompanies, []);
     // Scoped by identity, not by a caller-supplied id: there is nothing here to enumerate.
     assert.equal(h.queries[0].where.lineProviderUserId, 'Uline-1');
     assert.equal(h.queries[0].where.lineChannelId, 'channel-1');
@@ -52,13 +79,56 @@ describe('GetLineSignupStatusUseCase', () => {
   });
 
   it('hands back the shop id once it exists, so the page can open it', async () => {
-    const h = statusHarness({ id: 'signup-1', state: 'COMPLETED', companyName: 'ร้านมั่งมี', companyId: 'co-1' });
+    const h = statusHarness(
+      { id: 'signup-1', state: 'COMPLETED', companyName: 'ร้านมั่งมี', companyId: 'co-1' },
+      undefined,
+      false,
+      true,
+    );
     const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
-    assert.equal(status?.companyId, 'co-1');
+    assert.equal(status.progress?.entryCompanyId, 'co-1');
+    assert.deepEqual(status.eligibleCompanies, [{
+      companyId: 'co-1', companyName: 'ร้านมั่งมี', status: 'ACTIVE', canEnter: true,
+    }]);
+  });
+
+  it('reports that this request created a shop without offering entry after current access is gone', async () => {
+    const h = statusHarness({
+      id: 'signup-1', state: 'SUSPENDED', companyName: 'ร้านมั่งมี', companyId: 'co-1',
+      reviewResolution: 'NEW_SHOP',
+    });
+    const status = await h.useCase.execute('aaaa.bbbb.cccc', NOW);
+    assert.equal(status.progress?.companyCreated, true);
+    assert.equal(status.progress?.entryCompanyId, undefined, 'stored effects are not current navigation permission');
+    assert.deepEqual(status.eligibleCompanies, []);
+  });
+
+  it('does not offer an endless retry for a migrated intake missing a required field', async () => {
+    const status = await statusHarness({
+      id: 'signup-1', state: 'VALIDATED', companyName: 'ร้านข้อมูลเก่า', companyId: null,
+      phoneNumber: null,
+    }).useCase.execute('aaaa.bbbb.cccc', NOW);
+    assert.equal(status.progress?.canRetryIntake, false);
+    assert.equal(status.progress?.canUpdateContactEmail, true);
   });
 
   it('answers null for a LINE account that never applied', async () => {
-    assert.equal(await statusHarness(null).useCase.execute('aaaa.bbbb.cccc', NOW), null);
+    assert.deepEqual(await statusHarness(null).useCase.execute('aaaa.bbbb.cccc', NOW), {
+      progress: null,
+      eligibleCompanies: [],
+    });
+  });
+
+  it('returns proven memberships even when the account has no signup request', async () => {
+    const status = await statusHarness(null, undefined, false, true, [
+      { companyId: 'co-active', company: { name: 'ร้านพร้อมใช้', status: 'ACTIVE' } },
+      { companyId: 'co-expired', company: { name: 'ร้านหมดอายุ', status: 'DISABLED' } },
+    ]).useCase.execute('aaaa.bbbb.cccc', NOW);
+    assert.equal(status.progress, null);
+    assert.deepEqual(status.eligibleCompanies, [
+      { companyId: 'co-active', companyName: 'ร้านพร้อมใช้', status: 'ACTIVE', canEnter: true },
+      { companyId: 'co-expired', companyName: 'ร้านหมดอายุ', status: 'EXPIRED', canEnter: false },
+    ]);
   });
 
   // Residual risk from L-4: this route verifies an ID token too, and its own bucket is IP-only —

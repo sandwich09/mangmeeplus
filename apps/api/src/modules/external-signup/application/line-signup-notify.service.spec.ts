@@ -144,6 +144,20 @@ describe('P10-L push queueing (§7)', () => {
     assert.equal(h.appended[0].eventKey, lineSignupPushEventKey('r1', 'approved'));
     assert.deepEqual(h.appended[0].payloadJson.data, { signupRequestId: 'r1', kind: 'approved' });
   });
+
+  it('gives each real information request its review-version key without putting the question in the outbox', async () => {
+    const h = harness();
+    await h.service.enqueue('r1', 'requested_info', new Date('2026-09-07T00:00:00Z'), { reviewVersion: 2 });
+    await h.service.enqueue('r1', 'requested_info', new Date('2026-09-07T01:00:00Z'), { reviewVersion: 3 });
+    h.restore();
+
+    assert.equal(h.appended[0].eventKey, lineSignupPushEventKey('r1', 'requested_info', 2));
+    assert.equal(h.appended[1].eventKey, lineSignupPushEventKey('r1', 'requested_info', 3));
+    assert.notEqual(h.appended[0].eventKey, h.appended[1].eventKey);
+    assert.deepEqual(h.appended[0].payloadJson.data, {
+      signupRequestId: 'r1', kind: 'requested_info', reviewVersion: 2,
+    });
+  });
 });
 
 describe('P10-L push delivery', () => {
@@ -185,6 +199,24 @@ describe('P10-L push delivery', () => {
     await notRejected.service.deliver('r1', 'rejected');
     notRejected.restore();
     assert.equal(notRejected.pushes.length, 0, 'a revived application must not receive its rejection');
+  });
+
+  it('loads only the matching current information request and suppresses an obsolete queued question', async () => {
+    const current = harness({ request: completed({
+      state: 'PENDING_REVIEW', companyId: null, version: 3,
+      reviewResolution: 'REQUEST_INFO', resolutionNote: 'กรุณาส่งชื่อร้านและเบอร์โทรศัพท์ให้ครบถ้วน',
+    }) });
+    await current.service.deliver('r1', 'requested_info', 3);
+    current.restore();
+    assert.match(JSON.stringify(current.pushes[0].body), /กรุณาส่งชื่อร้านและเบอร์โทรศัพท์ให้ครบถ้วน/);
+
+    const stale = harness({ request: completed({
+      state: 'PENDING_REVIEW', companyId: null, version: 4,
+      reviewResolution: 'REQUEST_INFO', resolutionNote: 'คำถามใหม่กว่า',
+    }) });
+    await stale.service.deliver('r1', 'requested_info', 3);
+    stale.restore();
+    assert.deepEqual(stale.pushes, [], 'version 3 must not send the version 4 question');
   });
 
   it('throws on a LINE failure so the drain records it instead of losing the one message owed', async () => {
@@ -489,15 +521,13 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     assert.deepEqual(h.supportUpdates, []);
   });
 
-  it('expires an OPEN request only once its assistant pause has lapsed (§2.4)', async () => {
+  it('never hides an unanswered case when its assistant pause lapses', async () => {
     const h = harness({ due: [{ id: 'req-1' }], stillPaused: [{ lineUserId: 'Uline-9' }] });
     const result = await h.service.sweepExpiredSupportRequests(new Date('2026-09-05T00:00:00.000Z'));
     h.restore();
-    assert.equal(result.expired, 1);
-    assert.deepEqual(h.supportQueries[0].where.lineUserId, { notIn: ['Uline-9'] },
-      'somebody still inside their 24h pause is still waiting');
-    assert.equal(h.supportQueries[0].where.status, 'OPEN');
-    assert.equal(h.supportUpdates[0].data.closedReason, 'expired');
+    assert.equal(result.expired, 0);
+    assert.deepEqual(h.supportQueries, []);
+    assert.deepEqual(h.supportUpdates, []);
   });
 
   /**
@@ -506,17 +536,14 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
    * swept at hour 24 with an unanswered question on it, straight after being told "ทีมงานจะตอบกลับ
    * ในแชทนี้นะคะ". The thread's life is measured from the last thing the customer said.
    */
-  it('measures the 24 hours from the customer\'s newest message, not from the tap', async () => {
+  it('does not infer resolution from either customer-message clock', async () => {
     const h = harness({ due: [{ id: 'req-1' }] });
     const now = new Date('2026-09-05T00:00:00.000Z');
     await h.service.sweepExpiredSupportRequests(now);
     h.restore();
 
-    const where = h.supportQueries[0].where;
-    assert.ok(where.lastMessageAt?.lte instanceof Date, 'the window is keyed on the newest message');
-    assert.equal((now.getTime() - where.lastMessageAt.lte.getTime()) / 3_600_000, 24);
-    assert.equal(JSON.stringify(where).includes('requestedAt'), false,
-      'a request the customer wrote to an hour ago is not 24 hours old');
+    assert.deepEqual(h.supportQueries, []);
+    assert.deepEqual(h.supportUpdates, []);
   });
 
   // §3 PDPA. A settled request keeps a raw LINE id and up to 200 characters the customer typed;
@@ -531,10 +558,10 @@ describe('support notices (line-support-request-spec-th §2.2)', () => {
     const where = h.supportQueries[0].where;
     // The clock runs from the SETTLED stamp, and an OPEN request is never touched however old:
     // one of those is somebody still waiting.
-    assert.deepEqual(where.OR.map((clause: any) => clause.status), ['CLOSED', 'ANSWERED']);
-    const cutoff = where.OR[0].closedAt.lte as Date;
+    assert.equal(where.status, 'CLOSED');
+    const cutoff = where.closedAt.lte as Date;
     assert.equal(Math.round((now.getTime() - cutoff.getTime()) / 86_400_000), 90);
-    assert.equal(where.OR[1].answeredAt.lte instanceof Date, true);
+    assert.equal(JSON.stringify(where).includes('ANSWERED'), false, 'an answer is not proof the issue was resolved');
     assert.equal(JSON.stringify(where).includes('requestedAt'), false);
     assert.deepEqual(h.supportDeletes[0].where, { id: { in: ['req-1', 'req-2'] } });
   });

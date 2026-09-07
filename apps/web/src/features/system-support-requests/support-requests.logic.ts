@@ -34,6 +34,7 @@ export function supportReopenedChip(
 }
 
 export function supportClosedReasonTh(reason: string | undefined): string | null {
+  if (reason === 'resolved') return 'แก้ไขสำเร็จและปิดเคสแล้ว';
   if (reason === 'admin') return 'ทีมงานให้ AI ทำงานต่อ';
   if (reason === 'customer_resumed') return 'ลูกค้าเรียก AI กลับเอง';
   if (reason === 'expired') return 'ครบ 24 ชั่วโมง';
@@ -132,6 +133,23 @@ export function supportAnswerLabel(item: SupportRequestItemDto): string {
   return item.companyId ? 'เปิดหน้าร้าน' : 'เปิดคิวสมัคร';
 }
 
-/** Both buttons act on a request that is still live; a closed one has nothing left to do. */
-export const canMarkAnswered = (status: SupportRequestStatus) => status === 'OPEN';
+export function supportReplyChip(
+  status: SupportRequestItemDto['lastReplyDeliveryStatus'],
+): Chip | null {
+  if (status === 'SENT') return { label: 'ส่งข้อความล่าสุดแล้ว', tone: 'success' };
+  if (status === 'PENDING') return { label: 'ยังไม่ทราบผลส่ง · ลองซ้ำได้', tone: 'warning' };
+  if (status === 'FAILED') return { label: 'ส่งไม่สำเร็จ · ลองซ้ำได้', tone: 'danger' };
+  return null;
+}
+
+export function supportReplyWithinRetryWindow(
+  item: Pick<SupportRequestItemDto, 'replyFirstAttemptAt' | 'lastReplyDeliveryStatus'>,
+  now = new Date(),
+): boolean {
+  if (!item.replyFirstAttemptAt || !['PENDING', 'FAILED'].includes(item.lastReplyDeliveryStatus ?? '')) return false;
+  const age = now.getTime() - new Date(item.replyFirstAttemptAt).getTime();
+  return Number.isFinite(age) && age >= 0 && age < 24 * 60 * 60 * 1000;
+}
+
+/** Resume changes only the assistant pause; the managed case remains open until explicit resolve. */
 export const canResumeAi = (status: SupportRequestStatus) => status !== 'CLOSED';

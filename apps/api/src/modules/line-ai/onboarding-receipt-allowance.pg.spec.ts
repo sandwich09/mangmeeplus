@@ -99,6 +99,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       } as never, new AuthRateLimitService(config, rateLimits), adminNotify, provision, opsAlerts);
       await submit.execute({
         idToken: 'test.external.line.proof', companyName: tag, phoneNumber: '0812345678',
+        submissionId: randomUUID(), intent: 'FIRST_SHOP',
         contactEmail: ' Shop.Contact@Example.test ', legal: { ...currentLegalRelease('th'), locale: 'th' },
         correlationRequestId: `${tag}-signup`, webBaseUrl: 'https://app.example.test', apiBaseUrl: 'https://api.example.test/v1',
       });

@@ -209,11 +209,11 @@ const SUPPORT_ALREADY_OPEN_REPLY = '📮 คำขอของคุณยัง
 const ASSISTANT_RESUMED_REPLY = '💚 น้องมั่งมีกลับมาแล้วค่ะ ถามได้เลยนะคะ';
 /** The amplification floor's answer. Warm on purpose: whoever hits it may still genuinely need
  *  help, and the requests they already opened are in the operator inbox either way. */
-const SUPPORT_DAILY_LIMIT_REPLY = '📮 รับเรื่องไว้แล้วค่ะ ทีมงานจะติดต่อกลับในเวลาทำการ '
-  + '(จันทร์–เสาร์ 9:00–18:00) หากรีบ โทร 098-256-5628 ได้เลยค่ะ';
+const SUPPORT_DAILY_LIMIT_REPLY = '📮 วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้ค่ะ '
+  + 'หากยังต้องการความช่วยเหลือ โทร 098-256-5628 ได้เลยค่ะ';
 /** Sent while a support pause is running and there is no live request to write to (§8). */
-const SUPPORT_PAUSED_REPLY = '📮 ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่ เดี๋ยวตอบในแชทนี้นะคะ '
-  + RESUME_HINT;
+const SUPPORT_PAUSED_REPLY = '📮 ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จค่ะ '
+  + 'กรุณากด "ติดต่อเจ้าหน้าที่" อีกครั้ง หากยังไม่ได้ โทร 098-256-5628 ได้เลยค่ะ';
 /**
  * UAT 2026-09-06. The reply above was told to a customer whose message had just been dropped on the
  * floor, which is the one thing it must never mean. This one is only ever sent once the message is
@@ -2133,10 +2133,6 @@ export class ProcessLineWebhookUseCase {
         },
       });
       if (moved.count === 0) return 'none';
-      // The expiry sweep closes a request 24h after the customer last wrote, and the assistant must
-      // stay out for exactly as long. Both clocks now run from the same message; before this, a
-      // request reopened at hour 23 was swept an hour later with a fresh question on it.
-      //
       // EXTEND ONLY, never create (review 2026-09-06 N2). `live.companyId` is whatever the row
       // recorded when it was filed, checked against nobody since — and §2.5 DELETES this row on
       // unlink, so an upsert here rebuilt an ex-member's context pointing at the shop they left.
@@ -2193,29 +2189,26 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
-  /**
-   * §2.4. The customer's own way out. Works with no pause running and with no account at all — it
-   * is a promise ("the assistant is back") that must never depend on state the customer cannot see.
-   */
+  /** §2.4. Clear the assistant pause without treating that separate choice as support resolution. */
   private async handleAssistantResume(event: LineTextEvent, requestId: string): Promise<void> {
-    await this.prisma.client.lineCompanyContext.updateMany({
+    const identity = await this.resolveLineIdentity(event);
+    const cleared = await this.prisma.client.lineCompanyContext.updateMany({
       where: { lineUserId: event.lineUserId },
       data: { aiPausedUntil: null },
     });
-    const closed = await this.prisma.client.lineSupportRequest.updateMany({
-      where: { lineUserId: event.lineUserId, status: 'OPEN' },
-      data: { status: 'CLOSED', closedAt: new Date(), closedReason: 'customer_resumed' },
-    });
-    await this.deliverReply(event, ASSISTANT_RESUMED_REPLY);
+    const available = Boolean(identity && identity.user.status === 'ACTIVE');
+    await this.deliverRequiredMessages(event, [
+      available ? { type: 'text', text: ASSISTANT_RESUMED_REPLY } : await this.entryDoorMessage(event.lineUserId),
+    ]);
     await this.audit.log({
       action: 'signup.line.support_resumed',
       targetType: 'line_user',
       requestId,
       result: 'SUCCESS',
       riskLevel: 'LOW',
-      metadataJson: { closedRequests: closed.count },
+      metadataJson: { pauseCleared: cleared.count > 0, assistantAvailable: available },
     });
-    await this.updateEventLog(event.webhookEventId, 'support_resumed');
+    await this.updateEventLog(event.webhookEventId, available ? 'support_resumed' : 'support_resume_unavailable');
   }
 
   /**
@@ -2851,6 +2844,17 @@ export class ProcessLineWebhookUseCase {
         await this.deliverRequiredMessages(event, [buildCapabilityCard()]);
         await this.updateEventLog(event.webhookEventId, 'staff_menu_capability');
         return;
+      }
+      // A REQUEST_INFO applicant or unlinked person may already be in a managed human-support
+      // conversation even though they have no account/company context to pause. Ordinary text is
+      // their answer to that case; public menu/signup/resume commands keep their explicit routes.
+      if (publicCommand === null) {
+        const recorded = await this.recordSupportFollowUp(event.lineUserId, requestId, { text: event.messageText });
+        if (recorded !== 'none') {
+          await this.deliverReply(event, SUPPORT_FOLLOW_UP_REPLIES[recorded]);
+          await this.updateEventLog(event.webhookEventId, 'support_follow_up');
+          return;
+        }
       }
       // P10-L §3.1: the plain "link your account first" line was a dead end for the one person who
       // has no account to link. The same card the door sends, so both entrances agree — and a

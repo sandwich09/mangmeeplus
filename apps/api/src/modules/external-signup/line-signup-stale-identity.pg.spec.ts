@@ -114,6 +114,8 @@ function wire(client: PrismaClient, options: { adminUserId: string; approvalMode
 
 const submitCmd = (correlationRequestId: string) => ({
   idToken: 'aaaa.bbbb.cccc',
+  submissionId: randomUUID(),
+  intent: 'FIRST_SHOP' as const,
   companyName: `ร้านใหม่ ${randomUUID().slice(0, 8)}`,
   // Required since Owner 2026-09-05 (spec §3.2); every real submit carries one.
   phoneNumber: '0812345678',
@@ -121,6 +123,15 @@ const submitCmd = (correlationRequestId: string) => ({
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId,
   ...URLS,
+});
+
+const createNewShopDecision = (version: number) => ({
+  action: 'CREATE_NEW_SHOP' as const,
+  version,
+  grantRepeatTrial: true,
+  trialGrantNote: 'Regression fixture: explicit repeat-trial authorization',
+  acknowledgeSharedContact: true,
+  sharedContactNote: 'Regression fixture: reviewed shared contact address',
 });
 
 /**
@@ -225,19 +236,37 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
         } });
         const h = wire(client, { adminUserId, lineUserId });
         const submitted = await h.submit.execute({ ...submitCmd(`${tag}-submit`), contactEmail: ` ${contactEmail.toUpperCase()} ` }, NOW);
-        assert.equal(submitted.existingAccount, attached);
-        const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.requestId } });
+        assert.equal(submitted.progress!.existingAccount, attached);
+        const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.progress!.requestId } });
         assert.equal(pending.contactEmail, contactEmail); assert.equal(pending.mxValid, null);
         assert.equal(pending.attachUserId, ownerBefore?.id ?? null);
-        if (scenario === 'legacy-null') await client.companySignupRequest.update({ where: { id: submitted.requestId }, data: { contactEmail: null } });
+        if (scenario === 'legacy-null') await client.companySignupRequest.update({ where: { id: submitted.progress!.requestId }, data: { contactEmail: null } });
         else {
-          const queued = (await h.queue.list()).items.find((item) => item.requestId === submitted.requestId)!;
+          const queued = (await h.queue.list()).items.find((item) => item.requestId === submitted.progress!.requestId)!;
           assert.equal(queued.contactEmail, contactEmail);
           assert.equal(queued.attachesToExistingAccount ?? false, attached);
         }
-        await assert.rejects(() => h.submit.execute({ ...submitCmd(`${tag}-duplicate`), contactEmail: 'changed@example.test' }, NOW), /line_signup_already_pending/);
-        await h.queue.decide(submitted.requestId, { action: 'APPROVE' }, adminUserId, `${tag}-approve`, URLS);
-        const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.requestId } });
+        const collided = await h.submit.execute({
+          ...submitCmd(`${tag}-duplicate`), contactEmail: 'changed@example.test',
+        }, NOW);
+        assert.equal(collided.progress?.requestId, submitted.progress?.requestId,
+          'a new client key discovers and resumes the already-open request');
+        const unchangedOpen = await client.companySignupRequest.findUniqueOrThrow({ where: { id: pending.id } });
+        assert.equal(unchangedOpen.contactEmail,
+          scenario === 'legacy-null' ? null : contactEmail,
+          'the changed POST payload never rewrites an open request');
+        assert.equal(unchangedOpen.companyName, pending.companyName);
+        assert.equal(await client.companySignupRequest.count({ where: { lineProviderUserId: lineUserId } }), 1);
+        assert.equal(await client.company.count({ where: { id: { startsWith: tag } } }), attached ? 1 : 0,
+          'the open-request replay creates no company');
+        await h.queue.decide(
+          submitted.progress!.requestId,
+          createNewShopDecision(pending.version),
+          adminUserId,
+          `${tag}-approve`,
+          URLS,
+        );
+        const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.progress!.requestId } });
         assert.equal(request.state, 'COMPLETED');
         const company = await client.company.findUniqueOrThrow({ where: { id: request.companyId! } });
         assert.equal(company.email, scenario === 'legacy-null' ? null : contactEmail);
@@ -295,10 +324,16 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       await first.user.create({ data: { id: adminUserId, displayName: tag, status: 'ACTIVE' } });
       const harnesses = [wire(synchronize(first), { adminUserId, lineUserId: lineIds[0]! }), wire(synchronize(second), { adminUserId, lineUserId: lineIds[1]! })];
       const requests = await Promise.all(harnesses.map((h, index) => h.submit.execute({ ...submitCmd(`${tag}-submit-${index}`), contactEmail }, NOW)));
-      const approvals = await Promise.allSettled(harnesses.map((h, index) => h.queue.decide(requests[index]!.requestId, { action: 'APPROVE' }, adminUserId, `${tag}-approve-${index}`, URLS)));
+      const approvals = await Promise.allSettled(harnesses.map((h, index) => h.queue.decide(
+        requests[index]!.progress!.requestId,
+        createNewShopDecision(requests[index]!.progress!.version),
+        adminUserId,
+        `${tag}-approve-${index}`,
+        URLS,
+      )));
       for (const result of approvals) if (result.status === 'rejected') throw result.reason;
       assert.equal(arrivals, 2); assert.equal(rollbacks, 1, 'one actual unique violation is recovered with its savepoint');
-      const completed = await first.companySignupRequest.findMany({ where: { id: { in: requests.map((r) => r.requestId) } } });
+      const completed = await first.companySignupRequest.findMany({ where: { id: { in: requests.map((r) => r.progress!.requestId) } } });
       assert.equal(completed.length, 2); assert.ok(completed.every((request) => request.state === 'COMPLETED'));
       const owners = await first.user.findMany({ where: { id: { in: completed.map((r) => r.ownerUserId!) } }, include: { credential: true, externalIdentities: true } });
       assert.equal(owners.length, 2); assert.equal(owners.filter((owner) => owner.email === contactEmail).length, 1);
@@ -330,6 +365,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     const lineUserId = `U${tag}`;
     try {
       const seeded = await seedOldShop(client, tag, lineUserId);
+      await client.user.update({ where: { id: seeded.oldUserId }, data: { email: 'shop@example.test' } });
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
 
       // The owner severs the link themselves — the real use-case, so the status is the real one.
@@ -346,28 +382,36 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       const accepted = await h.submit.execute(submitCmd(`${tag}-submit`), NOW);
       // Before the fix this was the last honest step: the row said "new account" and the failure
       // came later, at the constraint, where nobody could act on it.
-      assert.equal(accepted.existingAccount, false, 'the account that walked away is not the owner');
-      assert.equal(accepted.state, 'PENDING_REVIEW');
+      assert.equal(accepted.progress!.existingAccount, false, 'the account that walked away is not the owner');
+      assert.equal(accepted.progress!.state, 'PENDING_REVIEW');
       // Submit SAW the stale row. With the old `status: 'ACTIVE'` filter this reads false, because
       // the identity that names this person was invisible to the query that had to find it.
       const submitted = await client.auditLog.findFirstOrThrow({
-        where: { action: 'signup.line.submitted', targetId: accepted.requestId },
+        where: { action: 'signup.line.submitted', targetId: accepted.progress!.requestId },
       });
       assert.equal((submitted.metadataJson as any).repeatTrial, true);
+      assert.equal((submitted.metadataJson as any).emailPreviouslyUsed, true,
+        'an UNLINKED historical user is conflict evidence, not the currently proven owner');
+      assert.equal((await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.progress!.requestId } })).contactEmailConflict,
+        true);
 
       // The queue tells the operator this is a repeat trial, and names the shop it is repeating.
-      const queued = (await h.queue.list()).items.find((item) => item.requestId === accepted.requestId)!;
+      const queued = (await h.queue.list()).items.find((item) => item.requestId === accepted.progress!.requestId)!;
       assert.equal(queued.priorCompanyName, `ร้านเก่า ${tag}`);
       assert.equal(queued.priorCompanyState, 'EXPIRED');
 
       const decided = await h.queue.decide(
-        accepted.requestId, { action: 'APPROVE' }, seeded.adminUserId, `${tag}-approve`, URLS,
+        accepted.progress!.requestId,
+        createNewShopDecision(accepted.progress!.version),
+        seeded.adminUserId,
+        `${tag}-approve`,
+        URLS,
       );
       // The bug: this used to be a 409 from the unique index, twice, with the row left at
       // PROVISIONING_FAILED and every retry identical.
       assert.equal(decided.state, 'COMPLETED');
 
-      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.requestId } });
+      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.progress!.requestId } });
       assert.equal(request.state, 'COMPLETED');
       assert.equal(request.failureCode, null, 'nothing failed on the way');
       const newCompanyId = request.companyId!;
@@ -468,12 +512,12 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       const accepted = await h.submit.execute(submitCmd(`${tag}-repeat`), NOW);
 
       // Owner 2026-09-05: the machine may open a FIRST free trial, never a second one.
-      assert.equal(accepted.state, 'PENDING_REVIEW');
-      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.requestId } });
+      assert.equal(accepted.progress!.state, 'PENDING_REVIEW');
+      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.progress!.requestId } });
       assert.equal(request.autoApproved, false, 'no cap slot was burned on it either');
       assert.equal(request.companyId, null, 'and no shop exists yet');
       const flagged = await client.auditLog.findFirstOrThrow({
-        where: { action: 'signup.line.auto_approve_repeat_trial', targetId: accepted.requestId },
+        where: { action: 'signup.line.auto_approve_repeat_trial', targetId: accepted.progress!.requestId },
       });
       assert.equal((flagged.metadataJson as any).reason, 'repeat_trial_manual_review');
     } finally {
@@ -500,17 +544,17 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-employee`), NOW);
 
-      assert.equal(accepted.state, 'COMPLETED', 'a first shop is a first shop');
+      assert.equal(accepted.progress!.state, 'COMPLETED', 'a first shop is a first shop');
       const submitted = await client.auditLog.findFirstOrThrow({
-        where: { action: 'signup.line.submitted', targetId: accepted.requestId },
+        where: { action: 'signup.line.submitted', targetId: accepted.progress!.requestId },
       });
       assert.equal((submitted.metadataJson as any).repeatTrial, false);
       assert.equal(
-        await client.auditLog.count({ where: { action: 'signup.line.auto_approve_repeat_trial', targetId: accepted.requestId } }),
+        await client.auditLog.count({ where: { action: 'signup.line.auto_approve_repeat_trial', targetId: accepted.progress!.requestId } }),
         0,
       );
       // And the queue never names the employer's shop as a trial this applicant already had.
-      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.requestId);
+      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.progress!.requestId);
       for (const row of rows) assert.equal(row.priorCompanyName, undefined);
     } finally {
       await cleanup(client, tag, lineUserId);
@@ -534,12 +578,12 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-draft`), NOW);
 
-      assert.equal(accepted.state, 'COMPLETED', 'a draft nobody finished is not a previous trial');
+      assert.equal(accepted.progress!.state, 'COMPLETED', 'a draft nobody finished is not a previous trial');
       const submitted = await client.auditLog.findFirstOrThrow({
-        where: { action: 'signup.line.submitted', targetId: accepted.requestId },
+        where: { action: 'signup.line.submitted', targetId: accepted.progress!.requestId },
       });
       assert.equal((submitted.metadataJson as any).repeatTrial, false);
-      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.requestId);
+      const rows = (await h.queue.list()).items.filter((item) => item.requestId === accepted.progress!.requestId);
       for (const row of rows) assert.equal(row.priorCompanyName, undefined);
     } finally {
       await cleanup(client, tag, lineUserId);
@@ -577,7 +621,13 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       // commits — overwriting a re-point it never saw. Starting the link any earlier or later
       // cannot reproduce that, which is why an untimed race reported green with no lock at all.
       const [approve, link] = await Promise.allSettled([
-        h.queue.decide(accepted.requestId, { action: 'APPROVE' }, seeded.adminUserId, `${tag}-approve`, URLS),
+        h.queue.decide(
+          accepted.progress!.requestId,
+          createNewShopDecision(accepted.progress!.version),
+          seeded.adminUserId,
+          `${tag}-approve`,
+          URLS,
+        ),
         h.gate.then(() => h.link.execute({ userId: rivalUserId, idToken: 'aaaa.bbbb.cccc', requestId: `${tag}-link` })),
       ]);
 
@@ -595,7 +645,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
         where: { provider: 'LINE', providerChannelId: CHANNEL, providerUserId: lineUserId },
       });
       assert.equal(identities.length, 1, 'the unique slot still holds exactly one row');
-      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.requestId } });
+      const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: accepted.progress!.requestId } });
       const expectedOwner = approve.status === 'fulfilled' ? request.ownerUserId : rivalUserId;
       assert.equal(identities[0]!.userId, expectedOwner, 'and it belongs to the winner, not the last writer');
       assert.equal(identities[0]!.status, 'ACTIVE');

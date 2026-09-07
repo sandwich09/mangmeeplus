@@ -1,8 +1,11 @@
 import {
-  Body, Controller, ForbiddenException, Get, Headers, HttpCode, Post, Req, UnauthorizedException,
+  Body, Controller, ForbiddenException, Get, Headers, HttpCode, Param, Patch, Post, Req, UnauthorizedException,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import {
+  IsEmail, IsIn, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, IsUUID, Matches, MaxLength, Min,
+  ValidateNested,
+} from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import type { Request } from 'express';
 import type { LineSignupStatusDto, LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
@@ -14,7 +17,12 @@ import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { GetLineSignupStatusUseCase } from '../../application/get-line-signup-status.use-case';
 import { SubmitLineSignupUseCase } from '../../application/submit-line-signup.use-case';
-import { LINE_SIGNUP_COMPANY_NAME_MAX, LINE_SIGNUP_CONTACT_EMAIL_MAX, LINE_SIGNUP_REFERRAL_CODE_MAX } from '../../domain/line-signup.logic';
+import {
+  LINE_SIGNUP_COMPANY_NAME_MAX,
+  LINE_SIGNUP_CONTACT_EMAIL_MAX,
+  LINE_SIGNUP_INTENTS,
+  LINE_SIGNUP_REFERRAL_CODE_MAX,
+} from '../../domain/line-signup.logic';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
@@ -28,6 +36,8 @@ export class LineSignupLegalDto {
 
 export class LineSignupSubmitBodyDto {
   @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
+  @IsUUID() submissionId!: string;
+  @IsIn(LINE_SIGNUP_INTENTS) intent!: 'FIRST_SHOP' | 'ADD_SHOP';
   @IsString() @IsNotEmpty() @MaxLength(LINE_SIGNUP_COMPANY_NAME_MAX) companyName!: string;
   // Required since Owner 2026-09-05 (spec §3.2). Digits, spaces and dashes only; the use-case
   // decides whether they add up to a Thai mobile, and answers `line_signup_phone_*` when they do not.
@@ -36,6 +46,18 @@ export class LineSignupSubmitBodyDto {
   @IsEmail() @MaxLength(LINE_SIGNUP_CONTACT_EMAIL_MAX) contactEmail!: string;
   @IsString() @IsOptional() @MaxLength(LINE_SIGNUP_REFERRAL_CODE_MAX) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
   @IsObject() @ValidateNested() @Type(() => LineSignupLegalDto) legal!: LineSignupLegalDto;
+}
+
+export class LineSignupContactEmailCorrectionBodyDto {
+  @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
+  @Type(() => Number) @IsInt() @Min(0) version!: number;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
+  @IsEmail() @MaxLength(LINE_SIGNUP_CONTACT_EMAIL_MAX) contactEmail!: string;
+}
+
+export class LineSignupRetryBodyDto {
+  @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
+  @Type(() => Number) @IsInt() @Min(0) version!: number;
 }
 
 /**
@@ -71,6 +93,8 @@ export class PublicLineSignupController {
     await this.rateLimit.assertLineSignupIpAllowed(trustedClientIp(req));
     return this.submit.execute({
       idToken: dto.idToken,
+      submissionId: dto.submissionId,
+      intent: dto.intent,
       companyName: dto.companyName,
       phoneNumber: dto.phoneNumber,
       contactEmail: dto.contactEmail,
@@ -81,6 +105,51 @@ export class PublicLineSignupController {
       // Not the Origin (this request comes from a LIFF page the API itself serves) and not the
       // loose accessor (which falls back to the API's own origin): an AUTO_FREE submit persists
       // this as the owner's handoff URL.
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
+      apiBaseUrl: publicApiBase(req),
+    });
+  }
+
+  @Patch('line-signups/:requestId/contact-email')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Correct one token-owned pending LINE signup contact and resume intake' })
+  @ApiResponse({ status: 200, description: 'Current status after the guarded correction and resume' })
+  @ApiResponse({ status: 409, description: 'Version is stale or the request can no longer be edited' })
+  async correctContactEmail(
+    @Param('requestId') requestId: string,
+    @Body() dto: LineSignupContactEmailCorrectionBodyDto,
+    @Req() req: Request,
+  ): Promise<LineSignupStatusDto> {
+    this.assertEnabled();
+    await this.rateLimit.assertLineSignupIpAllowed(trustedClientIp(req));
+    return this.submit.correctContactEmail({
+      requestId,
+      idToken: dto.idToken,
+      version: dto.version,
+      contactEmail: dto.contactEmail,
+      correlationRequestId: requestIdOf(req),
+      webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
+      apiBaseUrl: publicApiBase(req),
+    });
+  }
+
+  @Post('line-signups/:requestId/retry')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Resume one token-owned committed LINE signup intake' })
+  @ApiResponse({ status: 200, description: 'Current status after the guarded retry' })
+  @ApiResponse({ status: 409, description: 'Version is stale or intake can no longer be retried' })
+  async retryIntake(
+    @Param('requestId') requestId: string,
+    @Body() dto: LineSignupRetryBodyDto,
+    @Req() req: Request,
+  ): Promise<LineSignupStatusDto> {
+    this.assertEnabled();
+    await this.rateLimit.assertLineSignupIpAllowed(trustedClientIp(req));
+    return this.submit.retryOwnedIntake({
+      requestId,
+      idToken: dto.idToken,
+      version: dto.version,
+      correlationRequestId: requestIdOf(req),
       webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: publicApiBase(req),
     });

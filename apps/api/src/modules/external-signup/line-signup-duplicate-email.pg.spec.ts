@@ -8,9 +8,16 @@ import { PrismaClient, type CompanySignupState } from '../../generated/prisma/cl
 import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
 import { currentLegalRelease, LegalAcceptanceService } from '../auth/application/legal-acceptance.service';
 import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application/use-cases/create-company-onboarding.use-case';
+import { PrismaOutboxRepository } from '../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
+import {
+  LINE_SIGNUP_PUSH_EVENT_TYPE,
+  LineSignupNotifyService,
+  lineSignupPushEventKey,
+} from './application/line-signup-notify.service';
 import { ProvisionSignupUseCase } from './application/provision-signup.use-case';
 import { SignupAdminQueueUseCase } from './application/signup-admin-queue.use-case';
+import { SignupClaimEmailService } from './application/signup-claim-email.service';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
 
 const databaseUrl = process.env.LINE_SIGNUP_TEST_DATABASE_URL;
@@ -24,11 +31,11 @@ function connect(): PrismaClient {
   return new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
 }
 
-function wire(client: PrismaClient, tag: string, lineUserId: string) {
+function wire(client: PrismaClient, tag: string, lineUserId: string, autoDailyCap = 100_000) {
   const prisma = { client } as any;
   const config = {
     credentialEncryptionKey: Buffer.alloc(32, 7), lineSignupApprovalMode: 'AUTO_FREE',
-    lineSignupAutoDailyCap: 100_000, lineSignupWarmupSlips: 15, lineFreeAiBudgetSatang: 8000,
+    lineSignupAutoDailyCap: autoDailyCap, lineSignupWarmupSlips: 15, lineFreeAiBudgetSatang: 8000,
     lineSignupBusinessDays: 'MON-SAT', lineSignupBusinessHours: '09:00-18:00',
   } as any;
   const core = new CompanySignupCoreService(prisma);
@@ -56,12 +63,16 @@ function wire(client: PrismaClient, tag: string, lineUserId: string) {
     enqueue: async () => { throw new Error('LINE signup must not send claim email'); },
     enqueueRejectionNotice: async () => { throw new Error('unexpected mailbox notification'); },
   } as any, provision, lineNotify);
-  return { submit, core, queue, notifications, get operatorLookups() { return operatorLookups; }, get provisionCalls() { return provisionCalls; } };
+  return {
+    submit, core, queue, provision, notifications,
+    get operatorLookups() { return operatorLookups; }, get provisionCalls() { return provisionCalls; },
+  };
 }
 
 function command(tag: string, email: string, suffix = 'new') {
   return {
     idToken: 'synthetic.line.proof', companyName: `${tag}-${suffix}`, phoneNumber: '0812345678',
+    submissionId: randomUUID(), intent: 'FIRST_SHOP' as const,
     contactEmail: email, legal: { ...currentLegalRelease('th'), locale: 'th' },
     correlationRequestId: `${tag}-${suffix}`, ...URLS,
   };
@@ -84,6 +95,7 @@ async function fixture(t: TestContext, run: (client: PrismaClient, tag: string) 
         const companyIds = companies.map((row) => row.id);
         const userIds = requests.flatMap((row) => row.ownerUserId ? [row.ownerUserId] : []);
         await client.lineCompanyContext.deleteMany({ where: { lineUserId: { startsWith: `U${tag}` } } });
+        await client.lineSupportRequest.deleteMany({ where: { signupRequestId: { in: requests.map((row) => row.id) } } });
         await client.outboxEvent.deleteMany({ where: { OR: [
           { companyId: { in: companyIds } }, { aggregateId: { in: requests.map((row) => row.id) } },
         ] } });
@@ -125,8 +137,8 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     const email = `${tag}@example.test`;
     const first = wire(client, tag, `U${tag}-first`);
     const result = await first.submit.execute(command(tag, ` ${email.toUpperCase()} `, 'first'));
-    assert.equal(result.state, 'COMPLETED');
-    const saved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.requestId } });
+    assert.equal(result.progress!.state, 'COMPLETED');
+    const saved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.progress!.requestId } });
     assert.equal(saved.contactEmail, email);
     assert.equal(saved.autoApproved, true);
     assert.ok(saved.companyId && saved.ownerUserId);
@@ -138,9 +150,54 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal((await client.companyPlanTerm.findUniqueOrThrow({ where: { companyId: saved.companyId } })).monthlySlipLimit, 15);
     const next = wire(client, tag, `U${tag}-next`);
     const repeated = await next.submit.execute(command(tag, email, 'next'));
-    await assertManual(client, next, repeated.requestId, email);
+    await assertManual(client, next, repeated.progress!.requestId, email);
     assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
     assert.equal(await client.companySignupRequest.count({ where: { companyName: { startsWith: tag }, autoApproved: true } }), 1);
+  }));
+
+  it('does not call an owner shared-contact merely because their own completed signup used the same email', async (t) => fixture(t, async (client, tag) => {
+    const email = `${tag}@example.test`, lineUserId = `U${tag}-owner`;
+    const h = wire(client, tag, lineUserId);
+    const firstCommand = command(tag, email, 'first-owned');
+    const first = await h.submit.execute(firstCommand);
+    assert.equal(first.progress?.state, 'COMPLETED');
+    const firstSaved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: first.progress!.requestId } });
+    assert.ok(firstSaved.companyId && firstSaved.ownerUserId);
+
+    const second = await h.submit.execute({
+      ...command(tag, email, 'second-owned'),
+      intent: 'ADD_SHOP',
+    });
+    assert.equal(second.progress?.state, 'PENDING_REVIEW', 'repeat-trial review remains in force');
+    assert.equal(second.progress?.existingAccount, true);
+    const secondSaved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: second.progress!.requestId } });
+    assert.equal(secondSaved.attachUserId, firstSaved.ownerUserId);
+    assert.equal(secondSaved.contactEmailConflict, false, 'own User, Company, and completed request history are excluded');
+    const audit = await client.auditLog.findFirstOrThrow({
+      where: { targetId: secondSaved.id, action: 'signup.line.submitted' },
+    });
+    assert.deepEqual(audit.metadataJson, {
+      source: 'line-oa',
+      repeatTrial: true,
+      existingAccount: true,
+      hasReferralCode: false,
+      emailPreviouslyUsed: false,
+    });
+    assert.ok(await client.auditLog.findFirst({
+      where: { targetId: secondSaved.id, action: 'signup.line.auto_approve_repeat_trial' },
+    }), 'repeat-trial routing remains separately auditable');
+
+    const lostResponseReplay = await h.submit.execute({ ...firstCommand, correlationRequestId: `${tag}-first-replay` });
+    assert.equal(lostResponseReplay.progress?.requestId, firstSaved.id);
+    assert.equal(lostResponseReplay.progress?.state, 'COMPLETED', 'an older exact key returns its own result, not the latest request');
+
+    const parked = await h.queue.decide(
+      secondSaved.id,
+      { action: 'CREATE_NEW_SHOP', version: secondSaved.version },
+      `${tag}-admin`, `${tag}-plan-review`, URLS,
+    );
+    assert.equal(parked.resolution, 'PLAN_REVIEW', 'own contact history never bypasses repeat-trial authorization');
+    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
   }));
 
   for (const source of ['account-active', 'account-disabled', 'legacy-username', 'company-active', 'company-archived'] as const) {
@@ -157,8 +214,8 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
       } });
       const h = wire(client, tag, `U${tag}-new`);
       const result = await h.submit.execute(command(tag, email));
-      assert.equal(result.existingAccount, false, 'email alone cannot identify the LINE applicant');
-      const request = await assertManual(client, h, result.requestId, email);
+      assert.equal(result.progress!.existingAccount, false, 'email alone cannot identify the LINE applicant');
+      const request = await assertManual(client, h, result.progress!.requestId, email);
       assert.equal(request.attachUserId, null);
     }));
   }
@@ -171,16 +228,32 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     } });
     const h = wire(client, tag, `U${tag}-new`);
     const result = await h.submit.execute(cmd);
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.progress!.state, 'COMPLETED');
     assert.equal(h.provisionCalls, 1);
-    const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.requestId } });
+    const request = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.progress!.requestId } });
     assert.equal(request.autoApproved, true, 'no alias folding, phone or company-name review rule is introduced');
     assert.ok(request.companyId && request.companyId !== `${tag}-old-company`);
   }));
 
+  it('counts a yesterday-created request in today cap when its automatic approval happened today', async (t) => fixture(t, async (client, tag) => {
+    const today = new Date('2026-09-07T10:00:00+07:00');
+    await client.companySignupRequest.create({ data: {
+      externalSignupId: `${tag}-prior-auto`, companyName: `${tag}-prior-auto`, ownerDisplayName: tag,
+      payloadHash: tag, consentVersion: 'historical', contactEmail: `${tag}-prior@example.test`,
+      source: 'line-oa', state: 'COMPLETED', autoApproved: true, reviewResolution: 'NEW_SHOP',
+      createdAt: new Date('2026-09-06T10:00:00+07:00'), approvedAt: today,
+    } });
+    const h = wire(client, tag, `U${tag}-new`, 1);
+    const result = await h.submit.execute(command(tag, `${tag}-fresh@example.test`), today);
+    assert.equal(result.progress?.state, 'PENDING_REVIEW');
+    assert.equal(h.provisionCalls, 0);
+    assert.ok((await client.auditLog.findMany({ where: { targetId: result.progress!.requestId } }))
+      .some((row) => row.action === 'signup.line.auto_approve_capped'));
+  }));
+
   const historyStates: CompanySignupState[] = [
     'RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_VERIFIED', 'PROVISIONING', 'READY',
-    'LINE_LINK_PENDING', 'COMPLETED', 'EMAIL_FAILED', 'PROVISIONING_FAILED', 'SUSPENDED', 'EXPIRED', 'REJECTED',
+    'LINE_LINK_PENDING', 'COMPLETED', 'EMAIL_FAILED', 'PROVISIONING_FAILED', 'SUSPENDED',
   ];
   for (const state of historyStates) {
     it(`retains prior application evidence from ${state}`, async (t) => fixture(t, async (client, tag) => {
@@ -192,24 +265,83 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
       } });
       const h = wire(client, tag, `U${tag}-new`);
       const result = await h.submit.execute(command(tag, email));
-      await assertManual(client, h, result.requestId, email);
+      await assertManual(client, h, result.progress!.requestId, email);
     }));
   }
+
+  for (const [state, failureCode] of [
+    ['REJECTED', null],
+  ] as const) {
+    it(`ignores harmless no-company ${state} history (${failureCode ?? 'no hold'})`, async (t) => fixture(t, async (client, tag) => {
+      const email = `${tag}@example.test`;
+      await client.companySignupRequest.create({ data: {
+        externalSignupId: `${tag}-history`, companyName: `${tag}-history`, ownerDisplayName: tag,
+        payloadHash: tag, consentVersion: 'historical', contactEmail: email,
+        source: 'official-site', state, failureCode,
+      } });
+      const h = wire(client, tag, `U${tag}-new`);
+      const result = await h.submit.execute(command(tag, email));
+      assert.equal(result.progress?.state, 'COMPLETED');
+    }));
+  }
+
+  it('ignores no-company history parked by the actual claim-expiry sweep', async (t) => fixture(t, async (client, tag) => {
+    const email = `${tag}@example.test`;
+    const old = new Date('2026-07-01T00:00:00.000Z');
+    const now = new Date('2026-09-07T00:00:00.000Z');
+    await client.companySignupRequest.create({ data: {
+      externalSignupId: `${tag}-history`, companyName: `${tag}-history`, ownerDisplayName: tag,
+      payloadHash: tag, consentVersion: 'historical', contactEmail: email,
+      source: 'official-site', state: 'EMAIL_PENDING', approvedAt: old, claimWindowStartedAt: old,
+    } });
+    const core = new CompanySignupCoreService({ client } as any);
+    const sweep = new SignupClaimEmailService(
+      { client } as any, {} as any, {} as any, core, {} as any, {} as any, {} as any, {} as any,
+      { warn: () => undefined } as any,
+    );
+    assert.deepEqual(await sweep.sweepExpiredApprovals(now), { expired: 1 });
+    const expired = await client.companySignupRequest.findUniqueOrThrow({ where: { externalSignupId: `${tag}-history` } });
+    assert.equal(expired.state, 'EXPIRED');
+    assert.equal(expired.failureCode, 'claim_not_started');
+
+    const h = wire(client, tag, `U${tag}-new`);
+    const result = await h.submit.execute(command(tag, email));
+    assert.equal(result.progress?.state, 'COMPLETED');
+  }));
+
+  it('retains an expired security-held history for manual review', async (t) => fixture(t, async (client, tag) => {
+    const email = `${tag}@example.test`;
+    await client.companySignupRequest.create({ data: {
+      externalSignupId: `${tag}-history`, companyName: `${tag}-history`, ownerDisplayName: tag,
+      payloadHash: tag, consentVersion: 'historical', contactEmail: email,
+      source: 'official-site', state: 'EXPIRED', failureCode: 'security_review_hold',
+    } });
+    const h = wire(client, tag, `U${tag}-new`);
+    const result = await h.submit.execute(command(tag, email));
+    await assertManual(client, h, result.progress!.requestId, email);
+  }));
 
   it('does not reopen AUTO_FREE through same-LINE resubmit or a rejected application', async (t) => fixture(t, async (client, tag) => {
     const email = `${tag}@example.test`;
     await client.user.create({ data: { id: `${tag}-old-owner`, displayName: tag, email, status: 'ACTIVE' } });
     const h = wire(client, tag, `U${tag}-new`), cmd = command(tag, email);
     const initial = await h.submit.execute(cmd);
-    await assertManual(client, h, initial.requestId, email);
-    await assert.rejects(h.submit.execute({ ...cmd, correlationRequestId: `${tag}-retry` }),
-      (error: unknown) => error instanceof ConflictException && error.message === 'line_signup_already_pending');
+    await assertManual(client, h, initial.progress!.requestId, email);
+    const replay = await h.submit.execute({ ...cmd, correlationRequestId: `${tag}-retry` });
+    assert.equal(replay.progress?.requestId, initial.progress?.requestId, 'the stable key replays the open row');
     assert.equal(await client.companySignupRequest.count({ where: { lineProviderUserId: `U${tag}-new` } }), 1);
-    await h.queue.decide(initial.requestId, { action: 'REJECT' }, `${tag}-admin`, `${tag}-reject`, URLS);
+    const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: initial.progress!.requestId } });
+    await h.queue.decide(
+      initial.progress!.requestId,
+      { action: 'REJECT', version: pending.version },
+      `${tag}-admin`,
+      `${tag}-reject`,
+      URLS,
+    );
     const next = wire(client, tag, `U${tag}-new`);
     const repeated = await next.submit.execute(command(tag, email, 'after-reject'));
-    assert.notEqual(repeated.requestId, initial.requestId);
-    await assertManual(client, next, repeated.requestId, email);
+    assert.notEqual(repeated.progress!.requestId, initial.progress!.requestId);
+    await assertManual(client, next, repeated.progress!.requestId, email);
     assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 0);
   }));
 
@@ -235,7 +367,7 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
         second.submit.execute(command(tag, ` ${email.toUpperCase()} `, 'second')),
       ]);
       assert.equal(arrived, 2, 'both real receive transactions reached the committed barrier');
-      for (const [index, h] of [first, second].entries()) await assertManual(client, h, results[index]!.requestId, email);
+      for (const [index, h] of [first, second].entries()) await assertManual(client, h, results[index]!.progress!.requestId, email);
       assert.equal(await client.companySignupRequest.count({ where: { companyName: { startsWith: tag } } }), 2);
       assert.equal(await client.companySignupRequest.count({ where: { companyName: { startsWith: tag }, autoApproved: true } }), 0);
       assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 0);
@@ -248,10 +380,14 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     await client.user.create({ data: { id: rivalId, displayName: tag, email, emailVerifiedAt: verifiedAt, status: 'ACTIVE' } });
     const h = wire(client, tag, `U${tag}-new`);
     const result = await h.submit.execute(command(tag, email));
-    await assertManual(client, h, result.requestId, email);
-    const approved = await h.queue.decide(result.requestId, { action: 'APPROVE' }, `${tag}-admin`, `${tag}-approve`, URLS);
+    await assertManual(client, h, result.progress!.requestId, email);
+    const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.progress!.requestId } });
+    const approved = await h.queue.decide(result.progress!.requestId, {
+      action: 'CREATE_NEW_SHOP', version: pending.version,
+      acknowledgeSharedContact: true, sharedContactNote: 'ลูกค้ายืนยันว่าเป็นอีเมลติดต่อร้านที่ใช้ร่วมกัน',
+    }, `${tag}-admin`, `${tag}-approve`, URLS);
     assert.equal(approved.state, 'COMPLETED');
-    const saved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.requestId } });
+    const saved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.progress!.requestId } });
     assert.equal(saved.autoApproved, false);
     assert.equal(saved.approvedByUserId, `${tag}-admin`);
     assert.ok(saved.ownerUserId && saved.companyId);
@@ -266,8 +402,70 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal((await client.company.findUniqueOrThrow({ where: { id: saved.companyId } })).email, email);
     assert.equal((await client.externalIdentity.findFirstOrThrow({ where: { provider: 'LINE', providerChannelId: tag, providerUserId: `U${tag}-new` } })).userId, owner.id);
     assert.equal(await client.companyMembership.count({ where: { companyId: saved.companyId, userId: rivalId } }), 0);
-    await h.queue.decide(result.requestId, { action: 'APPROVE' }, `${tag}-admin`, `${tag}-approve-retry`, URLS);
+    const completed = await client.companySignupRequest.findUniqueOrThrow({ where: { id: result.progress!.requestId } });
+    await h.queue.decide(
+      result.progress!.requestId,
+      { action: 'CREATE_NEW_SHOP', version: completed.version },
+      `${tag}-admin`,
+      `${tag}-approve-retry`,
+      URLS,
+    );
     assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
     assert.equal(await client.companyOnboardingRun.count({ where: { companyId: saved.companyId } }), 1);
+  }));
+
+  it('REQUEST_INFO atomically links one owned support case and gives each repeated question its own outbox event', async (t) => fixture(t, async (client, tag) => {
+    const email = `${tag}@example.test`;
+    await client.user.create({ data: { id: `${tag}-rival`, displayName: tag, email, status: 'ACTIVE' } });
+    const h = wire(client, tag, `U${tag}-info`);
+    const submitted = await h.submit.execute(command(tag, email, 'request-info'));
+    const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: submitted.progress!.requestId } });
+    assert.equal(pending.state, 'PENDING_REVIEW');
+
+    const prisma = { client } as any;
+    const lineNotify = new LineSignupNotifyService(
+      prisma,
+      new PrismaOutboxRepository(prisma),
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+    );
+    const queue = new SignupAdminQueueUseCase(
+      prisma,
+      h.core,
+      { revokeAll: async () => 0 } as any,
+      {} as any,
+      h.provision,
+      lineNotify,
+    );
+    const first = await queue.decide(pending.id, {
+      action: 'REQUEST_INFO', version: pending.version,
+      resolutionNote: 'กรุณาส่งชื่อร้านและเบอร์โทรศัพท์ที่ถูกต้องให้ครบในข้อความเดียว',
+    }, `${tag}-admin`, `${tag}-info-1`, URLS);
+    const support = await client.lineSupportRequest.findFirstOrThrow({ where: { signupRequestId: pending.id } });
+    assert.equal(first.supportRequestId, support.id);
+    assert.equal(first.customerNotification, 'QUEUED');
+    assert.equal(support.assignedToUserId, `${tag}-admin`);
+    assert.equal(support.requestText, null);
+    assert.equal(support.lastMessageText, null);
+
+    const second = await queue.decide(pending.id, {
+      action: 'REQUEST_INFO', version: first.version,
+      resolutionNote: 'กรุณาส่งอีเมลติดต่อที่ถูกต้องเพิ่มเติม',
+    }, `${tag}-rival`, `${tag}-info-2`, URLS);
+    assert.equal(second.supportRequestId, support.id);
+    assert.equal(await client.lineSupportRequest.count({ where: { signupRequestId: pending.id } }), 1);
+    assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id: support.id } })).assignedToUserId, `${tag}-admin`,
+      'a later reviewer does not steal an existing live case');
+    const events = await client.outboxEvent.findMany({
+      where: { aggregateId: pending.id, eventType: LINE_SIGNUP_PUSH_EVENT_TYPE },
+      orderBy: { createdAt: 'asc' },
+    });
+    assert.deepEqual(events.map((event) => event.eventKey), [
+      lineSignupPushEventKey(pending.id, 'requested_info', first.version),
+      lineSignupPushEventKey(pending.id, 'requested_info', second.version),
+    ]);
   }));
 });

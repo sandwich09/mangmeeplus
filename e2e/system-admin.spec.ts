@@ -109,4 +109,61 @@ test.describe('SYS — system admin', () => {
     await authedPage.goto('/system/partners');
     await expect(authedPage.getByText(/Access denied|ไม่มีสิทธิ์|not have permission/i).first()).toBeVisible();
   });
+
+  test('SYS-06 @p1 LINE review requests every missing detail in one real mutation', async ({ page }) => {
+    const databaseUrl = process.env['DATABASE_URL'];
+    test.skip(!databaseUrl, 'DATABASE_URL is required for the signup review fixture');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const requestId = unique('e2e-line-request-info').toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const lineProviderUserId = `U-${requestId}`;
+    const companyName = `E2E LINE ${requestId.slice(-8)}`;
+    const requestedInformation = '1. ชื่อร้านตามทะเบียน\n2. อีเมลติดต่อที่ถูกต้อง\n3. ยังเข้า LINE หรือบัญชีเดิมได้หรือไม่';
+    try {
+      await client.companySignupRequest.create({ data: {
+        id: requestId,
+        source: 'line-oa',
+        externalSignupId: requestId,
+        payloadHash: requestId,
+        companyName,
+        ownerDisplayName: 'เจ้าของร้าน LINE E2E',
+        contactEmail: 'line-review@example.test',
+        phoneNumber: '0812345678',
+        consentVersion: 'e2e',
+        state: 'PENDING_REVIEW',
+        version: 3,
+        lineSignupIntent: 'FIRST_SHOP',
+        lineProviderUserId,
+        lineChannelId: 'e2e-line-channel',
+      } });
+
+      await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+      await page.goto('/system/signup-requests');
+      const row = page.getByRole('row').filter({ hasText: companyName });
+      await expect(row).toBeVisible();
+      await row.getByRole('button', { name: 'เลือกผลคำขอ', exact: true }).click();
+      await page.getByText('ขอข้อมูลเพิ่ม', { exact: true }).click();
+      await page.getByLabel('ข้อมูลที่ต้องขอทั้งหมด').fill(requestedInformation);
+      await page.getByRole('button', { name: 'บันทึกและแจ้งข้อมูลที่ต้องขอ', exact: true }).click();
+      await expect(page.getByText('บันทึกข้อมูลที่ต้องขอและเข้าคิวแจ้งลูกค้าทาง LINE แล้ว', { exact: true })).toBeVisible();
+
+      const stored = await client.companySignupRequest.findUniqueOrThrow({ where: { id: requestId } });
+      expect(stored.state).toBe('PENDING_REVIEW');
+      expect(stored.reviewResolution).toBe('REQUEST_INFO');
+      expect(stored.resolutionNote).toBe(requestedInformation);
+      expect(stored.version).toBe(4);
+      const admin = await client.user.findFirstOrThrow({ where: { username: SEED_USERS.systemAdmin.username } });
+      const support = await client.lineSupportRequest.findFirstOrThrow({ where: { signupRequestId: requestId } });
+      expect(support.companyId).toBeNull();
+      expect(support.lineUserId).toBe(lineProviderUserId);
+      expect(support.status).toBe('OPEN');
+      expect(support.assignedToUserId).toBe(admin.id);
+      expect(support.assignedAt).not.toBeNull();
+      await expectNoClientError(page);
+    } finally {
+      await client.lineSupportRequest.deleteMany({ where: { signupRequestId: requestId } }).catch(() => {});
+      await client.outboxEvent.deleteMany({ where: { aggregateId: requestId } }).catch(() => {});
+      await client.companySignupRequest.deleteMany({ where: { id: requestId } }).catch(() => {});
+      await client.$disconnect();
+    }
+  });
 });

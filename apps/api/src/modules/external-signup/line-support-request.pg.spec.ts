@@ -30,6 +30,7 @@ const databaseUrl = process.env.LINE_SUPPORT_TEST_DATABASE_URL;
 
 const CHANNEL = 'line-support-pg-channel';
 const WEB_BASE = 'https://app.example.test';
+const originalFetch = globalThis.fetch;
 
 function connect(): PrismaClient {
   const url = new URL(databaseUrl!);
@@ -122,7 +123,7 @@ function wire(client: PrismaClient, options: {
 
   return {
     webhook, notify, unlink: new UnlinkLineIdentityUseCase(prisma),
-    admin: new SupportRequestAdminUseCase(prisma),
+    admin: new SupportRequestAdminUseCase(prisma, config),
     replies, notices, letters, alerts,
     get adminPushes() { return state.adminPushes; },
   };
@@ -185,6 +186,80 @@ async function cleanup(client: PrismaClient, tag: string, lineUserId: string) {
 }
 
 describe('"ติดต่อเจ้าหน้าที่" on real PostgreSQL', { skip: !databaseUrl }, () => {
+  it('claims, replies to a no-company case, and resolves it with durable operator evidence', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    const operationId = randomUUID();
+    try {
+      const { userId } = await seed(client, tag, lineUserId);
+      const request = await client.lineSupportRequest.create({
+        data: { lineUserId, lineUserIdHash: hashOf(lineUserId), requestText: 'สมัครร้านต่อไม่ได้ค่ะ' },
+      });
+      const h = wire(client);
+      let pushedTo: string | undefined;
+      globalThis.fetch = (async (_url: unknown, init: any) => {
+        pushedTo = JSON.parse(init.body).to;
+        return new Response('', { status: 200 });
+      }) as typeof fetch;
+
+      await h.admin.claim(request.id, userId, `${tag}-claim`);
+      const replied = await h.admin.reply(
+        request.id, 'กรุณาส่งอีเมลที่ต้องการใช้ค่ะ', operationId, null, userId, `${tag}-reply`,
+      );
+      assert.equal(replied.deliveryStatus, 'SENT');
+      assert.equal(pushedTo, lineUserId, 'the recipient came from the server-side request');
+      await h.admin.resolve(request.id, 'ได้รับอีเมลและดำเนินการให้แล้ว', userId, `${tag}-resolve`);
+
+      const stored = await client.lineSupportRequest.findUniqueOrThrow({ where: { id: request.id } });
+      assert.equal(stored.lastReplyText, 'กรุณาส่งอีเมลที่ต้องการใช้ค่ะ');
+      assert.equal(stored.lastReplyDeliveryStatus, 'SENT');
+      assert.equal(stored.status, 'CLOSED');
+      assert.equal(stored.closedReason, 'resolved');
+      assert.equal(stored.resolutionNote, 'ได้รับอีเมลและดำเนินการให้แล้ว');
+      const audits = await client.auditLog.findMany({ where: { targetId: request.id } });
+      assert.deepEqual(new Set(audits.map((audit) => audit.action)), new Set([
+        'system.support_request.claimed',
+        'system.support_request.reply',
+        'system.support_request.resolved',
+      ]));
+    } finally {
+      globalThis.fetch = originalFetch;
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
+  it('pages beyond 200 live cases without hiding the older queue tail', async () => {
+    const client = connect();
+    const tag = `linesupport-${randomUUID().slice(0, 8)}`;
+    const lineUserId = `U${tag}`;
+    try {
+      const { userId, companyId } = await seed(client, tag, lineUserId);
+      const start = new Date('2026-01-01T00:00:00.000Z').getTime();
+      await client.lineSupportRequest.createMany({ data: Array.from({ length: 205 }, (_, index) => ({
+        id: `${tag}-request-${String(index).padStart(3, '0')}`,
+        companyId,
+        lineUserId,
+        lineUserIdHash: hashOf(lineUserId),
+        requestedAt: new Date(start + index * 1_000),
+        lastMessageAt: new Date(start + index * 1_000),
+      })) });
+      const h = wire(client);
+      const first = await h.admin.list(userId, { status: 'OPEN', limit: 200 });
+      assert.equal(first.items.length, 200);
+      assert.equal(first.totalCount, 205);
+      assert.ok(first.nextCursor);
+      const second = await h.admin.list(userId, { status: 'OPEN', limit: 200, cursor: first.nextCursor! });
+      assert.equal(second.items.length, 5);
+      assert.equal(second.nextCursor, null);
+      assert.equal(new Set([...first.items, ...second.items].map((item) => item.id)).size, 205);
+    } finally {
+      await cleanup(client, tag, lineUserId);
+      await client.$disconnect();
+    }
+  });
+
   it('files the request against the shop the asker is IN, not the one the context row remembers', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
@@ -271,7 +346,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(row.status, 'OPEN', 'and the request is still in the inbox, which is the point');
 
       // The inbox names the shop and hides the LINE id, whatever happened on the other rails.
-      const queue = await dark.admin.list('OPEN');
+      const queue = await dark.admin.list('system-test-admin', { status: 'OPEN' });
       const item = queue.items.find((entry) => entry.id === id);
       assert.ok(item, 'the request an operator can act on is listed');
       assert.match(item!.askerLabel, /ร้านปัจจุบัน/);
@@ -303,7 +378,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
     }
   });
 
-  it('lets the customer bring the assistant back, and closes their request with it', async () => {
+  it('lets the customer bring the assistant back without hiding their unresolved request', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
@@ -318,8 +393,8 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.aiPausedUntil, null, 'the pause is what the customer is living with');
       const row = await client.lineSupportRequest.findFirstOrThrow({ where: { lineUserId } });
-      assert.equal(row.status, 'CLOSED');
-      assert.equal(row.closedReason, 'customer_resumed');
+      assert.equal(row.status, 'OPEN');
+      assert.equal(row.closedReason, null);
       assert.match(h.replies.at(-1)!, /น้องมั่งมีกลับมาแล้ว/);
     } finally {
       await cleanup(client, tag, lineUserId);
@@ -337,6 +412,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
 
+      await h.admin.claim(id, userId, `${tag}-claim`);
       await h.admin.markAnswered(id, userId, `${tag}-answered`);
       assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'ANSWERED');
 
@@ -345,12 +421,12 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.equal(context.aiPausedUntil, null);
       const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
-      assert.equal(row.status, 'CLOSED');
-      assert.equal(row.closedReason, 'admin');
+      assert.equal(row.status, 'ANSWERED', 'resuming the assistant is not issue resolution');
+      assert.equal(row.closedReason, null);
 
       const audits = await client.auditLog.findMany({ where: { targetId: id }, orderBy: { createdAt: 'asc' } });
       assert.deepEqual(audits.map((a) => a.action), [
-        'system.support_request.answered', 'system.support_request.resume_ai',
+        'system.support_request.claimed', 'system.support_request.answered', 'system.support_request.resume_ai',
       ]);
       assert.ok(audits.every((a) => a.riskLevel === 'HIGH'));
     } finally {
@@ -377,10 +453,11 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
 
+      await h.admin.claim(id, userId, `${tag}-claim`);
       await h.admin.markAnswered(id, userId, `${tag}-answered`);
       const answered = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
       assert.equal(answered.status, 'ANSWERED');
-      assert.equal((await h.admin.list('OPEN')).items.some((row) => row.id === id), false,
+      assert.equal((await h.admin.list(userId, { status: 'OPEN' })).items.some((row) => row.id === id), false,
         'off the tab, which is the state the customer then wrote into');
 
       await h.webhook.execute(event(lineUserId, 'ยังไม่ได้เลยค่ะ ลองแล้วไม่ขึ้น'));
@@ -395,7 +472,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(row.answeredByUserId, userId);
       assert.deepEqual(row.answeredAt, answered.answeredAt);
 
-      const queue = await h.admin.list('OPEN');
+      const queue = await h.admin.list(userId, { status: 'OPEN' });
       const item = queue.items.find((entry) => entry.id === id);
       assert.ok(item, 'and an operator can see it again');
       assert.equal(item!.reopenedCount, 1);
@@ -430,7 +507,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
   // CLOSED is settled by somebody deciding. A later message must not resurrect it — a fresh
   // "ติดต่อเจ้าหน้าที่" is how a new matter opens (§2.2.4).
-  it('never reopens a request the customer or an operator already closed', async () => {
+  it('never reopens a request an operator already resolved', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
@@ -439,13 +516,13 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const h = wire(client);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
-      // UAT 2026-09-06: the phrase the reply used to print, in the lowercase a phone keyboard
-      // produces — kept as a typed alias of the tile.
-      await h.webhook.execute(event(lineUserId, 'คุยกับ ai ต่อ'));
+      await client.lineSupportRequest.update({
+        where: { id },
+        data: { status: 'CLOSED', closedAt: new Date(), closedReason: 'resolved' },
+      });
       assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'CLOSED');
 
-      // The pause is gone with it, so this is an ordinary assistant turn again — but re-arm it to
-      // prove the follow-up path itself refuses a CLOSED row rather than merely never running.
+      // Keep the pause armed to prove the follow-up path itself refuses a CLOSED row.
       await client.lineCompanyContext.update({
         where: { lineUserId }, data: { aiPausedUntil: new Date(Date.now() + 3_600_000) },
       });
@@ -455,7 +532,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(row.status, 'CLOSED');
       assert.equal(row.reopenedCount, 0);
       assert.notEqual(row.lastMessageText, 'ขอบคุณค่ะ');
-      assert.match(h.replies.at(-1)!, /กำลังดูให้อยู่/, 'and the customer keeps the old reply');
+      assert.match(h.replies.at(-1)!, /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();
@@ -502,7 +579,8 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
       assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 0);
       assert.deepEqual(h.notices, []);
-      assert.match(h.replies.at(-1)!, /รับเรื่องไว้แล้วค่ะ/);
+      assert.match(h.replies.at(-1)!, /วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้/);
+      assert.doesNotMatch(h.replies.at(-1)!, /รับเรื่องไว้แล้ว|ทีมงานจะติดต่อกลับ/);
       // A refused tap opens nothing and pages nobody, so a 24h pause on the strength of it would
       // cost the customer the assistant AND leave nothing in the inbox to be answered from.
       assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0,
@@ -515,7 +593,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
   // §3 PDPA: the raw LINE id and the customer's own words leave the database 90 days after the
   // matter settled. Proven against real rows because "the row is gone" is the whole assertion.
-  it('deletes a settled request 90 days on, and never an OPEN one', async () => {
+  it('deletes only an explicitly CLOSED request 90 days on', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
@@ -528,6 +606,11 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
       // Old, but still OPEN: somebody is waiting, however long it has been.
       await client.lineSupportRequest.update({ where: { id }, data: { requestedAt: long } });
+      assert.deepEqual(await h.notify.purgeSettledSupportRequests(), { purged: 0 });
+      assert.equal(await client.lineSupportRequest.count({ where: { id } }), 1);
+
+      // A reply is delivery evidence, not resolution. Keep old ANSWERED cases in the queue too.
+      await client.lineSupportRequest.update({ where: { id }, data: { status: 'ANSWERED', answeredAt: long } });
       assert.deepEqual(await h.notify.purgeSettledSupportRequests(), { purged: 0 });
       assert.equal(await client.lineSupportRequest.count({ where: { id } }), 1);
 
@@ -545,7 +628,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
     }
   });
 
-  it('expires an OPEN request once its 24h pause has lapsed, and leaves a live one alone', async () => {
+  it('keeps an OPEN request managed after its 24h assistant pause has lapsed', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;
     const lineUserId = `U${tag}`;
@@ -568,14 +651,14 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.deepEqual(await h.notify.sweepExpiredSupportRequests(), { expired: 0 });
       assert.equal((await client.lineSupportRequest.findUniqueOrThrow({ where: { id } })).status, 'OPEN');
 
-      // Pause lapsed: the customer is not waiting on us any more.
+      // Pause lapsed: the assistant state changed, but nobody proved the support issue resolved.
       await client.lineCompanyContext.update({
         where: { lineUserId }, data: { aiPausedUntil: new Date(Date.now() - 1_000) },
       });
-      assert.equal((await h.notify.sweepExpiredSupportRequests()).expired >= 1, true);
+      assert.deepEqual(await h.notify.sweepExpiredSupportRequests(), { expired: 0 });
       const row = await client.lineSupportRequest.findUniqueOrThrow({ where: { id } });
-      assert.equal(row.status, 'CLOSED');
-      assert.equal(row.closedReason, 'expired');
+      assert.equal(row.status, 'OPEN');
+      assert.equal(row.closedReason, null);
     } finally {
       await cleanup(client, tag, lineUserId);
       await client.$disconnect();
@@ -664,6 +747,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       assert.equal(withPhoto.requestText, 'ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ');
 
       // F7: answered, then TAPPED again. One request, reopened — not two rows for one conversation.
+      await h.admin.claim(id, userId, `${tag}-claim`);
       await h.admin.markAnswered(id, userId, `${tag}-answered`);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
 
@@ -697,6 +781,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const h = wire(client);
       await h.webhook.execute(event(lineUserId, STAFF_CONTACT_COMMAND));
       const id = h.notices[0]!;
+      await h.admin.claim(id, userId, `${tag}-claim`);
       await h.admin.markAnswered(id, userId, `${tag}-answered`);
 
       // An hour of mute left — the state the probe describes, and the one the old code pushed out
@@ -719,7 +804,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
       const context = await client.lineCompanyContext.findUniqueOrThrow({ where: { lineUserId } });
       assert.deepEqual(context.aiPausedUntil, endsAt, 'and the mute still ends in an hour, not tomorrow');
-      assert.equal((await h.admin.list('OPEN')).items.some((entry) => entry.id === id), false,
+      assert.equal((await h.admin.list(userId, { status: 'OPEN' })).items.some((entry) => entry.id === id), false,
         'a settled thread stays settled: the row is not back on รอตอบ');
     } finally {
       await cleanup(client, tag, lineUserId);
