@@ -1,5 +1,7 @@
 # Auto-register จาก LINE OA (LINE-first Signup) — Spec P10-L
 
+**Owner amendment 2026-09-07:** รอบแก้ onboarding ถัดไปให้ทดลองได้ 15 ตามแพ็กเกจตั้งแต่วันแรก (ไม่มีเพดานสิบในสัปดาห์แรกสำหรับ trial นี้), เพิ่มอีเมลติดต่อร้านที่ตรวจรูปแบบเท่านั้น, ไม่หักโควตาใบเสร็จที่อ่านไม่สำเร็จ และทำปุ่มเติมข้อมูลบน dashboard ให้ชัดขึ้น ตาม [spec ห้าปัญหา](onboarding-trial-receipt-fixes-spec.md) ซึ่งมีผลเหนือกฎ no-email / warmup10 เดิมที่ขัดกัน อีเมลติดต่อไม่ใช่หลักฐานยืนยันอีเมลบัญชี และการกรอกข้อมูลร้านเพิ่มเติมไม่ใช่เงื่อนไขก่อนสแกนใบเสร็จ
+
 สถานะ: **v4 — 2026-09-04 (หลัง Review รอบ 1 — [mangmee-line-first-signup-review-round-1-th.md](../plans/mangmee-line-first-signup-review-round-1-th.md))** — งบ AI 8,000 สตางค์เคาะแล้ว; deltas ของ v4 อยู่ใน §15 (มีผลเหนือข้อความ §1–§13 เมื่อขัดกัน); implementation เริ่ม Slice L-A
 เจ้าของ: Owner (มั่งมีพลัส) / ผู้เขียน: Claude (Fable)
 ความสัมพันธ์: **companion ของ P10** ([mangmee-external-signup-contract-spec-th.md](mangmee-external-signup-contract-spec-th.md)) — P10 §4F จดไว้แล้วว่า "ฟอร์มเวอร์ชัน LIFF สำหรับคนสมัครจาก rich menu — รู้ตัวตน LINE ตั้งแต่กรอก" คืองานอนาคต; เอกสารนี้คือการทำงานชิ้นนั้นให้เป็นสัญญา โดย**ไม่หัก**กฎ P10/P11/P12 ที่ production แล้ว
