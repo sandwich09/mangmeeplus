@@ -10,3 +10,7 @@
  */
 export const SUPPORT_REQUEST_ANSWERED_ACTION = 'system.support_request.answered';
 export const SUPPORT_REQUEST_RESUME_ACTION = 'system.support_request.resume_ai';
+export const SUPPORT_REQUEST_CLAIM_ACTION = 'system.support_request.claimed';
+export const SUPPORT_REQUEST_RELEASE_ACTION = 'system.support_request.released';
+export const SUPPORT_REQUEST_REPLY_ACTION = 'system.support_request.reply';
+export const SUPPORT_REQUEST_RESOLVE_ACTION = 'system.support_request.resolved';

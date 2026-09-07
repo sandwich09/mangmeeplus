@@ -706,7 +706,7 @@ describe('ProcessLineWebhookUseCase', () => {
     });
   }
 
-  it('lets the support pause swallow a linked caller\'s capability question like any other free text', async () => {
+  it('keeps a paused capability question out of AI and admits when no live case recorded it', async () => {
     const { prisma, updates } = makePrisma({
       entitlements: EXPENSES_ONLY_ENTITLEMENTS,
       lineCompanyContext: { companyId: 'company-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
@@ -716,7 +716,9 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-capability-paused', messageText: 'มั่งมีใช้ยังไง' });
 
-    assert.match(replies[0] ?? '', /ทีมงานรับเรื่องแล้วค่ะ กำลังดูให้อยู่/);
+    assert.match(replies[0] ?? '', /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
+    assert.match(replies[0] ?? '', /098-256-5628/);
+    assert.doesNotMatch(replies[0] ?? '', /ส่งข้อความถึงทีมงานแล้ว|ทีมงานรับเรื่องแล้ว/);
     assert.equal(JSON.stringify(sentMessages).includes(CAPABILITY_CARD_ALT), false);
     assert.equal(intakeRequests.length, 0);
     assert.equal(getAiGatewayCalled(), false);

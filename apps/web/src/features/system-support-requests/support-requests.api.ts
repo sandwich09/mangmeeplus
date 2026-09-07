@@ -1,5 +1,6 @@
 import type {
-  SupportRequestActionDto, SupportRequestCountDto, SupportRequestQueueDto, SupportRequestStatus,
+  SupportRequestActionDto, SupportRequestCountDto, SupportRequestQueueDto,
+  SupportRequestReplyBody, SupportRequestReplyResultDto, SupportRequestStatus,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 
@@ -7,10 +8,36 @@ export type { SupportRequestItemDto, SupportRequestQueueDto, SupportRequestStatu
 
 export function listSupportRequests(
   status?: SupportRequestStatus,
+  cursor?: string,
   init?: { signal?: AbortSignal },
 ): Promise<SupportRequestQueueDto> {
-  const query = status ? `?${new URLSearchParams({ status }).toString()}` : '';
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (cursor) params.set('cursor', cursor);
+  const query = params.size > 0 ? `?${params.toString()}` : '';
   return apiFetch<SupportRequestQueueDto>(`/v1/system/support-requests${query}`, init);
+}
+
+const postAction = (id: string, action: string, body?: unknown): Promise<SupportRequestActionDto> =>
+  apiFetch<SupportRequestActionDto>(`/v1/system/support-requests/${id}/${action}`, {
+    method: 'POST',
+    ...(body ? { body: JSON.stringify(body) } : {}),
+    suppressErrorToast: true,
+  });
+
+export const claimSupportRequest = (id: string) => postAction(id, 'claim');
+export const releaseSupportRequest = (id: string) => postAction(id, 'release');
+export const reclaimSupportRequest = (id: string, expectedAssignedAt: string, reason: string) =>
+  postAction(id, 'reclaim', { expectedAssignedAt, reason });
+export const resolveSupportRequest = (id: string, note: string) => postAction(id, 'resolve', { note });
+
+export function replySupportRequest(
+  id: string,
+  body: SupportRequestReplyBody,
+): Promise<SupportRequestReplyResultDto> {
+  return apiFetch<SupportRequestReplyResultDto>(`/v1/system/support-requests/${id}/reply`, {
+    method: 'POST', body: JSON.stringify(body), suppressErrorToast: true,
+  });
 }
 
 export function getSupportOpenCount(init?: { signal?: AbortSignal }): Promise<SupportRequestCountDto> {

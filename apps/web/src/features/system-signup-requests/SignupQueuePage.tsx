@@ -1,7 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { COMPANY_BUSINESS_CATEGORIES, SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
+import {
+  COMPANY_BUSINESS_CATEGORIES,
+  SIGNUP_REJECTION_REASON_MAX_LENGTH,
+  SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
+  type AdminSignupDecisionBody,
+} from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { Modal, useConfirm } from '@/common/components/modal';
 import { Button } from '@/common/components/button';
@@ -24,6 +29,7 @@ import {
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
+  canRetrySignupIntake,
   canSuspendSignup,
   isAbandonedEmptyAttempt,
   queueEmptyForReal,
@@ -74,7 +80,7 @@ function SkeletonRow() {
 }
 
 const rowActionClass =
-  'rounded border px-3 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed';
+  'min-h-10 rounded border px-3 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-40';
 
 
 /**
@@ -83,18 +89,20 @@ const rowActionClass =
  * which PROVISIONING rows may be suspended — is exactly the kind that a source assertion can agree
  * with while the markup does something else.
  */
-export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, onSuspend }: {
+export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, onRetryIntake, onSuspend }: {
   item: AdminSignupQueueItemDto;
   busy: boolean;
   onApprove: () => void;
   onReject: () => void;
   onReissue: () => void;
+  onRetryIntake: () => void;
   onSuspend: () => void;
 }) {
   const approve = canApproveSignup(item.state, item);
   const reject = canRejectSignup(item.state);
   const reissue = canReissueSignup(item.state);
   const suspend = canSuspendSignup(item);
+  const retryIntake = canRetrySignupIntake(item);
 
   return (
     <div className="flex flex-wrap gap-2">
@@ -105,7 +113,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
           onClick={onApprove}
           className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
         >
-          {busy ? 'กำลังทำรายการ...' : approveLabel(item.state)}
+          {busy ? 'กำลังทำรายการ...' : approveLabel(item.state, item)}
         </button>
       )}
       {/* Rejecting is only a decision before one has been made; every other state answers 409, so
@@ -130,6 +138,16 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
           {busy ? 'กำลังทำรายการ...' : 'ส่งลิงก์ใหม่'}
         </button>
       )}
+      {retryIntake && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onRetryIntake}
+          className={`${rowActionClass} border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100`}
+        >
+          {busy ? 'กำลังทำรายการ...' : 'ทำขั้นตอนรับคำขอต่อ'}
+        </button>
+      )}
       {suspend && (
         <button
           type="button"
@@ -140,7 +158,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
           ระงับ
         </button>
       )}
-      {!approve && !reject && !reissue && !suspend && <span className="text-xs text-gray-400">—</span>}
+      {!approve && !reject && !reissue && !retryIntake && !suspend && <span className="text-xs text-gray-400">—</span>}
     </div>
   );
 }
@@ -176,6 +194,13 @@ export default function SignupQueuePage() {
   // F2: "อื่น ๆ" is a legitimate answer — a barber shop really is one — so it is confirmed, not
   // refused. Reset with every dialog so a confirmation never carries to the next shop.
   const [confirmedOther, setConfirmedOther] = useState(false);
+  const [resolutionAction, setResolutionAction] = useState<AdminSignupDecisionBody['action'] | ''>('');
+  const [targetCompanyId, setTargetCompanyId] = useState('');
+  const [resolutionNote, setResolutionNote] = useState('');
+  const [grantRepeatTrial, setGrantRepeatTrial] = useState(false);
+  const [trialGrantNote, setTrialGrantNote] = useState('');
+  const [acknowledgeSharedContact, setAcknowledgeSharedContact] = useState(false);
+  const [sharedContactNote, setSharedContactNote] = useState('');
   // Keyed by request id: one shared box put the note an operator typed for one shop onto whichever
   // shop they decided next.
   const [packageNotes, setPackageNotes] = useState<Record<string, string>>({});
@@ -247,6 +272,15 @@ export default function SignupQueuePage() {
     // Default to what the server mapped, so a row the mapping DID read is one click as before.
     setBusinessCategory(item.businessCategory ?? 'OTHER');
     setConfirmedOther(false);
+    setResolutionAction(isLineSignup(item)
+      ? (isFinishingStrandedRow(item.state) ? 'CREATE_NEW_SHOP' : '')
+      : 'APPROVE');
+    setTargetCompanyId('');
+    setResolutionNote('');
+    setGrantRepeatTrial(false);
+    setTrialGrantNote('');
+    setAcknowledgeSharedContact(false);
+    setSharedContactNote('');
     setApproving(item);
   };
 
@@ -259,12 +293,37 @@ export default function SignupQueuePage() {
       // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
       const fromLine = isLineSignup(item);
       const finishing = fromLine && isFinishingStrandedRow(item.state);
-      const decided = await decideSignupRequest(item.requestId, {
-        action: 'APPROVE',
-        businessCategory: businessCategory,
-      });
+      if (!resolutionAction) return;
+      const body: AdminSignupDecisionBody = {
+        action: resolutionAction,
+        ...(fromLine ? { version: item.version } : {}),
+        ...(!finishing && (resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
+          ? { businessCategory } : {}),
+        ...(resolutionAction === 'RETURN_EXISTING' ? { targetCompanyId } : {}),
+        ...(resolutionAction === 'REQUEST_INFO' ? { resolutionNote: resolutionNote.trim() } : {}),
+        ...(!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item.requiresRepeatTrialGrant
+          ? { grantRepeatTrial, ...(trialGrantNote.trim() ? { trialGrantNote: trialGrantNote.trim() } : {}) }
+          : {}),
+        ...(!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item.contactEmailConflict
+          ? {
+              acknowledgeSharedContact,
+              ...(sharedContactNote.trim() ? { sharedContactNote: sharedContactNote.trim() } : {}),
+            }
+          : {}),
+      };
+      const decided = await decideSignupRequest(item.requestId, body);
       if (decided.state === 'PROVISIONING') {
         toast.warning('ยังเปิดร้านอยู่ รอสักครู่แล้วลองใหม่');
+      } else if (resolutionAction === 'REQUEST_INFO') {
+        if (decided.customerNotification === 'QUEUED') {
+          toast.success('บันทึกข้อมูลที่ต้องขอและเข้าคิวแจ้งลูกค้าทาง LINE แล้ว');
+        } else {
+          toast.warning('บันทึกข้อมูลที่ต้องขอแล้ว แต่ยังแจ้งลูกค้าทาง LINE ไม่ได้ กรุณาติดต่อผ่านเคสช่วยเหลือ');
+        }
+      } else if (resolutionAction === 'RETURN_EXISTING') {
+        toast.success('ปิดคำขอโดยให้กลับร้านเดิมแล้ว');
+      } else if (resolutionAction === 'CREATE_NEW_SHOP' && item.requiresRepeatTrialGrant && !grantRepeatTrial) {
+        toast.success('บันทึกรอจัดแพ็กเกจแล้ว ยังไม่ได้เปิดร้าน');
       } else {
         toast.success(finishing
           ? 'ปิดงานเรียบร้อย'
@@ -273,6 +332,28 @@ export default function SignupQueuePage() {
       setApproving(null);
       await load();
       if (tabLoadsOwnList(tab)) await loadTab(tab);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleRetryIntake = async (item: AdminSignupQueueItemDto) => {
+    setBusyId(item.requestId);
+    try {
+      const decided = await decideSignupRequest(item.requestId, {
+        action: 'RETRY_INTAKE',
+        version: item.version,
+      });
+      if (decided.state === 'PENDING_REVIEW') {
+        toast.success('ทำขั้นตอนรับคำขอต่อแล้ว ส่งเข้าคิวตรวจสอบเรียบร้อย');
+      } else if (decided.state === 'COMPLETED') {
+        toast.success('ทำคำขอเดิมต่อและเปิดร้านเรียบร้อย');
+      } else {
+        toast.warning(`ทำคำขอเดิมต่อแล้ว สถานะล่าสุด: ${signupStateChip(decided.state).label}`);
+      }
+      await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
     } finally {
@@ -383,24 +464,37 @@ export default function SignupQueuePage() {
   // and for a row whose shop already exists, so would promising to open one (review LOW-2).
   const approveFromLine = approving ? isLineSignup(approving) : false;
   const approveFinishing = approveFromLine && isFinishingStrandedRow(approving!.state);
-  const approveDialogTitle = approveFinishing ? 'ปิดงานคำขอ' : 'อนุมัติคำขอ';
+  const approveDialogTitle = approveFinishing ? 'ทำคำขอเดิมต่อ' : approveFromLine ? 'เลือกผลคำขอ LINE' : 'อนุมัติคำขอ';
   const approveDialogConfirmLabel = approveFinishing
-    ? 'ปิดงาน'
-    : approveFromLine ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล';
+    ? 'ทำรายการเดิมต่อ'
+    : resolutionAction === 'RETURN_EXISTING' ? 'ยืนยันกลับร้านเดิม'
+      : resolutionAction === 'REQUEST_INFO' ? 'บันทึกและแจ้งข้อมูลที่ต้องขอ'
+        : resolutionAction === 'CREATE_NEW_SHOP' ? 'ยืนยันผลเปิดร้านใหม่'
+          : approveFromLine ? 'เลือกผลก่อน' : 'อนุมัติและส่งอีเมล';
   const approveDialogMessage = !approving
     ? ''
     : approveFinishing
-      ? `ปิดงานให้ร้าน ${approving.companyName} ที่เปิดค้างอยู่ ใช่หรือไม่`
+      ? `ทำคำขอเดิมของร้าน ${approving.companyName} ต่อ ระบบจะใช้ผลตรวจและสิทธิ์ทดลองที่บันทึกไว้เดิม`
       : approveFromLine
-        ? `อนุมัติและเปิดร้าน ${approving.companyName} ให้ทันที (ลูกค้าจะได้รับแจ้งทาง LINE) ใช่หรือไม่`
+        ? `เลือกผลที่จะเกิดกับคำขอของร้าน ${approving.companyName} ให้ชัดเจนก่อนบันทึก`
         : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
   // R10/F2: a row whose free text the mapping could not read may not be approved on the DEFAULT —
   // but "อื่น ๆ" chosen on purpose is a decision, and the checkbox is how it says so.
   const approveNeedsOtherConfirmed = approving !== null
     && requiresCategoryChoice(approving)
+    && (resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
     && businessCategory === 'OTHER';
-  const approveBlocked = approving !== null
-    && approveBlockedOnCategory(approving, businessCategory, confirmedOther);
+  const approveBlocked = approving !== null && (
+    (!approveFinishing && approveFromLine && !resolutionAction)
+    || (resolutionAction === 'RETURN_EXISTING' && !targetCompanyId)
+    || (resolutionAction === 'REQUEST_INFO' && !resolutionNote.trim())
+    || (resolutionAction === 'CREATE_NEW_SHOP' && approving.requiresRepeatTrialGrant === true
+      && grantRepeatTrial && !trialGrantNote.trim())
+    || (resolutionAction === 'CREATE_NEW_SHOP' && approving.contactEmailConflict === true
+      && (!acknowledgeSharedContact || !sharedContactNote.trim()))
+    || ((resolutionAction === 'APPROVE' || resolutionAction === 'CREATE_NEW_SHOP')
+      && approveBlockedOnCategory(approving, businessCategory, confirmedOther))
+  );
 
   const visible = tab === 'AUTO_APPROVED' ? (autoItems ?? []) : items;
   // R13: "no applications in this group" is a claim about the DATABASE, so it may only be made
@@ -447,6 +541,80 @@ export default function SignupQueuePage() {
       >
         <div className="space-y-3 text-sm text-gray-600">
           <p>{approveDialogMessage}</p>
+          {approveFromLine && !approveFinishing && (
+            <fieldset className="space-y-2">
+              <legend className="font-medium text-gray-900">ผลของคำขอนี้</legend>
+              <label className="flex min-h-12 items-start gap-3 rounded-lg border border-gray-200 p-3">
+                <input
+                  type="radio"
+                  name="signup-resolution"
+                  className="mt-1 h-4 w-4"
+                  checked={resolutionAction === 'CREATE_NEW_SHOP'}
+                  onChange={() => setResolutionAction('CREATE_NEW_SHOP')}
+                />
+                <span><strong className="block text-gray-900">เปิดร้านใหม่</strong>สร้างร้านใหม่ให้บัญชี LINE ที่พิสูจน์แล้ว</span>
+              </label>
+              {(approving?.eligibleExistingCompanies ?? []).filter((company) => company.canEnter).length > 0 && (
+                <label className="flex min-h-12 items-start gap-3 rounded-lg border border-gray-200 p-3">
+                  <input
+                    type="radio"
+                    name="signup-resolution"
+                    className="mt-1 h-4 w-4"
+                    checked={resolutionAction === 'RETURN_EXISTING'}
+                    onChange={() => setResolutionAction('RETURN_EXISTING')}
+                  />
+                  <span><strong className="block text-gray-900">กลับร้านเดิม</strong>ไม่สร้างร้าน บริษัท สมาชิก หรือสิทธิ์ทดลองใหม่</span>
+                </label>
+              )}
+              <label className="flex min-h-12 items-start gap-3 rounded-lg border border-gray-200 p-3">
+                <input
+                  type="radio"
+                  name="signup-resolution"
+                  className="mt-1 h-4 w-4"
+                  checked={resolutionAction === 'REQUEST_INFO'}
+                  onChange={() => setResolutionAction('REQUEST_INFO')}
+                />
+                <span><strong className="block text-gray-900">ขอข้อมูลเพิ่ม</strong>เก็บคำขอเดิมไว้ และขอสิ่งที่ขาดทั้งหมดในครั้งเดียว</span>
+              </label>
+            </fieldset>
+          )}
+
+          {resolutionAction === 'RETURN_EXISTING' && (
+            <div className="space-y-1.5">
+              <label htmlFor="signup-existing-company" className="block font-medium text-gray-700">ร้านที่ให้กลับเข้าใช้</label>
+              <select
+                id="signup-existing-company"
+                value={targetCompanyId}
+                onChange={(event) => setTargetCompanyId(event.target.value)}
+                className="min-h-12 w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
+              >
+                <option value="">เลือกร้านจากสิทธิ์ LINE ที่ตรวจแล้ว</option>
+                {(approving?.eligibleExistingCompanies ?? []).filter((company) => company.canEnter).map((company) => (
+                  <option key={company.companyId} value={company.companyId}>{company.companyName}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {resolutionAction === 'REQUEST_INFO' && (
+            <div className="space-y-1.5">
+              <label htmlFor="signup-resolution-note" className="block font-medium text-gray-700">
+                ข้อมูลที่ต้องขอทั้งหมด
+              </label>
+              <textarea
+                id="signup-resolution-note"
+                rows={5}
+                maxLength={SIGNUP_RESOLUTION_NOTE_MAX_LENGTH}
+                value={resolutionNote}
+                onChange={(event) => setResolutionNote(event.target.value)}
+                placeholder={'เช่น\n1. ชื่อร้านตามทะเบียน\n2. อีเมลติดต่อที่ถูกต้อง\n3. ยังเข้า LINE หรือบัญชีเดิมได้หรือไม่'}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
+              />
+              <p className="text-xs text-gray-500">ลูกค้าจะเห็นข้อความนี้ ({resolutionNote.length}/{SIGNUP_RESOLUTION_NOTE_MAX_LENGTH})</p>
+            </div>
+          )}
+
+          {(resolutionAction === 'APPROVE' || (resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing)) && (
           <div className="space-y-1.5">
             <label htmlFor="signup-business-category" className="block text-sm font-medium text-gray-700">
               ประเภทธุรกิจของร้านนี้
@@ -492,6 +660,60 @@ export default function SignupQueuePage() {
               </label>
             )}
           </div>
+          )}
+
+          {resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing && approving?.requiresRepeatTrialGrant && (
+            <div className="space-y-2 rounded-lg border border-yellow-200 bg-yellow-50 p-3">
+              <p className="font-medium text-gray-900">บัญชีนี้เคยได้รับสิทธิ์ทดลองแล้ว</p>
+              <label className="flex min-h-12 items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={grantRepeatTrial}
+                  onChange={(event) => setGrantRepeatTrial(event.target.checked)}
+                />
+                <span>อนุญาตทดลองใช้ฟรีเพิ่มอีกครั้ง</span>
+              </label>
+              {grantRepeatTrial ? (
+                <textarea
+                  aria-label="เหตุผลที่ให้ทดลองใช้ฟรีเพิ่ม"
+                  rows={3}
+                  maxLength={SIGNUP_RESOLUTION_NOTE_MAX_LENGTH}
+                  value={trialGrantNote}
+                  onChange={(event) => setTrialGrantNote(event.target.value)}
+                  placeholder="ระบุเหตุผลที่อนุญาต"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
+                />
+              ) : (
+                <p className="text-xs text-gray-700">หากไม่อนุญาต ระบบจะเก็บไว้ที่ “รอจัดแพ็กเกจ” และยังไม่เปิดร้าน</p>
+              )}
+            </div>
+          )}
+
+          {resolutionAction === 'CREATE_NEW_SHOP' && !approveFinishing && approving?.contactEmailConflict && (
+            <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50 p-3">
+              <p className="font-medium text-gray-900">อีเมลติดต่อซ้ำกับบุคคลอื่น</p>
+              <p className="text-xs">อีเมลนี้ไม่ใช้ยืนยันเจ้าของและไม่ย้ายบัญชี ลูกค้ารายนี้จะเข้าใช้ด้วย LINE</p>
+              <label className="flex min-h-12 items-start gap-3">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4"
+                  checked={acknowledgeSharedContact}
+                  onChange={(event) => setAcknowledgeSharedContact(event.target.checked)}
+                />
+                <span>ตรวจแล้ว เป็นข้อมูลติดต่อที่ใช้ร่วมกันโดยตั้งใจ</span>
+              </label>
+              <textarea
+                aria-label="เหตุผลที่ยอมรับอีเมลติดต่อร่วมกัน"
+                rows={3}
+                maxLength={SIGNUP_RESOLUTION_NOTE_MAX_LENGTH}
+                value={sharedContactNote}
+                onChange={(event) => setSharedContactNote(event.target.value)}
+                placeholder="บันทึกสิ่งที่ตรวจแล้ว"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
+              />
+            </div>
+          )}
         </div>
       </Modal>
 
@@ -787,6 +1009,7 @@ export default function SignupQueuePage() {
                                 setRejecting(item);
                               }}
                               onReissue={() => void handleReissue(item)}
+                              onRetryIntake={() => void handleRetryIntake(item)}
                               onSuspend={() => void handleSuspend(item)}
                             />
                           </td>

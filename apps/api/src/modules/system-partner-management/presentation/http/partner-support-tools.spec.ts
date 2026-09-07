@@ -34,7 +34,10 @@ type Options = {
   ownerMemberships?: Array<{ userId: string }>;
   /** The `LineSupportRequest` a `supportRequestId` resolves to. `companyId`/`status` default to
    *  "this shop, still waiting", so a case only spells out the half it is about. */
-  supportRequest?: { companyId?: string; status?: string; lineUserId: string } | null;
+  supportRequest?: {
+    companyId?: string; status?: string; lineUserId: string;
+    lastMessageAt?: Date; answeredAt?: Date | null;
+  } | null;
   memberIdentity?: any | null;
   ocrUsage?: { usedCount: number } | null;
   aiUsage?: { costSatang: number } | null;
@@ -96,7 +99,11 @@ function harness(options: Options = {}) {
           if (options.supportRequest === undefined || options.supportRequest === null) {
             return options.supportRequest ?? null;
           }
-          return { id: 'sr-9', companyId: 'co-1', status: 'OPEN', ...options.supportRequest };
+          return {
+            id: 'sr-9', companyId: 'co-1', status: 'OPEN',
+            lastMessageAt: new Date('2026-09-05T02:00:00.000Z'), answeredAt: null,
+            ...options.supportRequest,
+          };
         },
         updateMany: async (args: any) => { supportAnswered.push(args); return { count: 1 }; },
       },
@@ -245,9 +252,8 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
     assert.equal(h.audits[0].action, 'system.partner.line_message_sent');
     assert.equal(h.audits[0].metadataJson.text, 'ได้รับเรื่องแล้วนะคะ');
     assert.equal(h.audits[0].result, 'SUCCESS');
-    // line-support-request-spec-th §2.3: the message IS the answer, so the request closes with it.
-    assert.deepEqual(h.supportAnswered[0].where, { companyId: 'co-1', status: 'OPEN' });
-    assert.equal(h.supportAnswered[0].data.answeredByUserId, 'admin-1');
+    assert.deepEqual(h.supportAnswered, [],
+      'a generic company message names no customer question and must hide no support case');
   });
 
   it('leaves the request OPEN when the message reached nobody', async () => {
@@ -326,7 +332,10 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
       'co-1', { text: 'ได้รับเรื่องแล้วนะคะ', supportRequestId: 'sr-9' }, REQ,
     );
 
-    assert.deepEqual(h.supportAnswered[0].where, { id: 'sr-9', status: 'OPEN' },
+    assert.deepEqual(h.supportAnswered[0].where, {
+      id: 'sr-9', status: 'OPEN',
+      lastMessageAt: new Date('2026-09-05T02:00:00.000Z'), answeredAt: null,
+    },
       'only the request this reply names, not every stranger on the same shop');
     assert.equal(h.supportAnswered[0].data.answeredByUserId, 'admin-1');
     const answered = h.audits.find((row: any) => row.action === 'system.support_request.answered');
@@ -344,8 +353,10 @@ describe('POST /system/partners/:id/line-message — SEC-05', () => {
     );
 
     assert.deepEqual(pushes.map((push) => push.to), ['Uowner-1', 'Uemployee-1'], 'a second reply still lands');
-    assert.deepEqual(h.supportAnswered[0].where, { id: 'sr-9', status: 'OPEN' },
-      'the guard is what makes it idempotent: nothing to move');
+    assert.deepEqual(h.supportAnswered[0].where, {
+      id: 'sr-9', status: 'ANSWERED',
+      lastMessageAt: new Date('2026-09-05T02:00:00.000Z'), answeredAt: null,
+    }, 'the named reply remains bound to the request snapshot the operator read');
   });
 
   it('refuses a request belonging to another shop, rather than pushing across tenants', async () => {

@@ -3,7 +3,7 @@ import type { PartnerLineMessageResultDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
-import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
+import { checkShopMessage, shopMessageAllowedHosts, shopMessageBodyTh } from '../../domain/logic/partner-line-message.logic';
 import { ownerLineUserIds } from './package-change-decision.use-case';
 // From the shared constants file, not from the inbox use case: two spellings of the action would
 // split the audit trail the /system page reads, and neither module should import the other's
@@ -11,11 +11,6 @@ import { ownerLineUserIds } from './package-change-decision.use-case';
 import { SUPPORT_REQUEST_ANSWERED_ACTION } from '../../../external-signup/domain/support-request.constants';
 
 export const PARTNER_LINE_MESSAGE_ACTION = 'system.partner.line_message_sent';
-
-/** §8: the shop must be able to tell a person from the bot, so the operator signs their own name. */
-export function shopMessageBodyTh(senderName: string, text: string): string {
-  return `📮 ข้อความจากทีมงานมั่งมีพลัส (${senderName})\n${text}`;
-}
 
 /**
  * P10-L §8 / SEC-05. The OA runs webhook-only (Chat is off in OA Manager), so an operator cannot
@@ -54,7 +49,10 @@ export class SendPartnerLineMessageUseCase {
     const target = cmd.supportRequestId
       ? await this.prisma.client.lineSupportRequest.findUnique({
         where: { id: cmd.supportRequestId },
-        select: { id: true, companyId: true, status: true, lineUserId: true },
+        select: {
+          id: true, companyId: true, status: true, lineUserId: true,
+          lastMessageAt: true, answeredAt: true,
+        },
       })
       : null;
     if (cmd.supportRequestId
@@ -93,33 +91,37 @@ export class SendPartnerLineMessageUseCase {
       if (await pushSystemLineMessage(token, providerUserId, body)) delivered += 1;
     }
 
-    // line-support-request-spec-th §2.3: answering IS answering the request, so the operator does
-    // not also have to remember to press a button. Only when something landed — a message that
-    // reached nobody has not answered anybody. Named request: only that one, which is the same
-    // narrowing the recipients got. Unnamed: the shop's OPEN requests, as before.
-    if (delivered > 0) {
-      await this.prisma.client.lineSupportRequest.updateMany({
-        // The `status: 'OPEN'` guard is what makes this idempotent, exactly like the button: a
-        // second reply on an already-ANSWERED request moves nothing and keeps the first answerer.
-        where: target ? { id: target.id, status: 'OPEN' } : { companyId: cmd.companyId, status: 'OPEN' },
-        data: { status: 'ANSWERED', answeredAt: new Date(), answeredByUserId: cmd.requestingAdminUserId },
-      });
-      // The inbox's own action, written from here so both routes to "ตอบแล้ว" leave the same trail.
-      if (target) {
-        await this.prisma.client.auditLog.create({
-          data: {
-            companyId: cmd.companyId,
-            actorUserId: cmd.requestingAdminUserId,
-            action: SUPPORT_REQUEST_ANSWERED_ACTION,
-            targetType: 'line_support_request',
-            targetId: target.id,
-            requestId: cmd.requestId,
-            result: 'SUCCESS',
-            riskLevel: 'HIGH',
-            metadataJson: { previousStatus: target.status, via: 'partner_line_message' },
+    // Only a named request can become answered here. A generic company notice has no proof that it
+    // answered any particular person's question, and must never hide all of the shop's open cases.
+    // The message stamp also prevents a customer reply that arrives during the push from being
+    // overwritten by this older answer.
+    if (delivered > 0 && target) {
+      await this.prisma.client.$transaction(async (tx) => {
+        const answered = await tx.lineSupportRequest.updateMany({
+          where: {
+            id: target.id,
+            status: target.status,
+            lastMessageAt: target.lastMessageAt,
+            answeredAt: target.answeredAt,
           },
+          data: { status: 'ANSWERED', answeredAt: new Date(), answeredByUserId: cmd.requestingAdminUserId },
         });
-      }
+        if (answered.count > 0) {
+          await tx.auditLog.create({
+            data: {
+              companyId: cmd.companyId,
+              actorUserId: cmd.requestingAdminUserId,
+              action: SUPPORT_REQUEST_ANSWERED_ACTION,
+              targetType: 'line_support_request',
+              targetId: target.id,
+              requestId: cmd.requestId,
+              result: 'SUCCESS',
+              riskLevel: 'HIGH',
+              metadataJson: { previousStatus: target.status, via: 'partner_line_message' },
+            },
+          });
+        }
+      });
     }
 
     // The paragraph IS the evidence here (SEC-05): an operator speaking as the platform must leave

@@ -9,6 +9,8 @@ const LEGAL = { ...RELEASE, locale: 'th' };
 
 const CMD = {
   idToken: 'aaaa.bbbb.cccc',
+  submissionId: '11111111-1111-4111-8111-111111111111',
+  intent: 'FIRST_SHOP' as const,
   companyName: 'ร้านมั่งมี',
   phoneNumber: '0812345678',
   contactEmail: 'shop@example.test',
@@ -44,6 +46,8 @@ function harness(options: {
   systemAdmins?: string[];
   attemptBucketFull?: boolean;
   emailPreviouslyUsed?: boolean;
+  recordLineSignupFailures?: number;
+  provisionFailures?: number;
 } = {}) {
   const created: any[] = [];
   const advances: any[] = [];
@@ -57,13 +61,19 @@ function harness(options: {
   const locks: unknown[][] = [];
   const identityReads: any[] = [];
   const emailReads: Array<{ sql: string; values: unknown[] }> = [];
+  const quotaRecords: Array<{ lineUserId: string; requestId: string }> = [];
+  let recordFailures = options.recordLineSignupFailures ?? 0;
+  let provisionFailures = options.provisionFailures ?? 0;
+  let request: any = null;
   const client: any = {
     externalIdentity: {
       findFirst: async (args: any) => {
         identityReads.push(args);
-        return options.identity
-          ? { status: 'ACTIVE', user: { status: 'ACTIVE' }, ...options.identity }
-          : null;
+        if (!options.identity) return null;
+        const identity = { status: 'ACTIVE', user: { status: 'ACTIVE' }, ...options.identity };
+        if (args.where.status && args.where.status !== identity.status) return null;
+        if (args.where.user?.status && args.where.user.status !== identity.user.status) return null;
+        return identity;
       },
     },
     // Both filters are HONOURED. Dropping the OWNER role turns an employee's first shop into a
@@ -75,10 +85,35 @@ function harness(options: {
         if (args?.where?.status?.not && (m.status ?? 'ACTIVE') === args.where.status.not) return false;
         return true;
       }).length,
+      findMany: async () => [],
     },
     companySignupRequest: {
       count: async (args: any) => { capCounts.push(args); return options.approvedToday ?? 0; },
-      update: async (args: any) => { updates.push(args); return {}; },
+      findUnique: async (args: any) => {
+        if (!request) return null;
+        const key = args.where.id ?? args.where.externalSignupId;
+        return key === request.id || key === request.externalSignupId ? request : null;
+      },
+      findFirst: async (args: any) => {
+        if (!request) return null;
+        if (args.where.id && args.where.id !== request.id) return null;
+        if (args.where.externalSignupId && args.where.externalSignupId !== request.externalSignupId) return null;
+        if (args.where.source && args.where.source !== request.source) return null;
+        if (args.where.lineProviderUserId && args.where.lineProviderUserId !== request.lineProviderUserId) return null;
+        if (args.where.lineChannelId && args.where.lineChannelId !== request.lineChannelId) return null;
+        const states = args.where.state?.in as string[] | undefined;
+        return !states || states.includes(request.state) ? request : null;
+      },
+      update: async (args: any) => {
+        updates.push(args);
+        const data = args.data;
+        request = {
+          ...request,
+          ...data,
+          version: data.version?.increment ? request.version + data.version.increment : request.version,
+        };
+        return request;
+      },
     },
     auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
     // The cap is claimed inside a transaction holding an advisory lock; the fake records both so a
@@ -103,9 +138,22 @@ function harness(options: {
     receiveNormalized: async (data: any) => {
       if (options.createThrows) throw options.createThrows;
       created.push(data);
-      return { id: 'signup-1', ...data };
+      request = {
+        id: 'signup-1', state: 'RECEIVED', version: 0, createdAt: NOW,
+        companyId: null, ownerUserId: null, provisioningAttemptId: null,
+        resolvedExistingCompanyId: null, reviewResolution: null, resolutionNote: null,
+        contactEmailConflict: null, autoApproved: false, approvedAt: null,
+        repeatTrialGrantedAt: null, sharedContactReviewedAt: null,
+        ...data,
+      };
+      return { request, replayed: false };
     },
-    advance: async (id: string, state: string) => { advances.push({ id, state }); return {}; },
+    advance: async (id: string, state: string, _correlationId: string, _failure?: string, expect?: any) => {
+      if (expect && !expect(request)) throw new ConflictException(expect.rejectionCode);
+      advances.push({ id, state });
+      request = { ...request, state, version: request.version + 1 };
+      return { request, replayed: false };
+    },
   } as any;
 
   const lineIdToken = {
@@ -124,13 +172,30 @@ function harness(options: {
       if (options.attemptBucketFull) throw new Error('Too many requests');
     },
     assertLineSignupUserAllowed: async (key: string) => { userQuotas.push(`inspect:${key}`); },
-    recordLineSignupUser: async (key: string) => { userQuotas.push(`consume:${key}`); },
+    recordLineSignupUser: async (lineUserId: string, requestId: string) => {
+      userQuotas.push(`consume:${lineUserId}`);
+      quotaRecords.push({ lineUserId, requestId });
+      if (recordFailures > 0) {
+        recordFailures -= 1;
+        throw new Error('signup_creation_quota_store_unavailable');
+      }
+    },
   } as any;
   const adminNotify = {
     activeSystemAdmins: async () => (options.systemAdmins ?? ['sysadmin-1']).map((userId) => ({ companyId: 'sys', userId })),
     enqueue: async (id: string) => { notified.push(id); },
   } as any;
-  const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
+  const provision = {
+    execute: async (cmd: any) => {
+      provisioned.push(cmd);
+      if (provisionFailures > 0) {
+        provisionFailures -= 1;
+        throw new Error('injected_before_provision');
+      }
+      request = { ...request, state: 'COMPLETED', companyId: 'company-1', version: request.version + 1 };
+      return {};
+    },
+  } as any;
 
   // §15.6: the daily-cap alert is raised, not sent — recorded so the trigger can be asserted.
   const alerts: string[] = [];
@@ -139,7 +204,9 @@ function harness(options: {
   return {
     useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
     created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks, alerts,
-    identityReads, emailReads,
+    identityReads, emailReads, quotaRecords,
+    current: () => request,
+    patchRequest: (data: Record<string, unknown>) => { request = { ...request, ...data }; },
   };
 }
 
@@ -192,9 +259,11 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     const h = harness({ identity: { userId: 'line-owner' } });
     await h.useCase.execute({ ...CMD, contactEmail: ' Shop@Example.TEST ' }, NOW);
     await h.useCase.execute({ ...CMD, contactEmail: 'shop@example.test' }, NOW);
-    await h.useCase.execute({ ...CMD, contactEmail: 'different@example.test' }, NOW);
-    assert.equal(h.created[0].payloadHash, h.created[1].payloadHash);
-    assert.notEqual(h.created[0].payloadHash, h.created[2].payloadHash);
+    await assert.rejects(
+      () => h.useCase.execute({ ...CMD, contactEmail: 'different@example.test' }, NOW),
+      /line_signup_submission_conflict/,
+    );
+    assert.equal(h.created.length, 1, 'normalized exact replay does not create another request');
     assert.ok(h.created.every((row) => row.attachUserId === 'line-owner'));
     assert.ok(h.identityReads.every((read) => read.where.providerUserId === 'Uline-1' && !('email' in read.where)));
   });
@@ -215,13 +284,74 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await assert.rejects(() => h.useCase.execute({ ...CMD, phoneNumber: '12345' }, NOW));
     }
-    assert.deepEqual(h.userQuotas.filter((q: string) => q.startsWith('inspect')).length, 3);
+    assert.deepEqual(h.userQuotas.filter((q: string) => q.startsWith('inspect')).length, 0);
     assert.equal(h.userQuotas.filter((q: string) => q.startsWith('consume')).length, 0);
 
     // The fourth attempt is the one that gets it right, and it must still go through.
     const result = await h.useCase.execute(CMD, NOW);
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.userQuotas.at(-1), 'consume:Uline-1');
+  });
+
+  it('recovers the same committed RECEIVED request after the creation-counter store fails', async () => {
+    const h = harness({ recordLineSignupFailures: 1 });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /signup_creation_quota_store_unavailable/);
+    assert.equal(h.current().state, 'RECEIVED');
+    assert.equal(h.created.length, 1, 'the durable intake exists before the external counter call');
+
+    const recovered = await h.useCase.execute({ ...CMD, correlationRequestId: 'req-replay' }, NOW);
+    assert.equal(recovered.progress?.state, 'PENDING_REVIEW');
+    assert.equal(h.created.length, 1, 'the exact client key never creates a second request');
+    assert.deepEqual(h.quotaRecords, [
+      { lineUserId: 'Uline-1', requestId: 'signup-1' },
+      { lineUserId: 'Uline-1', requestId: 'signup-1' },
+    ], 'both attempts use the same consume-once key');
+  });
+
+  it('retries persisted intake by proof and version after local form state is gone', async () => {
+    const h = harness({ recordLineSignupFailures: 1 });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW));
+    await assert.rejects(
+      () => h.useCase.retryOwnedIntake({
+        requestId: 'signup-1', idToken: CMD.idToken, version: 99,
+        correlationRequestId: 'req-stale', webBaseUrl: CMD.webBaseUrl, apiBaseUrl: CMD.apiBaseUrl,
+      }, NOW),
+      /line_signup_version_conflict/,
+    );
+    const recovered = await h.useCase.retryOwnedIntake({
+      requestId: 'signup-1', idToken: CMD.idToken, version: 0,
+      correlationRequestId: 'req-retry', webBaseUrl: CMD.webBaseUrl, apiBaseUrl: CMD.apiBaseUrl,
+    }, NOW);
+    assert.equal(recovered.progress?.state, 'PENDING_REVIEW');
+    assert.equal(recovered.progress?.requestId, 'signup-1');
+  });
+
+  it('corrects contact under the request version and invalidates the earlier review before resuming', async () => {
+    const h = harness();
+    const initial = await h.useCase.execute(CMD, NOW);
+    h.patchRequest({
+      reviewResolution: 'REQUEST_INFO', resolutionNote: 'อีเมลไม่ถูกต้อง',
+      resolvedAt: NOW, resolvedByUserId: 'admin-1',
+      repeatTrialGrantedAt: NOW, repeatTrialGrantedByUserId: 'admin-1', repeatTrialGrantNote: 'old',
+      sharedContactReviewedAt: NOW, sharedContactReviewedByUserId: 'admin-1', sharedContactReviewNote: 'old',
+    });
+    const corrected = await h.useCase.correctContactEmail({
+      requestId: initial.progress!.requestId,
+      idToken: CMD.idToken,
+      version: initial.progress!.version,
+      contactEmail: ' Corrected@Example.TEST ',
+      correlationRequestId: 'req-correct',
+      webBaseUrl: CMD.webBaseUrl,
+      apiBaseUrl: CMD.apiBaseUrl,
+    }, NOW);
+
+    assert.equal(corrected.progress?.contactEmail, 'corrected@example.test');
+    assert.equal(corrected.progress?.state, 'PENDING_REVIEW');
+    const mutation = h.updates.find((update: any) => update.data.contactEmail === 'corrected@example.test');
+    assert.equal(mutation.data.reviewResolution, null);
+    assert.equal(mutation.data.repeatTrialGrantedAt, null);
+    assert.equal(mutation.data.sharedContactReviewedAt, null);
+    assert.ok(h.audits.some((entry: any) => entry.data.action === 'signup.line.contact_email_corrected'));
   });
 
   // Review L-4: with the creation bucket no longer charging failures, one account could otherwise
@@ -296,9 +426,10 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness();
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.deepEqual(result, {
-      requestId: 'signup-1', state: 'PENDING_REVIEW', existingAccount: false, businessHours: true,
-    });
+    assert.equal(result.progress?.requestId, 'signup-1');
+    assert.equal(result.progress?.state, 'PENDING_REVIEW');
+    assert.equal(result.progress?.existingAccount, false);
+    assert.equal(result.progress?.businessHours, true);
     assert.deepEqual(h.advances, [
       { id: 'signup-1', state: 'VALIDATED' },
       { id: 'signup-1', state: 'PENDING_REVIEW' },
@@ -311,10 +442,10 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ approvalMode: 'AUTO_FREE' });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.progress!.state, 'COMPLETED');
     assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'VALIDATED' }], 'no PENDING_REVIEW hop');
     assert.deepEqual(h.notified, [], 'and no admin is woken up');
-    assert.equal(h.updates[0].data.autoApproved, true);
+    assert.equal(h.updates.find((update: any) => update.data.autoApproved)?.data.autoApproved, true);
     assert.equal(h.provisioned[0].requestId, 'signup-1');
     // Review HIGH-1: onboarding writes this id into two foreign keys, so it has to be a real user.
     assert.equal(h.provisioned[0].actorUserId, 'sysadmin-1');
@@ -322,23 +453,44 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     assert.equal(h.audits[0].data.metadataJson.emailPreviouslyUsed, false);
   });
 
+  it('reuses an already-claimed AUTO_FREE slot when the process dies before provisioning', async () => {
+    const h = harness({ approvalMode: 'AUTO_FREE', provisionFailures: 1 });
+    await assert.rejects(() => h.useCase.execute(CMD, NOW), /injected_before_provision/);
+    assert.equal(h.current().state, 'VALIDATED');
+    assert.equal(h.current().autoApproved, true);
+    assert.equal(h.current().reviewResolution, 'NEW_SHOP');
+
+    const recovered = await h.useCase.execute({ ...CMD, correlationRequestId: 'req-auto-replay' }, NOW);
+    assert.equal(recovered.progress?.state, 'COMPLETED');
+    assert.equal(h.capCounts.length, 1, 'replay does not claim or count another daily slot');
+    assert.equal(h.provisioned.length, 2, 'the same request retries the failed external work');
+    assert.equal(h.created.length, 1);
+  });
+
   it('accepts reused owner email for manual review without an AUTO_FREE slot or provisioning', async () => {
     for (const approvalMode of ['AUTO_FREE', 'MANUAL'] as const) {
       const h = harness({ approvalMode, emailPreviouslyUsed: true, identity: { userId: 'staff-owner' }, memberships: [{ owner: false }] });
       const result = await h.useCase.execute({ ...CMD, contactEmail: ' Shop@Example.TEST ' }, NOW);
-      assert.equal(result.state, 'PENDING_REVIEW');
+      assert.equal(result.progress!.state, 'PENDING_REVIEW');
       assert.deepEqual(h.notified, ['signup-1']);
-      assert.deepEqual(h.provisioned, []); assert.deepEqual(h.updates, []); assert.deepEqual(h.capCounts, []);
+      assert.deepEqual(h.provisioned, []);
+      assert.ok(h.updates.every((update: any) => update.data.autoApproved === undefined));
+      assert.deepEqual(h.capCounts, []);
       assert.deepEqual(h.alerts, []);
       assert.equal(h.audits[0].data.metadataJson.emailPreviouslyUsed, true);
       assert.equal(h.audits[0].data.metadataJson.manualReviewReason, 'email_previously_used');
       assert.equal(JSON.stringify(h.audits).includes('shop@example.test'), false);
       const read = h.emailReads[0]!;
-      assert.deepEqual(read.values, ['shop@example.test', 'shop@example.test', 'shop@example.test', 'signup-1', 'shop@example.test']);
+      assert.deepEqual(read.values, [
+        'staff-owner', 'staff-owner',
+        'shop@example.test', 'shop@example.test', 'shop@example.test',
+        'staff-owner', 'signup-1', 'shop@example.test', 'staff-owner',
+      ]);
       for (const table of ['User', 'Company', 'CompanySignupRequest']) assert.ok(read.sql.includes(`FROM "${table}"`));
-      assert.match(read.sql, /"id" <>/); assert.match(read.sql, /lower\(btrim\("contactEmail"\)\)/);
-      assert.match(read.sql, /lower\(btrim\("username"\)\)/);
-      assert.doesNotMatch(read.sql, /"state"|"status"|ILIKE/);
+      assert.match(read.sql, /"id" <>/); assert.match(read.sql, /lower\(btrim\(csr\."contactEmail"\)\)/);
+      assert.match(read.sql, /lower\(btrim\(u\."username"\)\)/);
+      assert.match(read.sql, /"state"/);
+      assert.doesNotMatch(read.sql, /ILIKE/);
     }
   });
 
@@ -348,21 +500,23 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ approvalMode: 'AUTO_FREE' });
     await h.useCase.execute(CMD, NOW);
 
-    assert.deepEqual(h.locks, [['line-signup-auto-cap:2026-09-03']], 'count and mark are serialised');
+    assert.ok(h.locks.some((values) => values[0] === 'line-signup-auto-cap:2026-09-03'));
     const where = h.capCounts[0].where;
     assert.equal(where.source, 'line-oa');
     assert.equal(where.autoApproved, true);
     // Bangkok midnight of 2026-09-03 is 2026-09-02T17:00Z.
-    assert.equal(where.createdAt.gte.toISOString(), '2026-09-02T17:00:00.000Z');
+    assert.equal(where.OR[0].approvedAt.gte.toISOString(), '2026-09-02T17:00:00.000Z');
+    assert.equal(where.OR[1].approvedAt, null);
+    assert.equal(where.OR[1].createdAt.gte.toISOString(), '2026-09-02T17:00:00.000Z');
   });
 
   it('sends the application to the queue when no SYSTEM_ADMIN can act as operator', async () => {
     const h = harness({ approvalMode: 'AUTO_FREE', systemAdmins: [] });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.provisioned, []);
-    assert.deepEqual(h.updates, [], 'and no cap slot is burned discovering that');
+    assert.ok(h.updates.every((update: any) => update.data.autoApproved === undefined), 'no cap slot is burned');
     assert.equal(h.audits.at(-1).data.action, 'signup.line.auto_approve_no_actor');
   });
 
@@ -370,7 +524,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ approvalMode: 'AUTO_FREE', autoDailyCap: 20, approvedToday: 20 });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.provisioned, [], 'the cap is a stop, not a suggestion');
     assert.deepEqual(h.notified, ['signup-1']);
     const capped = h.audits.find((entry: any) => entry.data.action === 'signup.line.auto_approve_capped');
@@ -390,9 +544,9 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.deepEqual(h.provisioned, [], 'no shop is opened by the machine for a repeat trial');
-    assert.deepEqual(h.updates, [], 'and no daily cap slot is burned on it either');
+    assert.ok(h.updates.every((update: any) => update.data.autoApproved === undefined), 'no daily cap slot is burned');
     assert.deepEqual(h.notified, ['signup-1'], 'it lands in the admin queue like any manual row');
     const flagged = h.audits.find((entry: any) => entry.data.action === 'signup.line.auto_approve_repeat_trial');
     assert.equal(flagged.data.metadataJson.reason, 'repeat_trial_manual_review');
@@ -412,7 +566,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED', 'their first shop is a first shop');
+    assert.equal(result.progress!.state, 'COMPLETED', 'their first shop is a first shop');
     assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
   });
 
@@ -429,7 +583,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.progress!.state, 'COMPLETED');
     assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
   });
 
@@ -441,7 +595,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
         memberships: [{ owner: true, status }],
       });
       const result = await h.useCase.execute(CMD, NOW);
-      assert.equal(result.state, 'PENDING_REVIEW', `${status} membership is still a shop they had`);
+      assert.equal(result.progress!.state, 'PENDING_REVIEW', `${status} membership is still a shop they had`);
     }
   });
 
@@ -449,7 +603,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-old', status: 'UNLINKED' } });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'COMPLETED', 'an unlinked identity alone is not a repeat trial');
+    assert.equal(result.progress!.state, 'COMPLETED', 'an unlinked identity alone is not a repeat trial');
     assert.equal(h.audits[0].data.metadataJson.repeatTrial, false);
   });
 
@@ -457,7 +611,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ approvalMode: 'AUTO_FREE', identity: { userId: 'user-9' }, memberships: [{ owner: true }] });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.state, 'PENDING_REVIEW');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW');
     assert.equal(h.created[0].attachUserId, 'user-9', 'still an attach — just not an automatic one');
   });
 
@@ -477,7 +631,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ identity: { userId: 'user-9' } });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.existingAccount, true);
+    assert.equal(result.progress!.existingAccount, true);
     assert.equal(h.created[0].attachUserId, 'user-9');
   });
 
@@ -486,7 +640,8 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     await h.useCase.execute(CMD, NOW);
     // UAT cmto4xtrx002r4o5tf7o38dls: with `status: 'ACTIVE'` in this where-clause an UNLINKED row
     // was invisible here and fatal in onboarding, because the unique slot belongs to it regardless.
-    assert.deepEqual(h.identityReads[0].where, {
+    const unfiltered = h.identityReads.find((read) => read.where.status === undefined)!;
+    assert.deepEqual(unfiltered.where, {
       provider: 'LINE', providerUserId: 'Uline-1', providerChannelId: 'channel-1',
     });
   });
@@ -498,16 +653,16 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED' } });
     const result = await h.useCase.execute(CMD, NOW);
 
-    assert.equal(result.existingAccount, false, 'the old account is not where this shop belongs');
+    assert.equal(result.progress!.existingAccount, false, 'the old account is not where this shop belongs');
     assert.equal(h.created[0].attachUserId, undefined);
-    assert.equal(result.state, 'PENDING_REVIEW', 'and the application is a real one, not a refusal');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW', 'and the application is a real one, not a refusal');
   });
 
   it('refuses at submit when the account behind the LINE identity is suspended', async () => {
     const h = harness({ identity: { userId: 'user-9', user: { status: 'SUSPENDED' } } });
     await assert.rejects(() => h.useCase.execute(CMD, NOW), /line_signup_account_blocked/);
     assert.deepEqual(h.created, [], 'no application row exists for a refusal');
-    assert.deepEqual(h.userQuotas, ['attempt:Uline-1', 'inspect:Uline-1'], 'no creation quota spent');
+    assert.deepEqual(h.userQuotas, ['attempt:Uline-1'], 'no creation quota spent');
   });
 
   it('refuses at submit when an admin disabled the LINE identity', async () => {
@@ -535,15 +690,15 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
   it('still lets an UNLINKED identity of an ACTIVE account open a new shop', async () => {
     const h = harness({ identity: { userId: 'user-old', status: 'UNLINKED', user: { status: 'ACTIVE' } } });
     const result = await h.useCase.execute(CMD, NOW);
-    assert.equal(result.state, 'PENDING_REVIEW', 'the ordinary "I closed my old shop" case is untouched');
+    assert.equal(result.progress!.state, 'PENDING_REVIEW', 'the ordinary "I closed my old shop" case is untouched');
   });
 
   it('tells the LIFF page which waiting message to show', async () => {
     const inHours = await harness().useCase.execute(CMD, NOW);
-    assert.equal(inHours.businessHours, true);
+    assert.equal(inHours.progress!.businessHours, true);
     // Sunday: the office is shut, so the page promises the next business day instead.
     const sunday = await harness().useCase.execute(CMD, new Date('2026-09-06T10:00:00+07:00'));
-    assert.equal(sunday.businessHours, false);
+    assert.equal(sunday.progress!.businessHours, false);
   });
 
   it('keeps applicant text out of the audit trail', async () => {

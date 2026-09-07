@@ -7,6 +7,7 @@ import {
   canApproveSignup,
   canRejectSignup,
   canReissueSignup,
+  canRetrySignupIntake,
   canSuspendSignup,
   suspendLeavesShopRunning,
   isFinishingStrandedRow,
@@ -28,6 +29,7 @@ import {
 function item(overrides: Partial<AdminSignupQueueItemDto> = {}): AdminSignupQueueItemDto {
   return {
     requestId: 'req_1',
+    version: 1,
     state: 'PENDING_REVIEW',
     companyName: 'ร้านทดสอบ',
     ownerDisplayName: 'สมชาย',
@@ -79,6 +81,7 @@ describe('a failed provisioning is actionable, not just labelled', () => {
 
   it('says what the approve button will actually do', () => {
     assert.equal(approveLabel('PENDING_REVIEW'), 'อนุมัติ');
+    assert.equal(approveLabel('PENDING_REVIEW', item({ source: 'line-oa' })), 'เลือกผลคำขอ');
     assert.equal(approveLabel('PROVISIONING_FAILED'), 'ลองเปิดร้านอีกครั้ง');
     assert.equal(approveLabel('READY'), 'ปิดงาน');
     assert.equal(approveLabel('PROVISIONING'), 'ปิดงาน');
@@ -153,6 +156,23 @@ describe('a failed provisioning is actionable, not just labelled', () => {
     assert.equal(canSuspendSignup(item({ state: 'COMPLETED', source: 'line-oa' })), true);
     assert.equal(canSuspendSignup(item({ state: 'PENDING_REVIEW' })), false, 'web form');
     assert.equal(canSuspendSignup(item({ state: 'SUSPENDED', source: 'line-oa' })), false, 'already stopped');
+  });
+});
+
+describe('saved LINE intake recovery', () => {
+  it('offers retry only before review, and labels both states in Thai', () => {
+    assert.equal(canRetrySignupIntake(item({ source: 'line-oa', state: 'RECEIVED' })), true);
+    assert.equal(canRetrySignupIntake(item({ source: 'line-oa', state: 'VALIDATED' })), true);
+    assert.equal(canRetrySignupIntake(item({ source: 'line-oa', state: 'PENDING_REVIEW' })), false);
+    assert.equal(canRetrySignupIntake(item({ source: 'official-site', state: 'RECEIVED' })), false);
+    assert.match(signupStateChip('RECEIVED').label, /ทำขั้นตอนรับต่อ/);
+    assert.match(signupStateChip('VALIDATED').label, /ทำขั้นตอนรับต่อ/);
+  });
+
+  it('shows explicit non-provisioning resolutions', () => {
+    assert.ok(signupHintChips(item({ reviewResolution: 'PLAN_REVIEW' })).some((chip) => chip.label.includes('ยังไม่เปิดร้าน')));
+    assert.ok(signupHintChips(item({ reviewResolution: 'REQUEST_INFO' })).some((chip) => chip.label === 'รอข้อมูลจากลูกค้า'));
+    assert.ok(signupHintChips(item({ reviewResolution: 'RETURN_EXISTING' })).some((chip) => chip.label.includes('ไม่สร้างร้านใหม่')));
   });
 });
 

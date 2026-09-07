@@ -93,12 +93,46 @@ test('R10: approving asks for the business category the mapping could not read',
   assert.match(source, /requiresCategoryChoice\(approving\)/);
   assert.match(source, /COMPANY_BUSINESS_CATEGORIES\.map/);
   assert.match(source, /setBusinessCategory\(item\.businessCategory/);
-  assert.match(source, /businessCategory: businessCategory/);
+  assert.match(source, /\? \{ businessCategory \} : \{\}/);
   // F2: "อื่น ๆ" is confirmed, never refused — every Thai answer maps to OTHER, so refusing it
   // meant a genuinely-other shop could not be approved at all.
   assert.match(source, /approveBlockedOnCategory\(approving, businessCategory, confirmedOther\)/);
   assert.match(source, /ตรวจแล้ว เป็นอื่น ๆ/);
   assert.match(source, /setConfirmedOther\(false\)/);
+});
+
+test('a LINE review records one explicit outcome and only server-proven return targets', () => {
+  assert.match(source, /setResolutionAction\(isLineSignup\(item\)[\s\S]{0,160}\? \(isFinishingStrandedRow/);
+  assert.match(source, /setResolutionAction\('CREATE_NEW_SHOP'\)/);
+  assert.match(source, /setResolutionAction\('RETURN_EXISTING'\)/);
+  assert.match(source, /setResolutionAction\('REQUEST_INFO'\)/);
+  assert.match(source, /eligibleExistingCompanies \?\? \[\]\)\.filter\(\(company\) => company\.canEnter\)/);
+  assert.match(source, /targetCompanyId/);
+  assert.match(source, /version: item\.version/);
+});
+
+test('repeat trials and shared contact data require explicit recorded review', () => {
+  assert.match(source, /requiresRepeatTrialGrant/);
+  assert.match(source, /grantRepeatTrial/);
+  assert.match(source, /trialGrantNote/);
+  assert.match(source, /contactEmailConflict/);
+  assert.match(source, /acknowledgeSharedContact/);
+  assert.match(source, /sharedContactNote/);
+  assert.match(source, /อีเมลนี้ไม่ใช้ยืนยันเจ้าของและไม่ย้ายบัญชี/);
+});
+
+test('recovery reuses the recorded review instead of posting fresh decision fields', () => {
+  assert.match(source, /!finishing && \(resolutionAction === 'APPROVE' \|\| resolutionAction === 'CREATE_NEW_SHOP'\)/);
+  assert.match(source, /!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item\.requiresRepeatTrialGrant/);
+  assert.match(source, /!finishing && resolutionAction === 'CREATE_NEW_SHOP' && item\.contactEmailConflict/);
+});
+
+test('request info gathers all gaps together and reports queueing truthfully', () => {
+  assert.match(source, /ข้อมูลที่ต้องขอทั้งหมด/);
+  assert.match(source, /resolutionNote: resolutionNote\.trim\(\)/);
+  assert.match(source, /decided\.customerNotification === 'QUEUED'/);
+  assert.match(source, /บันทึกข้อมูลที่ต้องขอและเข้าคิวแจ้งลูกค้าทาง LINE แล้ว/);
+  assert.match(source, /บันทึกข้อมูลที่ต้องขอแล้ว แต่ยังแจ้งลูกค้าทาง LINE ไม่ได้/);
 });
 
 test('the queue survives a 390px phone, which is where an operator reads it', () => {

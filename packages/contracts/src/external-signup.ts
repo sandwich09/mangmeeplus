@@ -107,6 +107,7 @@ export type SignupClaimResultDto = {
 
 export type AdminSignupQueueItemDto = {
   requestId: string;
+  version: number;
   state: string;
   companyName: string;
   ownerDisplayName: string;
@@ -154,6 +155,8 @@ export type AdminSignupQueueItemDto = {
   emailMatchesExistingUser: boolean;
   /** LINE submit found this address in an account, shop or earlier application; review before opening another shop. */
   emailPreviouslyUsed?: boolean;
+  /** Current persisted duplicate-contact routing result for LINE; false includes safe own-contact/history exclusions. */
+  contactEmailConflict?: boolean;
   taxIdMatchesCompanyName?: string;
   /**
    * Review A-01: the phone on this application already reaches a shop we opened — most often one an
@@ -172,6 +175,14 @@ export type AdminSignupQueueItemDto = {
   priorCompanyName?: string;
   /** How that shop stands today: 'ACTIVE' | 'EXPIRED' (term ended) | 'CLOSED'. Web owns the Thai. */
   priorCompanyState?: string;
+  /** Explicit LINE review outcome. PLAN_REVIEW remains actionable under PENDING_REVIEW. */
+  reviewResolution?: LineSignupReviewResolution;
+  /** Existing shop selected from current LINE proof; never the company created by provisioning. */
+  resolvedExistingCompanyId?: string;
+  /** Current proven ACTIVE shops an operator may safely return this applicant to. */
+  eligibleExistingCompanies?: LineSignupEligibleCompanyDto[];
+  requiresRepeatTrialGrant?: boolean;
+  repeatTrialGranted?: boolean;
   /**
    * Why provisioning stopped, for the rows on the "มีปัญหา" tab. A bounded code the API already
    * stores on the request (`failureCode`), surfaced so the queue can say what an admin must fix
@@ -197,11 +208,31 @@ export type AdminSignupQueueDto = {
 
 /** Bounded because the admin's paragraph travels through the outbox and into an inbox. */
 export const SIGNUP_REJECTION_REASON_MAX_LENGTH = 500;
+export const SIGNUP_RESOLUTION_NOTE_MAX_LENGTH = 500;
 
 export type AdminSignupDecisionBody = {
   /** Idempotency: repeat with same requestId is a no-op returning current state.
    *  SUSPEND (P10-L §8) stops an auto-approved application an admin does not want to keep. */
-  action: 'APPROVE' | 'REJECT' | 'SUSPEND';
+  action:
+    | 'APPROVE'
+    | 'CREATE_NEW_SHOP'
+    | 'RETURN_EXISTING'
+    | 'REQUEST_INFO'
+    | 'RETRY_INTAKE'
+    | 'REJECT'
+    | 'SUSPEND';
+  /** Required on LINE admin mutations so an applicant correction cannot race an old decision. */
+  version?: number;
+  /** RETURN_EXISTING only; the server re-proves current LINE/user/membership access before commit. */
+  targetCompanyId?: string;
+  /** CREATE_NEW_SHOP only; repeat trials require explicit true plus trialGrantNote. */
+  grantRepeatTrial?: boolean;
+  trialGrantNote?: string;
+  /** CREATE_NEW_SHOP only; required when another person's contact data still conflicts. */
+  acknowledgeSharedContact?: boolean;
+  sharedContactNote?: string;
+  /** REQUEST_INFO customer-facing text; internal notes on other outcomes are never public. */
+  resolutionNote?: string;
   /**
    * R10, APPROVE only. `businessType` on the form is free text in the applicant's own language and
    * the PDPA health tripwire reads the CLOSED enum — "คลินิก" maps to OTHER, so the safeguard never
@@ -219,7 +250,17 @@ export type AdminSignupDecisionBody = {
   rejectionReason?: string;
 };
 
-export type AdminSignupDecisionDto = { requestId: string; state: string };
+export type AdminSignupDecisionDto = {
+  requestId: string;
+  state: string;
+  version?: number;
+  resolution?: LineSignupReviewResolution;
+  entryCompanyId?: string;
+  /** REQUEST_INFO: durable outbox acceptance, never a claim that LINE delivered it. */
+  customerNotification?: 'QUEUED' | 'NOT_AVAILABLE';
+  /** REQUEST_INFO: the owned support inbox case that receives the customer's follow-up. */
+  supportRequestId?: string;
+};
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
 
@@ -273,6 +314,10 @@ export type LineSignupLegalEvidenceDto = {
 export type LineSignupSubmitDto = {
   /** LIFF ID token. The ONLY identity input; the profile the client shows is never trusted. */
   idToken: string;
+  /** Client-stable UUID, persisted before POST and reused verbatim after a lost response. */
+  submissionId: string;
+  /** Opening another shop is an explicit choice and always uses a fresh submissionId. */
+  intent: LineSignupIntent;
   companyName: string;
   /** Required Thai mobile, 10 digits starting 0. */
   phoneNumber: string;
@@ -282,23 +327,64 @@ export type LineSignupSubmitDto = {
   legal: LineSignupLegalEvidenceDto;
 };
 
-export type LineSignupSubmitAcceptedDto = {
+export type LineSignupIntent = 'FIRST_SHOP' | 'ADD_SHOP';
+
+export type LineSignupReviewResolution = 'NEW_SHOP' | 'RETURN_EXISTING' | 'REQUEST_INFO' | 'PLAN_REVIEW';
+
+export type LineSignupEligibleCompanyDto = {
+  companyId: string;
+  companyName: string;
+  /** EXPIRED is term-disabled and remains visible for the renewal/support path. */
+  status: 'ACTIVE' | 'EXPIRED';
+  /** Only ACTIVE is a valid RETURN_EXISTING target and direct entry. */
+  canEnter: boolean;
+};
+
+export type LineSignupProgressDto = {
   requestId: string;
+  submissionId: string;
+  version: number;
   state: string;
-  /** True when this LINE account already belongs to an active user — the shop becomes their 2nd. */
+  companyName: string;
+  phoneNumber: string;
+  contactEmail: string;
+  referralCode?: string;
+  intent: LineSignupIntent;
+  resolution?: LineSignupReviewResolution;
+  /** Present only when an operator chose REQUEST_INFO. */
+  requestedInformation?: string;
+  /** True when this LINE account belongs to an active user. */
   existingAccount: boolean;
   /** Asia/Bangkok business hours right now; decides which waiting message the client shows. */
   businessHours: boolean;
+  /** RECEIVED/VALIDATED work may be resumed against this exact persisted submission. */
+  canRetryIntake: boolean;
+  /** A guarded correction endpoint may revise the contact before any provisioning begins. */
+  canUpdateContactEmail: boolean;
+  /** A company was created by this request even when current access was later revoked. */
+  companyCreated: boolean;
+  /** Permission-checked navigation target, whether newly created or an explicitly resolved existing shop. */
+  entryCompanyId?: string;
 };
 
 export type LineSignupStatusDto = {
-  requestId: string;
-  state: string;
-  companyName: string;
-  businessHours: boolean;
-  /** Set once the shop exists, so the LIFF page can send the owner straight into it. */
-  companyId?: string;
-} | null;
+  progress: LineSignupProgressDto | null;
+  /** Current ACTIVE companies reachable through the token-proven ACTIVE account and memberships. */
+  eligibleCompanies: LineSignupEligibleCompanyDto[];
+};
+
+export type LineSignupSubmitAcceptedDto = LineSignupStatusDto;
+
+export type LineSignupContactEmailCorrectionDto = {
+  idToken: string;
+  version: number;
+  contactEmail: string;
+};
+
+export type LineSignupRetryDto = {
+  idToken: string;
+  version: number;
+};
 
 export type PackageChangeRequestStatus = 'OPEN' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
@@ -356,8 +442,10 @@ export type PartnerLineMessageResultDto = {
 
 export type SupportRequestStatus = 'OPEN' | 'ANSWERED' | 'CLOSED';
 
-/** Why a request closed. `expired` is the sweep; the other two are a person deciding. */
-export type SupportRequestClosedReason = 'admin' | 'customer_resumed' | 'expired';
+/** Why a request closed. `expired` and `customer_resumed` remain readable for legacy rows. */
+export type SupportRequestClosedReason = 'admin' | 'customer_resumed' | 'expired' | 'resolved';
+
+export type SupportReplyDeliveryStatus = 'PENDING' | 'SENT' | 'FAILED';
 
 /**
  * One person waiting for a human.
@@ -377,6 +465,8 @@ export type SupportRequestItemDto = {
   companyId?: string;
   /** Present while they are still in the signup funnel: the queue opens from here instead. */
   signupRequestId?: string;
+  /** Current bounded REQUEST_INFO question from the linked signup review, when one is active. */
+  requestedInformation?: string;
   requestedAt: string;
   /**
    * ≤200 chars of the question that was on the screen when they tapped. Never rewritten — a nudge
@@ -420,14 +510,30 @@ export type SupportRequestItemDto = {
   notifyState: 'queued' | 'notified' | 'unreachable';
   answeredAt?: string;
   answeredByDisplayName?: string;
+  assignedAt?: string;
+  assigneeDisplayName?: string;
+  assignedToMe: boolean;
+  assignmentNote?: string;
+  /** Stable id of the latest logical send; reused only to retry that same text. */
+  replyOperationId?: string;
+  replyFirstAttemptAt?: string;
+  lastReplyText?: string;
+  lastReplyByDisplayName?: string;
+  lastReplyDeliveryStatus?: SupportReplyDeliveryStatus;
+  lastReplyError?: string;
   closedAt?: string;
   closedReason?: SupportRequestClosedReason;
+  resolvedByDisplayName?: string;
+  resolutionNote?: string;
 };
 
 export type SupportRequestQueueDto = {
   items: SupportRequestItemDto[];
   /** Always the OPEN total, whatever `status` filtered the list — it feeds the system nav badge. */
   openCount: number;
+  /** Total rows matching this status in the database, not only the current page. */
+  totalCount: number;
+  nextCursor: string | null;
 };
 
 /**
@@ -439,8 +545,36 @@ export type SupportRequestCountDto = { open: number };
 export type SupportRequestActionDto = {
   id: string;
   status: SupportRequestStatus;
+  assignedToMe?: boolean;
+  assigneeDisplayName?: string;
   /** `resume-ai` only: whether a running assistant pause was actually lifted. */
   pauseCleared?: boolean;
+};
+
+export type SupportRequestReplyBody = {
+  text: string;
+  /** Client-minted UUID: retries reuse it; a deliberate later message mints another. */
+  operationId: string;
+  /** Latest operation the client read. Null means this case has never had a reply operation. */
+  previousReplyOperationId: string | null;
+};
+
+export type SupportRequestReplyResultDto = SupportRequestActionDto & {
+  deliveryStatus: 'SENT' | 'FAILED';
+  errorCode?: string;
+  /** True when a newer customer message kept the request OPEN after this reply landed. */
+  newerCustomerMessage?: boolean;
+};
+
+export type SupportRequestResolveBody = {
+  /** Required, bounded operator note describing the actual outcome. */
+  note: string;
+};
+
+export type SupportRequestReclaimBody = {
+  /** Assignment version shown by the queue; prevents taking a case after it changed again. */
+  expectedAssignedAt: string;
+  reason: string;
 };
 
 /** One event on a shop's timeline (§8). Assembled from rows that already exist — no new log table. */

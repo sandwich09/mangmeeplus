@@ -12,6 +12,8 @@ export type Chip = { label: string; tone: ChipTone };
 const IDLE_WARNING_DAYS = 3;
 
 const STATE_CHIP: Record<string, Chip> = {
+  RECEIVED: { label: 'รับคำขอแล้ว ต้องทำขั้นตอนรับต่อ', tone: 'warning' },
+  VALIDATED: { label: 'ตรวจข้อมูลแล้ว ต้องทำขั้นตอนรับต่อ', tone: 'warning' },
   PENDING_REVIEW: { label: 'รออนุมัติ', tone: 'info' },
   EMAIL_PENDING: { label: 'ส่งเมลแล้ว รอตั้งรหัส', tone: 'neutral' },
   EMAIL_FAILED: { label: 'เมลตีกลับ', tone: 'danger' },
@@ -84,6 +86,15 @@ export function signupIdleChip(item: AdminSignupQueueItemDto): Chip | null {
  */
 export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   const chips: Chip[] = [];
+  if (item.reviewResolution === 'PLAN_REVIEW') {
+    chips.push({ label: 'รอจัดแพ็กเกจ ยังไม่เปิดร้าน', tone: 'warning' });
+  }
+  if (item.reviewResolution === 'REQUEST_INFO') {
+    chips.push({ label: 'รอข้อมูลจากลูกค้า', tone: 'warning' });
+  }
+  if (item.reviewResolution === 'RETURN_EXISTING') {
+    chips.push({ label: 'จบด้วยการกลับร้านเดิม ไม่สร้างร้านใหม่', tone: 'success' });
+  }
   // A LINE signup's email is unverified shop contact data, not an account identity. Only the
   // verified web-email flow may promise that an address match will attach an existing account.
   if (!isLineSignup(item) && item.emailMatchesExistingUser) {
@@ -184,10 +195,16 @@ export function canRejectSignup(state: string): boolean {
 }
 
 /** What the approve button DOES here, so the operator is not told "approve" for a recovery. */
-export function approveLabel(state: string): string {
+export function approveLabel(state: string, item?: AdminSignupQueueItemDto): string {
   if (state === 'PROVISIONING_FAILED') return 'ลองเปิดร้านอีกครั้ง';
   if (state === 'READY' || state === 'PROVISIONING') return 'ปิดงาน';
+  if (item && isLineSignup(item)) return 'เลือกผลคำขอ';
   return 'อนุมัติ';
+}
+
+/** Intake stopped after the request was saved; this resumes validation rather than approving past it. */
+export function canRetrySignupIntake(item: AdminSignupQueueItemDto): boolean {
+  return isLineSignup(item) && (item.state === 'RECEIVED' || item.state === 'VALIDATED');
 }
 
 /** True when approving CLOSES a shop that already exists rather than deciding a new application. */

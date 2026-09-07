@@ -502,35 +502,35 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
   });
 
   // §2.4. The other half of the complaint: a 24h pause with no way out.
-  it('lets the customer bring the assistant back, and closes their request with it', async () => {
+  it('lets the customer bring the assistant back without hiding their unresolved request', async () => {
     const h = harness({ identity: linked, context: { companyId: 'co-now', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
     await h.useCase.execute(event(RESUME_AI_COMMAND));
 
     assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
     assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null });
-    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
-    assert.equal(h.supportClosures[0].where.status, 'OPEN');
+    assert.deepEqual(h.supportClosures, []);
     assert.equal(outcome(h), 'support_resumed');
   });
 
-  it('answers the resume command the same way with no pause and no account', async () => {
+  it('keeps the resume command useful without promising an assistant to an unlinked applicant', async () => {
     const h = harness({ identity: null, context: null });
     await h.useCase.execute(event('ให้ AI ตอบ'));
 
-    assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/, 'a promise must not depend on state nobody can see');
-    assert.equal(outcome(h), 'support_resumed');
+    assert.doesNotMatch(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
+    assert.match(rendered(h), /เปิดร้านใหม่ ทดลองฟรี/);
+    assert.equal(outcome(h), 'support_resume_unavailable');
   });
 
-  // Closing a request frees the dedupe above, so tap → "คุยกับ AI ต่อ" → tap, repeated, was an
-  // unbounded source of rows, letters and pushes from one unauthenticated LINE account.
-  it('stops opening new requests after three in a day, warmly and without writing anything', async () => {
+  it('stops opening new requests after three in a day, truthfully and without writing anything', async () => {
     const h = harness({ identity: linked, memberships: [{ companyId: 'co-now', roles: [] }], supportSlot: false });
     await h.useCase.execute(event(STAFF_CONTACT_COMMAND));
 
     assert.deepEqual(h.supportSlots, ['Uline-1'], 'the floor is keyed on the LINE account');
     assert.deepEqual(h.supportRequests, [], 'no fourth row');
     assert.deepEqual(h.supportNotices, [], 'and nobody is paged for it');
-    assert.match(rendered(h), /รับเรื่องไว้แล้วค่ะ/, 'and the customer is answered warmly, not refused');
+    assert.match(rendered(h), /วันนี้ยังเปิดคำขอคุยกับเจ้าหน้าที่เพิ่มไม่ได้/);
+    assert.match(rendered(h), /098-256-5628/);
+    assert.doesNotMatch(rendered(h), /รับเรื่องไว้แล้ว|ทีมงานจะติดต่อกลับ/);
     assert.equal(rendered(h).includes('Too many'), false);
     assert.equal(outcome(h), 'support_rate_limited');
     assert.equal(h.audits.at(-1).result, 'DENIED');
@@ -600,7 +600,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
   it('holds the assistant back while the pause runs, and lets go once it expires', async () => {
     const paused = harness({ identity: linked, context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) } });
     await paused.useCase.execute(event('ยอดขายวันนี้'));
-    assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
+    assert.match(rendered(paused), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     assert.equal(outcome(paused), 'support_paused');
 
     // Self-expiring: a stamp in the past is the same as no stamp, with nothing to clean up.
@@ -637,7 +637,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
     });
     await paused.useCase.execute(event('ยอดขายวันนี้เท่าไหร่'));
 
-    assert.match(rendered(paused), /ทีมงานรับเรื่องแล้ว/);
+    assert.match(rendered(paused), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     assert.equal(outcome(paused), 'support_paused');
     assert.deepEqual(paused.packageChanges, []);
   });
@@ -658,6 +658,47 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     webhookEventId: 'evt-photo', replyToken: 'reply-1', lineUserId: 'Uline-1',
     lineMessageId: 'msg-1', messageType: 'image', messagingChannelId: 'msg-channel-1',
   }) as any;
+
+  it('records an unlinked applicant reply on their live support case instead of returning the door card', async () => {
+    const h = harness({
+      identity: null,
+      pendingSignup: { id: 'signup-1', companyName: 'ร้านที่กำลังสมัคร' },
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: null },
+    });
+    await h.useCase.execute(event('อีเมลใหม่คือ owner@example.test ค่ะ'));
+
+    assert.equal(h.supportUpdates[0].data.lastMessageText, 'อีเมลใหม่คือ owner@example.test ค่ะ');
+    assert.match(rendered(h), /ส่งข้อความถึงทีมงานแล้ว/);
+    assert.equal(rendered(h).includes('เปิดร้านใหม่ ทดลองฟรี'), false);
+    assert.equal(outcome(h), 'support_follow_up');
+    assert.deepEqual(h.contextUpdates[0].where, { lineUserId: 'Uline-1', aiPausedUntil: { not: null } },
+      'the existing helper only extends a pause; it grants no company context');
+    assert.deepEqual(h.contextUpserts, []);
+  });
+
+  it('reopens an ANSWERED unlinked applicant case when they supply the requested information', async () => {
+    const h = harness({
+      identity: null,
+      openSupportRequest: { id: 'sr-9', status: 'ANSWERED', companyId: null },
+    });
+    await h.useCase.execute(event('ส่งข้อมูลครบแล้วค่ะ'));
+
+    assert.equal(h.supportUpdates[0].data.status, 'OPEN');
+    assert.deepEqual(h.supportUpdates[0].data.reopenedCount, { increment: 1 });
+    assert.equal(h.audits.find((entry: any) => entry.action === 'signup.line.support_follow_up').metadataJson.reopened, true);
+  });
+
+  it('keeps explicit public commands on their public route even when an unlinked case is live', async () => {
+    const h = harness({
+      identity: null,
+      openSupportRequest: { id: 'sr-9', status: 'OPEN', companyId: null },
+    });
+    await h.useCase.execute(event(EMPLOYEE_DOOR_COMMAND));
+
+    assert.deepEqual(h.supportUpdates, []);
+    assert.match(rendered(h), /ให้เจ้าของร้านเปิดเมนู/);
+    assert.equal(outcome(h), 'line_employee_door');
+  });
 
   it('reopens an ANSWERED request and stops promising what it does not do', async () => {
     const h = harness({
@@ -733,17 +774,18 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     assert.equal(lookup.where.companyId, undefined, 'one person, whatever shop the request names');
   });
 
-  it('keeps the old reply when there is no request to append to', async () => {
+  it('says the message was not recorded when there is no request to append to', async () => {
     const h = harness({ identity: linked, context: pausedContext, openSupportRequest: null });
     await h.useCase.execute(event('ยอดขายวันนี้'));
 
     assert.deepEqual(h.supportUpdates, [], 'nothing to write to');
-    assert.match(rendered(h), /กำลังดูให้อยู่/, 'and the customer keeps the answer they had');
+    assert.match(rendered(h), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
+    assert.doesNotMatch(rendered(h), /ส่งข้อความถึงทีมงานแล้ว|ทีมงานรับเรื่องแล้ว/);
     assert.equal(outcome(h), 'support_paused');
   });
 
-  // Bookkeeping beside the turn, never in front of it: the fallback is the old reply, not silence
-  // on an event that has already been claimed and so is never redelivered.
+  // Bookkeeping beside the turn, never in front of it: the fallback tells the truth rather than
+  // going silent on an event that has already been claimed and will not be redelivered.
   it('still answers the customer when the request cannot be written to', async () => {
     const h = harness({
       identity: linked, context: pausedContext,
@@ -753,7 +795,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
 
     await h.useCase.execute(event('มีอัปเดตไหมคะ'));
 
-    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.match(rendered(h), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false, 'and never a promise we broke');
     assert.equal(outcome(h), 'support_paused');
   });
@@ -838,7 +880,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
 
     assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'ANSWERED' },
       'the status it read is the precondition it writes under');
-    assert.match(rendered(h), /กำลังดูให้อยู่/, 'the old reply, which promises nothing we did not do');
+    assert.match(rendered(h), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     assert.equal(rendered(h).includes('ส่งข้อความถึงทีมงานแล้ว'), false);
     assert.equal(h.audits.some((row: any) => row.action === 'signup.line.support_follow_up'), false,
       'and nothing was recorded, so nothing is audited as recorded');
@@ -854,11 +896,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
     assert.deepEqual(h.supportUpdates[0].where, { id: 'sr-9', status: 'OPEN' });
   });
 
-  /**
-   * Review 2026-09-06 (F1). The sweep closes a request 24 h after its last customer message, so a
-   * follow-up that did not move the pause left the assistant free to talk over a human — and the
-   * row expired on a clock the customer had already reset. One rule, both places.
-   */
+  /** A fresh customer reply extends the assistant pause, while the managed case itself stays live. */
   it('re-arms the 24h pause from the message it just recorded, and only ever extends one', async () => {
     const h = harness({
       identity: linked, context: pausedContext,
@@ -1000,7 +1038,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
   // Owner 2026-09-06: "กดปุ่มคุยกับมั่งมี หรือ พิมพ์คุยกับ AI" — the tile's own words are the way
   // back, tapped or typed. Under a pause the tile lifts it, exactly as the typed command does; the
   // greeting, which contradicted the hold, is never sent into a thread a human is holding.
-  it('lifts the pause from the rich-menu tile, and closes the request with it', async () => {
+  it('lifts the pause from the rich-menu tile and leaves resolution to the support workflow', async () => {
     const h = harness({ identity: linked, context: pausedContext, openSupportRequest: waiting });
     await h.useCase.execute(event('คุยกับน้องมั่งมี'));
 
@@ -1008,8 +1046,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
     assert.equal(rendered(h).includes('น้องมั่งมีมาแล้ว'), false, 'not the greeting');
     assert.equal(rendered(h).includes('กำลังดูให้อยู่'), false, 'and not the pause notice either');
     assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, 'the hold is lifted');
-    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
-    assert.equal(h.supportClosures[0].where.status, 'OPEN', 'and the inbox stops showing รอตอบ');
+    assert.deepEqual(h.supportClosures, [], 'resuming AI is not evidence that support is resolved');
     assert.deepEqual(h.supportUpdates, [], 'a tile tap is never filed as a message to the team');
     assert.equal(outcome(h), 'support_resumed');
   });
@@ -1033,7 +1070,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
 
       assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/, words);
       assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, words);
-      assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed', words);
+      assert.deepEqual(h.supportClosures, [], words);
       assert.deepEqual(h.supportUpdates, [], words);
       assert.equal(outcome(h), 'support_resumed', words);
     }
@@ -1051,7 +1088,8 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
     await nothingLive.useCase.execute(event('ยังไม่ได้เลยค่ะ'));
 
     const hint = /กดปุ่ม "คุยกับน้องมั่งมี" หรือพิมพ์ "คุยกับน้องมั่งมี" เมื่ออยากให้น้องมั่งมีตอบต่อ/;
-    for (const h of [tap, again, nothingLive]) assert.match(spoken(h), hint);
+    for (const h of [tap, again]) assert.match(spoken(h), hint);
+    assert.match(spoken(nothingLive), /ยังส่งข้อความนี้เข้าคิวทีมงานไม่สำเร็จ/);
     const everything = [tap, again, nothingLive].map(spoken).join('\n');
     assert.equal(everything.includes('คุยกับ AI'), false, 'the old phrase is gone from every reply');
     assert.equal(everything.includes('🤖'), false, 'no robot icon');
@@ -1063,8 +1101,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
 
     assert.match(rendered(h), /น้องมั่งมีกลับมาแล้ว/);
     assert.deepEqual(h.contextUpdates[0].data, { aiPausedUntil: null }, 'the hold is lifted');
-    assert.equal(h.supportClosures[0].data.closedReason, 'customer_resumed');
-    assert.equal(h.supportClosures[0].where.status, 'OPEN', 'and the inbox stops showing รอตอบ');
+    assert.deepEqual(h.supportClosures, [], 'the unresolved case stays visible');
     assert.deepEqual(h.supportUpdates, [], 'never filed as one more message to the team');
     assert.equal(outcome(h), 'support_resumed');
   });

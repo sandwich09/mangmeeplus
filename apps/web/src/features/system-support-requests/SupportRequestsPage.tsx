@@ -2,25 +2,30 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { useConfirm } from '@/common/components/modal';
+import { useConfirm, useInputPrompt } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import {
   listSupportRequests,
-  markSupportRequestAnswered,
+  claimSupportRequest,
   publishSupportOpenCount,
+  reclaimSupportRequest,
+  releaseSupportRequest,
+  replySupportRequest,
+  resolveSupportRequest,
   resumeSupportRequestAi,
   type SupportRequestItemDto,
 } from './support-requests.api';
 import {
   SUPPORT_QUEUE_TABS,
-  canMarkAnswered,
   canResumeAi,
   notifiedSummary,
   supportAnswerHref,
   supportAnswerLabel,
   supportClosedReasonTh,
   supportReopenedChip,
+  supportReplyChip,
+  supportReplyWithinRetryWindow,
   supportStatusChip,
   waitedLabelTh,
   waitedForTh,
@@ -58,20 +63,25 @@ function SkeletonRow() {
 }
 
 const rowActionClass =
-  'rounded border px-3 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed';
+  'min-h-11 rounded border px-3 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed md:min-h-0';
 
 /**
  * The buttons one row offers. Exported so a spec can RENDER the gating rather than only read the
  * source — the page reaches its rows behind `useEffect`, and "which requests may still be acted
  * on" is exactly the rule a source assertion can agree with while the markup does something else.
  */
-export function SupportRowActions({ item, busy, onAnswered, onResume }: {
+export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, onReply, onResolve, onResume }: {
   item: SupportRequestItemDto;
   busy: boolean;
-  onAnswered: () => void;
+  onClaim: () => void;
+  onRelease: () => void;
+  onTakeover: () => void;
+  onReply: () => void;
+  onResolve: () => void;
   onResume: () => void;
 }) {
   const href = supportAnswerHref(item);
+  const live = item.status !== 'CLOSED';
   return (
     <div className="flex flex-wrap gap-2">
       {href && (
@@ -82,17 +92,37 @@ export function SupportRowActions({ item, busy, onAnswered, onResume }: {
           {supportAnswerLabel(item)}
         </a>
       )}
-      {canMarkAnswered(item.status) && (
+      {live && !item.assignedAt && (
         <button
           type="button"
           disabled={busy}
-          onClick={onAnswered}
-          className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
+          onClick={onClaim}
+          className={`${rowActionClass} border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100`}
         >
-          {busy ? 'กำลังทำรายการ...' : 'ตอบแล้ว'}
+          {busy ? 'กำลังทำรายการ...' : 'รับเคส'}
         </button>
       )}
-      {canResumeAi(item.status) && (
+      {live && item.assignedAt && !item.assignedToMe && (
+        <button
+          type="button"
+          disabled={busy || !item.assignedAt}
+          onClick={onTakeover}
+          className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
+        >
+          {busy ? 'กำลังทำรายการ...' : 'รับช่วงต่อ'}
+        </button>
+      )}
+      {live && item.assignedToMe && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onReply}
+          className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
+        >
+          {busy ? 'กำลังทำรายการ...' : supportReplyWithinRetryWindow(item) ? 'ลองส่งข้อความเดิม' : 'ตอบใน LINE'}
+        </button>
+      )}
+      {live && item.assignedToMe && canResumeAi(item.status) && (
         <button
           type="button"
           disabled={busy}
@@ -102,7 +132,27 @@ export function SupportRowActions({ item, busy, onAnswered, onResume }: {
           {busy ? 'กำลังทำรายการ...' : 'ให้ AI ทำงานต่อ'}
         </button>
       )}
-      {!href && !canMarkAnswered(item.status) && !canResumeAi(item.status) && (
+      {live && item.assignedToMe && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onResolve}
+          className={`${rowActionClass} border-green-300 bg-white text-green-700 hover:bg-green-50`}
+        >
+          {busy ? 'กำลังทำรายการ...' : 'แก้ไขสำเร็จและปิดเคส'}
+        </button>
+      )}
+      {live && item.assignedToMe && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onRelease}
+          className={`${rowActionClass} border-gray-300 bg-white text-gray-500 hover:bg-gray-50`}
+        >
+          {busy ? 'กำลังทำรายการ...' : 'ปล่อยเคส'}
+        </button>
+      )}
+      {!href && !live && (
         <span className="text-xs text-gray-400">—</span>
       )}
     </div>
@@ -118,13 +168,24 @@ export function SupportRowActions({ item, busy, onAnswered, onResume }: {
  * permission error does not know. Having the decision in one function is what makes rendering with
  * `error` set provably unable to produce a table.
  */
-export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAnswered, onResume }: {
+export function SupportInboxBody({
+  error, loading, loadingMore, items, busyId, totalCount, nextCursor,
+  onRetry, onLoadMore, onClaim, onRelease, onTakeover, onReply, onResolve, onResume,
+}: {
   error: string | null;
   loading: boolean;
+  loadingMore: boolean;
   items: SupportRequestItemDto[];
   busyId: string | null;
+  totalCount: number;
+  nextCursor: string | null;
   onRetry: () => void;
-  onAnswered: (item: SupportRequestItemDto) => void;
+  onLoadMore: () => void;
+  onClaim: (item: SupportRequestItemDto) => void;
+  onRelease: (item: SupportRequestItemDto) => void;
+  onTakeover: (item: SupportRequestItemDto) => void;
+  onReply: (item: SupportRequestItemDto) => void;
+  onResolve: (item: SupportRequestItemDto) => void;
   onResume: (item: SupportRequestItemDto) => void;
 }) {
   if (error) {
@@ -140,9 +201,9 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
 
   return (
     <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-      <div className="overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200 text-left text-sm">
-          <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
+      <div className="md:overflow-x-auto">
+        <table className="block w-full text-left text-sm md:table md:min-w-full md:divide-y md:divide-gray-200">
+          <thead className="hidden bg-gray-50 text-xs font-medium uppercase text-gray-500 md:table-header-group">
             <tr>
               <th className="px-4 py-3">ผู้ขอ</th>
               <th className="px-4 py-3">รอมานาน</th>
@@ -153,7 +214,7 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
               <th className="px-4 py-3">การทำงาน</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100 text-gray-700">
+          <tbody className="block divide-y divide-gray-100 text-gray-700 md:table-row-group">
             {loading ? (
               [...Array(4)].map((_, i) => <SkeletonRow key={i} />)
             ) : items.length === 0 ? (
@@ -167,6 +228,7 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
               // A request the customer wrote back to is OPEN like any other; without this it reads
               // as a first ask, and the operator answers a conversation already in progress blind.
               const reopened = supportReopenedChip(item);
+              const replyState = supportReplyChip(item.lastReplyDeliveryStatus);
               // What they ASKED, and where the thread has got to. One column used to hold both, so
               // a nudge ("มีอัปเดตไหมคะ") left the operator with no idea what was being asked. Rows
               // raised before the split have only the newest message, which is then the question.
@@ -175,11 +237,11 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                 ? item.lastMessageText
                 : null;
               return (
-                <tr key={item.id} className="align-top hover:bg-gray-50">
+                <tr key={item.id} className="block p-4 align-top hover:bg-gray-50 md:table-row md:p-0">
                   {/* Bounded for the same reason the message cell is: the applicant label
                       ("ผู้ที่ยังไม่ได้เปิดร้าน (มีคำขอสมัคร: …)") carries a shop name an operator
                       did not choose the length of. */}
-                  <td className="max-w-[14rem] px-4 py-3">
+                  <td className="block px-0 py-2 md:table-cell md:max-w-[14rem] md:px-4 md:py-3">
                     <p className="break-words font-medium text-gray-900">{item.askerLabel}</p>
                     {/* §3 PDPA: a fragment of the hash, so two rows can be matched to one person
                         without a LINE id ever reaching this page. */}
@@ -192,8 +254,18 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                     {item.answeredByDisplayName && (
                       <p className="mt-0.5 text-xs text-gray-500">ตอบโดย {item.answeredByDisplayName}</p>
                     )}
+                    {item.assignedAt && (
+                      <p className="mt-1 text-xs font-medium text-gray-600">
+                        ผู้รับผิดชอบ: {item.assignedToMe ? 'คุณ' : item.assigneeDisplayName ?? 'ทีมงานเดิม'}
+                      </p>
+                    )}
+                    {item.assignmentNote && (
+                      <p className="mt-0.5 line-clamp-2 break-words text-xs text-gray-500" title={item.assignmentNote}>
+                        เหตุผลรับช่วงต่อ: {item.assignmentNote}
+                      </p>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-gray-600">
+                  <td className="block border-t border-gray-100 px-0 py-2 text-xs text-gray-600 md:table-cell md:border-0 md:px-4 md:py-3">
                     {/* The clock stops when somebody answered or the request closed: a settled
                         row that keeps counting reads as a customer still waiting. */}
                     <p className="text-gray-500">{waitedLabelTh(item)}</p>
@@ -211,32 +283,57 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
                       `.line-clamp-2`, so it overrides the `-webkit-box` the clamp needs and the
                       cell renders all 200 characters (352px tall at 390px, measured). Every other
                       `line-clamp-2` in this repo omits it for the same reason. */}
-                  <td className="max-w-[16rem] px-4 py-3 text-xs text-gray-600">
+                  <td className="block border-t border-gray-100 px-0 py-2 text-xs text-gray-600 md:table-cell md:max-w-[16rem] md:border-0 md:px-4 md:py-3">
+                    <p className="mb-1 font-medium text-gray-500 md:hidden">ข้อความลูกค้า</p>
                     {question ? (
-                      <span className="line-clamp-2 break-words" title={question}>
+                      <p className="break-words md:line-clamp-2" title={question}>
                         “{question}”
-                      </span>
+                      </p>
                     ) : null}
                     {/* Only when it has moved on: on a request nobody has followed up the two are
                         the same sentence, and printing it twice reads as two messages. */}
                     {latest && (
-                      <span className="mt-1 line-clamp-2 break-words text-gray-500" title={latest}>
+                      <p className="mt-1 break-words text-gray-500 md:line-clamp-2" title={latest}>
                         ล่าสุด: “{latest}”
-                      </span>
+                      </p>
                     )}
                     {/* §3 keeps the bytes out of the record, so this is the whole of what a photo
                         leaves behind — beside the words, never in place of them. */}
                     {item.lastMediaAt && <span className="mt-1 text-gray-500">📷 ส่งรูปมา</span>}
                     {!question && !item.lastMediaAt && '—'}
+                    {item.lastReplyText && (
+                      <div className="mt-2 border-t border-gray-100 pt-2">
+                        <p className="font-medium text-gray-500">
+                          ทีมงาน{item.lastReplyByDisplayName ? ` (${item.lastReplyByDisplayName})` : ''} ถามล่าสุด
+                        </p>
+                        <p className="mt-0.5 break-words md:line-clamp-2" title={item.lastReplyText}>“{item.lastReplyText}”</p>
+                        {replyState && <div className="mt-1"><ChipBadge chip={replyState} /></div>}
+                      </div>
+                    )}
+                    {item.requestedInformation && (
+                      <div className="mt-2 rounded border border-blue-100 bg-blue-50 p-2 text-blue-800">
+                        <p className="font-medium">ข้อมูลที่ทีมงานขอเพิ่มเติม</p>
+                        <p className="mt-0.5 break-words">{item.requestedInformation}</p>
+                      </div>
+                    )}
+                    {item.resolutionNote && (
+                      <p className="mt-2 break-words text-gray-500">ผลที่บันทึก: {item.resolutionNote}</p>
+                    )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="block border-t border-gray-100 px-0 py-2 md:table-cell md:border-0 md:px-4 md:py-3">
+                    <p className="mb-1 text-xs font-medium text-gray-500 md:hidden">การแจ้งทีมงาน</p>
                     <ChipBadge chip={notifiedSummary(item)} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="block border-t border-gray-100 px-0 py-2 md:table-cell md:border-0 md:px-4 md:py-3">
+                    <p className="mb-1 text-xs font-medium text-gray-500 md:hidden">จัดการเคส</p>
                     <SupportRowActions
                       item={item}
                       busy={busyId === item.id}
-                      onAnswered={() => onAnswered(item)}
+                      onClaim={() => onClaim(item)}
+                      onRelease={() => onRelease(item)}
+                      onTakeover={() => onTakeover(item)}
+                      onReply={() => onReply(item)}
+                      onResolve={() => onResolve(item)}
                       onResume={() => onResume(item)}
                     />
                   </td>
@@ -246,6 +343,21 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
           </tbody>
         </table>
       </div>
+      {!loading && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 px-4 py-3 text-sm text-gray-500">
+          <span>แสดง {items.length} จาก {totalCount} เคส</span>
+          {nextCursor && (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={onLoadMore}
+              className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
+            >
+              {loadingMore ? 'กำลังโหลด...' : 'โหลดเคสเก่าถัดไป'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -261,10 +373,14 @@ export function SupportInboxBody({ error, loading, items, busyId, onRetry, onAns
 export default function SupportRequestsPage() {
   const toast = useToast();
   const { confirm, confirmDialog } = useConfirm();
+  const { promptInput, inputPromptDialog } = useInputPrompt();
   const [items, setItems] = useState<SupportRequestItemDto[]>([]);
   const [openCount, setOpenCount] = useState<number | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [tab, setTab] = useState<SupportQueueTab>('OPEN');
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   /**
@@ -276,18 +392,23 @@ export default function SupportRequestsPage() {
   const readSeq = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
 
-  const load = async (next: SupportQueueTab = tab) => {
+  const load = async (next: SupportQueueTab = tab, cursor?: string, append = false) => {
     const seq = ++readSeq.current;
     inFlight.current?.abort();
     const controller = new AbortController();
     inFlight.current = controller;
-    setLoading(true);
-    setError(null);
+    if (append) setLoadingMore(true);
+    else {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      const result = await listSupportRequests(next, { signal: controller.signal });
+      const result = await listSupportRequests(next, cursor, { signal: controller.signal });
       if (seq !== readSeq.current) return;
-      setItems(result.items);
+      setItems((current) => append ? [...current, ...result.items] : result.items);
       setOpenCount(result.openCount);
+      setTotalCount(result.totalCount);
+      setNextCursor(result.nextCursor);
       // One number, one source: the nav badge above this page reads what we just read.
       publishSupportOpenCount(result.openCount);
     } catch (err) {
@@ -295,10 +416,17 @@ export default function SupportRequestsPage() {
       const e = err as Error & { status?: number };
       // Cleared, not left standing: rows under a permission error read as "the queue is empty",
       // and rows from the previous tab under a failed switch read as this tab's contents.
-      setItems([]);
-      setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่' : apiErrorMessage(err));
+      const message = e.status === 403 ? 'คุณไม่มีสิทธิ์ดูคำขอคุยกับเจ้าหน้าที่' : apiErrorMessage(err);
+      if (append) toast.error(message);
+      else {
+        setItems([]);
+        setError(message);
+      }
     } finally {
-      if (seq === readSeq.current) setLoading(false);
+      if (seq === readSeq.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
   };
 
@@ -312,11 +440,11 @@ export default function SupportRequestsPage() {
     void load(next);
   };
 
-  const handleAnswered = async (item: SupportRequestItemDto) => {
+  const mutate = async (item: SupportRequestItemDto, action: () => Promise<unknown>, success: string) => {
     setBusyId(item.id);
     try {
-      await markSupportRequestAnswered(item.id);
-      toast.success('บันทึกว่าตอบแล้ว');
+      await action();
+      toast.success(success);
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -325,12 +453,129 @@ export default function SupportRequestsPage() {
     }
   };
 
+  const handleClaim = (item: SupportRequestItemDto) =>
+    mutate(item, () => claimSupportRequest(item.id), 'รับผิดชอบเคสนี้แล้ว');
+
+  const handleRelease = async (item: SupportRequestItemDto) => {
+    if (!await confirm({
+      title: 'ปล่อยเคส',
+      message: 'เคสจะกลับไปรอทีมงานคนอื่นรับผิดชอบ และยังไม่ถือว่าแก้ไขสำเร็จ',
+      confirmLabel: 'ปล่อยเคส',
+      variant: 'primary',
+    })) return;
+    await mutate(item, () => releaseSupportRequest(item.id), 'ปล่อยเคสแล้ว');
+  };
+
+  const handleTakeover = async (item: SupportRequestItemDto) => {
+    if (!item.assignedAt) {
+      toast.error('ข้อมูลผู้รับผิดชอบเปลี่ยนแล้ว กรุณาโหลดใหม่');
+      return;
+    }
+    const reason = await promptInput({
+      title: 'รับช่วงต่อจากผู้รับผิดชอบเดิม',
+      message: `เคสนี้อยู่กับ ${item.assigneeDisplayName ?? 'ทีมงานคนอื่น'} กรุณาระบุเหตุผลเพื่อให้ประวัติตรวจสอบได้`,
+      label: 'เหตุผลที่รับช่วงต่อ',
+      placeholder: 'เช่น ผู้รับผิดชอบเดิมลางาน และลูกค้ากำลังรอคำตอบ',
+      confirmLabel: 'รับช่วงต่อ',
+      variant: 'primary',
+    });
+    if (!reason) return;
+    await mutate(
+      item,
+      () => reclaimSupportRequest(item.id, item.assignedAt!, reason),
+      'รับช่วงต่อเคสนี้แล้ว',
+    );
+  };
+
+  const handleReply = async (item: SupportRequestItemDto) => {
+    const retrySame = Boolean(
+      item.replyOperationId && item.lastReplyText && supportReplyWithinRetryWindow(item),
+    );
+    let text: string | null = item.lastReplyText ?? null;
+    let operationId = item.replyOperationId ?? crypto.randomUUID();
+    const expiredUnknown = Boolean(
+      item.replyOperationId
+      && ['PENDING', 'FAILED'].includes(item.lastReplyDeliveryStatus ?? '')
+      && !supportReplyWithinRetryWindow(item),
+    );
+    if (retrySame) {
+      const retry = await confirm({
+        title: 'ลองส่งข้อความเดิมอีกครั้ง',
+        message: `ระบบจะใช้รหัสส่งเดิมเพื่อป้องกันข้อความซ้ำ และส่งข้อความเดิมนี้เท่านั้น: “${item.lastReplyText}”`,
+        confirmLabel: 'ลองส่งข้อความเดิม',
+        variant: 'primary',
+      });
+      if (!retry) return;
+    } else {
+      text = await promptInput({
+        title: expiredUnknown
+          ? 'ส่งเป็นข้อความใหม่'
+          : `ตอบ ${item.askerLabel} ใน LINE`,
+        message: expiredUnknown
+          ? 'พ้นช่วงลองส่งเดิมอย่างปลอดภัยแล้ว ข้อความก่อนหน้าอาจถึงลูกค้า กรุณาตรวจและเขียนข้อความใหม่ให้ชัดเจน'
+          : 'ถ้าต้องขอข้อมูลเพิ่ม กรุณาระบุข้อมูลที่ขาดทั้งหมด วิธีส่ง และสิ่งที่จะเกิดขึ้นต่อให้ครบในข้อความเดียว',
+        label: 'ข้อความถึงลูกค้า',
+        placeholder: 'เช่น กรุณาส่งชื่อร้าน เบอร์โทร และอีเมลที่ต้องการใช้ในข้อความเดียว ทีมงานจะตรวจแล้วตอบกลับที่แชทนี้',
+        confirmLabel: 'ส่งใน LINE',
+        variant: 'primary',
+      });
+      if (!text) return;
+      if (text.length > 500) {
+        toast.error('ข้อความยาวเกิน 500 ตัวอักษร กรุณาย่อแล้วลองใหม่');
+        return;
+      }
+      operationId = crypto.randomUUID();
+    }
+    setItems((current) => current.map((row) => row.id === item.id ? {
+      ...row,
+      replyOperationId: operationId,
+      replyFirstAttemptAt: retrySame ? row.replyFirstAttemptAt : new Date().toISOString(),
+      lastReplyText: text!,
+      lastReplyDeliveryStatus: 'PENDING',
+      lastReplyError: undefined,
+    } : row));
+    setBusyId(item.id);
+    try {
+      const result = await replySupportRequest(item.id, {
+        text: text!,
+        operationId,
+        previousReplyOperationId: item.replyOperationId ?? null,
+      });
+      if (result.deliveryStatus === 'SENT') {
+        toast.success(result.newerCustomerMessage
+          ? 'ส่งข้อความแล้ว แต่ลูกค้าส่งข้อความใหม่เข้ามา เคสจึงยังรอตอบ'
+          : 'ส่งข้อความถึงลูกค้าแล้ว');
+      } else {
+        toast.error('ยังยืนยันไม่ได้ว่าส่งข้อความถึงลูกค้า กรุณาลองส่งข้อความเดิมอีกครั้ง');
+      }
+      await load();
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleResolve = async (item: SupportRequestItemDto) => {
+    const note = await promptInput({
+      title: 'แก้ไขสำเร็จและปิดเคส',
+      message: 'ใช้เมื่อได้ผลลัพธ์จริงแล้วเท่านั้น การส่งข้อความหรือให้ AI ทำงานต่ออย่างเดียวยังไม่ใช่การแก้ไขสำเร็จ',
+      label: 'ผลที่แก้ไขให้ลูกค้า',
+      placeholder: 'เช่น ลูกค้าส่งข้อมูลครบ ทีมงานเปิดร้านและยืนยันว่าเข้าใช้งานได้แล้ว',
+      confirmLabel: 'บันทึกและปิดเคส',
+      variant: 'primary',
+    });
+    if (!note) return;
+    await mutate(item, () => resolveSupportRequest(item.id, note), 'บันทึกว่าแก้ไขสำเร็จและปิดเคสแล้ว');
+  };
+
   const handleResume = async (item: SupportRequestItemDto) => {
     // The customer's chat changes the moment this lands, so it asks first — the same treatment the
     // signup queue gives every decision a customer can feel.
     const ok = await confirm({
       title: 'ให้ AI ทำงานต่อ',
-      message: `น้องมั่งมีจะกลับมาตอบในแชทของ ${item.askerLabel} และคำขอนี้จะถูกปิด`,
+      message: `น้องมั่งมีจะกลับมาตอบในแชทของ ${item.askerLabel} เคสนี้ยังอยู่กับทีมงานจนกว่าจะบันทึกว่าแก้ไขสำเร็จ`,
       confirmLabel: 'ให้ AI ทำงานต่อ',
       variant: 'primary',
     });
@@ -338,7 +583,7 @@ export default function SupportRequestsPage() {
     setBusyId(item.id);
     try {
       const result = await resumeSupportRequestAi(item.id);
-      toast.success(result.pauseCleared ? 'น้องมั่งมีกลับมาตอบแล้ว' : 'ปิดคำขอแล้ว (ไม่มีการหยุด AI ค้างอยู่)');
+      toast.success(result.pauseCleared ? 'น้องมั่งมีกลับมาตอบแล้ว เคสยังไม่ถูกปิด' : 'AI ไม่ได้หยุดอยู่ และเคสยังไม่ถูกปิด');
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err));
@@ -350,13 +595,14 @@ export default function SupportRequestsPage() {
   return (
     <div className="min-h-dvh bg-gray-50 p-6">
       {confirmDialog}
+      {inputPromptDialog}
 
       <div className="mx-auto max-w-6xl space-y-4">
         <div>
           <h1 className="text-xl font-semibold text-gray-900">คำขอคุยกับเจ้าหน้าที่</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            ลูกค้าที่กด ติดต่อเจ้าหน้าที่ ใน LINE จะขึ้นที่นี่ทันที ตอบได้จากกล่อง ส่งข้อความถึงร้าน ในหน้าร้าน
-            โดยไม่ต้องผูก LINE กับบัญชีทีมงาน
+            ลูกค้าที่กด ติดต่อเจ้าหน้าที่ ใน LINE จะขึ้นที่นี่ทันที รับเคสแล้วตอบกลับใน LINE ได้จากแถวนี้
+            รวมถึงผู้สมัครที่ยังไม่มีร้าน โดยไม่เปิดเผย LINE ID
           </p>
         </div>
 
@@ -388,10 +634,18 @@ export default function SupportRequestsPage() {
         <SupportInboxBody
           error={error}
           loading={loading}
+          loadingMore={loadingMore}
           items={items}
           busyId={busyId}
+          totalCount={totalCount}
+          nextCursor={nextCursor}
           onRetry={() => void load()}
-          onAnswered={(item) => void handleAnswered(item)}
+          onLoadMore={() => nextCursor && void load(tab, nextCursor, true)}
+          onClaim={(item) => void handleClaim(item)}
+          onRelease={(item) => void handleRelease(item)}
+          onTakeover={(item) => void handleTakeover(item)}
+          onReply={(item) => void handleReply(item)}
+          onResolve={(item) => void handleResolve(item)}
           onResume={(item) => void handleResume(item)}
         />
       </div>

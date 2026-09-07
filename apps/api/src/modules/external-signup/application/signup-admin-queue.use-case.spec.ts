@@ -8,6 +8,7 @@ const NOW = new Date('2026-09-01T00:00:00.000Z');
 
 const REQUEST = {
   id: 'signup-1',
+  version: 1,
   state: 'PENDING_REVIEW',
   companyName: 'ร้านมั่งมี',
   ownerDisplayName: 'สมชาย ใจดี',
@@ -22,6 +23,14 @@ const REQUEST = {
   approvedAt: null as Date | null,
   claimEmailLastSentAt: null as Date | null,
   pendingPasswordHash: 'scrypt$salt$hash',
+  source: 'official-site',
+  companyId: null,
+  resolvedExistingCompanyId: null,
+  provisioningAttemptId: null,
+  reviewResolution: null,
+  resolutionNote: null,
+  repeatTrialGrantedAt: null,
+  sharedContactReviewedAt: null,
 };
 
 function harness(options: {
@@ -49,6 +58,10 @@ function harness(options: {
     status?: string;
     company: { name: string; status: string; planTerm: { termDisabledAt: Date | null } | null };
   }>;
+  priorOwnedCompany?: boolean;
+  existingMembership?: boolean;
+  contactEmailConflict?: boolean;
+  liveSupport?: { id: string; assignedToUserId: string | null } | null;
 } = {}) {
   const audits: any[] = [];
   const updates: any[] = [];
@@ -58,13 +71,28 @@ function harness(options: {
   const userQueries: any[] = [];
   const provisioned: any[] = [];
   const requestQueries: any[] = [];
+  const supportCreates: any[] = [];
+  const supportUpdates: any[] = [];
+  const lineNotifications: any[] = [];
+  const contextUpserts: any[] = [];
+  let currentRequest = options.request === undefined ? { ...REQUEST } : options.request ? { ...options.request } : null;
+  let liveSupport = options.liveSupport ?? null;
 
   const prisma = {
     client: {
       companySignupRequest: {
-        findUnique: async () => (options.request === undefined ? { ...REQUEST } : options.request),
+        findUnique: async () => currentRequest,
         findMany: async (args: any) => { requestQueries.push(args); return options.requests ?? []; },
-        update: async (args: any) => { updates.push(args); return {}; },
+        update: async (args: any) => {
+          updates.push(args);
+          const data = args.data;
+          currentRequest = {
+            ...currentRequest,
+            ...data,
+            version: data.version?.increment ? currentRequest.version + data.version.increment : currentRequest.version,
+          };
+          return currentRequest;
+        },
         // R13: the tab counts are read from the whole table, never from the page just fetched.
         groupBy: async () => options.stateCounts ?? [],
         count: async () => options.staleProvisioningCount ?? 0,
@@ -88,8 +116,34 @@ function harness(options: {
             return true;
           });
         },
+        count: async () => options.priorOwnedCompany ? 1 : 0,
+        findFirst: async () => options.existingMembership ? { id: 'membership-1' } : null,
       },
-      externalIdentity: { findMany: async () => options.identities ?? [] },
+      externalIdentity: {
+        findMany: async () => options.identities ?? [],
+        findFirst: async () => currentRequest?.lineProviderUserId
+          ? { userId: currentRequest.attachUserId ?? 'line-user-1', status: 'ACTIVE', user: { status: 'ACTIVE' } }
+          : null,
+      },
+      lineSupportRequest: {
+        findFirst: async () => liveSupport,
+        create: async (args: any) => {
+          supportCreates.push(args);
+          liveSupport = { id: 'support-1', assignedToUserId: args.data.assignedToUserId ?? null };
+          return { id: liveSupport.id };
+        },
+        update: async (args: any) => {
+          supportUpdates.push(args);
+          liveSupport = {
+            id: liveSupport?.id ?? args.where.id,
+            assignedToUserId: args.data.assignedToUserId ?? liveSupport?.assignedToUserId ?? null,
+          };
+          return { id: liveSupport.id };
+        },
+      },
+      lineCompanyContext: {
+        upsert: async (args: any) => { contextUpserts.push(args); return {}; },
+      },
       auditLog: {
         create: async (args: any) => { audits.push(args); return {}; },
         findMany: async (args: any) => {
@@ -98,6 +152,9 @@ function harness(options: {
           return (options.emailReviewEvidence ?? []).filter((row) => args.where.targetId.in.includes(row.targetId));
         },
       },
+      $executeRaw: async () => 0,
+      $queryRaw: async () => options.contactEmailConflict ? [{ id: 'conflict-1' }] : [],
+      $transaction: async (fn: any) => fn(prisma.client),
     },
   } as any;
 
@@ -116,7 +173,8 @@ function harness(options: {
       // F8: the audit and the letter both write through the transaction client, so the stub hands
       // over the same store — an `{}` here would hide a missing audit as a TypeError.
       await extras?.alsoInTransaction?.(prisma.client);
-      return {};
+      currentRequest = { ...currentRequest, state, version: currentRequest.version + 1, ...(extras?.data ?? {}) };
+      return { request: currentRequest, replayed: false };
     },
   } as any;
   const tokens = { revokeAll: async (id: string) => { revoked.push(id); return 2; } } as any;
@@ -127,17 +185,27 @@ function harness(options: {
     },
   } as any;
 
-  const provision = { execute: async (cmd: any) => { provisioned.push(cmd); return {}; } } as any;
+  const provision = {
+    execute: async (cmd: any) => {
+      provisioned.push(cmd);
+      currentRequest = { ...currentRequest, state: 'COMPLETED', companyId: currentRequest.companyId ?? 'co-1' };
+      return {};
+    },
+  } as any;
 
   // P10-L: a LINE rejection rides the push rail, not the mailer — recorded in the same list so the
   // "one notice, on the right rail" assertions stay in one place.
   const lineNotify = {
-    enqueue: async (id: string, kind: string) => { enqueued.push({ id, reason: `line-push:${kind}` }); },
+    enqueue: async (id: string, kind: string, now?: Date, options?: unknown) => {
+      enqueued.push({ id, reason: `line-push:${kind}` });
+      lineNotifications.push({ id, kind, now, options });
+    },
   } as any;
 
   return {
     useCase: new SignupAdminQueueUseCase(prisma, core, tokens, claimEmail, provision, lineNotify),
     audits, updates, advances, enqueued, revoked, userQueries, provisioned, requestQueries,
+    current: () => currentRequest, supportCreates, supportUpdates, lineNotifications, contextUpserts,
   };
 }
 
@@ -339,6 +407,8 @@ const LINE_REQUEST = {
   taxId: null,
   pendingPasswordHash: null,
   lineDisplayName: 'นิด',
+  lineProviderUserId: 'Uline-1',
+  lineChannelId: 'channel-1',
   autoApproved: false,
   legalAcceptedAt: new Date('2026-08-31T04:00:00.000Z'),
 };
@@ -394,18 +464,22 @@ describe('SignupAdminQueueUseCase.decide — business category at review', () =>
   it('carries the choice into a LINE approval, which provisions inline', async () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.decide(
-      'signup-1', { action: 'APPROVE', businessCategory: 'WELLNESS_SPA' }, 'admin-1', 'req-1', URLS,
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1, businessCategory: 'WELLNESS_SPA' },
+      'admin-1', 'req-1', URLS,
     );
     assert.equal(h.updates[0].data.businessCategory, 'WELLNESS_SPA');
   });
 });
 
 describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
-  it('provisions on approval instead of queueing a claim email nobody can receive', async () => {
+  it('provisions only from the explicit new-shop outcome', async () => {
     const h = harness({ request: LINE_REQUEST });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS,
+    );
 
-    assert.deepEqual(result, { requestId: 'signup-1', state: 'COMPLETED' });
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.resolution, 'NEW_SHOP');
     assert.deepEqual(h.enqueued, [], 'no letter is queued for an application with no address');
     assert.deepEqual(h.advances, [], 'provisioning owns the PROVISIONING transition, not advance');
     assert.equal(h.provisioned[0].requestId, 'signup-1');
@@ -413,10 +487,119 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.updates[0].data.approvedByUserId, 'admin-1');
   });
 
+  it('rejects legacy generic approval for LINE', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    await assert.rejects(
+      () => h.useCase.decide('signup-1', { action: 'APPROVE', version: 1 }, 'admin-1', 'req-1', URLS),
+      /line_signup_resolution_required/,
+    );
+    assert.deepEqual(h.provisioned, []);
+  });
+
+  it('requests all missing information through one versioned LINE event and one owned support case', async () => {
+    const h = harness({ request: LINE_REQUEST });
+    const first = await h.useCase.decide(
+      'signup-1',
+      { action: 'REQUEST_INFO', version: 1, resolutionNote: 'กรุณาส่งชื่อร้านและเบอร์โทรศัพท์ให้ครบถ้วน' },
+      'admin-1', 'req-info-1', URLS, NOW,
+    );
+
+    assert.deepEqual(first, {
+      requestId: 'signup-1', state: 'PENDING_REVIEW', version: 2,
+      resolution: 'REQUEST_INFO', customerNotification: 'QUEUED', supportRequestId: 'support-1',
+    });
+    assert.equal(h.supportCreates.length, 1);
+    assert.equal(h.supportCreates[0].data.signupRequestId, 'signup-1');
+    assert.equal(h.supportCreates[0].data.lineUserId, 'Uline-1');
+    assert.equal(h.supportCreates[0].data.assignedToUserId, 'admin-1');
+    assert.equal('requestText' in h.supportCreates[0].data, false);
+    assert.equal('lastMessageText' in h.supportCreates[0].data, false);
+    assert.equal(h.lineNotifications[0].kind, 'requested_info');
+    assert.equal(h.lineNotifications[0].options.reviewVersion, 2);
+
+    const second = await h.useCase.decide(
+      'signup-1',
+      { action: 'REQUEST_INFO', version: 2, resolutionNote: 'กรุณาส่งอีเมลติดต่อที่ถูกต้องด้วย' },
+      'admin-2', 'req-info-2', URLS, NOW,
+    );
+    assert.equal(second.version, 3);
+    assert.equal(second.supportRequestId, 'support-1');
+    assert.equal(h.supportCreates.length, 1, 'a repeated question reuses the live case');
+    assert.equal(h.supportUpdates.length, 1);
+    assert.equal(h.lineNotifications[1].options.reviewVersion, 3, 'a later real question has a distinct outbox key');
+  });
+
+  it('keeps the existing support owner when another admin asks for information', async () => {
+    const h = harness({ request: LINE_REQUEST, liveSupport: { id: 'support-old', assignedToUserId: 'admin-owner' } });
+    const result = await h.useCase.decide(
+      'signup-1',
+      { action: 'REQUEST_INFO', version: 1, resolutionNote: 'กรุณาส่งข้อมูลที่ขาดให้ครบในข้อความเดียว' },
+      'admin-2', 'req-info-owner', URLS, NOW,
+    );
+
+    assert.equal(result.supportRequestId, 'support-old');
+    assert.deepEqual(h.supportUpdates[0].data, { signupRequestId: 'signup-1' });
+  });
+
+  it('returns only to a currently proven shop and never provisions or stamps it as newly created', async () => {
+    const h = harness({ request: LINE_REQUEST, existingMembership: true });
+    const result = await h.useCase.decide(
+      'signup-1',
+      { action: 'RETURN_EXISTING', version: 1, targetCompanyId: 'company-existing' },
+      'admin-1', 'req-return', URLS, NOW,
+    );
+
+    assert.equal(result.state, 'COMPLETED');
+    assert.equal(result.resolution, 'RETURN_EXISTING');
+    assert.equal(result.entryCompanyId, 'company-existing');
+    assert.equal(h.current().companyId, null);
+    assert.equal(h.current().resolvedExistingCompanyId, 'company-existing');
+    assert.deepEqual(h.provisioned, []);
+    assert.equal(h.contextUpserts[0].update.companyId, 'company-existing');
+  });
+
+  it('parks a repeat trial for plan review until an admin separately grants it with a note', async () => {
+    const h = harness({ request: LINE_REQUEST, priorOwnedCompany: true });
+    const parked = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-plan', URLS, NOW,
+    );
+    assert.equal(parked.state, 'PENDING_REVIEW');
+    assert.equal(parked.resolution, 'PLAN_REVIEW');
+    assert.deepEqual(h.provisioned, [], 'plan review must not create an empty unusable shop');
+
+    const completed = await h.useCase.decide(
+      'signup-1', {
+        action: 'CREATE_NEW_SHOP', version: 2, grantRepeatTrial: true,
+        trialGrantNote: 'อนุมัติทดลองใช้งานรอบใหม่ตามแผนช่วยเหลือลูกค้า',
+      }, 'admin-1', 'req-grant', URLS, NOW,
+    );
+    assert.equal(completed.state, 'COMPLETED');
+    assert.equal(h.updates[1].data.repeatTrialGrantedByUserId, 'admin-1');
+    assert.equal(h.provisioned.length, 1);
+  });
+
+  it('requires an explicit shared-contact acknowledgement before creating a conflicting shop', async () => {
+    const h = harness({ request: { ...LINE_REQUEST, contactEmail: 'shared@example.test' }, contactEmailConflict: true });
+    await assert.rejects(
+      () => h.useCase.decide(
+        'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-shared-missing', URLS, NOW,
+      ),
+      /line_signup_shared_contact_review_required/,
+    );
+    await h.useCase.decide(
+      'signup-1', {
+        action: 'CREATE_NEW_SHOP', version: 1, acknowledgeSharedContact: true,
+        sharedContactNote: 'ตรวจสอบแล้วว่าเป็นอีเมลกลางที่ผู้สมัครมีสิทธิใช้',
+      }, 'admin-1', 'req-shared-ok', URLS, NOW,
+    );
+    assert.equal(h.updates[0].data.sharedContactReviewedByUserId, 'admin-1');
+    assert.equal(h.provisioned.length, 1);
+  });
+
   it('refuses to provision without the bases the owner handoff needs', async () => {
     const h = harness({ request: LINE_REQUEST });
     await assert.rejects(
-      () => h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1'),
+      () => h.useCase.decide('signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1'),
       /signup_provisioning_urls_required/,
     );
     assert.deepEqual(h.provisioned, []);
@@ -426,8 +609,12 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
   // listed the row, approve returned early without provisioning, and the customer's LINE account
   // stayed fenced by the open-application index with no admin path at all.
   it('finishes a READY application instead of calling it done', async () => {
-    const h = harness({ request: { ...LINE_REQUEST, state: 'READY', companyId: 'co-1' } });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const h = harness({ request: {
+      ...LINE_REQUEST, state: 'READY', companyId: 'co-1', reviewResolution: 'NEW_SHOP',
+    } });
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS,
+    );
 
     assert.equal(h.provisioned.length, 1, 'the finish path has to actually be called');
     assert.equal(h.provisioned[0].requestId, 'signup-1');
@@ -466,10 +653,12 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
       request: {
         ...LINE_REQUEST,
         state: 'PROVISIONING',
-        provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000),
+        provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000), reviewResolution: 'NEW_SHOP',
       },
     });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS, NOW,
+    );
 
     assert.equal(h.provisioned.length, 1, 'the fence would re-claim it, so the queue must offer it');
     assert.equal(result.state, 'COMPLETED');
@@ -480,43 +669,47 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
       request: {
         ...LINE_REQUEST,
         state: 'PROVISIONING',
-        provisioningStartedAt: new Date(NOW.getTime() - 1_000),
+        provisioningStartedAt: new Date(NOW.getTime() - 1_000), reviewResolution: 'NEW_SHOP',
       },
     });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS, NOW);
-
-    assert.equal(result.state, 'PROVISIONING');
-    assert.deepEqual(h.provisioned, [], 'a live run keeps the fence');
+    await assert.rejects(
+      () => h.useCase.decide(
+        'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS, NOW,
+      ),
+      /invalid_signup_create_new_shop:PROVISIONING/,
+    );
+    assert.deepEqual(h.provisioned, []);
   });
 
   it('treats a second tap on a finished application as a no-op', async () => {
-    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED' } });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED', reviewResolution: 'NEW_SHOP' } });
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS,
+    );
     assert.equal(result.state, 'COMPLETED');
     assert.deepEqual(h.provisioned, [], 'COMPLETED must not provision twice');
   });
 
-  // Review LOW-3: the approval stamp records WHEN this application was decided. Closing a row that
-  // is already past its decision must not rewrite that history.
-  it('stamps the approval once, and says what a later close actually did', async () => {
+  it('stamps the explicit decision once and reuses it for provisioning recovery', async () => {
     const first = harness({ request: LINE_REQUEST });
-    await first.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    await first.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS,
+    );
     assert.equal(first.updates[0].data.approvedByUserId, 'admin-1');
-    assert.equal(first.audits[0].data.metadataJson.finishedStrandedRow, false);
 
-    for (const [state, expected] of [['PROVISIONING_FAILED', 'retryOfFailedProvisioning'], ['READY', 'finishedStrandedRow']] as const) {
-      const h = harness({ request: { ...LINE_REQUEST, state } });
-      await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-2', 'req-2', URLS);
+    for (const state of ['PROVISIONING_FAILED', 'READY'] as const) {
+      const h = harness({ request: { ...LINE_REQUEST, state, reviewResolution: 'NEW_SHOP' } });
+      await h.useCase.decide(
+        'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-2', 'req-2', URLS,
+      );
       assert.deepEqual(h.updates, [], `${state} must not rewrite the approval stamp`);
-      assert.equal(h.audits[0].data.metadataJson[expected], true);
-      assert.equal(h.audits[0].data.metadataJson.fromState, state);
     }
   });
 
   it('sends the rejection on the rail this source actually has (P10-L §7)', async () => {
     const h = harness({ request: LINE_REQUEST });
     const result = await h.useCase.decide(
-      'signup-1', { action: 'REJECT', notifyApplicant: true }, 'admin-1', 'req-1', URLS,
+      'signup-1', { action: 'REJECT', version: 1, notifyApplicant: true }, 'admin-1', 'req-1', URLS,
     );
 
     assert.equal(result.state, 'REJECTED');
@@ -527,7 +720,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
   it('sends nothing when the admin cleared the notify toggle', async () => {
     const h = harness({ request: LINE_REQUEST });
-    await h.useCase.decide('signup-1', { action: 'REJECT' }, 'admin-1', 'req-1', URLS);
+    await h.useCase.decide('signup-1', { action: 'REJECT', version: 1 }, 'admin-1', 'req-1', URLS);
     assert.deepEqual(h.enqueued, [], 'silent by default stays silent on this rail too');
   });
 
@@ -552,12 +745,17 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.deepEqual(h.requestQueries[0].where.OR, [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
       { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { source: 'line-oa', state: { in: ['RECEIVED', 'VALIDATED'] } },
     ]);
   });
 
   it('retries provisioning when an admin approves a failed LINE application', async () => {
-    const h = harness({ request: { ...LINE_REQUEST, state: 'PROVISIONING_FAILED', autoApproved: true } });
-    const result = await h.useCase.decide('signup-1', { action: 'APPROVE' }, 'admin-1', 'req-1', URLS);
+    const h = harness({ request: {
+      ...LINE_REQUEST, state: 'PROVISIONING_FAILED', autoApproved: true, reviewResolution: 'NEW_SHOP',
+    } });
+    const result = await h.useCase.decide(
+      'signup-1', { action: 'CREATE_NEW_SHOP', version: 1 }, 'admin-1', 'req-1', URLS,
+    );
 
     assert.equal(result.state, 'COMPLETED');
     assert.equal(h.provisioned[0].requestId, 'signup-1');
@@ -565,7 +763,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     assert.equal(h.provisioned[0].actorUserId, 'admin-1');
     // Review LOW-3: a retry does not rewrite when the application was decided.
     assert.deepEqual(h.updates, []);
-    assert.equal(h.audits[0].data.metadataJson.retryOfFailedProvisioning, true);
+    assert.deepEqual(h.audits, [], 'provision recovery is not recorded as a second decision');
   });
 
   // Review F2: the web form gets the same retry. What it does NOT get is the READY close-out —
@@ -592,7 +790,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 describe('SignupAdminQueueUseCase.decide — suspend', () => {
   it('stops an auto-approved shop after the fact and revokes anything outstanding', async () => {
     const h = harness({ request: { ...LINE_REQUEST, state: 'COMPLETED', autoApproved: true } });
-    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND', version: 1 }, 'admin-1', 'req-1', URLS);
 
     assert.deepEqual(result, { requestId: 'signup-1', state: 'SUSPENDED' });
     // A failure state needs a reason code, and the reason is that an admin said so.
@@ -621,7 +819,7 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
         },
       });
       await assert.rejects(
-        () => h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW),
+        () => h.useCase.decide('signup-1', { action: 'SUSPEND', version: 1 }, 'admin-1', 'req-1', URLS, NOW),
         /suspend_not_allowed_in_flight/,
       );
       assert.deepEqual(h.advances, [], `age ${ageMs}ms / company ${companyId} must not settle the row`);
@@ -639,7 +837,7 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
         provisioningStartedAt: new Date(NOW.getTime() - STALE_PROVISIONING_MS - 1_000),
       },
     });
-    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS, NOW);
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND', version: 1 }, 'admin-1', 'req-1', URLS, NOW);
 
     assert.deepEqual(result, { requestId: 'signup-1', state: 'SUSPENDED' });
     assert.deepEqual(h.advances, [{ id: 'signup-1', state: 'SUSPENDED', failureCode: 'admin_suspended' }]);
@@ -648,7 +846,7 @@ describe('SignupAdminQueueUseCase.decide — suspend', () => {
 
   it('is a no-op when the application is already suspended', async () => {
     const h = harness({ request: { ...LINE_REQUEST, state: 'SUSPENDED' } });
-    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', URLS);
+    const result = await h.useCase.decide('signup-1', { action: 'SUSPEND', version: 1 }, 'admin-1', 'req-1', URLS);
 
     assert.equal(result.state, 'SUSPENDED');
     assert.deepEqual(h.advances, []);
@@ -666,6 +864,7 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
     OR: [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
       { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['RECEIVED', 'VALIDATED'] }, source: 'line-oa' },
     ],
   });
   const page = (n: number) => Array.from({ length: n }, (_, i) => ({
