@@ -58,6 +58,7 @@ import {
   lateDocumentDays,
   expenseVatSourceFromSnapshot,
   expenseVatSourceValidationMessage,
+  insertExpenseReviewLine,
   type ExpenseDraftReviewValues,
   type ExpenseDetail,
 } from './expenses.model';
@@ -467,6 +468,25 @@ describe('expenses.model', () => {
       assert.equal('origin' in payload.whtInput!, false);
       assert.equal('whtRate' in payload.lines![0]!, false, 'source input replaces stale line rates');
     }
+  });
+
+  it('keeps existing line identities through a deletion while a newly inserted row has no id', () => {
+    const line = (id: string, description: string) => ({
+      id, description, quantity: '1', unitPrice: '100', discountAmount: '0', vatRate: '0',
+      whtRate: null, expenseCategoryId: null, accountHintKey: null, taxCategory: null,
+    });
+    const detail = {
+      vendorNameSnapshot: 'ร้านทดสอบ', expenseDate: '2026-09-07', vatMode: 'NO_VAT', whtInputJson: null,
+      lines: [line('line-first', 'รายการแรก'), line('line-second', 'รายการที่สอง')],
+    } as ExpenseDetail;
+
+    let values = reviewValues(detail);
+    values = { ...values, lines: values.lines.slice(1) };
+    values = insertExpenseReviewLine(values, null);
+    const payload = buildExpenseDraftReviewPayload(values);
+
+    assert.deepEqual(payload.lines?.map((item) => item.id), ['line-second', undefined]);
+    assert.deepEqual(payload.lines?.map((item) => item.description), ['รายการที่สอง', '']);
   });
 
   it('preserves a legacy mixed-rate bill on ordinary save until an explicit whole-bill replacement', () => {

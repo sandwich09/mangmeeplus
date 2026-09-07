@@ -1,4 +1,4 @@
-import { Inject, Injectable, ForbiddenException, BadRequestException, HttpException, HttpStatus } from '@nestjs/common';
+import { Inject, Injectable, ForbiddenException, BadRequestException, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { PrismaAttachmentRepository } from '../../infrastructure/repositories/prisma-attachment.repository';
 import {
   generateObjectKey,
@@ -9,6 +9,7 @@ import { ATTACHMENT_STORAGE, type AttachmentStoragePort } from '../../domain/por
 import type { AttachmentVisibility } from '../../domain/models/attachment.model';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 import { AuditService } from '../../../audit/application/audit.service';
+import { isBranchInScope } from '../../domain/logic/branch.logic';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 
 const PENDING_STORAGE_RETENTION_MS = 24 * 60 * 60 * 1000;
@@ -38,6 +39,28 @@ export class CreateUploadIntentUseCase {
     private readonly audit: AuditService,
     private readonly config: AppConfigService,
   ) {}
+
+  /** Internal receipt retry: re-sign the existing pending object, never create another attachment. */
+  async resume(ctx: RequestContext, attachmentId: string): Promise<CreateUploadIntentResult & { uploadRequired: boolean }> {
+    if (!ctx.permissions.includes('attachment.create')) throw new ForbiddenException();
+    const attachment = await this.attachments.findById({ id: attachmentId, companyId: ctx.companyId });
+    if (!attachment) throw new NotFoundException('Attachment not found.');
+    if (attachment.uploadedByUserId !== ctx.userId || !isBranchInScope(ctx.scopes ?? {}, attachment.branchId)) throw new ForbiddenException();
+    if (attachment.status !== 'PENDING_UPLOAD' && attachment.status !== 'ACTIVE') throw new BadRequestException('Attachment cannot be resumed.');
+    if (attachment.status === 'ACTIVE') {
+      return { attachmentId, uploadUrl: '', uploadMethod: 'PUT', uploadHeaders: {}, expiresAt: new Date(), uploadRequired: false };
+    }
+    const metadata = await this.storage.getObjectMetadata({ bucket: attachment.bucket, objectKey: attachment.objectKey });
+    // Bytes present after a lost upload response still pass completion's full checksum/scanner checks.
+    if (metadata.exists) {
+      return { attachmentId, uploadUrl: '', uploadMethod: 'PUT', uploadHeaders: {}, expiresAt: new Date(), uploadRequired: false };
+    }
+    const intent = await this.storage.createUploadIntent({
+      companyId: ctx.companyId, objectKey: attachment.objectKey, mimeType: attachment.mimeType,
+      byteSize: attachment.byteSize, expiresInSeconds: this.config.signedUrlTtlSeconds,
+    });
+    return { attachmentId, uploadUrl: intent.uploadUrl, uploadMethod: intent.uploadMethod, uploadHeaders: intent.uploadHeaders, expiresAt: intent.expiresAt, uploadRequired: true };
+  }
 
   async execute(ctx: RequestContext, cmd: CreateUploadIntentCommand): Promise<CreateUploadIntentResult> {
     if (!ctx.permissions.includes('attachment.create')) {

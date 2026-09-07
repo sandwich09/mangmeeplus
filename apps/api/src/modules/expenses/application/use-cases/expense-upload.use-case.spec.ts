@@ -628,3 +628,60 @@ describe('expense checksum duplicate lookup', () => {
     assert.equal(result[0]?.vendorName, 'ร้านกาแฟทดสอบ');
   });
 });
+
+describe('LINE receipt durable identity and reserved attachment recovery', () => {
+  it('recovers the original draft and reservation across a crash after each durable boundary', async () => {
+    for (const failAfterReservation of [false, true]) {
+      const expenses: any[] = [];
+      const attachments: any[] = [];
+      let fail = true;
+      let resumes = 0;
+      const repo = {
+        ...branchValidation,
+        findByLineMessageId: async (companyId: string, lineMessageId: string) => expenses.find((row) => row.companyId === companyId && row.lineMessageId === lineMessageId) ?? null,
+        createExpense: async (input: any) => { const row = { ...input, id: 'durable-expense' }; expenses.push(row); return row; },
+      };
+      const createIntent = {
+        execute: async (_ctx: any, input: any) => {
+          assert.equal(expenses.length, 1, 'provider identity is durable before an attachment can be reserved');
+          if (fail && !failAfterReservation) { fail = false; throw new Error('reservation unavailable'); }
+          attachments.push({ id: 'reserved-image', ...input });
+          if (fail) { fail = false; throw new Error('process lost the reservation response'); }
+          return { attachmentId: 'reserved-image', uploadUrl: '/upload', uploadMethod: 'PUT', uploadHeaders: {}, expiresAt: new Date() };
+        },
+        resume: async (_ctx: any, id: string) => { resumes += 1; return { attachmentId: id, uploadRequired: false, uploadUrl: '', uploadMethod: 'PUT', uploadHeaders: {}, expiresAt: new Date() }; },
+      };
+      const prisma = { client: { $transaction: async (run: any) => run({
+        $executeRaw: async () => undefined,
+        attachmentObject: { findFirst: async ({ where }: any) => attachments.find((row) => row.metadataJson?.lineReceiptExpenseId === where.metadataJson.equals) ?? null },
+      }) } };
+      const construct = () => new InitReceiptUploadUseCase(repo as any, createIntent as any, { log: async () => {} } as any,
+        { execute: async () => ({ mode: 'FULL' }) } as any, openLaunchGate, prisma as any);
+      const command = { originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123, expenseDate: '2026-09-07',
+        branchId: 'branch-default', captureSource: 'LINE_UPLOAD' as const,
+        lineCapture: { lineMessageId: 'immutable-message', lineEventId: 'original-event', chatKeyHash: 'chat-hash' } };
+      await assert.rejects(() => construct().execute(ctx, command));
+      assert.equal(expenses.length, 1);
+      assert.equal(expenses[0].lineMessageId, 'immutable-message');
+      const result = await construct().execute(ctx, { ...command, lineCapture: { ...command.lineCapture, lineEventId: 'redelivered-event' } });
+      assert.equal(expenses.length, 1, 'new webhook identity cannot create another expense');
+      assert.equal(attachments.length, 1, 'reservation response loss cannot create another attachment');
+      assert.equal(expenses[0].lineEventId, 'original-event', 'the capture keeps its originating event');
+      assert.equal(result.expenseId, 'durable-expense');
+      assert.equal(result.attachmentId, 'reserved-image');
+      assert.equal(resumes, failAfterReservation ? 1 : 0);
+      if (failAfterReservation) assert.equal(result.uploadRequired, false, 'existing durable bytes are not uploaded again');
+    }
+  });
+
+  it('does not let another uploader resume a scoped provider message', async () => {
+    const uc = new InitReceiptUploadUseCase({
+      ...branchValidation,
+      findByLineMessageId: async () => ({ id: 'existing', createdByUserId: 'someone-else', branchId: 'branch-default' }),
+    } as any, { execute: async () => { throw new Error('must not reserve an attachment'); } } as any,
+    { log: async () => {} } as any, { execute: async () => ({ mode: 'FULL' }) } as any, openLaunchGate);
+    await assert.rejects(() => uc.execute(ctx, { originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 123,
+      expenseDate: '2026-09-07', branchId: 'branch-default', captureSource: 'LINE_UPLOAD',
+      lineCapture: { lineMessageId: 'same-message', lineEventId: 'event', chatKeyHash: 'chat' } }), /Forbidden/);
+  });
+});

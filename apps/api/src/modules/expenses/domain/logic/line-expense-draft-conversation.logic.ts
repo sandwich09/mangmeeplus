@@ -10,7 +10,8 @@ import {
   type LineIntakeExpenseItemHint,
 } from '@watchdog-bms/contracts';
 
-const MAX_ITEMS = 20;
+export const MAX_LINE_EXPENSE_DRAFT_ITEMS = 40;
+const MAX_ITEMS = MAX_LINE_EXPENSE_DRAFT_ITEMS;
 const MAX_TEXT = 200;
 const DECIMAL_PATTERN = /^(?:0|[1-9]\d{0,13})(?:\.\d{1,4})?$/u;
 
@@ -33,6 +34,10 @@ export type LineExpenseDraftQuestion = {
 export type LineExpenseDraftItem = {
   itemRef: string;
   sourceText: string;
+  lineId?: string;
+  materializedFacts?: { description: string; quantity: string; unitPrice: string; expenseCategoryId?: string };
+  reviewRequired?: boolean;
+  newItem?: boolean;
   description?: string;
   quantity?: string;
   unit?: string;
@@ -67,7 +72,7 @@ export type LineExpenseDraftContinuation = {
   };
   items: LineExpenseDraftItem[];
   provenance: Record<string, {
-    source: 'LINE_USER_TEXT' | 'LINE_AI_SOURCE_GROUNDED' | 'LINE_MEDIA_OCR';
+    source: 'LINE_USER_TEXT' | 'LINE_AI_SOURCE_GROUNDED' | 'LINE_MEDIA_OCR' | 'WEB_USER';
     acceptedAt: string;
     messageHash: string;
     webhookEventId?: string;
@@ -102,7 +107,7 @@ function decimal(value: unknown, positive = false): string | undefined {
   if (!DECIMAL_PATTERN.test(candidate)) return undefined;
   try {
     const parsed = new Decimal(candidate);
-    if (!parsed.isFinite() || parsed.isNegative() || (positive && !parsed.isPositive())) return undefined;
+    if (!parsed.isFinite() || parsed.isNegative() || (positive && !parsed.gt(0))) return undefined;
     return parsed.toDecimalPlaces(4).toString();
   } catch {
     return undefined;
@@ -199,6 +204,7 @@ export function collectLineExpenseDraftQuestions(
     if (!item.description) result.push({ id: `${item.itemRef}-DESC`, scope: 'ITEM', itemRef: item.itemRef, field: 'description', prompt: `${item.itemRef} รายการนี้คือสินค้า/บริการอะไร?` });
     if (!item.quantity) result.push({ id: `${item.itemRef}-QTY`, scope: 'ITEM', itemRef: item.itemRef, field: 'quantity', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} จำนวนเท่าไร และหน่วยอะไร?` });
     if (!item.unitPrice && !item.totalAmount) result.push({ id: `${item.itemRef}-PRICE`, scope: 'ITEM', itemRef: item.itemRef, field: 'price', prompt: `${item.itemRef} ${item.description ?? 'รายการนี้'} ราคาต่อหน่วยหรือยอดรวมเท่าไร?` });
+    if (item.reviewRequired) result.push({ id: `${item.itemRef}-REVIEW`, scope: 'ITEM', itemRef: item.itemRef, field: 'review', prompt: `${item.itemRef} ตรวจรายการนี้ในเว็บก่อน เพื่อเก็บรายการและภาษีเดิมให้ครบ` });
     if (!item.expenseCategoryId) {
       const suggestion = item.suggestedCategoryId ? names.get(item.suggestedCategoryId) : undefined;
       result.push({
@@ -243,7 +249,8 @@ export function buildInitialLineExpenseDraftContinuation(input: {
 }): LineExpenseDraftContinuation {
   const now = input.now ?? new Date().toISOString();
   const categories = categoryMap(input.categories);
-  const hintedItems = (input.hints?.items ?? []).slice(0, MAX_ITEMS)
+  if ((input.hints?.items?.length ?? 0) > MAX_ITEMS) throw new RangeError('Expense source draft supports at most 40 items.');
+  const hintedItems = (input.hints?.items ?? [])
     .map((hint, index) => initialItem(hint, index, input.messageText, categories))
     .filter((item): item is LineExpenseDraftItem => Boolean(item));
   const fallbackDescription = groundedText(input.messageText, input.hints?.description)
@@ -294,6 +301,14 @@ export function buildInitialLineExpenseDraftContinuation(input: {
   return state;
 }
 
+export function nextLineExpenseDraftItemRef(items: LineExpenseDraftItem[]): string {
+  for (let index = 1; index <= MAX_ITEMS; index++) {
+    const ref = `I${String(index).padStart(2, '0')}`;
+    if (!items.some((item) => item.itemRef === ref)) return ref;
+  }
+  throw new RangeError('Expense source draft supports at most 40 items.');
+}
+
 export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDraftContinuation | null {
   if (!value || typeof value !== 'object') return null;
   const state = value as Partial<LineExpenseDraftContinuation>;
@@ -305,11 +320,11 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
     || !state.header || !Array.isArray(state.items) || !Array.isArray(state.unresolvedQuestions)
     || !state.provenance || !Number.isSafeInteger(state.version) || state.version! < 1
     || !['OPEN', 'PAUSED', 'PAUSED_INTERRUPTED', 'INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE', 'CANCELLED'].includes(String(state.status))) return null;
-  if (state.items.length > MAX_ITEMS) return null;
+  if (state.items.length > MAX_ITEMS || new Set(state.items.map((item) => item?.itemRef)).size !== state.items.length) return null;
   if (state.items.some((item) => !item || typeof item !== 'object'
     || !/^I\d{2}$/u.test(String(item.itemRef))
     || typeof item.sourceText !== 'string' || item.sourceText.length > MAX_TEXT)) return null;
-  if (state.unresolvedQuestions.length > 100 || state.unresolvedQuestions.some((question) =>
+  if (state.unresolvedQuestions.length > 204 || state.unresolvedQuestions.some((question) =>
     !question || typeof question !== 'object' || typeof question.id !== 'string'
     || typeof question.field !== 'string' || typeof question.prompt !== 'string'
     || question.prompt.length > 300)) return null;
@@ -318,7 +333,7 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
 
 export function lineExpenseDraftControl(text: string): LineExpenseDraftControl | null {
   const value = normalized(text).toLocaleLowerCase('th-TH');
-  if (/^(พัก|พักไว้ก่อน|หยุด|ไว้ก่อน)$/u.test(value)) return 'pause';
+  if (/^(พัก|พักไว้ก่อน|หยุด|ไว้ก่อน|บันทึกไปก่อน|บันทึกไว้ก่อน|เดี๋ยวไปแก้ในเว็บ)$/u.test(value)) return 'pause';
   if (/^(ต่อ|ทำต่อ|กรอกต่อ|ทำรายการต่อ)$/u.test(value)) return 'resume';
   if (/^(หมด|จบ|ไม่มีแล้ว)$/u.test(value)) return 'end';
   if (/^(ยกเลิก|ยกเลิกรายการนี้|ไม่เอาแล้ว)$/u.test(value)) return 'cancel';
@@ -405,7 +420,7 @@ export function applyLineExpenseDraftAnswer(input: {
   else if (hints?.businessPurpose !== undefined) reject('D-PURPOSE', 'NOT_GROUNDED_OR_INVALID');
 
   const categories = categoryMap(input.categories);
-  for (const [hintIndex, hint] of (hints?.items ?? []).slice(0, MAX_ITEMS).entries()) {
+  for (const [hintIndex, hint] of (hints?.items ?? []).entries()) {
     let item = itemForHint(next.items, hint, input.messageText);
     if (!item) {
       const candidateRef = hint.itemRef ?? `ITEM-${hintIndex + 1}`;
@@ -422,7 +437,7 @@ export function applyLineExpenseDraftAnswer(input: {
         reject(candidateRef, hint.itemRef ? 'UNKNOWN_ITEM' : 'NOT_GROUNDED_OR_INVALID');
         continue;
       }
-      item = added;
+      item = { ...added, itemRef: nextLineExpenseDraftItemRef(next.items), newItem: true };
       next.items.push(item);
       record(`${item.itemRef}-DESC`);
       if (item.quantity) record(`${item.itemRef}-QTY`);
@@ -482,8 +497,8 @@ export function applyLineExpenseDraftAnswer(input: {
       for (const description of segment.value.split(/\s+(?:กับ|และ)\s+|[,;]+/u).map((value) => bounded(value, 120)).filter((value): value is string => Boolean(value))) {
         if (next.items.length >= MAX_ITEMS) { reject(segment.id, 'ITEM_LIMIT_REACHED'); break; }
         if (next.items.some((item) => normalized(item.description ?? item.sourceText) === normalized(description))) continue;
-        const itemRef = `I${String(next.items.length + 1).padStart(2, '0')}`;
-        next.items.push({ itemRef, sourceText: description, description });
+        const itemRef = nextLineExpenseDraftItemRef(next.items);
+        next.items.push({ itemRef, sourceText: description, description, newItem: true });
         record(`${itemRef}-DESC`);
       }
       continue;
@@ -634,9 +649,10 @@ export function formatLineExpenseDraftReply(input: {
 }): string {
   const state = input.state;
   const names = new Map(input.categories.map((category) => [category.id, category.name]));
+  const fieldLabels: Record<string, string> = { description: 'ชื่อสินค้า/บริการ', quantity: 'จำนวนและหน่วย', price: 'ราคาต่อหน่วยหรือยอดรวม', expenseCategoryId: 'หมวดค่าใช้จ่าย', review: 'ตรวจรายการเดิมในเว็บ' };
   const lines: string[] = [];
   if (input.acceptedFields?.length) {
-    lines.push(`บันทึกแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
+    lines.push(state.items.length > 10 ? `บันทึกข้อมูลแล้ว ${input.acceptedFields.length} ข้อ — ดูข้อมูลปัจจุบันด้านล่าง` : `บันทึกแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
   }
   lines.push(`🧾 ร่างค่าใช้จ่าย ${input.label ?? state.expenseId}`);
   lines.push(`วันที่: ${state.header.expenseDate ?? 'ยังไม่ทราบ'}`);
@@ -648,7 +664,8 @@ export function formatLineExpenseDraftReply(input: {
     const category = item.expenseCategoryId
       ? names.get(item.expenseCategoryId) ?? 'หมวดที่เลือก'
       : item.suggestedCategoryId ? `แนะนำ ${names.get(item.suggestedCategoryId) ?? 'รอตรวจ'}` : 'ยังไม่ระบุ';
-    lines.push(`${index + 1}) ${item.description ?? item.sourceText} — ${quantity} — ${price} — ${category}`);
+    lines.push(`${index + 1}) ${(item.description ?? item.sourceText).slice(0, 120)} — ${quantity} — ${price} — ${category.slice(0, 60)}`);
+    if (state.items.length > 10) return;
     if (item.accountingClass) lines.push(`   ประเภททางบัญชีแนะนำ: ${ACCOUNTING_LABELS[item.accountingClass]} (รอตรวจ)`);
     if (item.itemBehavior) lines.push(`   ลักษณะสินค้า/บริการ: ${ITEM_BEHAVIOR_LABELS[item.itemBehavior]} (รอตรวจ)`);
     const accountHint = item.expenseCategoryId
@@ -660,7 +677,7 @@ export function formatLineExpenseDraftReply(input: {
     if (item.taxTreatment) lines.push(`   ภาษีแนะนำ: ${item.taxTreatment} (รอตรวจหลักฐาน)`);
   });
   if (state.status === 'PAUSED' || state.status === 'PAUSED_INTERRUPTED') {
-    lines.push('', 'พักร่างนี้ไว้แล้ว พิมพ์ “ต่อ” เมื่อต้องการทำต่อ');
+    lines.push('', 'เก็บร่างแล้ว ยังไม่ยืนยันรายการ', 'พักร่างนี้ไว้แล้ว พิมพ์ “ต่อ” เมื่อต้องการทำต่อ');
   } else if (state.status === 'CANCELLED') {
     lines.push('', 'ยกเลิกการสนทนาร่างนี้แล้ว หลักฐานและร่างเดิมไม่ได้ถูกลบ');
   } else if (state.status === 'INPUT_ENDED_COMPLETE') {
@@ -669,12 +686,16 @@ export function formatLineExpenseDraftReply(input: {
     lines.push(
       '',
       `จบการกรอกและเก็บร่างไว้ โดยยังขาด ${state.unresolvedQuestions.length} ข้อ (ยังไม่ลงบัญชี)`,
-      `ข้อมูลที่ยังไม่ครบ: ${state.unresolvedQuestions.map((question) => question.id).join(', ')}`,
+      `ข้อมูลที่ยังไม่ครบ: ${[...new Set(state.unresolvedQuestions.map((question) => question.scope === 'DOCUMENT' ? `${question.id} ${question.prompt}` : `${question.id} ${fieldLabels[question.field] ?? question.prompt}`))].join(' • ')}`,
       'พิมพ์ “ต่อ” หากต้องการกลับมาเติมภายหลัง',
     );
   } else if (state.unresolvedQuestions.length) {
     lines.push('', 'ข้อมูลที่ยังต้องตอบทั้งหมด');
-    for (const question of state.unresolvedQuestions) lines.push(`${question.id} ${question.prompt}`);
+    for (const question of state.unresolvedQuestions.filter((question) => question.scope === 'DOCUMENT')) lines.push(`${question.id} ${question.prompt}`);
+    for (const item of state.items) {
+      const questions = state.unresolvedQuestions.filter((question) => question.itemRef === item.itemRef);
+      if (questions.length) lines.push(`${item.itemRef} ${(item.description ?? 'รายการนี้').slice(0, 60)}: ${questions.map((question) => `${question.id} ${fieldLabels[question.field] ?? question.field}`).join(' • ')}`);
+    }
     lines.push('', 'ตอบหลายข้อในข้อความเดียวได้ • พิมพ์ “พัก” เพื่อกลับมาต่อ • พิมพ์ “หมด” เพื่อจบการกรอก');
   } else {
     lines.push('', 'ข้อมูลครบสำหรับส่งให้ผู้มีสิทธิ์ตรวจสอบแล้ว (ยังไม่ลงบัญชี)', 'พิมพ์ “หมด” เพื่อจบการกรอก หรือแก้ข้อมูลต่อได้');

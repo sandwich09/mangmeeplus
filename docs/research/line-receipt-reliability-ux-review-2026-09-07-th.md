@@ -285,7 +285,7 @@ UAT ต้องทดสอบ journey และ failure จริงแบบ�
 | A7 / T17 เก็บไว้ก่อน/เปลี่ยนเรื่อง | U + C + R: 3 คำพูดไม่มี control; direct use-case call ไม่มี accepted field แต่เปลี่ยนเงินได้ | รองรับ intent เก็บร่างกับ stable target หยุด collection ไม่แปลเป็น finalize | ทดสอบ router + API + คำตอบจริง: ทั้ง 3 คำพูดเก็บร่างเดิม/หยุดถาม ผู้ใช้เงียบหรือคุยเรื่องอื่นไม่แก้บิล ไม่ทวง ไม่ยืนยันเอง |
 | A8 / T18 ร่างเก่า | C + R: explicit target ใบที่ 6 ไม่ถูก lookup หลัง limit 5 | แยก recent discovery กับ scoped explicit target lookup | เปิดร่างเก่าที่ระบุได้แม้มีมากกว่า 5 ใบ และไม่เข้าถึงร่างนอกสิทธิ์ |
 
-สถานะทุก T01–T18: **มีแนวทางและเกณฑ์รับงาน แต่ยังไม่ implement และยังไม่มีผลตรวจหลังแก้** เอกสารนี้เป็น analysis/acceptance inventory ไม่ใช่ implementation plan ที่ผ่าน review แล้วหรือ regression test files ที่ commit แล้ว ก่อนลงมือแก้หลายโมดูลต้องใช้รายการนี้ผูกกับ spec/plan ที่เกี่ยวข้อง และเมื่อแก้จริงให้เพิ่ม commit/PR, คำสั่งทดสอบ, actual result, artifact และ UAT run ของแต่ละกลุ่ม ห้ามปิดรายการด้วยแค่แก้โค้ดหรือเปิด flag
+สถานะเมื่อจบการวิเคราะห์ก่อนอนุมัติ coding: **มีแนวทางและเกณฑ์รับงาน แต่ยังไม่ implement และยังไม่มีผลตรวจหลังแก้** เอกสารนี้เป็น analysis/acceptance inventory ไม่ใช่ implementation plan ที่ผ่าน review แล้วหรือ regression test files ที่ commit แล้ว ก่อนลงมือแก้หลายโมดูลต้องใช้รายการนี้ผูกกับ spec/plan ที่เกี่ยวข้อง และเมื่อแก้จริงให้เพิ่ม commit/PR, คำสั่งทดสอบ, actual result, artifact และ UAT run ของแต่ละกลุ่ม ห้ามปิดรายการด้วยแค่แก้โค้ดหรือเปิด flag
 
 ข้อสรุปที่ตอบไปก่อนหน้าและข้อจำกัดของหลักฐาน:
 
@@ -297,3 +297,6 @@ UAT ต้องทดสอบ journey และ failure จริงแบบ�
 | เกี่ยวกับกรอกตั้งค่าไหม | settings ไม่ได้แก้ zero parser; รอบสองบันทึกผ่านก่อน request ตั้งค่าที่พบ จึงไม่รองรับข้อสรุปว่าต้องกรอกตั้งค่าเพื่อหลบ NaN | ไม่ได้พิสูจน์ว่า settings ไม่มีผลกับระบบทุกเรื่อง เพราะ VAT/capture policy ใช้ settings; request log ไม่มีบริษัท/ค่าเก่าใหม่พอระบุว่าเป็นการตั้งค่าของร้านนี้ |
 
 หลักฐาน log ถูกบันทึกเป็นสรุปที่ลดข้อมูลลูกค้า พร้อมเวลา UTC/Bangkok, log group และ event IDs ใน [บันทึกเหตุการณ์แรก](../../docs/agent-memory/line-receipt-zero-price-diagnosis-2026-09-07.md) ไม่ได้ export raw customer logs ลง repository ผลคำสั่งจำลองอยู่ใน tool history และสรุปใน memory/§11; ยังไม่มีไฟล์ regression ถาวรจากงานวิเคราะห์นี้
+
+
+หลังผู้ใช้อนุมัติให้ลงมือทำ: ติดตาม spec/plan และผลตรวจหลังแก้ T01–T18 ที่ [implementation verification](receipt-reliability-remediation-verification-2026-09-07.md) ซึ่งแยกหลักฐาน local/CI ออกจากการรับงานบน UAT/production จริง

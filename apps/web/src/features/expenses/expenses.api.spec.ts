@@ -19,6 +19,7 @@ import {
   normalizeApiBase,
   recordExpensePayment,
   resolveUploadUrl,
+  updateExpenseSourceDraft,
   uploadReceiptFile,
 } from './expenses.api';
 
@@ -48,6 +49,33 @@ function mockAttachmentPreviewResponse(fileResponse: Response): Array<{ input: s
 }
 
 describe('expenses.api URL helpers', () => {
+  it('sends a source draft as the only update lane and keeps unknown values null', async () => {
+    let request: { url?: string; method?: string; body?: unknown } = {};
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      request = { url: String(input), method: init?.method, body: JSON.parse(String(init?.body)) };
+      return new Response(JSON.stringify({ id: 'expense-1', updatedAt: '2026-09-07T00:01:00.000Z' }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    await updateExpenseSourceDraft('company-1', 'expense-1', '2026-09-07T00:00:00.000Z', {
+      businessPurpose: 'ซื้อใช้ที่ร้าน',
+      items: [{ itemRef: 'item-2', quantity: null, unitPrice: '0' }],
+    });
+
+    assert.deepEqual(request, {
+      url: '/api/v1/companies/company-1/expenses/expense-1',
+      method: 'PATCH',
+      body: {
+        expectedUpdatedAt: '2026-09-07T00:00:00.000Z',
+        sourceDraft: {
+          businessPurpose: 'ซื้อใช้ที่ร้าน',
+          items: [{ itemRef: 'item-2', quantity: null, unitPrice: '0' }],
+        },
+      },
+    });
+  });
+
   it('carries same-expense routing and renders one localized actionable toast from a coded prepare rejection', async () => {
     const input = { reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'paid without final receipt',
       businessPurpose: 'business meal', payerUserId: 'payer-1', routeCheckBill: true as const,

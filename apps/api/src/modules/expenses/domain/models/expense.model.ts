@@ -322,6 +322,8 @@ export type ExpenseLineInput = {
   taxSnapshot?: import('@watchdog-bms/contracts').TransactionTaxSnapshot;
   taxComponents?: import('@watchdog-bms/contracts').TransactionTaxComponentPreview[];
   sourceLineId?: string;
+  /** Internal scoped identity retained by source-draft line materialization. */
+  preserveLineId?: string;
 };
 
 export type PaginatedExpenses = {

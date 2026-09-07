@@ -29,17 +29,17 @@ Draft integrity publishes the exact `sourceDraft` read/write contract and author
 
 1. [x] Update develop, create isolated branch/worktree, preserve pre-existing local files, read AGENTS/ponytail and relevant docs, record current defects.
 2. [x] Write this spec/plan and copy sanitized investigation/acceptance evidence into branch.
-3. [ ] Implement each lane with focused permanent regressions; publish sourceDraft contract early.
-4. [ ] Integrate receipt → collection → partial web save → LINE resume without lossy row replacement or false completion. Inspect all final mutation paths and scope/permission boundaries.
-5. [ ] Run meaningful focused suites; contracts/API/gateway/web typechecks; applicable build/DB/browser checks. Complete T01–T18 evidence ledger with exact commands/results and scope limits. Do not substitute tests of a helper for the stateful path that originally failed.
-6. [ ] Review combined diff against UX, SA, BA and AI engineering requirements; inspect adjacent money/tax/duplicate/quota/stale and role flows. Resolve findings before accepting.
+3. [x] Implement each lane with focused permanent regressions; publish sourceDraft contract early.
+4. [x] Integrate receipt → collection → partial web save → LINE resume without lossy row replacement or false completion. Inspect all final mutation paths and scope/permission boundaries.
+5. [x] Run meaningful focused suites; contracts/API/gateway/web typechecks; applicable build/DB/browser checks. Complete T01–T18 evidence ledger with exact commands/results and scope limits. Do not substitute tests of a helper for the stateful path that originally failed.
+6. [x] Review combined diff against UX, SA, BA and AI engineering requirements; inspect adjacent money/tax/duplicate/quota/stale and role flows. Resolve findings before accepting.
 7. [ ] Commit scoped files, push branch, create reviewable PR into develop with evidence. Wait for relevant CI; fix failures on this branch. Use authorized admin merge when needed after reviewing the actual result.
 8. [ ] Update local/remote develop, create develop → main PR with final scope and exact evidence, resolve conflicts without losing main-only release configuration, verify candidate/diff and checks, admin merge as authorized.
 9. [ ] Record PR URLs, commits, merged develop/main SHAs, final tests and remaining live acceptance. Update task memory and plan. Do not claim deployed behavior from a merge.
 
 ## Verification record
 
-To be filled with actual lane and integration outputs. Historical no-write reproductions remain pre-fix evidence in the review, not post-fix passes.
+See the [T01–T18 implementation and verification ledger](../research/receipt-reliability-remediation-verification-2026-09-07.md): whole workspace passed; final real PostgreSQL 26/26 and browser 6/6 passed, with contracts/API/gateway/web type checks and permanent CI registration. Historical no-write reproductions remain pre-fix evidence in the review, not post-fix passes. GitHub CI and merge evidence follow in the PRs.
 
 ## Runtime boundary
 

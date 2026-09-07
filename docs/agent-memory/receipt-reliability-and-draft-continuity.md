@@ -1,6 +1,6 @@
 # Agent Memory: receipt reliability and draft continuity
 
-Status: Authorized implementation in progress; spec/plan committed, three coding lanes running; coordinator T01 fix and real-DB regression passed.
+Status: Implementation and combined local verification passed; preparing feature PR, GitHub CI and develop/main merges.
 Owner: Coordinator, delegated GPT-6 Astra xhigh and GPT-5.6 Sol xhigh per user's explicit request.
 Scope: All 18 issue/acceptance entries since the first receipt incident; implement, verify, commit/push, PR/admin merge to develop and main. No deployment in this Git delivery request.
 Decisions:
@@ -12,12 +12,12 @@ Decisions:
 - Preserve monetary values when accepting only header/control/no fields. Ask all missing user facts together, allow partial answers and save-for-later, silence/unrelated tasks do not finalize or consume unrelated text.
 - Keep API permissions/CAS/tenant/branch and final financial boundaries explicit; reuse staged metadata instead of fabricating monetary zero/one.
 Open questions:
-- Publish exact narrow sourceDraft API/read projection before web wiring. Proposed shape and authority boundaries specified in spec §5.
-- Need real local DB/browser availability and all-lane test outcomes. Never claim live UAT/OA proof from fixtures or PR merge.
+- No product authorization question remains. Need GitHub CI and both Git merges; live UAT/OA acceptance remains a separate runtime step.
 Artifacts:
 - docs/specs/receipt-reliability-and-draft-continuity-spec.md
 - docs/plans/receipt-reliability-and-draft-continuity-plan.md
 - docs/research/line-receipt-reliability-ux-review-2026-09-07-th.md
+- docs/research/receipt-reliability-remediation-verification-2026-09-07.md
 Verification:
 - git pull --ff-only origin develop succeeded after preserving/restoring local conflicting files.
 - git diff --stat 604ac785 HEAD -- apps packages empty.
@@ -28,4 +28,12 @@ Verification:
 - Dedicated disposable PostgreSQL container mangmeeplus-receipt-remediation-pg-20260907 at 127.0.0.1:15439, database watchdog_bms. All 176 baseline migrations applied; no schema change. Config/contracts built and Prisma client generated.
 - RECEIPT_TRUTH_TEST_DATABASE_URL pointing only to that local container + RECEIPT_TRUTH_REQUIRE_POSTGRES=true: receipt-truth.pg.spec.ts passed 8 tests, 0 fail, 0 skip, including real zero-priced Decimal persistence and sibling VAT/charge/date/correction cases.
 - Seeded isolated DB using APP_ENV=local, disabled AI/mail and no S3 credentials/bucket (local fixture storage). Seed passed; output/receipt-remediation-20260907/local-seed.log retained locally. No production services or customer data touched.
-Next: Delegate coding lanes, implement coordinator OCR fix, integrate and verify T01–T18, push and merge reviewed PRs to develop/main.
+- SourceDraft contract is published and integrated with real HTTP GET/PATCH; upload-only source editor passed actual authentication and revision checks. No finance permission added.
+- Final Playwright 6/6 passed in 14.6 seconds at 390/1280 px: partial reload, stale PATCH409, reviewer legacy READY reopen, upload-only image preview/save, and empty-OCR add-item continuation. Compact source-only layout, truthful unknown totals/date and visible correction CTA verified. Uses dedicated versioned local MinIO bucket receipt-remediation-20260907-01a0778d; fixtures remove their exact image versions and records.
+- Final root real PostgreSQL suites passed 26/26 with zero skips: receipt truth 8, source draft 11, capture/delivery reliability 6, existing LINE draft edit 1. Source suite uses real repository/audit transactions with a passthrough tax resolver and existing tax/confirmation suites as supplements.
+- Final whole workspace pnpm test passed. Owner focused suites passed 185/185 source and 537/537 delivery. API TypeScript with existing 8 GB heap, contracts build and gateway TypeScript passed; root web typecheck passed after the final correction CTA. Do not add overlapping test counts together.
+- Combined review fixed legacy READY correction dead-end, unpersisted source completeness at final mutation, source-to-financial row identity/deletion, saved marker leakage across attempts, canonical JSONB push identity, and default role/navigation compatibility. No dependencies, schema migrations or runtime default changes.
+- CI invokes source/LINE continuation via the existing whole-chain catalog plus both new PostgreSQL suites. Spec coverage 3/3 and catalog contract 4/4 passed without package.json changes. Final diff check passed.
+- Existing whole-chain acceptance runner passed all eight repository suites (21 catalog scenarios); its three external-image/provider acceptance scenarios remain explicitly outside this local pass.
+- Fetched origin develop/main: still 4b91953f /3720db9a; no open PRs when checked.
+Next: Commit scoped implementation/evidence files; push/admin-merge reviewed PRs to develop and main after CI; retain local test artifacts and remove only own disposable PostgreSQL container and local MinIO bucket. No deploy dispatch.

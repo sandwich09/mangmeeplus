@@ -1,7 +1,14 @@
 import { Logger } from '@nestjs/common';
+import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } from '@watchdog-bms/contracts';
+import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { effectiveMonthlySlipLimit } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokMonthKey } from './company-ai-usage-meter';
+
+// Outlast one 55s media route plus the full receipt provider chain and upload bookkeeping.
+export const LINE_RECEIPT_RETRY_LEASE_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS + 105_000;
+export const LINE_RECEIPT_RETRY_LEASE_CODE = 'LINE_OCR_RETRY_ACTIVE';
+export const LINE_RECEIPT_RETRY_WAIT_CODE = 'RETRYABLE_OCR_ADMISSION_WAIT';
 
 const logger = new Logger('CompanyOcrGovernance');
 
@@ -103,7 +110,7 @@ export const isOcrPreProviderHttpStatus = (status: number): boolean =>
  * that aborts the connection first has no body to read, so nothing is metered at all — which is
  * exactly why `AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS` is derived to outlast the gateway's whole chain
  * rather than race it. Within that guarantee a transport timeout means the gateway is gone, and a
- * gateway that is gone spent nothing.
+ * gateway that is gone has unknown spend, not proof of zero cost.
  */
 export function isOcrRetryableProviderFailure(response: { status?: string; errorCode?: string }): boolean {
   return response.status === 'failed' && !(response.errorCode ?? '').startsWith('OCR_');
@@ -134,7 +141,7 @@ export async function releaseReceiptQuotaNotice(
       data: { quotaNoticeSentMonthKey: null },
     });
   } catch (error) {
-    logger.warn({ msg: 'receipt.quota.notice_release_failed', companyId, monthKey, error: (error as Error).message });
+    logger.warn({ msg: 'receipt.quota.notice_release_failed', companyId, monthKey, ...safeLineErrorDetails(error) });
   }
 }
 
@@ -153,7 +160,7 @@ export async function claimReceiptQuotaNotice(
     });
     return count === 1;
   } catch (error) {
-    logger.warn({ msg: 'receipt.quota.notice_claim_failed', companyId, monthKey, error: (error as Error).message });
+    logger.warn({ msg: 'receipt.quota.notice_claim_failed', companyId, monthKey, ...safeLineErrorDetails(error) });
     return false;
   }
 }
@@ -177,6 +184,8 @@ export async function admitCompanyOcr(
     monthKey?: string;
     /** RECEIPT_QUOTA_ENFORCED. Off (the default) measures the plan ceiling without refusing on it. */
     enforceReceiptQuota?: boolean;
+    /** Server-owned orphan event only; a duplicate admission alone never authorizes another read. */
+    retryWebhookEventId?: string;
   },
 ): Promise<CompanyOcrAdmission> {
   const monthKey = input.monthKey ?? bangkokMonthKey();
@@ -198,9 +207,38 @@ export async function admitCompanyOcr(
             requestId: input.requestId,
           },
         },
-        select: { id: true },
+        select: { id: true, monthKey: true, createdAt: true },
       });
-      if (replay) return { allowed: false, reason: 'duplicate' } as const;
+      if (replay) {
+        const cutoff = new Date(Date.now() - LINE_RECEIPT_RETRY_LEASE_MS);
+        if (input.sourceRoute !== 'receipt-ocr-line' || !input.retryWebhookEventId || replay.createdAt > cutoff) return { allowed: false, reason: 'duplicate' } as const;
+        const owner = await tx.lineWebhookEventLog.findUnique({ where: { webhookEventId: input.retryWebhookEventId } });
+        const envelope = owner?.payloadJson as { item?: { lineMessageId?: string; companyIdAtAcceptance?: string } } | null;
+        if (!owner || owner.status !== 'received' || owner.errorCode !== null || !owner.processedAt
+          || owner.processedAt <= cutoff || envelope?.item?.lineMessageId !== input.requestId
+          || (owner.companyId ?? envelope?.item?.companyIdAtAcceptance) !== input.companyId) return { allowed: false, reason: 'duplicate' } as const;
+        const [captured, active] = await Promise.all([
+          tx.expenseRecord.findFirst({ where: { companyId: input.companyId, lineMessageId: input.requestId }, select: { id: true } }),
+          tx.lineWebhookEventLog.findFirst({ where: { companyId: input.companyId, status: 'received',
+            errorCode: LINE_RECEIPT_RETRY_LEASE_CODE, processedAt: { gt: cutoff },
+            payloadJson: { path: ['item', 'lineMessageId'], equals: input.requestId } }, select: { id: true } }),
+        ]);
+        if (captured || active) return { allowed: false, reason: 'duplicate' } as const;
+        const policy = await tx.companyAiConfiguration.findUnique({ where: { companyId: input.companyId }, select: { ocrEnabled: true, ocrMonthlyLimit: true } });
+        if (policy?.ocrEnabled === false) return { allowed: false, reason: 'disabled' } as const;
+        const claimed = await tx.lineWebhookEventLog.updateMany({
+          where: { id: owner.id, status: 'received', errorCode: null, processedAt: owner.processedAt },
+          data: { errorCode: LINE_RECEIPT_RETRY_LEASE_CODE, companyId: input.companyId, processedAt: new Date() },
+        });
+        if (claimed.count !== 1) return { allowed: false, reason: 'duplicate' } as const;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${replay.monthKey}`}))`;
+        const usage = await tx.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId: input.companyId, monthKey: replay.monthKey } }, select: { usedCount: true } });
+        await tx.auditLog.create({ data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
+          action: 'receipt.ocr.admission.resumed', targetType: 'company_ocr_usage_event', targetId: replay.id,
+          requestId: input.retryWebhookEventId, result: 'SUCCESS', riskLevel: 'LOW',
+          metadataJson: { operationId: input.requestId, monthKey: replay.monthKey } } });
+        return { allowed: true, monthKey: replay.monthKey, usedCount: usage.usedCount, monthlyLimit: policy?.ocrMonthlyLimit ?? null } as const;
+      }
 
       const configuration = await tx.companyAiConfiguration.findUnique({
         where: { companyId: input.companyId },
@@ -266,7 +304,7 @@ export async function admitCompanyOcr(
       companyId: input.companyId,
       sourceRoute: input.sourceRoute,
       requestId: input.requestId,
-      error: (error as Error).message,
+      ...safeLineErrorDetails(error),
     });
     return { allowed: false, reason: 'unavailable' };
   }
@@ -325,12 +363,13 @@ async function recordPlanQuotaWouldBlock(
       },
     });
   } catch (error) {
-    logger.warn({ msg: 'plan.receipt_quota.audit_failed', companyId: input.companyId, monthKey, error: (error as Error).message });
+    logger.warn({ msg: 'plan.receipt_quota.audit_failed', companyId: input.companyId, monthKey, ...safeLineErrorDetails(error) });
   }
 }
 
 /**
- * Compensates an admission only when the downstream gateway proves that no OCR provider ran.
+ * Compensates admission after a proven pre-provider refusal or a system failure before a usable
+ * receipt result. Customer entitlement is separate from provider spend; usage rows are retained.
  * The same locks as admission make the event deletion and aggregate decrement atomic and safe
  * against a concurrent retry. Missing events are an idempotent success.
  */
@@ -340,6 +379,7 @@ export async function releaseCompanyOcrAdmission(
     companyId: string;
     sourceRoute: CompanyOcrSourceRoute;
     requestId: string;
+    reason?: 'SYSTEM_FAILURE_NO_USABLE_RESULT';
   },
 ): Promise<boolean> {
   let lastError: unknown;
@@ -369,6 +409,12 @@ export async function releaseCompanyOcrAdmission(
           data: { usedCount: { decrement: 1 } },
         });
         if (aggregate.count !== 1) throw new Error('OCR_QUOTA_AGGREGATE_MISSING');
+        if (input.reason) await tx.auditLog.create({
+          data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
+            action: 'receipt.ocr.admission.compensated', targetType: 'company_ocr_usage_event', targetId: event.id,
+            requestId: `ocr-compensation-${event.id}`, result: 'SUCCESS', riskLevel: 'LOW',
+            metadataJson: { sourceRoute: input.sourceRoute, operationId: input.requestId, monthKey: event.monthKey, reason: input.reason } },
+        });
         await tx.companyOcrUsageEvent.delete({ where: { id: event.id } });
         return true;
       });
@@ -388,7 +434,7 @@ export async function releaseCompanyOcrAdmission(
     companyId: input.companyId,
     sourceRoute: input.sourceRoute,
     requestId: input.requestId,
-    error: (lastError as Error).message,
+    ...safeLineErrorDetails(lastError),
   });
   return false;
 }

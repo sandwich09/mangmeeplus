@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { RecoverOrphanLineEventsUseCase, parseBufferEnvelope, parseOutcomeMessages, ORPHAN_REPLAY_MAX_AGE_MS } from './recover-orphan-line-events.use-case';
+import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE } from '../company-ocr-governance';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 
 type Row = {
@@ -41,7 +42,7 @@ function makeHarness(rows: Row[], opts: {
   const outcomeStore = new Map((opts.outcomes ?? []).map((outcome) => [outcome.webhookEventId, { ...outcome }]));
   const enqueued: any[] = [];
   const audits: any[] = [];
-  const pushes: Array<{ to: string; messages: any[] }> = [];
+  const pushes: Array<{ to: string; messages: any[]; operationId?: string }> = [];
 
   const prisma = {
     client: {
@@ -55,6 +56,7 @@ function makeHarness(rows: Row[], opts: {
           if (!outcome || (where.deliveredAt === null && outcome.deliveredAt !== null)) return { count: 0 };
           if (data.attempts?.increment) outcome.attempts += data.attempts.increment;
           if (data.deliveredAt) outcome.deliveredAt = data.deliveredAt;
+          if (data.messagesJson) outcome.messagesJson = data.messagesJson;
           return { count: 1 };
         },
       },
@@ -64,11 +66,15 @@ function makeHarness(rows: Row[], opts: {
             if (where.payloadJson && row.payloadJson == null) return false;
             if (where.createdAt?.lte && row.createdAt > where.createdAt.lte) return false;
             if (where.createdAt?.lt && row.createdAt >= where.createdAt.lt) return false;
+            const before = where.AND?.[0]?.OR?.[1]?.processedAt?.lte;
+            if (before && row.processedAt && row.processedAt > before) return false;
             if (!where.OR) return true;
             return where.OR.some((clause: any) => {
               if (clause.status !== row.status) return false;
+              if (typeof clause.errorCode === 'string' && clause.errorCode !== row.errorCode) return false;
+              if (clause.processedAt?.lte && row.processedAt && row.processedAt > clause.processedAt.lte) return false;
               if (clause.errorCode === null) return row.errorCode === null;
-              if (clause.errorCode?.startsWith) return (row.errorCode ?? '').startsWith(clause.errorCode.startsWith);
+              if (typeof clause.errorCode?.startsWith === 'string') return (row.errorCode ?? '').startsWith(clause.errorCode.startsWith);
               return true;
             });
           });
@@ -78,7 +84,7 @@ function makeHarness(rows: Row[], opts: {
         updateMany: async ({ where, data }: any) => {
           const row = store.get(where.id);
           if (!row || row.status !== where.status || (row.errorCode ?? null) !== (where.errorCode ?? null)) return { count: 0 };
-          if (opts.casWins === false) return { count: 0 };
+          if (opts.casWins === false || (where.processedAt !== undefined && row.processedAt?.getTime() !== where.processedAt?.getTime())) return { count: 0 };
           Object.assign(row, data, { payloadJson: 'payloadJson' in data ? null : row.payloadJson });
           return { count: 1 };
         },
@@ -103,9 +109,9 @@ function makeHarness(rows: Row[], opts: {
     },
   } as any;
   const lineReply = {
-    sendPush: async (to: string, messages: any[]) => {
+    sendPush: async (to: string, messages: any[], operationId?: string) => {
       if (opts.pushThrows) throw new Error('LINE unreachable');
-      pushes.push({ to, messages });
+      pushes.push({ to, messages, operationId });
       return opts.pushResult ?? 'ok';
     },
     sendReply: async () => { throw new Error('a replay must never spend a reply token'); },
@@ -172,6 +178,19 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     const result = await useCase.execute();
     assert.equal(result.replayed, 0);
     assert.equal(enqueued.length, 0);
+  });
+
+  it('waits for a provider-input lease before retrying the same durable input', async () => {
+    for (const errorCode of [LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_WAIT_CODE]) {
+      const h = makeHarness([rowAt('provider-wait', LINE_RECEIPT_RETRY_LEASE_MS + 1000, {
+        status: 'received', errorCode, processedAt: new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1000),
+      })]);
+      assert.equal((await h.useCase.execute()).replayed, 0);
+      assert.equal(h.enqueued.length, 0);
+      h.store.get('provider-wait')!.processedAt = new Date(Date.now() - LINE_RECEIPT_RETRY_LEASE_MS - 1000);
+      assert.equal((await h.useCase.execute()).replayed, 1);
+      assert.equal(h.enqueued[0].item.webhookEventId, 'provider-wait');
+    }
   });
 
   it('replays a row parked by a failed dispatch notice', async () => {
@@ -269,9 +288,8 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(enqueued.length, 0, 'a stored outcome is replayed, never re-routed');
     assert.equal(pushes.length, 1, 'exactly one push, and no reply token is spent');
     assert.equal(pushes[0]!.to, 'U-chat', 'pushed into the source chat, not the user id');
-    // The late answer names its question first; the stored payload itself stays byte-for-byte.
-    assert.match(pushes[0]!.messages[0]?.text ?? '', /ตอบข้อความก่อนหน้า.*ยอดขายเดือนนี้/);
-    assert.deepEqual(pushes[0]!.messages.slice(1), STORED_MESSAGES, 'byte-for-byte the rendered payload');
+    assert.deepEqual(pushes[0]!.messages, STORED_MESSAGES, 'byte-for-byte the FIRST push payload');
+    assert.equal(pushes[0]!.operationId, 'replay-1');
     // Delivery — and only delivery — closes the turn.
     assert.equal(store.get('replay-1')?.status, 'completed');
     assert.equal(store.get('replay-1')?.errorCode, null);
@@ -292,23 +310,17 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.deepEqual(pushes[0]!.messages, fullPayload, 'a full payload ships verbatim with no prefix');
   });
 
-  it('NEVER pushes the stale stored outcome for LINE_OUTCOME_NOT_RECORDED — legacy replay instead (PR #238 R2)', async () => {
-    // End-to-end recovery half of the §14.3 chain: in-turn, the first upsert persisted the Flex,
-    // LINE rejected it, and the text replacement upsert FAILED — the webhook seam parked the row as
-    // LINE_OUTCOME_NOT_RECORDED without sending (covered in process-line-webhook.use-case.spec).
-    // The sweep must now treat the stored outcome as superseded: pushing it would resend the very
-    // bytes LINE refused. The honest path is legacy input replay, whose re-run overwrites the row.
-    const { useCase, store, enqueued, pushes } = makeHarness([
-      rowAt('stale-flex-1', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_OUTCOME_NOT_RECORDED' }),
-    ], { replayEnabled: true, outcomes: [{ webhookEventId: 'stale-flex-1', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
-
-    const result = await useCase.execute();
-
-    assert.equal(pushes.length, 0, 'the rejected payload is never pushed');
-    assert.equal(result.replayed, 1);
-    assert.equal(enqueued.length, 1, 'the input goes back through the buffer to be recomputed');
-    assert.equal(store.get('stale-flex-1')?.status, 'received');
-    assert.equal(store.get('stale-flex-1')?.errorCode, 'RETRYABLE_ORPHAN_REPLAY');
+  it('converts a provider-rejected representation without rerunning the business operation', async () => {
+    for (const errorCode of ['LINE_OUTCOME_REPRESENTATION_PENDING', 'LINE_OUTCOME_NOT_RECORDED']) {
+      const { useCase, store, enqueued, pushes, outcomeStore } = makeHarness([
+        rowAt('stale-flex-1', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode }),
+      ], { replayEnabled: true, outcomes: [{ webhookEventId: 'stale-flex-1', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
+      assert.equal((await useCase.execute()).replayed, 1);
+      assert.deepEqual(pushes[0]!.messages, [{ type: 'text', text: STORED_MESSAGES[0].altText }]);
+      assert.deepEqual(outcomeStore.get('stale-flex-1')!.messagesJson, pushes[0]!.messages);
+      assert.equal(enqueued.length, 0);
+      assert.equal(store.get('stale-flex-1')?.status, 'completed');
+    }
   });
 
   it('keeps the row claimable when the replay push does not reach LINE', async () => {
@@ -352,17 +364,42 @@ describe('RecoverOrphanLineEventsUseCase', () => {
     assert.equal(store.get('replay-4')?.status, 'orphan_expired');
   });
 
-  it('falls back to the legacy input replay when no outcome was recorded', async () => {
-    // The fail-closed delivery seam parks a row it could not record as LINE_OUTCOME_NOT_RECORDED.
-    // Nothing reached the user and nothing is stored, so recomputing is the only honest recovery.
-    const { useCase, enqueued, pushes } = makeHarness([
+  it('parks a missing business outcome for repair instead of repeating its mutation', async () => {
+    const { useCase, enqueued, pushes, store } = makeHarness([
       rowAt('replay-5', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_OUTCOME_NOT_RECORDED' }),
     ], { replayEnabled: true });
-    const result = await useCase.execute();
-    assert.equal(result.replayed, 1);
+    assert.equal((await useCase.execute()).skipped, 1);
     assert.equal(pushes.length, 0);
-    assert.equal(enqueued.length, 1, 'no stored outcome means the legacy branch still owns the row');
-    assert.equal(enqueued[0].item.webhookEventId, 'replay-5');
+    assert.equal(enqueued.length, 0);
+    assert.equal(store.get('replay-5')?.errorCode, 'LINE_OUTCOME_RECOVERY_REQUIRED');
+  });
+
+  it('reconciles accepted outcomes after a restart without pushing or rerouting them', async () => {
+    const { useCase, enqueued, pushes, store } = makeHarness([
+      rowAt('accepted', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' }),
+    ], { replayEnabled: true, outcomes: [{ webhookEventId: 'accepted', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: new Date() }] });
+    assert.equal((await useCase.execute()).skipped, 1);
+    assert.equal(pushes.length, 0);
+    assert.equal(enqueued.length, 0);
+    assert.equal(store.get('accepted')?.status, 'completed');
+  });
+
+  it('leases a failed attempt until the retry interval and parks permanent failure', async () => {
+    const pending = makeHarness([
+      rowAt('retry', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' }),
+    ], { replayEnabled: true, pushResult: 'failed_other', outcomes: [{ webhookEventId: 'retry', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
+    await pending.useCase.execute();
+    await pending.useCase.execute();
+    assert.equal(pending.pushes.length, 1, 'no repeated push on the next immediate worker tick');
+    pending.store.get('retry')!.processedAt = new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1);
+    await pending.useCase.execute();
+    assert.equal(pending.pushes.length, 2);
+    assert.deepEqual(pending.pushes[0], pending.pushes[1], 'recipient, bytes and retry operation survive the lease');
+    const permanent = makeHarness([
+      rowAt('permanent', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' }),
+    ], { replayEnabled: true, pushResult: 'failed_permanent', outcomes: [{ webhookEventId: 'permanent', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });
+    await permanent.useCase.execute();
+    assert.equal(permanent.store.get('permanent')?.status, 'delivery_failed');
   });
 
   it('parks an unreadable stored outcome rather than pushing a half-formed payload', async () => {

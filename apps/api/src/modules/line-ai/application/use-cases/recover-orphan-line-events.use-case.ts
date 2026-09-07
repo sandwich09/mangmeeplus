@@ -18,9 +18,10 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { LineMessageBufferService, type LineBufferEnvelope } from '../line-message-buffer.service';
+import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE } from '../company-ocr-governance';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { emitLineAiTerminalOutcome } from '../../domain/logic/line-ai-terminal-outcome.logic';
-import { LineReplyAdapter, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { LineReplyAdapter, parseOutcomeMessages, safeLineErrorDetails } from '../../infrastructure/line-reply.adapter';
 
 /** Past this age the employee has moved on; answering an hour-old question is worse than not
  *  answering it. Reaching it means the sweep itself was down, so the row is parked for ops
@@ -34,16 +35,7 @@ const MAX_PURGE_BATCH = 500;
  *  the next tick picks up again, and the age bound is what finally parks it. */
 const OUTCOME_REPLAY_CLAIM = 'RETRYABLE_OUTCOME_REPLAY';
 
-/** Own data again, but a row rewritten by hand must not take the sweep down — and it must never be
- *  pushed half-formed, because these bytes go straight to a person's chat. */
-export function parseOutcomeMessages(value: unknown): LineReplyMessage[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const messages = value as Array<Partial<LineReplyMessage>>;
-  const valid = messages.every((message) => (message?.type === 'text' && typeof (message as { text?: unknown }).text === 'string')
-    || (message?.type === 'flex' && typeof (message as { altText?: unknown }).altText === 'string'
-      && !!(message as { contents?: unknown }).contents));
-  return valid ? (value as LineReplyMessage[]) : null;
-}
+export { parseOutcomeMessages } from '../../infrastructure/line-reply.adapter';
 
 export type OrphanSweepResult = {
   replayed: number;
@@ -84,6 +76,7 @@ export class RecoverOrphanLineEventsUseCase {
       where: {
         payloadJson: { not: Prisma.DbNull },
         createdAt: { lte: new Date(now - LINE_BUFFER_ORPHAN_REPROCESS_MS) },
+        AND: [{ OR: [{ processedAt: null }, { processedAt: { lte: new Date(now - LINE_BUFFER_ORPHAN_REPROCESS_MS) } }] }],
         // Only rows the employee never heard from. `errorCode: null` is doing real work here:
         // executeReceiptUpload and the media-download path answer with ERROR_REPLY and then
         // release the row as RETRYABLE_*, so sweeping those would send a second error message
@@ -92,6 +85,8 @@ export class RecoverOrphanLineEventsUseCase {
         OR: [
           // Never dispatched, or dispatched by a process that died mid-turn.
           { status: 'received', errorCode: null },
+          { status: 'received', errorCode: LINE_RECEIPT_RETRY_LEASE_CODE, processedAt: { lte: new Date(now - LINE_RECEIPT_RETRY_LEASE_MS) } },
+          { status: 'received', errorCode: LINE_RECEIPT_RETRY_WAIT_CODE, processedAt: { lte: new Date(now - LINE_RECEIPT_RETRY_LEASE_MS) } },
           // Parked by the buffer's dispatch-failure path when even the fallback message could
           // not be sent — that row still owes the user something.
           { status: 'delivery_pending', errorCode: { startsWith: 'RETRYABLE_' } },
@@ -112,14 +107,14 @@ export class RecoverOrphanLineEventsUseCase {
       take: Math.min(Math.max(batchSize, 1), MAX_SWEEP_BATCH),
     });
 
-    // One query for the batch, and only when the lane is on. `deliveredAt: null` is the guard that
-    // makes replay idempotent across ticks: an outcome LINE already accepted is never sent twice.
+    // Read pending AND accepted outcomes. A crash after API acceptance but before event bookkeeping
+    // must reconcile the event without rerouting or sending the already accepted result.
     const outcomes = this.config.lineAiTerminalOutcomeReplayEnabled && rows.length > 0
       ? new Map((await this.prisma.client.lineTurnOutcome.findMany({
-        where: { webhookEventId: { in: rows.map((row) => row.webhookEventId) }, deliveredAt: null },
-        select: { webhookEventId: true, messagesJson: true },
-      })).map((outcome) => [outcome.webhookEventId, outcome.messagesJson]))
-      : new Map<string, unknown>();
+        where: { webhookEventId: { in: rows.map((row) => row.webhookEventId) } },
+        select: { webhookEventId: true, messagesJson: true, deliveredAt: true },
+      })).map((outcome) => [outcome.webhookEventId, outcome]))
+      : new Map<string, { messagesJson: unknown; deliveredAt: Date | null }>();
 
     const result: OrphanSweepResult = { replayed: 0, expired: 0, skipped: 0, purged: 0 };
     const replayBefore = new Date(now - ORPHAN_REPLAY_MAX_AGE_MS);
@@ -135,22 +130,30 @@ export class RecoverOrphanLineEventsUseCase {
         result.expired += 1;
         continue;
       }
-      // §8.3: the outcome for this turn is already decided and durable, so the retry REPLAYS it and
-      // must not go back through the buffer — re-routing the same input can compute a different
-      // answer and lose the facts the original turn accepted. Rows without an outcome (the flag was
-      // off when they ran, or the outcome write itself failed) keep the legacy input replay below,
-      // which is the only honest recovery when there is nothing recorded to send.
-      //
-      // PR #238 review R2: LINE_OUTCOME_NOT_RECORDED is the one code where a stored outcome must
-      // NOT be trusted — it marks a turn whose outcome-of-record could not be updated in-turn, so
-      // whatever the table still holds is the SUPERSEDED payload (concretely: the Flex LINE just
-      // rejected, whose text replacement failed to persist). Pushing it would resend the refused
-      // bytes; legacy input replay below recomputes the turn and its upsert overwrites the stale row.
-      const outcome = row.errorCode === 'LINE_OUTCOME_NOT_RECORDED'
-        ? undefined
-        : outcomes.get(row.webhookEventId);
-      if (outcome !== undefined) {
-        result[await this.replayOutcome(row, envelope, outcome)] += 1;
+      const outcome = outcomes.get(row.webhookEventId);
+      if (outcome && row.errorCode === 'LINE_API_ACCEPTED') {
+        await this.prisma.client.lineTurnOutcome.updateMany({
+          where: { webhookEventId: row.webhookEventId, deliveredAt: null }, data: { deliveredAt: new Date() },
+        });
+        await this.park(row, 'completed', 'LINE_OUTCOME_ALREADY_ACCEPTED');
+        result.skipped += 1;
+        continue;
+      }
+      if (outcome?.deliveredAt) {
+        // The send committed before event bookkeeping did: never recompute an accepted turn.
+        await this.park(row, 'completed', 'LINE_OUTCOME_ALREADY_ACCEPTED');
+        result.skipped += 1;
+        continue;
+      }
+      if (outcome) {
+        result[await this.replayOutcome(row, envelope, outcome.messagesJson)] += 1;
+        continue;
+      }
+      if (row.status === 'delivery_pending' && row.errorCode?.startsWith('LINE_')) {
+        // A business mutation may already have committed. Missing delivery storage is an ops
+        // repair, not permission to rerun the user's operation.
+        await this.park(row, 'delivery_failed', 'LINE_OUTCOME_RECOVERY_REQUIRED');
+        result.skipped += 1;
         continue;
       }
       // CAS on the exact row state that was read: only one sweeper (or pod) may hand a row back
@@ -169,7 +172,7 @@ export class RecoverOrphanLineEventsUseCase {
         result.replayed += 1;
       } catch (err) {
         // Left reclaimable on purpose: the next tick retries until the age bound parks it.
-        this.logger.warn({ msg: 'line_orphan_replay_failed', webhookEventId: row.webhookEventId, error: (err as Error).message });
+        this.logger.warn({ msg: 'line_orphan_replay_failed', webhookEventId: row.webhookEventId, ...safeLineErrorDetails(err) });
         result.skipped += 1;
       }
     }
@@ -206,18 +209,28 @@ export class RecoverOrphanLineEventsUseCase {
    * it is picked up on the next tick; and the age bound above is what ends the retry loop.
    */
   private async replayOutcome(
-    row: { id: string; status: string; errorCode: string | null; webhookEventId: string },
+    row: { id: string; status: string; errorCode: string | null; webhookEventId: string; processedAt: Date | null },
     envelope: LineBufferEnvelope,
     messagesJson: unknown,
   ): Promise<'replayed' | 'skipped'> {
-    const messages = parseOutcomeMessages(messagesJson);
+    let messages = parseOutcomeMessages(messagesJson);
     if (!messages) {
       await this.park(row, 'orphan_unreadable', 'ORPHAN_OUTCOME_UNREADABLE');
       return 'skipped';
     }
+    if (row.errorCode === 'LINE_OUTCOME_REPRESENTATION_PENDING' || row.errorCode === 'LINE_OUTCOME_NOT_RECORDED') {
+      messages = messages.map((message) => message.type === 'flex'
+        ? { type: 'text' as const, text: message.altText, ...(message.quickReply ? { quickReply: message.quickReply } : {}) }
+        : message);
+      const replaced = await this.prisma.client.lineTurnOutcome.updateMany({
+        where: { webhookEventId: row.webhookEventId, deliveredAt: null, messagesJson: { equals: messagesJson as Prisma.InputJsonValue } },
+        data: { messagesJson: messages as unknown as Prisma.InputJsonValue, presentationKind: 'text_fallback' },
+      });
+      if (replaced.count !== 1) return 'skipped';
+    }
     const claimed = await this.prisma.client.lineWebhookEventLog.updateMany({
-      where: { id: row.id, status: row.status, errorCode: row.errorCode },
-      data: { status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM, processedAt: null },
+      where: { id: row.id, status: row.status, errorCode: row.errorCode, processedAt: row.processedAt },
+      data: { status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM, processedAt: new Date() },
     });
     if (claimed.count !== 1) return 'skipped';
 
@@ -226,34 +239,31 @@ export class RecoverOrphanLineEventsUseCase {
       data: { attempts: { increment: 1 } },
     }).catch(() => null);
 
-    // A replayed outcome lands minutes after its question — possibly mid-conversation about
-    // something else — so name what it answers. The stored messages themselves stay verbatim
-    // (§8.3); LINE allows 5 messages per push, so a full payload drops the prefix, not the answer.
-    const questionPreview = envelope.item.kind === 'text' ? envelope.item.text.trim().slice(0, 60) : '';
-    const contextPrefix = this.lineReply.buildTextMessage(questionPreview
-      ? `💬 ตอบข้อความก่อนหน้านะคะ: “${questionPreview}”`
-      : '💬 ตอบรูป/ไฟล์ที่ส่งไว้ก่อนหน้านะคะ');
-    const payload = messages.length < 5 ? [contextPrefix, ...messages] : messages;
-    let delivered = false;
+    // Same recipient, payload and operation key as the FIRST push, including reply fallback.
+    let delivery: Awaited<ReturnType<LineReplyAdapter['sendPush']>> = 'failed_other';
     try {
-      delivered = await this.lineReply.sendPush(envelope.chatId, payload) === 'ok';
+      delivery = await this.lineReply.sendPush(envelope.chatId, messages, row.webhookEventId);
     } catch (err) {
-      this.logger.warn({ msg: 'line_outcome_replay_failed', webhookEventId: row.webhookEventId, error: (err as Error).message });
+      this.logger.warn({ msg: 'line_outcome_replay_failed', webhookEventId: row.webhookEventId, ...safeLineErrorDetails(err) });
     }
+    if (delivery === 'failed_permanent') {
+      await this.park({ ...row, status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM }, 'delivery_failed', 'LINE_DELIVERY_FAILED_PERMANENT');
+      return 'skipped';
+    }
+    const delivered = delivery === 'ok';
     if (!delivered) {
       // Left claimed and `delivery_pending` on purpose: still retryable, still visible, still owed.
       this.logger.warn({ msg: 'line_outcome_replay_undelivered', webhookEventId: row.webhookEventId });
       return 'skipped';
     }
-    // Delivery is the ONLY thing that closes the turn, and only against the claim this sweeper won.
+    await this.prisma.client.lineTurnOutcome.updateMany({
+      where: { webhookEventId: row.webhookEventId, deliveredAt: null },
+      data: { deliveredAt: new Date() },
+    });
     await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { id: row.id, status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM },
       data: { status: 'completed', errorCode: null, processedAt: new Date(), payloadJson: Prisma.DbNull },
     });
-    await this.prisma.client.lineTurnOutcome.updateMany({
-      where: { webhookEventId: row.webhookEventId, deliveredAt: null },
-      data: { deliveredAt: new Date() },
-    }).catch(() => null);
     this.logger.log({ msg: 'line_outcome_replayed', webhookEventId: row.webhookEventId, messageCount: messages.length });
     emitLineAiTerminalOutcome(this.logger, { webhookEventId: row.webhookEventId, status: 'completed' });
     return 'replayed';

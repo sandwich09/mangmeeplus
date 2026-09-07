@@ -167,6 +167,8 @@ describe('AiGatewayClient actor delegation', () => {
 describe('AiGatewayClient OCR governance', () => {
   function readyOcrPrisma() {
     const events: any[] = [];
+    const compensations: any[] = [];
+    const providerUsage: any[] = [];
     let usedCount = 0;
     const tx = {
       $executeRaw: async () => undefined,
@@ -192,7 +194,9 @@ describe('AiGatewayClient OCR governance', () => {
       // P10-L §15.1: no CompanyPlanTerm row = grandfathered unlimited, so the ops-brake behaviour
       // every case in this file asserts is unchanged by the commercial ceiling layered above it.
       companyPlanTerm: { findUnique: async () => null },
-      auditLog: { findFirst: async () => null },
+      auditLog: { findFirst: async () => null, create: async ({ data }: any) => { compensations.push(data); return data; } },
+      aiUsageEvent: { createMany: async ({ data }: any) => { providerUsage.push(...data); return { count: data.length }; } },
+      companyAiMonthlyUsage: { upsert: async ({ create }: any) => ({ costSatang: create.costSatang }) },
     };
     const prisma = {
       client: {
@@ -201,8 +205,39 @@ describe('AiGatewayClient OCR governance', () => {
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
       },
     } as any;
-    return { prisma, events, usedCount: () => usedCount };
+    return { prisma, events, compensations, providerUsage, usedCount: () => usedCount };
   }
+
+  it('credits one unusable system attempt exactly once while retaining actual provider spend and admitting its retry once', async () => {
+    __resetCompanyAiBudgetCache();
+    const state = readyOcrPrisma();
+    const originalFetch = globalThis.fetch;
+    const request = { requestId: 'attempt-1', companyId: 'company-1', userId: 'user-1', activeCategories: [],
+      attachment: { id: 'immutable-receipt-input', mimeType: 'image/jpeg' as const, purpose: 'receipt' as const, contentBase64: 'AA==' } };
+    try {
+      const client = new AiGatewayClient({ aiGatewayInternalUrl: 'http://ai-gateway.test/v1', aiGatewayInternalSecret: 'secret',
+        aiMonthlyBudgetSatang: 1_000_000, isProduction: false, aiThbPerUsd: 35 } as any,
+      { issue: () => 'signed' } as any, undefined, state.prisma);
+      globalThis.fetch = async () => new Response(JSON.stringify({ status: 'failed', errorCode: 'PROVIDER_TIMEOUT', usage: [{
+        tag: 'receipt-ocr', modelId: 'anthropic.claude-sonnet-4-6', ok: false, inputTokens: 100, outputTokens: 10,
+        cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+      }] }));
+      assert.equal((await client.requestReceiptOcr(request)).status, 'failed');
+      assert.equal(state.usedCount(), 0);
+      assert.equal(state.events.length, 0);
+      assert.equal(state.compensations.length, 1);
+      assert.equal(state.compensations[0].metadataJson.operationId, request.attachment.id);
+      assert.equal(state.providerUsage.length, 1, 'real provider usage survives customer compensation');
+      assert.equal(state.providerUsage[0].inputTokens, 100);
+      globalThis.fetch = async () => new Response(JSON.stringify({ status: 'ok', fields: { grandTotalAmount: '120.00' } }));
+      assert.equal((await client.requestReceiptOcr({ ...request, requestId: 'attempt-2' })).status, 'ok');
+      assert.equal(state.usedCount(), 1);
+      assert.equal(state.events.length, 1);
+      assert.equal((await client.requestReceiptOcr({ ...request, requestId: 'attempt-3' })).errorCode, 'OCR_REQUEST_ALREADY_ADMITTED');
+      assert.equal(state.usedCount(), 1);
+      assert.equal(state.compensations.length, 1);
+    } finally { globalThis.fetch = originalFetch; }
+  });
 
   it('refuses both the LINE image router and receipt OCR before fetch when the company switch is off', async () => {
     __resetCompanyAiBudgetCache();
@@ -431,10 +466,10 @@ describe('AiGatewayClient OCR governance', () => {
         messageText: '', permissions: [], activeCategories: [],
         attachments: [{ id: 'image-timeout', mimeType: 'image/jpeg', purpose: 'unknown', contentBase64: 'AA==' }],
       });
-      assert.equal(uncertainPlan.ocrAdmission, 'admitted');
+      assert.equal(uncertainPlan.ocrAdmission, 'denied');
       assert.equal(uncertainPlan.ocrErrorCode, 'OCR_ROUTE_UNAVAILABLE');
-      assert.equal(uncertain.events.length, 1);
-      assert.equal(uncertain.usedCount(), 1);
+      assert.equal(uncertain.events.length, 0);
+      assert.equal(uncertain.usedCount(), 0);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -480,8 +515,8 @@ describe('AiGatewayClient OCR governance', () => {
         requestId: 'webhook-synthetic-http-code', companyId: 'company-1', userId: 'user-1', activeCategories: [],
         attachment: { id: 'line-synthetic-http-code', mimeType: 'image/jpeg', purpose: 'receipt', contentBase64: 'AA==' },
       })).status, 'failed');
-      assert.equal(syntheticHttpCode.events.length, 1);
-      assert.equal(syntheticHttpCode.usedCount(), 1);
+      assert.equal(syntheticHttpCode.events.length, 0, 'system failure compensation is separate from pre-provider proof');
+      assert.equal(syntheticHttpCode.usedCount(), 0);
     } finally {
       globalThis.fetch = originalFetch;
     }
