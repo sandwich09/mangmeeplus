@@ -1,0 +1,10 @@
+{
+  "status": 200,
+  "response": {},
+  "at": "2026-09-07T18:32:54.144398+00:00",
+  "endpoint": "validate/push",
+  "messages": 4,
+  "synthetic": true,
+  "noRecipient": true,
+  "source": "fe584d2f6006f251bebac0377e9ce7c4ac0c7588"
+}

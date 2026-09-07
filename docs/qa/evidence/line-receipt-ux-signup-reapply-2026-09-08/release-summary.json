@@ -1,0 +1,42 @@
+{
+  "candidate": "fe584d2f6006f251bebac0377e9ce7c4ac0c7588",
+  "controller": "d2e60091dad7434ba7476ea31b1121204ee7b047",
+  "developPR": 483,
+  "mainPR": 484,
+  "CI_RUN_IDS": [
+    34151804829,
+    34151898827
+  ],
+  "UAT_RUN_ID": 34153596271,
+  "READY_RUN_ID": 34155321390,
+  "PROD_RUN_ID": null,
+  "productionHold": true,
+  "localTypecheck": "PASS",
+  "localWholeWorkspaceTests": "PASS",
+  "postgresSignupSupportWebhook": 118,
+  "postgresReceipt": 11,
+  "browser": 7,
+  "providerValidation": 4,
+  "developMerge": "dfce145842d34e8f169dd3b15b4b74e51baef261",
+  "dispatchRequestedAt": "2026-09-07T18:55:53.326433+00:00",
+  "UAT_CONCLUSION": "success",
+  "READY_SERVING_MODE": "maintenance_closed",
+  "UAT_ACCEPTANCE": "PASS",
+  "passportContentSha256": "950d7a278dcad46906c1595fc9d2b7f21249b2ac9c7ef2be241b8b7794fc312f",
+  "passportArtifactId": 10030748649,
+  "passportArchiveDigest": "sha256:f18d36a461a4ca62faa12156cd4199ca8eac8e5434662ae6f9e76b6e15421eaa",
+  "READY_CONCLUSION": "success",
+  "readyContentSha256": "7f8245db620add5136079ac8bc3c2e6aaefa952a8e91d3f32434fbce34103c13",
+  "readyArtifactId": 10031229943,
+  "readyArchiveDigest": "sha256:ba19a79c48d3eab6a1d6d0a52325e3720a1e5d6d56952f2f5ab583c78c5dd399",
+  "cleanup": {
+    "deleteCompletedAtEpoch": 1788810301,
+    "deleteRequestedAtEpoch": 1788810202,
+    "instanceAbsent": true,
+    "residualResourceCount": 0,
+    "secretDeleted": true,
+    "snapshotDeleted": true,
+    "taskStopped": true
+  },
+  "status": "UAT_COMPLETE_PRODUCTION_HOLD"
+}

@@ -1,0 +1,11 @@
+{
+  "at": "2026-09-07T19:28:41.038Z",
+  "status": "PASS",
+  "browser": "Chromium",
+  "mocked": false,
+  "gateStatus": 200,
+  "gate": {
+    "state": "OPEN"
+  },
+  "anonymousStatus": 401
+}
