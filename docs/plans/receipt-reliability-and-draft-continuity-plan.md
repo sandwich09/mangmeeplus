@@ -1,6 +1,6 @@
 # Receipt reliability and draft continuity implementation plan
 
-Status: In progress. User authorized implementation, commit/push and admin PR merge to develop and main on 2026-09-07.
+Status: Git delivery complete through PR #473 (develop) and #474 (main). Owner requires both LINE receipt flags enabled in the next deployment; see the checklist below.
 
 Spec: [receipt reliability and draft continuity](../specs/receipt-reliability-and-draft-continuity-spec.md).
 Evidence baseline: [T01–T18 inventory](../research/line-receipt-reliability-ux-review-2026-09-07-th.md).
@@ -33,9 +33,9 @@ Draft integrity publishes the exact `sourceDraft` read/write contract and author
 4. [x] Integrate receipt → collection → partial web save → LINE resume without lossy row replacement or false completion. Inspect all final mutation paths and scope/permission boundaries.
 5. [x] Run meaningful focused suites; contracts/API/gateway/web typechecks; applicable build/DB/browser checks. Complete T01–T18 evidence ledger with exact commands/results and scope limits. Do not substitute tests of a helper for the stateful path that originally failed.
 6. [x] Review combined diff against UX, SA, BA and AI engineering requirements; inspect adjacent money/tax/duplicate/quota/stale and role flows. Resolve findings before accepting.
-7. [ ] Commit scoped files, push branch, create reviewable PR into develop with evidence. Wait for relevant CI; fix failures on this branch. Use authorized admin merge when needed after reviewing the actual result.
-8. [ ] Update local/remote develop, create develop → main PR with final scope and exact evidence, resolve conflicts without losing main-only release configuration, verify candidate/diff and checks, admin merge as authorized.
-9. [ ] Record PR URLs, commits, merged develop/main SHAs, final tests and remaining live acceptance. Update task memory and plan. Do not claim deployed behavior from a merge.
+7. [x] Commit scoped files, push branch, create reviewable PR into develop with evidence. Wait for relevant CI; fix failures on this branch. Use authorized admin merge when needed after reviewing the actual result.
+8. [x] Update local/remote develop, create develop → main PR with final scope and exact evidence, resolve conflicts without losing main-only release configuration, verify candidate/diff and checks, admin merge as authorized.
+9. [x] Record PR URLs, commits, merged develop/main SHAs, final tests and remaining live acceptance. Update task memory and plan. Do not claim deployed behavior from a merge.
 
 ## Verification record
 
@@ -43,4 +43,19 @@ See the [T01–T18 implementation and verification ledger](../research/receipt-r
 
 ## Runtime boundary
 
-UAT/production workflows are manual in this baseline. This request ends with reviewed merges to develop and main. No cloud release, customer gate write, runtime toggle, outbound LINE test to real users, or customer data/quota repair is dispatched by this plan. A later runtime release must follow the mandatory deployment protocol and existing live feature acceptance gates.
+Git delivery above did not dispatch a runtime release or flag change. Final merges, successful CI run IDs and matching file-tree proof are recorded in the [delivery memory](../agent-memory/receipt-reliability-and-draft-continuity.md).
+
+## Required flags for the next deployment — owner directive 2026-09-07
+
+The owner explicitly instructed that the next deployment must enable BOTH existing flags in UAT and Production:
+
+| Flag | Required UAT value | Required Production value |
+|---|---|---|
+| `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED` | `true` | `true` |
+| `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED` | `true` | `true` |
+
+- [ ] Verify that environment inputs are actually passed through the workflows/deploy scripts to every running consumer; both schema defaults are `false`, so omission is not acceptable. Repair missing wiring before deployment if needed.
+- [ ] Deploy UAT with both enabled; read back the actual running values and verify LINE collection of all missing facts, partial answers/save-for-later/web/resume, and saved-outcome replay without repeating OCR or business writes.
+- [ ] Promote Production with the same two enabled values; verify actual runtime readback and the customer journey. Record exact UAT/READY/Production run IDs, signed release result and customer OPEN acceptance under the [mandatory deployment protocol](../runbooks/uat-production-v2-deployment.md).
+
+This records the required configuration for that future release; it does not dispatch a deployment now.

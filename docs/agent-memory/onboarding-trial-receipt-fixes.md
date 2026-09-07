@@ -1,6 +1,6 @@
 # Agent Memory: onboarding trial receipt fixes
 
-Status: PR #475 candidate8505826d passed CI34115108003. The later owner clarification now routes reused emails to manual review; backend414/414, real PostgreSQL24/24 and browser6/6 pass. Latest whole-workspace tests/typecheck and protected pins pass; require fresh amended-head CI before merge. Docs-first commits 4f9cbb8a and 324172b2; no deployment dispatched.
+Status: Git delivery COMPLETE. PR #475 and #476 admin-merged after both source-matched CI runs passed; develop/main trees equal tested05d456b1. This final local handoff records post-merge results; durable remote evidence is in both PR descriptions. No deployment dispatched.
 Owner: Coordinator with GPT-6 Astra xhigh receipt/email lanes and GPT-5.6 Sol xhigh web lane, as requested by the same-workflow instruction.
 Scope: User issues 1–5: first receipt after signup, trial 15 consistency, syntax-only signup contact email, failed receipt reads free of customer quota, prominent dashboard profile actions. Git delivery through develop/main; no live environment or customer-data mutation.
 
@@ -52,7 +52,7 @@ Owner clarification resolved: “กรอกแล้วใช้งานไ�
 - Bounded compensation retries emit `OCR_QUOTA_COMPENSATION_REQUIRED` with exact event identity if a prolonged database outage prevents release. That condition needs exact-event reconciliation; this change does not infer blanket historical refunds.
 - Local evidence proves deterministic application behavior with controlled model/storage boundaries, not that an external AI provider can never fail or that live Production has changed. The previous zero-priced-item fix is included from #473/#474 and covered again.
 
-Next: Wait for CI on the frozen branch, admin merge the develop PR, then the develop-to-main PR and verify tree parity. Record PR/run IDs in delivery evidence. At the next release, verify both required flags and actual trial15 runtime values in UAT and Production; follow the deployment runbook, signed UAT/READY/Production results and customer OPEN acceptance. This coding task does not dispatch those runs.
+Next: Git delivery is complete. At the next release, verify both required flags and actual trial15 runtime values in UAT and Production; follow the deployment runbook, signed UAT/READY/Production results and customer OPEN acceptance. This coding task does not dispatch those runs.
 
 ### Reproduce the amended PostgreSQL acceptance
 
@@ -73,3 +73,13 @@ Owner: “ถ้าเมลเดิมมาสมัครเป็นไป�
 Duplicate-email evidence: external-signup414/414; clean real PostgreSQL24/24, zero skips, including two-client commit barrier, all14 historical states, manual approval and retry. Actual served LIFF/profile browser6/6; the mobile pending screenshot was inspected. Required PostgreSQL acceptance is registered in CI. Detailed routing inventory: [auto conditions](../research/line-signup-auto-approval-conditions-2026-09-07-th.md).
 
 Latest duplicate-email amended source: full `pnpm test` and `NODE_OPTIONS=--max-old-space-size=8192 pnpm typecheck` both exit0 (`workspace-tests-duplicate-email.log`, `workspace-typecheck-duplicate-email.log`). Protected maintenance pins remain current and `git diff --check` passes. Browser6/6 passed in40.5s; web1,663/1,663. CI34115108003 succeeded for the previous8505826d only; delivery requires a new source-matched CI result.
+
+## Final delivery and latest evidence question
+
+Final delivery: source `05d456b16e9d2968d5275a129f8dba3f2850b800`; develop [PR #475](https://github.com/MangmeeDev/mangmeeplus/pull/475), CI [34116941538](https://github.com/MangmeeDev/mangmeeplus/actions/runs/34116941538) PASS, merge `d03c1761932d19abc019afaaf10a8f75674ff0b4`; main [PR #476](https://github.com/MangmeeDev/mangmeeplus/pull/476), CI [34117565901](https://github.com/MangmeeDev/mangmeeplus/actions/runs/34117565901) PASS, merge `700a6414a0915ac800e42bd1b0d2c1e2fb9e1523`. Both branch trees equal the tested source. No deployment dispatched.
+
+Owner-requested evidence clarification: manual APPROVE opens a new shop; it does not identify or restore a prior shop by email. A new LINE applicant whose email belongs to another User receives a distinct LINE owner with null account email/no credential; Company.email retains contact. Existing LINE identity may reuse its proven account; available account email can be adopted unverified. Real PostgreSQL evidence: `line-signup-duplicate-email.pg.spec.ts:245` proves manual approval, rival-account preservation and repeated approval creates exactly one shop/run; 24/24 pass, zero skips. The current queue has a reuse warning, not a return-to-existing-shop choice.
+
+Original develop fast-forwarded to d03c1761; all8 pre-existing user-file hashes preserved. Only this task memory receives the final local handoff after merge. Disposable local PostgreSQL/Redis containers removed; logs/screenshots retained in the dedicated task worktree output. Next action remains the separately authorized release protocol with both required draft/replay flags enabled in UAT and Production.
+
+The subsequent identity/email/recovery policy is now implemented in PR477/478; see [current delivery memory](line-signup-recovery-and-resolution.md) and its spec/plan. Historical duplicate-email routing above describes PR475/476 only.

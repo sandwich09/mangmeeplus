@@ -1,0 +1,18 @@
+{
+  "retrievedOn": "2026-09-06",
+  "sourceType": "GitHub REST API selected fields",
+  "data": {
+    "actor": "MangmeeDev",
+    "conclusion": "success",
+    "created_at": "2026-08-10T02:01:49Z",
+    "event": "workflow_dispatch",
+    "head_sha": "83210a8e609d2f71333050030e0ce01732fd1a48",
+    "html_url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/31348664798",
+    "id": 31348664798,
+    "name": "Recover uat intent PRE_INTENT",
+    "run_started_at": "2026-08-10T02:01:49Z",
+    "status": "completed",
+    "triggering_actor": "MangmeeDev",
+    "updated_at": "2026-08-10T02:06:18Z"
+  }
+}

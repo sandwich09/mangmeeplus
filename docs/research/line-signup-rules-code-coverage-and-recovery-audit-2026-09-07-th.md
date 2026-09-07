@@ -130,18 +130,16 @@ Account merge ใช้ต่อได้เฉพาะบริบทที่
 
 ## 4. Verification และข้อจำกัด
 
-หลักฐานรอบนี้อยู่ที่ `output/line-signup-rules-audit-20260907/`:
+หลักฐานก่อนแก้ที่เก็บถาวรอยู่ใน [QA archive](../qa/evidence/line-signup-recovery-2026-09-07/README.md):
 
-- `liff-state-probe.ts` / `.json`: รัน actual LIFF script ด้วย node:vm และ fake DOM/API states; reproduced 4/4 ไม่ใช่ browser/LINE live
-- `intake-failure-probe.ts` / `.json`: reuse actual integration harness, inject faults หลัง receive และ validate; actual queue list/approve; reproduced 2/2 ไม่ได้ใช้ live DB และไม่ได้พิสูจน์ความถี่ของปัญหาใน prod
+- `baseline-liff-state-probe.json`: รัน actual LIFF script ด้วย node:vm และ fake DOM/API states; reproduced 4/4 ไม่ใช่ browser/LINE live
+- `baseline-intake-failure-probe.json`: reuse actual integration harness, inject faults หลัง receive และ validate; actual queue list/approve; reproduced 2/2 ไม่ได้ใช้ live DB และไม่ได้พิสูจน์ความถี่ของปัญหาใน prod
 - `existing-focused-tests.log`: tests เดิมของ LIFF/signup auto/core queue/support admin **142 passed, 0 failed, 0 skipped** แสดงว่า coverage เดิมยังไม่ครอบคลุม counterexamples ใหม่นี้
 - การลองรัน intake probe ครั้งแรกขาด `count()` ใน fake queue client จึงล้มที่ harness; เพิ่ม stub ใน output probe แล้วรันผ่าน ไม่มี app code ถูกแก้เพื่อให้ผลผ่าน
 
-คำสั่ง:
+Probe ชั่วคราวและ raw log ถูกลบในการ cleanup หลัง counterexamples เหล่านี้ถูกผูกเป็น regression tests แล้ว คำสั่ง focused suite ที่ยังรันได้:
 
 ```sh
-pnpm --filter @watchdog-bms/api exec tsx ../../output/line-signup-rules-audit-20260907/liff-state-probe.ts
-pnpm --filter @watchdog-bms/api exec tsx ../../output/line-signup-rules-audit-20260907/intake-failure-probe.ts
 pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-liff-signup.spec.ts src/modules/external-signup/application/line-signup-auto-free.integration.spec.ts src/modules/external-signup/application/signup-admin-queue.use-case.spec.ts src/modules/external-signup/application/support-request-admin.use-case.spec.ts
 ```
 

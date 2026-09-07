@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-09-07T00:52:47.992633+00:00",
+  "status": "PASS",
+  "scope": "Actual UAT versus staged Production candidate; Production ECS is not promoted yet",
+  "uatVersion": "54",
+  "stagedProductionVersion": "25",
+  "configKeyCount": 39,
+  "configurationHashesMatchSignedBindings": true,
+  "equalRuntimeFlags": {
+    "GIT_SHA": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+    "BEDROCK_MODEL_ID": "global.anthropic.claude-sonnet-4-6",
+    "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
+    "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "true",
+    "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+    "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES": "sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+  },
+  "expectedEnvironmentDifferences": [
+    "AI_GATEWAY_INTERNAL_SECRET_ARN",
+    "CORS_ALLOWED_ORIGINS",
+    "DEPLOY_ENVIRONMENT",
+    "ERP_CORE_INTERNAL_URL",
+    "PUBLIC_BASE_URL",
+    "WATCHDOG_JWT_AUDIENCE",
+    "WATCHDOG_JWT_ISSUER",
+    "WATCHDOG_JWT_SECRET_SOURCE_ARN"
+  ]
+}

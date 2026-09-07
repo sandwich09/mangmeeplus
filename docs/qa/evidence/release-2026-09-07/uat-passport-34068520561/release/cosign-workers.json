@@ -1,0 +1,2 @@
+
+[{"critical":{"identity":{"docker-reference":"311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc"},"image":{"docker-manifest-digest":"sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc"},"type":"https://sigstore.dev/cosign/sign/v1"},"optional":{}}]

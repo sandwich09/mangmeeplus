@@ -1,6 +1,6 @@
 # Plan: LINE signup recovery and resolution
 
-Status: Implementation complete; local verification complete; source-matched CI/Git delivery pending. Spec established before application edits.
+Status: Implementation and Git delivery complete through PR477/478. Both source-matched CI runs passed. Spec established before application edits.
 Spec: [LINE signup recovery/resolution](../specs/line-signup-recovery-and-resolution-spec-th.md)
 Memory: [task state](../agent-memory/line-signup-recovery-and-resolution.md)
 
@@ -8,7 +8,7 @@ Memory: [task state](../agent-memory/line-signup-recovery-and-resolution.md)
 
 - Base origin/develop `d03c1761932d19abc019afaaf10a8f75674ff0b4`; origin/main `700a6414a0915ac800e42bd1b0d2c1e2fb9e1523` fetched before work.
 - Branch `codex/line-signup-recovery-20260907`, isolated worktree `../mangmeeplus-line-signup-recovery-20260907`.
-- Original checkout has unrelated user documentation; hash snapshot kept under original output/line-signup-recovery-20260907. No stash, cleanup or unrelated commits.
+- Original13 pending documents were preserved throughout coding. The later owner-authorized cleanup retains their hash/disposition record in docs/qa/evidence/line-signup-recovery-2026-09-07/original-document-disposition.json.
 - No package.json changes, no new dependency, no cloud mutation or deployment. Existing feature flags/presets remain; bug fixes do not need another opt-in flag.
 - Deployment handoff: the next authorized release must apply both additive migrations and ship matching API/web contracts; an already-open old LIFF form may need reopening after release. Follow the mandatory deployment runbook and prior feature-enable/parity decisions then. Git merge alone is not customer availability or live acceptance.
 
@@ -33,8 +33,8 @@ Workers share this worktree with disjoint file/section ownership and send propos
 - [x] Test backend-to-frontend journey including fault/replay, existing-shop target, trial authorization, and no-company support reply/failure.
 - [x] Run relevant workspace tests/typecheck and existing browser acceptance on isolated local services; inspect mobile result.
 - [x] Update support playbook (remove weak proof assumption and stale email/trial wording), research status and memory with evidence.
-- [ ] Freeze commit, push feature branch; review diff and CI of that exact source, create/review develop PR and admin merge.
-- [ ] Promote same tested source to main via PR; resolve/retest any intervening change, admin merge, verify final trees and exact CI/merge IDs.
+- [x] Freeze commit, push feature branch; review diff and CI of that exact source, create/review develop PR and admin merge.
+- [x] Promote same tested source to main via PR; resolve/retest any intervening change, admin merge, verify final trees and exact CI/merge IDs.
 - [x] Record mail provider and subscriber payment flow as next task, with boundaries and relevant existing modules. No implementation of those future tasks yet.
 
 ## Integration contract decisions
@@ -55,7 +55,7 @@ Coordinator review findings to verify before acceptance: obsolete entry targets;
 
 ## Validation and delivery evidence
 
-Evidence is local under `output/line-signup-recovery-20260907/`; no live LINE delivery, AWS operation, or production rollout is implied.
+Durable evidence is under `docs/qa/evidence/line-signup-recovery-2026-09-07/`; no live LINE delivery, AWS operation, or production rollout is implied.
 
 | Check | Result / evidence |
 |---|---|
@@ -74,10 +74,12 @@ Evidence is local under `output/line-signup-recovery-20260907/`; no live LINE de
 | Whole workspace tests | PASS `pnpm test` exit0 on frozen application source; `workspace-tests-clean.log`. Earlier obsolete webhook expectation was fixed and its focused310/310 check passed before this clean run |
 | Maintenance release pins | PASS45 exact files; validator SHA `50c79dc7b1ebc390639bb82dd6475246b8b685aa1b0df34bf989b2b64f12ef24` |
 | Original user documentation | 13 hashed files unchanged |
-| Final CI / PRs / merge SHAs | Pending; do not treat local validation as Git delivery |
+| Final CI / PRs / merge SHAs | PASS develop PR477 / CI34138514480 / merge9014e14a; main PR478 / CI34138526460 / merge1c732df1; both trees equal tested46a5b791 |
 
 Accepted mobile screenshots are in `browser-ux-final/`, including `signup-completed-390.png`, `support-no-company-claimed-390.png`, and `support-no-company-resolved-390.png`. Earlier screenshots with reference IDs or pre-final support layout are superseded.
 
 Coordinator review closed: exact old request replay; revoked entry targets; once-per-request quota after response loss; approval-day cap; own historical email; repeat-trial authority; versioned question outbox; REQUEST_INFO→assigned support→unlinked reply; reply result/audit transaction and lost-response replay; deleted assignee takeover; retention of unresolved cases; truthful acknowledgement; mobile layout and form scroll reset; no technical codes in customer copy. Detailed rules and support boundaries are in the spec and support playbook.
 
 Backend final review also fixed contact correction resumption using the committed version, with regression coverage. All three lanes are frozen; the correction preceded the clean workspace test invocation.
+
+Owner-authorized cleanup retained the final screenshots and compact evidence in [docs/qa/evidence](../qa/evidence/line-signup-recovery-2026-09-07/README.md). Paths to raw output logs above identify historical local invocations; those regenerable logs and superseded images were removed. The linked CI runs and committed regressions are the durable verification record.

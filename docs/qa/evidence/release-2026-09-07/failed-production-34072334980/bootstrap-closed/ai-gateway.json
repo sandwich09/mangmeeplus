@@ -1,0 +1,8 @@
+{
+  "service": "ai-gateway",
+  "serviceArn": "arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/watchdog-bms-ai-gateway-v2",
+  "deploymentArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/watchdog-bms-ai-gateway-v2/wGXZrOFijPEPmWcAoi8aC",
+  "targetRevisionArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-ai-gateway-v2/0756556405824286583",
+  "sourceSha": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "noOp": false
+}

@@ -1,0 +1,20 @@
+{
+  "id": 10000460901,
+  "node_id": "MDg6QXJ0aWZhY3QxMDAwMDQ2MDkwMQ==",
+  "name": "production-release-ready-v2-604ac785479ced5b9858d0b46d89f8d11cf2b9f6-run-34069876587-attempt-1",
+  "size_in_bytes": 49527,
+  "url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/10000460901",
+  "archive_download_url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/10000460901/zip",
+  "expired": false,
+  "digest": "sha256:578a051003c9694fbf38e23fcd0152a0adfac00783be356dbd07cf32197de7ba",
+  "created_at": "2026-09-07T00:50:21Z",
+  "updated_at": "2026-09-07T00:50:21Z",
+  "expires_at": "2026-09-14T00:50:21Z",
+  "workflow_run": {
+    "id": 34069876587,
+    "repository_id": 1326789216,
+    "head_repository_id": 1326789216,
+    "head_branch": "main",
+    "head_sha": "255c889917e3c56511fdff562c36e605c72ecc98"
+  }
+}

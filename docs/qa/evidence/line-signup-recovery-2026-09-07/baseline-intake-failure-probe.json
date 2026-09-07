@@ -1,0 +1,160 @@
+{
+  "sourceHead": "d03c1761932d19abc019afaaf10a8f75674ff0b4",
+  "method": "Actual submit/core/admin queue using existing in-memory integration harness with injected failures. No real Postgres/Redis outage or production claim. Queue predicates captured from actual list(); DB fence checked separately in migration.",
+  "findings": [
+    {
+      "fault": "rate_counter",
+      "persistedState": "RECEIVED",
+      "openApplicationFenceHolds": true,
+      "adminNotified": false,
+      "provisioned": false,
+      "queueFilters": [
+        {
+          "OR": [
+            {
+              "state": {
+                "in": [
+                  "PENDING_REVIEW",
+                  "EMAIL_PENDING",
+                  "EMAIL_FAILED",
+                  "EXPIRED",
+                  "PROVISIONING_FAILED"
+                ]
+              }
+            },
+            {
+              "state": {
+                "in": [
+                  "READY",
+                  "PROVISIONING"
+                ]
+              },
+              "source": "line-oa"
+            }
+          ]
+        },
+        {
+          "state": "PENDING_REVIEW"
+        },
+        {
+          "state": "EMAIL_PENDING"
+        },
+        {
+          "state": {
+            "in": [
+              "REJECTED",
+              "SUSPENDED",
+              "EXPIRED"
+            ]
+          }
+        },
+        {
+          "OR": [
+            {
+              "state": {
+                "in": [
+                  "EMAIL_FAILED",
+                  "EXPIRED",
+                  "PROVISIONING_FAILED"
+                ]
+              }
+            },
+            {
+              "state": {
+                "in": [
+                  "READY"
+                ]
+              },
+              "source": "line-oa"
+            },
+            {
+              "state": "PROVISIONING",
+              "source": "line-oa",
+              "provisioningStartedAt": {
+                "lt": "2026-09-03T02:57:00.000Z"
+              }
+            }
+          ]
+        }
+      ],
+      "adminApprove": "invalid_signup_decision:RECEIVED"
+    },
+    {
+      "fault": "email_lookup",
+      "persistedState": "VALIDATED",
+      "openApplicationFenceHolds": true,
+      "adminNotified": false,
+      "provisioned": false,
+      "queueFilters": [
+        {
+          "OR": [
+            {
+              "state": {
+                "in": [
+                  "PENDING_REVIEW",
+                  "EMAIL_PENDING",
+                  "EMAIL_FAILED",
+                  "EXPIRED",
+                  "PROVISIONING_FAILED"
+                ]
+              }
+            },
+            {
+              "state": {
+                "in": [
+                  "READY",
+                  "PROVISIONING"
+                ]
+              },
+              "source": "line-oa"
+            }
+          ]
+        },
+        {
+          "state": "PENDING_REVIEW"
+        },
+        {
+          "state": "EMAIL_PENDING"
+        },
+        {
+          "state": {
+            "in": [
+              "REJECTED",
+              "SUSPENDED",
+              "EXPIRED"
+            ]
+          }
+        },
+        {
+          "OR": [
+            {
+              "state": {
+                "in": [
+                  "EMAIL_FAILED",
+                  "EXPIRED",
+                  "PROVISIONING_FAILED"
+                ]
+              }
+            },
+            {
+              "state": {
+                "in": [
+                  "READY"
+                ]
+              },
+              "source": "line-oa"
+            },
+            {
+              "state": "PROVISIONING",
+              "source": "line-oa",
+              "provisioningStartedAt": {
+                "lt": "2026-09-03T02:57:00.000Z"
+              }
+            }
+          ]
+        }
+      ],
+      "adminApprove": "invalid_signup_decision:VALIDATED"
+    }
+  ]
+}

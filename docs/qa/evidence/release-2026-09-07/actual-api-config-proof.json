@@ -1,0 +1,17 @@
+{
+  "originalIssues": [
+    "SES_FROM_ADDRESS"
+  ],
+  "maintenance": {
+    "status": "PASS",
+    "emailProvider": "disabled"
+  },
+  "projectedLive": {
+    "status": "PASS",
+    "emailProvider": "disabled"
+  },
+  "checkedAt": "2026-09-07T02:45:06.158082+00:00",
+  "secretReferenceCount": 12,
+  "scope": "Actual failed task environment and AWSCURRENT secrets read only in memory; fixed maintenance and projected live controls",
+  "secretValuesPersisted": false
+}

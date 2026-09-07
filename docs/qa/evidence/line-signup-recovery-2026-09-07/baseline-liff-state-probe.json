@@ -1,0 +1,42 @@
+{
+  "sourceHead": "d03c1761932d19abc019afaaf10a8f75674ff0b4",
+  "method": "Actual LIFF_PAGE_SCRIPT executed in existing node:vm fake DOM/fetch harness. Synthetic API states; not real browser, LINE or production.",
+  "reproduced": [
+    {
+      "scenario": "POST 202 COMPLETED still says awaiting review",
+      "visibleViews": [
+        "done-view"
+      ],
+      "doneText": "ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ",
+      "pendingText": "",
+      "callCount": 2
+    },
+    {
+      "scenario": "Reopen latest COMPLETED shows new signup form",
+      "visibleViews": [
+        "form-view"
+      ],
+      "doneText": "",
+      "pendingText": "",
+      "callCount": 1
+    },
+    {
+      "scenario": "PROVISIONING_FAILED is shown as normal review",
+      "visibleViews": [
+        "pending-view"
+      ],
+      "doneText": "",
+      "pendingText": "คำขอเปิดร้าน ร้านทดสอบ เข้าระบบแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ",
+      "callCount": 1
+    },
+    {
+      "scenario": "409 recovery reads COMPLETED but still shows pending",
+      "visibleViews": [
+        "pending-view"
+      ],
+      "doneText": "",
+      "pendingText": "คำขอเปิดร้าน ร้านทดสอบ เข้าระบบแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ (จันทร์–เสาร์ 9:00–18:00) พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ",
+      "callCount": 3
+    }
+  ]
+}

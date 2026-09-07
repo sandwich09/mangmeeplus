@@ -1,0 +1,25 @@
+{
+  "status": "LIVE_PUBLIC_OPEN_ADMIN_ACCEPTANCE_PENDING",
+  "checkedAt": "2026-09-07T04:18:20.286002+00:00",
+  "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "controller": "3720db9a2414bd671c63be3fdd69270487f1402a",
+  "uatRunId": "34068520561",
+  "readyRunId": "34076680047",
+  "productionRunId": "34078121808",
+  "signedResult": "PROMOTED_LIVE",
+  "publicGate": "OPEN",
+  "migrationsApplied": 15,
+  "configEntries": 253,
+  "secretReferenceEntries": 17,
+  "unclassifiedConfigDifferences": 0,
+  "activeServices": 3,
+  "alarmsOK": 15,
+  "emailProvider": "disabled",
+  "currentAdmin": {
+    "username": "prodmangmeeplus",
+    "userId": "cmt8k20fs00000q319isxwkc5",
+    "addRunId": "32840045983",
+    "revokeRunId": "32843219991"
+  },
+  "remaining": "Mac unlock and current administrator BFF login / identity / permission / gate readback / logout / post-logout acceptance. No new deployment is needed for the revoked seed credential."
+}

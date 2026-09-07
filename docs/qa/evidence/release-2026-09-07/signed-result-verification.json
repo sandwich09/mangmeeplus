@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "checkedAt": "2026-09-07T04:06:11.831829+00:00",
+  "canonicalValidator": "PASS",
+  "cosign": "Verified OK",
+  "archiveDigest": "sha256:5f3f8496b812a484e4be7ec48147f4244d238b403f087a73e0ca6c6e7017b821",
+  "state": "PROMOTED_LIVE",
+  "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "controller": "3720db9a2414bd671c63be3fdd69270487f1402a",
+  "uatRunId": "34068520561",
+  "readinessRunId": "34076680047",
+  "productionRunId": "34078121808",
+  "attempt": 1
+}

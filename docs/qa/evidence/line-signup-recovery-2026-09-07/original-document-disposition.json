@@ -1,0 +1,67 @@
+[
+  {
+    "path": "docs/agent-memory/line-ai-hosted-baseline-2026-09-03.md",
+    "originalSha256": "b7ed6b85cc7d691b0312717e085a803ab0ab3fdd74c16048be40bd798a7e21b5",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/agent-memory/line-signup-business-rules-and-support-design.md",
+    "originalSha256": "0e570ef13cb5139aaf3de0e85c36ff4331a127400cce7d38634ded206f096523",
+    "disposition": "remove-superseded-design-memory"
+  },
+  {
+    "path": "docs/agent-memory/mangmee-iso29110-depa-research.md",
+    "originalSha256": "6b5b7ff9a9026e0749f53517a680ff8795f65bbabe5a611e5462f864cc0a6c94",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/research/line-signup-business-rules-and-support-value-2026-09-07-th.md",
+    "originalSha256": "fd7cae60113f68cc065001ac48f05bb7d0d6b0c4b1e97986960bd738409aea14",
+    "disposition": "replace-local-copy-with-merged-current-document"
+  },
+  {
+    "path": "docs/research/line-signup-identity-and-shop-resolution-proposal-2026-09-07-th.md",
+    "originalSha256": "e25aac24566132c55319ffff5c356ec05310b321be8fdc98bb6772b383a24cc9",
+    "disposition": "replace-local-copy-with-merged-current-document"
+  },
+  {
+    "path": "docs/research/line-signup-rules-code-coverage-and-recovery-audit-2026-09-07-th.md",
+    "originalSha256": "de5c756e80a1b1095118cfb9cdd305b1ffbec0e3585104d6c6aecc98651a055a",
+    "disposition": "replace-local-copy-with-merged-current-document"
+  },
+  {
+    "path": "docs/research/mangmee-iso29110-depa-gap-analysis-2026-09-06-th.md",
+    "originalSha256": "ee7a2373a0effb446120fe88b5cf56e7e84ab0c9b75e2b209e82c3466600231e",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/agent-memory/auto-register-review-2026-09-05.md",
+    "originalSha256": "87624810506764e39287e68ccd9adbb0d7c82f0b19f77357d09d719bf4d39d33",
+    "disposition": "discard-regressive-local-edit"
+  },
+  {
+    "path": "docs/agent-memory/onboarding-trial-receipt-fixes.md",
+    "originalSha256": "52f7e70ebee1eb3101cd80ed0a879691762f26c35af75a2f5291e41ef7d80fc3",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/agent-memory/receipt-reliability-and-draft-continuity.md",
+    "originalSha256": "484fbe31d97b22a355ac8ab862da941aed0ea70a0ecdb8e7569cda732af2c8f5",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/agent-memory/scheduled-uat-prod-release-2026-09-07.md",
+    "originalSha256": "30bbf37c62a7e984d65112dbf9f5b0ac2565a5f3b909072730e4ba2cbe587770",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/plans/receipt-reliability-and-draft-continuity-plan.md",
+    "originalSha256": "611a6931548c63a9b812d53e1493570203a28bfad3f9c8d10045f0069da7219b",
+    "disposition": "retain-and-update-portable-index-or-final-status"
+  },
+  {
+    "path": "docs/research/line-receipt-reliability-ux-review-2026-09-07-th.md",
+    "originalSha256": "d7e6e6917929dd9f510f97d715f572209fdfe91d1e6b8269a33851724d0167b5",
+    "disposition": "discard-regressive-local-edit"
+  }
+]

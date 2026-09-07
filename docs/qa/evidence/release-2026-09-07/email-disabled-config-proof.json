@@ -1,0 +1,11 @@
+{
+  "scope": "Exact failed task plaintext environment; schema-valid surrogate secret values only",
+  "beforeIssues": [
+    "SES_FROM_ADDRESS"
+  ],
+  "afterSchema": "PASS",
+  "afterProductionRules": "PASS",
+  "emailProvider": "disabled",
+  "sender": "contact@mangmeeplus.com",
+  "checkedAt": "2026-09-07T01:51:08.019887+00:00"
+}
