@@ -1,6 +1,6 @@
 # LINE receipt UX and signup reapplication implementation plan
 
-Status: IN PROGRESS — 2026-09-08 Bangkok.
+Status: COMPLETE — 2026-09-08 Bangkok. Implementation, develop/main integration, UAT34153596271 acceptance and automatic READY34155321390 zero-residue cleanup all PASS. Production HOLD.
 
 Spec: `docs/specs/line-receipt-ux-signup-reapply-spec.md`.
 Branch: `codex/line-receipt-ux-signup-reapply-20260908`, based on updated origin/develop `1c905ff0`.
