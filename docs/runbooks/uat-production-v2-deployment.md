@@ -129,13 +129,16 @@ Readiness เป็นการพิสูจน์ก่อน deploy; ถ้�
 
 ### E. เปิด durable customer gate และยืนยันใช้งานจริง
 
-ทำเฉพาะหลัง signed result ของ run เดียวกันเป็น `PROMOTED_LIVE`. ใช้ protected seed
-`thawatchai.watchdog` ผ่าน BFF และอ่าน password จาก
-`watchdog-bms/production/seed-system-admin-password` ใน Secrets Manager แบบ in-memory เท่านั้น:
+ทำเฉพาะหลัง signed result ของ run เดียวกันเป็น `PROMOTED_LIVE`. ใช้ administrator ปัจจุบัน
+`prodmangmeeplus` ผ่าน BFF หรือ session ที่เจ้าของ login ไว้ และพิสูจน์ identity/permission ก่อน mutation.
+Signed cutover ADD `32840045983` / REVOKE `32843219991` ยกเลิก seed เดิมแล้ว
+(หลักฐานใน `docs/agent-memory/scheduled-uat-prod-release-2026-09-07.md`). ห้ามใช้
+`thawatchai.watchdog`, seed password หรือ cutover temporary password และห้าม reset เพื่อทำ acceptance.
+ถ้า session/credential ปัจจุบันไม่พร้อม ให้เจ้าของ login ผ่าน UI; ไม่ขอ password ในแชท:
 
 1. Login ต้องได้ `200`, `passwordChangeRequired=false`, `legalAcceptanceRequired=false` และ redirect
    `/system/platform-access`.
-2. `/api/v1/auth/me` ต้องเป็น `seed-watchdog-system-admin`, มี role `SYSTEM_ADMIN` และ permission
+2. `/api/v1/auth/me` ต้องเป็น `cmt8k20fs00000q319isxwkc5` (`prodmangmeeplus`), มี role `SYSTEM_ADMIN` และ permission
    `system.launch_gate.manage`.
 3. ก่อน mutation, `/api/v1/system/platform-access` ต้องอ่านได้, `servingMode=live` และ `canOpen=true`.
 4. ถ้า `effectiveState=CLOSED` ให้ PUT `state=OPEN` พร้อม reason ที่ผูก owner/legal reference และ

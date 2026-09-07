@@ -379,6 +379,8 @@ jobs:
       # UAT secrets are provisioned out of band by infra/uat/bootstrap-data.sh; the deploy
       # only resolves their ARNs.
       LINE_AI_AGENT_RUNTIME: ${{ vars.LINE_AI_AGENT_RUNTIME || 'disabled' }}
+      LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED: ${{ vars.LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED || 'true' }}
+      LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED: ${{ vars.LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED || 'true' }}
       AGENTCORE_REGION: ${{ vars.AGENTCORE_REGION }}
       AGENTCORE_RUNTIME_ARN: ${{ vars.AGENTCORE_RUNTIME_ARN }}
       AGENTCORE_RUNTIME_QUALIFIER: ${{ vars.AGENTCORE_RUNTIME_QUALIFIER }}

@@ -394,4 +394,38 @@ if verify_service_environment ai-gateway "$bad_ai_artifact_state" 2>/dev/null; t
   exit 1
 fi
 
+# Execute the actual input and serving blocks without AWS: both receipt lanes default on,
+# explicit rollback stays off, and maintenance cannot resume conversations or replay outcomes.
+awk '/^RESOURCE_PREFIX=/{exit} {print}' "$deploy" > "$tmp_dir/receipt-config.sh"
+awk '/^SERVING_CRM_AUTO_REPLY_ENABLED=/{copy=1} copy && /^if \[ "\$DEPLOY_ENV" = production \]/{exit} copy {print}' "$deploy" >> "$tmp_dir/receipt-config.sh"
+cat >> "$tmp_dir/receipt-config.sh" <<'EOF'
+printf '%s\n' "$SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED|$SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED|$SERVING_EMAIL_PROVIDER"
+EOF
+for stage in uat production; do
+  expected_email=disabled
+  [ "$stage" != uat ] || expected_email=ses
+  actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live bash "$tmp_dir/receipt-config.sh")"
+  test "$actual" = "true|true|$expected_email"
+  actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live \
+    LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=false LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=false \
+    bash "$tmp_dir/receipt-config.sh")"
+  test "$actual" = "false|false|$expected_email"
+  for receipt_flag in LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED; do
+    assert_rejected "invalid-$stage-$receipt_flag" "$receipt_flag must be exactly true or false" \
+      env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live "$receipt_flag=yes" bash "$deploy" all
+    test "$(grep -Fc "{name:\"$receipt_flag\", value:\$" "$deploy")" -eq 1
+    for workflow in deploy-uat.yml deploy-production-v2.yml; do
+      grep -Fq "$receipt_flag: \${{ vars.$receipt_flag || 'true' }}" "$repo_root/.github/workflows/$workflow"
+    done
+  done
+done
+actual="$(env -i PATH="$PATH" DEPLOY_ENV=production PRODUCTION_SERVING_MODE=maintenance_only \
+  RELEASE_MODE=maintenance-bootstrap MAINTENANCE_BOOTSTRAP_READONLY=true \
+  PRODUCTION_IMAGE_MANIFEST=manifest.json SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  REIMBURSEMENT_WRITE_QUIESCE=true LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=true \
+  LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=true bash "$tmp_dir/receipt-config.sh" all)"
+test "$actual" = 'false|false|disabled'
+grep -Fq -- '--arg lineExpenseDraftConversationEnabled "$SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED"' "$deploy"
+grep -Fq -- '--arg lineAiTerminalOutcomeReplayEnabled "$SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED"' "$deploy"
+
 echo 'production serving-mode deploy contract: PASS'
