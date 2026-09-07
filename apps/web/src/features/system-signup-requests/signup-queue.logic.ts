@@ -89,6 +89,9 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   if (!isLineSignup(item) && item.emailMatchesExistingUser) {
     chips.push({ label: 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน', tone: 'info' });
   }
+  if (item.emailPreviouslyUsed) {
+    chips.push({ label: 'อีเมลเคยใช้แล้ว — ตรวจร้านเดิมก่อนอนุมัติ', tone: 'warning' });
+  }
   // P10-L §8: this LINE account already belongs to somebody, so approving adds a shop to THEIR
   // account instead of creating a new one. The operator's next click depends on knowing which.
   if (item.attachesToExistingAccount) {

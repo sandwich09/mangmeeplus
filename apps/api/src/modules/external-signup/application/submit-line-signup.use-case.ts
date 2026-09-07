@@ -30,7 +30,7 @@ export type SubmitLineSignupCommand = {
   companyName: string;
   /** Required since Owner 2026-09-05; still checked here, because a type is not a trust boundary. */
   phoneNumber: string;
-  /** Unverified shop contact; never an account identity. */
+  /** Owner email syntax is checked here; it is never proof of mailbox ownership. */
   contactEmail: string;
   referralCode?: string;
   legal: {
@@ -121,19 +121,22 @@ export class SubmitLineSignupUseCase {
     await this.rateLimit.recordLineSignupUser(verified.providerUserId);
 
     await this.core.advance(request.id, 'VALIDATED', cmd.correlationRequestId);
+    const emailPreviouslyUsed = await this.emailWasUsedBefore(request.id, contactEmail);
     await this.audit(request.id, 'signup.line.submitted', cmd.correlationRequestId, {
       source: SIGNUP_SOURCE_LINE_OA,
       existingAccount: attachUserId !== null,
       // No `hasPhoneNumber`: the field is required now, so the flag could only ever be true.
       hasReferralCode: referralCode !== null,
       repeatTrial,
+      emailPreviouslyUsed,
+      ...(emailPreviouslyUsed ? { manualReviewReason: 'email_previously_used' } : {}),
     });
 
     const businessHours = isBusinessHours(now, {
       days: this.config.lineSignupBusinessDays,
       hours: this.config.lineSignupBusinessHours,
     });
-    const state = await this.decideAndRun(request.id, cmd, now, repeatTrial);
+    const state = await this.decideAndRun(request.id, cmd, now, repeatTrial, emailPreviouslyUsed);
     return { requestId: request.id, state, existingAccount: attachUserId !== null, businessHours };
   }
 
@@ -143,22 +146,22 @@ export class SubmitLineSignupUseCase {
    * under the daily cap: either way it falls back to MANUAL rather than opening the spend tap
    * wider (spec §9 item 3).
    *
-   * Owner 2026-09-05 adds a third fallback with the same shape: a repeat trial. Nothing is blocked
-   * — the application still reaches the queue, where an operator can see the shop this LINE account
-   * had before and approve it anyway.
+   * Prior LINE ownership or reuse of an owner email also needs review. The application still
+   * reaches the queue, where an operator checks the earlier shop before approving another one.
    */
   private async decideAndRun(
     requestId: string,
     cmd: SubmitLineSignupCommand,
     now: Date,
     repeatTrial: boolean,
+    emailPreviouslyUsed: boolean,
   ): Promise<string> {
     if (repeatTrial && this.config.lineSignupApprovalMode === 'AUTO_FREE') {
       await this.audit(requestId, 'signup.line.auto_approve_repeat_trial', cmd.correlationRequestId, {
         reason: 'repeat_trial_manual_review',
       });
     }
-    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial) {
+    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial && !emailPreviouslyUsed) {
       // Resolved BEFORE a cap slot is taken: onboarding writes this id into two foreign keys, so
       // an installation with no SYSTEM_ADMIN cannot auto-provision at all and must not burn a slot
       // discovering that. `approvedByUserId` stays null on the row — the spec's record of "no admin
@@ -198,6 +201,21 @@ export class SubmitLineSignupUseCase {
     await this.core.advance(requestId, 'PENDING_REVIEW', cmd.correlationRequestId);
     await this.adminNotify.enqueue(requestId);
     return 'PENDING_REVIEW';
+  }
+
+  private async emailWasUsedBefore(requestId: string, email: string): Promise<boolean> {
+    // Our request has already committed. Two concurrent submits cannot both miss the other's
+    // committed request: the later commit sees the earlier one, even before it reaches approval.
+    // All states count; closing/rejecting an application does not erase this review signal.
+    const matches = await this.prisma.client.$queryRaw<Array<{ id: string }>>`
+      SELECT "id" FROM "User" WHERE lower(btrim("email")) = ${email} OR lower(btrim("username")) = ${email}
+      UNION ALL
+      SELECT "id" FROM "Company" WHERE lower(btrim("email")) = ${email}
+      UNION ALL
+      SELECT "id" FROM "CompanySignupRequest" WHERE "id" <> ${requestId} AND lower(btrim("contactEmail")) = ${email}
+      LIMIT 1
+    `;
+    return matches.length > 0;
   }
 
   /**

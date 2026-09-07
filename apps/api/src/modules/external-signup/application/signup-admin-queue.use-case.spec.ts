@@ -28,6 +28,7 @@ function harness(options: {
   request?: any;
   requests?: any[];
   users?: any[];
+  emailReviewEvidence?: Array<{ targetId: string }>;
   companies?: any[];
   companiesByPhone?: Array<{ phone: string; name: string }>;
   membershipsByPhone?: Array<{ user: { phoneNumber: string | null }; company: { name: string } }>;
@@ -89,7 +90,14 @@ function harness(options: {
         },
       },
       externalIdentity: { findMany: async () => options.identities ?? [] },
-      auditLog: { create: async (args: any) => { audits.push(args); return {}; } },
+      auditLog: {
+        create: async (args: any) => { audits.push(args); return {}; },
+        findMany: async (args: any) => {
+          assert.equal(args.where.action, 'signup.line.submitted');
+          assert.deepEqual(args.where.metadataJson, { path: ['emailPreviouslyUsed'], equals: true });
+          return (options.emailReviewEvidence ?? []).filter((row) => args.where.targetId.in.includes(row.targetId));
+        },
+      },
     },
   } as any;
 
@@ -134,6 +142,19 @@ function harness(options: {
 }
 
 describe('SignupAdminQueueUseCase.list', () => {
+  it('shows the durable email-review reason independently of account attachment or a current email match', async () => {
+    const h = harness({
+      requests: [{ ...REQUEST, id: 'duplicate-line', source: 'line-oa' }, { ...REQUEST, id: 'fresh-line', source: 'line-oa' }],
+      emailReviewEvidence: [{ targetId: 'duplicate-line' }, { targetId: 'outside-this-page' }],
+    });
+    const { items } = await h.useCase.list(NOW);
+    assert.equal(items[0]!.emailPreviouslyUsed, true);
+    assert.equal(items[0]!.emailMatchesExistingUser, false);
+    assert.equal(items[0]!.attachesToExistingAccount, undefined);
+    assert.equal(items[1]!.emailPreviouslyUsed, undefined);
+    assert.deepEqual(h.provisioned, []);
+  });
+
   it('surfaces dedupe hints without deciding anything', async () => {
     const h = harness({
       requests: [{ ...REQUEST, approvedAt: new Date('2026-08-20T00:00:00.000Z'), state: 'EMAIL_PENDING' }],

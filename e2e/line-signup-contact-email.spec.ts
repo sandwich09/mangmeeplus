@@ -69,3 +69,63 @@ for (const width of [390, 1280]) {
     expect(submissions[1]?.contactEmail).toBe('shop+contact@example.test');
   });
 }
+
+test('a previously used owner email waits for review without showing an active-shop action', async ({ page, urls }, info) => {
+  expect(['localhost', '127.0.0.1']).toContain(new URL(urls.api).hostname);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('https://static.line-scdn.net/**', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.liff = {
+      init: async function () {}, isLoggedIn: function () { return true; },
+      getIDToken: function () { return 'local.synthetic.token'; },
+      getDecodedIDToken: function () { return { name: 'เจ้าของร้านเดิม', exp: Math.floor(Date.now()/1000)+3600 }; },
+      closeWindow: function () {}
+    };`,
+  }));
+  let statusReads = 0;
+  await page.route(`${urls.api}/public/line-signups/me`, (route) => route.fulfill({
+    json: statusReads++ === 0 ? null : {
+      requestId: 'repeat-email-1',
+      state: 'PENDING_REVIEW',
+      companyName: 'ร้านเดิมที่ต้องตรวจ',
+      businessHours: true,
+    },
+  }));
+  const submissions: Record<string, any>[] = [];
+  await page.route(`${urls.api}/public/line-signups`, async (route) => {
+    submissions.push(route.request().postDataJSON());
+    await route.fulfill({
+      status: 202,
+      json: {
+        requestId: 'repeat-email-1',
+        state: 'PENDING_REVIEW',
+        existingAccount: false,
+        businessHours: true,
+      },
+    });
+  });
+
+  const response = await page.goto(`${urls.api}/auth/line/link-page/signup`);
+  expect(response?.ok()).toBe(true);
+  await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านเดิมที่ต้องตรวจ');
+  await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
+  const email = page.getByLabel('อีเมลเจ้าของร้าน', { exact: true });
+  await email.fill('used-owner@example.test');
+  await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
+
+  await expect(page.locator('#done-view')).toBeVisible();
+  await expect(page.locator('#done-text')).toContainText('ทีมงานกำลังตรวจสอบ');
+  await expect(page.locator('#contact-email-error')).toBeHidden();
+  await expect(page.locator('#form-view')).toBeHidden();
+  await expect(page.getByRole('button', { name: 'ปิด', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: /เปิดหน้าเว็บ|เริ่มใช้งาน/ })).toHaveCount(0);
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0]?.contactEmail).toBe('used-owner@example.test');
+
+  await page.reload();
+  await expect(page.locator('#pending-view')).toBeVisible();
+  await expect(page.locator('#pending-text')).toContainText('ทีมงานกำลังตรวจสอบ');
+  await expect(page.locator('#form-view')).toBeHidden();
+  await expect(page.getByRole('link', { name: /เปิดหน้าเว็บ|เริ่มใช้งาน/ })).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('signup-duplicate-email-pending-390.png'), fullPage: true });
+});

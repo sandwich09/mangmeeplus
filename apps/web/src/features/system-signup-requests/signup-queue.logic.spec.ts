@@ -202,6 +202,16 @@ describe('signupHintChips', () => {
     assert.equal(chips.some((chip) => chip.label.includes('อีเมลตรงกับบัญชีเดิม')), false);
   });
 
+  it('tells the reviewer to check a previously used email without claiming an identity match', () => {
+    const chips = signupHintChips(item({
+      source: 'line-oa',
+      emailMatchesExistingUser: true,
+      emailPreviouslyUsed: true,
+    }));
+    assert.ok(chips.some((chip) => chip.label === 'อีเมลเคยใช้แล้ว — ตรวจร้านเดิมก่อนอนุมัติ'));
+    assert.equal(chips.some((chip) => chip.label.includes('ระบบจะผูก')), false);
+  });
+
   it('names the company a tax id collides with', () => {
     const chips = signupHintChips(item({ taxIdMatchesCompanyName: 'ร้านเดิม' }));
     assert.equal(chips[0]!.label, 'เลขภาษีตรงกับ ร้านเดิม');

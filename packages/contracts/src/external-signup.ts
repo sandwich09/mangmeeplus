@@ -152,6 +152,8 @@ export type AdminSignupQueueItemDto = {
   claimEmailLastSentAt?: string;
   /** Dedupe hints — booleans/labels only, decided at claim time per spec §4C. */
   emailMatchesExistingUser: boolean;
+  /** LINE submit found this address in an account, shop or earlier application; review before opening another shop. */
+  emailPreviouslyUsed?: boolean;
   taxIdMatchesCompanyName?: string;
   /**
    * Review A-01: the phone on this application already reaches a shop we opened — most often one an

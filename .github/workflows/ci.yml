@@ -471,6 +471,9 @@ jobs:
           LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/external-signup/line-signup-stale-identity.pg.spec.ts
+          LINE_SIGNUP_TEST_DATABASE_URL="$DATABASE_URL" LINE_SIGNUP_REQUIRE_POSTGRES=true \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/external-signup/line-signup-duplicate-email.pg.spec.ts
           LINE_SUPPORT_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/external-signup/line-support-request.pg.spec.ts

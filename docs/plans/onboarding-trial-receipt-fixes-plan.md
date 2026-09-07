@@ -1,6 +1,6 @@
 # New-shop onboarding and trial receipt fix plan
 
-Status: Five-issue implementation and owner-email amendment complete; all local integration acceptance passes. Candidate frozen for PR CI and authorized develop/main admin delivery. Docs-first commits `4f9cbb8a` and `324172b2`; no deployment dispatched.
+Status: PR #475 candidate8505826d passed local acceptance and entered CI. Owner then clarified duplicate email must route to manual review; the amendment is implemented with focused414/414, PostgreSQL24/24 and browser6/6 acceptance; latest workspace tests/typecheck and protected pins also pass; awaiting amended-head CI before any merge. Docs-first commits `4f9cbb8a` and `324172b2`; no deployment dispatched.
 
 Spec: [five-issue contract](../specs/onboarding-trial-receipt-fixes-spec.md). Memory: [task state](../agent-memory/onboarding-trial-receipt-fixes.md).
 
@@ -46,8 +46,15 @@ Integration ownership updates: the email Astra lane owns the separate first-shop
 
 ## Owner email clarification implementation
 
-- Astra email lane: safely adopt available unverified owner email without blocking LINE signup; preserve existing account identity, duplicate-contact shop continuation and idempotent provisioning. Align optional initial-password backend with a present email identifier; real PG lifecycle coverage.
+- Astra email lane: safely adopt available unverified owner email without blocking LINE signup; preserve existing account identity and idempotent provisioning. The later duplicate-email gate requires actual manual approval before a reused-email shop can be provisioned. Align optional initial-password backend with a present email identifier; real PG lifecycle coverage.
 - Sol web lane: account email truth/optional password UX, no username requirement when account email exists, actual LIFF owner-email label/helper and browser proof coordinated with Astra. No signup password field, send or verification wait.
 - Coordinator: amendment/spec/memory, integration review and re-run affected verification before Git delivery. Initial contact-only test evidence is historical until revised email expectations pass.
 
 Amended acceptance: full workspace tests/typecheck and eight-suite LINE acceptance pass; clean PostgreSQL signup14/auth1/first-receipt1 (zero skips); combined actual-page browser5/5. See task memory for exact evidence and runtime boundaries.
+
+## Duplicate email owner clarification after PR #475
+
+- Astra email lane: exact normalized duplicate detection over account/company/prior signup, PENDING_REVIEW routing and durable audit reason; no AUTO_FREE slot or provisioning, existing replay behavior intact. Focused unit/API tests.
+- Astra integrity lane: independent concurrency and identity-boundary review, real PostgreSQL duplicate/race/manual-approval acceptance in a separate test or agreed existing test ownership.
+- Sol web lane: admin queue review reason and honest pending public status, retain signup input/no password and existing first-time immediate flow.
+- Coordinator: docs, integration/source/CI checks, updated same PR and only merge the amended head after fresh CI. Current CI run34115108003 validates the earlier candidate only.

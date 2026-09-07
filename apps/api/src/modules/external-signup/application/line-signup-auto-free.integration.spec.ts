@@ -247,8 +247,14 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
         };
       }
       if (prop === '$executeRaw') return async () => 0;
-      if (prop === '$queryRaw') return async (strings: TemplateStringsArray, userId: string, email: string) => {
+      if (prop === '$queryRaw') return async (strings: TemplateStringsArray, ...values: string[]) => {
+        if (strings.join('').includes('UNION ALL')) {
+          const [email, , , requestId] = values;
+          return [...userRows.values()].filter((row) => row.email?.trim().toLowerCase() === email || row.username?.trim().toLowerCase() === email)
+            .concat([...requests.values()].filter((row) => row.id !== requestId && row.contactEmail?.trim().toLowerCase() === email)).map((row) => ({ id: row.id }));
+        }
         assert.ok(strings.join('').includes('lower("email")'));
+        const [userId, email] = values;
         return [...userRows.values()].filter((row) => row.id !== userId
           && (row.email?.toLowerCase() === email || row.username?.toLowerCase() === email)).map((row) => ({ id: row.id }));
       };

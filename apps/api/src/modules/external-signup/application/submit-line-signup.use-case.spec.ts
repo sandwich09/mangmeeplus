@@ -43,6 +43,7 @@ function harness(options: {
   displayName?: string | null;
   systemAdmins?: string[];
   attemptBucketFull?: boolean;
+  emailPreviouslyUsed?: boolean;
 } = {}) {
   const created: any[] = [];
   const advances: any[] = [];
@@ -55,6 +56,7 @@ function harness(options: {
   const capCounts: any[] = [];
   const locks: unknown[][] = [];
   const identityReads: any[] = [];
+  const emailReads: Array<{ sql: string; values: unknown[] }> = [];
   const client: any = {
     externalIdentity: {
       findFirst: async (args: any) => {
@@ -82,6 +84,10 @@ function harness(options: {
     // The cap is claimed inside a transaction holding an advisory lock; the fake records both so a
     // spec can prove the serialisation exists rather than trusting the comment above it.
     $executeRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => { locks.push(values); return 0; },
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      emailReads.push({ sql: strings.join('?'), values });
+      return options.emailPreviouslyUsed ? [{ id: 'prior-email-evidence' }] : [];
+    },
     $transaction: async (fn: any) => fn(client),
   };
   const prisma = { client } as any;
@@ -133,7 +139,7 @@ function harness(options: {
   return {
     useCase: new SubmitLineSignupUseCase(prisma, config, core, lineIdToken, rateLimit, adminNotify, provision, opsAlerts),
     created, advances, audits, updates, notified, provisioned, userQuotas, capCounts, locks, alerts,
-    identityReads,
+    identityReads, emailReads,
   };
 }
 
@@ -313,6 +319,27 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
     // Review HIGH-1: onboarding writes this id into two foreign keys, so it has to be a real user.
     assert.equal(h.provisioned[0].actorUserId, 'sysadmin-1');
     assert.equal(h.audits.at(-1).data.actorRefId, 'line-signup-auto-approve');
+    assert.equal(h.audits[0].data.metadataJson.emailPreviouslyUsed, false);
+  });
+
+  it('accepts reused owner email for manual review without an AUTO_FREE slot or provisioning', async () => {
+    for (const approvalMode of ['AUTO_FREE', 'MANUAL'] as const) {
+      const h = harness({ approvalMode, emailPreviouslyUsed: true, identity: { userId: 'staff-owner' }, memberships: [{ owner: false }] });
+      const result = await h.useCase.execute({ ...CMD, contactEmail: ' Shop@Example.TEST ' }, NOW);
+      assert.equal(result.state, 'PENDING_REVIEW');
+      assert.deepEqual(h.notified, ['signup-1']);
+      assert.deepEqual(h.provisioned, []); assert.deepEqual(h.updates, []); assert.deepEqual(h.capCounts, []);
+      assert.deepEqual(h.alerts, []);
+      assert.equal(h.audits[0].data.metadataJson.emailPreviouslyUsed, true);
+      assert.equal(h.audits[0].data.metadataJson.manualReviewReason, 'email_previously_used');
+      assert.equal(JSON.stringify(h.audits).includes('shop@example.test'), false);
+      const read = h.emailReads[0]!;
+      assert.deepEqual(read.values, ['shop@example.test', 'shop@example.test', 'shop@example.test', 'signup-1', 'shop@example.test']);
+      for (const table of ['User', 'Company', 'CompanySignupRequest']) assert.ok(read.sql.includes(`FROM "${table}"`));
+      assert.match(read.sql, /"id" <>/); assert.match(read.sql, /lower\(btrim\("contactEmail"\)\)/);
+      assert.match(read.sql, /lower\(btrim\("username"\)\)/);
+      assert.doesNotMatch(read.sql, /"state"|"status"|ILIKE/);
+    }
   });
 
   // Review MEDIUM-2: count-then-write lets N concurrent submits all read `cap - 1` and all pass,
