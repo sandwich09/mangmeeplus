@@ -169,6 +169,7 @@ export const WORKSPACE_MODULES: WorkspaceModule[] = [
       'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
+      'expense.receipt.line_upload',
       'expense.create',
       'expense.confirm',
       'expense.category.manage',

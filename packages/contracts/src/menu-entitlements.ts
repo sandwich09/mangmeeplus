@@ -172,6 +172,7 @@ export const MENU_ENTITLEMENT_BINDINGS: readonly MenuEntitlementBinding[] = [
       'expense.read_related',
       'expense.read_own',
       'expense.receipt.upload',
+      'expense.receipt.line_upload',
       'expense.create',
       // A pure approver holds only this; without it the expenses module hides and the
       // substitute-receipt submenu it gates becomes unreachable.

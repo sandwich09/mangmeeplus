@@ -230,9 +230,12 @@ export class ExpenseController {
   }
 
   @Get(':expenseId')
-  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review', 'expense.confirm')
-  getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
-    return this.get.execute(ctx, expenseId);
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.create', 'expense.review', 'expense.confirm', 'expense.receipt.upload', 'expense.receipt.line_upload')
+  async getExpense(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string) {
+    const expense = await this.get.execute(ctx, expenseId);
+    const sourceDraft = await this.get.sourceDraft(ctx, expense);
+    const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
+    return { ...detail, sourceDraft };
   }
 
   @Get(':expenseId/payment-voucher.pdf')
@@ -399,15 +402,19 @@ export class ExpenseController {
   }
 
   @Patch(':expenseId')
-  @RequirePermissions('expense.update')
-  updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
-    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
+  @RequireAnyPermission('expense.update', 'expense.review', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload')
+  async updateDraft(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    const expense = await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
+    const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
+    return detail;
   }
 
   @Patch(':expenseId/review-fields')
   @RequirePermissions('expense.review')
-  updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
-    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
+  async updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    const expense = await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
+    const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
+    return detail;
   }
 
   @Post(':expenseId/non-expense-classification-override')
@@ -523,7 +530,7 @@ export class ExpenseCategoryController {
   ) {}
 
   @Get()
-  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review', 'expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload')
   listCategories(@ReqCtx() ctx: RequestContext) {
     return this.listCats.execute(ctx);
   }

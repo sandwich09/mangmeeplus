@@ -101,3 +101,33 @@ describe('CreateUploadIntentUseCase', () => {
     );
   });
 });
+
+describe('CreateUploadIntentUseCase receipt resume', () => {
+  it('reuses bytes from a lost upload response and re-signs only the original missing object', async () => {
+    for (const exists of [true, false]) {
+      const repo = makeRepo({ findById: async ({ companyId }: any) => companyId === 'co-1' ? stubRecord : null });
+      const storage = makeStorage();
+      storage.getObjectMetadata = mock.fn(async () => ({ byteSize: 1024, exists }));
+      const uc = new CreateUploadIntentUseCase(repo as any, storage as any, makeAudit() as any, config as any);
+      const result = await uc.resume(makeCtx(['attachment.create']), 'att-1');
+      assert.equal(result.attachmentId, 'att-1');
+      assert.equal(result.uploadRequired, !exists);
+      assert.equal(repo.createPending.mock.calls.length, 0);
+      assert.equal(storage.createUploadIntent.mock.calls.length, exists ? 0 : 1);
+      if (!exists) assert.equal((storage.createUploadIntent.mock.calls as any[])[0].arguments[0].objectKey, stubRecord.objectKey);
+    }
+  });
+
+  it('requires the same uploader, company and branch, including ACTIVE attachment recovery', async () => {
+    const repo = makeRepo({ findById: async ({ companyId }: any) => companyId === 'co-1' ? { ...stubRecord, branchId: 'branch-a', status: 'ACTIVE' } : null });
+    const storage = makeStorage();
+    const uc = new CreateUploadIntentUseCase(repo as any, storage as any, makeAudit() as any, config as any);
+    const owner = makeCtx(['attachment.create']);
+    assert.equal((await uc.resume(owner, 'att-1')).uploadRequired, false);
+    assert.equal(storage.createUploadIntent.mock.calls.length, 0, 'ACTIVE immutable bytes are never overwritten');
+    await assert.rejects(() => uc.resume({ ...owner, userId: 'someone-else' }, 'att-1'), /Forbidden/);
+    await assert.rejects(() => uc.resume({ ...owner, companyId: 'co-other' }, 'att-1'), /not found/i);
+    await assert.rejects(() => uc.resume({ ...owner, scopes: { branchIds: ['branch-b'] } }, 'att-1'), /Forbidden/);
+    await assert.rejects(() => uc.resume(makeCtx([]), 'att-1'), /Forbidden/);
+  });
+});

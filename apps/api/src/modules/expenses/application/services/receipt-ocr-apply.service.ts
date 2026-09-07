@@ -675,7 +675,8 @@ function prepareOcrLines(
     const candidate = [
       ...items.map((item, index) => {
         const qty = positiveMoney(item.quantity) ?? 1;
-        const amount = positiveMoney(item.amount)!;
+        // usableItemLines already proved a printed amount; a free row must retain zero here too.
+        const amount = nonNegativeMoney(item.amount)!;
         const printedUnit = positiveMoney(item.unitPrice);
         // Thai bills print the row's extended amount far more often than its unit price, so the
         // printed unit price is kept only when it explains that amount; otherwise it is derived.

@@ -640,7 +640,40 @@ export function expenseLineCharges(
     }));
 }
 
+/** Ordinary receipt facts; no chat identity, provenance, tax or final-mutation authority. */
+export type ExpenseSourceDraftItemInput = {
+  /** Omit only when adding a new staged item. Omitted existing items are retained. */
+  itemRef?: string;
+  description?: string | null;
+  quantity?: string | null;
+  unitPrice?: string | null;
+  totalAmount?: string | null;
+  expenseCategoryId?: string | null;
+};
+export type ExpenseSourceDraftInput = {
+  expenseDate?: string | null;
+  vendorName?: string | null;
+  businessPurpose?: string | null;
+  items?: ExpenseSourceDraftItemInput[];
+};
+export type ExpenseSourceDraft = {
+  status: 'OPEN' | 'PAUSED' | 'PAUSED_INTERRUPTED' | 'INPUT_ENDED_COMPLETE' | 'INPUT_ENDED_INCOMPLETE' | 'CANCELLED';
+  canEdit: boolean;
+  header: { expenseDate: string | null; vendorName: string | null; businessPurpose: string | null };
+  items: Array<{
+    itemRef: string;
+    lineId: string | null;
+    description: string | null;
+    quantity: string | null;
+    unitPrice: string | null;
+    totalAmount: string | null;
+    expenseCategoryId: string | null;
+  }>;
+  missingFields: Array<{ id: string; scope: 'DOCUMENT' | 'ITEM'; itemRef?: string; field: string; prompt: string }>;
+};
+
 export type ExpenseDetail = ExpenseSummary & {
+  sourceDraft?: ExpenseSourceDraft | null;
   /** Set when this expense is a reimbursement-claim projection — it is settled by the
    *  claim payout (RBPAY), never by a manual expense payment. */
   sourceReimbursementRequestId: string | null;
@@ -751,7 +784,10 @@ export type CreateExpenseDraftInput = {
 export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines'>> & {
   /** Interactive callers send the version they loaded; API PATCH/override routes require it. */
   expectedUpdatedAt?: string;
-  lines?: CreateExpenseDraftInput['lines'];
+  /** Existing row identity survives edits/reordering; omit id for a new row. */
+  lines?: Array<CreateExpenseDraftInput['lines'][number] & { id?: string }>;
+  /** Must be sent alone with expectedUpdatedAt. Null/blank clears a staged fact, absent preserves it. */
+  sourceDraft?: ExpenseSourceDraftInput;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;
   vendorBranchCodeSnapshot?: string;

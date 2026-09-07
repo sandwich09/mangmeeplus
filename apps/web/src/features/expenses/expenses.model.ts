@@ -18,6 +18,7 @@ import type {
   ExpenseTotalsIdentity,
   RecordExpensePaymentInput,
   ExpenseDocumentDateStatus,
+  ExpenseSourceDraft,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -342,6 +343,7 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  sourceDraft?: ExpenseSourceDraft | null;
   /** Suggested input Tax Code from this expense's category. A hint for the line picker only. */
   categoryDefaultInputTaxCode?: string | null;
   vendorTaxIdSnapshot: string | null;
@@ -453,6 +455,8 @@ export type ExpenseDraftReviewValues = {
   vatSource?: ExpenseVatSourceInput;
   whtInput?: ExpenseWhtInput;
   lines: Array<{
+    /** Existing rows keep their server identity; newly inserted review rows omit it. */
+    id?: string;
     description: string;
     /** §5.1: charge rows live in the same array as products and always sort after them, so the
      *  line numbers the payload sends already satisfy the server's ordering rule. */
@@ -483,6 +487,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
     lines: detail.lines.map((line) => ({
+      id: line.id,
       description: line.description,
       chargeKind: line.chargeKind ?? null,
       quantity: line.quantity,
@@ -624,6 +629,7 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     ...(values.vatSource && { vatSource: values.vatSource }),
     ...(values.whtInput && { whtInput: values.whtInput }),
     lines: values.lines.map((line, index) => ({
+      ...(line.id && { id: line.id }),
       lineNumber: index + 1,
       description: line.description.trim(),
       // ALWAYS sent, unlike the other optional line fields here. `lines` is a replacement and the
@@ -1168,9 +1174,33 @@ export function expenseAiMissingFields(summary: Record<string, unknown> | null, 
   return missing.filter((field): field is string => typeof field === 'string' && tracked.includes(field));
 }
 
+export function expenseSourceDraftViewState(
+  detail: Pick<ExpenseDetail, 'status' | 'sourceDraft'> & { lines: ReadonlyArray<unknown> },
+  canMutateDraft: boolean,
+): {
+  sourceDraft: ExpenseSourceDraft | null;
+  incomplete: boolean;
+  sourceOnly: boolean;
+  financialTotalUnknown: boolean;
+} {
+  const draft = detail.sourceDraft ?? null;
+  const sourceDraft = detail.status === 'DRAFT' || detail.status === 'NEEDS_REVIEW'
+    || (detail.status === 'READY_FOR_CONFIRMATION' && Boolean(draft?.missingFields.length))
+    ? draft
+    : null;
+  const incomplete = Boolean(sourceDraft?.missingFields.length);
+  return {
+    sourceDraft,
+    incomplete,
+    sourceOnly: Boolean(sourceDraft && !canMutateDraft
+      && (sourceDraft.canEdit || detail.status === 'READY_FOR_CONFIRMATION')),
+    financialTotalUnknown: incomplete && detail.lines.length === 0,
+  };
+}
+
 export function deriveExpenseReviewSteps(
   detail: Pick<ExpenseDetail, 'aiVerificationSummaryJson' | 'vendorNameSnapshot' | 'expenseDate' | 'taxEvidenceStatus'
-    | 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType' | 'duplicateStatus'> & {
+    | 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType' | 'duplicateStatus' | 'sourceDraft'> & {
     attachments: ReadonlyArray<{ purpose?: string; status?: string }>;
     lines: ReadonlyArray<unknown>;
     substituteReceiptEvidence: Pick<SubstituteReceiptEvidenceSummary, 'status' | 'artifactAttachmentId'> | null;
@@ -1186,7 +1216,8 @@ export function deriveExpenseReviewSteps(
   // fields worth a second look. Gating the tick on the flags left a filled-in step showing ⚠.
   // §5.2 again: an upload-day placeholder passes `Boolean(expenseDate)` and ticked step 1 as done.
   const dateReadable = expenseDateIsReadable(detail.aiVerificationSummaryJson);
-  const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0;
+  const sourceDraftComplete = !detail.sourceDraft || detail.sourceDraft.missingFields.length === 0;
+  const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0 && sourceDraftComplete;
   const evidenceState: ExpenseReviewStepState = detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
     ? 'done'
     : classificationBlocked || !substituteReady || needsReceiptOrSubstitute ? 'attention' : 'pending';

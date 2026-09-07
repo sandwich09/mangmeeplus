@@ -18,6 +18,12 @@ test('explains stale draft removal without a misleading generic concurrency erro
     'ลบได้เฉพาะร่างพนักงานที่ยังไม่เสร็จสิ้น กรุณาตรวจสอบสถานะล่าสุด');
 });
 
+test('explains source-draft validation, completion, and item races in plain Thai', () => {
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_SOURCE_DRAFT_INVALID' })), /ตรวจวันที่ จำนวน ราคา/);
+  assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_SOURCE_DRAFT_INCOMPLETE' })), /ยังส่งตรวจหรือยืนยันไม่ได้/);
+  assert.match(apiErrorMessage(apiError('Conflict', { status: 409, code: 'expense_source_line_identity_changed' })), /เปิดรายการใหม่/);
+});
+
 test('distinguishes a wrong current password from an expired session', () => {
   assert.equal(apiErrorMessage(apiError('Current password is incorrect.', {
     status: 400, code: 'current_password_incorrect',

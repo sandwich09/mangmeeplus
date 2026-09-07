@@ -1,3 +1,4 @@
+import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -905,6 +906,11 @@ export class PrismaExpenseRepository {
         if (internalEvidence && rest.sourceDocumentType !== undefined && rest.sourceDocumentType !== internalEvidence.originalSourceDocumentType) {
           throw new ConflictException({ code: 'substitute_evidence_doc_type_locked', message: 'The original source document type is locked while substitute evidence is active.' });
         }
+      }
+      if (rest.status === 'READY_FOR_CONFIRMATION' || rest.status === 'CONFIRMED') {
+        const source = await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
+        assertExpenseSourceDraftComplete(source?.sourceChannelMetadataJson as Record<string, unknown> | null,
+          source?.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(source), lines: (source.lines ?? []).map(mapLine) } : undefined);
       }
       const updated = await tx.expenseRecord.updateMany({
         where: { id, companyId, ...(expectedUpdatedAt && { updatedAt: expectedUpdatedAt }) },
@@ -2015,8 +2021,13 @@ export class PrismaExpenseRepository {
   }): Promise<ExpenseRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
+      const current = await tx.expenseRecord.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
+      if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
+        current.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) } : undefined);
       const changed = await tx.expenseRecord.updateMany({
-        where: { id: input.id, companyId: input.companyId, updatedAt: input.expectedUpdatedAt },
+        where: { id: input.id, companyId: input.companyId, status: 'READY_FOR_CONFIRMATION', updatedAt: input.expectedUpdatedAt },
         data: {
           status: 'CONFIRMED', confirmedByUserId: input.actorUserId, confirmedAt: new Date(),
           updatedByUserId: input.actorUserId, expenseNumber: input.expenseNumber, postingStatus: input.postingStatus,
@@ -2064,6 +2075,8 @@ export class PrismaExpenseRepository {
       });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
       requireExpenseBranchId(current.branchId);
+      assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
+        current.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(current), lines: current.lines.map(mapLine) } : undefined);
       if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
       const substitute = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId: input.companyId, expenseId: input.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' },
@@ -2325,14 +2338,24 @@ export class PrismaExpenseRepository {
     return new Map(rows.map((row) => [row.lineNumber, { chargeKind: row.chargeKind ?? null, description: row.description }]));
   }
 
-  async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any): Promise<void> {
+  async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any, preserveLineIdentity = false): Promise<void> {
     await this.runInTx(db, async (tx: any) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
       const signedEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId, expenseId, status: { in: ['PAYER_CERTIFIED', 'ISSUED'] } }, select: { id: true },
       });
       if (signedEvidence) throw new ConflictException({ code: 'substitute_evidence_locks_lines', message: 'Signed substitute evidence locks expense lines. Prepare a corrected version before changing them.' });
-      await tx.expenseLine.deleteMany({ where: { expenseId, companyId, lineNumber: { notIn: lines.map((line) => line.lineNumber) } } });
+      const preservedIds = lines.flatMap((line) => line.preserveLineId ? [line.preserveLineId] : []);
+      if (preserveLineIdentity || preservedIds.length) {
+        const existing = await tx.expenseLine.findMany({ where: { expenseId, companyId }, select: { id: true } });
+        if (new Set(preservedIds).size !== preservedIds.length || preservedIds.some((id) => !existing.some((row: { id: string }) => row.id === id))) {
+          throw new ConflictException('expense_source_line_identity_changed');
+        }
+        // Vacate positions inside the transaction before inserting a new product ahead of charges.
+        // The existing ids (and tax/evidence references to them) survive reordering.
+        for (const [index, id] of preservedIds.entries()) await tx.expenseLine.update({ where: { id }, data: { lineNumber: -(index + 1) } });
+        await tx.expenseLine.deleteMany({ where: { expenseId, companyId, id: { notIn: preservedIds } } });
+      } else await tx.expenseLine.deleteMany({ where: { expenseId, companyId, lineNumber: { notIn: lines.map((line) => line.lineNumber) } } });
       if (lines.length > 0) {
         for (const l of lines) {
           const { taxSnapshot, taxComponents } = l;
@@ -2371,6 +2394,10 @@ export class PrismaExpenseRepository {
           taxComponentsJson: taxComponents ?? null,
           accountAssignmentsJson: taxComponents?.flatMap((component) => component.accountAssignments) ?? null,
           };
+          if (l.preserveLineId) {
+            await tx.expenseLine.update({ where: { id: l.preserveLineId }, data });
+            continue;
+          }
           await tx.expenseLine.upsert({
             where: { expenseId_lineNumber: { expenseId, lineNumber: l.lineNumber } },
             create: data,
@@ -2684,7 +2711,8 @@ export class PrismaExpenseRepository {
       where: {
         companyId: input.companyId,
         captureSource: 'LINE_UPLOAD',
-        status: 'DRAFT',
+        status: { in: ['DRAFT', 'NEEDS_REVIEW'] },
+        createdByUserId: input.userId,
         AND: [
           { sourceChannelMetadataJson: { path: ['lineExpenseDraftContinuation', 'userId'], equals: input.userId } },
           { sourceChannelMetadataJson: { path: ['lineExpenseDraftContinuation', 'chatKeyHash'], equals: input.chatKeyHash } },

@@ -1940,7 +1940,8 @@ describe('LINE intake dispatch – media path', () => {
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
       findExpenseByLineMessageId: async (_companyId, lineMessageId) => {
         lookupCount += 1;
-        return lookupCount === 1 ? null : { id: 'expense-1', lineMessageId, sourceDocumentType: 'RECEIPT' };
+        return lookupCount === 1 ? null : { id: 'expense-1', lineMessageId, sourceDocumentType: 'RECEIPT',
+          status: 'CONFIRMED', createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' };
       },
     });
 
@@ -1950,7 +1951,10 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.initCalls.length, 1);
     assert.equal(h.uploads.length, 1);
     assert.equal(h.completeCalls.length, 1);
+    assert.equal(h.routeRequests.length, 1, 'redelivery reuses the capture before provider admission');
+    assert.equal(h.ocrRequests.length, 1);
     assert.match(h.replies[1] ?? '', /expense-1/);
+    assert.doesNotMatch(h.replies[1] ?? '', /ยังไม่ยืนยันรายการ|ส่งรูป.*ใหม่/);
   });
 
   it('OCR unavailable without a caption persists clarification and creates no expense', async () => {
@@ -2008,6 +2012,11 @@ describe('LINE intake dispatch – media path', () => {
   });
 
   it('does not complete an attachment when the storage PUT fails', async () => {
+    const event = { ...MEDIA_EVENT };
+    const prior = makeHarness({ permissions: ['expense.receipt.line_upload'],
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 } });
+    await prior.useCase.executeReceiptUpload(event);
+    assert.equal(prior.completeCalls.length, 1);
     const { prisma, updates } = makePrisma();
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
@@ -2015,7 +2024,9 @@ describe('LINE intake dispatch – media path', () => {
       uploadThrows: true,
       prisma,
     });
-    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    // Reusing an input cannot carry a different invocation's saved marker into this failed PUT.
+    await h.useCase.executeReceiptUpload(event);
+    assert.equal(h.initCalls.length, 1);
     assert.equal(h.uploads.length, 1);
     assert.equal(h.completeCalls.length, 0);
     // Media failure copy names the photo and the resend path (owner UX 2026-08-29).
@@ -2154,7 +2165,12 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.ocrRequests.length, 1);
     assert.equal(h.initCalls.length, 1);
     assert.equal(h.completeCalls.length, 1);
-    assert.equal(recordUpdates.length, 1);
+    assert.equal(recordUpdates.length, 2, 'source facts persist before apply, then the final capture metadata is written');
+    assert.equal(recordUpdates[0].where.id, 'expense-1');
+    assert.deepEqual(recordUpdates[0].data.aiVerificationSummaryJson.recognizedFields, validReceiptOcr().fields);
+    assert.equal(recordUpdates[0].data.lineMessageId, undefined, 'the first write is only the captured source result');
+    assert.equal(recordUpdates[1].data.lineMessageId, MEDIA_EVENT.lineMessageId);
+    assert.equal(recordUpdates[1].data.captureSource, 'LINE_UPLOAD');
     assert.equal(pendingMediaRows.length, 0);
     assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
   });
@@ -2213,7 +2229,11 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(h.ocrRequests.length, 1);
     assert.equal(h.initCalls.length, 1);
     assert.equal(h.completeCalls.length, 1);
-    assert.equal(recordUpdates.length, 1);
+    assert.equal(recordUpdates.length, 2, 'source facts persist before apply, then the final capture metadata is written');
+    assert.equal(recordUpdates[0].where.id, 'expense-1');
+    assert.deepEqual(recordUpdates[0].data.aiVerificationSummaryJson.recognizedFields, validReceiptOcr().fields);
+    assert.equal(recordUpdates[1].data.lineMessageId, MEDIA_EVENT.lineMessageId);
+    assert.equal(recordUpdates[1].data.lineEventId, MEDIA_EVENT.webhookEventId);
     assert.equal(turnCreates.length, 1);
     assert.equal(turnCreates[0].data.intent, 'EVIDENCE_CAPTURE');
     assert.match(turnCreates[0].data.replyPreview, /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
@@ -2855,12 +2875,18 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
     const again = makeHarness({
       permissions: SUBSTITUTE_PERMISSIONS, prisma: redelivered.prisma, substituteMediaContext: AWAITING,
       routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
-      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT' }),
+      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
+        createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' }),
     });
     await again.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-redelivered' });
     assert.equal(redelivered.pendingMediaRows.length, 0, 'no second copy of an already-captured photo');
     assert.equal(again.attachMediaCalls.length, 0);
-    assert.match(again.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่าย/);
+    assert.equal(again.routeRequests.length, 0, 'an existing capture needs no second admission');
+    assert.equal(again.ocrRequests.length, 0);
+    assert.equal(again.initCalls.length, 0);
+    assert.match(again.replies[0] ?? '', /เก็บรายการนี้ไว้แล้ว/);
+    assert.match(again.replies[0] ?? '', /\/companies\/company-1\/expenses\/expense-1/);
+    assert.doesNotMatch(again.replies[0] ?? '', /ยังไม่ยืนยันรายการ|ส่งรูป.*ใหม่/);
   });
 
   it('resolves a numbered answer against the question that was asked, never against today’s list', async () => {

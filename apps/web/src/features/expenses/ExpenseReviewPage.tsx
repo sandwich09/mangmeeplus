@@ -20,14 +20,14 @@ import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
   acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate, fetchAttachmentPreviewBlob, getExpense,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
-  requestExpenseExtraction, runDuplicateCheck, uploadExpenseEvidenceFile, voidExpense,
+  requestExpenseExtraction, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
 } from './expenses.api';
 import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker,
-  expenseNeedsReceiptOrSubstitute, expenseSubstituteReceiptReady, expenseValueLabel,
+  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
@@ -48,6 +48,7 @@ import {
 import { ForeignCurrencyNotice } from './ForeignCurrencyNotice';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
+import { ExpenseSourceDraftCard } from './ExpenseSourceDraftCard';
 
 // Sticky offsets, measured against the running app — do not guess these.
 // AppHeader is `sticky top-0 z-[99999] h-[68px]`, so page-level sticky chrome must clear it or it
@@ -475,6 +476,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
   const isConfirmedDuplicate = detail.duplicateStatus === 'CONFIRMED_DUPLICATE';
+  const sourceDraftView = expenseSourceDraftViewState(detail, canMutateDraft);
+  const visibleSourceDraft = sourceDraftView.sourceDraft;
+  const sourceDraftIncomplete = sourceDraftView.incomplete;
+  const sourceOnlyDraft = sourceDraftView.sourceOnly;
+  const financialTotalUnknown = sourceDraftView.financialTotalUnknown;
+  const readySourceDraftMessage = detail.status === 'READY_FOR_CONFIRMATION' && sourceDraftIncomplete
+    ? t(canReview ? 'expenses.source_draft_ready_reviewer_help' : 'expenses.source_draft_ready_waiting_help', locale)
+    : undefined;
   const duplicateBlockMessage = t(isConfirmedDuplicate ? 'expenses.duplicate_confirmed_block' : 'expenses.duplicate_action_required', locale);
   const hasWht = Number(detail.whtAmount) > 0;
   // Spec §7.5: a document that already records VAT keeps showing it, whatever the workspace mode.
@@ -502,7 +511,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Audit H-11: isZeroAmount only ever rendered a warning below and was missing from this gate, so
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
   // reviewer is told before the round trip, and the button no longer disagrees with the rule.
-  const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
   // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
@@ -512,9 +521,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       substituteReady, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
     })
     : null;
-  const confirmBlockedText = confirmBlocker
-    ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale))
-    : null;
+  const confirmBlockedText = sourceDraftIncomplete
+    ? t('expenses.source_draft_blocks_progress', locale)
+    : confirmBlocker ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale)) : null;
   const confirmBlockedNotice = confirmBlockedText ? (
     <p className="w-full text-center text-xs font-medium text-warning-700">
       {t('expenses.confirm_blocked_prefix', locale)} {confirmBlockedText}
@@ -575,14 +584,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="tabular-nums text-xs font-bold text-gray-400">{firstFilled(detail.expenseNumber) ?? t('expenses.draft_label', locale)}</span>
         <span className="max-w-full truncate text-lg font-extrabold text-gray-900">{firstFilled(detail.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
-        <span className="text-xs font-normal text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย')} · {dateShort(detail.expenseDate)}</span>
+        <span className="text-xs font-normal text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย')} · {visibleSourceDraft && !visibleSourceDraft.header.expenseDate
+          ? t('expenses.source_draft_date_unknown', locale)
+          : dateShort(visibleSourceDraft?.header.expenseDate ?? detail.expenseDate)}</span>
       </span>
     </span>
   );
   const pageMeta = (
     <div className="mt-1.5 flex flex-wrap gap-2">
       <StatusBadge status={detail.status} />
-      <MangmeeBadge tone={TAX_TONE(detail.taxEvidenceStatus)}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, detail.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge>
+      {!sourceOnlyDraft && <MangmeeBadge tone={TAX_TONE(detail.taxEvidenceStatus)}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, detail.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge>}
       {/* the AI badge is gone: the AI strip on the data step already says it, in words */}
       <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, detail.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
     </div>
@@ -632,7 +643,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    {sourceDraftIncomplete && <p role="status" className="max-w-lg text-sm font-medium text-warning-700">{t('expenses.source_draft_blocks_progress', locale)}</p>}
                   </>
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
@@ -773,16 +785,21 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.money_section_title', locale)}</h3>
-        {/* §5.1: the rows below are the stored header, and the lines are stored separately. A record
-            written before that rule — or by anything bypassing the draft use-cases — can have the
-            two disagree, and printing the header alone would state a total its own lines contradict.
-            Branch on `ok`: a subtotal-only drift has a correct grand total and so a zero gap. */}
-        {detail.totalsIdentity?.ok === false && (
-          <p className="mt-2 rounded-lg bg-warning-50 px-3 py-2 text-xs leading-relaxed text-warning-700">
-            {t('expenses.totals_identity_warning', locale)}
+        {financialTotalUnknown ? (
+          <p role="status" className="mt-3 rounded-xl bg-warning-50 px-4 py-3 text-sm font-semibold text-warning-800">
+            {t('expenses.source_draft_total_unknown', locale)}
           </p>
-        )}
-        <div className="mt-2">
+        ) : <>
+          {/* §5.1: the rows below are the stored header, and the lines are stored separately. A record
+              written before that rule — or by anything bypassing the draft use-cases — can have the
+              two disagree, and printing the header alone would state a total its own lines contradict.
+              Branch on `ok`: a subtotal-only drift has a correct grand total and so a zero gap. */}
+          {detail.totalsIdentity?.ok === false && (
+            <p className="mt-2 rounded-lg bg-warning-50 px-3 py-2 text-xs leading-relaxed text-warning-700">
+              {t('expenses.totals_identity_warning', locale)}
+            </p>
+          )}
+          <div className="mt-2">
           <MoneyRow label={t('expenses.subtotal', locale)} value={detail.subtotalAmount} />
           {Number(detail.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={detail.discountAmount} negative />}
           {/* Spec §5.1: the goods subtotal no longer includes the additional charges, so the column
@@ -817,7 +834,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               {Number(detail.paidAmount) > 0 && <div className="tabular-nums text-xs text-gray-500">{t('expenses.paid_prefix', locale)} {baht(detail.paidAmount)}</div>}
             </div>
           </div>
-        </div>
+          </div>
+        </>}
       </MangmeeCard>
     </div>
   );
@@ -1097,13 +1115,19 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <>
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
+        {readySourceDraftMessage && canReview && (
+          <button type="button" className={btnClass} disabled={actionLoading}
+            onClick={() => void doAction(() => updateExpenseReviewFields(companyId, expenseId, { expectedUpdatedAt: detail.updatedAt }))}>
+            {t('expenses.source_draft_reopen', locale)}
+          </button>
+        )}
         {/* A11Y-01: while an action runs the only visible cue is the disabled buttons. Empty when
             idle, so nothing is announced on mount. */}
         <p role="status" aria-live="polite" className="sr-only">
           {actionLoading ? t('expenses.action_in_progress', locale) : ''}
         </p>
 
-        <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
+        {!sourceOnlyDraft && <div className="sticky z-10 flex flex-wrap gap-1.5 border-b border-gray-100 bg-white px-4 py-2.5" style={{ top: `${APP_HEADER_REM}rem` }}>
           {guided ? (
             <ThemedSteps steps={steps.map((entry, index) => ({
               key: entry.key,
@@ -1124,7 +1148,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               {t(chip.key, locale)}
             </button>
           ))}
-        </div>
+        </div>}
         {guided && (
           <div className="border-b border-gray-100 bg-brand-25 px-4 py-2.5 text-sm text-gray-700">
             <span className="font-bold text-brand-700">ขั้นที่ {stepIndex + 1}:</span>{' '}
@@ -1226,7 +1250,21 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
               )}
 
               <div className={cx('space-y-4 p-4', checkBillBlocked && 'order-1')}>
-                {guided ? (
+                {sourceOnlyDraft ? (
+                  <>
+                    {noticesBlock}
+                    {visibleSourceDraft && <ExpenseSourceDraftCard
+                      key={detail.id}
+                      companyId={companyId}
+                      expenseId={detail.id}
+                      expectedUpdatedAt={detail.updatedAt}
+                      sourceDraft={visibleSourceDraft}
+                      locale={locale}
+                      readOnlyMessage={readySourceDraftMessage}
+                      onSaved={setDetail}
+                    />}
+                  </>
+                ) : guided ? (
                   <>
                     <div className={cx('space-y-4', step === 'data' ? undefined : 'hidden')}>
                       <CoverLoader active={aiReading} scope="section" label={t('expenses.ai_reading', locale)}>
@@ -1245,6 +1283,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                         </div>
                       </fieldset>
                       </CoverLoader>
+                      {visibleSourceDraft && <ExpenseSourceDraftCard
+                        key={detail.id}
+                        companyId={companyId}
+                        expenseId={detail.id}
+                        expectedUpdatedAt={detail.updatedAt}
+                        sourceDraft={visibleSourceDraft}
+                        locale={locale}
+                        readOnlyMessage={readySourceDraftMessage}
+                        onSaved={setDetail}
+                      />}
                       {vendorCard}
                       {moneyCard}
                     </div>
@@ -1260,6 +1308,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 ) : (
                   <>
                     {noticesBlock}
+                    {visibleSourceDraft && <ExpenseSourceDraftCard
+                      key={detail.id}
+                      companyId={companyId}
+                      expenseId={detail.id}
+                      expectedUpdatedAt={detail.updatedAt}
+                      sourceDraft={visibleSourceDraft}
+                      locale={locale}
+                      readOnlyMessage={readySourceDraftMessage}
+                      onSaved={setDetail}
+                    />}
                     {postingCard}
                     {auditCard}
                     {moneyCard}
