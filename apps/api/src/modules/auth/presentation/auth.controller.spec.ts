@@ -394,7 +394,7 @@ describe('AuthController LIFF page security (H-08)', () => {
       [EmployeeLineLinkDto, { token: 'a'.repeat(32), idToken: 'not-a-jwt' }],
       [LineExchangeDto, { idToken: validIdToken, channelId: 'line channel<script>' }],
       [LineLinkDto, { idToken: `${'a'.repeat(4093)}.b.c`, companyId: 'company-1' }],
-      [PasswordResetRequestDto, { username: 'a'.repeat(65) }],
+      [PasswordResetRequestDto, { username: 'a'.repeat(255) }],
     ];
     for (const [metatype, body] of cases) {
       await assert.rejects(
@@ -408,6 +408,9 @@ describe('AuthController LIFF page security (H-08)', () => {
       { type: 'body', metatype: EmployeeLineLinkDto },
     );
     assert.equal(valid.token.length, 32);
+    const emailIdentifier = `${'owner'.repeat(12)}@example.test`;
+    const recovery = await pipe.transform({ username: emailIdentifier }, { type: 'body', metatype: PasswordResetRequestDto });
+    assert.equal(recovery.username, emailIdentifier);
   });
 
   it('rejects malformed LINE ID tokens before calling the provider', async () => {

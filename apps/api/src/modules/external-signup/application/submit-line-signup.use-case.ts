@@ -17,6 +17,7 @@ import {
   normalizeLineCompanyName,
   normalizeReferralCode,
   requireThaiMobile,
+  requireLineContactEmail,
 } from '../domain/line-signup.logic';
 import { CompanySignupCoreService } from './company-signup-core.service';
 import { ProvisionSignupUseCase } from './provision-signup.use-case';
@@ -29,6 +30,8 @@ export type SubmitLineSignupCommand = {
   companyName: string;
   /** Required since Owner 2026-09-05; still checked here, because a type is not a trust boundary. */
   phoneNumber: string;
+  /** Unverified shop contact; never an account identity. */
+  contactEmail: string;
   referralCode?: string;
   legal: {
     documentVersion: string;
@@ -79,16 +82,17 @@ export class SubmitLineSignupUseCase {
 
     let companyName: string;
     let phoneNumber: string;
+    let contactEmail: string;
     let referralCode: string | null;
     try {
       companyName = normalizeLineCompanyName(cmd.companyName);
       phoneNumber = requireThaiMobile(cmd.phoneNumber);
+      contactEmail = requireLineContactEmail(cmd.contactEmail);
       referralCode = normalizeReferralCode(cmd.referralCode);
     } catch (error) {
       const code = (error as Error).message;
-      // The phone is the one field the customer can see and correct, so it answers 400 with a code
-      // the LIFF page turns back into a sentence beside the field (Owner 2026-09-05).
-      if (code.startsWith('line_signup_phone_')) throw new BadRequestException(code);
+      // Contact errors answer 400 with a code the LIFF page renders beside the editable field.
+      if (code.startsWith('line_signup_phone_') || code.startsWith('line_signup_email_')) throw new BadRequestException(code);
       throw new UnprocessableEntityException(code);
     }
 
@@ -105,6 +109,7 @@ export class SubmitLineSignupUseCase {
       externalSignupId,
       companyName,
       phoneNumber,
+      contactEmail,
       referralCode,
       attachUserId,
       verified,
@@ -224,6 +229,7 @@ export class SubmitLineSignupUseCase {
     externalSignupId: string;
     companyName: string;
     phoneNumber: string | null;
+    contactEmail: string;
     referralCode: string | null;
     attachUserId: string | null;
     verified: { providerUserId: string; channelId: string; displayName?: string };
@@ -239,6 +245,7 @@ export class SubmitLineSignupUseCase {
         payloadHash: canonicalFingerprint({
           companyName: input.companyName,
           phoneNumber: input.phoneNumber,
+          contactEmail: input.contactEmail,
           referralCode: input.referralCode,
           lineProviderUserId: verified.providerUserId,
           lineChannelId: verified.channelId,
@@ -247,7 +254,7 @@ export class SubmitLineSignupUseCase {
         // The LINE profile name is the only name this form ever learns. A token without one is
         // legal, so the owner gets a neutral label rather than an empty string.
         ownerDisplayName: verified.displayName ?? 'เจ้าของร้าน',
-        // `contactEmail` stays null: this flow never asks for an address (spec §5).
+        contactEmail: input.contactEmail,
         // The clickwrap IS the consent record for this source, so it names the version it accepted.
         consentVersion: evidence.documentVersion,
         ...(input.phoneNumber ? { phoneNumber: input.phoneNumber } : {}),

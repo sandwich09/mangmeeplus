@@ -209,7 +209,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   LINE_SIGNUP_APPROVAL_MODE: z.enum(['MANUAL', 'AUTO_FREE']).default('MANUAL'),
   LINE_SIGNUP_AUTO_DAILY_CAP: z.coerce.number().int().nonnegative().default(20),
   // First-week slip ceiling for a LINE trial shop, below its tier's own limit (spec §9).
-  LINE_SIGNUP_WARMUP_SLIPS: z.coerce.number().int().positive().default(10),
+  LINE_SIGNUP_WARMUP_SLIPS: z.coerce.number().int().positive().default(15),
   // Per-shop AI spend cap for a free trial, in satang. 8000 = ฿80/month, Owner 2026-09-04 from the
   // production meter: a stop, not an expected bill (a normal trial shop spends ฿15–25).
   LINE_FREE_AI_BUDGET_SATANG: z.coerce.number().int().positive().default(8000),

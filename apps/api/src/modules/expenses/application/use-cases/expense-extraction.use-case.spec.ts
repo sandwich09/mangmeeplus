@@ -106,7 +106,7 @@ function makeUseCase(options: {
   };
   const prisma = {
     client: {
-      companyOcrMonthlyUsage: { findUnique: async () => options.used === undefined ? null : { usedCount: options.used } },
+      companyOcrUsageEvent: { count: async () => options.used ?? 0 },
       companyPlanTerm: {
         findUnique: async () => options.planTerm
           ? { warmupUntil: null, warmupSlipLimit: null, ...options.planTerm }
@@ -115,7 +115,7 @@ function makeUseCase(options: {
     },
   } as any;
   const useCase = new RequestReceiptExtractionUseCase(repo as any, storage as any, client as any, applyService as any, audit as any, prisma);
-  return { useCase, repo, storage, client, updates, applyCalls, audits };
+  return { useCase, repo, storage, client, applyService, audit, updates, applyCalls, audits };
 }
 
 describe('RequestReceiptExtractionUseCase', () => {
@@ -208,6 +208,7 @@ describe('RequestReceiptExtractionUseCase', () => {
     assert.deepEqual(applyCalls[0], [requestContext, 'expense-1', fields, {}]);
     assert.deepEqual(updates[0].aiVerificationSummaryJson, {
       status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+      extractionRequestId: 'request-1', extractionAttachmentId: 'attachment-1',
       recognizedFields: fields,
       classification: {
         contentKind: 'DOCUMENT',
@@ -368,6 +369,7 @@ describe('RequestReceiptExtractionUseCase', () => {
   it('keeps the explicit draft and attachment but applies no fields for non-expense classifications', async () => {
     for (const documentKind of ['QUOTATION', 'ORDER_OR_CHECK_BILL', 'APPOINTMENT_CARD', 'BOOKING_CONFIRMATION', 'NON_FINANCIAL_IMAGE']) {
       const detected = classification(documentKind, {
+        documentFamily: documentKind === 'NON_FINANCIAL_IMAGE' ? 'NON_BUSINESS' : ['APPOINTMENT_CARD', 'BOOKING_CONFIRMATION'].includes(documentKind) ? 'SCHEDULING_DOCUMENT' : 'COMMERCIAL_DOCUMENT',
         evidenceSignals: ['bounded display evidence'],
         missingRequiredSignals: ['MISSING_PAYMENT_EVIDENCE'],
       });
@@ -404,7 +406,9 @@ describe('RequestReceiptExtractionUseCase', () => {
     const missingTotal = makeUseCase({
       gatewayResult: { status: 'ok', fields: { vendorName: 'ร้านค้า', grandTotalAmount: '0' }, classification: classification() },
     });
-    assert.equal((await missingTotal.useCase.execute(ctx(['expense.ocr.request']), 'expense-1')).status, 'not_expense_document');
+    assert.deepEqual(await missingTotal.useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_UNUSABLE_RESULT' });
+    assert.equal(missingTotal.updates[0].aiVerificationSummaryJson.status, 'OCR_FAILED');
+    assert.deepEqual(missingTotal.updates[0].aiVerificationSummaryJson.recognizedFields, { vendorName: 'ร้านค้า', grandTotalAmount: '0' });
     assert.equal(missingTotal.applyCalls.length, 0);
   });
 
@@ -500,18 +504,18 @@ describe('RequestReceiptExtractionUseCase', () => {
       );
     });
 
-    it('names the warm-up ceiling while that window is open', async () => {
+    it('names the full trial ceiling despite a persisted warmup-ten window', async () => {
       const { useCase } = makeUseCase({
         gatewayResult: quotaRefused,
         planTerm: { ...freeTrial, warmupUntil: new Date(Date.now() + 86_400_000), warmupSlipLimit: 10 },
-        used: 10,
+        used: 15,
       });
 
       await assert.rejects(
         () => useCase.execute(ctx(['expense.ocr.request']), 'expense-1'),
         (error: any) => {
-          assert.equal(error.getResponse().limit, 10);
-          assert.match(error.getResponse().message, /10 ครั้ง/);
+          assert.equal(error.getResponse().limit, 15);
+          assert.match(error.getResponse().message, /15 ครั้ง/);
           return true;
         },
       );
@@ -549,6 +553,8 @@ describe('ReceiptOcrClient failure boundary', () => {
   function readyPrisma() {
     const events: any[] = [];
     let usedCount = 0;
+    let eventSequence = 0;
+    const providerUsage: any[] = [];
     const tx = {
       $executeRaw: async () => undefined,
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: true, ocrMonthlyLimit: 10 }) },
@@ -559,7 +565,7 @@ describe('ReceiptOcrClient failure boundary', () => {
             && event.sourceRoute === key.sourceRoute && event.requestId === key.requestId) ?? null;
         },
         create: async ({ data }: any) => {
-          const event = { id: `event-${events.length + 1}`, ...data };
+          const event = { id: `event-${++eventSequence}`, ...data };
           events.push(event);
           return event;
         },
@@ -573,7 +579,9 @@ describe('ReceiptOcrClient failure boundary', () => {
       // P10-L §15.1: no CompanyPlanTerm row = grandfathered unlimited, so every ops-brake
       // expectation in this block is unchanged by the commercial layer above it.
       companyPlanTerm: { findUnique: async () => null },
-      auditLog: { findFirst: async () => null },
+      auditLog: { findFirst: async () => null, create: async () => ({}) },
+      aiUsageEvent: { createMany: async ({ data }: any) => { providerUsage.push(...data); return { count: data.length }; } },
+      companyAiMonthlyUsage: { upsert: async ({ create }: any) => ({ costSatang: create.costSatang }) },
     };
     const prisma = {
       client: {
@@ -582,7 +590,43 @@ describe('ReceiptOcrClient failure boundary', () => {
         $transaction: async (fn: (value: typeof tx) => Promise<unknown>) => fn(tx),
       },
     } as any;
-    return { prisma, events, usedCount: () => usedCount };
+    return { prisma, events, providerUsage, usedCount: () => usedCount };
+  }
+
+  for (const scenario of ['empty', 'malformed', 'missing_classification', 'missing_fields', 'unreadable', 'apply_failure', 'summary_failure', 'stale_apply', 'success', 'notification_failure', 'generic_image'] as const) {
+    it(`real web client + use case admission settles ${scenario} by the persisted result`, async () => {
+      __resetCompanyAiBudgetCache();
+      const originalFetch = globalThis.fetch;
+      const state = readyPrisma();
+      const usage = [{ tag: 'receipt-ocr', modelId: 'anthropic.claude-sonnet-4-6', ok: true, inputTokens: 1000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 }];
+      const result: any = { status: 'ok', classification: classification(), fields: { grandTotalAmount: '321.00', vendorName: 'Synthetic shop' }, usage };
+      if (scenario === 'empty') Object.assign(result, { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' });
+      if (scenario === 'missing_classification') delete result.classification;
+      if (scenario === 'missing_fields') delete result.fields;
+      if (scenario === 'unreadable') result.classification = classification('NEEDS_REVIEW', { contentKind: 'UNREADABLE' });
+      if (scenario === 'generic_image') result.classification = classification('NON_FINANCIAL_IMAGE', { contentKind: 'NON_DOCUMENT_IMAGE', documentFamily: 'NON_BUSINESS', businessDirection: 'UNKNOWN' });
+      globalThis.fetch = (async () => new Response(scenario === 'malformed' ? '{bad json' : JSON.stringify(result))) as any;
+      try {
+        const fixture = makeUseCase({ applyResult: scenario === 'stale_apply' ? { staleSkipped: true } : undefined });
+        if (scenario === 'apply_failure') fixture.applyService.apply.mock.mockImplementation(async () => { throw new Error('synthetic apply failure'); });
+        if (scenario === 'summary_failure') fixture.repo.updateExpense.mock.mockImplementation(async () => { throw new Error('synthetic persist failure'); });
+        if (scenario === 'notification_failure') fixture.audit.log.mock.mockImplementation(async (entry: any) => { if (entry.action === 'expense.ocr.request') throw new Error('synthetic post-save audit failure'); });
+        const client = new ReceiptOcrClient({ aiGatewayInternalSecret: 'synthetic', aiGatewayInternalUrl: 'http://ai.invalid', aiMonthlyBudgetSatang: 1_000_000, aiThbPerUsd: 35, isProduction: false } as any, undefined, state.prisma);
+        const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma);
+        await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
+        const retained = ['success', 'notification_failure', 'generic_image'].includes(scenario);
+        assert.equal(state.usedCount(), retained ? 1 : 0, scenario);
+        assert.equal(state.events.length, retained ? 1 : 0, 'fence matches retained commercial use');
+        if (scenario !== 'malformed') {
+          assert.equal(state.providerUsage.length, 1, 'provider usage survives customer compensation');
+          assert.ok(state.providerUsage[0].costSatang > 0);
+        }
+        if (scenario === 'success') {
+          assert.equal(fixture.updates[0].aiVerificationSummaryJson.extractionRequestId, 'request-1');
+          assert.equal(fixture.updates[0].aiVerificationSummaryJson.extractionAttachmentId, 'attachment-1');
+        }
+      } finally { globalThis.fetch = originalFetch; }
+    });
   }
 
   it('returns a reviewable failure when the OCR gateway is unreachable', async () => {
@@ -650,7 +694,7 @@ describe('ReceiptOcrClient failure boundary', () => {
     }
   });
 
-  it('still keeps the read when the failure is a decision this system already made', async () => {
+  it('releases empty OCR output even though its code starts with OCR_', async () => {
     // `OCR_*` codes are refusals a retry cannot change, so they are NOT compensated — that is the
     // line between "our flakiness" and "the answer".
     __resetCompanyAiBudgetCache();
@@ -665,7 +709,7 @@ describe('ReceiptOcrClient failure boundary', () => {
         aiMonthlyBudgetSatang: 1_000_000, isProduction: false,
       } as any, undefined, state.prisma);
       assert.equal((await client.extract(request)).errorCode, 'OCR_EMPTY_OUTPUT');
-      assert.equal(state.usedCount(), 1, 'the provider read the image and said it was empty');
+      assert.equal(state.usedCount(), 0, 'an empty image result is not a usable read');
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -714,7 +758,7 @@ describe('ReceiptOcrClient failure boundary', () => {
       companyAiConfiguration: { findUnique: async () => ({ ocrEnabled: false, ocrMonthlyLimit: 10 }) },
       companyOcrMonthlyUsage: { findUnique: async () => null },
       companyPlanTerm: { findUnique: async () => null },
-      auditLog: { findFirst: async () => null },
+      auditLog: { findFirst: async () => null, create: async () => ({}) },
     };
     const prisma = {
       client: {

@@ -9,7 +9,7 @@ import { generateRawToken, hashLineRecoveryPassword } from '../../domain/logic/s
 import { buildTemporaryPasswordFlexMessage, pushSystemLineMessages } from '../../infrastructure/system-line-push';
 
 const RECOVERY_TTL_MS = 30 * 60 * 1000;
-// Identical reply for every outcome: the caller must not learn whether the username,
+// Identical reply for every outcome: the caller must not learn whether the identifier,
 // credential or linked LINE identity exists.
 const GENERIC_MESSAGE = 'If the account is eligible, a temporary password has been sent to its linked LINE.';
 
@@ -34,7 +34,8 @@ export class NotifyPasswordResetRequestUseCase {
   }
 
   private async request(input: { username: string; requestId?: string }): Promise<{ message: string }> {
-    const username = input.username.trim().toLowerCase();
+    // Keep the existing wire field and normalization; email is an identifier, not mailbox proof.
+    const identifier = input.username.trim().toLowerCase();
     const requestId = input.requestId ?? 'system';
 
     const deny = async (reason: string, userId?: string, companyId?: string): Promise<{ message: string }> => {
@@ -53,10 +54,14 @@ export class NotifyPasswordResetRequestUseCase {
       return { message: GENERIC_MESSAGE };
     };
 
-    const user = await this.prisma.client.user.findFirst({
-      where: { username },
+    const users = await this.prisma.client.user.findMany({
+      where: { OR: [{ username: identifier }, { email: identifier }] },
       include: { credential: true },
+      take: 2,
     });
+    // Legacy usernames may look like another account's email. Never choose a recipient by row order.
+    if (users.length > 1) return deny('ambiguous_identifier');
+    const user = users[0];
     if (!user) return deny('unknown_username');
     if (user.status !== 'ACTIVE' || !user.credential || user.credential.status === 'DISABLED') {
       return deny('ineligible_account', user.id);

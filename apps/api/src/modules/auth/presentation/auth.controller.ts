@@ -17,7 +17,8 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, Length, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { Public } from '../../../common/security/public.decorator';
@@ -170,7 +171,14 @@ export class AcceptLegalDocumentsDto implements AcceptLegalDocumentsInput {
 }
 
 export class PasswordResetRequestDto {
-  @IsString() @IsNotEmpty() @MaxLength(64) username!: string;
+  @IsString() @IsNotEmpty() @MaxLength(254) username!: string;
+}
+
+export class SetUnverifiedEmailDto {
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
+  @IsEmail() @MaxLength(254) newEmail!: string;
+  @ValidateIf((dto) => dto.expectedEmail !== null) @IsString() @MaxLength(320) expectedEmail!: string | null;
+  @IsString() @IsNotEmpty() @IsOptional() currentPassword?: string;
 }
 
 class RequestEmailChangeDto {
@@ -554,6 +562,10 @@ export class AuthController {
         <label for="phone-number">เบอร์มือถือ</label>
         <input id="phone-number" type="tel" inputmode="tel" maxlength="10" autocomplete="tel-national" required />
         <p id="phone-number-error" class="field-error" hidden></p>
+        <label for="contact-email">อีเมลเจ้าของร้าน</label>
+        <input id="contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" required aria-describedby="contact-email-help" />
+        <p id="contact-email-error" class="field-error" hidden></p>
+        <p id="contact-email-help" class="fine">เปิดร้านแล้วใช้งานผ่าน LINE ได้ทันที ไม่ต้องยืนยันอีเมลหรือตั้งรหัสผ่าน รหัสผ่านตั้งภายหลังได้</p>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
@@ -993,7 +1005,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Set the first password for an account that has none' })
   @ApiBody({ type: SetFirstPasswordDto })
   @ApiResponse({ status: 200, description: 'Password set; answers the stored username' })
-  @ApiResponse({ status: 400, description: 'This account has no verified email, so a username is required' })
+  @ApiResponse({ status: 400, description: 'This account has no email, so a username is required' })
   @ApiResponse({ status: 409, description: 'This account already has a password' })
   async setMyFirstPassword(@Body() dto: SetFirstPasswordDto, @Req() req: Request & { context: RequestContext }) {
     // `username_taken` makes this an enumeration oracle for anyone holding one valid session.
@@ -1004,6 +1016,18 @@ export class AuthController {
     return this.accountProfile.setInitialPassword(
       req.context.userId, dto.password, dto.username, req.context.requestId, tokenId,
     );
+  }
+
+  @Post('me/email/unverified')
+  @HttpCode(200)
+  @RequirePermissions('account.password.change')
+  @ApiOperation({ summary: 'Correct a LINE-linked account unverified email without email delivery' })
+  @ApiBody({ type: SetUnverifiedEmailDto })
+  async setMyUnverifiedEmail(@Body() dto: SetUnverifiedEmailDto, @Req() req: Request & { context: RequestContext }) {
+    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
+    const tokenId = extractSid(req);
+    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
+    return this.accountProfile.setUnverifiedEmail({ ...dto, userId: req.context.userId, requestId: req.context.requestId, currentTokenId: tokenId });
   }
 
   @Get('me/companies')

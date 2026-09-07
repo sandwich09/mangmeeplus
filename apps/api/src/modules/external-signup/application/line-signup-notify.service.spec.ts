@@ -56,7 +56,7 @@ function harness(options: {
           return { count: options.markCount ?? 1 };
         },
       },
-      companyOcrMonthlyUsage: { aggregate: async () => ({ _sum: { usedCount: options.ocrUsed ?? 0 } }) },
+      companyOcrUsageEvent: { count: async () => options.ocrUsed ?? 0 },
       companyMembership: { findFirst: async () => (options.owner ? { user: options.owner } : null), findMany: async () => [] },
       company: { findUnique: async () => ({ name: 'ร้านนิด' }) },
       externalIdentity: { findMany: async () => [] },

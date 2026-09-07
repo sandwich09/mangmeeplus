@@ -1,9 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  availableExpenseSessionStorage,
   classifySignatureUploadFile,
   classifyUploadFile,
   detectReceiptImageByteKind,
+  readExpenseExtractionAttempt,
+  recoveredExpenseExtraction,
+  requestExpenseExtractionWithRecovery,
+  writeExpenseExtractionAttempt,
   expenseExtractionRetryMode,
   expenseExtractionRetryRequestId,
   bangkokMonthKey,
@@ -53,11 +58,158 @@ describe('OCR extraction retry', () => {
     assert.equal(expenseExtractionRetryMode(null), 'same_request');
     assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'AI_GATEWAY_ERROR_503' }), 'new_request');
     assert.equal(expenseExtractionRetryMode({ status: 'failed' }), 'new_request');
+    for (const errorCode of ['OCR_EMPTY_OUTPUT', 'OCR_JSON_PARSE_FAILED']) assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode }), 'new_request');
+    for (const errorCode of ['OCR_REQUEST_ALREADY_ADMITTED', 'OCR_QUOTA_UNAVAILABLE', 'RECEIPT_QUOTA_EXCEEDED']) assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode }), 'none');
     assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'OCR_FEATURE_DISABLED' }), 'none');
     assert.equal(expenseExtractionRetryMode({ status: 'failed', errorCode: 'OCR_MONTHLY_LIMIT_EXCEEDED' }), 'none');
     assert.equal(expenseExtractionRetryMode({ status: 'ok' }), 'none');
     assert.equal(expenseExtractionRetryRequestId('same_request', 'first-id', 'fresh-id'), 'first-id');
     assert.equal(expenseExtractionRetryRequestId('new_request', 'first-id', 'fresh-id'), 'fresh-id');
+  });
+
+  const saved = (summary: Record<string, unknown>, attachmentId = 'att-1') => ({
+    aiVerificationSummaryJson: summary,
+    attachments: [{ id: attachmentId, purpose: 'expense.receipt.primary', status: 'ACTIVE' }],
+    vendorNameSnapshot: 'ร้านเดิม',
+    vendorDocumentNumber: 'R-1',
+    expenseDate: '2026-09-07',
+    grandTotalAmount: '120.00',
+  } as any);
+
+  it('recovers one persisted success after a lost response without a second provider request', async () => {
+    const attempt = { requestId: 'ocr-1', attachmentId: 'att-1' };
+    let requests = 0;
+    const outcome = await requestExpenseExtractionWithRecovery({
+      attempt,
+      request: async () => { requests += 1; throw { kind: 'network_error' }; },
+      read: async () => saved({
+        status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+        extractionRequestId: 'ocr-1',
+        extractionAttachmentId: 'att-1',
+        recognizedFields: { vendorName: 'ร้านเดิม', grandTotalAmount: '120.00' },
+        missingFields: ['expenseDate'],
+      }),
+      wait: async () => undefined,
+    });
+
+    assert.equal(requests, 1);
+    assert.equal(outcome.result.status, 'ok');
+    assert.equal(outcome.result.fields?.grandTotalAmount, '120.00');
+    assert.equal(outcome.result.fields?.expenseDate, undefined, 'does not recover the placeholder record date as a paper fact');
+    assert.deepEqual(outcome.result.missingFields, ['expenseDate']);
+    assert.ok(outcome.recoveredDetail);
+    assert.equal(outcome.pending, false);
+  });
+
+  it('refuses an old or differently attached summary and keeps a proven failure retriable', async () => {
+    const attempt = { requestId: 'ocr-new', attachmentId: 'att-new' };
+    for (const stale of [
+      saved({ status: 'OCR_EXTRACTED_NEEDS_REVIEW' }, 'att-new'),
+      saved({
+        status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+        extractionRequestId: 'ocr-old',
+        extractionAttachmentId: 'att-new',
+      }, 'att-new'),
+      saved({
+        status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+        extractionRequestId: 'ocr-new',
+        extractionAttachmentId: 'att-old',
+      }, 'att-new'),
+      saved({
+        status: 'NOT_EXPENSE_DOCUMENT',
+        extractionRequestId: 'ocr-new',
+        extractionAttachmentId: 'att-new',
+      }, 'att-new'),
+      saved({
+        status: 'OCR_FAILED',
+        extractionRequestId: 'ocr-new',
+        extractionAttachmentId: 'att-new',
+      }, 'att-new'),
+    ]) assert.equal(recoveredExpenseExtraction(stale, attempt), null);
+
+    const requestIds: string[] = [];
+    const outcome = await requestExpenseExtractionWithRecovery({
+      attempt,
+      request: async (requestId) => {
+        requestIds.push(requestId);
+        if (requestIds.length === 1) throw { kind: 'network_error' };
+        return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
+      },
+      read: async () => saved({ status: 'OCR_EXTRACTED_NEEDS_REVIEW' }, 'att-new'),
+      wait: async () => undefined,
+    });
+    assert.deepEqual(requestIds, ['ocr-new', 'ocr-new']);
+    assert.equal(outcome.result.status, 'failed');
+    assert.equal(expenseExtractionRetryMode(outcome.result), 'new_request');
+  });
+
+  it('keeps a duplicate admission unresolved, then recovers before POST on resume', async () => {
+    const attempt = { requestId: 'ocr-pending', attachmentId: 'att-1' };
+    let persisted = false;
+    const requestIds: string[] = [];
+    const read = async () => saved(persisted ? {
+      status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+      extractionRequestId: 'ocr-pending',
+      extractionAttachmentId: 'att-1',
+      recognizedFields: { vendorName: 'ร้านช้า' },
+      missingFields: ['expenseDate'],
+    } : { status: 'PROCESSING' });
+    const first = await requestExpenseExtractionWithRecovery({
+      attempt,
+      request: async (requestId) => {
+        requestIds.push(requestId);
+        if (requestIds.length === 1) throw { kind: 'network_error' };
+        return { status: 'failed', errorCode: 'OCR_REQUEST_ALREADY_ADMITTED' };
+      },
+      read,
+      wait: async () => undefined,
+    });
+    assert.equal(first.pending, true);
+    assert.deepEqual(requestIds, ['ocr-pending', 'ocr-pending']);
+
+    persisted = true;
+    const resumed = await requestExpenseExtractionWithRecovery({
+      attempt,
+      request: async (requestId) => {
+        requestIds.push(requestId);
+        throw new Error('must recover before another POST');
+      },
+      read,
+      wait: async () => undefined,
+      resume: true,
+    });
+    assert.equal(resumed.pending, false);
+    assert.equal(resumed.result.fields?.vendorName, 'ร้านช้า');
+    assert.deepEqual(requestIds, ['ocr-pending', 'ocr-pending']);
+  });
+
+  it('stores an uncertain attempt only inside its company, expense, and attachment scope', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
+    };
+    const attempt = { requestId: 'ocr-1', attachmentId: 'att-1' };
+    writeExpenseExtractionAttempt(storage, 'company-1', 'expense-1', attempt);
+    assert.deepEqual(readExpenseExtractionAttempt(storage, 'company-1', 'expense-1', 'att-1'), attempt);
+    assert.equal(readExpenseExtractionAttempt(storage, 'company-2', 'expense-1', 'att-1'), null);
+    assert.equal(readExpenseExtractionAttempt(storage, 'company-1', 'expense-2', 'att-1'), null);
+    assert.equal(readExpenseExtractionAttempt(storage, 'company-1', 'expense-1', 'att-2'), null);
+    writeExpenseExtractionAttempt(storage, 'company-1', 'expense-1', null);
+    assert.equal(readExpenseExtractionAttempt(storage, 'company-1', 'expense-1', 'att-1'), null);
+  });
+
+  it('keeps extraction usable when the browser blocks access to session storage', () => {
+    const blocked = Object.defineProperty({}, 'sessionStorage', {
+      get: () => { throw new DOMException('blocked', 'SecurityError'); },
+    }) as { readonly sessionStorage: Storage };
+    const storage = availableExpenseSessionStorage(blocked);
+    assert.equal(storage, undefined);
+    assert.equal(readExpenseExtractionAttempt(storage, 'company-1', 'expense-1', 'att-1'), null);
+    assert.doesNotThrow(() => writeExpenseExtractionAttempt(storage, 'company-1', 'expense-1', {
+      requestId: 'ocr-1', attachmentId: 'att-1',
+    }));
   });
 });
 

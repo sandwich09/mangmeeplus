@@ -66,6 +66,9 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes('inputmode="tel"'), 'the phone field opens a phone keypad');
     assert.ok(/<input id="phone-number"[^>]*\brequired\b/.test(html), 'the phone field is required (Owner 2026-09-05)');
     assert.ok(html.includes('<label for="phone-number">เบอร์มือถือ</label>'), 'the bare label, no optional tag');
+    assert.ok(html.includes('<label for="contact-email">อีเมลเจ้าของร้าน</label>'));
+    assert.match(html, /<input id="contact-email"[^>]*type="email"[^>]*maxlength="254"[^>]*required/);
+    assert.ok(html.includes('ไม่ต้องยืนยันอีเมลหรือตั้งรหัสผ่าน'));
     assert.equal(html.includes('ไม่บังคับ'), false, 'the phone is no longer optional');
     assert.ok(html.includes('ยอมรับและเริ่มทดลองใช้ฟรี'));
     assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง'));
@@ -229,7 +232,7 @@ describe('P10-L LIFF client script', () => {
   function runSignupScript(
     statusBody: string,
     responses: Array<{ status: number; body: string }> = [],
-    options: { initFails?: Error; phone?: string; companyName?: string; fetchThrows?: Error } = {},
+    options: { initFails?: Error; phone?: string; contactEmail?: string; companyName?: string; fetchThrows?: Error } = {},
   ) {
     const handlers: Record<string, Array<() => unknown>> = {};
     const listen = (key: string) => (_event: string, handler: () => unknown) => {
@@ -262,6 +265,8 @@ describe('P10-L LIFF client script', () => {
       'company-name-error': { textContent: '', hidden: true },
       'phone-number': input('phone-number', options.phone ?? '081-234-5678'),
       'phone-number-error': { textContent: '', hidden: true },
+      'contact-email': input('contact-email', options.contactEmail ?? ' Shop@Example.COM '),
+      'contact-email-error': { textContent: '', hidden: true },
     };
     const closeButtons = [{ addEventListener: listen('close') }];
     const views = [
@@ -393,6 +398,7 @@ describe('P10-L LIFF client script', () => {
     });
     assert.equal(body.companyName, 'ร้านนิด');
     assert.equal(body.phoneNumber, '0812345678', 'sent as digits, however the owner spaced it');
+    assert.equal(body.contactEmail, 'shop@example.com');
     assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
     // The card's heading already reads "ได้รับแล้ว"; the body must not say it a second time.
     assert.equal(h.elements['done-text']!.textContent.startsWith('ได้รับแล้วค่ะ'), false);
@@ -429,6 +435,36 @@ describe('P10-L LIFF client script', () => {
    * geometry-independent: WHICH element holds the text, what the input is marked with, where focus
    * went. Any of them would have caught the original defect.
    */
+  describe('owner email is syntax-only and retained on refusal', () => {
+    it('does not submit blank, malformed or overlong email and keeps all typed fields', async () => {
+      for (const contactEmail of ['', ' ', 'shop', 'a@@example.com', 'a b@example.com', 'a@b', `${'a'.repeat(245)}@example.com`]) {
+        const h = runSignupScript('null', [{ status: 200, body: 'null' }], { contactEmail });
+        await settle(); await settle(); await h.click('link'); await settle();
+        assert.equal(h.calls.length, 1, contactEmail);
+        assert.equal(h.elements['contact-email']!.value, contactEmail);
+        assert.equal(h.elements['company-name']!.value, 'ร้านนิด');
+        assert.equal(h.elements['phone-number']!.value, '081-234-5678');
+        assert.equal(h.elements['contact-email']!.attributes['aria-invalid'], 'true');
+        assert.match(h.elements['contact-email-error']!.textContent, /shop@example.com/);
+        assert.match(h.elements['contact-email-error']!.textContent, /อีเมลเจ้าของร้าน/);
+        assert.deepEqual(h.focused, ['contact-email']);
+        assert.equal(h.elements.link!.disabled, false);
+      }
+    });
+
+    it('maps domain and DTO refusals to the same field without clearing the address', async () => {
+      for (const message of ['line_signup_email_required', 'line_signup_email_invalid', ['contactEmail must be an email']]) {
+        const h = runSignupScript('null', [{ status: 200, body: 'null' }, { status: 400, body: JSON.stringify({ message }) }]);
+        await settle(); await settle(); await h.click('link'); await settle();
+        assert.equal(h.elements['contact-email']!.value, ' Shop@Example.COM ');
+        assert.deepEqual(h.focused, ['contact-email']);
+        assert.equal(h.tone(), 'warning');
+        assert.equal(h.elements['contact-email-error']!.hidden, false);
+        assert.equal(h.elements.link!.disabled, false);
+      }
+    });
+  });
+
   describe('the phone is required, and says so next to the field (Owner 2026-09-05)', () => {
     const PHONE_RULE_TH = 'ใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0 เช่น 0812345678';
 

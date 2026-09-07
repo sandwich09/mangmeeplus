@@ -17,6 +17,7 @@ import { SubmitLineSignupUseCase } from './submit-line-signup.use-case';
  */
 function fakePrisma(options: { systemAdmins?: string[] } = {}) {
   const users = new Set<string>(options.systemAdmins ?? []);
+  const userRows = new Map<string, any>();
   const requests = new Map<string, any>();
   const planTerms = new Map<string, any>();
   const chartRows: any[] = [];
@@ -120,9 +121,16 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
     user: auto('user', {
       findUnique: async () => null,
       create: async ({ data }: any) => {
-        const row = { id: `user-${(seq += 1)}`, ...data };
+        const row = { id: `user-${(seq += 1)}`, email: null, emailVerifiedAt: null, ...data };
         users.add(row.id);
+        willWrite(userRows, row.id); userRows.set(row.id, row);
         return row;
+      },
+      updateMany: async ({ where, data }: any) => {
+        const row = userRows.get(where.id);
+        if (!row || Object.entries(where).some(([key, value]) => row[key] !== value)) return { count: 0 };
+        willWrite(userRows, row.id); Object.assign(row, data);
+        return { count: 1 };
       },
     }),
     role: auto('role', { findUnique: async () => ({ id: 'role-owner' }) }),
@@ -239,6 +247,11 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
         };
       }
       if (prop === '$executeRaw') return async () => 0;
+      if (prop === '$queryRaw') return async (strings: TemplateStringsArray, userId: string, email: string) => {
+        assert.ok(strings.join('').includes('lower("email")'));
+        return [...userRows.values()].filter((row) => row.id !== userId
+          && (row.email?.toLowerCase() === email || row.username?.toLowerCase() === email)).map((row) => ({ id: row.id }));
+      };
       models[prop] ??= auto(prop);
       return models[prop];
     },
@@ -265,6 +278,7 @@ const CMD = {
   idToken: 'aaaa.bbbb.cccc',
   companyName: 'ร้านมั่งมี',
   phoneNumber: '0812345678',
+  contactEmail: 'shop@example.test',
   legal: { ...currentLegalRelease('th'), locale: 'th' },
   correlationRequestId: 'req-1',
   webBaseUrl: 'https://app.example.com',

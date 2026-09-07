@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
-import { hashPassword } from '../../domain/logic/password-credential.logic';
+import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 // Cross-module, deliberately: this is the same Thai-mobile rule the LINE signup form applies, and
 // a second copy of it here is how the two would drift apart. Pure function, no DI, no cycle.
-import { normalizeThaiMobile } from '../../../external-signup/domain/line-signup.logic';
+import { normalizeThaiMobile, requireLineContactEmail } from '../../../external-signup/domain/line-signup.logic';
+import { CURRENT_PASSWORD_INCORRECT } from './change-password.use-case';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -31,6 +32,47 @@ export class AccountProfileUseCase {
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
+
+  /** Correct a LINE owner's unverified login address; mailbox verification stays a separate flow. */
+  async setUnverifiedEmail(input: {
+    userId: string; newEmail: string; expectedEmail: string | null; currentPassword?: string;
+    requestId: string; currentTokenId: string;
+  }): Promise<{ email: string; emailVerified: false }> {
+    let email: string;
+    try { email = requireLineContactEmail(input.newEmail); }
+    catch { throw new BadRequestException({ code: 'invalid_email', message: 'Enter a valid email address up to 254 characters.' }); }
+    try {
+      await this.prisma.client.$transaction(async (tx) => {
+        // Shared with request/confirm verification, before either user or token row locks.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${input.userId}`}))`;
+        // Recovery also takes the credential before a User FK lock. Then lock the parent to
+        // exclude a first credential insert, and catch one that committed while we waited.
+        const lockedCredential = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "UserCredential" WHERE "userId" = ${input.userId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.userId} FOR UPDATE`;
+        if (lockedCredential.length === 0) await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${input.userId} FOR UPDATE`;
+        const user = await tx.user.findUnique({ where: { id: input.userId }, include: { credential: true } });
+        if (!user || user.status !== 'ACTIVE') throw new NotFoundException('User not found.');
+        if (user.emailVerifiedAt) throw new ConflictException({ code: 'account_email_verified', message: 'Use the verified email change flow.' });
+        if (user.email !== input.expectedEmail) throw new ConflictException({ code: 'account_email_changed', message: 'Account email changed. Reload and try again.' });
+        const line = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "ExternalIdentity" WHERE "userId" = ${input.userId} AND "provider" = 'LINE' AND "status" = 'ACTIVE' FOR UPDATE`;
+        if (line.length === 0) throw new ForbiddenException({ code: 'account_line_required', message: 'An active LINE account link is required.' });
+        const credential = user.credential;
+        if (credential && (credential.status === 'DISABLED' || (credential.expiresAt && credential.expiresAt <= new Date())
+          || !verifyPassword(input.currentPassword ?? '', credential.passwordHash))) throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
+        const taken = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "User" WHERE "id" <> ${input.userId} AND (lower("email") = ${email} OR lower("username") = ${email}) LIMIT 1`;
+        if (taken.length > 0) throw new ConflictException({ code: 'account_email_conflict', message: 'This email is already used by another account.' });
+        await tx.user.update({ where: { id: input.userId }, data: { email } });
+        await tx.emailVerificationToken.updateMany({ where: { userId: input.userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
+        await revokeActiveSessions(tx.authSession, { userId: input.userId, exceptTokenId: input.currentTokenId });
+      });
+    } catch (error) {
+      if (uniqueConstraintFields(error)?.some((field) => field.includes('email'))) throw new ConflictException({ code: 'account_email_conflict', message: 'This email is already used by another account.' });
+      throw error;
+    }
+    await this.audit?.log({ action: AuditAction.AUTH_ACCOUNT_CONTACT_UPDATE, actorUserId: input.userId, targetType: 'User', targetId: input.userId,
+      requestId: input.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { unverifiedEmailChanged: true } });
+    return { email, emailVerified: false };
+  }
 
   /** Blank clears the number: "I would rather you did not keep it" is a legitimate answer (§9 DATA-MIN-01). */
   async setPhoneNumber(userId: string, phoneNumber: string | undefined, requestId?: string): Promise<{ phoneNumber: string | null }> {
@@ -93,15 +135,12 @@ export class AccountProfileUseCase {
       throw new ConflictException({ code: 'password_already_set', message: 'This account already has a password. Use change password instead.' });
     }
 
-    // `PasswordLoginUseCase` finds the account by username OR verified email. A LINE-first owner
-    // has neither, so a password saved without a username would be a credential nobody can ever
-    // log in with — and the second attempt answers 409 `password_already_set`, so they could not
-    // even fix it. Refuse up front rather than store a dead credential.
-    const hasLoginIdentifier = user.username !== null || (user.email !== null && user.emailVerifiedAt !== null);
+    // Email is a login identifier even before mailbox verification; recovery proof is separate.
+    const hasLoginIdentifier = user.username !== null || user.email !== null;
     if (desiredUsername === null && !hasLoginIdentifier) {
       throw new BadRequestException({
         code: 'username_required',
-        message: 'Set a username: this account has no verified email to log in with.',
+        message: 'Set a username: this account has no email to log in with.',
       });
     }
 

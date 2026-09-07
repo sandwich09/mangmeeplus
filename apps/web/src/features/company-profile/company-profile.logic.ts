@@ -347,21 +347,27 @@ export function buildShopSave(
   return { identityPatch: patch.body, vatStatus };
 }
 
-export type EmailSectionMode = 'unavailable' | 'edit' | 'pending' | 'verified' | 'none';
+export type EmailSectionMode = 'unavailable' | 'edit' | 'pending' | 'verified' | 'unverified' | 'none';
 
 /**
- * Which of the five email blocks to render (§15.4.1 B).
- *
- * A verified address used to sit in an open box under a "ส่งลิงก์ยืนยันอีเมล" button whose only
- * possible answer was the API's 409 "already verified for your account". `unavailable` wins over
- * everything because with no mailer there is no action to offer in any state; only an explicit
- * `false` triggers it, so an API that predates the field leaves the page working.
+ * Chooses the account-email block. A LINE-linked owner can save or correct an unverified account
+ * email even when delivery is disabled; mail availability only controls the verification action.
  */
 export function emailSectionMode(
-  account: { emailDeliveryEnabled?: boolean; pendingEmail: string | null; emailVerified: boolean } | null,
+  account: {
+    email: string | null;
+    emailDeliveryEnabled?: boolean;
+    pendingEmail: string | null;
+    emailVerified: boolean;
+    lineLinked: boolean;
+  } | null,
   editing: boolean,
 ): EmailSectionMode {
   if (!account) return 'none';
+  if (account.lineLinked && !account.emailVerified) {
+    if (editing || !account.email) return 'edit';
+    return 'unverified';
+  }
   if (account.emailDeliveryEnabled === false) return 'unavailable';
   if (editing) return 'edit';
   if (account.pendingEmail) return 'pending';
@@ -379,17 +385,17 @@ export const PHONE_ERROR_MESSAGE = 'เบอร์มือถือต้อ�
 export const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
 export const INVALID_USERNAME_MESSAGE = 'ชื่อผู้ใช้ใช้ได้เฉพาะ a-z 0-9 จุด ขีด และขีดล่าง ยาว 4 ถึง 64 ตัว (ภาษาไทยใช้ไม่ได้ค่ะ)';
 
-export type AccountLoginState = { username: string | null; emailVerified: boolean } | null;
+export type AccountLoginState = { username: string | null; email?: string | null; emailVerified: boolean } | null;
 
 /**
  * Whether a first password must come with a username.
  *
- * `PasswordLoginUseCase` finds the account by username OR verified email. An account with
- * neither would get a credential nothing can log in with, and the second attempt is refused as
+ * `PasswordLoginUseCase` finds the account by username OR its stored account email. An account
+ * with neither would get a credential nothing can log in with, and the second attempt is refused as
  * `password_already_set` — so it would be unusable and unfixable.
  */
 export function usernameFieldRequired(account: AccountLoginState): boolean {
-  return account !== null && !account.username && !account.emailVerified;
+  return account !== null && !account.username && !account.email;
 }
 
 /** The Thai reason this password form cannot be submitted yet, or null. */

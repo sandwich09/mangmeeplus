@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
+import { countReceiptOcrAdmissions } from '../../../line-ai/application/company-ocr-governance';
 import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
 import { effectiveMonthlySlipLimit } from '../../domain/logic/receipt-quota.logic';
 
@@ -169,10 +170,7 @@ export class GetPartnerTimelineUseCase {
     // The timeline's own clock, so a caller that passes `now` gets a coherent answer.
     const monthKey = bangkokMonthKey(now);
     const [ocrUsage, aiUsage, aiConfig] = await Promise.all([
-      this.prisma.client.companyOcrMonthlyUsage.findUnique({
-        where: { companyId_monthKey: { companyId, monthKey } },
-        select: { usedCount: true },
-      }),
+      countReceiptOcrAdmissions(this.prisma.client, companyId, monthKey),
       this.prisma.client.companyAiMonthlyUsage.findUnique({
         where: { companyId_monthKey: { companyId, monthKey } },
         select: { costSatang: true },
@@ -184,7 +182,7 @@ export class GetPartnerTimelineUseCase {
     ]);
 
     const limit = effectiveMonthlySlipLimit(term, now);
-    if (limit !== null && (ocrUsage?.usedCount ?? 0) >= limit) {
+    if (limit !== null && ocrUsage >= limit) {
       return `ให้ AI อ่านรูปครบ ${limit} ครั้งของเดือนนี้แล้ว`;
     }
     const budget = aiConfig?.monthlyBudgetSatang ?? this.config.aiMonthlyBudgetSatang;

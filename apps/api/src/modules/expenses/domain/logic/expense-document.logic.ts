@@ -390,3 +390,14 @@ export function isExpenseExtractionEligible(
     && EXPENSE_EXTRACTION_KINDS.has(classification.documentKind)
     && amountSignalSupports(grandTotalAmount, classification.amountSignals);
 }
+
+/** A clear non-receipt classification is still useful AI work; an unreadable receipt is not. */
+export function isSuccessfulNonReceiptClassification(classification: BusinessDocumentClassification | null | undefined): boolean {
+  if (!classification || classification.requiresClarification
+    || !['DOCUMENT', 'NON_DOCUMENT_IMAGE'].includes(classification.contentKind)
+    || classification.documentKind === 'NEEDS_REVIEW') return false;
+  return classification.businessDirection === 'SALES_RECEIVABLE'
+    || classification.businessDirection === 'CUSTOMER_INBOUND'
+    || (classification.documentFamily !== 'EXPENSE_EVIDENCE'
+      && !EXPENSE_EXTRACTION_KINDS.has(classification.documentKind));
+}

@@ -84,7 +84,9 @@ export function signupIdleChip(item: AdminSignupQueueItemDto): Chip | null {
  */
 export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   const chips: Chip[] = [];
-  if (item.emailMatchesExistingUser) {
+  // A LINE signup's email is unverified shop contact data, not an account identity. Only the
+  // verified web-email flow may promise that an address match will attach an existing account.
+  if (!isLineSignup(item) && item.emailMatchesExistingUser) {
     chips.push({ label: 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน', tone: 'info' });
   }
   // P10-L §8: this LINE account already belongs to somebody, so approving adds a shop to THEIR

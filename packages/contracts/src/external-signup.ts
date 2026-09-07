@@ -110,7 +110,7 @@ export type AdminSignupQueueItemDto = {
   state: string;
   companyName: string;
   ownerDisplayName: string;
-  /** P10-L: absent on a `line-oa` application — that flow never asks for an address (spec §5). */
+  /** Shop contact for LINE; absent only on legacy applications that did not collect it. */
   contactEmail?: string;
   /** 'official-site' (Flow B) or 'line-oa' (P10-L). Absent reads as the legacy web form. */
   source?: string;
@@ -272,8 +272,10 @@ export type LineSignupSubmitDto = {
   /** LIFF ID token. The ONLY identity input; the profile the client shows is never trusted. */
   idToken: string;
   companyName: string;
-  /** Thai mobile, 10 digits starting 0. Optional by design (spec §3.2). */
-  phoneNumber?: string;
+  /** Required Thai mobile, 10 digits starting 0. */
+  phoneNumber: string;
+  /** Required unverified shop contact email; syntax-only, at most 254 characters. */
+  contactEmail: string;
   referralCode?: string;
   legal: LineSignupLegalEvidenceDto;
 };

@@ -11,6 +11,7 @@ const CMD = {
   idToken: 'aaaa.bbbb.cccc',
   companyName: 'ร้านมั่งมี',
   phoneNumber: '0812345678',
+  contactEmail: 'shop@example.test',
   legal: LEGAL,
   userAgent: 'LINE/14 iOS',
   correlationRequestId: 'req-1',
@@ -166,18 +167,39 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     assert.equal(row.consentVersion, RELEASE.documentVersion);
   });
 
-  it('mints the idempotency key from the identity it verified, and keeps no address', async () => {
+  it('mints the idempotency key from LINE identity and stores unverified shop contact', async () => {
     const h = harness();
     await h.useCase.execute(CMD, NOW);
 
     const row = h.created[0];
     assert.match(row.externalSignupId, /^line:channel-1:Uline-1:[0-9a-f-]{36}$/);
     assert.equal(row.source, 'line-oa');
-    assert.equal(row.contactEmail, undefined, 'this flow never asks for an address');
+    assert.equal(row.contactEmail, 'shop@example.test');
+    assert.equal(row.mxValid, undefined, 'no mailbox or DNS proof is claimed');
     assert.equal(row.lineDisplayName, 'นิด');
     // DATA-MIN-01: display name and typed fields only, never a picture.
     assert.equal(JSON.stringify(row).toLowerCase().includes('picture'), false);
     assert.deepEqual(h.userQuotas, ['attempt:Uline-1', 'inspect:Uline-1', 'consume:Uline-1']);
+  });
+
+  it('normalizes contact before hashing and never chooses an owner by email', async () => {
+    const h = harness({ identity: { userId: 'line-owner' } });
+    await h.useCase.execute({ ...CMD, contactEmail: ' Shop@Example.TEST ' }, NOW);
+    await h.useCase.execute({ ...CMD, contactEmail: 'shop@example.test' }, NOW);
+    await h.useCase.execute({ ...CMD, contactEmail: 'different@example.test' }, NOW);
+    assert.equal(h.created[0].payloadHash, h.created[1].payloadHash);
+    assert.notEqual(h.created[0].payloadHash, h.created[2].payloadHash);
+    assert.ok(h.created.every((row) => row.attachUserId === 'line-owner'));
+    assert.ok(h.identityReads.every((read) => read.where.providerUserId === 'Uline-1' && !('email' in read.where)));
+  });
+
+  it('rejects invalid contact before creating an application or spending a shop creation', async () => {
+    const h = harness();
+    for (const contactEmail of [undefined, null, '', ' ', 123, 'broken', 'a@@example.com', `${'a'.repeat(245)}@example.com`]) {
+      await assert.rejects(() => h.useCase.execute({ ...CMD, contactEmail } as any, NOW), BadRequestException);
+    }
+    assert.deepEqual(h.created, []);
+    assert.ok(!h.userQuotas.some((entry) => entry.startsWith('consume:')));
   });
 
   // Review MEDIUM-1: the bucket is three shops a DAY. Consuming it on a rejected submit turns

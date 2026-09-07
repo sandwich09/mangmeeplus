@@ -1,6 +1,6 @@
 # New-shop onboarding and trial receipt fix plan
 
-Status: Initial five-issue implementation and local acceptance complete. Owner clarified email must also serve the owner account while signup remains password-free and immediately usable through LINE. Applying this docs-first amendment before PR delivery. Baseline commit: `4f9cbb8a`; no deployment dispatched.
+Status: Five-issue implementation and owner-email amendment complete; all local integration acceptance passes. Candidate frozen for PR CI and authorized develop/main admin delivery. Docs-first commits `4f9cbb8a` and `324172b2`; no deployment dispatched.
 
 Spec: [five-issue contract](../specs/onboarding-trial-receipt-fixes-spec.md). Memory: [task state](../agent-memory/onboarding-trial-receipt-fixes.md).
 
@@ -49,3 +49,5 @@ Integration ownership updates: the email Astra lane owns the separate first-shop
 - Astra email lane: safely adopt available unverified owner email without blocking LINE signup; preserve existing account identity, duplicate-contact shop continuation and idempotent provisioning. Align optional initial-password backend with a present email identifier; real PG lifecycle coverage.
 - Sol web lane: account email truth/optional password UX, no username requirement when account email exists, actual LIFF owner-email label/helper and browser proof coordinated with Astra. No signup password field, send or verification wait.
 - Coordinator: amendment/spec/memory, integration review and re-run affected verification before Git delivery. Initial contact-only test evidence is historical until revised email expectations pass.
+
+Amended acceptance: full workspace tests/typecheck and eight-suite LINE acceptance pass; clean PostgreSQL signup14/auth1/first-receipt1 (zero skips); combined actual-page browser5/5. See task memory for exact evidence and runtime boundaries.

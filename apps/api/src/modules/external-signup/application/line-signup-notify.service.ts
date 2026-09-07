@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
+import { countReceiptOcrAdmissions } from '../../line-ai/application/company-ocr-governance';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
@@ -460,13 +461,9 @@ export class LineSignupNotifyService {
     return { queued };
   }
 
-  /** The OCR admission counter L-A2 layered the plan ceiling into — one number for the whole system. */
+  /** The retained receipt/image reads, excluding bank-statement accounting imports. */
   private async hasEnoughReads(companyId: string): Promise<boolean> {
-    const used = await this.prisma.client.companyOcrMonthlyUsage.aggregate({
-      where: { companyId },
-      _sum: { usedCount: true },
-    });
-    return (used._sum.usedCount ?? 0) >= PROFILE_GUARD_AFTER_READS;
+    return await countReceiptOcrAdmissions(this.prisma.client, companyId) >= PROFILE_GUARD_AFTER_READS;
   }
 
   /** An owner with a verified email or a phone on file can already get back in without LINE. */

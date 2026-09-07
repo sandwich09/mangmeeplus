@@ -2,8 +2,8 @@ import {
   Body, Controller, ForbiddenException, Get, Headers, HttpCode, Post, Req, UnauthorizedException,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsEmail, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import type { Request } from 'express';
 import type { LineSignupStatusDto, LineSignupSubmitAcceptedDto } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -14,7 +14,7 @@ import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
 import { GetLineSignupStatusUseCase } from '../../application/get-line-signup-status.use-case';
 import { SubmitLineSignupUseCase } from '../../application/submit-line-signup.use-case';
-import { LINE_SIGNUP_COMPANY_NAME_MAX, LINE_SIGNUP_REFERRAL_CODE_MAX } from '../../domain/line-signup.logic';
+import { LINE_SIGNUP_COMPANY_NAME_MAX, LINE_SIGNUP_CONTACT_EMAIL_MAX, LINE_SIGNUP_REFERRAL_CODE_MAX } from '../../domain/line-signup.logic';
 
 const SHA256_HEX = /^[a-f0-9]{64}$/;
 
@@ -32,6 +32,8 @@ export class LineSignupSubmitBodyDto {
   // Required since Owner 2026-09-05 (spec §3.2). Digits, spaces and dashes only; the use-case
   // decides whether they add up to a Thai mobile, and answers `line_signup_phone_*` when they do not.
   @IsString() @IsNotEmpty() @MaxLength(20) @Matches(/^[0-9 -]*$/) phoneNumber!: string;
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
+  @IsEmail() @MaxLength(LINE_SIGNUP_CONTACT_EMAIL_MAX) contactEmail!: string;
   @IsString() @IsOptional() @MaxLength(LINE_SIGNUP_REFERRAL_CODE_MAX) @Matches(/^[A-Za-z0-9_-]*$/) referralCode?: string;
   @IsObject() @ValidateNested() @Type(() => LineSignupLegalDto) legal!: LineSignupLegalDto;
 }
@@ -71,6 +73,7 @@ export class PublicLineSignupController {
       idToken: dto.idToken,
       companyName: dto.companyName,
       phoneNumber: dto.phoneNumber,
+      contactEmail: dto.contactEmail,
       ...(dto.referralCode ? { referralCode: dto.referralCode } : {}),
       legal: dto.legal,
       ...(req.headers['user-agent'] ? { userAgent: String(req.headers['user-agent']) } : {}),

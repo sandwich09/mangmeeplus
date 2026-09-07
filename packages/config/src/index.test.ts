@@ -1626,3 +1626,11 @@ describe('redactLogValue() – L-09 shared deep log redactor', () => {
     assert.equal(redactLogValue(undefined), undefined);
   });
 });
+
+
+describe('trial allowance defaults', () => {
+  it('grants fifteen from day one in API config and deployment defaults', () => {
+    assert.equal(apiConfigSchema.shape.LINE_SIGNUP_WARMUP_SLIPS.parse(undefined), 15);
+    assert.match(readFileSync(new URL('../../../infra/prod-ecs-express/deploy.sh', import.meta.url), 'utf8'), /LINE_SIGNUP_WARMUP_SLIPS:-15/);
+  });
+});

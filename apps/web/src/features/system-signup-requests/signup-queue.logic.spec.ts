@@ -192,9 +192,14 @@ describe('signupIdleChip', () => {
 });
 
 describe('signupHintChips', () => {
-  it('says what the system will do about a matching email, not what to decide', () => {
-    const chips = signupHintChips(item({ emailMatchesExistingUser: true }));
+  it('keeps the account-attachment hint for the verified web-email flow', () => {
+    const chips = signupHintChips(item({ source: 'official-site', emailMatchesExistingUser: true }));
     assert.equal(chips[0]!.label, 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน');
+  });
+
+  it('does not treat an unverified LINE shop-contact email as account identity', () => {
+    const chips = signupHintChips(item({ source: 'line-oa', emailMatchesExistingUser: true }));
+    assert.equal(chips.some((chip) => chip.label.includes('อีเมลตรงกับบัญชีเดิม')), false);
   });
 
   it('names the company a tax id collides with', () => {

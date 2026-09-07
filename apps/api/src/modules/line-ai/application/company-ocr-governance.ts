@@ -1,5 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
-import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS } from '@watchdog-bms/contracts';
+import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, isReceiptOcrRetryableFailure } from '@watchdog-bms/contracts';
 import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { effectiveMonthlySlipLimit } from '../../system-partner-management/domain/logic/receipt-quota.logic';
@@ -20,11 +21,18 @@ export type CompanyOcrSourceRoute = 'receipt-ocr-web' | 'receipt-ocr-line' | 'ba
  */
 const PLAN_QUOTA_ROUTES = new Set<CompanyOcrSourceRoute>(['receipt-ocr-web', 'receipt-ocr-line']);
 
+/** The commercial allowance excludes bank statements; the operational aggregate still includes them. */
+export function countReceiptOcrAdmissions(db: Pick<PrismaService['client'], 'companyOcrUsageEvent'>, companyId: string, monthKey?: string): Promise<number> {
+  return db.companyOcrUsageEvent.count({ where: { companyId, ...(monthKey ? { monthKey } : {}), sourceRoute: { in: [...PLAN_QUOTA_ROUTES] } } });
+}
+
+export type CompanyOcrAdmissionIdentity = { eventId: string; monthKey: string };
+
 /** Fired once per company-month while the plan ceiling is measured but not enforced. */
 const PLAN_WOULD_BLOCK_ACTION = 'plan.receipt_quota.would_block';
 
 export type CompanyOcrAdmission =
-  | { allowed: true; monthKey: string; usedCount: number; monthlyLimit: number | null }
+  | ({ allowed: true; usedCount: number; monthlyLimit: number | null } & CompanyOcrAdmissionIdentity)
   | { allowed: false; reason: 'disabled' }
   | { allowed: false; reason: 'exceeded'; usedCount: number; monthlyLimit: number }
   /** The shop's plan ran out, not the platform's ops brake — a sales moment, not an outage. */
@@ -52,8 +60,8 @@ export const RECEIPT_QUOTA_ERROR_CODE: CompanyOcrErrorCode = 'RECEIPT_QUOTA_EXCE
 
 /**
  * What the reply needs to name a number: how many document reads this company/month has, and the
- * ceiling its plan allows. Read from the SAME aggregate the admission increments, so the trial's
- * "อ่านครั้งที่ n จาก 15" and the admin console can never disagree.
+ * ceiling its plan allows. Read from the SAME qualifying events admission counts, so the trial's
+ * "อ่านครั้งที่ n จาก 15" agrees with commercial enforcement. Operational totals include bank statements.
  */
 export async function receiptQuotaSnapshot(
   prisma: PrismaService,
@@ -61,18 +69,15 @@ export async function receiptQuotaSnapshot(
   monthKey: string = bangkokMonthKey(),
   now: Date = new Date(),
 ): Promise<{ usedCount: number; planLimit: number | null; tierKey: string | null }> {
-  const [usage, term] = await Promise.all([
-    prisma.client.companyOcrMonthlyUsage.findUnique({
-      where: { companyId_monthKey: { companyId, monthKey } },
-      select: { usedCount: true },
-    }),
+  const [usedCount, term] = await Promise.all([
+    countReceiptOcrAdmissions(prisma.client, companyId, monthKey),
     prisma.client.companyPlanTerm.findUnique({
       where: { companyId },
       select: { tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true },
     }),
   ]);
   return {
-    usedCount: usage?.usedCount ?? 0,
+    usedCount,
     planLimit: effectiveMonthlySlipLimit(term, now),
     tierKey: term?.tierKey ?? null,
   };
@@ -92,28 +97,10 @@ export function isOcrPreProviderRefusal(response: { status?: string; errorCode?:
 export const isOcrPreProviderHttpStatus = (status: number): boolean =>
   status === 400 || status === 401 || status === 403 || status === 404;
 
-/**
- * A failure the WEB caller will retry under a fresh request id, and therefore a fresh admission.
- *
- * Deliberately the same classification `expenseExtractionRetryMode` uses to return `'new_request'`
- * (apps/web/.../expense-upload.logic.ts): `status: 'failed'` with a code that is not `OCR_*`. An
- * `OCR_*` code is a decision this system already made — disabled, over limit, duplicate — and a
- * retry cannot change it, so those keep their admission.
- *
- * Unlike `isOcrPreProviderRefusal` this does NOT prove the provider stayed unread: a 5xx may well
- * have cost a real call. Releasing anyway is a deliberate trade under P10-L §15.1 — the retry buys
- * its own admission a second later, so holding this one bills one flaky minute of ours as two of
- * the customer's fifteen, and under-counting our own spend is the cheaper error.
- *
- * It once claimed the AI budget meter "still records what the provider actually cost". That is only
- * true when a RESPONSE came back: `recordCompanyAiUsage` reads its numbers off the body. A caller
- * that aborts the connection first has no body to read, so nothing is metered at all — which is
- * exactly why `AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS` is derived to outlast the gateway's whole chain
- * rather than race it. Within that guarantee a transport timeout means the gateway is gone, and a
- * gateway that is gone has unknown spend, not proof of zero cost.
- */
+/** Extraction failures release customer allowance. Only explicit governance decisions are excluded.
+ * Provider usage stays in the separate AI ledger; an absent response means unknown spend, not zero. */
 export function isOcrRetryableProviderFailure(response: { status?: string; errorCode?: string }): boolean {
-  return response.status === 'failed' && !(response.errorCode ?? '').startsWith('OCR_');
+  return isReceiptOcrRetryableFailure(response);
 }
 
 /**
@@ -169,11 +156,8 @@ export async function claimReceiptQuotaNotice(
  * The one OCR admission seam. A transaction advisory lock serializes the config read, request
  * fence and monthly increment for one company/month; no concurrent caller can overshoot by one.
  *
- * P10-L §15.1 (review G-01) layered the COMMERCIAL ceiling here rather than beside it. Two monthly
- * counters would hand support and the admin console two different "receipts this month" numbers for
- * the same shop, so `CompanyPlanTerm.monthlySlipLimit` reads the aggregate this function already
- * keeps. The effective ceiling is `min(ocrMonthlyLimit ?? ∞, planLimit ?? ∞)`; which one bound is
- * the difference between an outage (`exceeded`) and a sales moment (`plan_exceeded`).
+ * The commercial ceiling counts only indexed receipt-route events under this same lock. The
+ * operational ceiling uses the all-route aggregate; each refusal names the policy that bound.
  */
 export async function admitCompanyOcr(
   prisma: PrismaService,
@@ -233,11 +217,13 @@ export async function admitCompanyOcr(
         if (claimed.count !== 1) return { allowed: false, reason: 'duplicate' } as const;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${replay.monthKey}`}))`;
         const usage = await tx.companyOcrMonthlyUsage.findUniqueOrThrow({ where: { companyId_monthKey: { companyId: input.companyId, monthKey: replay.monthKey } }, select: { usedCount: true } });
+        // Same input/month, new execution generation: an old worker's delayed release cannot credit this retry.
+        const resumed = await tx.companyOcrUsageEvent.update({ where: { id: replay.id }, data: { id: randomUUID() }, select: { id: true } });
         await tx.auditLog.create({ data: { companyId: input.companyId, actorType: 'SYSTEM', actorRefId: 'receipt-ocr-admission',
-          action: 'receipt.ocr.admission.resumed', targetType: 'company_ocr_usage_event', targetId: replay.id,
+          action: 'receipt.ocr.admission.resumed', targetType: 'company_ocr_usage_event', targetId: resumed.id,
           requestId: input.retryWebhookEventId, result: 'SUCCESS', riskLevel: 'LOW',
-          metadataJson: { operationId: input.requestId, monthKey: replay.monthKey } } });
-        return { allowed: true, monthKey: replay.monthKey, usedCount: usage.usedCount, monthlyLimit: policy?.ocrMonthlyLimit ?? null } as const;
+          metadataJson: { operationId: input.requestId, monthKey: replay.monthKey, previousEventId: replay.id } } });
+        return { allowed: true, eventId: resumed.id, monthKey: replay.monthKey, usedCount: usage.usedCount, monthlyLimit: policy?.ocrMonthlyLimit ?? null } as const;
       }
 
       const configuration = await tx.companyAiConfiguration.findUnique({
@@ -266,9 +252,10 @@ export async function admitCompanyOcr(
           select: { tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true },
         });
         const planLimit = effectiveMonthlySlipLimit(term, new Date());
-        if (planLimit !== null && usedCount >= planLimit) {
+        const receiptCount = planLimit === null ? 0 : await countReceiptOcrAdmissions(tx, input.companyId, monthKey);
+        if (planLimit !== null && receiptCount >= planLimit) {
           if (input.enforceReceiptQuota === true) {
-            return { allowed: false, reason: 'plan_exceeded', usedCount, monthlyLimit: planLimit, tierKey: term?.tierKey ?? null } as const;
+            return { allowed: false, reason: 'plan_exceeded', usedCount: receiptCount, monthlyLimit: planLimit, tierKey: term?.tierKey ?? null } as const;
           }
           // Rollout mode: the read still happens, and the shop is told nothing. Read the marker
           // under the lock so the once-per-month decision cannot race itself.
@@ -276,17 +263,18 @@ export async function admitCompanyOcr(
             where: { requestId: planWouldBlockKey(input.companyId, monthKey) },
             select: { id: true },
           });
-          wouldBlock = { usedCount, planLimit, tierKey: term?.tierKey ?? null, audited: audited !== null };
+          wouldBlock = { usedCount: receiptCount, planLimit, tierKey: term?.tierKey ?? null, audited: audited !== null };
         }
       }
 
-      await tx.companyOcrUsageEvent.create({
+      const event = await tx.companyOcrUsageEvent.create({
         data: {
           companyId: input.companyId,
           monthKey,
           sourceRoute: input.sourceRoute,
           requestId: input.requestId,
         },
+        select: { id: true },
       });
       const aggregate = await tx.companyOcrMonthlyUsage.upsert({
         where: { companyId_monthKey: { companyId: input.companyId, monthKey } },
@@ -294,7 +282,7 @@ export async function admitCompanyOcr(
         update: { usedCount: { increment: 1 } },
         select: { usedCount: true },
       });
-      return { allowed: true, monthKey, usedCount: aggregate.usedCount, monthlyLimit } as const;
+      return { allowed: true, eventId: event.id, monthKey, usedCount: aggregate.usedCount, monthlyLimit } as const;
     });
     if (wouldBlock) await recordPlanQuotaWouldBlock(prisma, input, monthKey, wouldBlock);
     return admission;
@@ -379,6 +367,8 @@ export async function releaseCompanyOcrAdmission(
     companyId: string;
     sourceRoute: CompanyOcrSourceRoute;
     requestId: string;
+    /** A delayed credit cannot consume a replacement attempt. */
+    eventId: string;
     reason?: 'SYSTEM_FAILURE_NO_USABLE_RESULT';
   },
 ): Promise<boolean> {
@@ -402,6 +392,7 @@ export async function releaseCompanyOcrAdmission(
           select: { id: true, monthKey: true },
         });
         if (!event) return true;
+        if (event.id !== input.eventId) return true;
 
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ocr-quota:${input.companyId}:${event.monthKey}`}))`;
         const aggregate = await tx.companyOcrMonthlyUsage.updateMany({
@@ -434,6 +425,7 @@ export async function releaseCompanyOcrAdmission(
     companyId: input.companyId,
     sourceRoute: input.sourceRoute,
     requestId: input.requestId,
+    eventId: input.eventId,
     ...safeLineErrorDetails(lastError),
   });
   return false;

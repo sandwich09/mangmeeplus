@@ -9,6 +9,9 @@ const TOKEN_CONFIG = { lineMessagingChannelAccessToken: 'system-oa-token', passw
 
 function makePrisma(options: {
   user?: Record<string, unknown> | null;
+  users?: Array<Record<string, any>>;
+  identities?: Record<string, string>;
+  onIdentityQuery?: (args: any) => void;
   membership?: { companyId: string } | null;
   identity?: { providerUserId: string } | null;
   onUserQuery?: (args: any) => void;
@@ -16,7 +19,8 @@ function makePrisma(options: {
   const tokens: Array<{ id: string; userId: string; tokenHash: string; expiresAt: Date; status: string }> = [];
   const tx = {
     $queryRaw: async () => [{ id: 'credential-1' }],
-    userCredential: { findUnique: async () => ACTIVE_USER.credential },
+    userCredential: { findUnique: async ({ where }: any) => options.users
+      ? options.users.find((user) => user.id === where.userId)?.credential ?? null : ACTIVE_USER.credential },
     passwordResetToken: {
       updateMany: async ({ where, data }: any) => {
         let count = 0;
@@ -40,16 +44,22 @@ function makePrisma(options: {
   const prisma = {
     client: {
       user: {
-        findFirst: async (args: any) => {
+        findMany: async (args: any) => {
           options.onUserQuery?.(args);
-          return options.user === undefined ? ACTIVE_USER : options.user;
+          if (options.users) return options.users.filter((user) => args.where.OR.some((condition: any) =>
+            Object.entries(condition).every(([key, value]) => user[key] === value))).slice(0, args.take);
+          return options.user === null ? [] : [options.user ?? ACTIVE_USER];
         },
       },
       companyMembership: {
         findFirst: async () => options.membership === undefined ? { companyId: 'company-1' } : options.membership,
       },
       externalIdentity: {
-        findFirst: async () => options.identity === undefined ? { providerUserId: 'line-user-1' } : options.identity,
+        findFirst: async (args: any) => {
+          options.onIdentityQuery?.(args);
+          if (options.identities) return options.identities[args.where.userId] ? { providerUserId: options.identities[args.where.userId] } : null;
+          return options.identity === undefined ? { providerUserId: 'line-user-1' } : options.identity;
+        },
       },
       passwordResetToken: tx.passwordResetToken,
       $transaction: async (fn: (db: typeof tx) => Promise<unknown>) => fn(tx),
@@ -102,7 +112,105 @@ describe('NotifyPasswordResetRequestUseCase', () => {
     let queried: any;
     const { prisma } = makePrisma({ user: null, onUserQuery: (args) => { queried = args; } });
     await run(prisma, TOKEN_CONFIG, '  Owner.One  ');
-    assert.equal(queried.where.username, 'owner.one');
+    assert.deepEqual(queried.where, { OR: [{ username: 'owner.one' }, { email: 'owner.one' }] });
+    assert.equal(queried.take, 2);
+  });
+
+  it('sends nothing when one account username collides with another account email, regardless of row order', async () => {
+    const email = 'owner@example.com';
+    const byUsername = { ...ACTIVE_USER, id: 'username-account', username: email, email: 'different@example.com' };
+    const byEmail = { ...ACTIVE_USER, id: 'email-account', username: null, email };
+    for (const users of [[byUsername, byEmail], [byEmail, byUsername]]) {
+      let identityQueried = false;
+      const { prisma, tokens } = makePrisma({ users, identities: {
+        'username-account': 'line-username-account', 'email-account': 'line-email-account',
+      }, onIdentityQuery: () => { identityQueried = true; } });
+      const line = captureLinePush();
+      try {
+        const { result, audits } = await run(prisma, TOKEN_CONFIG, ' Owner@Example.com ');
+        await flushDetached();
+        assert.equal(result.message, GENERIC_MESSAGE);
+        assert.equal(tokens.length, 0);
+        assert.equal(line.pushes.length, 0);
+        assert.equal(identityQueried, false);
+        assert.equal(audits[0].metadataJson.reason, 'ambiguous_identifier');
+      } finally { line.restore(); }
+    }
+  });
+
+  it('treats one account matching both username and email as one recipient', async () => {
+    const email = 'owner@example.com';
+    const user = { ...ACTIVE_USER, username: email, email };
+    const { prisma, tokens } = makePrisma({ users: [user], identities: { 'user-1': 'line-same-account' } });
+    const line = captureLinePush();
+    try {
+      assert.equal((await run(prisma, TOKEN_CONFIG, email)).result.message, GENERIC_MESSAGE);
+      await flushDetached();
+      assert.deepEqual(line.pushes.map((push) => push.to), ['line-same-account']);
+      assert.deepEqual(tokens.map((token) => token.userId), [user.id]);
+      assert.equal(tokens[0]!.tokenHash, hashLineRecoveryPassword(line.pushes[0]!.clipboardText!, user.credential.passwordHash));
+    } finally { line.restore(); }
+  });
+
+  it('accepts a trimmed mixed-case account email without a username or verified mailbox', async () => {
+    const email = `${'owner'.repeat(14)}@example.com`;
+    assert.ok(email.length > 64, 'the login email may be longer than a username');
+    const user = { ...ACTIVE_USER, username: null, email, emailVerifiedAt: null };
+    let queried: any;
+    let destinationQuery: any;
+    const { prisma, tokens } = makePrisma({ users: [user], identities: { 'user-1': 'line-email-owner' },
+      onUserQuery: (args) => { queried = args; }, onIdentityQuery: (args) => { destinationQuery = args; } });
+    const line = captureLinePush();
+    try {
+      assert.equal((await run(prisma, TOKEN_CONFIG, `  ${email.toUpperCase()}  `)).result.message, GENERIC_MESSAGE);
+      await flushDetached();
+      assert.deepEqual(queried.where, { OR: [{ username: email }, { email }] });
+      assert.deepEqual(destinationQuery.where, { userId: user.id, provider: 'LINE', status: 'ACTIVE' });
+      assert.equal(line.pushes.length, 1);
+      assert.equal(line.pushes[0]!.to, 'line-email-owner');
+      assert.equal(tokens[0]!.userId, user.id);
+      assert.equal(tokens[0]!.tokenHash, hashLineRecoveryPassword(line.pushes[0]!.clipboardText!, user.credential.passwordHash));
+      assert.equal(user.emailVerifiedAt, null, 'LINE recovery never proves a mailbox');
+    } finally { line.restore(); }
+  });
+
+  it('resolves an email to that account only and sends nothing to an account sharing its shop contact', async () => {
+    const requested = { ...ACTIVE_USER, id: 'email-account', username: null, email: 'owner@example.com', emailVerifiedAt: null,
+      credential: { ...ACTIVE_USER.credential, passwordHash: 'email-account-credential' } };
+    const other = { ...ACTIVE_USER, id: 'other-account', username: 'other.owner', email: 'different@example.com', companyContactEmail: requested.email };
+    const { prisma, tokens } = makePrisma({ users: [other, requested], identities: {
+      'email-account': 'line-email-account', 'other-account': 'line-other-account',
+    } });
+    const line = captureLinePush();
+    try {
+      assert.equal((await run(prisma, TOKEN_CONFIG, requested.email)).result.message, GENERIC_MESSAGE);
+      await flushDetached();
+      assert.deepEqual(line.pushes.map((push) => push.to), ['line-email-account']);
+      assert.deepEqual(tokens.map((token) => token.userId), ['email-account']);
+      assert.equal(tokens[0]!.tokenHash, hashLineRecoveryPassword(line.pushes[0]!.clipboardText!, requested.credential.passwordHash));
+
+      const contactOnly = makePrisma({ users: [{ ...other, companyContactEmail: 'shop-contact@example.com' }], identities: { 'other-account': 'line-other-account' } });
+      assert.equal((await run(contactOnly.prisma, TOKEN_CONFIG, 'shop-contact@example.com')).result.message, GENERIC_MESSAGE);
+      await flushDetached();
+      assert.equal(contactOnly.tokens.length, 0);
+      assert.equal(line.pushes.length, 1, 'Company.email is never a recovery identity');
+    } finally { line.restore(); }
+  });
+
+  it('does not give email-only signup a password or recovery token before it sets a credential, or without linked LINE', async () => {
+    for (const hasCredential of [false, true]) {
+      const user = { ...ACTIVE_USER, username: null, email: 'owner@example.com', emailVerifiedAt: null,
+        credential: hasCredential ? ACTIVE_USER.credential : null };
+      const { prisma, tokens } = makePrisma({ users: [user], identities: hasCredential ? {} : { 'user-1': 'line-user-1' } });
+      const line = captureLinePush();
+      try {
+        assert.equal((await run(prisma, TOKEN_CONFIG, ' Owner@Example.com ')).result.message, GENERIC_MESSAGE);
+        await flushDetached();
+        assert.equal(tokens.length, 0);
+        assert.equal(line.pushes.length, 0);
+        assert.equal(user.credential, hasCredential ? ACTIVE_USER.credential : null);
+      } finally { line.restore(); }
+    }
   });
 
   it('preserves the generic response without changing credentials for every ineligible account', async () => {

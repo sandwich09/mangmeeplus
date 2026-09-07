@@ -225,21 +225,26 @@ describe('ConfirmPasswordResetUseCase', () => {
 describe('RequestEmailChangeUseCase', () => {
   it('creates a pending verification token for a valid password', async () => {
     const calls: unknown[] = [];
+    const passwordHash = hashPassword('watchdog-old');
     const prisma = {
       client: {
         user: {
           findUnique: async () => ({
             id: 'user-1',
+            status: 'ACTIVE',
             email: null,
             emailVerifiedAt: null,
             credential: {
               status: 'ACTIVE',
-              passwordHash: hashPassword('watchdog-old'),
+              passwordHash,
             },
           }),
           findFirst: async () => null,
         },
         $transaction: async (fn: (tx: any) => Promise<void>) => fn({
+          $executeRaw: async () => 1,
+          $queryRaw: async () => [],
+          user: prisma.client.user,
           emailVerificationToken: {
             updateMany: async (args: unknown) => { calls.push(args); return { count: 0 }; },
             create: async (args: unknown) => { calls.push(args); return args; },

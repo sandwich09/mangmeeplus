@@ -1,3 +1,4 @@
+import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
@@ -165,6 +166,8 @@ function makeHarness(opts: {
   uploadThrows?: boolean;
   mediaDownloadFails?: boolean;
   receiptOcrResult?: any;
+  governReceiptAdmission?: boolean;
+  receiptApplyError?: Error;
   findExpenseByLineMessageId?: (companyId: string, lineMessageId: string) => Promise<any>;
   prisma?: any;
   /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
@@ -173,6 +176,7 @@ function makeHarness(opts: {
   substituteResult?: any;
   /** §11: what `loadOpenMediaContext` reports for this chat — undefined means no open substitute work. */
   substituteMediaContext?: any;
+  substituteAttachError?: Error;
   /** R11: what the link gate refuses with, so the reply for an uncomposable scan can be asserted. */
   linkScanError?: Error;
   /** Rows behind `hasActiveSubstituteContinuation`: a chat already mid-workflow must not fork a draft. */
@@ -324,8 +328,13 @@ function makeHarness(opts: {
         ocrRequests.push(req);
         return opts.receiptOcrResult ?? validReceiptOcr();
       },
-      requestLineIntakeRoute: async (req: any) => {
+      requestLineIntakeRoute: async (req: any, options?: any) => {
         routeRequests.push(req);
+        if (opts.governReceiptAdmission) {
+          const admitted = await admitCompanyOcr(prisma, { companyId: req.companyId, sourceRoute: 'receipt-ocr-line', requestId: req.attachments[0].id, enforceReceiptQuota: true });
+          assert.ok(admitted.allowed, 'test receipt must reach its actual provisional admission');
+          options?.onAdmitted?.(admitted);
+        }
         if (opts.routeThrows) throw new Error('gateway down');
         return opts.routePlan ?? { status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0, errorCode: 'PROVIDER_DISABLED' };
       },
@@ -342,7 +351,7 @@ function makeHarness(opts: {
         return opts.lineReplyResult ?? 'ok';
       },
     } as any,
-    { apply: async () => ({ candidatesCreated: 0 }) } as any,
+    { apply: async () => { if (opts.receiptApplyError) throw opts.receiptApplyError; return { candidatesCreated: 0 }; } } as any,
     { assertClean: async () => undefined } as any,
     acceptedLegal,
     shadowProbe,
@@ -428,6 +437,7 @@ function makeHarness(opts: {
         },
         attachMedia: async (_ctx: any, input: any) => {
           attachMediaCalls.push(input);
+          if (opts.substituteAttachError) throw opts.substituteAttachError;
           return { replyText: `📎 แนบแล้ว ${input.purpose}` };
         },
         linkWetSignedScan: async (_ctx: any, input: any) => {
@@ -4022,4 +4032,80 @@ describe('LINE capture branch default – every LINE-originated draft (UAT 2026-
     assert.equal(h.draftsCreated.length, 1, 'the REAL capture use case reached CreateExpenseDraftUseCase');
     assert.equal(h.draftsCreated[0].branchId, 'silom', 'and forwards it to the draft');
   });
+});
+
+
+describe('LINE usable receipt allowance settlement', () => {
+  for (const enabled of [false, true]) for (const scenario of ['empty', 'missing_fields', 'apply_failure', 'summary_failure', 'success', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support', 'substitute_failure'] as const) {
+    it(`${scenario} settles its admission with draft conversation ${enabled ? 'enabled' : 'disabled'}`, async () => {
+      const state = makePrisma();
+      const events: any[] = [];
+      const credits: any[] = [];
+      let used = 0;
+      Object.assign(state.prisma.client, {
+        $executeRaw: async () => undefined,
+        companyAiConfiguration: { findUnique: async () => null },
+        companyPlanTerm: { findUnique: async () => ({ tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15, warmupSlipLimit: 10, warmupUntil: new Date(Date.now() + 100000) }) },
+        companyOcrUsageEvent: {
+          findUnique: async ({ where }: any) => events.find((event) => event.requestId === where.companyId_sourceRoute_requestId.requestId) ?? null,
+          create: async ({ data }: any) => { const event = { id: 'admission-generation-1', ...data }; events.push(event); return event; },
+          count: async () => events.length,
+          delete: async ({ where }: any) => events.splice(events.findIndex((event) => event.id === where.id), 1)[0],
+        },
+        companyOcrMonthlyUsage: {
+          findUnique: async () => ({ usedCount: used }),
+          upsert: async () => ({ usedCount: ++used }),
+          updateMany: async () => { assert.ok(used > 0); used -= 1; return { count: 1 }; },
+        },
+        auditLog: { findFirst: async () => null, create: async ({ data }: any) => { credits.push(data); return data; } },
+        outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
+      });
+      state.prisma.client.$transaction = async (work: any) => work(state.prisma.client);
+      const recordUpdate = state.prisma.client.expenseRecord.update;
+      let writes = 0;
+      if (scenario === 'summary_failure') state.prisma.client.expenseRecord.update = async (args: any) => {
+        if (++writes === 2) throw new Error('synthetic final summary failure');
+        return recordUpdate(args);
+      };
+      const generic = businessClassification({ documentFamily: 'COMMERCIAL_DOCUMENT', documentKind: 'QUOTATION', businessDirection: 'CUSTOMER_INBOUND' });
+      const substitute = scenario.startsWith('substitute_');
+      const h = makeHarness({
+        permissions: substitute ? ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.review'] : ['expense.receipt.line_upload'], prisma: state.prisma,
+        substituteMediaContext: substitute ? { expenseId: 'existing-expense', awaitingScans: [] } : undefined,
+        substituteAttachError: scenario === 'substitute_failure' ? new Error('synthetic attach failure') : undefined,
+        governReceiptAdmission: true, expenseDraftConversationEnabled: enabled,
+        expenseDraftConversation: enabled ? { startFromReceipt: async () => ({ replyTexts: ['บันทึกร่างแล้ว'], expenseId: 'expense-1' }) } : undefined,
+        receiptApplyError: scenario === 'apply_failure' ? new Error('synthetic apply failure') : undefined,
+        lineReplyResult: scenario === 'delivery_failure' ? 'failed_other' : 'ok',
+        routePlan: { status: 'ROUTED', intent: scenario === 'generic_reference' ? 'BUSINESS_DOCUMENT_REFERENCE' : 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 },
+        receiptOcrResult: scenario === 'empty' || scenario === 'substitute_failure' ? { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }
+          : scenario === 'missing_fields' ? { status: 'ok', classification: businessClassification() }
+          : scenario === 'generic_reference' ? { status: 'ok', classification: generic, fields: { grandTotalAmount: '120.00' } } : validReceiptOcr(),
+      });
+      await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `settle-${scenario}-${enabled}` },
+        substitute ? scenario === 'substitute_support' ? 'หลักฐานค่าที่จอดรถค่ะ' : 'สลิปโอนค่ะ' : undefined);
+      const retained = ['success', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support'].includes(scenario);
+      assert.equal(used, retained ? 1 : 0);
+      assert.equal(events.length, retained ? 1 : 0);
+      assert.equal(credits.filter((entry) => entry.action === 'receipt.ocr.admission.compensated').length, retained ? 0 : 1);
+      if (scenario === 'success' || scenario === 'delivery_failure') {
+        assert.match(h.replies.join(' '), /อ่านครั้งที่ 1 จาก 15/);
+        assert.equal(h.completeCalls.length, 1);
+      } else assert.doesNotMatch(h.replies.join(' '), /อ่านครั้งที่/);
+      if (substitute) {
+        assert.equal(h.attachMediaCalls.length, 1, 'existing work claims the supporting/payment image');
+        if (scenario !== 'substitute_failure') {
+          assert.equal(h.attachMediaCalls[0].expenseId, 'existing-expense');
+          assert.equal(h.attachMediaCalls[0].purpose, scenario === 'substitute_support' ? 'expense.receipt.supporting' : 'expense.payment.evidence');
+          assert.equal(state.pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+          assert.equal(h.ocrRequests.length, 0, 'no second receipt extraction for an attached supporting image');
+          assert.equal(h.initCalls.length, 0, 'no new expense for the existing work');
+        }
+      }
+      if (scenario === 'apply_failure' || scenario === 'summary_failure') {
+        assert.equal(h.completeCalls.length, 1, 'stored image is kept even when extraction persistence fails');
+        assert.match(h.replies.join(' '), /expense-1/);
+      }
+    });
+  }
 });
