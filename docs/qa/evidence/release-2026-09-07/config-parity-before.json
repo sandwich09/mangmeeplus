@@ -1,0 +1,1684 @@
+{
+  "checkedAt": "2026-09-06T17:30:41.008913+00:00",
+  "errors": {},
+  "layers": {
+    "github": {
+      "config": [
+        {
+          "key": "AGENTCORE_INVOKE_TIMEOUT_MS",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "20000"
+        },
+        {
+          "key": "AGENTCORE_MAX_ATTACHMENTS",
+          "status": "equal",
+          "uat": "10",
+          "production": "10"
+        },
+        {
+          "key": "AGENTCORE_MAX_BODY_BYTES",
+          "status": "equal",
+          "uat": "1048576",
+          "production": "1048576"
+        },
+        {
+          "key": "AGENTCORE_MAX_CONCURRENT_INVOCATIONS",
+          "status": "equal",
+          "uat": "16",
+          "production": "16"
+        },
+        {
+          "key": "AGENTCORE_MAX_MESSAGE_CHARS",
+          "status": "equal",
+          "uat": "8000",
+          "production": "8000"
+        },
+        {
+          "key": "AGENTCORE_REGION",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_RUNTIME_ARN",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_RUNTIME_QUALIFIER",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_DATA_RETENTION_DAYS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_LLM_MAX_PER_COMPANY",
+          "status": "equal",
+          "uat": "60",
+          "production": "60"
+        },
+        {
+          "key": "AI_MONTHLY_BUDGET_SATANG",
+          "status": "equal",
+          "uat": "200000",
+          "production": "200000"
+        },
+        {
+          "key": "AI_MONTHLY_BUDGET_SATANG_CEILING",
+          "status": "equal",
+          "uat": "1000000",
+          "production": "1000000"
+        },
+        {
+          "key": "AI_OCR_MAX_PER_COMPANY",
+          "status": "equal",
+          "uat": "20",
+          "production": "20"
+        },
+        {
+          "key": "AI_RATE_LIMIT_WINDOW_SECONDS",
+          "status": "equal",
+          "uat": "60",
+          "production": "60"
+        },
+        {
+          "key": "AI_THB_PER_USD",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APPROVED_AI_PROVIDERS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APPROVED_AI_REGIONS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_ACCOUNT_ID",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_DEPLOY_ROLE_ARN",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_ROLE_ARN",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "BEDROCK_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_HOST",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_TIMEOUT_MS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AI_MIN_CONFIDENCE",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AI_OUTBOUND_ALLOWED_DOMAINS",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AUTO_REPLY_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "DOCUMENT_AI_MODEL_ID",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "LINE_AI_AGENT_RUNTIME",
+          "status": "different",
+          "uat": "strands-local",
+          "production": "agentcore"
+        },
+        {
+          "key": "LINE_LIFF_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_LOGIN_CHANNEL_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_MESSAGING_CHANNEL_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_OA_ADD_URL",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_OA_QR_IMAGE_URL",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "LOG_KMS_KEY_ID",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "MODEL_PROVIDER",
+          "status": "equal",
+          "uat": "bedrock",
+          "production": "bedrock"
+        },
+        {
+          "key": "PASSWORD_RESET_RESPONSE_MIN_MS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PUBLIC_DOMAIN_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "REDIS_REPLICATION_GROUP_ID",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "SECURITY_ALERT_TOPIC_ARN",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_MAX_PER_SESSION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_REUSE_GRACE_SECONDS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_WINDOW_SECONDS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SWAGGER_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "TYPHOON_PROCESSING_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WEB_LINE_ACCOUNT_LINK_URL",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        },
+        {
+          "key": "WORKFLOW_WEBHOOK_ALLOWED_HOSTS",
+          "status": "missing_uat",
+          "uat": null,
+          "production": "[configured]"
+        }
+      ],
+      "secretReferences": [],
+      "uatState": null,
+      "productionState": null,
+      "uatImage": null,
+      "productionImage": null,
+      "uatVersion": null,
+      "productionVersion": null
+    },
+    "api-web": {
+      "config": [
+        {
+          "key": "AI_DATA_RETENTION_DAYS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_GATEWAY_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_GATEWAY_INTERNAL_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_LLM_MAX_PER_COMPANY",
+          "status": "equal",
+          "uat": "60",
+          "production": "60"
+        },
+        {
+          "key": "AI_MONTHLY_BUDGET_SATANG",
+          "status": "equal",
+          "uat": "200000",
+          "production": "200000"
+        },
+        {
+          "key": "AI_MONTHLY_BUDGET_SATANG_CEILING",
+          "status": "equal",
+          "uat": "1000000",
+          "production": "1000000"
+        },
+        {
+          "key": "AI_OCR_MAX_PER_COMPANY",
+          "status": "equal",
+          "uat": "20",
+          "production": "20"
+        },
+        {
+          "key": "AI_RATE_LIMIT_WINDOW_SECONDS",
+          "status": "equal",
+          "uat": "60",
+          "production": "60"
+        },
+        {
+          "key": "AI_THB_PER_USD",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "API_PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APP_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AUDIT_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AUTH_PROVIDER",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_HOST",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CLAMAV_TIMEOUT_MS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CORS_ALLOWED_ORIGINS",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AI_MIN_CONFIDENCE",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AI_OUTBOUND_ALLOWED_DOMAINS",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CRM_AUTO_REPLY_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "DEPLOY_ENVIRONMENT",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "DEV_AUTH_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "EMAIL_LOGO_URL",
+          "status": "missing_production",
+          "uat": "[configured]",
+          "production": null
+        },
+        {
+          "key": "EMAIL_PROVIDER",
+          "status": "missing_production",
+          "uat": "ses",
+          "production": null
+        },
+        {
+          "key": "EXTERNAL_SIGNUP_ENABLED",
+          "status": "missing_production",
+          "uat": "true",
+          "production": null
+        },
+        {
+          "key": "GIT_SHA",
+          "status": "different",
+          "uat": "f2bd38edc11449f598332910e2cd3e402a1b7916",
+          "production": "a768e3a27aa0ffe5aaf848c23fea720b381a76b0"
+        },
+        {
+          "key": "GLOBAL_MAINTENANCE_MODE",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "HOST",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "INTERNAL_API_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_ACCOUNT_LINK_QR_IMAGE_URL",
+          "status": "equal",
+          "uat": "[empty]",
+          "production": "[empty]"
+        },
+        {
+          "key": "LINE_ACCOUNT_LINK_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_AI_ADVISOR_MODE",
+          "status": "equal",
+          "uat": "social",
+          "production": "social"
+        },
+        {
+          "key": "LINE_AI_BUFFER_DEBOUNCE_MS",
+          "status": "equal",
+          "uat": "1000",
+          "production": "1000"
+        },
+        {
+          "key": "LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "LINE_AI_DRAFT_EDIT_ENABLED",
+          "status": "missing_production",
+          "uat": "true",
+          "production": null
+        },
+        {
+          "key": "LINE_AI_EXACT_GREETING_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_FUSED_PLAN_SHADOW_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_LEDGER_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_LOADING_ON_ACCEPT_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_PREPARED_SIMPLE_READ_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_FREE_AI_BUDGET_SATANG",
+          "status": "missing_production",
+          "uat": "8000",
+          "production": null
+        },
+        {
+          "key": "LINE_LIFF_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_LOGIN_CHANNEL_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_MESSAGING_CHANNEL_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_OA_ADD_URL",
+          "status": "different",
+          "uat": "[empty]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_OA_QR_IMAGE_URL",
+          "status": "different",
+          "uat": "[empty]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY",
+          "status": "missing_production",
+          "uat": "5",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_ADMIN_REMINDER_MINUTES",
+          "status": "missing_production",
+          "uat": "60",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_APPROVAL_MODE",
+          "status": "missing_production",
+          "uat": "AUTO_FREE",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_AUTO_DAILY_CAP",
+          "status": "missing_production",
+          "uat": "20",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_BUSINESS_DAYS",
+          "status": "missing_production",
+          "uat": "MON-SAT",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_BUSINESS_HOURS",
+          "status": "missing_production",
+          "uat": "09:00-18:00",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_ENABLED",
+          "status": "missing_production",
+          "uat": "true",
+          "production": null
+        },
+        {
+          "key": "LINE_SIGNUP_WARMUP_SLIPS",
+          "status": "missing_production",
+          "uat": "10",
+          "production": null
+        },
+        {
+          "key": "LINE_WEB_HANDOFF_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_WEB_LOGIN_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LOG_FORMAT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LOG_REDACTION_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "NEXT_PUBLIC_AI_GATEWAY_BASE_URL",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_API_BASE_URL",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_API_URL",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_APP_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_LIFF_ID",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_LINE_ACCOUNT_LINK_QR_IMAGE_URL",
+          "status": "equal",
+          "uat": "[empty]",
+          "production": "[empty]"
+        },
+        {
+          "key": "NEXT_PUBLIC_LINE_ACCOUNT_LINK_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_LINE_OA_ADD_URL",
+          "status": "different",
+          "uat": "[empty]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NEXT_PUBLIC_LINE_OA_QR_IMAGE_URL",
+          "status": "different",
+          "uat": "[empty]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NODE_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PASSWORD_RESET_RESPONSE_MIN_MS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PRODUCTION_SERVING_MODE",
+          "status": "equal",
+          "uat": "live",
+          "production": "live"
+        },
+        {
+          "key": "PUBLIC_BASE_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "RATE_LIMIT_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "RATE_LIMIT_MAX_REQUESTS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "RATE_LIMIT_WINDOW_SECONDS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "RECEIPT_QUOTA_ENFORCED",
+          "status": "missing_production",
+          "uat": "true",
+          "production": null
+        },
+        {
+          "key": "REIMBURSEMENT_WRITE_QUIESCE",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "S3_BUCKET",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "S3_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_NAME",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_VERSION",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_MAX_PER_SESSION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_REUSE_GRACE_SECONDS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SESSION_REFRESH_WINDOW_SECONDS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SES_CONFIGURATION_SET",
+          "status": "missing_production",
+          "uat": "[configured]",
+          "production": null
+        },
+        {
+          "key": "SES_EVENTS_TOPIC_ARN",
+          "status": "missing_production",
+          "uat": "[configured]",
+          "production": null
+        },
+        {
+          "key": "SES_FROM_ADDRESS",
+          "status": "missing_production",
+          "uat": "[configured]",
+          "production": null
+        },
+        {
+          "key": "SES_REGION",
+          "status": "missing_production",
+          "uat": "[configured]",
+          "production": null
+        },
+        {
+          "key": "SWAGGER_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "WATCHDOG_JWT_AUDIENCE",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WATCHDOG_JWT_ISSUER",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WEB_BASE_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WEB_PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WORKFLOW_WEBHOOK_ALLOWED_HOSTS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        }
+      ],
+      "secretReferences": [
+        {
+          "key": "AI_ACTOR_DELEGATION_SIGNING_KEY",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "AI_GATEWAY_INTERNAL_SECRET",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "CREDENTIAL_ENCRYPTION_KEY",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "DATABASE_URL",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "LINE_LOGIN_CHANNEL_SECRET",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "LINE_MESSAGING_CHANNEL_SECRET",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "PDPA_PSEUDONYMIZATION_KEY",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "REDIS_URL",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "WATCHDOG_JWT_SECRET_ARN",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "WORKER_INTERNAL_TOKEN",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        }
+      ],
+      "uatState": {
+        "statusCode": "ACTIVE"
+      },
+      "productionState": {
+        "statusCode": "ACTIVE"
+      },
+      "uatImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:d05d259f10a979300820a9d8a4a3d518920fbd15871d36fdf14ba30ace792953",
+      "productionImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:c10161cbea1d7182fa7820596b1defd7d9a27a9a0454ff7cb8cd0a6903187cdb",
+      "uatVersion": null,
+      "productionVersion": null
+    },
+    "ai-gateway": {
+      "config": [
+        {
+          "key": "AGENTCORE_EXPECTED_ARTIFACT_SHA256",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_EXPECTED_CONTRACT_VERSION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_EXPECTED_SOURCE_COMMIT",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_INVOKE_TIMEOUT_MS",
+          "status": "equal",
+          "uat": "20000",
+          "production": "20000"
+        },
+        {
+          "key": "AGENTCORE_MAX_ATTACHMENTS",
+          "status": "equal",
+          "uat": "10",
+          "production": "10"
+        },
+        {
+          "key": "AGENTCORE_MAX_BODY_BYTES",
+          "status": "equal",
+          "uat": "1048576",
+          "production": "1048576"
+        },
+        {
+          "key": "AGENTCORE_MAX_CONCURRENT_INVOCATIONS",
+          "status": "equal",
+          "uat": "16",
+          "production": "16"
+        },
+        {
+          "key": "AGENTCORE_MAX_MESSAGE_CHARS",
+          "status": "equal",
+          "uat": "8000",
+          "production": "8000"
+        },
+        {
+          "key": "AGENTCORE_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_RUNTIME_ARN",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_RUNTIME_QUALIFIER",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_AGENT_REGISTRY_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_FINAL_MUTATION_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "AI_GATEWAY_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_GLOBAL_INFERENCE_PROFILE_APPROVED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_MAX_TOOL_CALLS",
+          "status": "equal",
+          "uat": "8",
+          "production": "8"
+        },
+        {
+          "key": "AI_PROMPT_LOGGING_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "AI_TOOL_AUDIT_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_TOOL_POLICY_ENFORCED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_TOOL_TIMEOUT_MS",
+          "status": "equal",
+          "uat": "15000",
+          "production": "15000"
+        },
+        {
+          "key": "APPROVED_AI_MODEL_IDS",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "APPROVED_AI_PROVIDERS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APPROVED_AI_REGIONS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APP_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "BEDROCK_MODEL_ID",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "BEDROCK_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CORS_ALLOWED_ORIGINS",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "DEPLOY_ENVIRONMENT",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "DOCUMENT_AI_MODEL_ID",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "ERP_CORE_INTERNAL_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "GIT_SHA",
+          "status": "different",
+          "uat": "f2bd38edc11449f598332910e2cd3e402a1b7916",
+          "production": "a768e3a27aa0ffe5aaf848c23fea720b381a76b0"
+        },
+        {
+          "key": "HOST",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LINE_AI_AGENT_ORCHESTRATION_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_AGENT_RUNTIME",
+          "status": "equal",
+          "uat": "agentcore",
+          "production": "agentcore"
+        },
+        {
+          "key": "LINE_AI_COVERAGE_CRITIC_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES",
+          "status": "equal",
+          "uat": "sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric",
+          "production": "sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric"
+        },
+        {
+          "key": "LINE_AI_DRAFT_EDIT_ENABLED",
+          "status": "missing_production",
+          "uat": "true",
+          "production": null
+        },
+        {
+          "key": "LINE_AI_FUSED_PLAN_SHADOW_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_PREPARED_SIMPLE_READ_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LINE_AI_TOOLUSE_LOOP_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "LOG_FORMAT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LOG_REDACTION_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "MODEL_PROVIDER",
+          "status": "equal",
+          "uat": "bedrock",
+          "production": "bedrock"
+        },
+        {
+          "key": "NODE_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PRODUCTION_SERVING_MODE",
+          "status": "equal",
+          "uat": "live",
+          "production": "live"
+        },
+        {
+          "key": "PUBLIC_BASE_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_NAME",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_VERSION",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SWAGGER_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "WATCHDOG_JWT_AUDIENCE",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WATCHDOG_JWT_ISSUER",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        }
+      ],
+      "secretReferences": [
+        {
+          "key": "AI_GATEWAY_INTERNAL_SECRET",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "WATCHDOG_JWT_SECRET_ARN",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        }
+      ],
+      "uatState": {
+        "statusCode": "ACTIVE"
+      },
+      "productionState": {
+        "statusCode": "ACTIVE"
+      },
+      "uatImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:9206ec6cb28c3cfa328f783f1807f0284d491b078cf4a304386151a959aac64f",
+      "productionImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:732a2ef0495c6f6ac5fa428ff589b0fe24d672daabd04676b87a76a8480df703",
+      "uatVersion": null,
+      "productionVersion": null
+    },
+    "workers": {
+      "config": [
+        {
+          "key": "APP_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AWS_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "DEPLOY_ENVIRONMENT",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "GIT_SHA",
+          "status": "different",
+          "uat": "f2bd38edc11449f598332910e2cd3e402a1b7916",
+          "production": "a768e3a27aa0ffe5aaf848c23fea720b381a76b0"
+        },
+        {
+          "key": "HOST",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "INTERNAL_API_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LOG_FORMAT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "NODE_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PRODUCTION_SERVING_MODE",
+          "status": "equal",
+          "uat": "live",
+          "production": "live"
+        },
+        {
+          "key": "PUBLIC_BASE_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "QUEUE_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "S3_BUCKET",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "S3_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_NAME",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_VERSION",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        }
+      ],
+      "secretReferences": [
+        {
+          "key": "DATABASE_URL",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "REDIS_URL",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        },
+        {
+          "key": "WORKER_INTERNAL_TOKEN",
+          "status": "different",
+          "uat": "reference",
+          "production": "reference"
+        }
+      ],
+      "uatState": {
+        "statusCode": "ACTIVE"
+      },
+      "productionState": {
+        "statusCode": "ACTIVE"
+      },
+      "uatImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:32a0329ec6c33438a76df255f8ae7b73a94d0bc1dd6a92d11f2c4496d3f29960",
+      "productionImage": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:65d4254f2812318f03501eec4a1511f52e14b304bf374cf86674e362622ac798",
+      "uatVersion": null,
+      "productionVersion": null
+    },
+    "agentcore": {
+      "config": [
+        {
+          "key": "AGENTCORE_ARTIFACT_SHA256",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AGENTCORE_MAX_ATTACHMENTS",
+          "status": "equal",
+          "uat": "10",
+          "production": "10"
+        },
+        {
+          "key": "AGENTCORE_MAX_BODY_BYTES",
+          "status": "equal",
+          "uat": "1048576",
+          "production": "1048576"
+        },
+        {
+          "key": "AGENTCORE_MAX_CONCURRENT_INVOCATIONS",
+          "status": "equal",
+          "uat": "16",
+          "production": "16"
+        },
+        {
+          "key": "AGENTCORE_MAX_MESSAGE_CHARS",
+          "status": "equal",
+          "uat": "8000",
+          "production": "8000"
+        },
+        {
+          "key": "AI_FINAL_MUTATION_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "AI_GATEWAY_INTERNAL_SECRET_ARN",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "AI_GLOBAL_INFERENCE_PROFILE_APPROVED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_MAX_TOOL_CALLS",
+          "status": "equal",
+          "uat": "8",
+          "production": "8"
+        },
+        {
+          "key": "AI_PROMPT_LOGGING_ENABLED",
+          "status": "equal",
+          "uat": "false",
+          "production": "false"
+        },
+        {
+          "key": "AI_TOOL_AUDIT_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_TOOL_POLICY_ENFORCED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "AI_TOOL_TIMEOUT_MS",
+          "status": "equal",
+          "uat": "15000",
+          "production": "15000"
+        },
+        {
+          "key": "APPROVED_AI_MODEL_IDS",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "APPROVED_AI_PROVIDERS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APPROVED_AI_REGIONS",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "APP_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "BEDROCK_MODEL_ID",
+          "status": "equal",
+          "uat": "global.anthropic.claude-sonnet-4-6",
+          "production": "global.anthropic.claude-sonnet-4-6"
+        },
+        {
+          "key": "BEDROCK_REGION",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "CORS_ALLOWED_ORIGINS",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "DEPLOY_ENVIRONMENT",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "ERP_CORE_INTERNAL_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "GIT_SHA",
+          "status": "different",
+          "uat": "f2bd38edc11449f598332910e2cd3e402a1b7916",
+          "production": "a768e3a27aa0ffe5aaf848c23fea720b381a76b0"
+        },
+        {
+          "key": "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES",
+          "status": "different",
+          "uat": "sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric",
+          "production": ""
+        },
+        {
+          "key": "LINE_AI_FUSED_PLAN_SHADOW_ENABLED",
+          "status": "different",
+          "uat": "true",
+          "production": "false"
+        },
+        {
+          "key": "LINE_AI_PREPARED_SIMPLE_READ_ENABLED",
+          "status": "different",
+          "uat": "true",
+          "production": "false"
+        },
+        {
+          "key": "LOG_FORMAT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "LOG_REDACTION_ENABLED",
+          "status": "equal",
+          "uat": "true",
+          "production": "true"
+        },
+        {
+          "key": "MODEL_PROVIDER",
+          "status": "equal",
+          "uat": "bedrock",
+          "production": "bedrock"
+        },
+        {
+          "key": "NODE_ENV",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PORT",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "PUBLIC_BASE_URL",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_NAME",
+          "status": "equal",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "SERVICE_VERSION",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WATCHDOG_JWT_AUDIENCE",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WATCHDOG_JWT_ISSUER",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        },
+        {
+          "key": "WATCHDOG_JWT_SECRET_SOURCE_ARN",
+          "status": "different",
+          "uat": "[configured]",
+          "production": "[configured]"
+        }
+      ],
+      "secretReferences": [],
+      "uatState": "READY",
+      "productionState": "READY",
+      "uatImage": null,
+      "productionImage": null,
+      "uatVersion": "53",
+      "productionVersion": "17"
+    }
+  }
+}

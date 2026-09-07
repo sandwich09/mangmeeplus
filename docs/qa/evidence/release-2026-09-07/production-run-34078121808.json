@@ -1,0 +1,384 @@
+{
+  "conclusion": "success",
+  "createdAt": "2026-09-07T02:59:57Z",
+  "databaseId": 34078121808,
+  "event": "workflow_dispatch",
+  "headSha": "3720db9a2414bd671c63be3fdd69270487f1402a",
+  "jobs": [
+    {
+      "completedAt": "2026-09-07T04:03:55Z",
+      "conclusion": "success",
+      "databaseId": 101608120947,
+      "name": "Promote exact UAT Passport through signed Production READY",
+      "startedAt": "2026-09-07T03:00:04Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-09-07T03:00:07Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-09-07T03:00:05Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:13Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "number": 2,
+          "startedAt": "2026-09-07T03:00:07Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:14Z",
+          "conclusion": "success",
+          "name": "Run sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+          "number": 3,
+          "startedAt": "2026-09-07T03:00:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:21Z",
+          "conclusion": "success",
+          "name": "Bind the protected controller and verify signed Passport/READY artifacts",
+          "number": 4,
+          "startedAt": "2026-09-07T03:00:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:21Z",
+          "conclusion": "skipped",
+          "name": "Revalidate current legal evidence for a live opening",
+          "number": 5,
+          "startedAt": "2026-09-07T03:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:21Z",
+          "conclusion": "skipped",
+          "name": "Configure narrow legal reader for a live opening",
+          "number": 6,
+          "startedAt": "2026-09-07T03:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:21Z",
+          "conclusion": "skipped",
+          "name": "Revalidate the independently reviewed live legal bundle",
+          "number": 7,
+          "startedAt": "2026-09-07T03:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:21Z",
+          "conclusion": "success",
+          "name": "Honor the signed owner legal override for a live opening",
+          "number": 8,
+          "startedAt": "2026-09-07T03:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:00:22Z",
+          "conclusion": "success",
+          "name": "Configure read-only Production security credentials",
+          "number": 9,
+          "startedAt": "2026-09-07T03:00:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:02:25Z",
+          "conclusion": "success",
+          "name": "Recheck exact image availability and hard runtime baseline",
+          "number": 10,
+          "startedAt": "2026-09-07T03:00:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:02:26Z",
+          "conclusion": "success",
+          "name": "Configure clone-policy reader for a pending migration",
+          "number": 11,
+          "startedAt": "2026-09-07T03:02:25Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:02:29Z",
+          "conclusion": "success",
+          "name": "Recheck exact clone policy for a pending migration",
+          "number": 12,
+          "startedAt": "2026-09-07T03:02:26Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:02:30Z",
+          "conclusion": "success",
+          "name": "Configure the dedicated A5 read-only controller",
+          "number": 13,
+          "startedAt": "2026-09-07T03:02:29Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:05:11Z",
+          "conclusion": "success",
+          "name": "Recheck service, IAM and migration baselines before deploy authority",
+          "number": 14,
+          "startedAt": "2026-09-07T03:02:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:05:12Z",
+          "conclusion": "success",
+          "name": "Configure mutation-capable Production deploy credentials only after READY recheck",
+          "number": 15,
+          "startedAt": "2026-09-07T03:05:11Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:05:55Z",
+          "conclusion": "success",
+          "name": "Recheck stable service identity at the mutation boundary",
+          "number": 16,
+          "startedAt": "2026-09-07T03:05:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:10:11Z",
+          "conclusion": "success",
+          "name": "Prove maintenance bootstrap compatibility before closing Production",
+          "number": 17,
+          "startedAt": "2026-09-07T03:05:55Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:21:24Z",
+          "conclusion": "success",
+          "name": "Close the exact candidate before any Production database mutation",
+          "number": 18,
+          "startedAt": "2026-09-07T03:10:11Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:21:24Z",
+          "conclusion": "skipped",
+          "name": "Prove an already-deployed exact candidate remains closed",
+          "number": 19,
+          "startedAt": "2026-09-07T03:21:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:36:24Z",
+          "conclusion": "success",
+          "name": "Expire direct-storage URLs only on an OPEN to CLOSED transition",
+          "number": 20,
+          "startedAt": "2026-09-07T03:21:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:36:25Z",
+          "conclusion": "success",
+          "name": "Refresh Production deploy credentials for the durable release envelope",
+          "number": 21,
+          "startedAt": "2026-09-07T03:36:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:36:25Z",
+          "conclusion": "success",
+          "name": "Persist the durable release operation identity before database preparation",
+          "number": 22,
+          "startedAt": "2026-09-07T03:36:25Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T03:39:40Z",
+          "conclusion": "success",
+          "name": "Recheck signed READY migration authority inside the durable database fence",
+          "number": 23,
+          "startedAt": "2026-09-07T03:36:25Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:33Z",
+          "conclusion": "success",
+          "name": "Roll out the exact UAT image digests without rebuilding",
+          "number": 24,
+          "startedAt": "2026-09-07T03:39:40Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:49Z",
+          "conclusion": "success",
+          "name": "Verify exact digest, source, serving mode, health and deep DB readiness",
+          "number": 25,
+          "startedAt": "2026-09-07T04:00:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:49Z",
+          "conclusion": "skipped",
+          "name": "Prove the final release remains globally closed",
+          "number": 26,
+          "startedAt": "2026-09-07T04:00:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:49Z",
+          "conclusion": "skipped",
+          "name": "Refresh Production deploy credentials for bounded closed-stage recovery",
+          "number": 27,
+          "startedAt": "2026-09-07T04:00:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:49Z",
+          "conclusion": "skipped",
+          "name": "Recover an unsuccessful closed-stage promotion to the exact closed candidate",
+          "number": 28,
+          "startedAt": "2026-09-07T04:00:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:00:50Z",
+          "conclusion": "success",
+          "name": "Refresh Production deploy credentials for durable release finalization",
+          "number": 29,
+          "startedAt": "2026-09-07T04:00:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:47Z",
+          "conclusion": "success",
+          "name": "Retire or reconcile launch-build authority and finalize the durable release",
+          "number": 30,
+          "startedAt": "2026-09-07T04:00:50Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:47Z",
+          "conclusion": "skipped",
+          "name": "Finalize a non-api durable release",
+          "number": 31,
+          "startedAt": "2026-09-07T04:03:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:47Z",
+          "conclusion": "skipped",
+          "name": "Fail the requested promotion after a proved safe recovery",
+          "number": 32,
+          "startedAt": "2026-09-07T04:03:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:49Z",
+          "conclusion": "success",
+          "name": "Build, validate and sign Production Release Result V2",
+          "number": 33,
+          "startedAt": "2026-09-07T04:03:47Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:49Z",
+          "conclusion": "skipped",
+          "name": "Remove local legal evidence",
+          "number": 34,
+          "startedAt": "2026-09-07T04:03:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:50Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "number": 35,
+          "startedAt": "2026-09-07T04:03:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:51Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "number": 36,
+          "startedAt": "2026-09-07T04:03:50Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:51Z",
+          "conclusion": "success",
+          "name": "Post Refresh Production deploy credentials for durable release finalization",
+          "number": 66,
+          "startedAt": "2026-09-07T04:03:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:51Z",
+          "conclusion": "success",
+          "name": "Post Refresh Production deploy credentials for the durable release envelope",
+          "number": 67,
+          "startedAt": "2026-09-07T04:03:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:51Z",
+          "conclusion": "success",
+          "name": "Post Configure mutation-capable Production deploy credentials only after READY recheck",
+          "number": 68,
+          "startedAt": "2026-09-07T04:03:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:52Z",
+          "conclusion": "success",
+          "name": "Post Configure the dedicated A5 read-only controller",
+          "number": 69,
+          "startedAt": "2026-09-07T04:03:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:52Z",
+          "conclusion": "success",
+          "name": "Post Configure clone-policy reader for a pending migration",
+          "number": 70,
+          "startedAt": "2026-09-07T04:03:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:52Z",
+          "conclusion": "success",
+          "name": "Post Configure read-only Production security credentials",
+          "number": 71,
+          "startedAt": "2026-09-07T04:03:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:52Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5",
+          "number": 72,
+          "startedAt": "2026-09-07T04:03:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-09-07T04:03:52Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 73,
+          "startedAt": "2026-09-07T04:03:52Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/34078121808/job/101608120947"
+    },
+    {
+      "completedAt": "2026-09-07T02:59:59Z",
+      "conclusion": "skipped",
+      "databaseId": 101608121572,
+      "name": "Prove Production READY inside this promotion run",
+      "startedAt": "2026-09-07T03:00:00Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/34078121808/job/101608121572"
+    }
+  ],
+  "status": "completed",
+  "updatedAt": "2026-09-07T04:03:56Z"
+}

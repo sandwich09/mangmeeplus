@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-09-07T03:44:04.002651+00:00",
+  "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/c9bad60e6b0241639ee2aedb44c3a4b8",
+  "operationId": "55d9d582-628f-4204-9515-2ac799187e19",
+  "exitCode": 0,
+  "readyPendingCount": "15",
+  "appliedMigrations": [
+    "20260830170000_user_phone_number",
+    "20260830180000_signup_flow_b_delta",
+    "20260830180500_company_plan_term",
+    "20260831120000_account_merge_ticket",
+    "20260831120000_signup_claim_ses_message_id",
+    "20260831210000_signup_owner_name_split",
+    "20260904120000_line_first_signup",
+    "20260905120000_line_signup_push_state",
+    "20260905140000_user_username_lower_idx",
+    "20260905160000_expense_line_charge_kind",
+    "20260905170000_line_support_request",
+    "20260905173000_signup_claim_activation_window",
+    "20260905180000_line_support_request_notified_at",
+    "20260905180000_signup_business_category",
+    "20260906120000_line_support_request_continuity"
+  ],
+  "allMigrationsAppliedMarker": true
+}

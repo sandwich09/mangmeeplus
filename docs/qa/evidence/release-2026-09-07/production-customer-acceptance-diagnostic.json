@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-09-07T04:09:24.082758+00:00",
+  "ownerRef": "OWNER-DIRECTIVE-2026-09-07-UAT-PROD-PARITY",
+  "checks": {
+    "signed_result_state": "PASS",
+    "signed_result_source": "PASS",
+    "run_id_in_result": "PASS",
+    "controller_in_result": "PASS",
+    "live_all_target": "PASS",
+    "seed_secret_read": "PASS",
+    "login_http": "FAIL"
+  },
+  "productionRunId": "34078121808",
+  "controllerCommit": "3720db9a2414bd671c63be3fdd69270487f1402a",
+  "loginHttpStatus": 401,
+  "loginFailureCode": null,
+  "loginFailureMessage": "Invalid username or password.",
+  "status": "FAIL",
+  "failedBoundary": "login_http"
+}

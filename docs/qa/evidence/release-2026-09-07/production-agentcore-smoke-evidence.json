@@ -1,0 +1,55 @@
+{
+  "status": "PASS",
+  "checkedAt": "2026-09-07T03:56:28.404906+00:00",
+  "evidenceRunId": "34076680047",
+  "environment": "production",
+  "checks": [
+    {
+      "label": "safe",
+      "turnId": "smoke-read-01",
+      "httpStatus": 200,
+      "refused": true,
+      "refusalReason": "forbidden",
+      "toolsInvokedCount": 0,
+      "usage": [
+        {
+          "tag": "line.plan-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 27,
+          "outputTokens": 125
+        }
+      ],
+      "runtimeIdentity": {
+        "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+        "artifactSha256": "540132fcfcdb891929b9f005e74d309e1e15723a1ecc4afddf149b4b2a78807d",
+        "serviceVersion": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+        "contractVersion": 1
+      }
+    },
+    {
+      "label": "mutation",
+      "turnId": "smoke-mutation-01",
+      "httpStatus": 200,
+      "refused": true,
+      "refusalReason": "mutation_blocked",
+      "toolsInvokedCount": 0,
+      "usage": [
+        {
+          "tag": "line.plan-route",
+          "modelId": "global.anthropic.claude-sonnet-4-6",
+          "ok": true,
+          "inputTokens": 36,
+          "outputTokens": 105
+        }
+      ],
+      "runtimeIdentity": {
+        "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+        "artifactSha256": "540132fcfcdb891929b9f005e74d309e1e15723a1ecc4afddf149b4b2a78807d",
+        "serviceVersion": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+        "contractVersion": 1
+      }
+    }
+  ],
+  "limitation": "Synthetic identities only. This proves model invocation and mutation refusal, not successful customer-data access or a real LINE journey. No real customer transaction or LINE message sent."
+}

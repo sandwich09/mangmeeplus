@@ -1,0 +1,60 @@
+{
+  "checkedAt": "2026-09-07T03:43:15.776761+00:00",
+  "releaseTasks": [
+    {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/1bb206facfcf4535b124be181c8ad18f",
+      "group": "family:watchdog-bms-release-task",
+      "status": "STOPPED",
+      "createdAt": "2026-09-07T10:41:23.212000+07:00",
+      "stoppedAt": "2026-09-07T10:42:24.030000+07:00",
+      "exitCodes": [
+        0
+      ],
+      "operation": {}
+    },
+    {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/55d6d6632af54a4eade344ad8010f6b1",
+      "group": "family:watchdog-a5-production-catalog-34078121808-a1",
+      "status": "STOPPED",
+      "createdAt": "2026-09-07T10:04:01.266000+07:00",
+      "stoppedAt": "2026-09-07T10:04:58.933000+07:00",
+      "exitCodes": [
+        0
+      ],
+      "operation": {}
+    },
+    {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/57065efb78744ed5847c85cb75fa3d15",
+      "group": "family:watchdog-bms-release-task",
+      "status": "STOPPED",
+      "createdAt": "2026-09-07T10:41:29.202000+07:00",
+      "stoppedAt": "2026-09-07T10:42:23.287000+07:00",
+      "exitCodes": [
+        0
+      ],
+      "operation": {}
+    },
+    {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/bca9dc1ad282447b921be5edca3a609e",
+      "group": "family:watchdog-bms-release-task",
+      "status": "STOPPED",
+      "createdAt": "2026-09-07T10:06:36.739000+07:00",
+      "stoppedAt": "2026-09-07T10:10:08.072000+07:00",
+      "exitCodes": [
+        0
+      ],
+      "operation": {}
+    },
+    {
+      "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/c9bad60e6b0241639ee2aedb44c3a4b8",
+      "group": "family:watchdog-bms-release-task",
+      "status": "STOPPED",
+      "createdAt": "2026-09-07T10:37:06.607000+07:00",
+      "stoppedAt": "2026-09-07T10:39:29.498000+07:00",
+      "exitCodes": [
+        0
+      ],
+      "operation": {}
+    }
+  ]
+}

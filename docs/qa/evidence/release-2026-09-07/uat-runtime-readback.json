@@ -1,0 +1,48 @@
+{
+  "checkedAt": "2026-09-07T00:29:51.687687+00:00",
+  "status": "PASS",
+  "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "services": [
+    {
+      "service": "api-web",
+      "state": "ACTIVE",
+      "currentDeployment": null,
+      "exactPassportImage": true,
+      "flags": {
+        "LINE_SIGNUP_ENABLED": "true",
+        "EXTERNAL_SIGNUP_ENABLED": "true",
+        "LINE_SIGNUP_APPROVAL_MODE": "AUTO_FREE",
+        "RECEIPT_QUOTA_ENFORCED": "true",
+        "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+        "EMAIL_PROVIDER": "ses"
+      }
+    },
+    {
+      "service": "ai-gateway",
+      "state": "ACTIVE",
+      "currentDeployment": null,
+      "exactPassportImage": true,
+      "flags": {
+        "LINE_AI_DRAFT_EDIT_ENABLED": "true"
+      }
+    },
+    {
+      "service": "workers",
+      "state": "ACTIVE",
+      "currentDeployment": null,
+      "exactPassportImage": true,
+      "flags": {}
+    }
+  ],
+  "runtimeVersion": "54",
+  "runtimeConfigurationHash": "PASS",
+  "runtimeFlags": {
+    "GIT_SHA": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+    "LINE_AI_PREPARED_SIMPLE_READ_ENABLED": "true",
+    "LINE_AI_FUSED_PLAN_SHADOW_ENABLED": "true",
+    "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES": "sales.get_sales_summary::single_metric,expense.list_recent::single_metric,accounting.get_summary::list,expense.get_daily_closing::single_metric",
+    "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+    "BEDROCK_MODEL_ID": "global.anthropic.claude-sonnet-4-6",
+    "DOCUMENT_AI_MODEL_ID": null
+  }
+}

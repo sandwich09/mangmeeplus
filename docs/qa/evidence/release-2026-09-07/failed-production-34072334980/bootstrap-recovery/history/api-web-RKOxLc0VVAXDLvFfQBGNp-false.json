@@ -1,0 +1,8 @@
+{
+  "service": "api-web",
+  "serviceArn": "arn:aws:ecs:ap-southeast-1:311414082667:service/watchdog-bms-prod/watchdog-bms-api-web-pub",
+  "deploymentArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/watchdog-bms-api-web-pub/RKOxLc0VVAXDLvFfQBGNp",
+  "targetRevisionArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-api-web-pub/9743877966630810821",
+  "sourceSha": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "noOp": false
+}

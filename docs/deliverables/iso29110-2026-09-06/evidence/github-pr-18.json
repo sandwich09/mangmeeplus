@@ -1,0 +1,14 @@
+{
+  "retrievedOn": "2026-09-06",
+  "sourceType": "GitHub REST API selected fields",
+  "data": {
+    "html_url": "https://github.com/MangmeeDev/mangmeeplus/pull/18",
+    "merge_commit_sha": "83210a8e609d2f71333050030e0ce01732fd1a48",
+    "merged_at": "2026-08-10T01:38:34Z",
+    "merged_by": "MangmeeDev",
+    "number": 18,
+    "state": "closed",
+    "title": "fix(recovery): close zero-intent all-target release",
+    "user": "MangmeeDev"
+  }
+}

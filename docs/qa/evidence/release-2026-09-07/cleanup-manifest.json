@@ -1,0 +1,872 @@
+[
+  {
+    "original": "output/release-20260907/actual-api-config-proof.json",
+    "sha256": "4c8584dacf949fc1d3fb045625d1fed2882379a4e52bc0b802bacc40a3bf50fc",
+    "bytes": 461,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-add-32840045983/evidence.bundle",
+    "sha256": "07bb0bdabaa93785af0baa4153573d16cb1ae2643c3200b86e07a77211ec8f03",
+    "bytes": 10755,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-add-32840045983/evidence.json",
+    "sha256": "ed6defc80ff91e6c05a70e5922547343173c8f1d8ab4b8797f31e0acbe02249b",
+    "bytes": 484,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-add-32840045983.metadata.json",
+    "sha256": "8b19819b41f4859bd9eb9edf41b7a21db1a2366946aef32f4cf41aaa0642c9b4",
+    "bytes": 803,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-add-32840045983.zip",
+    "sha256": "6d45c81b6d85691fe29a5ec060ba38d259ed04c2716fcbdd909e7e4d34884813",
+    "bytes": 7382,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-revoke-32843219991/evidence.bundle",
+    "sha256": "76bab24d221c0cc8b0ebc6df117c929178783f2b00d28ebcd8dbefcb1f54b566",
+    "bytes": 10899,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-revoke-32843219991/evidence.json",
+    "sha256": "60d5243a66bcb1a6399f5ced77b9b92e35560fd0d22bbd354bb5adbde00ff804",
+    "bytes": 509,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-revoke-32843219991.metadata.json",
+    "sha256": "5a554504a331a662f372c379b98165aeaabab3ed131409dbbb0f869fcbdea753",
+    "bytes": 806,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/admin-cutover-revoke-32843219991.zip",
+    "sha256": "a151fd935b9e653cb9a82d00c892be4f2691071f5cd6fb7d67ae20e5682ecf3a",
+    "bytes": 7459,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/agentcore-production-binding.json",
+    "sha256": "eb33b0afebe8aa754cb7fbdb3b4eb50ce7031545a2a4457e5cdd2784a8e48b91",
+    "bytes": 1261,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/catalog-result.json",
+    "sha256": "502823caa47aa99aafdff79ae32fb2d77ba6abea5ee085c350c3aab4566ab285",
+    "bytes": 452,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/catalog-runtime.json",
+    "sha256": "217b51174efaa17fe425b0aec8829d2740768b9be36ee61ac4bc6bd48d3c4659",
+    "bytes": 1748,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/clone-infrastructure.json",
+    "sha256": "9084b3d63a45e3cac8926a5d41246ec9c913a1fea870bebefdb8f09c1c85953c",
+    "bytes": 45319,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/clone-result.json",
+    "sha256": "3d6e3265e5ec431583ac3fedeb7ebb84afbac8a5fd099bbd59c8d6a055b7345d",
+    "bytes": 5181,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/line-ai-release-manifest.json",
+    "sha256": "d508ff0f43c3b5b00b92d472bbb2470e39198111c4496353527282a2f411964b",
+    "bytes": 1839,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/migration-catalog.json",
+    "sha256": "d609f703d9ddefaa70f35409a2e28a9d7216996db288a55dabfeeb2c56c4b9f9",
+    "bytes": 23563,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/passport.json",
+    "sha256": "15c3c628c9b2e8df8b1fd0990d5b037b9ee22bfc74b2a82a5079aa691691ce40",
+    "bytes": 5266,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/production-health.json",
+    "sha256": "e82e26542a2b865a68adb0c2b5b9539951267ae742f0f3ca70c3ce279da41c26",
+    "bytes": 74373,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/production-runtime.json",
+    "sha256": "e6b3de3cd5695f077d2e86c68f2b95fd9be7b18fb3af552e74f69250134b737d",
+    "bytes": 1076,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/promotion-prerequisites.json",
+    "sha256": "82be998485766ed5edaa23cc0e551243dbfb2ca4c88400e7ffa98a29e6cb3ecf",
+    "bytes": 18913,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/ready.bundle",
+    "sha256": "ee32d485f3472f59b7e6f182a357396b34a46c01498df37364801bd9af376b2e",
+    "bytes": 10831,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587/ready.json",
+    "sha256": "06a5b24456fd801722978c5c9710adf8b6f9f5fbcc6d8ffc07dbc0312ae4927a",
+    "bytes": 4252,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587.metadata.json",
+    "sha256": "019a35a33e7887e8ecd9540b88f0e838a4a975e51d4e948303174c43c3976ba5",
+    "bytes": 848,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/auto-ready-34069876587.zip",
+    "sha256": "578a051003c9694fbf38e23fcd0152a0adfac00783be356dbd07cf32197de7ba",
+    "bytes": 49527,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/config-parity-after.json",
+    "sha256": "f6565b31814b6d8b2e8a476290908a2bd9689715212d225e324d892713dffd5b",
+    "bytes": 46340,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/config-parity-after.md",
+    "sha256": "021d91adb14443bc5e366006d000560334f554bb77a3cf1aa79c96d3300bfec9",
+    "bytes": 21779,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/config-parity-before.json",
+    "sha256": "67768357d80e900825a2212860588df195b70e94b08f80ad3398e6fc7dd92af6",
+    "bytes": 46100,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/config-parity-before.md",
+    "sha256": "fd362575e902a90dc412ac1446eca9e813085d318c8e181d854534da29fe27c4",
+    "bytes": 27721,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/email-disabled-config-proof.json",
+    "sha256": "8c5eb1199b35c8f3a8aea32e334e69138ad8725a08c8768d11c0b8627f909848",
+    "bytes": 328,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/ai-gateway.json",
+    "sha256": "7f3359ae1f94b8dfc7a4a2cbd4e2e8393e8cc97a52d43daa49fbfca05217a05a",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/api-web.json",
+    "sha256": "8e0eca934b48abb3007ce651cde901226ecf69dd1f3fb707230bb3416ac9b0d3",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/history/ai-gateway-wGXZrOFijPEPmWcAoi8aC-false.json",
+    "sha256": "7f3359ae1f94b8dfc7a4a2cbd4e2e8393e8cc97a52d43daa49fbfca05217a05a",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/history/api-web-o9qtTbJv6EK7cYNcw14SP-false.json",
+    "sha256": "8e0eca934b48abb3007ce651cde901226ecf69dd1f3fb707230bb3416ac9b0d3",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/history/workers-4w0HTC096KadI0_cKNBKG-false.json",
+    "sha256": "d5720358ee0bc8db2e5a5b8185508f9ee0068248ea4b0725655a8175ab4cc12d",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-closed/workers.json",
+    "sha256": "d5720358ee0bc8db2e5a5b8185508f9ee0068248ea4b0725655a8175ab4cc12d",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/ai-gateway.json",
+    "sha256": "7efd8dec32de9eb9a2fba9dff2071426da6f6b37a66cd6db7437f993c28de915",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/api-web.json",
+    "sha256": "69f13c5e352330a6dfe3ad92a41593331eafd463c6155b606019cd3b71b93d6e",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/history/ai-gateway-Rw85Wsx5m4wnHldxFbDMJ-false.json",
+    "sha256": "7efd8dec32de9eb9a2fba9dff2071426da6f6b37a66cd6db7437f993c28de915",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/history/api-web-RKOxLc0VVAXDLvFfQBGNp-false.json",
+    "sha256": "69f13c5e352330a6dfe3ad92a41593331eafd463c6155b606019cd3b71b93d6e",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/history/workers-V_F7Sw7rNCQbEloAKjtnt-false.json",
+    "sha256": "2bf86988a3e480e8aa89432c4276146d9c334b6822f9186c079e6fec2a38ab7f",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/bootstrap-recovery/workers.json",
+    "sha256": "2bf86988a3e480e8aa89432c4276146d9c334b6822f9186c079e6fec2a38ab7f",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980/controller.json",
+    "sha256": "7a1b74f0f94a9b2d22bf1367ea696df909c0b316c6da8a792ee737afc17fcf34",
+    "bytes": 385,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980.metadata.json",
+    "sha256": "079022f6dc6a64f15e5a9fe937d44d75e18fa6e96931a864f69868e7cc86c657",
+    "bytes": 837,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-34072334980.zip",
+    "sha256": "888697d97a1129a355519ebb75a175e419dc055ea0574269fa95b6f75bdebb75",
+    "bytes": 5457,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/failed-production-platform-terminal.json",
+    "sha256": "6d4807a957705c9ec3a9c50c034e8e8459acfe7fae1bd3cf265b28e8b53ab4d0",
+    "bytes": 4885,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/failed-production-run-34072334980.json",
+    "sha256": "2cde9e3708e4ac8a3a38566ceca709434ceba8e88c3944ea48a171f20deb1c95",
+    "bytes": 9375,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/github-secret-metadata-after.json",
+    "sha256": "67da6f36848dff9e456a253a1b27bb1a1960e70aaabbbfefb4e60618029d803f",
+    "bytes": 655,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/agentcore-production-binding.json",
+    "sha256": "eb33b0afebe8aa754cb7fbdb3b4eb50ce7031545a2a4457e5cdd2784a8e48b91",
+    "bytes": 1261,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/catalog-result.json",
+    "sha256": "502823caa47aa99aafdff79ae32fb2d77ba6abea5ee085c350c3aab4566ab285",
+    "bytes": 452,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/catalog-runtime.json",
+    "sha256": "c8db8a7ec6355e71bc4e86b322a52507d08cc2709ee776d0d9b5d0a9fb05c8ce",
+    "bytes": 1748,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/clone-infrastructure.json",
+    "sha256": "572425fb412d3c6a58a0d24dc2df49b322fb02ca762fd48b64728be66267547b",
+    "bytes": 45259,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/clone-result.json",
+    "sha256": "4d411014b6169ea9823d21efa011f546b827062cf247420ceaa3e0daf66abfab",
+    "bytes": 5184,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/line-ai-release-manifest.json",
+    "sha256": "d508ff0f43c3b5b00b92d472bbb2470e39198111c4496353527282a2f411964b",
+    "bytes": 1839,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/migration-catalog.json",
+    "sha256": "d609f703d9ddefaa70f35409a2e28a9d7216996db288a55dabfeeb2c56c4b9f9",
+    "bytes": 23563,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/passport.json",
+    "sha256": "15c3c628c9b2e8df8b1fd0990d5b037b9ee22bfc74b2a82a5079aa691691ce40",
+    "bytes": 5266,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/production-health.json",
+    "sha256": "4cbc69105f76ebe3c8f9c94bdb17e6b5037790323df0fa90adfe7a593a74599d",
+    "bytes": 74373,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/production-runtime.json",
+    "sha256": "9faced0036929e0a865c0d648b84ffa865ea8dfa06594f483ad7d0bb3ad3c691",
+    "bytes": 1076,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/promotion-prerequisites.json",
+    "sha256": "39756ef535739d6876ead14f76f65e657aec87129867cc9c7438c08b36643960",
+    "bytes": 18913,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/ready.bundle",
+    "sha256": "617b859c12d0e71ca925750b2f678e917fe4e62b7c1ee8076e47745b160969b5",
+    "bytes": 10971,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693/ready.json",
+    "sha256": "ae3f98f97b5c134409ccdc1572418a3f508e9c0be1e2e67e411887b67c67b1d7",
+    "bytes": 4296,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693.metadata.json",
+    "sha256": "9733dcb50e4ddff38c3183a15b8f9d25413099282bf1ca91d078ae4ba57ebf68",
+    "bytes": 848,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34071132693.zip",
+    "sha256": "a1bba6a26616c1d94903be6352ad3ed493c56eae5ddae5e4ec4405f4c3428c5d",
+    "bytes": 49517,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/agentcore-production-binding.json",
+    "sha256": "eb33b0afebe8aa754cb7fbdb3b4eb50ce7031545a2a4457e5cdd2784a8e48b91",
+    "bytes": 1261,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/catalog-result.json",
+    "sha256": "502823caa47aa99aafdff79ae32fb2d77ba6abea5ee085c350c3aab4566ab285",
+    "bytes": 452,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/catalog-runtime.json",
+    "sha256": "114705ed759c059816ab3793ba9802b4e7e72467c1b26a22094f6c9059b43343",
+    "bytes": 1748,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/clone-infrastructure.json",
+    "sha256": "42211af4f22b4621228bb7fc20744ad00bef1c1f45e2669b940a6c2f65f22d98",
+    "bytes": 45326,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/clone-result.json",
+    "sha256": "10535b682e9492596b62a85c3eeb30be14fda4708cebd3d169a189af80736c57",
+    "bytes": 5186,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/line-ai-release-manifest.json",
+    "sha256": "d508ff0f43c3b5b00b92d472bbb2470e39198111c4496353527282a2f411964b",
+    "bytes": 1839,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/migration-catalog.json",
+    "sha256": "d609f703d9ddefaa70f35409a2e28a9d7216996db288a55dabfeeb2c56c4b9f9",
+    "bytes": 23563,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/passport.json",
+    "sha256": "15c3c628c9b2e8df8b1fd0990d5b037b9ee22bfc74b2a82a5079aa691691ce40",
+    "bytes": 5266,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/production-health.json",
+    "sha256": "f3edb5e64e28cd7c6972b85af49c2f3bfb57e0d080c7d975c0a209c10d46a186",
+    "bytes": 74117,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/production-runtime.json",
+    "sha256": "5a65620d07ad9aa9a121f80734b75313c11afa0865affed0cb75801d3bda7068",
+    "bytes": 1076,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/promotion-prerequisites.json",
+    "sha256": "ca6b3c53b9a59f30513684c1401c8ea727ba7ad361cccd7f2da4b4e034f868fa",
+    "bytes": 18913,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/ready.bundle",
+    "sha256": "5ba980b93aab3e34fa4aff585ad674b78722e468669bcf18553c3b59aeb87fad",
+    "bytes": 10927,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047/ready.json",
+    "sha256": "eb978f762f17005b31c353452d60770a6e4874d8b45ec52c40332161f9e7b1d4",
+    "bytes": 4321,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047.metadata.json",
+    "sha256": "ddaa60eddf79cfbbd2830a070f90b234cb7eeed85895f6dc9da4650d4fb2ccc6",
+    "bytes": 848,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/live-ready-34076680047.zip",
+    "sha256": "1ed9e9af6c1d9abcadd634c46210b95c2e063e2afb2ca97b10b2031e9cf0cd94",
+    "bytes": 49605,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/live-ready-run-34076680047.json",
+    "sha256": "1b0a814d401e737aaaba77462f2c33644c47ad56fd4f6cfba1546bc3e88ddb4d",
+    "bytes": 6125,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-34078121808-durable-prepare.json",
+    "sha256": "0b05a81ecc74ed983f50e0e5215bf90963c1a6728de156e5dcbaa5757a630dc4",
+    "bytes": 418,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-34078121808-release-task-readback.json",
+    "sha256": "505e78afa68fe6aee39db52a71f6105b50ff556421b1a966ef909988c4feb3d9",
+    "bytes": 76,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-34078121808-stopped-release-tasks.json",
+    "sha256": "ef4fa706fe3a4e7b7be26f1d9359933ecf81ee975851e9a0b1eca9d1fb81a394",
+    "bytes": 1993,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-agentcore-smoke-evidence.json",
+    "sha256": "831f3ef01e2958962a06aedbf34abb741f1af04df70c74fa66894f0f5d14216b",
+    "bytes": 1782,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-api-startup-sanitized.log",
+    "sha256": "7c9a0a0a72118c1dc988716b846521ecc1ca6357d4d4515f590c95b1689a690f",
+    "bytes": 3114,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/ai-gateway.json",
+    "sha256": "c89869a10df61266ef593b6d4d6b5e68de13a64b2eb7e9ab3fbf64f433b4ea14",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/api-web.json",
+    "sha256": "94688b4dfb7757680db1368cfcf6d7f4be6d10dd134f342b82fda3f99c0469fc",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/ai-gateway.json",
+    "sha256": "321b2dbefa7c27433fc9a85e76be43198380f16347e3c82eaebfab936febc471",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/api-web.json",
+    "sha256": "6bb7167eaa48f2d3907d05b5d262e94596620d41442e20b103f5e6661a0df8ec",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/history/ai-gateway-XgH-axyCvwn7rTub-GzgM-false.json",
+    "sha256": "321b2dbefa7c27433fc9a85e76be43198380f16347e3c82eaebfab936febc471",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/history/api-web-5lFn2a9zXadcJWXsNu353-false.json",
+    "sha256": "6bb7167eaa48f2d3907d05b5d262e94596620d41442e20b103f5e6661a0df8ec",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/history/workers-KZg46mgNMcI_odPGuqF5k-false.json",
+    "sha256": "76f21e2a9ef28bde7afe3d928e4a731f20b5bda0a91f98f3f5cb61a27aca55b0",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/maintenance-proof.json",
+    "sha256": "2eb553505000d7a9432c69250430ff4fb8e8f76d57b031d252b2387be2d5e802",
+    "bytes": 6184,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-closed/workers.json",
+    "sha256": "76f21e2a9ef28bde7afe3d928e4a731f20b5bda0a91f98f3f5cb61a27aca55b0",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/bootstrap-maintenance-proof.json",
+    "sha256": "2eb553505000d7a9432c69250430ff4fb8e8f76d57b031d252b2387be2d5e802",
+    "bytes": 6184,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/controller.json",
+    "sha256": "ef6c81953f9358d9ed2b5f6462e57f97739405f9e70119c9c982312727214cd4",
+    "bytes": 385,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/history/ai-gateway--QEpKobfxfBTBCr4dAY4W-false.json",
+    "sha256": "c89869a10df61266ef593b6d4d6b5e68de13a64b2eb7e9ab3fbf64f433b4ea14",
+    "bytes": 514,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/history/api-web-iP88RJMCft7oVROF7WY5t-false.json",
+    "sha256": "94688b4dfb7757680db1368cfcf6d7f4be6d10dd134f342b82fda3f99c0469fc",
+    "bytes": 505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/history/workers-BqFHTV9hsElWlKkujlbBV-false.json",
+    "sha256": "2c0f6ba39405111567f8771b298e2a5c6bae09eef3ef959fa44ca1373d63ebdd",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/maintenance-ingress-drain.json",
+    "sha256": "b4a0efdf0157f511421571fd7b54b81466ae2c7983bbafd63d28a4e464bf3f0b",
+    "bytes": 425,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/release-operation.json",
+    "sha256": "c3f2bc49ed715b26dcd76a1fa916bc555dbded315cb480dbfb1ce0cdd61be9f3",
+    "bytes": 217,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/release-prepare.log",
+    "sha256": "b2ba591c7de35ef8cc2ab5d2185a8974e76b2fffbe5890c055e27a06d2f874e9",
+    "bytes": 194550,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808/workers.json",
+    "sha256": "2c0f6ba39405111567f8771b298e2a5c6bae09eef3ef959fa44ca1373d63ebdd",
+    "bytes": 493,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808.metadata.json",
+    "sha256": "fbfde28dcad85c75feab06bbd75dbd8fe816d39f7db363d125d6a93b22143782",
+    "bytes": 838,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-controller-34078121808.zip",
+    "sha256": "02c9e2c7c21d7f5f32a0edab6f89311a76081c51d1df9a86f1eb7975a2c426a0",
+    "bytes": 18392,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/production-customer-acceptance-diagnostic.json",
+    "sha256": "56659b0556da3f2e2ac10244416ea382ce704151d49862c156c442795115b5db",
+    "bytes": 628,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-customer-acceptance-first-failed.json",
+    "sha256": "f36874af409f0c9f532935672833d5e0667d7102601241d599bb4b94251e11e2",
+    "bytes": 516,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-hosted-checks.json",
+    "sha256": "ad604e2db56fae29d98940d1a02f2d8d0f5a888e772d5403f8a83b1dfe06916e",
+    "bytes": 698,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-line-oa-identity.json",
+    "sha256": "77756dbf872a26a7fa61c46ae2926531d55fd8e6888541e47227a03b9684ef80",
+    "bytes": 165,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-maintenance-alarm-readback.json",
+    "sha256": "61b033cd572972237ed23af6563106f81865c05d1441042d4c724f693b27feeb",
+    "bytes": 5118,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-migration-execution.json",
+    "sha256": "8d4ae06a2c0719e6575cd1b2121f95d1e68f0eabafa9e523086e81469c16141d",
+    "bytes": 1027,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-platform-final.json",
+    "sha256": "88f9989e5201913f459354875429bcf04ac2fddfe9a321134bfd3f10873c21d3",
+    "bytes": 4852,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-public-open.json",
+    "sha256": "6aa2424fc56da6f1d9b4e8954cc39206476ed76e56fa279412a825c4c0b4756f",
+    "bytes": 313,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-result-34078121808/result.bundle",
+    "sha256": "7dabcee58400475417bf71f3d46d991aa38895b175d6d24379d954c58a11e7f7",
+    "bytes": 10867,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-result-34078121808/result.json",
+    "sha256": "dc579ef8cba6d4b1a278bfd98c6452643b21734e33085e01413912a3af205457",
+    "bytes": 1917,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-result-34078121808.metadata.json",
+    "sha256": "b201bf793e1bc087b6dcce6d8582c9893f107c502dba6f85e444f1a544b53bb8",
+    "bytes": 832,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/production-result-34078121808.zip",
+    "sha256": "5f3f8496b812a484e4be7ec48147f4244d238b403f087a73e0ca6c6e7017b821",
+    "bytes": 7647,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/production-run-34078121808.json",
+    "sha256": "b60bc73ccf340a33644d93a026d7598fadaf0ac4e8708d34b5c90bf51ff5577a",
+    "bytes": 13761,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/release-report.md",
+    "sha256": "7258ae599921b59236dfe027228e6587130d8c5368aac88ea6f95bcac15cf1b9",
+    "bytes": 7425,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/release-summary.json",
+    "sha256": "3f59db733d224ac0fa84e6b04619c8b4160fe7200f15cf7038cc123a734ffe1e",
+    "bytes": 943,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/signed-result-verification.json",
+    "sha256": "3e479b49174cc4ab0443bce5f25e0dd0eec32ac66d2d1123fb73a5219f5ff3a8",
+    "bytes": 487,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/staged-agentcore-parity.json",
+    "sha256": "a0bfddb793830650f3776155a766fb48347860a8eb8b741fcfa33de3fc8f1208",
+    "bytes": 1068,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-hosted-checks.json",
+    "sha256": "00b67c44308221d041197273eea1310449762722f8f29a4a3194839ff885a68c",
+    "bytes": 564,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/agentcore-binding.json",
+    "sha256": "75360d76d8f078b125cda4b5692a8f64e417616953a4c84bffda4c5089fd7bb0",
+    "bytes": 1195,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/migration-catalog.json",
+    "sha256": "d609f703d9ddefaa70f35409a2e28a9d7216996db288a55dabfeeb2c56c4b9f9",
+    "bytes": 23563,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/passport.bundle",
+    "sha256": "d6fbcd5c98ac68665c831555d1912d02defb3768b6ab6ff75858dd50ed896f3f",
+    "bytes": 10711,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/passport.json",
+    "sha256": "15c3c628c9b2e8df8b1fd0990d5b037b9ee22bfc74b2a82a5079aa691691ce40",
+    "bytes": 5266,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/agentcore/agentcore-artifact.json",
+    "sha256": "b760d97f5f88cdcf9c248f98a4c03fb8eed6c18a46696de04fe65d655a559613",
+    "bytes": 198,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/agentcore/agentcore.zip",
+    "sha256": "540132fcfcdb891929b9f005e74d309e1e15723a1ecc4afddf149b4b2a78807d",
+    "bytes": 909802,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/cosign-ai-gateway.json",
+    "sha256": "855dda98d68bd188d5644be271d6e3ae41401ed532e23cc1b96633329610711e",
+    "bytes": 366,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/cosign-api-web.json",
+    "sha256": "533cf186077d113a4c8145c08631bbeb1af526e16d488322d242aad493eefab2",
+    "bytes": 359,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/cosign-workers.json",
+    "sha256": "3309c4bf6869b188386dff4bc12a0ca52845ba8beae53639b6ad8f0ed10053c3",
+    "bytes": 363,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/line-ai-contract.ts",
+    "sha256": "df27b09df477a5957622818df8e9d4efb326d6ef85361e7c2765bd2475b1d0d7",
+    "bytes": 73742,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/line-ai-release-manifest.json",
+    "sha256": "d508ff0f43c3b5b00b92d472bbb2470e39198111c4496353527282a2f411964b",
+    "bytes": 1839,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/production-image-manifest.json",
+    "sha256": "f34ef06ed43ba60389dbf3758a0c7ccc7b32375ee55d310d6b96c7fc5f8e7b9d",
+    "bytes": 1505,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/sbom-ai-gateway.spdx.json",
+    "sha256": "aa46b41c62d4928ebd0a2ffa675f37abe2d8a45b8372c9b22a16719638d30a5b",
+    "bytes": 2990361,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/sbom-api-web.spdx.json",
+    "sha256": "2945838324b6c10794961753d0678e04cbaff8438032d4ef656370a39d0a26e3",
+    "bytes": 3594676,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/release/sbom-workers.spdx.json",
+    "sha256": "3918f04475717577fbdc6296b68657b4a18a3970c027f2e5aacdd542a2db6b5c",
+    "bytes": 2454582,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/cosign-migration-tool.json",
+    "sha256": "c6e277b5eaafcfd76f6a125a3e55de725cace4d1b660eb43f1649ffd53f47ad0",
+    "bytes": 370,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/cosign-release-task.json",
+    "sha256": "90a869da71ed9e2f6bdfc6f9b07ae7a2dafeff090cbb94a56b769f3453276a30",
+    "bytes": 359,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/image-migration-tool.json",
+    "sha256": "0ecd4909c07c45eba996be69ec3287be9405f8bb2aafc56469890ae988627071",
+    "bytes": 532,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/image-release-task.json",
+    "sha256": "18a349f8560bd33d0062e8c7c35229ebcd78c6705124d9b57754e5e36f888e11",
+    "bytes": 504,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/sbom-migration-tool.spdx.json",
+    "sha256": "b97dfb3277f940b3d46690a968e94e6a2b249ab225b6349040c32c8d86652c2b",
+    "bytes": 3726720,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561/tools/sbom-release-task.spdx.json",
+    "sha256": "bed63169e08343117eafb2f60a878e3edd51b89e0da75cafe36846df4c774188",
+    "bytes": 3717953,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561.metadata.json",
+    "sha256": "3b831d29628a5404afe4ccceb1e186e0b138096533001d84b4e405f7db3b6f1f",
+    "bytes": 830,
+    "disposition": "retained"
+  },
+  {
+    "original": "output/release-20260907/uat-passport-34068520561.zip",
+    "sha256": "752c9bb1bfaf55ac82b9268c2c1613f73db3c3d021de8736f5c6d0416794db79",
+    "bytes": 2962860,
+    "disposition": "removed-download-or-generated-copy"
+  },
+  {
+    "original": "output/release-20260907/uat-runtime-readback.json",
+    "sha256": "22bd20f12a766090b3f04e2fca3be22dc476992cd512adc5f34568d98bdbd2dd",
+    "bytes": 1497,
+    "disposition": "retained"
+  }
+]

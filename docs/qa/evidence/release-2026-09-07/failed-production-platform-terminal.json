@@ -1,0 +1,133 @@
+{
+  "checkedAt": "2026-09-07T02:09:40.876050+00:00",
+  "status": "PASS",
+  "services": [
+    {
+      "service": "api-web",
+      "status": "ACTIVE",
+      "currentDeployment": null,
+      "stableReads": 2,
+      "source": "a768e3a27aa0ffe5aaf848c23fea720b381a76b0",
+      "servingMode": "live",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-api-web-pub/3621147695276654835",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:c10161cbea1d7182fa7820596b1defd7d9a27a9a0454ff7cb8cd0a6903187cdb",
+      "configurationSha256": "cd3f4dc5ce9be539ca870c1eed431d843d3da8794cae14f88fc06c946d4a516f",
+      "latestDeployment": {
+        "serviceDeploymentArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/watchdog-bms-api-web-pub/RKOxLc0VVAXDLvFfQBGNp",
+        "status": "ROLLBACK_SUCCESSFUL",
+        "createdAt": "2026-09-07T08:51:45.600000+07:00"
+      }
+    },
+    {
+      "service": "ai-gateway",
+      "status": "ACTIVE",
+      "currentDeployment": null,
+      "stableReads": 2,
+      "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "servingMode": "maintenance_only",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-ai-gateway-v2/8721646416777945795",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:5fa4fbf544c0dc779f62cc134923846394d2e81bda17eba960c550c99ea4a253",
+      "configurationSha256": "0c496e91cb4ab0e94ec84e974107c9c3137a3798e3029a066317f868adeaf524",
+      "latestDeployment": {
+        "serviceDeploymentArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/watchdog-bms-ai-gateway-v2/Rw85Wsx5m4wnHldxFbDMJ",
+        "status": "SUCCESSFUL",
+        "createdAt": "2026-09-07T08:45:54.446000+07:00"
+      }
+    },
+    {
+      "service": "workers",
+      "status": "ACTIVE",
+      "currentDeployment": null,
+      "stableReads": 2,
+      "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "servingMode": "maintenance_only",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-workers/0025357484715279619",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc",
+      "configurationSha256": "d59034f8b27b738718b93f158be3e24e96dfa429d4163e57dee01b99404535a7",
+      "latestDeployment": {
+        "serviceDeploymentArn": "arn:aws:ecs:ap-southeast-1:311414082667:service-deployment/watchdog-bms-prod/watchdog-bms-workers/V_F7Sw7rNCQbEloAKjtnt",
+        "status": "SUCCESSFUL",
+        "createdAt": "2026-09-07T08:45:47.538000+07:00"
+      }
+    }
+  ],
+  "activeTasks": [
+    {
+      "arn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/07a5e8d7a1344a17aa6dc836ef264b8e",
+      "group": "service:watchdog-bms-api-web-pub",
+      "status": "RUNNING"
+    },
+    {
+      "arn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/73faa3b4df1f41a8ac6348aacb197476",
+      "group": "service:watchdog-bms-ai-gateway-v2",
+      "status": "RUNNING"
+    },
+    {
+      "arn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/db59065baf97442197e757f39c21af5c",
+      "group": "service:watchdog-bms-workers",
+      "status": "RUNNING"
+    }
+  ],
+  "alarms": [
+    {
+      "name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_ai_gateway-security",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_api_web-security",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-_ecs_watchdog_bms_prod_workers-security",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-db-connections-high",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-db-cpu-credits-low",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-db-memory-low",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-db-storage-low",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-log-ingest-ai-gateway",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-log-ingest-api-web",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-log-ingest-workers",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-redis-memory-high-001",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod-redis-memory-high-002",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod/watchdog-bms-ai-gateway-v2/RollbackAlarm",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod/watchdog-bms-api-web-pub/RollbackAlarm",
+      "state": "OK"
+    },
+    {
+      "name": "watchdog-bms-prod/watchdog-bms-workers/RollbackAlarm",
+      "state": "OK"
+    }
+  ]
+}
