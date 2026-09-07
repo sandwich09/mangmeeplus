@@ -53,7 +53,7 @@ describe('expenseSourceDraftViewState', () => {
   it('shows an incomplete READY source to its reviewer, but hides complete and terminal source state', () => {
     const locked = { ...draft, canEdit: false };
     assert.deepEqual(expenseSourceDraftViewState({ status: 'READY_FOR_CONFIRMATION', sourceDraft: locked, lines: [] }, true), {
-      sourceDraft: locked, incomplete: true, sourceOnly: false, financialTotalUnknown: true,
+      sourceDraft: locked, incomplete: true, sourceOnly: true, financialTotalUnknown: true,
     });
     assert.equal(expenseSourceDraftViewState({
       status: 'READY_FOR_CONFIRMATION', sourceDraft: { ...locked, missingFields: [] }, lines: [],

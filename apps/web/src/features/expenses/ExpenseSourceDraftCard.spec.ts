@@ -5,6 +5,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ExpenseSourceDraft } from '@watchdog-bms/contracts';
 import { ExpenseSourceDraftCard } from './ExpenseSourceDraftCard';
 
+// Match the shared field tests when tsx renders Next's automatic-JSX components in Node.
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
+
 function render(canEdit = true, readOnlyMessage?: string): string {
   const sourceDraft: ExpenseSourceDraft = {
     status: 'PAUSED_INTERRUPTED',
@@ -41,6 +44,8 @@ test('renders every staged item, ordinary missing labels, known zero, and the pa
   assert.match(html, />เพิ่มรายการ<\/button>/);
   assert.match(html, />เก็บร่างไว้ก่อน<\/button>/);
   assert.match(html, /ยังไม่ยืนยันรายการ/);
+  assert.doesNotMatch(html, /<select/);
+  assert.match(html, /role="combobox"[^>]*aria-label="รายการที่ 1 หมวดหมู่ค่าใช้จ่าย"/);
 });
 
 test('shows the staged facts without an unavailable save action when the API denies source editing', () => {

@@ -1,0 +1,48 @@
+Web/shared
+  ...
+# Subtest: removing a staged-only row is explicit in the same review save
+ok 65 - removing a staged-only row is explicit in the same review save
+  ---
+  duration_ms: 0.087791
+  type: 'test'
+  ...
+1..65
+# tests 190
+# suites 15
+# pass 190
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1232.060042
+
+Browser full
+
+Running 8 tests using 1 worker
+
+(node:36116) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › e2e/receipt-draft-continuity.spec.ts:67:7 › receipt partial draft saves and reloads all incomplete items at 390px (3.6s)
+  ✓  2 [chromium] › e2e/receipt-draft-continuity.spec.ts:67:7 › receipt partial draft saves and reloads all incomplete items at 1280px (1.6s)
+  ✓  3 [chromium] › e2e/receipt-draft-continuity.spec.ts:122:5 › source draft rejects stale browser save without replacing a newer vendor (663ms)
+  ✓  4 [chromium] › e2e/receipt-draft-continuity.spec.ts:140:5 › reviewer can reopen a legacy READY partial without inventing financial rows (753ms)
+  ✓  5 [chromium] › e2e/receipt-draft-continuity.spec.ts:163:5 › originating upload-only user can save source facts without acquiring finance authority (1.0s)
+  ✓  6 [chromium] › e2e/receipt-draft-continuity.spec.ts:163:5 › originating upload-only user can add an unreadable item and save source facts without acquiring finance authority (1.3s)
+  ✓  7 [chromium] › e2e/receipt-draft-continuity.spec.ts:225:7 › readable LINE receipt has one review form and one saved purpose at 390px (5.2s)
+  ✓  8 [chromium] › e2e/receipt-draft-continuity.spec.ts:225:7 › readable LINE receipt has one review form and one saved purpose at 1280px (2.6s)
+
+  8 passed (27.1s)
+
+Screenshot framing
+
+Running 2 tests using 1 worker
+
+(node:36592) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 [chromium] › e2e/receipt-draft-continuity.spec.ts:225:7 › readable LINE receipt has one review form and one saved purpose at 390px (7.7s)
+  ✓  2 [chromium] › e2e/receipt-draft-continuity.spec.ts:225:7 › readable LINE receipt has one review form and one saved purpose at 1280px (2.9s)
+
+  2 passed (19.7s)
+
+UAT read-only preflight
+UAT deploy readiness verified before image publication

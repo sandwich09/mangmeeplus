@@ -353,6 +353,31 @@ export class UpdateExpenseDraftUseCase {
     const reopenSourceReview = !canCollectOwnLineDraft && canReview && r.status === 'READY_FOR_CONFIRMATION'
       && (reviewSourceState ? reviewSourceState.unresolvedQuestions.length > 0
         : hasSourceDraft && (!persistedSourceState || collectLineExpenseDraftQuestions(persistedSourceState, []).length > 0));
+    const removedSourceItems = input.removedSourceItemRefs ?? [];
+    if (removedSourceItems.length || input.removedSourceItemRefs !== undefined) {
+      const state = persistedSourceState ?? reviewSourceState;
+      if (!canReview || !state || !input.lines) throw new ForbiddenException('Only a reviewer may remove staged receipt rows.');
+      if (!Array.isArray(removedSourceItems) || removedSourceItems.length > 40
+        || new Set(removedSourceItems).size !== removedSourceItems.length
+        || removedSourceItems.some((ref) => !state.items.some((item) => item.itemRef === ref)
+          || input.lines!.some((line) => line.sourceItemRef === ref || (state.items.find((item) => item.itemRef === ref)?.lineId === line.id && line.id !== undefined)))) {
+        throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Unknown, repeated or retained staged receipt row.' });
+      }
+    }
+    const sourceRows = input.lines?.filter((line) => line.sourceItemRef !== undefined) ?? [];
+    if (sourceRows.length) {
+      const state = persistedSourceState ?? reviewSourceState;
+      if (!canReview || !state) throw new ForbiddenException('Only a reviewer may resolve staged receipt rows.');
+      const seen = new Set<string>();
+      for (const line of sourceRows) {
+        const item = state.items.find((item) => item.itemRef === line.sourceItemRef);
+        if (!item || seen.has(item.itemRef) || (item.lineId && line.id !== item.lineId)
+          || !Number.isInteger(line.lineNumber) || input.lines!.filter((entry) => entry.lineNumber === line.lineNumber).length !== 1) {
+          throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Unknown, repeated or mismatched staged receipt row.' });
+        }
+        seen.add(item.itemRef);
+      }
+    }
     let lines = input.lines;
     const identityMode = Boolean(lines && (lines.some((line) => line.id !== undefined)
       || (!canCollectOwnLineDraft && canReview && hasSourceDraft)));
@@ -695,6 +720,18 @@ export class UpdateExpenseDraftUseCase {
             // items may disappear; unresolved source items without a line id remain staged.
             const prior = reviewSourceState ?? parseLineExpenseDraftContinuation(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]);
             if (!prior) throw new BadRequestException('Source draft cannot be read safely.');
+            state.items = state.items.filter((item) => !removedSourceItems.includes(item.itemRef));
+            // This is the explicit full review just submitted, not an OCR/position guess. Bind each
+            // scoped source reference to the row written in this SAME transaction, including new rows
+            // and duplicate descriptions. Later partial edits retain that persisted financial identity.
+            for (const reviewed of sourceRows) {
+              const item = state.items.find((item) => item.itemRef === reviewed.sourceItemRef);
+              const line = saved.lines.find((line) => line.lineNumber === reviewed.lineNumber);
+              if (!item || !line || line.chargeKind) throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Reviewed source row is unavailable.' });
+              item.lineId = line.id; item.description = line.description; item.quantity = line.quantity; item.unitPrice = line.unitPrice;
+              if (line.expenseCategoryId) item.expenseCategoryId = line.expenseCategoryId; else delete item.expenseCategoryId;
+              delete item.totalAmount; delete item.reviewRequired;
+            }
             const deleted = new Set(prior.items.filter((item) => item.lineId && !saved.lines.some((line) => line.id === item.lineId)).map((item) => item.itemRef));
             state.items = state.items.filter((item) => !deleted.has(item.itemRef));
             for (const item of state.items.filter((item) => !item.lineId)) {

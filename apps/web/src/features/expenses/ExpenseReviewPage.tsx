@@ -542,7 +542,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
   const hasDuplicates = hasUnresolvedDuplicateWarning(detail.duplicateStatus);
   const isConfirmedDuplicate = detail.duplicateStatus === 'CONFIRMED_DUPLICATE';
-  const sourceDraftView = expenseSourceDraftViewState(detail, canMutateDraft);
+  const sourceDraftView = expenseSourceDraftViewState(detail, canMutateDraft && canReview);
   const visibleSourceDraft = sourceDraftView.sourceDraft;
   const sourceDraftIncomplete = sourceDraftView.incomplete;
   const sourceOnlyDraft = sourceDraftView.sourceOnly;
@@ -637,7 +637,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const hasFooterActions = canMutateDraft || approverOnlyActions || isConfirmed || canRestartReview || canDelete;
   // Guided stepper only for editable drafts (canMutateDraft already implies status ∈ {DRAFT, NEEDS_REVIEW, READY_FOR_CONFIRMATION});
   // every other status/viewer keeps the continuous-scroll layout and footer untouched.
-  const guided = canMutateDraft;
+  const guided = canMutateDraft && !sourceOnlyDraft;
   const steps = guided ? deriveExpenseReviewSteps(detail, canReview) : [];
   const stepIndex = steps.findIndex((entry) => entry.key === step);
   const detailsStepDone = steps.some((entry) => entry.key === 'data' && entry.state === 'done');
@@ -907,7 +907,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} canConfirm={canConfirm} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (
@@ -1319,6 +1319,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 {sourceOnlyDraft ? (
                   <>
                     {noticesBlock}
+                    {financialTotalUnknown && <p role="status" className="text-sm text-gray-600">{t('expenses.source_draft_total_unknown', locale)}</p>}
                     {visibleSourceDraft && <ExpenseSourceDraftCard
                       key={detail.id}
                       companyId={companyId}
@@ -1349,16 +1350,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                         </div>
                       </fieldset>
                       </CoverLoader>
-                      {visibleSourceDraft && <ExpenseSourceDraftCard
-                        key={detail.id}
-                        companyId={companyId}
-                        expenseId={detail.id}
-                        expectedUpdatedAt={detail.updatedAt}
-                        sourceDraft={visibleSourceDraft}
-                        locale={locale}
-                        readOnlyMessage={readySourceDraftMessage}
-                        onSaved={setDetail}
-                      />}
+
                       {vendorCard}
                       {moneyCard}
                     </div>
@@ -1374,16 +1366,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 ) : (
                   <>
                     {noticesBlock}
-                    {visibleSourceDraft && <ExpenseSourceDraftCard
-                      key={detail.id}
-                      companyId={companyId}
-                      expenseId={detail.id}
-                      expectedUpdatedAt={detail.updatedAt}
-                      sourceDraft={visibleSourceDraft}
-                      locale={locale}
-                      readOnlyMessage={readySourceDraftMessage}
-                      onSaved={setDetail}
-                    />}
                     {postingCard}
                     {auditCard}
                     {moneyCard}

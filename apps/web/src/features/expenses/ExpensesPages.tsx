@@ -1205,7 +1205,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -1213,15 +1213,28 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
    *  a confirmer is never shown a refusal with no control that can clear it. */
   canConfirm: boolean;
+  /** Explicit save is available only on the first review step; later steps use navigation saves. */
+  showSaveDraft?: boolean;
   onSaved: () => Promise<void>;
-  /** The modal's ถัดไป/chip navigation triggers this save when leaving the details step — no in-section save button. */
+  /** The ถัดไป/chip navigation and the first-step draft button use the same save. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
   onValidationChange?: (errorCount: number, firstErrorMessage: string | null) => void;
   /** Plan 13.11.B: the VAT card collects "ใช้ยอดตามเอกสาร"; the page's confirm button spends it. */
   vatOverrideRef?: MutableRefObject<ExpenseVatSourceOverrideInput | null>;
 }) {
   const locale = useWorkspaceLocale();
+  const toast = useToast();
   const [values, setValues] = useState<ExpenseDraftReviewValues>(() => reviewValues(detail));
+  const [sourceCategories, setSourceCategories] = useState<ExpenseCategorySummary[]>([]);
+  const [sourceCategoryError, setSourceCategoryError] = useState(false);
+  useEffect(() => {
+    if (!detail.sourceDraft) return;
+    let active = true;
+    void listExpenseCategories(companyId).then((categories) => {
+      if (active) { setSourceCategories(categories.filter((category) => category.status === 'ACTIVE')); setSourceCategoryError(false); }
+    }).catch(() => { if (active) setSourceCategoryError(true); });
+    return () => { active = false; };
+  }, [companyId, Boolean(detail.sourceDraft)]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -1430,19 +1443,27 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     }));
   };
 
-  const save = async (): Promise<boolean> => {
+  const save = async (explicitDraftSave = false): Promise<boolean> => {
+    if (busy) return false;
     setError(null); setInfo(null);
     if (blockingIssueCount > 0) {
-      setError(t('expenses.v_blocking_count', locale).replace('{count}', String(blockingIssueCount)));
+      const message = firstBlockingMessage ?? t('expenses.v_blocking_count', locale).replace('{count}', String(blockingIssueCount));
+      setError(message);
+      if (explicitDraftSave) toast.error(message);
+      return false;
+    }
+    const forbidden = findForbiddenChars([
+      values.vendorNameSnapshot, values.vendorTaxIdSnapshot, values.vendorDocumentNumber,
+      ...values.lines.map((line) => line.description),
+    ].join(''));
+    if (forbidden.length > 0) {
+      const message = t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '));
+      setError(message);
+      if (explicitDraftSave) toast.error(message);
       return false;
     }
     setBusy(true);
     try {
-      const forbidden = findForbiddenChars([
-        values.vendorNameSnapshot, values.vendorTaxIdSnapshot, values.vendorDocumentNumber,
-        ...values.lines.map((line) => line.description),
-      ].join(''));
-      if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
       const update = canReview ? updateExpenseReviewFields : updateExpenseDraft;
       const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
       await update(companyId, detail.id, {
@@ -1452,8 +1473,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           : values),
         ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
       });
-      await onSaved();
+      try { await onSaved(); } catch {
+        // The PATCH succeeded. A failed readback must not claim the draft was lost or replay the write.
+        const message = t('expenses.review_saved_refresh_failed', locale);
+        setError(message);
+        toast.warning(message);
+        return false;
+      }
       setInfo(t('expenses.review_saved', locale));
+      if (explicitDraftSave) toast.success(t('expenses.review_draft_saved', locale));
       return true;
     } catch (e) { setError(err(e)); return false; }
     finally { setBusy(false); }
@@ -1470,6 +1498,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <h3 className="font-semibold text-gray-800">{t('expenses.vendor_and_lines', locale)}</h3>
         {!isMutable && <span className="text-xs text-gray-400">{t('expenses.read_only', locale)}</span>}
       </div>
+      {showSaveDraft && detail.status === 'DRAFT' && detail.sourceDraft && isMutable && <button type="button" className={ghostClass} disabled={busy} onClick={() => void save(true)}>
+        {busy ? t('expenses.source_draft_saving', locale) : t('expenses.review_save_draft', locale)}
+      </button>}
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
       {aiSuggestion && isMutable && (
@@ -1520,6 +1551,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <FieldIssueNote issue={expenseDateIssue} />
           <AiFieldMissingHint field="expenseDate" summary={detail.aiVerificationSummaryJson} />
         </label>
+        {values.businessPurpose !== undefined && (
+          <label className="sm:col-span-2">
+            <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.source_draft_business_purpose', locale)}</span>
+            <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} className={inputClass} rows={2} maxLength={200} value={values.businessPurpose}
+              onChange={(event) => setValues((current) => ({ ...current, businessPurpose: stripDisallowed(event.target.value) }))}
+              disabled={!isMutable || busy} />
+            {!values.businessPurpose.trim() && <p className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_missing_one', locale)}</p>}
+          </label>
+        )}
         <div className="sm:col-span-2">
           <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
             <label htmlFor={`expense-vat-mode-${detail.id}`}>{t('expenses.vat_mode', locale)}</label>
@@ -1792,9 +1832,25 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 two DOM fields for one value. */}
             <label className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_description', locale)}</span>
-              <textarea className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
+              <textarea aria-label={t('expenses.line_description', locale)} className={cx(validationInputClass(descriptionIssue), 'resize-y')} rows={2} aria-invalid={descriptionIssue?.severity === 'error' || undefined} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
               <FieldIssueNote issue={descriptionIssue} />
             </label>
+            {detail.sourceDraft && !line.chargeKind && (
+              <label className="sm:col-span-2">
+                <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.category', locale)}</span>
+                <ThemedSelect className={inputClass} value={line.expenseCategoryId ?? ''} disabled={!isMutable || busy || !canReview}
+                  aria-label={`${t('expenses.source_draft_item_n', locale).replace('{n}', String(index + 1))} ${t('expenses.category', locale)}`}
+                  onChange={(event) => setValues((current) => ({ ...current, lines: current.lines.map((entry, entryIndex) => entryIndex === index
+                    ? { ...entry, expenseCategoryId: event.target.value || null } : entry) }))}>
+                  <option value="" disabled={Boolean(line.expenseCategoryId)}>{t('expenses.category_unspecified', locale)}</option>
+                  {line.expenseCategoryId && !sourceCategories.some((category) => category.id === line.expenseCategoryId)
+                    && <option value={line.expenseCategoryId}>{t('expenses.source_draft_saved_category', locale)}</option>}
+                  {sourceCategories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </ThemedSelect>
+                {!line.expenseCategoryId && <p className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_missing_one', locale)}</p>}
+                {sourceCategoryError && <p role="alert" className="mt-1 text-xs text-warning-700">{t('expenses.source_draft_category_error', locale)}</p>}
+              </label>
+            )}
             <label>
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.line_quantity', locale)}</span>
               <input type="number" min="0" step="0.0001" className={validationInputClass(quantityIssue)} aria-invalid={quantityIssue?.severity === 'error' || undefined} value={line.quantity} onChange={(e) => updateLine(index, 'quantity', e.target.value)} disabled={!isMutable || busy} />
