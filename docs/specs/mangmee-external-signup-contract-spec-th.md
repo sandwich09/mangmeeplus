@@ -1,5 +1,7 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
+> **Owner amendment 2026-09-07:** trial `FREE_TRIAL_15` uses its stored monthly allowance from day one, including existing normal trial rows with warmup10. LINE signup collects syntax-only owner email for shop contact and an available unverified owner-account login identifier, preserving existing accounts and immediate password-free LINE access. It does not acquire Flow B's verified mailbox identity semantics. See [onboarding/trial fixes](onboarding-trial-receipt-fixes-spec.md) for the scoped current policy and acceptance evidence.
+
 สถานะ: **IMPLEMENTATION IN PROGRESS 2026-08-30 (Owner สั่งลุยทุก slice; Opus implements / Fable supervises); Flow B locked** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, admin queue, claim และ provision จริงยังไม่ implement; ตัวปลดล็อกที่เหลือคือ SES operations (P11 §5 ข้อ 1–2) และตัวเลข trial (แสดงผลเท่านั้น ไม่ block โค้ด); offer preview/EasySlip paid branch เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [แผน P10](../plans/mangmee-external-signup-plan-th.md) และ [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 > **Owner amendment v2 2026-08-30 ("Flow B" — ยืนยันในแชต, แทนลำดับของ amendment 2026-08-29):**
