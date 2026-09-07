@@ -45,9 +45,9 @@ function ordinal(text: string, count: number): number | null {
 function label(row: ContinuationRow): string {
   const incomplete = row.state.items.some((item) => !item.lineId || !item.quantity || (!item.unitPrice && !item.totalAmount) || item.reviewRequired);
   const amount = incomplete ? ' · ยอดรายการยังไม่ครบ' : Number.isFinite(Number(row.grandTotalAmount)) ? ` · ยอดในร่าง ${Number(row.grandTotalAmount).toLocaleString('th-TH')} บาท` : '';
-  const date = row.expenseDate ? ` · ${row.expenseDate.toISOString().slice(0, 10)}` : '';
-  const subject = row.vendorNameSnapshot ?? row.note;
-  return `${row.expenseNumber ?? row.id}${date}${subject ? ` · ${subject.slice(0, 60)}` : ''}${amount}`;
+  const date = row.expenseDate ? ` · ${row.expenseDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Bangkok' })}` : '';
+  const subject = row.vendorNameSnapshot ?? row.state.header.vendorName;
+  return `${subject?.slice(0, 60) || 'ใบเสร็จ'}${date}${amount}`;
 }
 
 function targetRequired(rows: ContinuationRow[]): LineExpenseDraftConversationResult {
@@ -58,7 +58,7 @@ function targetRequired(rows: ContinuationRow[]): LineExpenseDraftConversationRe
     replyTexts: [[
       'มีร่างค่าใช้จ่ายมากกว่า 1 รายการ กรุณาเลือกก่อนเพื่อไม่ให้คำตอบไปผิดร่าง',
       ...rows.map((row, index) => `${index + 1}) ${label(row)}`),
-      'ตอบ “ร่าง 1” หรือระบุเลขร่าง แล้วจึงตอบข้อมูลต่อได้ค่ะ',
+      'ระบุชื่อร้านหรือเลือก “ร่าง 1” เพื่อให้แก้ถูกใบค่ะ',
     ].join('\n')],
   };
 }
@@ -97,7 +97,7 @@ export class LineExpenseDraftConversationUseCase {
       expenseId: row.id,
       label: label(row),
       status: row.state.status as LineExpenseDraftRouteContext['status'],
-      questions: (row.id === focusedExpenseId ? row.state.unresolvedQuestions : []).map((question) => ({
+      questions: (row.id === focusedExpenseId && row.state.status === 'OPEN' ? row.state.unresolvedQuestions : []).map((question) => ({
         id: question.id,
         prompt: question.prompt.slice(0, 200),
         ...(question.itemRef ? { itemRef: question.itemRef } : {}),
@@ -189,6 +189,8 @@ export class LineExpenseDraftConversationUseCase {
       categories,
     });
     state = bindSourceDraftLines(state, expense);
+    // Capturing an image preserves editable facts; only the user can start the conversation.
+    state.status = 'PAUSED';
     state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);
     for (const provenance of Object.values(state.provenance)) provenance.source = 'LINE_MEDIA_OCR';
     const updated = await this.persist(ctx, expense, state, categories, input.businessPurpose ? ['D-PURPOSE'] : [], [], false);
@@ -235,6 +237,11 @@ export class LineExpenseDraftConversationUseCase {
     }
     const categories = await this.repo.listCategories(ctx.companyId);
     const control = lineExpenseDraftControl(input.messageText);
+    // A model-supplied target is not consent to restart a passive receipt draft.
+    const explicitEdit = /แก้|เปลี่ยน|เติม|กรอก|ปรับ|ใช้เพื่อ|ใช้สำหรับ|^วันที่\s*[0-9๐-๙]|^(?:ผู้ขาย|ยอดรวม)\s*[:=]/u.test(input.messageText);
+    if (selected.state.status.startsWith('PAUSED') && !control && selectedIndex === null && !explicitEdit) {
+      return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
+    }
     selected.state = control === 'resume' || selectedIndex !== null
       ? refreshExpenseSourceDraft(selected.state, expense, categories)
       : bindSourceDraftLines(selected.state, expense);
@@ -292,7 +299,10 @@ export class LineExpenseDraftConversationUseCase {
           fromSuggested: Boolean(item.suggestedCategoryId),
         });
       }
-      const reply = formatLineExpenseDraftReply({ state: savedState, categories, acceptedFields: changed.acceptedFields, label: label(selected) });
+      const reply = formatLineExpenseDraftReply({
+        state: savedState, categories, acceptedFields: changed.acceptedFields, label: label(selected),
+        includeQuestions: control === 'resume' || selectedIndex !== null || changed.acceptedFields.length === 0,
+      });
       const status = savedState.status === 'PAUSED' || savedState.status === 'PAUSED_INTERRUPTED' ? 'PAUSED'
         : savedState.status === 'CANCELLED' ? 'CANCELLED'
           : savedState.status.startsWith('INPUT_ENDED_') ? 'ENDED'
@@ -304,7 +314,6 @@ export class LineExpenseDraftConversationUseCase {
         expenseId: expense.id,
         workflowId: savedState.workflowId,
         acceptedFields: changed.acceptedFields,
-        ...(status === 'PAUSED' ? { resumeCapsule: `↩️ ร่างค่าใช้จ่าย ${label(selected)} ยังอยู่ พิมพ์ “ต่อ” เมื่อต้องการทำต่อ` } : {}),
       };
     } catch (error) {
       if (!(error instanceof ConflictException)) throw error;
@@ -325,22 +334,18 @@ export class LineExpenseDraftConversationUseCase {
       .filter((row) => row.state.status === 'OPEN' && !excluded.has(row.id));
     if (rows.length === 0) return undefined;
     const categories = await this.repo.listCategories(ctx.companyId);
-    const pausedRows: ContinuationRow[] = [];
     for (const row of rows) {
       const expense = await this.repo.findByIdWithRelations(ctx.companyId, row.id, undefined, ctx.scopes ?? {});
       if (!expense || expense.createdByUserId !== ctx.userId || expense.captureSource !== 'LINE_UPLOAD') continue;
       const state = transitionLineExpenseDraft(row.state, 'interrupt');
       try {
         await this.persist(ctx, expense, state, categories, [], [], false, row.state.targetRevision);
-        pausedRows.push(row);
       } catch (error) {
         if (!(error instanceof ConflictException)) throw error;
       }
     }
-    if (pausedRows.length === 0) return undefined;
-    return pausedRows.length === 1
-      ? `↩️ พักร่างค่าใช้จ่าย ${label(pausedRows[0]!)} ไว้แล้ว พิมพ์ “ต่อ” เมื่อต้องการกลับมาทำ`
-      : `↩️ พักร่างค่าใช้จ่าย ${pausedRows.length} รายการไว้แล้ว พิมพ์ “ต่อ” เพื่อเลือกทำต่อ`;
+    // A topic change parks the work silently; the user decides whether to resume.
+    return undefined;
   }
 
   private async persist(

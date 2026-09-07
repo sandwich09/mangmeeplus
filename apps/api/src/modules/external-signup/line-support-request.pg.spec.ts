@@ -24,6 +24,7 @@ import { RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND } from '../line-ai/domain/logi
 import { ProcessLineWebhookUseCase } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 import { UnlinkLineIdentityUseCase } from '../auth/application/use-cases/unlink-line-identity.use-case';
 import { LineSignupNotifyService } from './application/line-signup-notify.service';
+import { RequestLineSignupSupportUseCase } from './application/request-line-signup-support.use-case';
 import { SupportRequestAdminUseCase } from './application/support-request-admin.use-case';
 
 const databaseUrl = process.env.LINE_SUPPORT_TEST_DATABASE_URL;
@@ -186,6 +187,32 @@ async function cleanup(client: PrismaClient, tag: string, lineUserId: string) {
 }
 
 describe('"ติดต่อเจ้าหน้าที่" on real PostgreSQL', { skip: !databaseUrl }, () => {
+  it('LIFF help works without sendMessages, deduplicates concurrent taps, reopens answers and preserves the original message', async () => {
+    const client = connect(), tag = `linesupport-${randomUUID().slice(0, 8)}`, lineUserId = `U${tag}`;
+    let charges = 0;
+    const notices: string[] = [];
+    const support = new RequestLineSignupSupportUseCase({ client } as any,
+      { verify: async (token: string) => { assert.equal(token, 'verified-token'); return { providerUserId: lineUserId, channelId: CHANNEL }; } } as any,
+      { consumeLineSupportRequestSlot: async () => { charges += 1; return true; } } as any,
+      { enqueueSupportRequest: async (id: string) => { notices.push(id); } } as any);
+    try {
+      const results = await Promise.all(Array.from({ length: 5 }, () => support.execute('verified-token', tag)));
+      assert.ok(results.every((result) => result.received));
+      assert.equal(charges, 1);
+      assert.equal(new Set(notices).size, 1);
+      assert.equal(await client.lineSupportRequest.count({ where: { lineUserId } }), 1);
+      const request = await client.lineSupportRequest.findFirstOrThrow({ where: { lineUserId } });
+      assert.equal(request.companyId, null);
+      await client.lineSupportRequest.update({ where: { id: request.id }, data: { status: 'ANSWERED', lastMessageText: 'ข้อมูลจากลูกค้าเดิม' } });
+      await support.execute('verified-token', tag);
+      const reopened = await client.lineSupportRequest.findUniqueOrThrow({ where: { id: request.id } });
+      assert.equal(reopened.status, 'OPEN');
+      assert.equal(reopened.reopenedCount, 1);
+      assert.equal(reopened.lastMessageText, 'ข้อมูลจากลูกค้าเดิม');
+      assert.equal(charges, 1);
+    } finally { await cleanup(client, tag, lineUserId); await client.$disconnect(); }
+  });
+
   it('claims, replies to a no-company case, and resolves it with durable operator evidence', async () => {
     const client = connect();
     const tag = `linesupport-${randomUUID().slice(0, 8)}`;

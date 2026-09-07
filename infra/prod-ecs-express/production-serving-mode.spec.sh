@@ -410,7 +410,7 @@ for stage in uat production; do
     LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=false LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=false \
     bash "$tmp_dir/receipt-config.sh")"
   test "$actual" = "false|false|$expected_email"
-  for receipt_flag in LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED; do
+  for receipt_flag in LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED LINE_AI_FLEX_TEXT_FALLBACK_ENABLED; do
     assert_rejected "invalid-$stage-$receipt_flag" "$receipt_flag must be exactly true or false" \
       env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live "$receipt_flag=yes" bash "$deploy" all
     test "$(grep -Fc "{name:\"$receipt_flag\", value:\$" "$deploy")" -eq 1

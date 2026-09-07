@@ -1,9 +1,28 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LineReplyAdapter, linePushRetryKey } from './line-reply.adapter';
+import { LineReplyAdapter, linePushRetryKey, parseOutcomeMessages } from './line-reply.adapter';
 import { buildPendingApprovalCard, buildStaffMainMenu } from '../domain/logic/line-staff-menu.logic';
 
 describe('LineReplyAdapter rich payload delivery', () => {
+  it('keeps complete fallback text in durable replay but strips it from reply and push provider payloads', async () => {
+    const originalFetch = globalThis.fetch;
+    const canonicalText = 'รายละเอียด'.repeat(80) + ' เปิดดูรายการ https://app.example.test/companies/c/expenses/e';
+    const message = { type: 'flex' as const, altText: 'สรุป', canonicalText, contents: { type: 'bubble' } };
+    const bodies: any[] = [];
+    try {
+      globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body))); return new Response('', { status: 200 });
+      }) as typeof fetch;
+      assert.deepEqual(parseOutcomeMessages(JSON.parse(JSON.stringify([message]))), [message]);
+      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'synthetic' } as any);
+      await adapter.sendReply('token', [message]);
+      await adapter.sendPush('U-test', [message], 'operation');
+      assert.ok(bodies.every((body) => !Object.hasOwn(body.messages[0], 'canonicalText')));
+      assert.equal(message.canonicalText, canonicalText);
+      assert.equal(parseOutcomeMessages([{ ...message, canonicalText: 3 }]), null);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   it('sends Quick Reply and Flex messages without flattening the LINE payload', async () => {
     const originalFetch = globalThis.fetch;
     let signal: AbortSignal | null | undefined;

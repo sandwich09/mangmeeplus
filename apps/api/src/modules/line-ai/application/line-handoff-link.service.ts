@@ -61,8 +61,12 @@ export class LineHandoffLinkService {
         const text = await this.rewriteText(message.text, tenantPrefix, ctx);
         out.push(text === message.text ? message : { ...message, text });
       } else if (message.type === 'flex') {
-        const contents = await this.rewriteNode(message.contents, tenantPrefix, ctx) as Record<string, unknown>;
-        out.push(contents === message.contents ? message : { ...message, contents });
+        const replacements = new Map<string, string>();
+        const contents = await this.rewriteNode(message.contents, tenantPrefix, ctx, replacements) as Record<string, unknown>;
+        let canonicalText = message.canonicalText;
+        for (const [url, handoff] of replacements) canonicalText = canonicalText?.split(url).join(handoff);
+        out.push(contents === message.contents && canonicalText === message.canonicalText
+          ? message : { ...message, contents, ...(canonicalText ? { canonicalText } : {}) });
       } else {
         out.push(message);
       }
@@ -82,9 +86,9 @@ export class LineHandoffLinkService {
   }
 
   /** Deep-walks a flex bubble and rewrites every `action: { type: 'uri', uri }` on the web tenant. */
-  private async rewriteNode(node: unknown, tenantPrefix: string, ctx: LineHandoffContext): Promise<unknown> {
+  private async rewriteNode(node: unknown, tenantPrefix: string, ctx: LineHandoffContext, replacements: Map<string, string>): Promise<unknown> {
     if (Array.isArray(node)) {
-      const items = await Promise.all(node.map((item) => this.rewriteNode(item, tenantPrefix, ctx)));
+      const items = await Promise.all(node.map((item) => this.rewriteNode(item, tenantPrefix, ctx, replacements)));
       return items.some((item, index) => item !== node[index]) ? items : node;
     }
     if (!node || typeof node !== 'object') return node;
@@ -98,11 +102,11 @@ export class LineHandoffLinkService {
 
     if (source['type'] === 'uri' && typeof source['uri'] === 'string' && source['uri'].startsWith(tenantPrefix)) {
       const handoff = await this.handoffFor(source['uri'], ctx);
-      if (handoff) replace('uri', handoff);
+      if (handoff) { replacements.set(source['uri'], handoff); replace('uri', handoff); }
     }
     for (const [key, value] of Object.entries(source)) {
       if (!value || typeof value !== 'object') continue;
-      const rewritten = await this.rewriteNode(value, tenantPrefix, ctx);
+      const rewritten = await this.rewriteNode(value, tenantPrefix, ctx, replacements);
       if (rewritten !== value) replace(key, rewritten);
     }
     return next ?? node;

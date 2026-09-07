@@ -36,7 +36,7 @@ function harness(enabled: boolean, sesWebBaseUrl: string | null = 'https://app.m
         lineSignupEnabled: enabled,
         sesWebBaseUrl: sesWebBaseUrl ?? undefined,
         webBaseUrl: 'https://api.example.com',
-      } as any, rateLimit, submit, status,
+      } as any, rateLimit, submit, status, { execute: async () => ({ received: true }) } as any,
     ),
     calls,
     submits,

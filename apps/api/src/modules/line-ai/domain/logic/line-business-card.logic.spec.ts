@@ -104,7 +104,7 @@ describe('LINE business answer card renderer', () => {
     assert.equal(message.type, 'flex');
     const json = JSON.stringify(message);
     assert.match(json, /"type":"bubble"/);
-    assert.match(json, /#22C55E/);
+    assert.match(json, /#15803D/);
     assert.match(json, /#1A2E22/);
     assert.match(json, /https:\/\/app\.example\.com\/companies\/c1\/expenses\?month=2026-07/);
     assert.match(json, /แหล่งข้อมูล: ค่าใช้จ่าย/);

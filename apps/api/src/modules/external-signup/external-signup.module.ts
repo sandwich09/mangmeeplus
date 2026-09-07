@@ -17,6 +17,7 @@ import { SignupClaimUseCase } from './application/signup-claim.use-case';
 import { SupportRequestAdminUseCase } from './application/support-request-admin.use-case';
 import { SubmitCompanySignupUseCase } from './application/submit-company-signup.use-case';
 import { SubmitLineSignupUseCase } from './application/submit-line-signup.use-case';
+import { RequestLineSignupSupportUseCase } from './application/request-line-signup-support.use-case';
 import { GetLineSignupStatusUseCase } from './application/get-line-signup-status.use-case';
 import { PackageChangeRequestUseCase } from './application/package-change-request.use-case';
 import { SesEventsUseCase, SNS_HTTP_GET_TOKEN } from './application/ses-event.use-case';
@@ -50,6 +51,7 @@ import { SystemSupportRequestController } from './presentation/http/system-suppo
     SubmitCompanySignupUseCase,
     SubmitLineSignupUseCase,
     GetLineSignupStatusUseCase,
+    RequestLineSignupSupportUseCase,
     PackageChangeRequestUseCase,
     PublicSignupStatusUseCase,
     SignupClaimUseCase,

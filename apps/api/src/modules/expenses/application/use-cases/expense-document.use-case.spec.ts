@@ -82,8 +82,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
 
     assert.equal(creates.length, 1);
     assert.equal(creates[0].lines.length, 1, 'the incomplete paper item is preserved in metadata, not fabricated as a line');
-    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
-    assert.match(result.replyTexts.join('\n'), /I02-CATEGORY/u);
+    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
+    assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
     assert.equal(updates.at(-1).status, 'DRAFT');
   });
 
@@ -100,8 +100,8 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     assert.equal(result.insertedAmount, null, 'amount stays staged until quantity is known');
     assert.equal(result.categoryId, null, 'AI category is a suggestion until the user accepts it');
     assert.equal(result.categoryName, 'ค่าอาหาร');
-    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
-    assert.match(result.replyTexts.join('\n'), /I01-CATEGORY/u);
+    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
+    assert.match(result.replyTexts.join('\n'), /หมวดค่าใช้จ่าย/u);
     const update = updates.at(-1);
     assert.equal(update.sourceDocumentType, 'EXPENSE_NOTE_TEXT');
     assert.equal(update.taxEvidenceStatus, 'SUPPORTING_ONLY');
@@ -401,7 +401,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     });
     assert.equal(result.insertedAmount, null);
     assert.equal(result.categoryId, null);
-    assert.match(result.replyTexts.join('\n'), /I01-QTY/u);
+    assert.match(result.replyTexts.join('\n'), /จำนวนและหน่วย/u);
   });
 
   it('is idempotent by LINE message id', async () => {

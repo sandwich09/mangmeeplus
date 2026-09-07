@@ -507,7 +507,11 @@ describe('P10-L LIFF client script', () => {
 
       const unbuilt = runSignupScript(signupStatus({ state: 'REJECTED', companyCreated: false }));
       await settle(); await settle();
-      assert.match(unbuilt.elements['progress-text']!.textContent, /ยังไม่ได้เปิดร้าน/);
+      assert.match(unbuilt.elements['progress-text']!.textContent, /สมัครใหม่ได้/);
+      assert.equal(unbuilt.elements['add-shop']!.hidden, false);
+      await unbuilt.click('add-shop');
+      assert.equal(unbuilt.views.find((view) => view.id === 'form-view')!.hidden, false);
+      assert.match(unbuilt.elements.link!.textContent, /ส่งคำขอให้ทีมงานตรวจสอบ/);
     });
 
     it('shows requested information together and exposes email correction from server capability', async () => {
@@ -635,15 +639,16 @@ describe('P10-L LIFF client script', () => {
     assert.notEqual(body.submissionId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
   });
 
-  it('reports only that the help command was sent and keeps a phone fallback', async () => {
+  it('files help directly with verified identity even when LIFF sendMessages is unavailable and keeps a phone fallback', async () => {
     const status = signupStatus({ state: 'PROVISIONING_FAILED' });
-    const sent = runSignupScript(status);
+    const sent = runSignupScript(status, [{ status: 200, body: status }, { status: 202, body: '{"received":true}' }], { sendMessagesFails: new Error('LIFF unavailable') });
     await settle(); await settle(); await sent.click('support'); await settle();
-    assert.equal(JSON.stringify(sent.sentMessages), JSON.stringify([[{ type: 'text', text: 'ติดต่อเจ้าหน้าที่' }]]));
-    assert.match(sent.elements.status!.textContent, /ส่งข้อความขอช่วยแล้ว/);
-    assert.doesNotMatch(sent.elements.status!.textContent, /รับเรื่องแล้ว/);
+    assert.equal(sent.sentMessages.length, 0);
+    assert.equal(sent.calls.at(-1)!.url, 'https://api.example.test/v1/public/line-signups/support');
+    assert.deepEqual(JSON.parse(sent.calls.at(-1)!.init.body), { idToken: 'aaa.bbb.ccc' });
+    assert.match(sent.elements.status!.textContent, /รับเรื่องขอความช่วยเหลือแล้ว/);
 
-    const failed = runSignupScript(status, [], { sendMessagesFails: new Error('network') });
+    const failed = runSignupScript(status, [], { fetchThrows: new Error('network') });
     await settle(); await settle(); await failed.click('support'); await settle();
     assert.match(failed.elements.status!.textContent, /ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้/);
     assert.match(failed.elements.status!.textContent, /098-256-5628/);
