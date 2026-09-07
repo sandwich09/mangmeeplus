@@ -67,6 +67,7 @@ jobs:
       ECS_DEPLOY_MANAGE_IAM: 'false'
       ECR_REGISTRY: 311414082667.dkr.ecr.ap-southeast-1.amazonaws.com
       PUBLIC_DOMAIN_URL: ${{ vars.PUBLIC_DOMAIN_URL }}
+      SES_FROM_ADDRESS: ${{ vars.SES_FROM_ADDRESS || 'contact@mangmeeplus.com' }}
       LINE_LOGIN_CHANNEL_ID: ${{ vars.LINE_LOGIN_CHANNEL_ID }}
       LINE_LIFF_ID: ${{ vars.LINE_LIFF_ID }}
       LINE_MESSAGING_CHANNEL_ID: ${{ vars.LINE_MESSAGING_CHANNEL_ID }}
