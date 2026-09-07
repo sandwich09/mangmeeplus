@@ -3149,6 +3149,21 @@ model CompanySignupRequest {
   lineProviderUserId     String?
   lineChannelId          String?
   lineDisplayName        String?
+  // Recovery/resolution: client intent and review outcome are durable facts. An existing-shop
+  // target is deliberately separate from companyId, which only ever means "provisioned here".
+  lineSignupIntent             String?
+  contactEmailConflict         Boolean?
+  reviewResolution             String?
+  resolutionNote               String?
+  resolvedExistingCompanyId    String?
+  resolvedAt                   DateTime?
+  resolvedByUserId             String?
+  repeatTrialGrantedAt         DateTime?
+  repeatTrialGrantedByUserId   String?
+  repeatTrialGrantNote         String?
+  sharedContactReviewedAt      DateTime?
+  sharedContactReviewedByUserId String?
+  sharedContactReviewNote      String?
   // Clickwrap evidence captured on LIFF and replayed into a LegalDocumentActionRecord at
   // provisioning (LEGAL-LIFF-01). Written once at submit; never edited afterwards.
   legalDocumentVersion          String?
@@ -3175,6 +3190,7 @@ model CompanySignupRequest {
   @@index([taxId])
   @@index([companyId])
   @@index([ownerUserId])
+  @@index([resolvedExistingCompanyId])
   @@index([lineChannelId, lineProviderUserId, state])
   // One open application per LINE account is enforced by a PARTIAL unique index that Prisma cannot
   // express; it lives in the migration SQL as
@@ -3520,9 +3536,28 @@ model LineSupportRequest {
   status             LineSupportRequestStatus @default(OPEN)
   answeredAt         DateTime?
   answeredByUserId   String?
+  /// The system operator currently responsible for this case. Kept as an id without a relation so
+  /// deleting/deactivating an operator cannot delete or rewrite the support record.
+  assignedToUserId   String?
+  assignedAt         DateTime?
+  assignmentNote     String?
+  /// One logical LINE reply operation. The UUID is reused with LINE while the same payload is retried.
+  replyOperationId   String?
+  replyTextHash      String?
+  replyFirstAttemptAt DateTime?
+  /// Latest bounded staff reply, so an unknown delivery can retry the exact payload after reload.
+  /// This is case data with the same retention as the customer's bounded support text.
+  lastReplyText      String?
+  /// Snapshot used to reconstruct the exact signed body when another operator retries the attempt.
+  lastReplySenderName String?
+  /// `PENDING` | `SENT` | `FAILED`; kept as a string so the existing request-status enum stays stable.
+  lastReplyDeliveryStatus String?
+  lastReplyError     String?
   closedAt           DateTime?
-  /// `admin` | `customer_resumed` | `expired`
+  /// `admin` | `customer_resumed` | `expired` | `resolved`
   closedReason       String?
+  resolvedByUserId   String?
+  resolutionNote     String?
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -3530,6 +3565,7 @@ model LineSupportRequest {
   /// The inbox reads and the expiry sweep both moved to `lastMessageAt` (UAT 2026-09-06), so the
   /// index on `requestedAt` no longer serves either — it stays for the 90-day purge's ordering.
   @@index([status, lastMessageAt])
+  @@index([status, lastMessageAt, id])
   @@index([lineUserId, status])
 }
 

@@ -11,6 +11,7 @@ const { SignupRowActions } = require('./SignupQueuePage') as typeof import('./Si
 function item(overrides: Partial<AdminSignupQueueItemDto> = {}): AdminSignupQueueItemDto {
   return {
     requestId: 'req_1',
+    version: 1,
     state: 'PENDING_REVIEW',
     companyName: 'ร้านทดสอบ',
     ownerDisplayName: 'สมชาย',
@@ -31,6 +32,7 @@ function render(overrides: Partial<AdminSignupQueueItemDto>): string {
       onApprove: () => {},
       onReject: () => {},
       onReissue: () => {},
+      onRetryIntake: () => {},
       onSuspend: () => {},
     }),
   );
@@ -71,6 +73,12 @@ describe('SignupRowActions — the problem tab, rendered', () => {
   it('still offers ระงับ on the settled rows §3.7 is about', () => {
     assert.match(render({ state: 'COMPLETED', autoApproved: true }), /ระงับ/);
     assert.match(render({ state: 'PROVISIONING_FAILED' }), /ระงับ/);
+  });
+
+  it('offers the intake retry on saved pre-review states', () => {
+    assert.match(render({ state: 'RECEIVED' }), /ทำขั้นตอนรับคำขอต่อ/);
+    assert.match(render({ state: 'VALIDATED' }), /ทำขั้นตอนรับคำขอต่อ/);
+    assert.doesNotMatch(render({ state: 'PENDING_REVIEW' }), /ทำขั้นตอนรับคำขอต่อ/);
   });
 
   it('offers nothing at all on a web-form row it cannot act on', () => {

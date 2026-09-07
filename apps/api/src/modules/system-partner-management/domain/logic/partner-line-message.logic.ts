@@ -1,5 +1,10 @@
 import { PARTNER_LINE_MESSAGE_MAX_LENGTH } from '@watchdog-bms/contracts';
 
+/** The customer must be able to tell a staff reply from an assistant response. */
+export function shopMessageBodyTh(senderName: string, text: string): string {
+  return `📮 ข้อความจากทีมงานมั่งมีพลัส (${senderName})\n${text}`;
+}
+
 /**
  * SEC-05. The admin message box is a push sent in the platform's own name into a customer's LINE
  * chat, where our OA is a Verified Account — so a link inside it inherits that trust. Anything that

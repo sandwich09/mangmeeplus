@@ -1,17 +1,46 @@
-import { Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { IsIn, IsOptional } from 'class-validator';
+import {
+  IsIn, IsISO8601, IsNumberString, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf,
+} from 'class-validator';
 import type { Request } from 'express';
-import type {
-  SupportRequestActionDto, SupportRequestCountDto, SupportRequestQueueDto, SupportRequestStatus,
+import {
+  PARTNER_LINE_MESSAGE_MAX_LENGTH,
+  type SupportRequestActionDto,
+  type SupportRequestCountDto,
+  type SupportRequestQueueDto,
+  type SupportRequestReclaimBody,
+  type SupportRequestReplyBody,
+  type SupportRequestReplyResultDto,
+  type SupportRequestResolveBody,
+  type SupportRequestStatus,
 } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
-import { SupportRequestAdminUseCase } from '../../application/support-request-admin.use-case';
+import {
+  SUPPORT_RESOLUTION_NOTE_MAX_LENGTH, SupportRequestAdminUseCase,
+} from '../../application/support-request-admin.use-case';
 
 export class SupportRequestQueryDto {
   // A class, not an inline type: only a DTO class reaches the global ValidationPipe (audit H-23).
   @IsIn(['OPEN', 'ANSWERED', 'CLOSED']) @IsOptional() status?: SupportRequestStatus;
+  @IsString() @MaxLength(128) @Matches(/^[A-Za-z0-9_-]+$/) @IsOptional() cursor?: string;
+  @IsNumberString() @IsOptional() limit?: string;
+}
+
+export class SupportRequestReplyDto implements SupportRequestReplyBody {
+  @IsString() @MaxLength(PARTNER_LINE_MESSAGE_MAX_LENGTH) text!: string;
+  @IsUUID('4') operationId!: string;
+  @ValidateIf((_object, value) => value !== null) @IsUUID('4') previousReplyOperationId!: string | null;
+}
+
+export class SupportRequestResolveDto implements SupportRequestResolveBody {
+  @IsString() @MaxLength(SUPPORT_RESOLUTION_NOTE_MAX_LENGTH) note!: string;
+}
+
+export class SupportRequestReclaimDto implements SupportRequestReclaimBody {
+  @IsISO8601({ strict: true }) expectedAssignedAt!: string;
+  @IsString() @MaxLength(SUPPORT_RESOLUTION_NOTE_MAX_LENGTH) reason!: string;
 }
 
 /**
@@ -33,8 +62,15 @@ export class SystemSupportRequestController {
   @RequirePermissions('system.partner_company.update')
   @ApiOperation({ summary: 'Customers waiting for a person, OPEN first' })
   @ApiResponse({ status: 200 })
-  list(@Query() query: SupportRequestQueryDto): Promise<SupportRequestQueueDto> {
-    return this.requests.list(query?.status);
+  list(
+    @Query() query: SupportRequestQueryDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestQueueDto> {
+    return this.requests.list(req.context.userId, {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.cursor ? { cursor: query.cursor } : {}),
+      ...(query.limit ? { limit: Number(query.limit) } : {}),
+    });
   }
 
   // Declared before the `:supportRequestId` routes below so `count` can never be read as an id.
@@ -44,6 +80,69 @@ export class SystemSupportRequestController {
   @ApiResponse({ status: 200 })
   count(): Promise<SupportRequestCountDto> {
     return this.requests.openCount();
+  }
+
+  @Post(':supportRequestId/claim')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Claim this live support request for the current operator' })
+  claim(
+    @Param('supportRequestId') id: string,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestActionDto> {
+    return this.requests.claim(id, req.context.userId, req.context.requestId);
+  }
+
+  @Post(':supportRequestId/release')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Release a support request owned by the current operator' })
+  release(
+    @Param('supportRequestId') id: string,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestActionDto> {
+    return this.requests.release(id, req.context.userId, req.context.requestId);
+  }
+
+  @Post(':supportRequestId/reclaim')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Explicitly take over a currently assigned case at the shown version' })
+  reclaim(
+    @Param('supportRequestId') id: string,
+    @Body() dto: SupportRequestReclaimDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestActionDto> {
+    return this.requests.reclaim(
+      id, dto.expectedAssignedAt, dto.reason, req.context.userId, req.context.requestId,
+    );
+  }
+
+  @Post(':supportRequestId/reply')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Send a request-bound LINE reply without exposing the LINE recipient id' })
+  reply(
+    @Param('supportRequestId') id: string,
+    @Body() dto: SupportRequestReplyDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestReplyResultDto> {
+    return this.requests.reply(
+      id, dto.text, dto.operationId, dto.previousReplyOperationId,
+      req.context.userId, req.context.requestId,
+    );
+  }
+
+  @Post(':supportRequestId/resolve')
+  @HttpCode(200)
+  @RequirePermissions('system.partner_company.update')
+  @ApiOperation({ summary: 'Close a support request with an explicit resolution note' })
+  resolve(
+    @Param('supportRequestId') id: string,
+    @Body() dto: SupportRequestResolveDto,
+    @Req() req: Request & { context: RequestContext },
+  ): Promise<SupportRequestActionDto> {
+    return this.requests.resolve(id, dto.note, req.context.userId, req.context.requestId);
   }
 
   @Post(':supportRequestId/answered')
@@ -62,7 +161,7 @@ export class SystemSupportRequestController {
   @Post(':supportRequestId/resume-ai')
   @HttpCode(200)
   @RequirePermissions('system.partner_company.update')
-  @ApiOperation({ summary: 'Clear the assistant pause for this customer and close the request' })
+  @ApiOperation({ summary: 'Clear the assistant pause without changing the managed case outcome' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404 })
   resumeAssistant(

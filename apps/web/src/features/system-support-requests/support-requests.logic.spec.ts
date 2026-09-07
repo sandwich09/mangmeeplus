@@ -2,13 +2,14 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SUPPORT_QUEUE_TABS,
-  canMarkAnswered,
   canResumeAi,
   notifiedSummary,
   supportAnswerHref,
   supportAnswerLabel,
   supportClosedReasonTh,
   supportReopenedChip,
+  supportReplyChip,
+  supportReplyWithinRetryWindow,
   supportStatusChip,
   waitedForTh,
   waitedLabelTh,
@@ -29,6 +30,7 @@ const item = (over: Record<string, unknown> = {}) => {
     lineNotifiedCount: 0,
     emailSent: true,
     notifyState: 'notified' as const,
+    assignedToMe: false,
     ...over,
   } as any;
 };
@@ -238,10 +240,8 @@ describe('where an operator goes to answer', () => {
   });
 });
 
-describe('which buttons a row may offer', () => {
-  it('marks answered only while the request is still open, but resumes AI until it closes', () => {
-    assert.equal(canMarkAnswered('OPEN'), true);
-    assert.equal(canMarkAnswered('ANSWERED'), false);
+describe('support action labels', () => {
+  it('resumes AI until explicit closure', () => {
     assert.equal(canResumeAi('ANSWERED'), true, 'answered still leaves the assistant paused');
     assert.equal(canResumeAi('CLOSED'), false);
   });
@@ -252,6 +252,15 @@ describe('which buttons a row may offer', () => {
     assert.equal(supportStatusChip('ANSWERED').tone, 'success');
     assert.equal(supportClosedReasonTh('customer_resumed'), 'ลูกค้าเรียก AI กลับเอง');
     assert.equal(supportClosedReasonTh('expired'), 'ครบ 24 ชั่วโมง');
+    assert.equal(supportClosedReasonTh('resolved'), 'แก้ไขสำเร็จและปิดเคสแล้ว');
     assert.equal(supportClosedReasonTh(undefined), null);
+  });
+
+  it('states delivery truth and only retries the same LINE operation inside 24 hours', () => {
+    assert.equal(supportReplyChip('SENT')!.tone, 'success');
+    assert.equal(supportReplyChip('FAILED')!.tone, 'danger');
+    const first = { replyFirstAttemptAt: '2026-09-05T02:00:00.000Z', lastReplyDeliveryStatus: 'FAILED' as const };
+    assert.equal(supportReplyWithinRetryWindow(first, new Date('2026-09-06T01:59:59.000Z')), true);
+    assert.equal(supportReplyWithinRetryWindow(first, new Date('2026-09-06T02:00:00.000Z')), false);
   });
 });

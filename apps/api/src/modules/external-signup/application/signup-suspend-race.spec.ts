@@ -79,7 +79,7 @@ function harness(options: { row?: Record<string, unknown>; mutateBeforeLock?: Re
 }
 
 const suspend = (h: ReturnType<typeof harness>) =>
-  h.useCase.decide('signup-1', { action: 'SUSPEND' }, 'admin-1', 'req-1', undefined, NOW);
+  h.useCase.decide('signup-1', { action: 'SUSPEND', version: 1 }, 'admin-1', 'req-1', undefined, NOW);
 
 describe('SUSPEND is decided under the fence, not from a stale snapshot (HIGH-2)', () => {
   it('refuses when the abandoned attempt finished into READY between the two reads', async () => {

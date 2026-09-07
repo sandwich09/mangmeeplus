@@ -204,7 +204,7 @@ export class SignupClaimEmailService {
     if (eventType === LINE_SIGNUP_PUSH_EVENT_TYPE) {
       const kind = readPayloadString(payload, 'kind');
       if (!kind) throw new Error('missing_line_push_kind');
-      return this.lineNotify.deliver(signupRequestId, kind as LineSignupPushKind);
+      return this.lineNotify.deliver(signupRequestId, kind as LineSignupPushKind, readPayloadNumber(payload, 'reviewVersion'));
     }
     throw new Error(`unhandled_signup_event_type:${eventType}`);
   }
@@ -419,6 +419,13 @@ function readPayloadString(payload: Record<string, unknown>, key: string): strin
   if (!data || typeof data !== 'object') return null;
   const value = (data as Record<string, unknown>)[key];
   return typeof value === 'string' && value ? value : null;
+}
+
+function readPayloadNumber(payload: Record<string, unknown>, key: string): number | undefined {
+  const data = payload.data;
+  if (!data || typeof data !== 'object') return undefined;
+  const value = (data as Record<string, unknown>)[key];
+  return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 }
 
 function errorCode(error: unknown): string {

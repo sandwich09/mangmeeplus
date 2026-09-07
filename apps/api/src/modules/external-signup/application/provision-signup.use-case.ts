@@ -10,7 +10,7 @@ import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
-import { SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
 export type ProvisionSignupCommand = {
   requestId: string;
@@ -65,6 +65,9 @@ export class ProvisionSignupUseCase {
     const request = claim.request;
     // P10-L §6: which owner shape applies is decided by the row's source, once, here.
     const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
+    if (lineOa && request.resolvedExistingCompanyId) {
+      throw new ConflictException('line_signup_existing_resolution_not_provisionable');
+    }
 
     if (!claim.claimed) {
       if (!request.companyId) throw new ConflictException('signup_provisioning_in_progress');
@@ -95,6 +98,7 @@ export class ProvisionSignupUseCase {
     const emailKeptExisting = Boolean(existingOwner?.email && existingOwner.email !== request.contactEmail);
 
     try {
+      if (lineOa) await this.assertLineProvisionAuthorized(request);
       // Review MEDIUM-A: this id lands in two foreign keys to User, so an operator that cannot be
       // resolved has to fail here, by name, rather than at the constraint with a Prisma code.
       const operator = await this.resolveOperator(request, cmd);
@@ -216,6 +220,53 @@ export class ProvisionSignupUseCase {
     const [operator] = await this.adminDirectory.activeSystemAdmins();
     if (operator) return { userId: operator.userId, fromDirectory: true };
     throw new ConflictException('signup_operator_unresolved');
+  }
+
+  /** The last fence before a trial/company side effect: review intent and any repeat grant are durable. */
+  private async assertLineProvisionAuthorized(request: SignupRow): Promise<void> {
+    if (request.reviewResolution !== 'NEW_SHOP') {
+      throw new ConflictException('line_signup_resolution_required');
+    }
+    const identity = await this.prisma.client.externalIdentity.findFirst({
+      where: {
+        provider: 'LINE',
+        providerUserId: request.lineProviderUserId ?? '',
+        providerChannelId: request.lineChannelId ?? '',
+      },
+      select: { userId: true, status: true, user: { select: { status: true } } },
+    });
+    if (identity?.status === 'DISABLED') throw new ConflictException('line_signup_identity_disabled');
+    if (identity && identity.user.status !== 'ACTIVE') throw new ConflictException('line_signup_account_blocked');
+    if (request.attachUserId && (!identity || identity.status !== 'ACTIVE' || identity.userId !== request.attachUserId)) {
+      throw new ConflictException('line_signup_existing_account_proof_changed');
+    }
+    if (!request.attachUserId && identity?.status === 'ACTIVE') {
+      const ownsCompanyCreatedByRequest = request.companyId
+        ? await this.prisma.client.companyMembership.findFirst({
+            where: {
+              companyId: request.companyId,
+              userId: identity.userId,
+              status: 'ACTIVE',
+              roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },
+            },
+            select: { id: true },
+          })
+        : null;
+      if (request.ownerUserId !== identity.userId && !ownsCompanyCreatedByRequest) {
+        throw new ConflictException('line_signup_existing_account_proof_changed');
+      }
+    }
+    if (!identity) return;
+    const priorCompanyCount = await this.prisma.client.companyMembership.count({
+      where: {
+        userId: identity.userId,
+        ...OWNED_COMPANY_MEMBERSHIP,
+        ...(request.companyId ? { companyId: { not: request.companyId } } : {}),
+      },
+    });
+    if (priorCompanyCount > 0 && !request.repeatTrialGrantedAt) {
+      throw new ConflictException('line_signup_repeat_trial_grant_required');
+    }
   }
 
   private createCompany(
@@ -512,6 +563,9 @@ type SignupRow = {
   source: string;
   autoApproved: boolean;
   approvedByUserId: string | null;
+  reviewResolution: string | null;
+  resolvedExistingCompanyId: string | null;
+  repeatTrialGrantedAt: Date | null;
   companyId: string | null;
   ownerUserId: string | null;
   companyName: string;

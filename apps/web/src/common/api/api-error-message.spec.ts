@@ -172,6 +172,26 @@ test('unknown stable codes never reach the user as snake_case', () => {
   assert.doesNotMatch(message, /some_new_rule/);
 });
 
+test('translates LINE signup recovery failures without exposing backend codes', () => {
+  const cases: Record<string, RegExp> = {
+    line_signup_resolution_required: /เลือกผลคำขอ LINE/,
+    line_signup_existing_shop_proof_required: /สิทธิ์ LINE/,
+    line_signup_repeat_trial_grant_required: /ทดลองใช้ฟรี/,
+    line_signup_trial_grant_note_required: /เหตุผล/,
+    line_signup_resolution_note_required: /ข้อมูลที่ต้องขอ/,
+    line_signup_shared_contact_review_required: /ข้อมูลติดต่อร่วมกัน/,
+    line_signup_submission_conflict: /คำขอ LINE เดิม/,
+    line_signup_version_conflict: /โหลดรายการล่าสุด/,
+    line_signup_contact_update_not_allowed: /แก้อีเมลติดต่อไม่ได้/,
+    line_signup_retry_not_available: /โหลดสถานะล่าสุด/,
+  };
+  for (const [code, expected] of Object.entries(cases)) {
+    const message = apiErrorMessage(apiError(code, { status: 409, code }));
+    assert.match(message, expected, code);
+    assert.doesNotMatch(message, /line_signup_/i, code);
+  }
+});
+
 test('translates the document-number 409 family', () => {
   assert.equal(
     translateApiError('Only COMMITTED document numbers can be voided.'),

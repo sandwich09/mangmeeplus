@@ -20,6 +20,9 @@ const REQUEST = {
   source: 'official-site',
   companyId: null as string | null,
   ownerUserId: null as string | null,
+  reviewResolution: null as string | null,
+  resolvedExistingCompanyId: null as string | null,
+  repeatTrialGrantedAt: null as Date | null,
 };
 
 const CMD = {
@@ -38,6 +41,7 @@ function harness(options: {
   systemAdmins?: Array<{ companyId: string; userId: string }>;
   /** §15.6 (c): the core reports a fence taken from an abandoned attempt. */
   reclaimedStale?: boolean;
+  priorCompanyCount?: number;
 } = {}) {
   const onboardingCalls: any[] = [];
   const companyUpdates: any[] = [];
@@ -59,6 +63,17 @@ function harness(options: {
   const prisma = {
     client: {
       user: { findUnique: async () => (options.existingOwnerEmail === undefined ? null : { email: options.existingOwnerEmail }) },
+      externalIdentity: {
+        findFirst: async () => request.source === 'line-oa' && request.attachUserId
+          ? { userId: request.attachUserId, status: 'ACTIVE', user: { status: 'ACTIVE' } }
+          : null,
+      },
+      companyMembership: {
+        count: async () => options.priorCompanyCount ?? 0,
+        findFirst: async () => request.companyId && request.ownerUserId
+          ? { id: 'membership-created-by-request' }
+          : null,
+      },
       company: { update: async (args: any) => { companyUpdates.push(args); return {}; } },
       companyPlanTerm: {
         upsert: async (args: any) => { planTermUpserts.push(args); return {}; },
@@ -360,6 +375,7 @@ describe('ProvisionSignupUseCase — contactEmail is nullable now (review B-03)'
 // verified LINE identity is the account, and the clickwrap the owner gave on LIFF rides along.
 const LINE_REQUEST = {
   source: 'line-oa',
+  reviewResolution: 'NEW_SHOP',
   contactEmail: null,
   pendingPasswordHash: null,
   taxId: null,

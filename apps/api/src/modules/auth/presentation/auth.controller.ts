@@ -541,14 +541,17 @@ export class AuthController {
       },
       style: 'label{display:block;margin-top:16px;margin-bottom:6px;font-weight:600}'
         + '\n    input{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:10px;font-size:16px;font-family:inherit;color:var(--ink)}'
+        + '\n    .secondary{margin-top:10px;background:#fff;color:var(--brand-dark);border:1px solid var(--brand-dark)}'
+        + '\n    .quiet{margin-top:10px;background:#fff;color:var(--ink);border:1px solid var(--line)}'
+        + '\n    .actions{margin-top:16px}'
+        + '\n    .actions button+button{margin-top:10px}'
         + '\n    .legal{margin-top:20px;padding:12px;background:var(--ground);border:1px solid var(--line);border-radius:10px;font-size:14px}'
         + '\n    .legal li{margin-bottom:6px}'
         + '\n    .fine{color:var(--muted);font-size:14px}'
         // No <p> wrapper around the button: a hidden button inside a visible paragraph still left
         // that paragraph's margins on the page, as a 16px gap under the notice (review LOW-5).
         + '\n    #notice-action{margin-bottom:12px}',
-      content: `      <h1>เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
-      <p id="greeting"></p>
+      content: `      <p id="greeting"></p>
       <p id="status" class="notice notice-info">กำลังเตรียมหน้าให้ค่ะ</p>
       <button id="notice-action" hidden></button>
       <section id="retry-view" data-view hidden>
@@ -556,6 +559,7 @@ export class AuthController {
         <p><button id="retry">ลองอีกครั้ง</button></p>
       </section>
       <section id="form-view" data-view hidden>
+        <h1 id="form-title">เปิดร้านใหม่ ทดลองใช้ฟรี</h1>
         <label for="company-name">ชื่อร้าน</label>
         <input id="company-name" type="text" maxlength="${LINE_SIGNUP_COMPANY_NAME_MAX}" autocomplete="organization" />
         <p id="company-name-error" class="field-error" hidden></p>
@@ -578,16 +582,27 @@ export class AuthController {
         </section>
         <p><button id="link" disabled>ยอมรับและเริ่มทดลองใช้ฟรี</button></p>
         <p class="fine">ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง</p>
+        <button id="start-existing" type="button" class="secondary">เคยใช้แล้ว เข้าร้านเดิม</button>
+        <button id="form-support" type="button" class="quiet">ติดต่อเจ้าหน้าที่</button>
       </section>
-      <section id="done-view" data-view hidden>
-        <h2>ได้รับแล้ว</h2>
-        <p id="done-text"></p>
-        <p><button data-close>ปิด</button></p>
-      </section>
-      <section id="pending-view" data-view hidden>
-        <h2>ได้รับแล้ว</h2>
-        <p id="pending-text"></p>
-        <p><button data-close>ปิด</button></p>
+      <section id="progress-view" data-view hidden>
+        <h2 id="progress-title"></h2>
+        <p id="progress-text"></p>
+        <div id="existing-companies" class="actions"></div>
+        <section id="email-update" hidden>
+          <label for="updated-contact-email">แก้อีเมลเจ้าของร้าน</label>
+          <input id="updated-contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" />
+          <p id="updated-contact-email-error" class="field-error" hidden></p>
+          <button id="save-email" type="button">บันทึกอีเมลและทำคำขอเดิมต่อ</button>
+        </section>
+        <div class="actions">
+          <button id="retry-intake" type="button" hidden>ทำคำขอเดิมต่อ</button>
+          <button id="retry-status" type="button" hidden>ตรวจสอบสถานะอีกครั้ง</button>
+          <button id="edit-email" type="button" class="secondary" hidden>แก้อีเมล</button>
+          <button id="add-shop" type="button" class="secondary" hidden>เปิดร้านเพิ่ม</button>
+          <button id="support" type="button" class="quiet" hidden>ติดต่อเจ้าหน้าที่</button>
+          <button data-close type="button" class="quiet">ปิด</button>
+        </div>
       </section>
       <pre id="detail"></pre>`,
     });

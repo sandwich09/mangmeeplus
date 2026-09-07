@@ -149,6 +149,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   // P10-L §3.2/§3.5. Signup collects before it sends, so its button submits rather than auto-running;
   // signupReady is what tells the one handler which of the two phases it is in.
   let signupReady = false;
+  let signupInitialized = false;
+  let signupIntent = 'FIRST_SHOP';
+  let lineUserId = '';
+  let savedSubmission = null;
+  let lastSignupStatus = null;
 
   // One sentence for every "we cannot do this right now", so a flag that is off and a service that
   // is down read the same to a shop owner — neither is their problem to diagnose.
@@ -161,8 +166,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
    * the people who can help instead of inviting another tap.
    */
   const SIGNUP_BLOCKED_TH = 'บัญชี LINE นี้เปิดร้านใหม่ไม่ได้ค่ะ กรุณาติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com นะคะ';
-  /** States in which an application is still travelling — the page shows status, not the form. */
-  const OPEN_SIGNUP_STATES = ['RECEIVED', 'VALIDATED', 'PENDING_REVIEW', 'PROVISIONING', 'READY', 'PROVISIONING_FAILED'];
+  const SIGNUP_STORAGE_KEY = 'mangmee_line_signup_submission_v1';
   const START_REASON_TH = {
     suspended: 'ร้านนี้ถูกระงับการใช้งานอยู่ค่ะ ติดต่อทีมงานเพื่อเปิดใช้อีกครั้งได้นะคะ',
     expired: 'ช่วงทดลองใช้ของร้านนี้หมดอายุแล้วค่ะ พิมพ์ ขอเปลี่ยนแพ็กเกจ ในแชทได้เลย ทีมงานจะติดต่อกลับนะคะ',
@@ -204,6 +208,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     // The release moved under a page left open. Only a real reload re-renders the text being agreed to.
     legal_release_changed: { tone: 'warning', text: 'หน้านี้เปิดค้างไว้นาน ข้อกำหนดมีฉบับใหม่แล้ว', advice: 'แตะปุ่มด้านล่างเพื่อโหลดหน้าใหม่ แล้วยอมรับอีกครั้งนะคะ', action: 'reload' },
     line_signup_already_pending: { tone: 'info', text: 'มีคำขอเดิมรออนุมัติอยู่แล้ว', advice: 'ทีมงานกำลังตรวจสอบให้อยู่ค่ะ พร้อมใช้เมื่อไหร่จะแจ้งในแชทนี้นะคะ' },
+    line_signup_submission_conflict: { tone: 'warning', text: 'ข้อมูลที่ส่งไม่ตรงกับคำขอเดิม', advice: 'แตะตรวจสอบสถานะก่อน หากต้องการเปิดร้านเพิ่มให้เลือกปุ่ม เปิดร้านเพิ่ม จากหน้าผลเดิมนะคะ' },
+    line_signup_version_conflict: { tone: 'warning', text: 'คำขอนี้มีข้อมูลใหม่กว่าแล้ว', advice: 'แตะตรวจสอบสถานะ แล้วแก้จากข้อมูลล่าสุดนะคะ' },
+    line_signup_contact_update_not_allowed: { tone: 'warning', text: 'ตอนนี้แก้อีเมลจากหน้านี้ไม่ได้', advice: 'ตรวจสอบสถานะล่าสุด หรือ' + SUPPORT_TH },
+    line_signup_retry_not_available: { tone: 'warning', text: 'ขั้นตอนนี้ทำต่อจากหน้านี้ไม่ได้แล้ว', advice: 'แตะตรวจสอบสถานะเพื่อดูผลล่าสุดนะคะ' },
+    company_signup_request_not_found: { tone: 'error', text: 'ไม่พบคำขอที่แก้ไขได้จากบัญชี LINE นี้', advice: SUPPORT_TH },
     line_signup_disabled: { tone: 'error', text: 'ตอนนี้ยังเปิดให้สมัครทางนี้ไม่ได้', advice: 'ลองใหม่อีกครั้งภายหลัง หรือ' + SUPPORT_TH },
     web_base_url_not_configured: { tone: 'error', text: 'ระบบขัดข้อง ส่งคำขอไม่สำเร็จ', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH },
     // AUTO_FREE provisions inside the submit, so this 409 from provision-signup reaches this page.
@@ -227,7 +236,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     503: { tone: 'error', text: 'ระบบขัดข้องชั่วคราว', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH }
   };
   const GENERIC_ERROR = { tone: 'error', text: 'ระบบขัดข้อง ส่งคำขอไม่สำเร็จ', advice: 'ลองใหม่อีกครั้ง หากยังไม่ได้ ' + SUPPORT_TH };
-  const NETWORK_GUIDANCE = { tone: 'warning', text: 'เชื่อมต่อไม่สำเร็จ', advice: 'ตรวจสัญญาณอินเทอร์เน็ต แล้วแตะปุ่มเพื่อลองใหม่อีกครั้งนะคะ' };
+  const NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังยืนยันผลการส่งไม่ได้', advice: 'ข้อมูลเดิมยังอยู่ แตะลองอีกครั้งเพื่อตรวจหรือทำคำขอเดิมต่อได้ค่ะ' };
+  const SUPPORT_NETWORK_GUIDANCE = { tone: 'warning', text: 'ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้', advice: SUPPORT_TH };
   const BUSY_LABEL_TH = 'กำลังส่ง…';
 
   function compareVersion(actual, minimum) {
@@ -314,7 +324,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
    */
   function setGuidance(entry, detail) {
     setStatus(entry.advice ? entry.text + '\n' + entry.advice : entry.text, detail || '', entry.tone);
-    setFieldError(entry.field || '', entry.field ? entry.advice : '');
+    setFieldErrors(entry.fields || (entry.field ? { [entry.field]: entry.advice } : {}), entry.field || '');
     if (actionEl) {
       actionEl.hidden = entry.action !== 'reload';
       if (entry.action === 'reload') actionEl.textContent = 'โหลดหน้าใหม่';
@@ -333,16 +343,22 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
    * the other, so neither was on screen at the moment of the tap (review BLOCKER 1).
    */
   function setFieldError(inputId, message) {
+    setFieldErrors(inputId && message ? { [inputId]: message } : {}, inputId);
+  }
+
+  /** Marks every missing field together; focus still goes only to the first one. */
+  function setFieldErrors(messages, focusId) {
     for (let index = 0; index < FIELD_IDS.length; index += 1) {
       const id = FIELD_IDS[index];
       const input = document.getElementById(id);
       const errorEl = document.getElementById(id + '-error');
-      const active = id === inputId && !!message;
-      setMessage(errorEl, active ? message : '');
+      const message = messages[id] || '';
+      const active = !!message;
+      setMessage(errorEl, message);
       if (!input) continue;
       if (active) {
         input.setAttribute('aria-invalid', 'true');
-        if (input.focus) input.focus();
+        if (id === focusId && input.focus) input.focus();
       } else if (input.removeAttribute) {
         input.removeAttribute('aria-invalid');
       }
@@ -513,9 +529,48 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     return error;
   }
 
+  function newSubmissionId() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+    return Array.from(bytes, function (byte, index) {
+      const hex = byte.toString(16).padStart(2, '0');
+      return index === 4 || index === 6 || index === 8 || index === 10 ? '-' + hex : hex;
+    }).join('');
+  }
+
+  function readSavedSubmission() {
+    if (!lineUserId) return null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SIGNUP_STORAGE_KEY) || 'null');
+      if (!parsed || parsed.lineUserId !== lineUserId || !parsed.body) return null;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(parsed.body.submissionId || '')) return null;
+      if (parsed.body.intent !== 'FIRST_SHOP' && parsed.body.intent !== 'ADD_SHOP') return null;
+      return parsed.body;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveSubmission(body) {
+    savedSubmission = body;
+    if (!lineUserId) return;
+    localStorage.setItem(SIGNUP_STORAGE_KEY, JSON.stringify({ lineUserId, body }));
+  }
+
+  function clearSavedSubmission(submissionId) {
+    if (submissionId && savedSubmission && savedSubmission.submissionId !== submissionId) return;
+    savedSubmission = null;
+    localStorage.removeItem(SIGNUP_STORAGE_KEY);
+  }
+
   function showOnly(viewId) {
     const views = document.querySelectorAll('[data-view]');
     for (let index = 0; index < views.length; index += 1) views[index].hidden = views[index].id !== viewId;
+    // A submit button sits near the bottom of the long form. Once that form collapses, Chromium can
+    // retain the old scroll offset and leave the customer looking at blank space below the result.
+    if (typeof scrollTo === 'function') scrollTo(0, 0);
   }
 
   /** One read, on demand. Never on a timer: the answer arrives in the chat, not on this page. */
@@ -531,101 +586,332 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     return text ? JSON.parse(text) : null;
   }
 
-  /** P10-L §3.2. One read on open, then the form or the waiting card. */
-  async function openSignup() {
-    if (!await initLiff()) return;
-    const idToken = currentIdToken();
-    if (!idToken) return;
-    const decoded = liff.getDecodedIDToken();
-    const greetingEl = document.getElementById('greeting');
-    if (greetingEl && decoded && decoded.name) greetingEl.textContent = 'สวัสดีคุณ ' + decoded.name;
-    const status = await readSignupStatus(idToken);
-    if (status && OPEN_SIGNUP_STATES.indexOf(status.state) >= 0) {
-      showPending(status);
+  function resetProgressActions() {
+    for (const id of ['retry-intake', 'retry-status', 'edit-email', 'add-shop', 'support', 'email-update']) {
+      const el = document.getElementById(id);
+      if (el) el.hidden = true;
+    }
+    const companiesEl = document.getElementById('existing-companies');
+    if (companiesEl) companiesEl.textContent = '';
+  }
+
+  function setProgress(title, text, progress) {
+    signupReady = false;
+    document.getElementById('progress-title').textContent = title;
+    document.getElementById('progress-text').textContent = text;
+    setStatus('');
+    resetProgressActions();
+    if (progress && progress.canRetryIntake) document.getElementById('retry-intake').hidden = false;
+    if (progress && progress.canUpdateContactEmail) document.getElementById('edit-email').hidden = false;
+    showOnly('progress-view');
+  }
+
+  function showSupport() {
+    const el = document.getElementById('support');
+    if (el) el.hidden = false;
+  }
+
+  function renderEligibleCompanies(companies, entryCompanyId, entryOnly) {
+    const listEl = document.getElementById('existing-companies');
+    if (!listEl) return false;
+    const ordered = (companies || []).slice().sort(function (left, right) {
+      return left.companyId === entryCompanyId ? -1 : right.companyId === entryCompanyId ? 1 : 0;
+    });
+    let canEnter = false;
+    for (let index = 0; index < ordered.length; index += 1) {
+      const company = ordered[index];
+      if (entryOnly && company.companyId !== entryCompanyId) continue;
+      if (company.canEnter === true) {
+        canEnter = true;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = entryOnly ? 'เริ่มใช้งาน' : 'เข้าใช้ ' + company.companyName;
+        button.addEventListener('click', function () {
+          void runWith(function () { return startSession(company.companyId); }, button, 'กำลังเปิดร้าน…');
+        });
+        listEl.appendChild(button);
+      } else {
+        const note = document.createElement('p');
+        note.textContent = company.companyName + ' หมดอายุแล้ว ติดต่อทีมงานเพื่อเลือกแพ็กเกจก่อนเข้าใช้งานค่ะ';
+        listEl.appendChild(note);
+      }
+    }
+    return canEnter;
+  }
+
+  /** The only mapping from a server signup state to what this page shows. */
+  function renderSignupStatus(status) {
+    const envelope = status && Object.prototype.hasOwnProperty.call(status, 'progress')
+      ? status
+      : { progress: status || null, eligibleCompanies: [] };
+    const progress = envelope.progress;
+    const companies = Array.isArray(envelope.eligibleCompanies) ? envelope.eligibleCompanies : [];
+    lastSignupStatus = envelope;
+
+    if (!progress) {
+      if (companies.length > 0) {
+        setProgress('ร้านของคุณ', 'เลือกเข้าร้านเดิมได้เลยค่ะ หากต้องการร้านใหม่ ให้เลือก เปิดร้านเพิ่ม แยกต่างหาก', null);
+        const entered = renderEligibleCompanies(companies, '');
+        document.getElementById('add-shop').hidden = false;
+        if (!entered) showSupport();
+        return;
+      }
+      if (savedSubmission) {
+        setProgress('ยังยืนยันผลการส่งไม่ได้', 'ข้อมูลที่กรอกยังอยู่ในอุปกรณ์นี้ แตะทำคำขอเดิมต่อ ระบบจะทำรายการเดิมต่อและไม่เปิดคำขอซ้ำค่ะ', null);
+        document.getElementById('retry-intake').hidden = false;
+        showSupport();
+        return;
+      }
+      showSignupForm('FIRST_SHOP');
       return;
     }
+
+    if (savedSubmission && savedSubmission.submissionId === progress.submissionId && !progress.canRetryIntake) {
+      clearSavedSubmission(progress.submissionId);
+    }
+
+    const shop = progress.companyName || 'ร้านของคุณ';
+    if (progress.state === 'COMPLETED') {
+      const returned = progress.resolution === 'RETURN_EXISTING';
+      setProgress('พร้อมเริ่มใช้งาน', returned
+        ? shop + ' ใช้ต่อได้เลยค่ะ ไม่มีการเปิดร้านหรือเริ่มทดลองใช้ฟรีใหม่'
+        : shop + ' เปิดสำเร็จแล้วค่ะ', progress);
+      const entered = renderEligibleCompanies(companies, progress.entryCompanyId || '', true);
+      if (!entered) {
+        document.getElementById('progress-title').textContent = 'ร้านนี้ยังเข้าใช้ไม่ได้';
+        document.getElementById('progress-text').textContent = 'สิทธิ์หรือแพ็กเกจปัจจุบันยังไม่พร้อมให้เข้าใช้ กรุณาติดต่อทีมงานเพื่อตรวจสอบค่ะ';
+        showSupport();
+      }
+      document.getElementById('add-shop').hidden = false;
+      return;
+    }
+
+    if (progress.resolution === 'REQUEST_INFO') {
+      setProgress('ต้องการข้อมูลเพิ่ม', progress.requestedInformation
+        ? 'ทีมงานขอข้อมูลต่อไปนี้ให้ครบในครั้งเดียว:\n' + progress.requestedInformation
+        : 'ทีมงานต้องตรวจข้อมูลเพิ่ม กรุณาแตะติดต่อเจ้าหน้าที่ด้านล่างค่ะ', progress);
+      document.getElementById('retry-status').hidden = false;
+      showSupport();
+      return;
+    }
+
+    if (progress.resolution === 'PLAN_REVIEW') {
+      setProgress('รอจัดแพ็กเกจ', shop + ' ยังไม่ถูกเปิด เพราะคำขอนี้ต้องตรวจแพ็กเกจก่อน ทีมงานจะติดต่อกลับค่ะ', progress);
+      showSupport();
+      return;
+    }
+
+    if (progress.state === 'RECEIVED' || progress.state === 'VALIDATED') {
+      setProgress('บันทึกคำขอแล้ว', 'ข้อมูลคำขออยู่ในระบบแล้ว แต่ขั้นตอนตรวจรับยังไม่จบค่ะ', progress);
+      if (!progress.canRetryIntake) {
+        document.getElementById('retry-status').hidden = false;
+      }
+      showSupport();
+      return;
+    }
+
+    if (progress.state === 'PENDING_REVIEW') {
+      const timing = progress.businessHours
+        ? 'ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH
+        : 'ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH;
+      setProgress('รับคำขอแล้ว', shop + ' อยู่ระหว่างตรวจสอบค่ะ ' + timing + ' พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ', progress);
+      showSupport();
+      return;
+    }
+
+    if (progress.state === 'PROVISIONING') {
+      setProgress('กำลังเปิดร้าน', 'ข้อมูลคำขอบันทึกแล้ว ระบบกำลังเปิดร้านให้คุณอยู่ค่ะ', progress);
+      document.getElementById('retry-status').hidden = false;
+      return;
+    }
+
+    if (progress.state === 'PROVISIONING_FAILED' || progress.state === 'READY') {
+      setProgress(progress.state === 'READY' ? 'เปิดร้านแล้ว แต่ยังปิดงานไม่จบ' : 'เปิดร้านยังไม่สำเร็จ',
+        'ข้อมูลบันทึกไว้แล้ว ไม่ต้องสมัครใหม่ค่ะ แตะตรวจสอบสถานะอีกครั้ง หรือติดต่อทีมงานให้ทำรายการเดิมต่อ', progress);
+      document.getElementById('retry-status').hidden = false;
+      showSupport();
+      return;
+    }
+
+    if (progress.state === 'REJECTED' || progress.state === 'SUSPENDED' || progress.state === 'EXPIRED') {
+      setProgress(progress.state === 'REJECTED' ? 'คำขอไม่ได้รับอนุมัติ' : progress.state === 'SUSPENDED' ? 'คำขอถูกระงับ' : 'คำขอนี้หมดอายุแล้ว',
+        progress.companyCreated
+          ? 'ร้านเคยเปิดสำเร็จแล้ว แต่ตอนนี้ยังเข้าใช้ไม่ได้ กรุณาติดต่อทีมงานเพื่อตรวจสิทธิ์ค่ะ'
+          : 'ยังไม่ได้เปิดร้านจากคำขอนี้ กรุณาติดต่อทีมงานเพื่อตรวจสอบค่ะ', progress);
+      showSupport();
+      return;
+    }
+
+    setProgress('กำลังตรวจสอบคำขอ', 'ข้อมูลบันทึกแล้ว กรุณาตรวจสอบสถานะอีกครั้ง หรือติดต่อทีมงานค่ะ', progress);
+    document.getElementById('retry-status').hidden = false;
+    showSupport();
+  }
+
+  function showSignupForm(intent) {
+    signupIntent = intent;
+    signupReady = true;
+    const addShop = intent === 'ADD_SHOP';
+    document.getElementById('form-title').textContent = addShop ? 'เปิดร้านเพิ่ม' : 'เปิดร้านใหม่ ทดลองใช้ฟรี';
+    actionBtn.textContent = addShop ? 'ยืนยันเปิดร้านเพิ่ม' : 'ยอมรับและเริ่มทดลองใช้ฟรี';
+    if (addShop) {
+      clearSavedSubmission();
+      document.getElementById('company-name').value = '';
+      const progress = lastSignupStatus && lastSignupStatus.progress;
+      document.getElementById('phone-number').value = progress && progress.phoneNumber ? progress.phoneNumber : '';
+      document.getElementById('contact-email').value = progress && progress.contactEmail ? progress.contactEmail : '';
+    }
+    setFieldError('', '');
     setStatus('');
     showOnly('form-view');
-    signupReady = true;
     actionBtn.disabled = false;
   }
 
-  function showPending(status) {
-    const companyName = status && status.companyName ? status.companyName : '';
-    const shop = companyName ? 'ร้าน ' + companyName + ' ' : '';
-    // businessHours is the SERVER's answer for the Bangkok clock; a page left open since yesterday
-    // must not narrate hours it worked out itself.
-    // Same rule as the done card: the heading is "ได้รับแล้ว", so the body never says it again.
-    document.getElementById('pending-text').textContent = status && status.businessHours
-      ? 'คำขอเปิด' + shop + 'เข้าระบบแล้วค่ะ ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมเมื่อไหร่จะแจ้งในแชทนี้นะคะ'
-      : 'คำขอเปิด' + shop + 'เข้าระบบแล้วค่ะ ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' นะคะ';
-    setStatus('');
-    showOnly('pending-view');
+  /** P10-L §3.2. One read on open, then the shared status renderer. */
+  async function openSignup() {
+    if (!await initLiff()) return;
+    signupInitialized = true;
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    const decoded = liff.getDecodedIDToken();
+    lineUserId = decoded && typeof decoded.sub === 'string' ? decoded.sub : '';
+    savedSubmission = readSavedSubmission();
+    const greetingEl = document.getElementById('greeting');
+    if (greetingEl && decoded && decoded.name) greetingEl.textContent = 'สวัสดีคุณ ' + decoded.name;
+    renderSignupStatus(await readSignupStatus(idToken));
   }
 
   async function submitSignup() {
     setFieldError('', '');
-    const companyName = (document.getElementById('company-name').value || '').trim();
-    // Nothing has been sent at this point, so the summary must NOT read as a failed submit — it is
-    // a form that is not finished yet, which is a warning, not an error (review BLOCKER 1).
-    if (!companyName) {
-      throw refusal({ tone: 'warning', text: 'กรอกชื่อร้านก่อนนะคะ', advice: 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ', field: 'company-name' });
+    const companyName = savedSubmission
+      ? savedSubmission.companyName
+      : (document.getElementById('company-name').value || '').trim();
+    const phoneNumber = savedSubmission
+      ? savedSubmission.phoneNumber
+      : (document.getElementById('phone-number').value || '').replace(/[^0-9]/g, '');
+    const contactEmail = savedSubmission
+      ? savedSubmission.contactEmail
+      : (document.getElementById('contact-email').value || '').trim().toLowerCase();
+    const fields = {};
+    if (!companyName) fields['company-name'] = 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ';
+    if (!/^0[0-9]{9}$/.test(phoneNumber)) fields['phone-number'] = PHONE_RULE_TH;
+    if (!contactEmail || contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+      fields['contact-email'] = EMAIL_RULE_TH;
     }
-    const phoneNumber = (document.getElementById('phone-number').value || '').replace(/[^0-9]/g, '');
-    if (!/^0[0-9]{9}$/.test(phoneNumber)) {
-      throw refusal({ tone: 'warning', text: 'กรอกเบอร์มือถือให้ครบก่อนนะคะ', advice: PHONE_RULE_TH, field: 'phone-number' });
-    }
-    const contactEmail = (document.getElementById('contact-email').value || '').trim().toLowerCase();
-    if (!contactEmail) throw refusal(SIGNUP_GUIDANCE.line_signup_email_required);
-    if (contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
-      throw refusal(SIGNUP_GUIDANCE.line_signup_email_invalid);
+    const missing = savedSubmission ? [] : FIELD_IDS.filter(function (id) { return !!fields[id]; });
+    if (missing.length > 0) {
+      throw refusal({
+        tone: 'warning',
+        text: 'กรอกข้อมูลให้ครบ ' + missing.length + ' จุด',
+        advice: 'แก้ช่องที่มีข้อความสีแดงให้ครบ แล้วส่งอีกครั้งนะคะ',
+        fields,
+        field: missing[0]
+      });
     }
     const referralCode = validReferralCode(query.get('ref'));
     const idToken = currentIdToken();
     if (!idToken) return;
+    const body = savedSubmission || {
+      submissionId: newSubmissionId(),
+      intent: signupIntent,
+      companyName,
+      phoneNumber,
+      contactEmail,
+      ...(referralCode ? { referralCode } : {}),
+      legal: {
+        documentVersion: root.dataset.legalVersion || '',
+        statementSha256: root.dataset.legalStatement || '',
+        releaseFingerprintSha256: root.dataset.legalRelease || '',
+        displayChallenge: root.dataset.legalChallenge || '',
+        locale: root.dataset.legalLocale || 'th'
+      }
+    };
+    saveSubmission(body);
     setStatus('กำลังส่งคำขอ...', '', 'info');
     const res = await fetch(apiBase + '/public/line-signups', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        idToken,
-        companyName,
-        phoneNumber,
-        contactEmail,
-        ...(referralCode ? { referralCode } : {}),
-        // Echoed exactly as this page rendered them: the server refuses anything that is not the
-        // release it is serving right now (LEGAL-LIFF-01).
-        legal: {
-          documentVersion: root.dataset.legalVersion || '',
-          statementSha256: root.dataset.legalStatement || '',
-          releaseFingerprintSha256: root.dataset.legalRelease || '',
-          displayChallenge: root.dataset.legalChallenge || '',
-          locale: root.dataset.legalLocale || 'th'
-        }
-      })
+      body: JSON.stringify({ idToken, ...body })
     });
     const text = await res.text();
     if (res.status === 409 && refusalCode(text) === 'line_signup_already_pending') {
-      // A second tab, or a submit that raced the open read. One more read — not a poll — so the
-      // waiting card names the shop and the real business-hours answer instead of guessing both.
-      showPending(await readSignupStatus(idToken));
+      renderSignupStatus(await readSignupStatus(idToken));
       return;
     }
     // Every other refusal becomes what went wrong plus what to do next, in the right tone.
     if (!res.ok) throw refusal(signupGuidance(res.status, text));
-    const accepted = JSON.parse(text);
-    // The card's own heading already says "ได้รับแล้ว", so the body says what happens next and
-    // nothing else — repeating the heading was the first thing the Owner read twice (2026-09-05).
-    document.getElementById('done-text').textContent = accepted.existingAccount
-      // A second shop for an existing owner always goes to the review queue (§3.3), so it does NOT
-      // appear in บริษัทของฉัน yet. Saying where it will show up is what stops the owner reading the
-      // unchanged picker as "my shop vanished" (UAT 2026-09-06).
-      ? 'เพิ่มร้านที่ 2 ให้บัญชีของคุณแล้วค่ะ ร้านใหม่จะขึ้นในเมนู บริษัทของฉัน หลังทีมงานอนุมัตินะคะ พร้อมเมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
-      : (accepted.businessHours
-        ? 'ทีมงานกำลังตรวจสอบ ปกติดำเนินการให้ภายในวันทำการ ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ'
-        : 'ตอนนี้อยู่นอกเวลาทำการ ทีมงานจะดูให้ในวันทำการถัดไป ' + BUSINESS_HOURS_TH + ' พร้อมใช้เมื่อไหร่เราจะส่งข้อความในแชทนี้นะคะ');
-    setStatus('');
-    showOnly('done-view');
+    renderSignupStatus(JSON.parse(text));
+  }
+
+  async function refreshSignupStatus() {
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    renderSignupStatus(await readSignupStatus(idToken));
+  }
+
+  async function retrySignupIntake() {
+    const progress = lastSignupStatus && lastSignupStatus.progress;
+    if (!progress || !progress.canRetryIntake) return submitSignup();
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    const res = await fetch(apiBase + '/public/line-signups/' + encodeURIComponent(progress.requestId) + '/retry', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idToken, version: progress.version })
+    });
+    const text = await res.text();
+    const code = refusalCode(text);
+    if (res.status === 409 && (code === 'line_signup_version_conflict' || code === 'line_signup_retry_not_available')) {
+      renderSignupStatus(await readSignupStatus(idToken));
+      return;
+    }
+    if (!res.ok) throw refusal(signupGuidance(res.status, text));
+    renderSignupStatus(JSON.parse(text));
+  }
+
+  function beginEmailUpdate() {
+    const progress = lastSignupStatus && lastSignupStatus.progress;
+    if (!progress || !progress.canUpdateContactEmail) return;
+    const input = document.getElementById('updated-contact-email');
+    input.value = progress.contactEmail || '';
+    setMessage(document.getElementById('updated-contact-email-error'), '');
+    document.getElementById('email-update').hidden = false;
+    document.getElementById('edit-email').hidden = true;
+    if (input.focus) input.focus();
+  }
+
+  async function updateContactEmail() {
+    const progress = lastSignupStatus && lastSignupStatus.progress;
+    if (!progress || !progress.canUpdateContactEmail) throw refusal(SIGNUP_GUIDANCE.line_signup_contact_update_not_allowed);
+    const input = document.getElementById('updated-contact-email');
+    const contactEmail = (input.value || '').trim().toLowerCase();
+    if (!contactEmail || contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+      setMessage(document.getElementById('updated-contact-email-error'), EMAIL_RULE_TH);
+      input.setAttribute('aria-invalid', 'true');
+      if (input.focus) input.focus();
+      throw refusal({ tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH });
+    }
+    input.removeAttribute('aria-invalid');
+    setMessage(document.getElementById('updated-contact-email-error'), '');
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    const res = await fetch(apiBase + '/public/line-signups/' + encodeURIComponent(progress.requestId) + '/contact-email', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idToken, version: progress.version, contactEmail })
+    });
+    const text = await res.text();
+    if (!res.ok) throw refusal(signupGuidance(res.status, text));
+    renderSignupStatus(JSON.parse(text));
+  }
+
+  async function sendSupportRequest() {
+    if (!liff.sendMessages) throw refusal(SUPPORT_NETWORK_GUIDANCE);
+    try {
+      await liff.sendMessages([{ type: 'text', text: 'ติดต่อเจ้าหน้าที่' }]);
+      setStatus('ส่งข้อความขอช่วยแล้วค่ะ\nกลับไปดูคำตอบในแชท หากยังไม่มีคำตอบตามเวลาทำการ ' + SUPPORT_TH, '', 'success');
+    } catch (error) {
+      throw refusal(SUPPORT_NETWORK_GUIDANCE);
+    }
   }
 
   function validReferralCode(value) {
@@ -695,35 +981,34 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     setStatus('เลือกร้านที่จะเปิดค่ะ', '', 'info');
   }
 
-  async function runWith(action) {
+  async function runWith(action, activeButton, busyLabel) {
     // The label is restored on every failure, so a customer who fixes a typo taps the same button
     // that invited them in the first place — and cannot double-submit while one is in flight.
-    const label = actionBtn ? actionBtn.textContent : '';
-    if (actionBtn) {
-      actionBtn.disabled = true;
-      if (mode === 'signup' && signupReady) actionBtn.textContent = BUSY_LABEL_TH;
+    const button = activeButton || actionBtn;
+    const label = button ? button.textContent : '';
+    if (button) {
+      button.disabled = true;
+      if (mode === 'signup') button.textContent = busyLabel || (signupReady ? BUSY_LABEL_TH : label);
     }
     try {
       await action();
     } catch (error) {
-      // A refusal we understand carries its own guidance; anything else is either the network or a
-      // real defect, and only the latter is worth showing raw in the technical box.
+      // A refusal we understand carries its own guidance. Signup always keeps implementation
+      // details off the customer page and gives one natural next step.
       if (error && error.guidance) {
         setGuidance(error.guidance);
-      } else if (mode === 'signup' && signupReady) {
-        // Not only the network: a 202 whose JSON will not parse, or a status re-read that fails
-        // inside the 409 branch, land here too — and those leave nothing but the raw message.
-        setGuidance(NETWORK_GUIDANCE, errorDetail(error));
+      } else if (mode === 'signup' && signupInitialized) {
+        setGuidance(NETWORK_GUIDANCE);
       } else if (mode === 'signup') {
         // signupReady is false until the form is on screen, so this is precisely the init phase.
-        setStatus(SIGNUP_INIT_FAIL_TH + '\n' + 'ปิดหน้านี้แล้วแตะเมนูใน LINE อีกครั้งนะคะ', errorDetail(error), 'error');
+        setStatus(SIGNUP_INIT_FAIL_TH + '\n' + 'ปิดหน้านี้แล้วแตะเมนูใน LINE อีกครั้งนะคะ', '', 'error');
         showOnly('retry-view');
       } else {
         setStatus(FAIL_TITLE_TH[mode] || 'Link failed', errorDetail(error), 'error');
       }
-      if (actionBtn) {
-        actionBtn.textContent = label;
-        actionBtn.disabled = false;
+      if (button) {
+        button.textContent = label;
+        button.disabled = false;
       }
     }
   }
@@ -744,6 +1029,32 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   if (actionBtn) actionBtn.addEventListener('click', run);
+  const retryStatusBtn = document.getElementById('retry-status');
+  if (retryStatusBtn) retryStatusBtn.addEventListener('click', function () {
+    void runWith(refreshSignupStatus, retryStatusBtn, 'กำลังตรวจสอบ…');
+  });
+  const retryIntakeBtn = document.getElementById('retry-intake');
+  if (retryIntakeBtn) retryIntakeBtn.addEventListener('click', function () {
+    void runWith(retrySignupIntake, retryIntakeBtn, 'กำลังทำคำขอเดิมต่อ…');
+  });
+  const addShopBtn = document.getElementById('add-shop');
+  if (addShopBtn) addShopBtn.addEventListener('click', function () { showSignupForm('ADD_SHOP'); });
+  const startExistingBtn = document.getElementById('start-existing');
+  if (startExistingBtn) startExistingBtn.addEventListener('click', function () {
+    void runWith(function () { return startSession(''); }, startExistingBtn, 'กำลังค้นหาร้าน…');
+  });
+  const editEmailBtn = document.getElementById('edit-email');
+  if (editEmailBtn) editEmailBtn.addEventListener('click', beginEmailUpdate);
+  const saveEmailBtn = document.getElementById('save-email');
+  if (saveEmailBtn) saveEmailBtn.addEventListener('click', function () {
+    void runWith(updateContactEmail, saveEmailBtn, 'กำลังบันทึก…');
+  });
+  for (const supportId of ['support', 'form-support']) {
+    const supportBtn = document.getElementById(supportId);
+    if (supportBtn) supportBtn.addEventListener('click', function () {
+      void runWith(sendSupportRequest, supportBtn, 'กำลังส่งข้อความ…');
+    });
+  }
   // The signup page's own button lives inside the form, which an init failure never renders — so
   // the retry that recovers from it needs a control of its own.
   // The only guidance action there is: a release that moved needs the SERVER to re-render the page,

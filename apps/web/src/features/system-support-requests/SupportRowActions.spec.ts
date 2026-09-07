@@ -23,6 +23,7 @@ function item(overrides: Partial<SupportRequestItemDto> = {}): SupportRequestIte
     lineNotifiedCount: 0,
     emailSent: true,
     notifyState: 'notified',
+    assignedToMe: false,
     ...overrides,
   };
 }
@@ -33,7 +34,11 @@ function render(overrides: Partial<SupportRequestItemDto>, busy = false): string
     React.createElement(SupportRowActions, {
       item: item(overrides),
       busy,
-      onAnswered: () => {},
+      onClaim: () => {},
+      onRelease: () => {},
+      onTakeover: () => {},
+      onReply: () => {},
+      onResolve: () => {},
       onResume: () => {},
     }),
   );
@@ -45,26 +50,38 @@ function render(overrides: Partial<SupportRequestItemDto>, busy = false): string
  * the row actually asks them. So the row is RENDERED, the same component every table row uses.
  */
 describe('SupportRowActions — the inbox row, rendered', () => {
-  it('offers both buttons and a route to the message box while a request is open', () => {
+  it('offers claim and a route to the message box while an unassigned request is open', () => {
     const markup = render({ status: 'OPEN' });
-    assert.match(markup, /ตอบแล้ว/);
-    assert.match(markup, /ให้ AI ทำงานต่อ/);
+    assert.match(markup, /รับเคส/);
     // The link names the request, so the message box on the other end can answer the PERSON who
     // raised it rather than only the shop's owners (review 2026-09-06).
     assert.match(markup, /href="\/system\/partners\/co-1\?support=sr-1&amp;asker=edface"/);
     assert.match(markup, /เปิดหน้าร้าน/);
   });
 
-  it('drops "ตอบแล้ว" once answered, but keeps the assistant resume', () => {
-    const markup = render({ status: 'ANSWERED' });
-    assert.doesNotMatch(markup, /ตอบแล้ว</, 'nothing left to mark');
-    // Answering the shop does NOT lift the 24h pause, so this is still the only way back.
+  it('offers reply, resume, explicit resolution and release to the owner on a live case', () => {
+    const markup = render({ status: 'ANSWERED', assignedToMe: true, assigneeDisplayName: 'พี่แอดมิน' });
+    assert.match(markup, /ตอบใน LINE/);
     assert.match(markup, /ให้ AI ทำงานต่อ/);
+    assert.match(markup, /แก้ไขสำเร็จและปิดเคส/);
+    assert.match(markup, /ปล่อยเคส/);
+  });
+
+  it('offers an explicit takeover rather than leaving another operator\'s case stuck', () => {
+    const markup = render({ assigneeDisplayName: 'ทีมเดิม', assignedAt: '2026-09-05T03:00:00.000Z' });
+    assert.match(markup, /รับช่วงต่อ/);
+    assert.doesNotMatch(markup, /ตอบใน LINE/);
+  });
+
+  it('offers takeover when a deleted assignee has no display-name row left', () => {
+    const markup = render({ assigneeDisplayName: undefined, assignedAt: '2026-09-05T03:00:00.000Z' });
+    assert.match(markup, /รับช่วงต่อ/);
+    assert.doesNotMatch(markup, /รับเคส/);
   });
 
   it('offers no action at all on a closed request', () => {
     const markup = render({ status: 'CLOSED', companyId: undefined });
-    assert.doesNotMatch(markup, /ตอบแล้ว</);
+    assert.doesNotMatch(markup, /รับเคส/);
     assert.doesNotMatch(markup, /ให้ AI ทำงานต่อ/);
     assert.match(markup, /—/, 'an empty cell says so rather than rendering nothing');
   });
@@ -76,10 +93,10 @@ describe('SupportRowActions — the inbox row, rendered', () => {
     assert.doesNotMatch(markup, /\/system\/partners\//);
   });
 
-  it('disables both buttons while the row is busy, so one click is one action', () => {
-    const markup = render({ status: 'OPEN' }, true);
+  it('disables the owner controls while the row is busy, so one click is one action', () => {
+    const markup = render({ status: 'OPEN', assignedToMe: true, assigneeDisplayName: 'พี่แอดมิน' }, true);
     assert.match(markup, /กำลังทำรายการ/);
-    assert.equal((markup.match(/disabled=""/g) ?? []).length, 2);
+    assert.ok((markup.match(/disabled=""/g) ?? []).length >= 4);
   });
 });
 
@@ -89,10 +106,18 @@ function renderBody(props: Partial<Parameters<typeof SupportInboxBody>[0]> = {})
     React.createElement(SupportInboxBody, {
       error: null,
       loading: false,
+      loadingMore: false,
       items: [],
       busyId: null,
+      totalCount: 0,
+      nextCursor: null,
       onRetry: () => {},
-      onAnswered: () => {},
+      onLoadMore: () => {},
+      onClaim: () => {},
+      onRelease: () => {},
+      onTakeover: () => {},
+      onReply: () => {},
+      onResolve: () => {},
       onResume: () => {},
       ...props,
     }),
@@ -130,16 +155,26 @@ describe('SupportInboxBody — error, empty and the message cell, rendered', () 
   it('clamps a long message to two lines without a display that cancels the clamp', () => {
     const long = 'ก'.repeat(200);
     const markup = renderBody({ items: [item({ lastMessageText: long })] });
-    const cell = /<span class="([^"]*)" title="ก+">/.exec(markup);
+    const cell = /<p class="([^"]*)" title="ก+">/.exec(markup);
 
     assert.ok(cell, 'the message renders in a class-bearing span');
     const classes = cell![1]!.split(' ');
-    assert.ok(classes.includes('line-clamp-2'));
+    assert.ok(classes.includes('md:line-clamp-2'), 'desktop keeps the two-line table clamp');
     assert.ok(classes.includes('break-words'));
+    assert.equal(classes.includes('line-clamp-2'), false, 'mobile shows the full question without hover');
     assert.equal(classes.includes('block'), false, '`block` overrides the clamp and un-clamps it');
     assert.equal(classes.some((name) => /^(flex|grid|inline-block|table)$/.test(name)), false,
       'and so would any other display utility');
     assert.match(markup, /max-w-\[16rem\]/, 'the cell is bounded, so the clamp has a width to work in');
+  });
+
+  it('stacks a readable card on mobile and keeps its case actions at least 44px tall', () => {
+    const markup = renderBody({ items: [item({ assignedToMe: true, assignedAt: '2026-09-05T03:00:00.000Z' })] });
+    assert.match(markup, /block w-full text-left text-sm md:table/);
+    assert.match(markup, /block p-4 align-top[^\"]*md:table-row/);
+    assert.match(markup, /ข้อความลูกค้า/);
+    assert.match(markup, /จัดการเคส/);
+    assert.match(markup, /min-h-11/);
   });
 
   /**
@@ -186,6 +221,7 @@ describe('SupportInboxBody — error, empty and the message cell, rendered', () 
     assert.match(markup, /ส่งใบเสร็จแล้วไม่เห็นขึ้นเลยค่ะ/, 'the question survives every follow-up');
     assert.match(markup, /ล่าสุด/);
     assert.match(markup, /มีอัปเดตไหมคะ/);
+    assert.match(markup, /<\/p><p class="mt-1/, 'the latest message starts on its own readable line');
     assert.match(markup, /📷 ส่งรูปมา/, 'and a picture arrived, which is all §3 keeps of it');
   });
 

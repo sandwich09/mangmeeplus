@@ -292,10 +292,11 @@ export class AuthRateLimitService {
   }
 
   /** Spent once an application actually exists. */
-  async recordLineSignupUser(lineProviderUserId: string): Promise<void> {
-    await this.record(
+  async recordLineSignupUser(lineProviderUserId: string, signupRequestId: string): Promise<void> {
+    await this.limits.consumeOnce(
       'line-signup-user',
       lineProviderUserId,
+      signupRequestId,
       LINE_SIGNUP_MAX_PER_USER_PER_DAY,
       LINE_SIGNUP_DAY_SECONDS,
     );

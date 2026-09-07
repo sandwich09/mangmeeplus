@@ -72,6 +72,7 @@ describe('P10-L LIFF signup page', () => {
     assert.equal(html.includes('ไม่บังคับ'), false, 'the phone is no longer optional');
     assert.ok(html.includes('ยอมรับและเริ่มทดลองใช้ฟรี'));
     assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง'));
+    assert.equal(html.includes('progress-reference'), false, 'public signup never renders an internal request reference');
     assert.equal(html.includes('ไม่ต้องใส่บัตร'), false, 'dropped from the trial line (Owner 2026-09-05)');
   });
 
@@ -232,7 +233,15 @@ describe('P10-L LIFF client script', () => {
   function runSignupScript(
     statusBody: string,
     responses: Array<{ status: number; body: string }> = [],
-    options: { initFails?: Error; phone?: string; contactEmail?: string; companyName?: string; fetchThrows?: Error } = {},
+    options: {
+      initFails?: Error;
+      phone?: string;
+      contactEmail?: string;
+      companyName?: string;
+      fetchThrows?: Error;
+      sendMessagesFails?: Error;
+      stored?: Record<string, string>;
+    } = {},
   ) {
     const handlers: Record<string, Array<() => unknown>> = {};
     const listen = (key: string) => (_event: string, handler: () => unknown) => {
@@ -250,17 +259,37 @@ describe('P10-L LIFF client script', () => {
         removeAttribute: (name: string) => { delete attributes[name]; },
       };
     };
+    const element = (key: string, values: Record<string, any> = {}) => ({
+      hidden: false,
+      textContent: '',
+      disabled: false,
+      addEventListener: listen(key),
+      ...values,
+    });
     const elements: Record<string, Record<string, any>> = {
       status: { textContent: '', className: '' },
       detail: { textContent: '' },
       greeting: { textContent: '' },
+      'form-title': { textContent: '' },
       link: { disabled: true, textContent: 'ยอมรับและเริ่มทดลองใช้ฟรี', addEventListener: listen('link') },
       retry: { addEventListener: listen('retry') },
       'notice-action': { hidden: true, textContent: '', addEventListener: listen('notice-action') },
       'client-notice': { hidden: true },
       'liff-content': { hidden: false },
-      'pending-text': { textContent: '' },
-      'done-text': { textContent: '' },
+      'progress-title': { textContent: '' },
+      'progress-text': { textContent: '' },
+      'existing-companies': { textContent: '', children: [], appendChild(child: unknown) { this.children.push(child); } },
+      'retry-intake': element('retry-intake', { hidden: true }),
+      'retry-status': element('retry-status', { hidden: true }),
+      'edit-email': element('edit-email', { hidden: true }),
+      'add-shop': element('add-shop', { hidden: true }),
+      support: element('support', { hidden: true }),
+      'form-support': element('form-support'),
+      'start-existing': element('start-existing'),
+      'email-update': { hidden: true },
+      'save-email': element('save-email'),
+      'updated-contact-email': input('updated-contact-email', ''),
+      'updated-contact-email-error': { textContent: '', hidden: true },
       'company-name': input('company-name', options.companyName ?? 'ร้านนิด'),
       'company-name-error': { textContent: '', hidden: true },
       'phone-number': input('phone-number', options.phone ?? '081-234-5678'),
@@ -272,11 +301,12 @@ describe('P10-L LIFF client script', () => {
     const views = [
       { id: 'retry-view', hidden: true },
       { id: 'form-view', hidden: true },
-      { id: 'done-view', hidden: true },
-      { id: 'pending-view', hidden: true },
+      { id: 'progress-view', hidden: true },
     ];
     const calls: Array<{ url: string; init: any }> = [];
+    const sentMessages: unknown[] = [];
     let closed = 0;
+    const storage = new Map(Object.entries(options.stored ?? {}));
     runInNewContext(LIFF_PAGE_SCRIPT, {
       document: {
         body: {
@@ -287,19 +317,29 @@ describe('P10-L LIFF client script', () => {
         },
         getElementById: (id: string) => elements[id] ?? views.find((view) => view.id === id) ?? null,
         querySelectorAll: (selector: string) => (selector === '[data-close]' ? closeButtons : views),
+        createElement: () => element('created-' + Math.random()),
       },
       liff: {
         init: async () => { if (options.initFails) throw options.initFails; },
         isLoggedIn: () => true,
-        getDecodedIDToken: () => ({ exp: Math.floor(Date.now() / 1000) + 3600, name: 'นิด' }),
+        getDecodedIDToken: () => ({ exp: Math.floor(Date.now() / 1000) + 3600, name: 'นิด', sub: 'Uabc123' }),
         getIDToken: () => 'aaa.bbb.ccc',
         closeWindow: () => { closed += 1; },
         openWindow: () => {},
+        sendMessages: async (messages: unknown) => {
+          if (options.sendMessagesFails) throw options.sendMessagesFails;
+          sentMessages.push(messages);
+        },
       },
       navigator: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Line/14.0.0' },
       location: { href: 'https://api.example.test/v1/auth/line/link-page/signup', origin: 'https://api.example.test', search: '' },
       history: { replaceState() {} },
-      localStorage: { getItem: () => null, removeItem() {}, setItem() {} },
+      localStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        removeItem: (key: string) => { storage.delete(key); },
+        setItem: (key: string, value: string) => { storage.set(key, value); },
+      },
+      crypto: { randomUUID: () => '123e4567-e89b-42d3-a456-426614174000' },
       URL,
       URLSearchParams,
       setTimeout,
@@ -312,7 +352,7 @@ describe('P10-L LIFF client script', () => {
       },
     });
     return {
-      elements, views, calls, handlers,
+      elements, views, calls, handlers, storage, sentMessages,
       closed: () => closed,
       focused,
       tone: () => String(elements['status']!.className).replace('notice notice-', ''),
@@ -323,6 +363,28 @@ describe('P10-L LIFF client script', () => {
   }
 
   const settle = () => new Promise((resolve) => { setImmediate(resolve); });
+  const signupStatus = (
+    overrides: Record<string, unknown> = {},
+    eligibleCompanies: Array<{ companyId: string; companyName: string; status: 'ACTIVE' | 'EXPIRED'; canEnter: boolean }> = [],
+  ) => JSON.stringify({
+    progress: {
+      requestId: 'r1',
+      submissionId: '123e4567-e89b-42d3-a456-426614174000',
+      version: 1,
+      state: 'PENDING_REVIEW',
+      companyName: 'ร้านนิด',
+      phoneNumber: '0812345678',
+      contactEmail: 'shop@example.com',
+      intent: 'FIRST_SHOP',
+      existingAccount: false,
+      businessHours: true,
+      canRetryIntake: false,
+      canUpdateContactEmail: false,
+      companyCreated: false,
+      ...overrides,
+    },
+    eligibleCompanies,
+  });
 
   /** The runtime half of the same rule: `:empty` cannot see a message that is present but blank. */
   describe('an empty message container is hidden, a real message is not', () => {
@@ -336,17 +398,15 @@ describe('P10-L LIFF client script', () => {
       assert.equal(elements['detail']!.hidden, true, 'this is the grey box the Owner photographed');
     });
 
-    it('shows both again for a real failure, with no styling of its own', async () => {
+    it('shows the natural error and keeps technical detail hidden', async () => {
       const h = runSignupScript('null', [], { initFails: new Error('LIFF init failed') });
       await settle();
       await settle();
 
       assert.equal(h.elements.status!.hidden, false);
-      assert.equal(h.elements.detail!.hidden, false, 'an error still has to be readable');
-      assert.match(h.elements.detail!.textContent, /LIFF init failed/);
-      // Hidden is the only thing that changed: nothing swaps a class, so the shown box keeps the
-      // one `pre` rule the page was served with.
-      assert.equal(h.elements.detail!.className, undefined);
+      assert.match(h.elements.status!.textContent, /เปิดหน้าสมัครไม่สำเร็จ/);
+      assert.equal(h.elements.detail!.hidden, true);
+      assert.equal(h.elements.detail!.textContent, '');
     });
 
     // An `Error` carrying only whitespace is exactly the case the CSS rule cannot catch: the node
@@ -375,10 +435,224 @@ describe('P10-L LIFF client script', () => {
     assert.equal(elements['greeting']!.textContent, 'สวัสดีคุณ นิด');
   });
 
+  describe('one truthful renderer for open, submit and conflict recovery', () => {
+    const completed = () => signupStatus(
+      { state: 'COMPLETED', entryCompanyId: 'co-1', resolution: 'NEW_SHOP' },
+      [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'ACTIVE', canEnter: true }],
+    );
+
+    it('renders POST COMPLETED as ready, with entry and a separate add-shop choice', async () => {
+      const h = runSignupScript(JSON.stringify({ progress: null, eligibleCompanies: [] }), [
+        { status: 200, body: JSON.stringify({ progress: null, eligibleCompanies: [] }) },
+        { status: 202, body: completed() },
+      ]);
+      await settle(); await settle(); await h.click('link'); await settle();
+
+      assert.equal(h.views.find((view) => view.id === 'progress-view')!.hidden, false);
+      assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, true);
+      assert.equal(h.elements['progress-title']!.textContent, 'พร้อมเริ่มใช้งาน');
+      assert.doesNotMatch(h.elements['progress-text']!.textContent, /กำลังตรวจสอบ/);
+      assert.equal(h.elements['add-shop']!.hidden, false);
+      assert.equal(h.elements['existing-companies']!.children[0]!.textContent, 'เริ่มใช้งาน');
+    });
+
+    it('never reopens a completed request as a form until เปิดร้านเพิ่ม is chosen', async () => {
+      const h = runSignupScript(completed());
+      await settle(); await settle();
+
+      assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, true);
+      assert.equal(h.elements['add-shop']!.hidden, false);
+      await h.click('add-shop');
+      assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, false);
+      assert.equal(h.elements.link!.textContent, 'ยืนยันเปิดร้านเพิ่ม');
+    });
+
+    it('shows a provisioning failure as saved work needing recovery', async () => {
+      const h = runSignupScript(signupStatus({ state: 'PROVISIONING_FAILED' }));
+      await settle(); await settle();
+
+      assert.match(h.elements['progress-title']!.textContent, /ยังไม่สำเร็จ/);
+      assert.match(h.elements['progress-text']!.textContent, /บันทึกไว้แล้ว/);
+      assert.doesNotMatch(h.elements['progress-text']!.textContent, /r1|อ้างอิง/);
+      assert.doesNotMatch(h.elements['progress-text']!.textContent, /กำลังตรวจสอบ/);
+      assert.equal(h.elements.support!.hidden, false);
+    });
+
+    it('renders 409 then GET COMPLETED as ready instead of pending', async () => {
+      const h = runSignupScript(JSON.stringify({ progress: null, eligibleCompanies: [] }), [
+        { status: 200, body: JSON.stringify({ progress: null, eligibleCompanies: [] }) },
+        { status: 409, body: JSON.stringify({ message: 'line_signup_already_pending' }) },
+        { status: 200, body: completed() },
+      ]);
+      await settle(); await settle(); await h.click('link'); await settle(); await settle();
+
+      assert.equal(h.elements['progress-title']!.textContent, 'พร้อมเริ่มใช้งาน');
+      assert.doesNotMatch(h.elements['progress-text']!.textContent, /กำลังตรวจสอบ/);
+    });
+
+    it('does not claim a completed shop is usable after current access was removed', async () => {
+      const h = runSignupScript(signupStatus({ state: 'COMPLETED', companyCreated: true, resolution: 'NEW_SHOP' }));
+      await settle(); await settle();
+
+      assert.match(h.elements['progress-title']!.textContent, /ยังเข้าใช้ไม่ได้/);
+      assert.doesNotMatch(h.elements['progress-title']!.textContent, /พร้อมแล้ว/);
+      assert.match(h.elements['progress-text']!.textContent, /สิทธิ์หรือแพ็กเกจ/);
+      assert.equal(h.elements.support!.hidden, false);
+    });
+
+    it('uses the persisted company-created fact in terminal-state guidance', async () => {
+      const built = runSignupScript(signupStatus({ state: 'SUSPENDED', companyCreated: true }));
+      await settle(); await settle();
+      assert.match(built.elements['progress-text']!.textContent, /ร้านเคยเปิดสำเร็จ/);
+
+      const unbuilt = runSignupScript(signupStatus({ state: 'REJECTED', companyCreated: false }));
+      await settle(); await settle();
+      assert.match(unbuilt.elements['progress-text']!.textContent, /ยังไม่ได้เปิดร้าน/);
+    });
+
+    it('shows requested information together and exposes email correction from server capability', async () => {
+      const h = runSignupScript(signupStatus({
+        resolution: 'REQUEST_INFO',
+        requestedInformation: '1. ชื่อร้านตามทะเบียน\n2. อีเมลที่ใช้ติดต่อ',
+        canUpdateContactEmail: true,
+      }));
+      await settle(); await settle();
+
+      assert.match(h.elements['progress-text']!.textContent, /1\. ชื่อร้านตามทะเบียน/);
+      assert.match(h.elements['progress-text']!.textContent, /2\. อีเมลที่ใช้ติดต่อ/);
+      assert.equal(h.elements['edit-email']!.hidden, false);
+    });
+  });
+
+  it('marks every missing field together instead of asking one question per submit', async () => {
+    const h = runSignupScript('null', [{ status: 200, body: 'null' }], {
+      companyName: ' ', phone: '', contactEmail: '',
+    });
+    await settle(); await settle(); await h.click('link'); await settle();
+
+    assert.match(h.elements.status!.textContent, /3 จุด/);
+    for (const id of ['company-name', 'phone-number', 'contact-email']) {
+      assert.equal(h.elements[id]!.attributes['aria-invalid'], 'true', id);
+      assert.equal(h.elements[id + '-error']!.hidden, false, id);
+    }
+    assert.deepEqual(h.focused, ['company-name']);
+    assert.equal(h.calls.length, 1, 'invalid local fields never reach POST');
+  });
+
+  it('persists the exact submission before POST and reuses it after a lost response', async () => {
+    const first = runSignupScript('null', [{ status: 200, body: 'null' }], { fetchThrows: new Error('lost response') });
+    await settle(); await settle(); await first.click('link'); await settle();
+    const stored = Object.fromEntries(first.storage.entries());
+    const firstBody = JSON.parse(first.calls[1]!.init.body);
+
+    const second = runSignupScript('null', [
+      { status: 200, body: JSON.stringify({ progress: null, eligibleCompanies: [] }) },
+      { status: 202, body: signupStatus({ state: 'PENDING_REVIEW' }) },
+    ], { stored });
+    await settle(); await settle();
+    assert.equal(second.elements['retry-intake']!.hidden, false);
+    await second.click('retry-intake'); await settle();
+    const retriedBody = JSON.parse(second.calls[1]!.init.body);
+
+    assert.equal(retriedBody.submissionId, firstBody.submissionId);
+    assert.equal(retriedBody.intent, firstBody.intent);
+    assert.equal(retriedBody.companyName, firstBody.companyName);
+    assert.equal(retriedBody.idToken, 'aaa.bbb.ccc', 'the fresh token is never stored');
+    assert.equal(JSON.stringify(stored).includes('aaa.bbb.ccc'), false);
+  });
+
+  it('resumes persisted intake from another device without needing the original form body', async () => {
+    const initial = signupStatus({ state: 'RECEIVED', version: 7, canRetryIntake: true });
+    const resumed = signupStatus({ state: 'PENDING_REVIEW', version: 8, canRetryIntake: false });
+    const h = runSignupScript(initial, [
+      { status: 200, body: initial },
+      { status: 200, body: resumed },
+    ]);
+    await settle(); await settle();
+
+    assert.equal(h.storage.size, 0, 'this simulates a cleared browser or a different device');
+    assert.equal(h.elements['retry-intake']!.hidden, false);
+    await h.click('retry-intake'); await settle();
+
+    assert.equal(h.calls[1]!.url, 'https://api.example.test/v1/public/line-signups/r1/retry');
+    assert.equal(h.calls[1]!.init.method, 'POST');
+    assert.deepEqual(JSON.parse(h.calls[1]!.init.body), { idToken: 'aaa.bbb.ccc', version: 7 });
+    assert.match(h.elements['progress-title']!.textContent, /รับคำขอแล้ว/);
+  });
+
+  it('re-reads status when a proof-bound retry races a newer terminal result', async () => {
+    const initial = signupStatus({ state: 'VALIDATED', version: 4, canRetryIntake: true });
+    const completed = signupStatus(
+      { state: 'COMPLETED', version: 5, companyCreated: true, entryCompanyId: 'co-1' },
+      [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'ACTIVE', canEnter: true }],
+    );
+    const h = runSignupScript(initial, [
+      { status: 200, body: initial },
+      { status: 409, body: JSON.stringify({ message: 'line_signup_version_conflict' }) },
+      { status: 200, body: completed },
+    ]);
+    await settle(); await settle(); await h.click('retry-intake'); await settle(); await settle();
+
+    assert.equal(h.calls[2]!.url, 'https://api.example.test/v1/public/line-signups/me');
+    assert.equal(h.elements['progress-title']!.textContent, 'พร้อมเริ่มใช้งาน');
+  });
+
+  it('patches the same request and version when the applicant corrects contact email', async () => {
+    const initial = signupStatus({ resolution: 'REQUEST_INFO', canUpdateContactEmail: true, version: 3 });
+    const corrected = signupStatus({ resolution: undefined, canUpdateContactEmail: false, version: 4 });
+    const h = runSignupScript(initial, [
+      { status: 200, body: initial },
+      { status: 200, body: corrected },
+    ]);
+    await settle(); await settle(); await h.click('edit-email');
+    h.elements['updated-contact-email']!.value = ' New@Example.com ';
+    await h.click('save-email'); await settle();
+
+    assert.equal(h.calls[1]!.url, 'https://api.example.test/v1/public/line-signups/r1/contact-email');
+    assert.equal(h.calls[1]!.init.method, 'PATCH');
+    assert.deepEqual(JSON.parse(h.calls[1]!.init.body), {
+      idToken: 'aaa.bbb.ccc', version: 3, contactEmail: 'new@example.com',
+    });
+    assert.match(h.elements['progress-title']!.textContent, /รับคำขอแล้ว/);
+  });
+
+  it('creates a fresh ADD_SHOP submission only after the explicit add-shop choice', async () => {
+    const previous = signupStatus(
+      { state: 'COMPLETED', submissionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', entryCompanyId: 'co-1' },
+      [{ companyId: 'co-1', companyName: 'ร้านนิด', status: 'ACTIVE', canEnter: true }],
+    );
+    const h = runSignupScript(previous, [
+      { status: 200, body: previous },
+      { status: 202, body: signupStatus({ intent: 'ADD_SHOP' }) },
+    ]);
+    await settle(); await settle(); await h.click('add-shop');
+    h.elements['company-name']!.value = 'ร้านสอง';
+    await h.click('link'); await settle();
+
+    const body = JSON.parse(h.calls[1]!.init.body);
+    assert.equal(body.intent, 'ADD_SHOP');
+    assert.equal(body.companyName, 'ร้านสอง');
+    assert.notEqual(body.submissionId, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+  });
+
+  it('reports only that the help command was sent and keeps a phone fallback', async () => {
+    const status = signupStatus({ state: 'PROVISIONING_FAILED' });
+    const sent = runSignupScript(status);
+    await settle(); await settle(); await sent.click('support'); await settle();
+    assert.equal(JSON.stringify(sent.sentMessages), JSON.stringify([[{ type: 'text', text: 'ติดต่อเจ้าหน้าที่' }]]));
+    assert.match(sent.elements.status!.textContent, /ส่งข้อความขอช่วยแล้ว/);
+    assert.doesNotMatch(sent.elements.status!.textContent, /รับเรื่องแล้ว/);
+
+    const failed = runSignupScript(status, [], { sendMessagesFails: new Error('network') });
+    await settle(); await settle(); await failed.click('support'); await settle();
+    assert.match(failed.elements.status!.textContent, /ยังส่งข้อความหาเจ้าหน้าที่ไม่ได้/);
+    assert.match(failed.elements.status!.textContent, /098-256-5628/);
+  });
+
   it('posts the challenge ATTRIBUTE the page was rendered with, not a value from anywhere else', async () => {
     const h = runSignupScript('null', [
       { status: 200, body: 'null' },
-      { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: false, businessHours: true }) },
+      { status: 202, body: signupStatus() },
     ]);
     await settle();
     await settle();
@@ -399,10 +673,12 @@ describe('P10-L LIFF client script', () => {
     assert.equal(body.companyName, 'ร้านนิด');
     assert.equal(body.phoneNumber, '0812345678', 'sent as digits, however the owner spaced it');
     assert.equal(body.contactEmail, 'shop@example.com');
-    assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
-    // The card's heading already reads "ได้รับแล้ว"; the body must not say it a second time.
-    assert.equal(h.elements['done-text']!.textContent.startsWith('ได้รับแล้วค่ะ'), false);
-    assert.match(h.elements['done-text']!.textContent, /^ทีมงานกำลังตรวจสอบ/);
+    assert.equal(body.intent, 'FIRST_SHOP');
+    assert.match(body.submissionId, /^[0-9a-f-]{36}$/);
+    assert.equal(h.views.find((view) => view.id === 'progress-view')!.hidden, false);
+    assert.match(h.elements['progress-title']!.textContent, /รับคำขอแล้ว/);
+    assert.match(h.elements['progress-text']!.textContent, /ทีมงานกำลังตรวจสอบ/);
+    assert.doesNotMatch(h.elements['progress-text']!.textContent, /r1|อ้างอิง/);
   });
 
   /**
@@ -413,17 +689,16 @@ describe('P10-L LIFF client script', () => {
   it('tells a second-shop applicant where the new shop will show up once it is approved', async () => {
     const h = runSignupScript('null', [
       { status: 200, body: 'null' },
-      { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: true, businessHours: true }) },
+      { status: 202, body: signupStatus({ intent: 'ADD_SHOP', existingAccount: true }) },
     ]);
     await settle();
     await settle();
     await h.click('link');
     await settle();
 
-    const done = h.elements['done-text']!.textContent;
-    assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
-    assert.match(done, /บริษัทของฉัน/);
-    assert.match(done, /อนุมัติ/);
+    const done = h.elements['progress-text']!.textContent;
+    assert.equal(h.views.find((view) => view.id === 'progress-view')!.hidden, false);
+    assert.match(done, /อยู่ระหว่างตรวจสอบ/);
     // Still one card, still no "+" anywhere in customer-facing copy (spec §3).
     assert.equal(done.includes('+'), false);
   });
@@ -487,7 +762,7 @@ describe('P10-L LIFF client script', () => {
         // Nothing was sent, so the summary must not claim a submit failed.
         assert.equal(h.tone(), 'warning', label);
         assert.equal(h.elements.status!.textContent.includes('ส่งคำขอไม่สำเร็จ'), false, label);
-        assert.match(h.elements.status!.textContent, /^กรอกเบอร์มือถือให้ครบก่อนนะคะ/, label);
+        assert.match(h.elements.status!.textContent, /^กรอกข้อมูลให้ครบ 1 จุด/, label);
         // The button invites the retry it just asked for.
         assert.equal(h.elements.link!.disabled, false, label);
         assert.equal(h.elements.link!.textContent, 'ยอมรับและเริ่มทดลองใช้ฟรี', label);
@@ -617,27 +892,26 @@ describe('P10-L LIFF client script', () => {
       await settle();
 
       assert.equal(h.tone(), 'warning');
-      assert.match(h.elements.status!.textContent, /เชื่อมต่อไม่สำเร็จ/);
-      assert.match(h.elements.status!.textContent, /ลองใหม่/);
+      assert.match(h.elements.status!.textContent, /ยังยืนยันผลการส่งไม่ได้/);
+      assert.match(h.elements.status!.textContent, /ลองอีกครั้ง/);
       assert.equal(h.elements.link!.disabled, false);
-      // LOW-4: this branch also catches a 202 that will not parse and a failed status re-read, and
-      // the raw message is then the only diagnostic there is — support must still be able to see it.
-      assert.match(h.elements.detail!.textContent, /Failed to fetch/, 'the technical reason survives');
-      assert.equal(h.elements.detail!.hidden, false);
+      assert.equal(h.elements.detail!.textContent, '', 'no browser or backend diagnostic is customer-facing');
+      assert.equal(h.elements.detail!.hidden, true);
     });
 
     it('keeps the reason when a 202 body will not parse', async () => {
       const h = await submitWith(202, 'not json at all');
 
       assert.equal(h.tone(), 'warning');
-      assert.match(h.elements.status!.textContent, /เชื่อมต่อไม่สำเร็จ/, 'the customer gets a sentence');
-      assert.notEqual(h.elements.detail!.textContent, '', 'and support gets the parse error');
+      assert.match(h.elements.status!.textContent, /ยังยืนยันผลการส่งไม่ได้/, 'the customer gets a sentence');
+      assert.equal(h.elements.detail!.textContent, '', 'the parse error is not shown to the customer');
+      assert.equal(h.elements.detail!.hidden, true);
     });
 
     it('shows success in the success tone', async () => {
       const h = runSignupScript('null', [
         { status: 200, body: 'null' },
-        { status: 202, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', existingAccount: false, businessHours: true }) },
+        { status: 202, body: signupStatus() },
       ]);
       await settle();
       await settle();
@@ -647,7 +921,7 @@ describe('P10-L LIFF client script', () => {
       // The done CARD carries the words; the notice itself is cleared, so it paints nothing.
       assert.equal(h.elements.status!.textContent, '');
       assert.equal(h.elements.status!.hidden, true);
-      assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, false);
+      assert.equal(h.views.find((view) => view.id === 'progress-view')!.hidden, false);
     });
   });
 
@@ -655,7 +929,7 @@ describe('P10-L LIFF client script', () => {
     const h = runSignupScript('null', [
       { status: 200, body: 'null' },
       { status: 409, body: JSON.stringify({ message: 'line_signup_already_pending' }) },
-      { status: 200, body: JSON.stringify({ requestId: 'r1', state: 'PENDING_REVIEW', companyName: 'ร้านเดิม', businessHours: false }) },
+      { status: 200, body: signupStatus({ companyName: 'ร้านเดิม', businessHours: false }) },
     ]);
     await settle();
     await settle();
@@ -665,11 +939,9 @@ describe('P10-L LIFF client script', () => {
 
     assert.equal(h.calls.length, 3, 'open read, submit, one re-read — still no timer');
     assert.equal(h.calls[2]!.url, 'https://api.example.test/v1/public/line-signups/me');
-    assert.match(h.elements['pending-text']!.textContent, /ร้าน ร้านเดิม/);
-    assert.match(h.elements['pending-text']!.textContent, /นอกเวลาทำการ/);
-    assert.match(h.elements['pending-text']!.textContent, /จันทร์–เสาร์ 9:00–18:00/, 'the §7 wording, once');
-    // Same rule as the done card: the waiting card's heading is "ได้รับแล้ว" too.
-    assert.equal(h.elements['pending-text']!.textContent.startsWith('ได้รับ'), false);
+    assert.match(h.elements['progress-text']!.textContent, /ร้านเดิม อยู่ระหว่างตรวจสอบ/);
+    assert.match(h.elements['progress-text']!.textContent, /นอกเวลาทำการ/);
+    assert.match(h.elements['progress-text']!.textContent, /จันทร์–เสาร์ 9:00–18:00/, 'the §7 wording, once');
   });
 
   /**
@@ -706,7 +978,7 @@ describe('P10-L LIFF client script', () => {
       // The support sentence is for the customer, so it must NOT be hidden away in the grey box.
       assert.equal(h.elements.detail!.textContent, '', 'not the technical box');
       assert.equal(h.elements.detail!.hidden, true);
-      assert.equal(h.views.find((view) => view.id === 'done-view')!.hidden, true);
+      assert.equal(h.views.find((view) => view.id === 'progress-view')!.hidden, true);
       // A blocked account is not a field the customer can correct.
       assert.equal(h.elements['phone-number']!.attributes['aria-invalid'], undefined);
       assert.deepEqual(h.focused, []);
@@ -730,9 +1002,9 @@ describe('P10-L LIFF client script', () => {
     await settle();
 
     assert.equal(calls.length, 1);
-    assert.equal(views.find((view) => view.id === 'pending-view')!.hidden, false);
+    assert.equal(views.find((view) => view.id === 'progress-view')!.hidden, false);
     assert.equal(views.find((view) => view.id === 'form-view')!.hidden, true);
-    assert.match(elements['pending-text']!.textContent, /นอกเวลาทำการ/);
+    assert.match(elements['progress-text']!.textContent, /นอกเวลาทำการ/);
   });
 
   /**
@@ -756,8 +1028,8 @@ describe('P10-L LIFF client script', () => {
       assert.equal(h.elements.status!.textContent.includes('ส่งคำขอไม่สำเร็จ'), false, 'nothing was submitted');
       assert.equal(h.views.find((view) => view.id === 'retry-view')!.hidden, false);
       assert.equal(h.views.find((view) => view.id === 'form-view')!.hidden, true);
-      // This one really is technical — a raw SDK message — so #detail is exactly where it belongs.
-      assert.match(h.elements.detail!.textContent, /LIFF init failed/, 'the reason stays readable');
+      assert.equal(h.elements.detail!.textContent, '', 'raw SDK details stay off the customer page');
+      assert.equal(h.elements.detail!.hidden, true);
     });
 
     it('keeps the submit-failure wording for a submit that really did fail', async () => {

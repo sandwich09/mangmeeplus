@@ -5,11 +5,13 @@
  * — that one collects a verified account email and two name halves this form never asks for.
  */
 import { isEmail } from 'class-validator';
+import type { LineSignupIntent } from '@watchdog-bms/contracts';
 
 /** Spec §3.2: 1–120 characters. Duplicates across shops are legal (P10 §4C). */
 export const LINE_SIGNUP_COMPANY_NAME_MAX = 120;
 export const LINE_SIGNUP_REFERRAL_CODE_MAX = 128;
 export const LINE_SIGNUP_CONTACT_EMAIL_MAX = 254;
+export const LINE_SIGNUP_INTENTS: readonly LineSignupIntent[] = ['FIRST_SHOP', 'ADD_SHOP'];
 
 /** Contact data only: syntax does not prove mailbox ownership or enable account recovery. */
 export function requireLineContactEmail(value: unknown): string {
