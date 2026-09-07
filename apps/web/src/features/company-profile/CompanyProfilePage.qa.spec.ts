@@ -139,6 +139,15 @@ describe('the account section asks for what a login actually needs', () => {
     assert.doesNotMatch(html, /ชื่อผู้ใช้/);
   });
 
+  it('does not ask for a username when the saved account email is still unverified', () => {
+    const html = renderLoaded({
+      permissions: OWNER,
+      account: { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com' },
+    });
+    assert.doesNotMatch(html, /ชื่อผู้ใช้/);
+    assert.match(html, /หลังตั้งรหัสผ่านแล้ว ใช้อีเมล.*owner@example\.com.*เข้าเว็บได้/);
+  });
+
   it('sends an account that already has a password to change-password instead', () => {
     const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, hasPassword: true } });
     assert.match(html, /href="\/change-password"/);
@@ -147,7 +156,9 @@ describe('the account section asks for what a login actually needs', () => {
   });
 
   it('is honest that a mail may never arrive', () => {
-    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, pendingEmail: 'new@example.com' } });
+    const html = renderLoaded({ permissions: OWNER, account: {
+      ...LINE_ONLY_ACCOUNT, email: 'new@example.com', pendingEmail: 'new@example.com',
+    } });
     assert.match(html, /ถ้าไม่ได้รับอีเมล ติดต่อทีมงาน/);
   });
 });
@@ -192,6 +203,13 @@ describe('handlers that no static render reaches', () => {
   it('omits the current password for an account that has none', () => {
     const saveEmail = block('const saveEmail = async () => {', 'const savePhoneValue = async');
     assert.match(saveEmail, /account\?\.hasPassword \? emailPassword : undefined/);
+  });
+
+  it('saves a LINE account email directly and keeps verification as a separate action', () => {
+    const saveEmail = block('const saveEmail = async () => {', 'const savePhoneValue = async');
+    assert.match(saveEmail, /setMyUnverifiedEmail\(/);
+    assert.match(saveEmail, /account\?\.email \?\? null/);
+    assert.match(saveEmail, /requestMyEmailVerification\(account\.email/);
   });
 
   /**
@@ -247,7 +265,9 @@ describe('the email block matches the state the account is actually in', () => {
   });
 
   it('reports a request already in flight, and offers a resend', () => {
-    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, pendingEmail: 'new@example.com' } });
+    const html = renderLoaded({ permissions: OWNER, account: {
+      ...LINE_ONLY_ACCOUNT, email: 'new@example.com', pendingEmail: 'new@example.com',
+    } });
     assert.match(html, /new@example\.com/);
     assert.match(html, /รอการยืนยัน/);
     assert.match(html, /ลิงก์มีอายุ 15 นาที/);
@@ -255,24 +275,39 @@ describe('the email block matches the state the account is actually in', () => {
     assert.doesNotMatch(html, /id="account-email"/);
   });
 
-  it('gives an account with no email the plain form, labelled once', () => {
+  it('gives a LINE account with no email a direct account-email form, labelled once', () => {
     const html = renderLoaded({ permissions: OWNER });
     assert.match(html, /id="account-email"/);
-    assert.match(html, /ส่งลิงก์ยืนยันอีเมล/);
+    assert.match(html, /บันทึกอีเมลบัญชี/);
+    assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/);
     // The read-only blocks carry their own caption; with the box on screen that caption is the
     // box's own label, and rendering both put "อีเมล" on two consecutive lines.
-    assert.equal(html.match(/>อีเมล</g)?.length, 1, 'one label for one field');
+    assert.equal(html.match(/>อีเมลบัญชี</g)?.length, 1, 'one label for one field');
+  });
+
+  it('shows a saved unverified account email separately from optional recovery verification', () => {
+    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com' } });
+    assert.match(html, /อีเมลบัญชี/);
+    assert.match(html, /owner@example\.com/);
+    assert.match(html, /ยังไม่ยืนยัน/);
+    assert.match(html, /แก้ไขอีเมลบัญชี/);
+    assert.match(html, /ยืนยันอีเมลเพื่อกู้บัญชี/);
+    assert.match(html, /ส่งลิงก์ยืนยัน/);
   });
 
   // §15.4.1 C: production runs EMAIL_PROVIDER=disabled, where the mailer is a silent no-op.
   it('promises nothing on an environment that cannot send mail', () => {
-    for (const account of [LINE_ONLY_ACCOUNT, VERIFIED]) {
-      const html = renderLoaded({ permissions: OWNER, account: { ...account, emailDeliveryEnabled: false } });
-      assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/, 'no button that cannot work');
-      assert.doesNotMatch(html, /id="account-email"/);
-      assert.match(html, /ยังเปิดส่งอีเมลยืนยันไม่ได้/);
-      assert.match(html, /098-256-5628/);
-    }
+    const line = renderLoaded({ permissions: OWNER, account: {
+      ...LINE_ONLY_ACCOUNT, email: 'owner@example.com', emailDeliveryEnabled: false,
+    } });
+    assert.match(line, /owner@example\.com/);
+    assert.match(line, /ยังไม่ยืนยัน/);
+    assert.match(line, /แก้ไขอีเมลบัญชี/);
+    assert.doesNotMatch(line, /ส่งลิงก์ยืนยัน|ยังเปิดส่งอีเมลยืนยันไม่ได้/);
+
+    const verified = renderLoaded({ permissions: OWNER, account: { ...VERIFIED, emailDeliveryEnabled: false } });
+    assert.doesNotMatch(verified, /ส่งลิงก์ยืนยันอีเมล/, 'no button that cannot work');
+    assert.match(verified, /ยังเปิดส่งอีเมลยืนยันไม่ได้/);
   });
 });
 

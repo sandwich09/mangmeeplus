@@ -14,10 +14,12 @@ import {
   type VatFactStatus,
 } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { normalizeTaxId } from '../../../data-model-core/domain/logic/company-legal-identity.logic';
+import { requireLineContactEmail } from '../../../external-signup/domain/line-signup.logic';
 import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 import {
   LegalAcceptanceService,
@@ -54,6 +56,10 @@ import { bootstrapCompanyRevenueCategories } from '../../../accounting-documents
 
 export type CreateCompanyOnboardingCommand = {
   companyName: string;
+  /** Unverified shop contact, separate from claimedOwner.email and every login identity. */
+  companyContactEmail?: string;
+  /** LINE-proven owner login identifier only; never evidence of mailbox ownership. */
+  unverifiedOwnerEmail?: string;
   /**
    * The company's VAT registration, answered by the admin at registration. OPTIONAL: an admin who
    * does not know leaves it out, the company stays UNKNOWN, and every reader behaves exactly as it
@@ -74,7 +80,7 @@ export type CreateCompanyOnboardingCommand = {
   /**
    * P10-L §6. How the owner will get back in. `password` (the default, and what every existing
    * caller means by saying nothing) is unchanged in every byte. `line` is the LINE-first shop:
-   * no username, no email, NO UserCredential and therefore no temporary password to leak
+   * no username or UserCredential; an unverified email may be adopted separately. No password leaks
    * (LINE-ONBOARD-01) — the LINE identity created in this same transaction IS the credential.
    *
    * `line-link-later` (review A-04) is the admin console's version of the same idea: the operator
@@ -183,6 +189,8 @@ export class CreateCompanyOnboardingUseCase {
   ) {}
 
   async execute(cmd: CreateCompanyOnboardingCommand): Promise<CreateCompanyOnboardingResult> {
+    const companyContactEmail = cmd.companyContactEmail === undefined ? undefined : requireLineContactEmail(cmd.companyContactEmail);
+    const unverifiedOwnerEmail = cmd.unverifiedOwnerEmail === undefined ? undefined : requireLineContactEmail(cmd.unverifiedOwnerEmail);
     const attachUserId = cmd.claimedOwner?.attachUserId;
     const attach = cmd.attachExistingOwner === true || attachUserId !== undefined;
     const lineOwner = cmd.ownerAuth?.kind === 'line' ? cmd.ownerAuth : null;
@@ -265,6 +273,7 @@ export class CreateCompanyOnboardingUseCase {
       const company = await tx.company.create({
         data: {
           name: cmd.companyName,
+          ...(companyContactEmail ? { email: companyContactEmail } : {}),
           businessCategory: cmd.businessCategory,
           ...(taxId ? { taxId, legalIdentityVersion: 1 } : {}),
         },
@@ -313,8 +322,7 @@ export class CreateCompanyOnboardingUseCase {
         : await tx.user.create({
             data: {
               displayName: cmd.ownerDisplayName,
-              // Spec §6: a LINE-first owner has no username and no email. Both columns are already
-              // nullable and unique, so null is a real value here, not a placeholder.
+              // LINE starts without a username/password; its optional unverified email is adopted below.
               username: cmd.ownerUsername ?? null,
               status: 'ACTIVE',
               // Written here, in the company transaction, so a unique-email clash can never leave a
@@ -323,6 +331,23 @@ export class CreateCompanyOnboardingUseCase {
               ...(claimed?.phoneNumber ? { phoneNumber: claimed.phoneNumber } : {}),
             },
           });
+
+      if (lineOwner && unverifiedOwnerEmail) {
+        // A concurrent registration can win the unique email index after our read. PostgreSQL
+        // needs a savepoint: catching P2002 alone would leave the whole shop transaction aborted.
+        await tx.$executeRaw`SAVEPOINT unverified_owner_email`;
+        try {
+          const taken = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "User" WHERE "id" <> ${owner.id} AND (lower("email") = ${unverifiedOwnerEmail} OR lower("username") = ${unverifiedOwnerEmail}) LIMIT 1`;
+          if (taken.length === 0) await tx.user.updateMany({
+            where: { id: owner.id, email: null, emailVerifiedAt: null, status: 'ACTIVE' },
+            data: { email: unverifiedOwnerEmail },
+          });
+        } catch (error) {
+          await tx.$executeRaw`ROLLBACK TO SAVEPOINT unverified_owner_email`;
+          if (!uniqueConstraintFields(error)?.some((field) => field.includes('email'))) throw error;
+        }
+        await tx.$executeRaw`RELEASE SAVEPOINT unverified_owner_email`;
+      }
 
       // Attach path: adopt the verified email only when the account has none. An account that
       // already carries a different address keeps it — this flow proves one mailbox, and it is not

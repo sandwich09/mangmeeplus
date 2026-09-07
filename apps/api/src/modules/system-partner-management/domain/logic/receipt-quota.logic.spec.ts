@@ -32,9 +32,9 @@ describe('effective monthly slip limit (P10-L §15.1)', () => {
     assert.equal(effectiveMonthlySlipLimit(trial(), new Date()), 15);
   });
 
-  it('takes the LOWER of the two inside the warm-up window', () => {
+  it('grants the stored trial allowance immediately despite a legacy ten-read warmup', () => {
     const term = trial({ warmupUntil: WARMUP_ENDS, warmupSlipLimit: 10 });
-    assert.equal(effectiveMonthlySlipLimit(term, bangkok('2026-09-01T00:00:00Z')), 10);
+    assert.equal(effectiveMonthlySlipLimit(term, bangkok('2026-09-01T00:00:00Z')), 15);
   });
 
   it('never RAISES the tier ceiling: a warm-up limit above the tier is ignored', () => {
@@ -42,13 +42,17 @@ describe('effective monthly slip limit (P10-L §15.1)', () => {
     assert.equal(effectiveMonthlySlipLimit(term, bangkok('2026-09-01T00:00:00Z')), 15);
   });
 
-  it('is half-open at the boundary: the instant warm-up ends, the tier ceiling applies', () => {
-    const term = trial({ warmupUntil: WARMUP_ENDS, warmupSlipLimit: 10 });
+  it('preserves the non-trial warmup and its half-open boundary', () => {
+    const term = trial({ tierKey: 'STARTER_249', warmupUntil: WARMUP_ENDS, warmupSlipLimit: 10 });
     // One millisecond before 07:00 Bangkok on day 7 the shop is still capped at 10 …
     assert.equal(effectiveMonthlySlipLimit(term, new Date(WARMUP_ENDS.getTime() - 1)), 10);
     // … and exactly at it, and after, the trial's own 15 applies.
     assert.equal(effectiveMonthlySlipLimit(term, WARMUP_ENDS), 15);
     assert.equal(effectiveMonthlySlipLimit(term, new Date(WARMUP_ENDS.getTime() + 1)), 15);
+  });
+
+  it('honors an explicit admin monthly limit even below the legacy warmup', () => {
+    assert.equal(effectiveMonthlySlipLimit(trial({ monthlySlipLimit: 7, warmupUntil: WARMUP_ENDS, warmupSlipLimit: 10 }), bangkok('2026-09-01T00:00:00Z')), 7);
   });
 
   it('ignores a half-configured warm-up rather than guessing the missing half', () => {

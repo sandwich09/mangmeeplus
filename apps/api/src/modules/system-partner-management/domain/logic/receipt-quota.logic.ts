@@ -20,14 +20,16 @@ export type ReceiptQuotaTerm = {
 export const TRIAL_COUNTER_TIER_KEY = 'FREE_TRIAL_15';
 
 /**
- * `min(monthlySlipLimit, warmupSlipLimit)` inside the warm-up window, `monthlySlipLimit` after it,
- * `null` (unlimited) with no term row.
+ * Trial: monthlySlipLimit immediately. Other tiers: min(monthlySlipLimit, warmupSlipLimit) during warmup,
+ * monthlySlipLimit afterwards; null (unlimited) with no term row.
  *
  * The window is half-open — `now < warmupUntil` — so the instant the warm-up ends the tier's own
  * ceiling applies, and a term whose warm-up columns are unset is simply the tier's ceiling.
  */
 export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Date): number | null {
   if (!term) return null;
+  // The trial grants its configured monthly allowance from day one, including legacy warmup-10 rows.
+  if (term.tierKey === TRIAL_COUNTER_TIER_KEY) return term.monthlySlipLimit;
   const warmupActive = term.warmupUntil !== null
     && term.warmupSlipLimit !== null
     && now.getTime() < term.warmupUntil.getTime();
@@ -41,7 +43,7 @@ export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Da
  * a receipt, but also a signature photo or a picture sent with a question. Promising "15 receipts"
  * while charging for all of them is a promise the system does not keep, so the copy counts what is
  * actually counted and says what a receipt costs. The number comes from the term, never the
- * sentence: a warm-up shop meets this at 10 and a STARTER shop at 30.
+ * sentence: an admin-capped shop can meet this at 10 and a STARTER shop at 30.
  */
 export function receiptQuotaExceededTextTh(limit: number | null, tierKey?: string | null): string {
   const trial = tierKey === TRIAL_COUNTER_TIER_KEY;

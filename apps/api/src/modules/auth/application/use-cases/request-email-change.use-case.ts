@@ -68,6 +68,17 @@ export class RequestEmailChangeUseCase {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
     await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${input.userId}`}))`;
+      const lockedCredential = await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "UserCredential" WHERE "userId" = ${input.userId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.userId} FOR UPDATE`;
+      if (lockedCredential.length === 0) await tx.$queryRaw`SELECT "id" FROM "UserCredential" WHERE "userId" = ${input.userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: input.userId }, include: { credential: true } });
+      if (!current || current.status !== 'ACTIVE' || current.email !== user.email
+        || current.emailVerifiedAt?.getTime() !== user.emailVerifiedAt?.getTime()
+        || current.credential?.passwordHash !== credential?.passwordHash
+        || current.credential?.status !== credential?.status) {
+        throw new ConflictException({ code: 'account_email_changed', message: 'Account security changed. Reload and try again.' });
+      }
       await tx.emailVerificationToken.updateMany({
         where: { userId: input.userId, status: 'PENDING' },
         data: { status: 'REVOKED' },

@@ -12,7 +12,7 @@ const REQ = {
   get: () => 'api.example.com',
   socket: { remoteAddress: '203.0.113.10' },
 } as any;
-const BODY = { idToken: 'aaaa.bbbb.cccc', companyName: 'ร้านมั่งมี', phoneNumber: '0812345678', legal: {} } as any;
+const BODY = { idToken: 'aaaa.bbbb.cccc', companyName: 'ร้านมั่งมี', phoneNumber: '0812345678', contactEmail: 'shop@example.com', legal: {} } as any;
 
 /**
  * `sesWebBaseUrl: null` stands for WEB_BASE_URL being unset. `webBaseUrl` is set to the API origin
@@ -90,6 +90,7 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
     const h = harness(true);
     await h.controller.create({ ...BODY, phoneNumber: '081-234-5678' }, REQ);
     assert.equal(h.submits[0].phoneNumber, '081-234-5678', 'raw as typed; the use-case normalises it');
+    assert.equal(h.submits[0].contactEmail, BODY.contactEmail);
   });
 
   it('refuses a status read whose header is not even token-shaped', async () => {
@@ -106,6 +107,21 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
  * body with no phone at all before a single LINE verification round trip is spent — and the
  * use-case is the inner half. Both are asserted, because either one alone lets a blank through.
  */
+describe('LineSignupSubmitBodyDto — required syntax-only contact email', () => {
+  const errors = (contactEmail: unknown) => validateSync(plainToInstance(LineSignupSubmitBodyDto, { ...BODY, contactEmail }))
+    .filter((error) => error.property === 'contactEmail');
+  it('normalizes before validating and admits nonexistent mailbox domains', () => {
+    const dto = plainToInstance(LineSignupSubmitBodyDto, { ...BODY, contactEmail: ' Shop@Example.TEST ' });
+    assert.equal(dto.contactEmail, 'shop@example.test');
+    assert.deepEqual(errors(dto.contactEmail), []);
+  });
+  it('rejects missing, non-string, malformed and overlong input', () => {
+    for (const value of [undefined, null, '', ' ', 123, {}, ['a@b.com'], 'bad', 'a@b', 'a@@b.com', `${'a'.repeat(245)}@example.com`]) {
+      assert.ok(errors(value).length > 0, JSON.stringify(value));
+    }
+  });
+});
+
 describe('LineSignupSubmitBodyDto — the phone is required', () => {
   const validate = (phoneNumber: unknown) => validateSync(
     plainToInstance(LineSignupSubmitBodyDto, {

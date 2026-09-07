@@ -19,10 +19,7 @@ export type CompanyPlanTermDto = {
   lastRenewedAt?: string;
   /** Set when the sweep auto-disabled the company for term expiry (admin-disable never sets this). */
   termDisabledAt?: string;
-  /**
-   * P10-L §9: while this is in the future a LINE trial shop is held to `warmupSlipLimit` instead of
-   * its tier's own ceiling. Absent means no warm-up — every shop that did not come from LINE.
-   */
+  /** Optional legacy/non-trial warmup. FREE_TRIAL_15 always uses monthlySlipLimit immediately. */
   warmupUntil?: string;
   warmupSlipLimit?: number;
   derivedState: PlanTermDerivedState;
@@ -67,15 +64,8 @@ export const PLAN_TIER_PRESETS: Record<PlanTierKey, { labelTh: string; branchLim
  */
 export const SIGNUP_TRIAL_TIER_KEY: PlanTierKey = 'FREE_TRIAL_15';
 
-/**
- * Review F17: the first-week receipt ceiling a brand-new trial shop is held to (P10-L §9), so the
- * card can say it before anyone signs up rather than leaving them to discover it on day one.
- *
- * Mirrors the API's `LINE_SIGNUP_WARMUP_SLIPS` default. A deployment that overrides that env would
- * make this line stale — `apps/web/src/features/external-signup/signup.logic.spec.ts` pins the two
- * together, so changing the default fails there rather than silently misinforming an applicant.
- */
-export const SIGNUP_TRIAL_WARMUP_SLIPS = 10;
+/** New provisioning default, matching the trial allowance from day one. Legacy name retained for compatibility. */
+export const SIGNUP_TRIAL_WARMUP_SLIPS = PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY].monthlySlipLimit;
 
 /** Catalog order, cheapest first — the order a shop moves through, not an alphabetical accident. */
 const PLAN_TIER_LADDER: readonly PlanTierKey[] = [

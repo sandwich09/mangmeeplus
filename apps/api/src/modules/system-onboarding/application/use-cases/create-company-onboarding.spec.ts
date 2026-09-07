@@ -174,6 +174,7 @@ function makePrisma(opts: {
   const planTermUpserts: any[] = [];
   // P10-L: the LINE-first owner shape is defined by what is NOT written, so these are captured.
   const userCreates: any[] = [];
+  const companyCreates: any[] = [];
   const credentialCreates: any[] = [];
   const identityCreates: any[] = [];
   const identityUpdates: any[] = [];
@@ -189,6 +190,7 @@ function makePrisma(opts: {
   return {
     planTermUpserts: () => planTermUpserts,
     userCreates: () => userCreates,
+    companyCreates: () => companyCreates,
     credentialCreates: () => credentialCreates,
     identityCreates: () => identityCreates,
     identityUpdates: () => identityUpdates,
@@ -211,7 +213,7 @@ function makePrisma(opts: {
         const chart = chartBootstrapTx('co-1');
         const tx = {
             ...expenseCategoryTx(),
-          company: { create: async () => txResult.company, update: chart.companyUpdate },
+          company: { create: async (args: any) => { companyCreates.push(args); return txResult.company; }, update: chart.companyUpdate },
           chartOfAccount: chart.chartOfAccount,
           user: { create: async (args: any) => { userCreates.push(args); return txResult.owner; } },
           userCredential: { create: async (args: any) => { credentialCreates.push(args); return {}; } },
@@ -1305,11 +1307,14 @@ describe('CreateCompanyOnboardingUseCase P29 default term', () => {
     const result = await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute(makeCmd({
       ownerUsername: undefined,
       ownerAuth: { kind: 'line', providerUserId: 'Uline-1', channelId: 'channel-1', displayName: 'นิด' },
+      companyContactEmail: ' Shop@Example.TEST ',
       legalAcceptance: evidence,
     }));
 
     assert.equal(prisma.userCreates()[0].data.username, null);
-    assert.equal(prisma.userCreates()[0].data.email, undefined, 'this flow never asks for an address');
+    assert.equal(prisma.companyCreates()[0].data.email, 'shop@example.test', 'contact is saved inside the company transaction');
+    assert.equal(prisma.userCreates()[0].data.email, undefined, 'an unverified shop contact is not a login identity');
+    assert.equal(prisma.userCreates()[0].data.emailVerifiedAt, undefined);
     assert.deepEqual(prisma.credentialCreates(), [], 'LINE-ONBOARD-01: no credential, so no temp password');
     assert.equal(result.temporaryPassword, undefined);
     assert.equal(result.username, null);

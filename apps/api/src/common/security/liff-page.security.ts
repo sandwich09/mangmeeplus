@@ -141,7 +141,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const detailEl = document.getElementById('detail');
   const actionEl = document.getElementById('notice-action');
   /** Inputs that can carry their own error message; the signup form is the only page with any. */
-  const FIELD_IDS = ['company-name', 'phone-number'];
+  const FIELD_IDS = ['company-name', 'phone-number', 'contact-email'];
   const actionBtn = document.getElementById(mode === 'customer' ? 'register' : 'link');
   const openLineEl = document.getElementById('open-line');
   const noticeEl = document.getElementById('client-notice');
@@ -184,6 +184,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SUPPORT_TH = 'ติดต่อทีมงาน โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com (จันทร์–เสาร์ 9:00–18:00)';
   /** Owner 2026-09-05 wording, with the example that makes the rule unambiguous. */
   const PHONE_RULE_TH = 'ใส่เบอร์มือถือ 10 หลัก ขึ้นต้นด้วย 0 เช่น 0812345678';
+  const EMAIL_RULE_TH = 'ใส่อีเมลเจ้าของร้านให้ถูกต้อง เช่น shop@example.com ยาวไม่เกิน 254 ตัวอักษร';
 
   /**
    * What went wrong, and what to do about it — for every refusal this page can actually receive.
@@ -196,6 +197,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SIGNUP_GUIDANCE = {
     line_signup_phone_required: { tone: 'warning', text: 'ยังไม่ได้ใส่เบอร์มือถือ', advice: PHONE_RULE_TH, field: 'phone-number' },
     line_signup_phone_invalid: { tone: 'warning', text: 'เบอร์มือถือยังไม่ถูกต้อง', advice: PHONE_RULE_TH, field: 'phone-number' },
+    line_signup_email_required: { tone: 'warning', text: 'ยังไม่ได้ใส่อีเมลเจ้าของร้าน', advice: EMAIL_RULE_TH, field: 'contact-email' },
+    line_signup_email_invalid: { tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH, field: 'contact-email' },
     invalid_companyName: { tone: 'warning', text: 'ยังไม่ได้ใส่ชื่อร้าน', advice: 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ', field: 'company-name' },
     invalid_referralCode: { tone: 'warning', text: 'โค้ดแนะนำในลิงก์ไม่ถูกต้อง', advice: 'ปิดหน้านี้แล้วเปิดใหม่จากเมนูใน LINE โดยไม่ต้องใช้ลิงก์เดิมนะคะ' },
     // The release moved under a page left open. Only a real reload re-renders the text being agreed to.
@@ -351,6 +354,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const body = refusalBody(text);
     const known = SIGNUP_GUIDANCE[typeof body.message === 'string' ? body.message : ''];
     if (known) return known;
+    if (status === 400 && Array.isArray(body.message) && body.message.some(function (message) {
+      return typeof message === 'string' && message.indexOf('contactEmail ') === 0;
+    })) return SIGNUP_GUIDANCE.line_signup_email_invalid;
     if (status === 429) {
       const seconds = typeof body.retryAfterSeconds === 'number' ? body.retryAfterSeconds : 0;
       return {
@@ -569,6 +575,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!/^0[0-9]{9}$/.test(phoneNumber)) {
       throw refusal({ tone: 'warning', text: 'กรอกเบอร์มือถือให้ครบก่อนนะคะ', advice: PHONE_RULE_TH, field: 'phone-number' });
     }
+    const contactEmail = (document.getElementById('contact-email').value || '').trim().toLowerCase();
+    if (!contactEmail) throw refusal(SIGNUP_GUIDANCE.line_signup_email_required);
+    if (contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+      throw refusal(SIGNUP_GUIDANCE.line_signup_email_invalid);
+    }
     const referralCode = validReferralCode(query.get('ref'));
     const idToken = currentIdToken();
     if (!idToken) return;
@@ -580,6 +591,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         idToken,
         companyName,
         phoneNumber,
+        contactEmail,
         ...(referralCode ? { referralCode } : {}),
         // Echoed exactly as this page rendered them: the server refuses anything that is not the
         // release it is serving right now (LEGAL-LIFF-01).

@@ -9,7 +9,25 @@ import {
   normalizeReferralCode,
   normalizeThaiMobile,
   requireThaiMobile,
+  requireLineContactEmail,
 } from './line-signup.logic';
+
+describe('requireLineContactEmail', () => {
+  it('normalizes contact syntax without requiring a real mailbox or DNS record', () => {
+    assert.equal(requireLineContactEmail(' Shop+Receipts@Example.TEST '), 'shop+receipts@example.test');
+    const longest = `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(57)}.com`;
+    assert.equal(longest.length, 254);
+    assert.equal(requireLineContactEmail(longest), longest);
+    assert.throws(() => requireLineContactEmail(`${longest}m`), /line_signup_email_invalid/);
+  });
+
+  it('requires an actual email string and rejects malformed syntax', () => {
+    for (const value of [undefined, null, '', '   ']) assert.throws(() => requireLineContactEmail(value), /line_signup_email_required/);
+    for (const value of [123, {}, ['a@b.com'], 'shop', 'a@@example.com', 'a b@example.com', 'a@b', 'a@example..com', `${'a'.repeat(65)}@example.com`]) {
+      assert.throws(() => requireLineContactEmail(value), /line_signup_email_invalid/);
+    }
+  });
+});
 
 describe('normalizeThaiMobile', () => {
   it('accepts 10 digits starting 0, however the owner typed the separators', () => {

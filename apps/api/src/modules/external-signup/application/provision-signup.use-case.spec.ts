@@ -377,6 +377,22 @@ const LINE_REQUEST = {
 };
 
 describe('ProvisionSignupUseCase — LINE-first source', () => {
+  it('carries shop contact separately for both new and attached LINE owners, while allowing legacy null', async () => {
+    for (const attachUserId of [null, 'user-9']) {
+      const h = harness({ request: { ...LINE_REQUEST, attachUserId, contactEmail: 'shop@example.test' }, existingOwnerEmail: 'login@example.test' });
+      await h.useCase.execute(CMD);
+      const cmd = h.onboardingCalls[0];
+      assert.equal(cmd.companyContactEmail, 'shop@example.test');
+      assert.equal(cmd.unverifiedOwnerEmail, 'shop@example.test');
+      assert.equal(cmd.claimedOwner?.email, undefined);
+      assert.equal(cmd.claimedOwner?.attachUserId ?? null, attachUserId);
+      assert.equal(cmd.ownerAuth.kind, 'line');
+    }
+    const legacy = harness({ request: LINE_REQUEST });
+    await legacy.useCase.execute(CMD);
+    assert.equal(legacy.onboardingCalls[0].companyContactEmail, undefined);
+  });
+
   it('hands onboarding the LINE owner shape and the free trial preset', async () => {
     const h = harness({ request: LINE_REQUEST });
     await h.useCase.execute(CMD);

@@ -59,6 +59,7 @@ export class ConfirmEmailVerificationUseCase {
 
     let verifiedAt = now;
     const claimed = await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${token.userId}`}))`;
       const claim = await tx.emailVerificationToken.updateMany({
         where: { id: token.id, status: 'PENDING' },
         data: { status: 'USED', usedAt: verifiedAt },

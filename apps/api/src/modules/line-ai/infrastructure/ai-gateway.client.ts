@@ -26,6 +26,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import { recordCompanyAiUsage, retryBusyAdmission, runWithCompanyAiBudgetAdmission } from '../application/company-ai-usage-meter';
 import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-policy';
 import {
+  type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
   companyOcrErrorCode,
   isOcrPreProviderHttpStatus,
@@ -40,9 +41,8 @@ const LINE_INTAKE_TIMEOUT_MS = 30_000;
  *  caller must outlast it — otherwise the HTTP client aborts first and the provider-side fix is
  *  invisible. Kept strictly above the gateway budget plus request overhead (UAT 2026-08-27). */
 const LINE_INTAKE_MEDIA_TIMEOUT_MS = 55_000;
-// Same endpoint and same four-call chain as the web lane, so the same ceiling. Aborting early here
-// keeps the admission (this lane has no fresh-admission retry) but still loses the usage body, so
-// the spend would miss the AI meter the trial budget is calibrated from.
+// Same endpoint/provider chain as web. Outlast it to retain the usage response: an early transport
+// abort has unknown provider cost even when its failed customer admission is released.
 const RECEIPT_OCR_TIMEOUT_MS = AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS;
 
 export class AiGatewayRequestError extends Error {
@@ -119,7 +119,7 @@ export class AiGatewayClient {
 
   async requestReceiptOcr(
     request: ReceiptOcrRequest,
-    options: { ocrAlreadyAdmitted?: boolean; busyWaitDeadlineMs?: number } = {},
+    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void; busyWaitDeadlineMs?: number } = {},
   ): Promise<ReceiptOcrResponse> {
     const companyId = request.companyId;
     await this.assertRateLimit('ocr', companyId);
@@ -136,7 +136,7 @@ export class AiGatewayClient {
     const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
     return this.runBudgeted(
       companyId,
-      (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options.ocrAlreadyAdmitted === true),
+      (monthKey) => this.requestReceiptOcrAdmitted(governedRequest, monthKey, options),
       options.busyWaitDeadlineMs,
       'media',
     );
@@ -145,9 +145,10 @@ export class AiGatewayClient {
   private async requestReceiptOcrAdmitted(
     request: ReceiptOcrRequest,
     budgetMonthKey?: string,
-    ocrAlreadyAdmitted = false,
+    options: { ocrAlreadyAdmitted?: boolean; admissionIdentity?: CompanyOcrAdmissionIdentity; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {},
   ): Promise<ReceiptOcrResponse> {
-    if (!ocrAlreadyAdmitted) {
+    let identity = options.admissionIdentity;
+    if (!options.ocrAlreadyAdmitted) {
       const admission = await admitCompanyOcr(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-line',
@@ -158,6 +159,8 @@ export class AiGatewayClient {
         enforceReceiptQuota: this.config.receiptQuotaEnforced,
       });
       if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
+      identity = admission;
+      options.onAdmitted?.(admission);
     }
     let result: ReceiptOcrResponse;
     try {
@@ -171,11 +174,12 @@ export class AiGatewayClient {
     } catch (error) {
       const status = error instanceof AiGatewayRequestError ? error.httpStatus : undefined;
       const refusal = status !== undefined && isOcrPreProviderHttpStatus(status);
-      if (refusal || error instanceof AiGatewayRequestError) {
+      if (identity) {
         const released = await releaseCompanyOcrAdmission(this.prisma, {
           companyId: request.companyId,
           sourceRoute: 'receipt-ocr-line',
           requestId: request.attachment.id,
+          eventId: identity.eventId,
           ...(refusal ? {} : { reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' as const }),
         });
         if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
@@ -184,11 +188,12 @@ export class AiGatewayClient {
     }
     // A system failure before usable fields can release customer admission. Provider usage was
     // recorded independently by postInternal and is never removed by this compensation.
-    if ((!ocrAlreadyAdmitted && isOcrPreProviderRefusal(result)) || isOcrRetryableProviderFailure(result)) {
+    if (identity && (isOcrPreProviderRefusal(result) || isOcrRetryableProviderFailure(result))) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'receipt-ocr-line',
         requestId: request.attachment.id,
+        eventId: identity.eventId,
         ...(isOcrRetryableProviderFailure(result) ? { reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT' as const } : {}),
       });
       if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
@@ -197,7 +202,7 @@ export class AiGatewayClient {
   }
 
   /** LINE Intake Router: semantic route plan before intake dispatch. */
-  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string } = {}): Promise<GovernedLineIntakeRoutePlan> {
+  async requestLineIntakeRoute(request: LineIntakeRouteRequest, options: { busyWaitDeadlineMs?: number; retryWebhookEventId?: string; onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void } = {}): Promise<GovernedLineIntakeRoutePlan> {
     const companyId = (request as any).companyId ?? (request as any).userContext?.companyId;
     await this.assertRateLimit('llm', companyId);
     const media = request.attachments?.find((attachment) =>
@@ -216,7 +221,7 @@ export class AiGatewayClient {
     }
     const plan = await this.runBudgeted(
       companyId,
-      (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId),
+      (monthKey) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted),
       options.busyWaitDeadlineMs,
       media ? 'media' : 'chat',
     );
@@ -232,6 +237,7 @@ export class AiGatewayClient {
     mediaId: string | undefined,
     budgetMonthKey?: string,
     retryWebhookEventId?: string,
+    onAdmitted?: (identity: CompanyOcrAdmissionIdentity) => void,
   ): Promise<GovernedLineIntakeRoutePlan> {
     if (!mediaId) {
       return this.postInternal<LineIntakeRoutePlan>(
@@ -254,6 +260,7 @@ export class AiGatewayClient {
         errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: companyOcrErrorCode(admission),
       };
     }
+    onAdmitted?.(admission);
     try {
       const plan = await this.postInternal<LineIntakeRoutePlan>(
         '/internal/ai/line-intake-route', request, request.requestId, LINE_INTAKE_MEDIA_TIMEOUT_MS, budgetMonthKey,
@@ -264,6 +271,7 @@ export class AiGatewayClient {
             companyId: request.companyId,
             sourceRoute: 'receipt-ocr-line',
             requestId: mediaId,
+            eventId: admission.eventId,
           });
           // The intake router and receipt extractor may use different providers. Once the router
           // proves it never called its provider and the fence is released, let receipt OCR admit
@@ -273,7 +281,7 @@ export class AiGatewayClient {
             : { ...plan, ocrAdmission: 'admitted', ocrErrorCode: 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey };
         }
         const released = await releaseCompanyOcrAdmission(this.prisma, {
-          companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+          companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
         });
         return { ...plan, ocrAdmission: released ? 'denied' : 'admitted',
           ocrErrorCode: released ? 'OCR_ROUTE_UNAVAILABLE' : 'OCR_QUOTA_UNAVAILABLE', ocrMonthKey: admission.monthKey };
@@ -287,6 +295,7 @@ export class AiGatewayClient {
           companyId: request.companyId,
           sourceRoute: 'receipt-ocr-line',
           requestId: mediaId,
+          eventId: admission.eventId,
         });
         return {
           status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
@@ -298,7 +307,7 @@ export class AiGatewayClient {
       // Customer admission measures usable receipt reads. Transport failure supplies no result;
       // release its fence exactly once, but do not fabricate or delete provider usage entries.
       const released = await releaseCompanyOcrAdmission(this.prisma, {
-        companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
+        companyId: request.companyId, sourceRoute: 'receipt-ocr-line', requestId: mediaId, eventId: admission.eventId, reason: 'SYSTEM_FAILURE_NO_USABLE_RESULT',
       });
       this.logger.warn({ msg: 'line_ocr_no_usable_result', requestId: request.requestId,
         providerCost: 'unknown', ...safeLineErrorDetails(error) });

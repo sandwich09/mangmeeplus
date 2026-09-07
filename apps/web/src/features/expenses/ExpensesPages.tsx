@@ -61,9 +61,13 @@ import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSel
 import { taxDefinitionRateForSource } from '@/features/tax/transaction-tax.model';
 import {
   bangkokMonthKey, classifyUploadFile, HeicDecodeError, isReceiptQuotaBlocked, MAX_PDF_EXTRACTION_BYTES,
+  availableExpenseSessionStorage,
   prepareReceiptFile, RECEIPT_QUOTA_ERROR_CODE, RECEIPT_UPLOAD_ACCEPT, type ReceiptQuotaLatch,
   expenseExtractionRetryMode,
   expenseExtractionRetryRequestId,
+  expenseExtractionResponseIsUnknown,
+  requestExpenseExtractionWithRecovery,
+  writeExpenseExtractionAttempt,
 } from './expense-upload.logic';
 import {
   err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
@@ -303,56 +307,45 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
       await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
       setExtracting(true);
       let notice: ExtractionNotice;
-      // A long extraction can outlive the response (proxy cut, dropped connection) AFTER the API
-      // applied it; re-read before retrying so a finished extraction is not re-run — a re-run costs
-      // AI spend and rewrites aiVerificationSummaryJson, wiping review acknowledgements.
-      const recoveredNotice = async (): Promise<ExtractionNotice | null> => {
-        const applied = await getExpense(companyId, intent.expenseId).catch(() => null);
-        if (!applied?.aiVerificationSummaryJson) return null;
-        return extractionNotice({ status: 'ok', fields: {
-          vendorName: applied.vendorNameSnapshot ?? undefined,
-          documentNumber: applied.vendorDocumentNumber ?? undefined,
-          expenseDate: applied.expenseDate ?? undefined,
-          grandTotalAmount: applied.grandTotalAmount ?? undefined,
-        } }, locale);
-      };
       try {
-        let result: ExpenseExtractionResult | null = null;
+        const runAttempt = (requestId: string) => {
+          const attempt = { requestId, attachmentId: intent.attachmentId };
+          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, attempt);
+          return requestExpenseExtractionWithRecovery({
+            attempt,
+            request: (stableRequestId) => requestExpenseExtraction(companyId, intent.expenseId, stableRequestId),
+            read: () => getExpense(companyId, intent.expenseId),
+            wait: () => new Promise((resolve) => setTimeout(resolve, 1500)),
+          });
+        };
         const ocrRequestId = globalThis.crypto.randomUUID();
-        try {
-          result = await requestExpenseExtraction(companyId, intent.expenseId, ocrRequestId);
-        } catch { /* recovery-checked below, then retried once */ }
-        const retryMode = expenseExtractionRetryMode(result);
-        if (retryMode !== 'none') {
-          const recovered = await recoveredNotice();
-          if (recovered) {
-            notice = recovered;
-          } else {
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            const retryRequestId = expenseExtractionRetryRequestId(
-              retryMode,
-              ocrRequestId,
-              globalThis.crypto.randomUUID(),
-            );
-            result = await requestExpenseExtraction(companyId, intent.expenseId, retryRequestId);
-            notice = extractionNotice(result, locale);
-          }
-        } else {
-          if (!result) throw new Error('OCR_RETRY_STATE_INVALID');
-          notice = extractionNotice(result, locale);
+        let outcome = await runAttempt(ocrRequestId);
+        const retryMode = outcome.pending ? 'none' : expenseExtractionRetryMode(outcome.result);
+        if (retryMode === 'new_request') {
+          const retryRequestId = expenseExtractionRetryRequestId(
+            retryMode,
+            ocrRequestId,
+            globalThis.crypto.randomUUID(),
+          );
+          outcome = await runAttempt(retryRequestId);
         }
+        if (!outcome.pending) writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+        notice = extractionNotice(outcome.result, locale);
       } catch (e) {
         // The receipt IS saved; only the AI read was refused. Staying on the upload tab is the
         // point: `onSuccess` routes to the review screen, which would unmount this panel and take
         // the banner and the disabled button with it — the shop would land on an empty draft with
         // no idea why nothing was read, and could walk straight back and upload again.
         if (apiErrorCode(e) === RECEIPT_QUOTA_ERROR_CODE) {
+          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
           setQuotaLatch({ monthKey: bangkokMonthKey(todayCivilDate()), message: err(e, locale) });
           setBlockedExpenseId(intent.expenseId);
           return;
         }
-        notice = (await recoveredNotice())
-          ?? { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
+        if (!expenseExtractionResponseIsUnknown(e)) {
+          writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, intent.expenseId, null);
+        }
+        notice = { tone: 'error', message: `${t('expenses.upload_extract_failed_prefix', locale)} — ${err(e)} ${t('expenses.upload_extract_failed_suffix', locale)}` };
       }
       onSuccess(intent.expenseId, notice);
     } catch (e) { setError(err(e)); }

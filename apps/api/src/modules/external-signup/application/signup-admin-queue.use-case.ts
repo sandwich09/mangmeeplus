@@ -139,7 +139,8 @@ export class SignupAdminQueueUseCase {
     const emails = [...new Set(requests.map((r) => r.contactEmail).filter((email): email is string => !!email))];
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
     const phones = [...new Set(requests.map((r) => r.phoneNumber).filter((phone): phone is string => !!phone))];
-    const [users, companies, phoneMatches, priorCompanies] = await Promise.all([
+    const lineRequestIds = requests.filter((request) => request.source === SIGNUP_SOURCE_LINE_OA).map((request) => request.id);
+    const [users, companies, phoneMatches, priorCompanies, emailReviewEvidence] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
       taxIds.length
         ? this.prisma.client.company.findMany({ where: { taxId: { in: taxIds } }, select: { taxId: true, name: true } })
@@ -148,13 +149,20 @@ export class SignupAdminQueueUseCase {
       // Its own two reads are sequential (identity, then membership), but they run alongside the
       // others rather than after them: an admin opening the queue pays one round trip, not two.
       this.shopsTheseApplicantsAlreadyHad(requests),
+      lineRequestIds.length ? this.prisma.client.auditLog.findMany({
+        where: { action: 'signup.line.submitted', targetType: 'company_signup_request', targetId: { in: lineRequestIds },
+          metadataJson: { path: ['emailPreviouslyUsed'], equals: true } },
+        select: { targetId: true },
+      }) : Promise.resolve([]),
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
+    const reusedEmailRequests = new Set(emailReviewEvidence.map((evidence) => evidence.targetId));
 
     return {
       items: requests.map((request) =>
-        toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now)),
+        ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, now),
+          ...(reusedEmailRequests.has(request.id) ? { emailPreviouslyUsed: true } : {}) })),
       nextCursor,
       counts,
     };

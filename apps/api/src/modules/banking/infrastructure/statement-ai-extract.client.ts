@@ -78,12 +78,13 @@ export class StatementAiExtractClient {
       monthKey: budgetMonthKey,
     });
     if (!admission.allowed) return { status: 'failed', errorCode: companyOcrErrorCode(admission) };
-    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey);
+    const result = await this.extractAdmitted(request, modelPolicy, budgetMonthKey, admission.eventId);
     if (isOcrPreProviderRefusal(result)) {
       const released = await releaseCompanyOcrAdmission(this.prisma, {
         companyId: request.companyId,
         sourceRoute: 'bank-statement-extract',
         requestId: request.requestId,
+        eventId: admission.eventId,
       });
       if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
     }
@@ -93,7 +94,8 @@ export class StatementAiExtractClient {
   private async extractAdmitted(
     request: BankStatementAiExtractRequest,
     modelPolicy: AiModelPolicy | undefined,
-    budgetMonthKey?: string,
+    budgetMonthKey: string | undefined,
+    eventId: string,
   ): Promise<BankStatementAiExtractResponse> {
     const secret = this.config.aiGatewayInternalSecret!;
     const governedRequest = { ...request, ...(modelPolicy && { modelPolicy }) };
@@ -120,6 +122,7 @@ export class StatementAiExtractClient {
           companyId: request.companyId,
           sourceRoute: 'bank-statement-extract',
           requestId: request.requestId,
+          eventId,
         });
         if (!released) return { status: 'failed', errorCode: 'OCR_QUOTA_UNAVAILABLE' };
       }

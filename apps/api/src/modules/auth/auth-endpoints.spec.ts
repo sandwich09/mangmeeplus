@@ -39,7 +39,10 @@ describe('LINE recovery credential lifecycle', () => {
     }) as typeof fetch;
     const client: any = {
       $queryRaw: async () => [{ id: 'credential-1' }],
-      user: { findFirst: async () => ({ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }) },
+      user: {
+        findFirst: async () => ({ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }),
+        findMany: async () => [{ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }],
+      },
       companyMembership: { findFirst: async () => ({ id: 'member-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }] }) },
       externalIdentity: { findFirst: async () => ({ providerUserId: 'synthetic-line-owner' }) },
       userCredential: {
