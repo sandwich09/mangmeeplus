@@ -1,0 +1,12 @@
+{
+  "checkedAt": "2026-09-07T03:43:37.214650+00:00",
+  "taskArn": "arn:aws:ecs:ap-southeast-1:311414082667:task/watchdog-bms-prod/c9bad60e6b0241639ee2aedb44c3a4b8",
+  "taskDefinitionArn": "arn:aws:ecs:ap-southeast-1:311414082667:task-definition/watchdog-bms-release-task:209",
+  "status": "STOPPED",
+  "exitCodes": [
+    0
+  ],
+  "operation": {
+    "RELEASE_OPERATION_ID": "55d9d582-628f-4204-9515-2ac799187e19"
+  }
+}

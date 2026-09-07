@@ -1,0 +1,23 @@
+{
+  "environment": "production",
+  "checkedAt": "2026-09-07T04:12:44.143361+00:00",
+  "checks": {
+    "trusted_origin": "PASS",
+    "deep_db_readiness": "PASS",
+    "external_signup": "PASS",
+    "line_login": "PASS",
+    "line_signup_open_and_identity_guarded": "PASS",
+    "liff_signup_page": "PASS",
+    "liff_signup_production_app": "PASS",
+    "liff_start_page": "PASS",
+    "liff_start_production_app": "PASS",
+    "liff_employee_page": "PASS",
+    "liff_employee_production_app": "PASS",
+    "page_/signup": "PASS",
+    "page_/signup/welcome": "PASS",
+    "page_/claim-account": "PASS",
+    "line_webhook_endpoint": "PASS",
+    "line_provider_verification": "PASS"
+  },
+  "status": "PASS"
+}

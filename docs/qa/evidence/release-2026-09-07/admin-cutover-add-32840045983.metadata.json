@@ -1,0 +1,20 @@
+{
+  "id": 9560185381,
+  "node_id": "MDg6QXJ0aWZhY3Q5NTYwMTg1Mzgx",
+  "name": "production-system-admin-cutover-ADD-32840045983-attempt-1",
+  "size_in_bytes": 7382,
+  "url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/9560185381",
+  "archive_download_url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/9560185381/zip",
+  "expired": false,
+  "digest": "sha256:6d45c81b6d85691fe29a5ec060ba38d259ed04c2716fcbdd909e7e4d34884813",
+  "created_at": "2026-08-25T11:02:27Z",
+  "updated_at": "2026-08-25T11:02:27Z",
+  "expires_at": "2026-09-24T11:02:26Z",
+  "workflow_run": {
+    "id": 32840045983,
+    "repository_id": 1326789216,
+    "head_repository_id": 1326789216,
+    "head_branch": "main",
+    "head_sha": "51643ce4597a15c0f7e613acf1905029a7ab2265"
+  }
+}

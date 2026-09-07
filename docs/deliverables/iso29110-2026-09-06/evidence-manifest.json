@@ -1,0 +1,204 @@
+{
+  "prepared": "2026-09-06",
+  "checkout": "91957572df0e1ba0e8292a805e89787c90b23460",
+  "items": [
+    {
+      "id": "E01",
+      "title": "แนวทางการทำงานโครงการ",
+      "source": "AGENTS.md",
+      "file": "evidence/E01-AGENTS.md",
+      "sha256": "d6503500303d0edba967406dbd022600354e95eea04b94ab3f011157862c1d7c",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/AGENTS.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E02",
+      "title": "แนวทาง Backend",
+      "source": "docs/guidelines/backend-hexagonal-code-style.md",
+      "file": "evidence/E02-backend-hexagonal-code-style.md",
+      "sha256": "b23d77a898f02f78221da93fe7c48ead309f339d9a841b8308e9f44ad7d793dd",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/guidelines/backend-hexagonal-code-style.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E03",
+      "title": "แนวทาง Frontend",
+      "source": "docs/guidelines/web-frontend-code-style.md",
+      "file": "evidence/E03-web-frontend-code-style.md",
+      "sha256": "a4a8d09eebb8e06de3493b17307cd6f82c5257b1cd7b10263e79019536cccd43",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/guidelines/web-frontend-code-style.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E04",
+      "title": "แนวทางความมั่นคงปลอดภัย",
+      "source": "docs/guidelines/security-implementation-guideline.md",
+      "file": "evidence/E04-security-implementation-guideline.md",
+      "sha256": "8f248c65237cede09e2b51fc0aed5243df11867e099e44e5313ee5b6f81f69cc",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/guidelines/security-implementation-guideline.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E05",
+      "title": "การตรวจ CI",
+      "source": ".github/workflows/ci.yml",
+      "file": "evidence/E05-ci.yml",
+      "sha256": "01b484d913ee449cdf41ff1d2724cc44bc8e1719f71816f0f7ff13ff104808d6",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/.github/workflows/ci.yml",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E06",
+      "title": "ขั้นตอน UAT และ Production",
+      "source": "docs/runbooks/uat-production-v2-deployment.md",
+      "file": "evidence/E06-uat-production-v2-deployment.md",
+      "sha256": "ba6c0aa17becc4fea37677d542463b73d62ac0a9abcb0e364b18dfc314bad073",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/runbooks/uat-production-v2-deployment.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E07",
+      "title": "ข้อกำหนดการแก้ VAT navigation",
+      "source": "docs/specs/expense-vat-included-navigation-spec.md",
+      "file": "evidence/E07-expense-vat-included-navigation-spec.md",
+      "sha256": "56ab71962d8def424fd49c11e6523a215d5e63a6f03e27e6a982b515d0180647",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/specs/expense-vat-included-navigation-spec.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E08",
+      "title": "แผนการแก้ VAT navigation",
+      "source": "docs/plans/expense-vat-included-navigation-plan.md",
+      "file": "evidence/E08-expense-vat-included-navigation-plan.md",
+      "sha256": "0ae0cd7061be114a672ae8406483fd013cc3ac2f508c9f2d2439bcf330f5ed8e",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/plans/expense-vat-included-navigation-plan.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E09",
+      "title": "ผลพัฒนาและทดสอบ VAT navigation",
+      "source": "docs/agent-memory/vat-included-navigation.md",
+      "file": "evidence/E09-vat-included-navigation.md",
+      "sha256": "7660d3019e39d839a31afd08b9c51afd9cec19168ca782a9db42a2d703c86b43",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/agent-memory/vat-included-navigation.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E10",
+      "title": "บันทึกทบทวน VAT navigation",
+      "source": "docs/agent-memory/main-vat-included-navigation-review.md",
+      "file": "evidence/E10-main-vat-included-navigation-review.md",
+      "sha256": "05870d019591b5ac71e283f3370a757cc228420322dd7a43c843c39b0c6bc6fa",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/agent-memory/main-vat-included-navigation-review.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E11",
+      "title": "บันทึก UAT และ recovery วันที่ 10 สิงหาคม",
+      "source": "docs/agent-memory/uat-deploy-2026-08-10.md",
+      "file": "evidence/E11-uat-deploy-2026-08-10.md",
+      "sha256": "56fd5e7f14a2eaba0d5d65e0ac0bce366fdd214db068128dff864955f08aee41",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/agent-memory/uat-deploy-2026-08-10.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E12",
+      "title": "บันทึกแก้การปัดเศษค่าใช้จ่าย",
+      "source": "docs/agent-memory/expense-satang-rounding.md",
+      "file": "evidence/E12-expense-satang-rounding.md",
+      "sha256": "e196f988bc4706d72d7f6c73066d7ee46dc4ecb0578c6a408956961f4a310281",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/docs/agent-memory/expense-satang-rounding.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E13",
+      "title": "Test case ฝั่ง Web",
+      "source": "apps/web/src/features/expenses/expense-review-validation.spec.ts",
+      "file": "evidence/E13-expense-review-validation.spec.ts",
+      "sha256": "2791508958318e4edd66e6dbf1e648685dd176fb296e73dac834c97ae8216445",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/apps/web/src/features/expenses/expense-review-validation.spec.ts",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E14",
+      "title": "Test case ฝั่ง API",
+      "source": "apps/api/src/modules/expenses/application/use-cases/expense-draft-vat-decouple.use-case.spec.ts",
+      "file": "evidence/E14-expense-draft-vat-decouple.use-case.spec.ts",
+      "sha256": "f1d9225b0e8e20dae991af7f3ad81065fd18edd7f5e3c98712a99a453123dd4b",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/apps/api/src/modules/expenses/application/use-cases/expense-draft-vat-decouple.use-case.spec.ts",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E15",
+      "title": "Release manifest และ Bug Board",
+      "source": "release-evidence/manifest.md",
+      "file": "evidence/E15-manifest.md",
+      "sha256": "3d2e0cce574e23387fcc6240377f08e71d0873026c890c48bde13205d6fb42ce",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/blob/91957572df0e1ba0e8292a805e89787c90b23460/release-evidence/manifest.md",
+      "kind": "สำเนาไฟล์ ณ checkout ที่ระบุ",
+      "limitation": "วันที่รวบรวมไม่ใช่วันเกิดเหตุหรือวันอนุมัติ"
+    },
+    {
+      "id": "E16",
+      "title": "GitHub UAT run metadata",
+      "source": "GitHub REST API selected fields",
+      "file": "evidence/github-uat-run-31348984824.json",
+      "sha256": "ac1d14731b5495ac94d32f8af9b173068bf57afa1f7756e56bfb13361b66cdb6",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/31348984824",
+      "kind": "ตรวจ API ต้นทางวันที่ 6 กันยายน 2569",
+      "limitation": "สถานะ run/merge ไม่ใช่การอนุมัติทางธุรกิจหรือ customer acceptance"
+    },
+    {
+      "id": "E17",
+      "title": "GitHub recovery run metadata",
+      "source": "GitHub REST API selected fields",
+      "file": "evidence/github-recovery-run-31348664798.json",
+      "sha256": "b08ac203c35f6baddc65c40fbc2d3c0c50e55858ed6614b7355ff6a2b789053e",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/31348664798",
+      "kind": "ตรวจ API ต้นทางวันที่ 6 กันยายน 2569",
+      "limitation": "สถานะ run/merge ไม่ใช่การอนุมัติทางธุรกิจหรือ customer acceptance"
+    },
+    {
+      "id": "E18",
+      "title": "GitHub PR 18 merge metadata",
+      "source": "GitHub REST API selected fields",
+      "file": "evidence/github-pr-18.json",
+      "sha256": "8d64945384cc29bf63ea564ff28fa7c17cc4e9be02b6444afe5af78eced8fe5f",
+      "captured": "2026-09-06",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/pull/18",
+      "kind": "ตรวจ API ต้นทางวันที่ 6 กันยายน 2569",
+      "limitation": "สถานะ run/merge ไม่ใช่การอนุมัติทางธุรกิจหรือ customer acceptance"
+    }
+  ]
+}

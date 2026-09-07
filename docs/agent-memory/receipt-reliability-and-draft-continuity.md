@@ -1,6 +1,6 @@
 # Agent Memory: receipt reliability and draft continuity
 
-Status: Implementation and combined local verification passed; develop PR #473 open, resolving its maintenance checksum preflight before final CI and develop/main merges.
+Status: Complete for Git delivery. Implementation, local verification and both CI runs passed; admin-merged #473 to develop and #474 to main. Final remote file trees match the tested candidate.
 Owner: Coordinator, delegated GPT-6 Astra xhigh and GPT-5.6 Sol xhigh per user's explicit request.
 Scope: All 18 issue/acceptance entries since the first receipt incident; implement, verify, commit/push, PR/admin merge to develop and main. No deployment in this Git delivery request.
 Decisions:
@@ -11,8 +11,9 @@ Decisions:
 - Read root AGENTS.md; stale ponytail path absent, applied .agents/skills/ponytail/SKILL.md from this repository, full mode. No dependency/package.json change planned.
 - Preserve monetary values when accepting only header/control/no fields. Ask all missing user facts together, allow partial answers and save-for-later, silence/unrelated tasks do not finalize or consume unrelated text.
 - Keep API permissions/CAS/tenant/branch and final financial boundaries explicit; reuse staged metadata instead of fabricating monetary zero/one.
+- Owner directive after delivery, 2026-09-07: the NEXT deployment must enable `LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=true` and `LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=true` in both UAT and Production. This explicitly authorizes these two flag activations for that deployment; it is not a request to deploy or change live env now. Verify workflow/deploy-script wiring and actual running configuration, not only GitHub variables or schema defaults. Test in UAT before promotion and verify Production readback and behavior afterward.
 Open questions:
-- No product authorization question remains. Need GitHub CI and both Git merges; live UAT/OA acceptance remains a separate runtime step.
+- No question or Git delivery work remains. Live UAT/OA acceptance remains a separate runtime step.
 Artifacts:
 - docs/specs/receipt-reliability-and-draft-continuity-spec.md
 - docs/plans/receipt-reliability-and-draft-continuity-plan.md
@@ -37,4 +38,13 @@ Verification:
 - Existing whole-chain acceptance runner passed all eight repository suites (21 catalog scenarios); its three external-image/provider acceptance scenarios remain explicitly outside this local pass.
 - Integrated implementation committed/pushed as d4896759; develop PR https://github.com/MangmeeDev/mangmeeplus/pull/473. Initial CI 34102495652 stopped at stale maintenance pins before tests. Regenerated only the changed upload-intent digest and dependent validator digest using the existing pin-sync script; enforcement behavior is unchanged. Both pin/validator contract suites and pin --check pass.
 - Fetched origin develop/main: still 4b91953f /3720db9a; no open PRs when checked.
-Next: Commit scoped implementation/evidence files; push/admin-merge reviewed PRs to develop and main after CI; retain local test artifacts and remove only own disposable PostgreSQL container and local MinIO bucket. No deploy dispatch.
+Delivery checkpoint after develop merge:
+- Tested feature head: 3ee21ed64d190def8b1888a428000d1ce3585a31. Full CI https://github.com/MangmeeDev/mangmeeplus/actions/runs/34102641318 succeeded, including Typecheck and Test (17m17s), security audit, secret scan, config validation, migration review and release-control contracts. Image publishing jobs are intentionally skipped for pull requests.
+- Admin-merged https://github.com/MangmeeDev/mangmeeplus/pull/473 at 2026-09-07T09:07:53Z. Develop merge SHA: ca36d69751ad37629bb512b0d0d3585afdcf010e. Its file tree equals the tested feature head.
+- Local develop fast-forwarded to ca36d697; three pre-existing investigation files were backed up under ../mangmeeplus-receipt-remediation-local-backup-20260907/before-final-develop-update and restored byte-for-byte. Other pre-existing local edits were untouched.
+- Main PR: https://github.com/MangmeeDev/mangmeeplus/pull/474, head develop ca36d697. CI: https://github.com/MangmeeDev/mangmeeplus/actions/runs/34104354102 succeeded for that exact head. Admin-merged at 2026-09-07T09:27:38Z; main merge SHA: 1596cfa7fddd61917818d1b8cd379471ab3b0e79.
+- Removed only own disposable PostgreSQL container and local MinIO bucket. Bucket had zero remaining versions after fixture cleanup. Existing local PostgreSQL/Redis/MinIO services remain available. Test logs/screenshots remain in the dedicated worktree.
+- Post-merge `git diff --exit-code origin/develop origin/main` and feature HEAD → origin/main both pass. All three file trees equal b24b222fa4163a8e136152836e3a1de806ed854d. The dedicated implementation worktree is clean. This closes plan delivery checkpoints 7–9.
+- Both complete successful CI logs are retained in the dedicated worktree's output/receipt-remediation-20260907/github-ci-{develop,main}-success.log. Local browser launcher retained outside Git under ../mangmeeplus-receipt-remediation-local-backup-20260907/test-tools/run-browser.py.
+- This local memory entry records post-merge delivery state; the merged code/spec/evidence remains the reviewed PR content. No cloud release, LINE message or runtime flag change was performed. The existing LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED and LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED defaults were not changed; live flag values were not queried in this Git delivery task.
+Next: At the next UAT → Production deployment, enable both owner-required flags above explicitly and verify they are `true` in the actual running environments. Exercise LINE partial answers/all missing facts, save-for-later/web/resume, and saved-outcome delivery recovery without repeated OCR/business writes. Follow the mandatory UAT/production protocol and record actual OA/device acceptance plus exact UAT/READY/Production run IDs. This note changes documentation only; no live activation or deployment has been performed.

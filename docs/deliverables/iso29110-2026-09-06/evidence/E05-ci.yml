@@ -1,0 +1,1013 @@
+name: CI
+
+# Fast Promote Checklist (all must pass before production):
+#   - pnpm typecheck passes
+#   - pnpm test passes
+#   - pnpm security:audit passes
+#   - Secret scan passes
+#   - Docker images build
+#   - Local infra starts (docker:local:infra)
+#   - Migrations run locally
+#   - Seed works locally
+#   - Production config validates (pnpm config:validate)
+#   - Production secrets exist in AWS Secrets Manager or SSM
+#   - LINE Login and Messaging API config exists
+#   - WatchDog-BMS session/JWT secret exists
+#   - Backups enabled
+#   - AI remains disabled or AI safety tests pass
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Full commit SHA resolved by a deploy workflow
+        required: true
+        type: string
+      publish_environment:
+        description: GitHub environment holding the scoped image-publisher role
+        required: false
+        default: production
+        type: string
+      validated_ci_run_id:
+        description: Exact successful pull-request CI run that already validated source_ref
+        required: false
+        default: ''
+        type: string
+      publish_release_tools:
+        description: Publish the release-task and migration-tool required by a Production passport
+        required: false
+        default: false
+        type: boolean
+    outputs:
+      source_sha:
+        value: ${{ jobs.resolve-source.outputs.source_sha }}
+      release_artifact:
+        value: production-release-${{ jobs.resolve-source.outputs.source_sha }}
+      release_tools_artifact:
+        value: production-release-tools-${{ jobs.resolve-source.outputs.source_sha }}
+      release_task_artifact:
+        value: production-tool-${{ jobs.resolve-source.outputs.source_sha }}-release-task
+  workflow_dispatch:
+  pull_request:
+    # Automatic CI runs only before merge. UAT and production call this workflow
+    # explicitly for their exact release SHA instead of starting a duplicate push run.
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  resolve-source:
+    name: Resolve Source
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      code_changed: ${{ steps.source.outputs.code_changed }}
+      recovery_only: ${{ steps.source.outputs.recovery_only }}
+      release_controller_only: ${{ steps.source.outputs.release_controller_only }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.source_ref || github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - id: source
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          neutral_bootstrap=false
+          neutral_uat_acceptance_sync=false
+          neutral_recovery_update=false
+          neutral_f2_plan_update=false
+          # One-shot bridge: production `main` is intentionally far behind the UAT source and
+          # cannot execute this newer CI file itself. Permit exactly the five reviewed controller
+          # files to land on the one audited base commit without pretending old application code
+          # passed new checks. The full base SHA makes this exception impossible to replay.
+          if [[ "$EVENT_NAME" == "push" \
+            && "$GITHUB_REF" == "refs/heads/main" \
+            && "$BASE_SHA" == "26c8c851023764b0ccf0d2649e720acfe168a21f" \
+            && "$(git rev-list --count "$BASE_SHA..$sha")" == "1" \
+            && "$(git rev-list --parents -n 1 "$sha" | awk '{print NF}')" == "2" \
+            && "$(git rev-parse "$sha^")" == "$BASE_SHA" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/ci.yml" 2>/dev/null || true)" == "16392d7a715964742deb1bc0266cf993e7e05963" ]]; then
+            expected_paths="$(printf '%s\n' \
+              .github/workflows/ci.yml \
+              .github/workflows/deploy-uat.yml \
+              .github/workflows/f2-normalize-apply.yml \
+              .github/workflows/f2-normalize.yml \
+              .github/workflows/recover-release-intent.yml)"
+            expected_status="$(printf '%s\n' \
+              $'M\t.github/workflows/ci.yml' \
+              $'M\t.github/workflows/deploy-uat.yml' \
+              $'A\t.github/workflows/f2-normalize-apply.yml' \
+              $'A\t.github/workflows/f2-normalize.yml' \
+              $'A\t.github/workflows/recover-release-intent.yml')"
+            changed_status="$(git diff --name-status --no-renames "$BASE_SHA" "$sha" | LC_ALL=C sort -k2)"
+            regular_controller_files=true
+            while IFS= read -r path; do
+              [[ "$(git ls-tree "$sha" -- "$path" | awk '{print $1 " " $2}')" == "100644 blob" ]] \
+                || regular_controller_files=false
+            done <<< "$expected_paths"
+            [[ "$changed_status" == "$expected_status" && "$regular_controller_files" == "true" ]] \
+              && neutral_bootstrap=true
+          fi
+          # One-shot bridge: main only owns the neutral UAT controller. Sync the exact
+          # signed-acceptance controller without treating its older application tree as a release.
+          if [[ "$EVENT_NAME" == "push" \
+            && "$GITHUB_REF" == "refs/heads/main" \
+            && "$BASE_SHA" == "afde427010669a1327363a68ac19c65d339f1086" \
+            && "$(git rev-list --count "$BASE_SHA..$sha")" == "1" \
+            && "$(git rev-list --parents -n 1 "$sha" | awk '{print NF}')" == "2" \
+            && "$(git rev-parse "$sha^")" == "$BASE_SHA" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/ci.yml" 2>/dev/null || true)" == "cd78fb8cd0823c8519d138ad0b7ee81511522fea" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/deploy-uat.yml" 2>/dev/null || true)" == "c1cdc03b232ab4554e147ab5b4ef799252693baa" \
+            && "$(git rev-parse "$sha:.github/workflows/deploy-uat.yml" 2>/dev/null || true)" == "0bea4710d3b7bcf08ec9c6f692331e740f01877c" ]]; then
+            expected_status="$(printf '%s\n' \
+              $'M\t.github/workflows/ci.yml' \
+              $'M\t.github/workflows/deploy-uat.yml')"
+            changed_status="$(git diff --name-status --no-renames "$BASE_SHA" "$sha" | LC_ALL=C sort -k2)"
+            regular_controller_files=true
+            for path in .github/workflows/ci.yml .github/workflows/deploy-uat.yml; do
+              [[ "$(git ls-tree "$sha" -- "$path" | awk '{print $1 " " $2}')" == "100644 blob" ]] \
+                || regular_controller_files=false
+            done
+            [[ "$changed_status" == "$expected_status" && "$regular_controller_files" == "true" ]] \
+              && neutral_uat_acceptance_sync=true
+          fi
+          # One-shot follow-up: main owns the neutral controller while the reviewed recovery
+          # executor remains on develop. Accept only this exact controller blob on the
+          # exact neutral-bootstrap base; no application/runtime file is part of the commit.
+          if [[ "$EVENT_NAME" == "push" \
+            && "$GITHUB_REF" == "refs/heads/main" \
+            && "$BASE_SHA" == "ee1c61ddf97163ff5e8a79d5c6392f6dd47c0e68" \
+            && "$(git rev-list --count "$BASE_SHA..$sha")" == "1" \
+            && "$(git rev-list --parents -n 1 "$sha" | awk '{print NF}')" == "2" \
+            && "$(git rev-parse "$sha^")" == "$BASE_SHA" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/ci.yml" 2>/dev/null || true)" == "49200e312a198b51dacb1ca7e3469dc8c867998d" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/recover-release-intent.yml" 2>/dev/null || true)" == "95163904042fe813ee35e51ed3803524fa3c6180" \
+            && "$(git rev-parse "$sha:.github/workflows/recover-release-intent.yml" 2>/dev/null || true)" == "990c928a8894c9f5d5c709ed8a4a0a6510b5f7c5" ]]; then
+            expected_status="$(printf '%s\n' \
+              $'M\t.github/workflows/ci.yml' \
+              $'M\t.github/workflows/recover-release-intent.yml')"
+            changed_status="$(git diff --name-status --no-renames "$BASE_SHA" "$sha" | LC_ALL=C sort -k2)"
+            regular_controller_files=true
+            for path in .github/workflows/ci.yml .github/workflows/recover-release-intent.yml; do
+              [[ "$(git ls-tree "$sha" -- "$path" | awk '{print $1 " " $2}')" == "100644 blob" ]] \
+                || regular_controller_files=false
+            done
+            [[ "$changed_status" == "$expected_status" && "$regular_controller_files" == "true" ]] \
+              && neutral_recovery_update=true
+          fi
+          # One-shot follow-up: sync only the reviewability checks in the neutral F2 PLAN controller.
+          # The application/runtime remains owned by develop; this exact-base exception
+          # cannot carry application code or another controller file onto production main.
+          if [[ "$EVENT_NAME" == "push" \
+            && "$GITHUB_REF" == "refs/heads/main" \
+            && "$BASE_SHA" == "b91fb84bde33e0e073eb899f93dcefa1c6a6d6eb" \
+            && "$(git rev-list --count "$BASE_SHA..$sha")" == "1" \
+            && "$(git rev-list --parents -n 1 "$sha" | awk '{print NF}')" == "2" \
+            && "$(git rev-parse "$sha^")" == "$BASE_SHA" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/ci.yml" 2>/dev/null || true)" == "3c777c6e93749b0edee42b6bec7d7b9563117f4f" \
+            && "$(git rev-parse "$BASE_SHA:.github/workflows/f2-normalize.yml" 2>/dev/null || true)" == "0e1e8d2ad15deefc56f9a28fa8eb16b4ec242fe9" \
+            && "$(git rev-parse "$sha:.github/workflows/f2-normalize.yml" 2>/dev/null || true)" == "d7e5b9b988208346962e3de627e80ee7f7b9532e" ]]; then
+            expected_status="$(printf '%s\n' \
+              $'M\t.github/workflows/ci.yml' \
+              $'M\t.github/workflows/f2-normalize.yml')"
+            changed_status="$(git diff --name-status --no-renames "$BASE_SHA" "$sha" | LC_ALL=C sort -k2)"
+            regular_controller_files=true
+            for path in .github/workflows/ci.yml .github/workflows/f2-normalize.yml; do
+              [[ "$(git ls-tree "$sha" -- "$path" | awk '{print $1 " " $2}')" == "100644 blob" ]] \
+                || regular_controller_files=false
+            done
+            [[ "$changed_status" == "$expected_status" && "$regular_controller_files" == "true" ]] \
+              && neutral_f2_plan_update=true
+          fi
+          if [[ "$neutral_bootstrap" == "true" || "$neutral_uat_acceptance_sync" == "true" \
+            || "$neutral_recovery_update" == "true" || "$neutral_f2_plan_update" == "true" ]]; then
+            code_changed=false
+          elif [[ "$EVENT_NAME" != "push" && "$EVENT_NAME" != "pull_request" ]]; then
+            code_changed=true
+          elif [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            code_changed=true
+          elif git diff --quiet "$BASE_SHA" "$sha" -- \
+            . ':(exclude)docs/**' ':(exclude)outputs/**' ':(exclude)**/*.md' ':(exclude)LICENSE'; then
+            code_changed=false
+          else
+            code_changed=true
+          fi
+          recovery_only=false
+          if [[ "$EVENT_NAME" == "pull_request" && "$code_changed" == "true" ]]; then
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$sha")"
+            allowed_paths="$(printf '%s\n' \
+              .github/workflows/ci.yml \
+              apps/api/prisma/run-exclusive-release-operation.spec.ts \
+              apps/api/prisma/run-exclusive-release-operation.ts \
+              docs/agent-memory/production-deploy-2026-08-17.md \
+              docs/runbooks/uat-production-v2-deployment.md)"
+            if grep -Fxq 'apps/api/prisma/run-exclusive-release-operation.ts' <<< "$changed_paths" \
+              && grep -Fxq 'apps/api/prisma/run-exclusive-release-operation.spec.ts' <<< "$changed_paths" \
+              && ! grep -Fvx -f <(printf '%s\n' "$allowed_paths") <<< "$changed_paths" | grep -q .; then
+              recovery_only=true
+            fi
+          fi
+          release_controller_only=false
+          if [[ "$EVENT_NAME" == "pull_request" && "$code_changed" == "true" ]]; then
+            release_controller_only=true
+            changed_paths="$(git diff --name-only "$BASE_SHA" "$sha")"
+            while IFS= read -r path; do
+              case "$path" in
+                docs/*|.github/workflows/ci.yml|.github/workflows/deploy-uat.yml|\
+                .github/workflows/production-readiness.yml|\
+                .github/workflows/deploy-production.yml|\
+                .github/workflows/recover-release-intent.yml|\
+                infra/ai-gateway/build-agentcore-artifact.sh|\
+                infra/ai-gateway/agentcore-deploy.sh|\
+                infra/ai-gateway/agentcore-candidate-binding.spec.sh|\
+                infra/ai-gateway/select-retirable-agentcore-endpoints.jq|\
+                infra/ai-gateway/h15-trust-boundary.spec.sh|\
+                infra/ai-gateway/validate-agentcore-candidate-binding.sh|\
+                infra/prod-ecs-express/deploy.sh|\
+                infra/prod-ecs-express/lib-uat-fast-rollout.sh|\
+                infra/prod-ecs-express/production-serving-mode.spec.sh|\
+                infra/prod-ecs-express/uat-fast-rollout.spec.sh|\
+                infra/prod-ecs-express/verify-deployment.sh|\
+                infra/security/production-promotion-resources.spec.sh|\
+                infra/security/production-readiness-workflow-v2.spec.sh|\
+                infra/security/production-release-ready-v2.spec.sh|\
+                infra/security/uat-release-passport-v2.spec.sh|\
+                infra/security/validate-production-maintenance-release.sh|\
+                infra/uat/agentcore-candidate-policy.spec.sh|\
+                infra/uat/github-deploy-role-policy.template.json|\
+                infra/prod-ecs-express/github-deploy-role-policy.template.json|\
+                .github/workflows/deploy-production-v2.yml|\
+                infra/prod-ecs-express/lib-prod-rollout-config.sh|\
+                infra/prod-ecs-express/prod-rollout-config.spec.sh|\
+                infra/prod-ecs-express/lib-wait-for-service-url.sh|\
+                infra/prod-ecs-express/release-safety.spec.sh|\
+                infra/security/production-deploy-workflow-v2.spec.sh|\
+                infra/docker/validate-uat-deployment-acceptance.sh|\
+                infra/docker/uat-deployment-acceptance.spec.sh|\
+                infra/docker/production-image-security.spec.sh) ;;
+                *) release_controller_only=false ;;
+              esac
+            done <<< "$changed_paths"
+            agentcore_bundle=true
+            for required in infra/ai-gateway/agentcore-deploy.sh \
+              infra/ai-gateway/h15-trust-boundary.spec.sh \
+              infra/uat/agentcore-candidate-policy.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || agentcore_bundle=false
+            done
+            ecs_binding_bundle=true
+            for required in infra/prod-ecs-express/deploy.sh \
+              infra/prod-ecs-express/verify-deployment.sh \
+              infra/prod-ecs-express/production-serving-mode.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || ecs_binding_bundle=false
+            done
+            uat_rollout_bundle=true
+            for required in infra/prod-ecs-express/lib-uat-fast-rollout.sh \
+              infra/prod-ecs-express/uat-fast-rollout.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || uat_rollout_bundle=false
+            done
+            prod_rollout_bundle=true
+            for required in infra/prod-ecs-express/lib-prod-rollout-config.sh \
+              infra/prod-ecs-express/prod-rollout-config.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || prod_rollout_bundle=false
+            done
+            promote_controller_bundle=true
+            for required in .github/workflows/deploy-production-v2.yml \
+              infra/security/production-deploy-workflow-v2.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || promote_controller_bundle=false
+            done
+            acceptance_contract_bundle=true
+            for required in infra/docker/validate-uat-deployment-acceptance.sh \
+              infra/docker/uat-deployment-acceptance.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || acceptance_contract_bundle=false
+            done
+            readiness_controller_bundle=true
+            for required in .github/workflows/production-readiness.yml \
+              infra/security/production-readiness-workflow-v2.spec.sh; do
+              grep -Fxq "$required" <<< "$changed_paths" || readiness_controller_bundle=false
+            done
+            [[ "$agentcore_bundle" == true || "$ecs_binding_bundle" == true \
+              || "$uat_rollout_bundle" == true || "$readiness_controller_bundle" == true \
+              || "$prod_rollout_bundle" == true || "$promote_controller_bundle" == true \
+              || "$acceptance_contract_bundle" == true ]] \
+              || release_controller_only=false
+          fi
+          echo "code_changed=$code_changed" >> "$GITHUB_OUTPUT"
+          echo "recovery_only=$recovery_only" >> "$GITHUB_OUTPUT"
+          echo "release_controller_only=$release_controller_only" >> "$GITHUB_OUTPUT"
+      - name: Verify maintenance policy pins before CI fan-out
+        if: steps.source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+        run: |
+          set -euo pipefail
+          if [ -f infra/security/sync-production-maintenance-release-pins.mjs ]; then
+            node infra/security/sync-production-maintenance-release-pins.mjs --check
+          fi
+      - name: Verify reused CI validation
+        if: inputs.validated_ci_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          VALIDATED_CI_RUN_ID: ${{ inputs.validated_ci_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$VALIDATED_CI_RUN_ID" =~ ^[0-9]+$ ]]
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$VALIDATED_CI_RUN_ID" |
+            jq -e --arg sha "$SOURCE_SHA" '
+              .head_sha == $sha
+              and .conclusion == "success"
+              and .event == "pull_request"
+              and .path == ".github/workflows/ci.yml"
+            ' >/dev/null
+
+  typecheck-and-test:
+    name: Typecheck and Test
+    if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    services:
+      recovery-postgres:
+        image: postgres:18.3-alpine@sha256:54451ecb8ab38c24c3ec123f2fd501303a3a1856a5c66e98cecf2460d5e1e9d7
+        env:
+          POSTGRES_USER: watchdog
+          POSTGRES_PASSWORD: watchdog_ci
+          POSTGRES_DB: watchdog_recovery_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U watchdog -d watchdog_recovery_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+          fetch-depth: 2
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - name: Install production PDF fonts
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          # Match the API runtime font prerequisite; fallback fonts have different text metrics.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-core fontconfig
+          fc-match -f '%{family}\n' 'Noto Sans Thai' | grep -Fx 'Noto Sans Thai'
+      - run: pnpm install --frozen-lockfile
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+      - run: pnpm --filter @watchdog-bms/contracts build
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+      - run: pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: Test AgentCore release controller without application TypeScript
+        if: needs.resolve-source.outputs.release_controller_only == 'true'
+        run: |
+          bash -n infra/ai-gateway/agentcore-deploy.sh
+          jq empty infra/uat/github-deploy-role-policy.template.json \
+            infra/prod-ecs-express/github-deploy-role-policy.template.json
+          bash infra/ai-gateway/h15-trust-boundary.spec.sh
+          bash infra/uat/agentcore-candidate-policy.spec.sh
+          bash infra/prod-ecs-express/production-serving-mode.spec.sh
+          bash infra/prod-ecs-express/uat-fast-rollout.spec.sh
+          bash infra/security/production-readiness-workflow-v2.spec.sh
+          node infra/security/sync-production-maintenance-release-pins.mjs --check
+          git diff --check HEAD^ HEAD
+      - run: pnpm typecheck
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Typecheck and test durable release recovery against PostgreSQL
+        if: needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
+        run: |
+          pnpm --filter @watchdog-bms/api exec tsc \
+            --noEmit --module CommonJS --moduleResolution Node --target ES2022 \
+            --esModuleInterop --skipLibCheck \
+            prisma/run-exclusive-release-operation.ts prisma/run-exclusive-release-operation.spec.ts
+          pnpm --filter @watchdog-bms/api test:release-recovery
+      - name: Test A5 role bootstrap against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          A5_BOOTSTRAP_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_recovery_ci
+        run: pnpm --filter @watchdog-bms/api test:a5-bootstrap
+      # Step 0 tax identity proves partial unique indexes, `date` columns and the migration's
+      # own backfill SQL — none of which a mocked client reproduces. Its own database, applied
+      # from an empty one, so this is also the fresh-clone `migrate deploy` check.
+      - name: Test Step 0 company tax identity against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_step0_ci
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_step0_ci'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api test:tax-identity-pg
+          SYSTEM_ADMIN_CUTOVER_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test prisma/system-admin-cutover.pg.spec.ts
+      - run: pnpm test
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: P27, OCR, and expense payment integrity against PostgreSQL
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        env:
+          PGPASSWORD: watchdog_ci
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_p27_ci
+          P27_REQUIRE_POSTGRES: 'true'
+          OCR_REQUIRE_POSTGRES: 'true'
+          EXPENSE_PAYMENT_REQUIRE_POSTGRES: 'true'
+        run: |
+          psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_p27_ci'
+          pnpm --filter @watchdog-bms/api exec prisma migrate deploy
+          pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/accounting-documents/infrastructure/prisma-accounting.repository.atomic-issue.spec.ts \
+            src/modules/crm/infrastructure/prisma-crm.repository.spec.ts \
+            src/modules/line-ai/application/company-ai-usage-meter.spec.ts \
+            src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.spec.ts \
+            src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts \
+            src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts
+      - name: Harness manifests (protected corpus + golden stores)
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: pnpm test:harness
+      # The LINE AI whole-chain feature specs (substitute-receipt continuation + siblings) are named
+      # only in the acceptance catalog, so `pnpm test`'s per-package lists never run them. This runner
+      # is what executes them (plus its catalog/controlled-image/gateway/infra contracts).
+      - name: LINE AI whole-chain acceptance
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: node scripts/run-line-ai-whole-chain-acceptance.mjs
+      - run: pnpm --filter @watchdog-bms/api test:m01
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      - run: pnpm --filter @watchdog-bms/api test:p1
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      # Every spec above builds its subject with `new`, so none of them asks Nest to wire
+      # anything: a DI mistake passes the whole suite and only fails when the container starts.
+      - run: pnpm --filter @watchdog-bms/api test:boot
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: Test legal release evidence gates
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          bash infra/security/provision-legal-release-evidence.spec.sh
+          bash infra/security/validate-legal-release-readiness.spec.sh
+      - run: bash infra/docker/production-image-security.spec.sh
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: Test production maintenance controls
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          node --test infra/api-web/web-api-proxy.spec.mjs
+          pnpm --filter @watchdog-bms/ai-gateway exec tsx --test \
+            src/common/http/production-maintenance.middleware.spec.ts
+          bash infra/prod-ecs-express/production-serving-mode.spec.sh
+          bash infra/prod-ecs-express/maintenance-preflight.spec.sh
+          bash infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh
+          bash infra/prod-ecs-express/verify-production-maintenance.spec.sh
+          bash infra/prod-ecs-express/system-admin-cutover.spec.sh
+          bash infra/security/validate-production-maintenance-release.spec.sh
+          bash infra/security/sync-production-maintenance-release-pins.spec.sh
+      - name: Test immutable LINE AI release identity
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        run: |
+          bash infra/ai-gateway/line-ai-release-manifest.spec.sh
+          bash infra/ai-gateway/agentcore-candidate-binding.spec.sh
+          bash infra/uat/agentcore-candidate-policy.spec.sh
+          bash infra/security/uat-release-passport-v2.spec.sh
+      - run: bash infra/security/production-a5-current-health.spec.sh
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+      - name: Build immutable AgentCore artifact
+        if: github.event_name != 'pull_request'
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: bash infra/ai-gateway/build-agentcore-artifact.sh release/agentcore "$SOURCE_SHA"
+      - name: Retain AgentCore artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agentcore-runtime-${{ needs.resolve-source.outputs.source_sha }}
+          path: release/agentcore/
+          if-no-files-found: error
+          retention-days: 90
+
+  security-audit:
+    name: Security Audit
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm security:audit
+
+  secret-scan:
+    name: Secret Scan
+    if: needs.resolve-source.outputs.code_changed == 'true' && inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@8708801319700a16c56abb86628803ba766d5563 # main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --debug --only-verified
+
+  docker-build:
+    name: Production Image
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      inputs.validated_ci_run_id == '' &&
+      (github.event_name == 'workflow_call' ||
+      github.event_name == 'workflow_dispatch')
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: api
+            dockerfile: apps/api/Dockerfile
+          - service: api-web
+            dockerfile: infra/api-web/Dockerfile.api-web
+          - service: ai-gateway
+            dockerfile: apps/ai-gateway/Dockerfile
+          - service: web
+            dockerfile: apps/web/Dockerfile
+          - service: web-lambda
+            dockerfile: apps/web/Dockerfile.lambda
+          - service: workers
+            dockerfile: apps/workers/Dockerfile
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build ${{ matrix.service }}
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./${{ matrix.dockerfile }}
+          load: true
+          push: false
+          tags: watchdog-bms/${{ matrix.service }}:ci
+          labels: org.opencontainers.image.revision=${{ needs.resolve-source.outputs.source_sha }}
+          cache-from: type=gha,scope=production-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=production-${{ matrix.service }},ignore-error=true
+      - name: Verify final filesystem
+        run: bash infra/docker/verify-production-image.sh watchdog-bms/${{ matrix.service }}:ci
+      - name: Generate SBOM
+        run: bash infra/docker/generate-image-sbom.sh watchdog-bms/${{ matrix.service }}:ci sbom-${{ matrix.service }}.spdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-image-sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+
+  config-validation:
+    name: Production Config Validation
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm config:validate
+      - name: Test runtime monitoring contracts (fake AWS)
+        run: bash infra/monitoring/runtime-alarms.spec.sh
+
+  migration-review:
+    name: Migration Review
+    if: >-
+      needs.resolve-source.outputs.code_changed == 'true' &&
+      needs.resolve-source.outputs.release_controller_only != 'true' &&
+      inputs.validated_ci_run_id == ''
+    needs: resolve-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @watchdog-bms/api prisma:validate
+      - run: pnpm --filter @watchdog-bms/api migration:review > /tmp/watchdog-bms-migration-review.sql
+
+  publish-production-images:
+    name: Publish Production Image
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_call' ||
+      github.event_name == 'workflow_dispatch') &&
+      needs.resolve-source.result == 'success' &&
+      (inputs.validated_ci_run_id != '' ||
+      (needs.typecheck-and-test.result == 'success' &&
+      needs.security-audit.result == 'success' &&
+      needs.secret-scan.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      needs.config-validation.result == 'success' &&
+      needs.migration-review.result == 'success'))
+    needs:
+      - resolve-source
+      - typecheck-and-test
+      - security-audit
+      - secret-scan
+      - docker-build
+      - config-validation
+      - migration-review
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.publish_environment || 'production' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        include:
+          - service: api-web
+            repository: watchdog-bms-api
+            dockerfile: infra/api-web/Dockerfile.api-web
+          - service: ai-gateway
+            repository: watchdog-bms-ai-gateway
+            dockerfile: apps/ai-gateway/Dockerfile
+          - service: workers
+            repository: watchdog-bms-workers
+            dockerfile: apps/workers/Dockerfile
+    env:
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-publish-${{ github.run_id }}
+      - name: Log in to ECR
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build and push ${{ matrix.service }}
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/amd64
+          provenance: mode=max
+          tags: ${{ env.ECR_REGISTRY }}/${{ matrix.repository }}:git-${{ needs.resolve-source.outputs.source_sha }}
+          labels: org.opencontainers.image.revision=${{ needs.resolve-source.outputs.source_sha }}
+          cache-from: type=gha,scope=production-${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=production-${{ matrix.service }},ignore-error=true
+      - name: Pull immutable image
+        id: image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ env.ECR_REGISTRY }}/${{ matrix.repository }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          mkdir -p release
+          echo "ref=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          docker pull "${IMAGE}@${DIGEST}"
+      - name: Verify pushed filesystem and revision
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          bash infra/docker/verify-production-image.sh "$IMAGE_REF"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE_REF")" = "$SOURCE_SHA"
+      - name: Enforce ECR vulnerability policy
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash infra/docker/verify-ecr-scan.sh "${{ matrix.repository }}" "$DIGEST"
+      - name: Sign and verify immutable image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE_REF"
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/(heads|tags)/" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "$IMAGE_REF" > "release/cosign-${{ matrix.service }}.json"
+      - name: Generate SBOM from pushed digest
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: bash infra/docker/generate-image-sbom.sh "$IMAGE_REF" "release/sbom-${{ matrix.service }}.spdx.json"
+      - name: Record immutable image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          jq -n \
+            --arg service "${{ matrix.service }}" \
+            --arg repository "${{ matrix.repository }}" \
+            --arg image "$IMAGE_REF" \
+            --arg digest "$DIGEST" \
+            --arg sourceCommit "$SOURCE_SHA" \
+            --arg sbom "sbom-${{ matrix.service }}.spdx.json" \
+            '{service:$service,repository:$repository,image:$image,digest:$digest,sourceCommit:$sourceCommit,sbom:$sbom}' \
+            > "release/image-${{ matrix.service }}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-image-${{ needs.resolve-source.outputs.source_sha }}-${{ matrix.service }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-production-manifest:
+    name: Production Digest Manifest
+    if: >-
+      always() &&
+      needs.resolve-source.result == 'success' &&
+      needs.publish-production-images.result == 'success' &&
+      (github.event_name == 'workflow_call' ||
+      github.event_name == 'workflow_dispatch')
+    needs:
+      - resolve-source
+      - publish-production-images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: production-image-${{ needs.resolve-source.outputs.source_sha }}-*
+          path: release
+          merge-multiple: true
+      - name: Build and verify digest manifest
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+          VALIDATED_CI_RUN_ID: ${{ inputs.validated_ci_run_id }}
+        run: |
+          set -euo pipefail
+          jq -s \
+            --arg sourceCommit "$SOURCE_SHA" \
+            --arg workflowRunId "$GITHUB_RUN_ID" \
+            --arg validationRunId "$VALIDATED_CI_RUN_ID" \
+            '{schemaVersion:1,sourceCommit:$sourceCommit,workflowRunId:$workflowRunId,validationRunId:$validationRunId,images:sort_by(.service)}' \
+            release/image-*.json > release/production-image-manifest.json
+          jq -e --arg sha "$SOURCE_SHA" '
+            .sourceCommit == $sha
+            and (.images | length == 3)
+            and ([.images[].service] | unique | length == 3)
+            and all(.images[];
+              . as $image
+              | $image.sourceCommit == $sha
+                and ($image.digest | test("^sha256:[0-9a-f]{64}$"))
+                and ($image.image | endswith("@" + $image.digest)))
+          ' release/production-image-manifest.json > /dev/null
+          for service in api-web ai-gateway workers; do
+            jq -e '.spdxVersion | startswith("SPDX-")' "release/sbom-${service}.spdx.json" > /dev/null
+          done
+      - name: Build and bind the exact AgentCore candidate
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+          VALIDATED_CI_RUN_ID: ${{ inputs.validated_ci_run_id }}
+        run: |
+          set -euo pipefail
+          bash infra/ai-gateway/build-agentcore-artifact.sh release/agentcore "$SOURCE_SHA"
+          cp packages/contracts/src/line-ai.ts release/line-ai-contract.ts
+          bash infra/ai-gateway/build-line-ai-release-manifest.sh \
+            release/line-ai-release-manifest.json release/production-image-manifest.json \
+            release/agentcore release/line-ai-contract.ts \
+            "$GITHUB_RUN_ID" "$VALIDATED_CI_RUN_ID"
+          test "$(bash infra/ai-gateway/validate-line-ai-release-manifest.sh \
+            release/line-ai-release-manifest.json release/production-image-manifest.json \
+            release/agentcore release/line-ai-contract.ts "$SOURCE_SHA")" = "$SOURCE_SHA"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-release-${{ needs.resolve-source.outputs.source_sha }}
+          path: |
+            release/production-image-manifest.json
+            release/line-ai-release-manifest.json
+            release/line-ai-contract.ts
+            release/agentcore/agentcore-artifact.json
+            release/agentcore/agentcore.zip
+            release/sbom-*.spdx.json
+            release/cosign-*.json
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-release-tools:
+    name: Publish Release Tool
+    if: >-
+      always() &&
+      inputs.source_ref != '' &&
+      needs.resolve-source.result == 'success' &&
+      (inputs.validated_ci_run_id != '' ||
+      (needs.typecheck-and-test.result == 'success' &&
+      needs.security-audit.result == 'success' &&
+      needs.secret-scan.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      needs.config-validation.result == 'success' &&
+      needs.migration-review.result == 'success'))
+    needs:
+      - resolve-source
+      - typecheck-and-test
+      - security-audit
+      - secret-scan
+      - docker-build
+      - config-validation
+      - migration-review
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.publish_environment || 'production' }}
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        include: ${{ fromJSON(inputs.publish_release_tools && '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"},{"purpose":"migration-tool","repository":"watchdog-bms-migration-tool","target":"migration-tool"}]' || '[{"purpose":"release-task","repository":"watchdog-bms-api","target":"release-task"}]') }}
+    env:
+      ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.resolve-source.outputs.source_sha }}
+      - name: Configure scoped UAT image publisher
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: watchdog-bms-tool-${{ matrix.purpose }}-${{ github.run_id }}
+      - name: Log in to ECR
+        run: aws ecr get-login-password | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build and push ${{ matrix.purpose }}
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: ./apps/api/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          build-args: GIT_SHA=${{ needs.resolve-source.outputs.source_sha }}
+          tags: ${{ env.ECR_REGISTRY }}/${{ matrix.repository }}:uat-${{ matrix.purpose }}-${{ needs.resolve-source.outputs.source_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          labels: org.opencontainers.image.revision=${{ needs.resolve-source.outputs.source_sha }}
+          cache-from: type=gha,scope=release-tool-${{ matrix.purpose }}
+          cache-to: type=gha,mode=max,scope=release-tool-${{ matrix.purpose }},ignore-error=true
+      - name: Pull and verify immutable tool
+        id: image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PURPOSE: ${{ matrix.purpose }}
+          REPOSITORY: ${{ matrix.repository }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          image="$ECR_REGISTRY/$REPOSITORY@$DIGEST"
+          docker pull --platform linux/amd64 "$image"
+          test "$(docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$SOURCE_SHA"
+          if [ "$PURPOSE" = migration-tool ]; then
+            bash infra/security/verify-production-a5-migration-tool.sh "$image" "$SOURCE_SHA"
+          else
+            test "$(docker inspect --format '{{ index .Config.Labels "com.watchdog-bms.image-purpose" }}' "$image")" = production-release-task
+            docker run --rm --entrypoint /bin/sh "$image" -lc \
+              'set -eu
+               test -f /app/apps/api/prisma/verify-production-ready-migration.ts
+               test -f /app/apps/api/prisma/verify-applied-migration-catalog.ts
+               test -f /app/apps/api/prisma/run-exclusive-release-operation.ts
+               cd /app/apps/api
+               ./node_modules/.bin/prisma validate --schema prisma/schema.prisma'
+          fi
+          echo "ref=$image" >> "$GITHUB_OUTPUT"
+      - name: Enforce ECR vulnerability policy
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: bash infra/docker/verify-ecr-scan.sh "${{ matrix.repository }}" "$DIGEST"
+      - name: Sign and verify immutable tool
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p tool
+          cosign sign --yes "$IMAGE_REF"
+          cosign verify \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE_REF" > "tool/cosign-${{ matrix.purpose }}.json"
+      - name: Generate tool SBOM from pushed digest
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: bash infra/docker/generate-image-sbom.sh "$IMAGE_REF" "tool/sbom-${{ matrix.purpose }}.spdx.json"
+      - name: Record immutable tool
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          jq -cS -n \
+            --arg purpose "${{ matrix.purpose }}" \
+            --arg repository "${{ matrix.repository }}" \
+            --arg image "$IMAGE_REF" --arg digest "$DIGEST" --arg source "$SOURCE_SHA" \
+            --arg sbom "sbom-${{ matrix.purpose }}.spdx.json" \
+            --arg signature "cosign-${{ matrix.purpose }}.json" '
+              {purpose:$purpose,repository:$repository,image:$image,digest:$digest,sourceCommit:$source,
+               sbom:$sbom,signature:$signature,
+               attestations:{provenance:"BUILDKIT_MAX",sbom:"BUILDKIT_REGISTRY_NATIVE"}}
+            ' > "tool/image-${{ matrix.purpose }}.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-tool-${{ needs.resolve-source.outputs.source_sha }}-${{ matrix.purpose }}
+          path: tool/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish-release-tools-manifest:
+    name: Release Tools Manifest
+    if: >-
+      always() &&
+      inputs.publish_release_tools == true &&
+      needs.resolve-source.result == 'success' &&
+      needs.publish-release-tools.result == 'success'
+    needs:
+      - resolve-source
+      - publish-release-tools
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: production-tool-${{ needs.resolve-source.outputs.source_sha }}-*
+          path: tools
+          merge-multiple: true
+      - name: Verify release tool set
+        env:
+          SOURCE_SHA: ${{ needs.resolve-source.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          expected=$'cosign-migration-tool.json:f\ncosign-release-task.json:f\nimage-migration-tool.json:f\nimage-release-task.json:f\nsbom-migration-tool.spdx.json:f\nsbom-release-task.spdx.json:f'
+          test "$(find tools -mindepth 1 -maxdepth 1 -printf '%f:%y\n' | LC_ALL=C sort)" = "$expected"
+          jq -s -e --arg source "$SOURCE_SHA" '
+            length == 2 and ([.[].purpose] | sort) == ["migration-tool","release-task"]
+            and all(.[]; .sourceCommit == $source and (.digest | test("^sha256:[0-9a-f]{64}$"))
+              and (.digest as $digest | .image | endswith("@" + $digest)))
+          ' tools/image-*.json >/dev/null
+          for purpose in migration-tool release-task; do
+            jq -e '.spdxVersion | startswith("SPDX-")' "tools/sbom-$purpose.spdx.json" >/dev/null
+            jq -e 'type == "array" and length >= 1' "tools/cosign-$purpose.json" >/dev/null
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: production-release-tools-${{ needs.resolve-source.outputs.source_sha }}
+          path: tools/
+          if-no-files-found: error
+          retention-days: 90

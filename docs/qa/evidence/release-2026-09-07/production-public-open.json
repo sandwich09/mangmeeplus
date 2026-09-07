@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-09-07T04:16:07.568721+00:00",
+  "checks": {
+    "public_gate": {
+      "status": "PASS",
+      "httpStatus": 200
+    },
+    "login_page": {
+      "status": "PASS",
+      "httpStatus": 200
+    }
+  },
+  "status": "PASS",
+  "authenticatedAcceptance": "PENDING_CURRENT_ADMIN_BROWSER_SESSION"
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+  "workflowRunId": "34068520561",
+  "validationRunId": "34048730318",
+  "images": [
+    {
+      "service": "ai-gateway",
+      "repository": "watchdog-bms-ai-gateway",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:5fa4fbf544c0dc779f62cc134923846394d2e81bda17eba960c550c99ea4a253",
+      "digest": "sha256:5fa4fbf544c0dc779f62cc134923846394d2e81bda17eba960c550c99ea4a253",
+      "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "sbom": "sbom-ai-gateway.spdx.json"
+    },
+    {
+      "service": "api-web",
+      "repository": "watchdog-bms-api",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:bb95dbbddec4cf7b0b03e3c4bf9049cc342bd7c476539d55de4529ae9a2ccb6d",
+      "digest": "sha256:bb95dbbddec4cf7b0b03e3c4bf9049cc342bd7c476539d55de4529ae9a2ccb6d",
+      "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "sbom": "sbom-api-web.spdx.json"
+    },
+    {
+      "service": "workers",
+      "repository": "watchdog-bms-workers",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc",
+      "digest": "sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc",
+      "sourceCommit": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "sbom": "sbom-workers.spdx.json"
+    }
+  ]
+}

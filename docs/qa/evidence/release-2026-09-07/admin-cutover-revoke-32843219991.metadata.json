@@ -1,0 +1,20 @@
+{
+  "id": 9561363128,
+  "node_id": "MDg6QXJ0aWZhY3Q5NTYxMzYzMTI4",
+  "name": "production-system-admin-cutover-REVOKE-32843219991-attempt-1",
+  "size_in_bytes": 7459,
+  "url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/9561363128",
+  "archive_download_url": "https://api.github.com/repos/MangmeeDev/mangmeeplus/actions/artifacts/9561363128/zip",
+  "expired": false,
+  "digest": "sha256:a151fd935b9e653cb9a82d00c892be4f2691071f5cd6fb7d67ae20e5682ecf3a",
+  "created_at": "2026-08-25T11:39:20Z",
+  "updated_at": "2026-08-25T11:39:20Z",
+  "expires_at": "2026-09-24T11:39:20Z",
+  "workflow_run": {
+    "id": 32843219991,
+    "repository_id": 1326789216,
+    "head_repository_id": 1326789216,
+    "head_branch": "main",
+    "head_sha": "51643ce4597a15c0f7e613acf1905029a7ab2265"
+  }
+}
