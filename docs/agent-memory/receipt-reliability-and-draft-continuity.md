@@ -1,6 +1,6 @@
 # Agent Memory: receipt reliability and draft continuity
 
-Status: Authorized implementation in progress; spec/plan ready, before code.
+Status: Authorized implementation in progress; spec/plan committed, three coding lanes running; coordinator T01 fix and real-DB regression passed.
 Owner: Coordinator, delegated GPT-6 Astra xhigh and GPT-5.6 Sol xhigh per user's explicit request.
 Scope: All 18 issue/acceptance entries since the first receipt incident; implement, verify, commit/push, PR/admin merge to develop and main. No deployment in this Git delivery request.
 Decisions:
@@ -23,4 +23,9 @@ Verification:
 - git diff --stat 604ac785 HEAD -- apps packages empty.
 - pnpm install --frozen-lockfile --offline --ignore-scripts passed, no lockfile/dependency edits.
 - Existing release workflows manual; read deployment protocol for boundary/context; no dispatch performed.
+- Spec/plan and sanitized evidence committed as 5d7b3415 before first application fix commit.
+- T01 permanent regression first failed against original source: expected 0.0000, actual NaN. Shared OCR mapper changed to nonNegativeMoney consistent with its validator. All receipt-ocr-apply.service.spec.ts tests pass, including explicit zero/0.01 control and unreadable/NaN/Infinity/negative amount cases.
+- Dedicated disposable PostgreSQL container mangmeeplus-receipt-remediation-pg-20260907 at 127.0.0.1:15439, database watchdog_bms. All 176 baseline migrations applied; no schema change. Config/contracts built and Prisma client generated.
+- RECEIPT_TRUTH_TEST_DATABASE_URL pointing only to that local container + RECEIPT_TRUTH_REQUIRE_POSTGRES=true: receipt-truth.pg.spec.ts passed 8 tests, 0 fail, 0 skip, including real zero-priced Decimal persistence and sibling VAT/charge/date/correction cases.
+- Seeded isolated DB using APP_ENV=local, disabled AI/mail and no S3 credentials/bucket (local fixture storage). Seed passed; output/receipt-remediation-20260907/local-seed.log retained locally. No production services or customer data touched.
 Next: Delegate coding lanes, implement coordinator OCR fix, integrate and verify T01–T18, push and merge reviewed PRs to develop/main.
