@@ -15,6 +15,7 @@ import { Public } from '../../../../common/security/public.decorator';
 import { LINE_ID_TOKEN_MAX_LENGTH, LINE_ID_TOKEN_PATTERN } from '../../../../common/security/liff-page.security';
 import { trustedClientIp } from '../../../../common/security/trusted-client-ip';
 import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.service';
+import { RequestLineSignupSupportUseCase } from '../../application/request-line-signup-support.use-case';
 import { GetLineSignupStatusUseCase } from '../../application/get-line-signup-status.use-case';
 import { SubmitLineSignupUseCase } from '../../application/submit-line-signup.use-case';
 import {
@@ -55,6 +56,10 @@ export class LineSignupContactEmailCorrectionBodyDto {
   @IsEmail() @MaxLength(LINE_SIGNUP_CONTACT_EMAIL_MAX) contactEmail!: string;
 }
 
+export class LineSignupSupportBodyDto {
+  @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
+}
+
 export class LineSignupRetryBodyDto {
   @IsString() @MaxLength(LINE_ID_TOKEN_MAX_LENGTH) @Matches(LINE_ID_TOKEN_PATTERN) idToken!: string;
   @Type(() => Number) @IsInt() @Min(0) version!: number;
@@ -76,6 +81,7 @@ export class PublicLineSignupController {
     private readonly rateLimit: AuthRateLimitService,
     private readonly submit: SubmitLineSignupUseCase,
     private readonly status: GetLineSignupStatusUseCase,
+    private readonly support: RequestLineSignupSupportUseCase,
   ) {}
 
   @Post('line-signups')
@@ -108,6 +114,15 @@ export class PublicLineSignupController {
       webBaseUrl: requiredWebAppBase(this.config.sesWebBaseUrl),
       apiBaseUrl: publicApiBase(req),
     });
+  }
+
+  @Post('line-signups/support')
+  @HttpCode(202)
+  @ApiOperation({ summary: 'Request signup help in the support inbox using verified LINE identity' })
+  async requestSupport(@Body() dto: LineSignupSupportBodyDto, @Req() req: Request): Promise<{ received: true }> {
+    this.assertEnabled();
+    await this.rateLimit.assertLineSignupIpAllowed(trustedClientIp(req));
+    return this.support.execute(dto.idToken, requestIdOf(req));
   }
 
   @Patch('line-signups/:requestId/contact-email')

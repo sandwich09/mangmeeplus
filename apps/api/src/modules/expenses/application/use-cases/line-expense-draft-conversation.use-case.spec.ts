@@ -14,7 +14,7 @@ const ctx: RequestContext = {
   roles: [], permissions: ['expense.receipt.line_upload'], scopes: {}, authProvider: 'line',
 };
 
-function harness(count = 1, expenseNote?: string) {
+function harness(count = 1, expenseNote?: string, passive = false) {
   const state = buildInitialLineExpenseDraftContinuation({
     workflowId: 'wf-1', companyId: 'c1', userId: 'u1', expenseId: 'e1', chatKeyHash: 'chat',
     targetRevision: '2026-08-18T00:00:00.000Z', provisionalExpenseDate: '2026-08-18',
@@ -24,7 +24,7 @@ function harness(count = 1, expenseNote?: string) {
   const rows = Array.from({ length: count }, (_, index) => ({
     id: `e${index + 1}`, expenseNumber: null, note: 'ใช้สำนักงาน', grandTotalAmount: '0',
     updatedAt: new Date('2026-08-18T00:00:00.000Z'),
-    sourceChannelMetadataJson: { lineExpenseDraftContinuation: { ...state, expenseId: `e${index + 1}`, workflowId: `wf-${index + 1}` } },
+    sourceChannelMetadataJson: { lineExpenseDraftContinuation: { ...state, expenseId: `e${index + 1}`, workflowId: `wf-${index + 1}`, ...(passive ? { status: 'PAUSED' as const } : {}) } },
   }));
   const expense = {
     id: 'e1', companyId: 'c1', createdByUserId: 'u1', captureSource: 'LINE_UPLOAD', status: 'DRAFT',
@@ -56,6 +56,22 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.ok(contexts[0]?.questions.some((question) => question.id === 'I01-QTY'));
   });
 
+  it('keeps passive uploads out of unrelated chat even when a model proposes their id; explicit edits still work', async () => {
+    const passive = harness(1, undefined, true);
+    const contexts = await passive.useCase.routeContexts(ctx, 'chat');
+    assert.deepEqual(contexts[0]!.questions, []);
+    for (const messageText of ['300', 'ยอดขายวันนี้เท่าไร', 'ขอบคุณ']) {
+      const result = await passive.useCase.execute(ctx, { chatKeyHash: 'chat', messageText, captureHints: { targetExpenseId: 'e1', vendorName: messageText } });
+      assert.equal(result.handled, false);
+    }
+    assert.equal(passive.updates.length, 0);
+    const edited = await passive.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'แก้ผู้ขายเป็น ร้าน ABC', captureHints: { targetExpenseId: 'e1', vendorName: 'ร้าน ABC' } });
+    assert.equal(edited.handled, true);
+    assert.ok(edited.acceptedFields.includes('D-VENDOR'));
+    assert.doesNotMatch(edited.replyTexts.join(''), /ข้อมูลที่ต้องใช้|ตอบรวม|D-VENDOR/u);
+    assert.equal(passive.updates.length, 1);
+  });
+
   it('starts the same durable question workflow from validated receipt OCR fields', async () => {
     const h = harness();
     const expense = (h.useCase as any).repo.findByIdWithRelations;
@@ -78,9 +94,10 @@ describe('LineExpenseDraftConversationUseCase', () => {
 
     assert.equal(result.status, 'UPDATED');
     assert.match(result.replyTexts.join('\n'), /ร้าน ABC/u);
-    assert.match(result.replyTexts.join('\n'), /D-PURPOSE/u);
-    assert.match(result.replyTexts.join('\n'), /I01-CATEGORY/u);
+    assert.doesNotMatch(result.replyTexts.join('\n'), /D-PURPOSE|I01-CATEGORY|ข้อมูลที่ต้องใช้|ตอบรวม/u);
     const saved = h.updates[0].options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation;
+    assert.equal(saved.status, 'PAUSED');
+    assert.ok(saved.unresolvedQuestions.some((question: any) => question.id === 'D-PURPOSE'));
     assert.equal(saved.items.length, 1);
     assert.equal(saved.items[0].quantity, '2');
     assert.ok(Object.values(saved.provenance).every((item: any) => item.source === 'LINE_MEDIA_OCR'));
@@ -107,7 +124,7 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.equal(updates[0].options.transactionalAudit.metadataJson.nextVersion, 2);
     assert.deepEqual(updates[0].options.transactionalAudit.metadataJson.webhookEventIds, ['evt-2']);
     assert.match(result.replyTexts.join('\n'), /กระดาษ A4/u);
-    assert.match(result.replyTexts.join('\n'), /ข้อมูลครบสำหรับส่งให้ผู้มีสิทธิ์ตรวจสอบ/u);
+    assert.match(result.replyTexts.join('\n'), /ยังไม่ยืนยันรายการ/u);
   });
 
   // Spec S1-R5: the override signal must come from the mobile journey too, or the measured
@@ -164,7 +181,7 @@ describe('LineExpenseDraftConversationUseCase', () => {
     const ended = await harness().useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'หมด' });
     assert.equal(paused.status, 'PAUSED');
     assert.equal(ended.status, 'ENDED');
-    assert.match(ended.replyTexts.join('\n'), /ยังไม่ลงบัญชี/u);
+    assert.match(ended.replyTexts.join('\n'), /ยังไม่ยืนยันรายการ/u);
   });
 
   it('fails closed when several drafts exist and no exact target is selected', async () => {
@@ -215,17 +232,17 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.equal(h.updates[0].input.expectedUpdatedAt, '2026-08-18T00:00:00.000Z');
   });
 
-  it('parks one open draft for an unrelated request and returns a resume capsule', async () => {
+  it('parks one open draft silently for an unrelated request', async () => {
     const { useCase, updates } = harness();
     const capsule = await useCase.interruptOpen(ctx, 'chat');
-    assert.match(capsule!, /พิมพ์ “ต่อ”/u);
+    assert.equal(capsule, undefined);
     assert.equal(updates[0].options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation.status, 'PAUSED_INTERRUPTED');
   });
 
   it('parks every open draft before handing an unrelated request back to normal chat', async () => {
     const { useCase, updates } = harness(2);
     const capsule = await useCase.interruptOpen(ctx, 'chat');
-    assert.match(capsule!, /2 รายการ/u);
+    assert.equal(capsule, undefined);
     assert.equal(updates.length, 2);
     assert.ok(updates.every((update) =>
       update.options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation.status === 'PAUSED_INTERRUPTED'));

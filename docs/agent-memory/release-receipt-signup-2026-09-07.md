@@ -1,13 +1,13 @@
 # Agent Memory: Receipt and signup release 2026-09-07
 
-Status: Preparing release; no UAT/READY/Production run dispatched for this candidate.
-Owner: Release controller under the owner's explicit UAT → Production live authorization.
+Status: UAT released and verified. Production HOLD by owner instruction on2026-09-08 Bangkok; no Production deployment or standalone live READY dispatched. Automatic READY34146487267 completed successfully with signed cleanup residualResourceCount=0. Owner authorized a new UAT-only bug-fix cycle and paused UAT.
+Owner: Release controller. Owner paused Production on 2026-09-08 Bangkok; earlier live deployment authorization is suspended until explicitly resumed.
 Scope: Ship merged receipt reliability, trial/onboarding and signup/support recovery changes; enable the two receipt flags in both environments. Defer Production mail provider activation.
 Decisions: LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=true and LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=true in UAT and Production live. Preserve explicit false rollback and maintenance quiescence. Production EMAIL_PROVIDER=disabled; existing UAT SES sandbox unchanged. Preserve environment identities, security controls and existing AI/signup parity. Legal owner authorization already recorded as OWNER-DIRECTIVE-2026-09-07-UAT-PROD-PARITY; no legal evidence is manufactured.
 Open questions: None for authorized preparation. Current administrator browser acceptance must be proved with the current enabled identity, never the revoked seed account.
 Artifacts: Existing receipt-reliability-and-draft-continuity plan, onboarding-trial-receipt-fixes plan, line-signup-recovery-and-resolution plan; this release ledger; mandatory uat-production-v2-deployment and cloud-environment-operations runbooks.
-Verification: Pending focused deployment config/maintenance checks, full required candidate CI, signed UAT Passport, signed live READY, signed Production result, runtime flag/config parity and customer OPEN acceptance.
-Next: Wire missing flags in deploy script/workflow environment, verify, merge reviewed source into develop/main, freeze controller, then release exact tested source through the mandatory protocol.
+Verification: Focused deployment checks, full candidate CI, signed UAT Passport, hosted UAT checks and final UAT runtime/digest/flag acceptance PASS. Automatic READY 34146487267 is still running its isolated migration rehearsal and cleanup. Live READY, Production deployment and new-release customer acceptance are on HOLD.
+Next: Honor Production HOLD. Finish evidence/read-only UAT checks and follow the already-running automatic READY through cleanup. Do not dispatch standalone live READY or Production until the owner explicitly resumes. Keep the controller frozen while automatic READY is active; any later source/controller changes require revalidation before resumption.
 
 ## Preparation plan and acceptance
 
@@ -21,9 +21,9 @@ Next: Wire missing flags in deploy script/workflow environment, verify, merge re
 ## Release ledger
 
 - Previous live source: 604ac785479ced5b9858d0b46d89f8d11cf2b9f6; Production run 34078121808.
-- Candidate source / full CI / controller: pending preparation PR.
-- UAT / auto READY / live READY / Production: not dispatched.
-- Signed digests and customer acceptance: pending.
+- Candidate source: `42ddc2dce45f094acceab885e299e8d3caeed3ac`; full CI `34143062233` / `34143241159` SUCCESS; frozen controller `d6c1ab2487c3438bebeb0f9d0ed0a46b0db1b41b`.
+- UAT `34144694046` SUCCESS. Automatic READY `34146487267` in progress. Standalone live READY and Production: not dispatched, owner HOLD.
+- UAT signed Passport and exact deployed digests verified; see terminal evidence below. Real LINE receipt/draft transaction has not been exercised in this release. New-release Production customer acceptance is not applicable while promotion is held.
 
 ## Preflight and implementation evidence
 
@@ -34,3 +34,28 @@ Next: Wire missing flags in deploy script/workflow environment, verify, merge re
 - GitHub environment variables read back true for both required flags in uat and production. This changes the next workflow inputs only; running services have not been mutated.
 - Existing authenticated Chrome Production platform-access page shows deployment live and customer Open. No gate mutation or logout performed during preparation.
 - Owner reconfirmed that the required final Production state is live and usable, never maintenance. No maintenance Production deployment is planned; maintenance assertions above are local tests only.
+
+## Frozen release execution
+
+- Candidate: `42ddc2dce45f094acceab885e299e8d3caeed3ac`. Full actual CI34143062233 and34143241159 SUCCESS, including Typecheck/Test, PostgreSQL, security, secret scan, config and migration review. PR image publication skips are by design; UAT publishes the immutable images.
+- PR481 merged develop at `1c905ff0012aef90ca2c39c8cbfa55241fb4f81f`; PR482 merged main at `d6c1ab2487c3438bebeb0f9d0ed0a46b0db1b41b`. Trees match candidate and both required workflow blobs match. Controller frozen at d6c1ab24 for this release.
+- UAT_RUN_ID=`34144694046`, attempt1, created2026-09-07T16:45:12Z, title/source/controller exact. One dispatch only, targetall, run_m01_acceptance=false. Environment preflight PASS; immutable image publication is next.
+- Dispatch sequencing defect: the orchestration executed UAT after the zero-active-flow command returned nonzero instead of inspecting exit_code first. Its sole hit was READY31611733340, dated2026-08-12, statusqueued, zero jobs, unchanged timestamps. Normal cancel returned "Cannot cancel a workflow run that is completed"; metadata inconsistency is being investigated. No overlapping current READY or Production job found. All future dependent mutations must branch on successful prerequisite exit_code. Do not dispatch a duplicate UAT run.
+- Hosted LINE acceptance question sent to owner while UAT preparation runs; no real LINE/customer message sent by this task. Current-admin browser session can load Production platform-access and authenticated GET returned200/live/Open before deployment. Acceptance HTTP inspection is available through native Chrome DevTools without revealing headers.
+- Stale READY classification: exact run31611733340 / checkSuite85752682208 / source33ed788c / created2026-08-12 remains an unstarted metadata record. REST jobs and check-runs total0. Normal cancel says completed; force-cancel returns409 "Cannot cancel a workflow run that has not been queued yet." This proves the row is not an executable queued/current job. Do not delete history, request a rerun, or exclude any other run. Retain sanitized provider responses and exclude only this proved stale identity from subsequent active-run checks; all actual active runs must still be zero before each new dispatch. UAT34144694046 continues as the sole current release run.
+- UAT34144694046 attempt1 SUCCESS, reused exact PR CI34143241159. All immutable image publication, release task, three-service rollout, digest/health, retirement and finalization passed.
+- AUTO_READY_RUN_ID=`34146487267`, created2026-09-07T17:10:30Z, controllerd6c1ab24, source UAT34144694046; monitor this exact automatic run to terminal before any standalone live READY dispatch. Its automatic requested mode is maintenance_closed and it will not be used for a live promotion.
+- Hosted UAT checks at2026-09-07T17:08:04Z PASS: secret-safe deep DB readiness200/dbok, external signup200/enabled, LINE signup401 identity guard, real LIFF owner email required/no password-or-verification prerequisite/trial15/recovery copy/no public request reference; public signup/welcome/claim pages200; customer gateOPEN; exact active LINE webhook and provider connectivity test passed. No customer message or signup submitted.
+- UAT provider identity read-only: uat-mangmeeplus / @234jrspv. Authenticated UAT browser opened existing test company cmth2jn6y008w4k5xwb3hcman successfully; company ACTIVE, tax/registered name still empty, OWNER linked to LINE, expense/AI menus and document OCR enabled. No company settings changed. This test company has an older STARTER package, not a normal LINE AUTO_FREE trial, so its package allowance is not trial15 evidence.
+- User-facing hosted LINE test question remains unanswered; no manual LINE messages sent. Production live READY and promotion not yet dispatched. Signed UAT Passport validation pending retrieval.
+
+- UAT signed Passport verified: archive digest `sha256:e27c1aa81a8caf0dd6452602d697203534f092c189db0f0bfcca5983f860d6dd`, artifact10027823015; cosign exact deploy-uat.yml@main/repository/controller/trigger PASS; full canonical Passport validator PASS. Content SHA `b10ad8efa32053f97e488bd7ca4b619fff4cebb53b0b3ad3e75cac20401fc73b`; issued1788801016, expires1788887416.
+- Final UAT readback: all3 ACTIVE with one active configuration, source42ddc2dc/live. API flags true/true, draft-edit true, trial15, UAT SES unchanged. Immutable API digestf75cc5996003ce637e12ef9dc7d3b6a7d5720128b01517270c971e4f50982531; gatewayd40689a8845840ed63f3d3db8ce91ae0e024cd723ddacbb68275f8ebf418021a; workersedbcb1162276c427f16c85b3fcfa7de4d6868ba278113abff03ce4ab0f3871e8. Production is still on the previous live source604ac785; no Production deploy dispatched.
+
+## Owner stop instruction — Production HOLD
+
+Latest explicit owner direction (2026-09-08 Bangkok): "เดี๋ยวอย่าพึ่งดีพอน prod". This withdraws authorization to start the next Production deployment for now. UAT34144694046 is already successful and verified; Production still runs604ac785 in live/Open. No Production workflow has been dispatched in this release. No standalone live READY has been dispatched. Automatic READY34146487267 was triggered by UAT before the hold and is currently doing readiness work; follow it to terminal and safe isolated-resource cleanup, without promotion. The unanswered optional LINE test question grants no permission to send messages.
+
+- Post-hold check: latest Production workflow remains successful run `34078121808` created `2026-09-07T02:59:57Z`. Automatic READY `34146487267` reached isolated migration rehearsal at `2026-09-07T17:17:06Z`; it does not deploy serving services or migrate the live Production database. Its existing cleanup trap removes run-owned clone resources. No cancellation, retry, new READY or Production dispatch was issued.
+
+- Automatic READY34146487267 SUCCESS; cosign and canonical validator PASS; two migrations rehearsed, signed cleanup residualResourceCount=0. Artifact10028383820 archive digest sha256:60e4aaaecc158c6bb920400761940f04dd25f0946f464763e890134a05f26b21. No Production/live READY dispatched. This candidate is superseded by owner-requested receipt UX/signup fixes; do not promote it. Follow `line-receipt-ux-signup-reapply-2026-09-08.md`. UAT intentionally paused to0/0 on2026-09-08 while fixes are implemented; reopen only when ready to deploy the new candidate.

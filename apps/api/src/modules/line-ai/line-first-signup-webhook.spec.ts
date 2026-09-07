@@ -218,6 +218,8 @@ function harness(options: {
 
   const prisma = {
     client: {
+      $executeRaw: async () => 0,
+      $transaction: async (fn: any) => fn(prisma.client),
       companySignupRequest: { findFirst: async () => options.pendingSignup ?? null },
       lineCompanyContext: {
         findUnique: async () => options.context ?? null,

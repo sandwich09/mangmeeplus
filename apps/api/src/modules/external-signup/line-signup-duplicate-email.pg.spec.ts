@@ -345,6 +345,33 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 0);
   }));
 
+  it('a rejected applicant can change email, reapply manually, and actually open the shop after admin approval', async (t) => fixture(t, async (client, tag) => {
+    const lineUserId = `U${tag}-new`;
+    const prior = await client.companySignupRequest.create({ data: {
+      source: 'line-oa', externalSignupId: `${tag}-old`, payloadHash: 'prior-proof', consentVersion: 'v3',
+      companyName: `${tag}-old`, ownerDisplayName: tag, state: 'REJECTED',
+      lineProviderUserId: lineUserId, lineChannelId: tag, contactEmail: `${tag}-old@example.test`,
+    } });
+    const h = wire(client, tag, lineUserId);
+    const cmd = command(tag, `${tag}-fresh@example.test`);
+    const result = await h.submit.execute(cmd);
+    const requestId = result.progress!.requestId;
+    assert.notEqual(requestId, prior.id);
+    const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: requestId } });
+    assert.equal(pending.state, 'PENDING_REVIEW');
+    assert.equal(pending.autoApproved, false);
+    assert.equal(pending.contactEmailConflict, false);
+    assert.equal(h.provisionCalls, 0);
+    const queue = await h.queue.list();
+    assert.equal(queue.items.find((row) => row.requestId === requestId)?.priorRejectedRequestId, prior.id);
+    const replay = await h.submit.execute(cmd);
+    assert.equal(replay.progress!.requestId, requestId);
+    const approved = await h.queue.decide(requestId, { action: 'CREATE_NEW_SHOP', version: pending.version }, `${tag}-admin`, `${tag}-approve`, URLS);
+    assert.equal(approved.state, 'COMPLETED');
+    assert.equal((await client.companySignupRequest.findUniqueOrThrow({ where: { id: prior.id } })).state, 'REJECTED');
+    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
+  }));
+
   it('two committed concurrent fresh applications cannot both auto-provision', async (t) => fixture(t, async (client, tag) => {
     const other = connect(), email = `${tag}@example.test`;
     let release!: () => void, arrived = 0;

@@ -46,6 +46,7 @@ function harness(options: {
   systemAdmins?: string[];
   attemptBucketFull?: boolean;
   emailPreviouslyUsed?: boolean;
+  priorRejected?: boolean;
   recordLineSignupFailures?: number;
   provisionFailures?: number;
 } = {}) {
@@ -95,6 +96,14 @@ function harness(options: {
         return key === request.id || key === request.externalSignupId ? request : null;
       },
       findFirst: async (args: any) => {
+        if (args.where.state === 'REJECTED') {
+          assert.equal(args.where.source, 'line-oa');
+          assert.equal(args.where.lineProviderUserId, request.lineProviderUserId);
+          assert.equal(args.where.lineChannelId, request.lineChannelId);
+          assert.deepEqual(args.where.id, { not: request.id });
+          assert.equal(args.where.contactEmail, undefined, 'history follows verified LINE, not unverified email');
+          return options.priorRejected ? { id: 'rejected-old' } : null;
+        }
         if (!request) return null;
         if (args.where.id && args.where.id !== request.id) return null;
         if (args.where.externalSignupId && args.where.externalSignupId !== request.externalSignupId) return null;
@@ -211,6 +220,20 @@ function harness(options: {
 }
 
 describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
+  it('queues reapplication after rejection for manual review even with an unused changed email and no prior shop', async () => {
+    for (const contactEmail of ['shop@example.test', 'changed@example.test']) {
+      const h = harness({ approvalMode: 'AUTO_FREE', priorRejected: true });
+      const result = await h.useCase.execute({ ...CMD, contactEmail }, NOW);
+      assert.equal(result.progress?.state, 'PENDING_REVIEW');
+      assert.equal(h.provisioned.length, 0);
+      assert.equal(h.notified.length, 1);
+      const evidence = h.audits.find((entry) => entry.data.action === 'signup.line.reapplication_review');
+      assert.equal(evidence.data.metadataJson.priorRequestId, 'rejected-old');
+      assert.equal(evidence.data.metadataJson.reason, 'prior_rejection_manual_review');
+      assert.equal(h.created.length, 1);
+    }
+  });
+
   it('never touches the database when the token does not verify', async () => {
     const h = harness({ verifyThrows: new UnauthorizedException('bad token') });
     await assert.rejects(() => h.useCase.execute(CMD, NOW), UnauthorizedException);

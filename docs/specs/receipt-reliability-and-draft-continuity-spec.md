@@ -1,5 +1,8 @@
 # Receipt reliability and draft continuity
 
+2026-09-08 amendment: [Receipt UX and rejected reapplication](line-receipt-ux-signup-reapply-spec.md) supersedes automatic receipt questioning and terminal-rejection dead ends. Capture, permissions, audit and final-mutation boundaries remain.
+
+
 Status: Authorized for implementation, 2026-09-07. Runtime rollout is separate from merging this change.
 
 Owner: Product owner; coordinating agent with GPT-6 Astra / GPT-5.6 Sol at xhigh as requested.

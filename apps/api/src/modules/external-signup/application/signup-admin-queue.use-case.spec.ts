@@ -147,6 +147,7 @@ function harness(options: {
       auditLog: {
         create: async (args: any) => { audits.push(args); return {}; },
         findMany: async (args: any) => {
+          if (args.where.action === 'signup.line.reapplication_review') return [];
           assert.equal(args.where.action, 'signup.line.submitted');
           assert.deepEqual(args.where.metadataJson, { path: ['emailPreviouslyUsed'], equals: true });
           return (options.emailReviewEvidence ?? []).filter((row) => args.where.targetId.in.includes(row.targetId));

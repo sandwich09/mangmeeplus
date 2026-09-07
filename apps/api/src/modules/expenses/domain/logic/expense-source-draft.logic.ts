@@ -34,7 +34,9 @@ export function bindSourceDraftLines(state: LineExpenseDraftContinuation, expens
       const matches = expense.lines.filter((candidate) => !candidate.chargeKind && candidate.description === item.description && !used.has(candidate.id));
       if (matches.length === 1) {
         const candidate = matches[0]!;
-        const reconciledItems = expense.aiVerificationSummaryJson?.['chargeReconciliationStatus'] === 'RECONCILED_ITEM_LINES';
+        const reconciliation = expense.aiVerificationSummaryJson?.['chargeReconciliation'];
+        const reconciledItems = reconciliation !== null && typeof reconciliation === 'object'
+          && !Array.isArray(reconciliation) && 'status' in reconciliation && reconciliation.status === 'RECONCILED_ITEM_LINES';
         const quantityProven = Boolean(item.quantity);
         const priceProven = Boolean(item.unitPrice || item.totalAmount);
         const numericMatch = quantityProven && priceProven && new Decimal(item.quantity!).eq(candidate.quantity)

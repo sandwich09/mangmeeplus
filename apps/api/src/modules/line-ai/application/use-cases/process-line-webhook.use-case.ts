@@ -8,7 +8,7 @@
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Injectable, Logger, Optional, ForbiddenException } from '@nestjs/common';
+import { HttpException, Injectable, Logger, Optional, ForbiddenException, ConflictException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -70,8 +70,7 @@ import {
   type LineSubstituteReceiptContinuationResult,
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
-import { sourceDraftState } from '../../../expenses/domain/logic/expense-source-draft.logic';
-import { formatLineExpenseDraftReply, splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
+import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
@@ -746,21 +745,12 @@ export function presentationKindOf(messages: LineReplyMessage[]): string {
   return messages.some((message) => message.type === 'text') ? 'text_parts_then_flex' : 'flex';
 }
 
-/** The canonical text of a Flex message is its own `altText` — LINE's designated plain-text
- *  equivalent, written by the SAME builder that wrote the bubble. Nothing is invented here and no
- *  model is called: a card LINE refused to render is re-sent as the words it already declared, with
- *  its quick reply intact so the completion menu survives the downgrade.
- *
- *  ponytail: `altText` is `preview(text, 400)` in line-business-card.logic.ts, so a card body longer
- *  than 400 characters falls back to its VISIBLY marked ("…") preview rather than the full body —
- *  short of §10.2's lossless bar, but strictly more than the silence it replaces, and on the
- *  multi-part lane the long text already shipped as text before the card. Give the card builders a
- *  canonical-text field the day a fallback delivery is observed losing content. */
+/** Preserve the complete customer reply and action if LINE rejects a Flex body. */
 export function toCanonicalTextMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
   return messages.map((message) => (message.type === 'flex'
     ? {
         type: 'text' as const,
-        text: message.altText,
+        text: message.canonicalText ?? message.altText,
         ...(message.quickReply ? { quickReply: message.quickReply } : {}),
       }
     : message));
@@ -1023,13 +1013,20 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
   const amountValue = options.fields?.grandTotalAmount ?? options.amount;
   const amount = amountValue && Number(toMoney4(amountValue)) > 0 ? Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังไม่ระบุ';
   const docType = options.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] : undefined;
-  const parts = [
+  const parts = options.compact ? [
+    '🧾 เก็บรูปและร่างแล้วค่ะ',
+    ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
+    ...(options.fields?.vendorName ? [`ร้าน: ${options.fields.vendorName}`] : []),
+    `ยอดในใบเสร็จ: ${amount === 'ยังไม่ระบุ' ? 'ยังอ่านยอดไม่ได้' : `${amount}${options.fields?.currency && options.fields.currency !== 'THB' ? ` ${options.fields.currency}` : ' บาท'}`}`,
+    `วันที่: ${!options.fields?.expenseDate ? 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน' : options.dateStatus === 'unverified' ? 'ยังรอตรวจสอบ' : receiptCardDateLine(options.fields.expenseDate, options.dateStatus ?? 'verified')}`,
+    'ยังไม่ยืนยันรายการ',
+  ] : [
     '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)',
     '',
     '📋 ข้อมูลที่อ่านได้ตอนนี้:',
@@ -1055,7 +1052,7 @@ export function formatPaypersReply(
     && FOLDED_CHARGE_STATUSES.includes(options.chargeReconciliation.status)
     ? options.fields?.additionalCharges ?? []
     : [];
-  if (charges.length > 0) parts.push('', ...chargeSummaryLines(charges));
+  if (charges.length > 0) parts.push('', ...(options.compact ? chargeSummaryLines(charges).slice(0, 1) : chargeSummaryLines(charges)));
   else if (folded.length > 0) parts.push('', foldedChargeLine(folded));
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
     const itemLines = receiptItemLines(options.fields, charges);
@@ -1075,7 +1072,7 @@ export function formatPaypersReply(
   if (options.fields?.currency && options.fields.currency !== 'THB') {
     parts.push('', `⚠️ เอกสารนี้เป็นสกุลเงิน ${options.fields.currency} – ยอดที่อ่านได้อาจไม่ใช่จำนวนเงินบาท กรุณาตรวจและแก้ยอดเป็นเงินบาทก่อนบันทึก`);
   }
-  parts.push('', `✅ ตรวจสอบและยืนยันในเว็บแอป:\n${link}`);
+  parts.push('', `${options.compact ? 'เปิดดูรายการ' : '✅ ตรวจสอบและยืนยันในเว็บแอป'}:\n${link}`);
   return parts.join('\n');
 }
 
@@ -1933,7 +1930,40 @@ export class ProcessLineWebhookUseCase {
     // LINE account. Three genuine asks a day is more than a real customer makes; the fourth is
     // answered warmly and writes nothing. Checked HERE, not at dispatch: a repeat tap on an
     // already-open request costs nothing and must never be refused.
-    if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) {
+    const created = await this.prisma.client.$transaction(async (tx) => {
+      const lockKey = `line-support:${hashMessagePreview(event.lineUserId)}`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+      const raced = await tx.lineSupportRequest.findFirst({
+        where: { lineUserId: event.lineUserId, status: { in: ['OPEN', 'ANSWERED'] } },
+        orderBy: { requestedAt: 'desc' }, select: { id: true, status: true },
+      });
+      if (raced) {
+        const touched = await tx.lineSupportRequest.updateMany({
+          where: { id: raced.id, status: raced.status },
+          data: { lastMessageAt: new Date(), ...(raced.status === 'ANSWERED'
+            ? { status: 'OPEN', reopenedCount: { increment: 1 } } : {}) },
+        });
+        if (touched.count === 0) throw new ConflictException('line_support_state_changed');
+        return raced;
+      }
+      if (this.rateLimit && !await this.rateLimit.consumeLineSupportRequestSlot(event.lineUserId)) return null;
+
+      return tx.lineSupportRequest.create({
+        data: {
+          lineUserId: event.lineUserId,
+          lineUserIdHash: hashMessagePreview(event.lineUserId),
+          ...(asker?.companyId ? { companyId: asker.companyId } : {}),
+          ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
+          // Both, from the same sentence: `requestText` is the question and never changes again,
+          // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
+          ...(asker?.lastMessageText
+            ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
+            : {}),
+        },
+        select: { id: true },
+      });
+    });
+    if (!created) {
       await this.deliverReply(event, SUPPORT_DAILY_LIMIT_REPLY);
       await this.audit.log({
         action: 'signup.line.support_requested',
@@ -1951,20 +1981,6 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
-    const created = await this.prisma.client.lineSupportRequest.create({
-      data: {
-        lineUserId: event.lineUserId,
-        lineUserIdHash: hashMessagePreview(event.lineUserId),
-        ...(asker?.companyId ? { companyId: asker.companyId } : {}),
-        ...(asker?.signupRequestId ? { signupRequestId: asker.signupRequestId } : {}),
-        // Both, from the same sentence: `requestText` is the question and never changes again,
-        // `lastMessageText` is where the thread has got to and is rewritten by every follow-up.
-        ...(asker?.lastMessageText
-          ? { requestText: asker.lastMessageText, lastMessageText: asker.lastMessageText }
-          : {}),
-      },
-      select: { id: true },
-    });
     // Only a linked asker has an assistant to stop, and only now that a request actually exists:
     // someone who unlinked is talking to the door card, so there is nothing to pause — but they
     // still reach a human (§2.1.2).
@@ -2464,6 +2480,9 @@ export class ProcessLineWebhookUseCase {
     /** Spec §13: the state badge the reply's own use case chose. Absent renders exactly as before. */
     badge?: string,
   ): Promise<void> {
+    if (Array.from(text).length > LINE_FLEX_CARD_BODY_MAX_CHARS) {
+      return this.deliverCompletedReplies(event, splitLineExpenseDraftReply(text), companyId, access, undefined, true);
+    }
     const message = await this.timeStage(event.webhookEventId, 'render', () => this.withCompletionMenu(
       buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId, badge),
       companyId,
@@ -2486,7 +2505,7 @@ export class ProcessLineWebhookUseCase {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     if (texts.some((text) => text.includes(link))) return texts;
     const suffix = `
-เปิดร่างเดิมหรือเติมข้อมูลในเว็บ: ${link}`;
+เปิดดูรายการ: ${link}`;
     const last = texts.length - 1;
     return texts.map((text, index) => index === last ? `${text}${suffix}` : text);
   }
@@ -2497,13 +2516,14 @@ export class ProcessLineWebhookUseCase {
     companyId: string,
     access: { permissions: string[]; roles: string[] },
     expenseDraft?: LineExpenseDraftCardFacts,
+    requestedDraftEdit = false,
   ): Promise<void> {
     if (texts.length === 0 || texts.length > LINE_MAX_MESSAGES_PER_REPLY) throw new Error('LINE_EXPENSE_DRAFT_REPLY_PARTS_INVALID');
     const messages = await this.timeStage(event.webhookEventId, 'render', async () => {
       const terminal = texts[texts.length - 1]!;
       // Default-off is the legacy shape exactly: every part a text message, completion quick reply on the
       // terminal one only.
-      if (!this.config.lineAiMultipartTerminalFlexEnabled) {
+      if (!this.config.lineAiMultipartTerminalFlexEnabled && !requestedDraftEdit) {
         const parts = texts.map((text) => this.buildLosslessTextMessage(text));
         parts[parts.length - 1] = await this.withCompletionMenu(parts[parts.length - 1]!, companyId, access);
         return parts;
@@ -2511,9 +2531,9 @@ export class ProcessLineWebhookUseCase {
       // §10.1: an expense capture terminal that grounded a draft gets the DEDICATED ร่างค่าใช้จ่าย card;
       // the generic card stays the render for every terminal with no such draft behind it. Same gate
       // either way, so flag-off is still the byte-identical legacy all-text shape above.
-      const terminalCard = (text: string): LineReplyMessage => (expenseDraft
+      const terminalCard = (text: string): LineReplyMessage => expenseDraft && !/ข้อมูลที่ต้องใช้|ข้อมูลที่ยังต้องตอบ/u.test(text)
         ? buildExpenseDraftCardMessage(text, expenseDraft, this.config.webBaseUrl, companyId)
-        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId));
+        : buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, companyId);
       // Spec §10.1: earlier parts stay lossless text; the terminal part becomes the same Flex card a
       // single completed reply gets, so a multi-part journey never ends in plain text.
       if (Array.from(terminal).length <= LINE_FLEX_CARD_BODY_MAX_CHARS) {
@@ -3289,7 +3309,7 @@ export class ProcessLineWebhookUseCase {
         webhookEventId: event.webhookEventId,
       });
       if (result.handled) {
-        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
@@ -3856,18 +3876,16 @@ export class ProcessLineWebhookUseCase {
         webhookEventId: event.webhookEventId,
         captureHints: routePlan.captureHints,
       });
-      if (!result.handled) {
-        await this.deliverReply(event, TEXT_EXPENSE_CLARIFY_REPLY);
-        await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
+      if (result.handled) {
+        await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
+        await this.persistIntakeTurn({
+          userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+          userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
+        });
+        await this.updateEventLog(event.webhookEventId, result.status === 'UPDATED' ? 'clarification_required' : 'completed', undefined, companyId);
         return;
       }
-      await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess);
-      await this.persistIntakeTurn({
-        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
-        userMessagePreview: normalizedText, replyText: result.replyTexts.join('\n'), intent: 'CLARIFY',
-      });
-      await this.updateEventLog(event.webhookEventId, result.status === 'UPDATED' ? 'clarification_required' : 'completed', undefined, companyId);
-      return;
+      // No user-initiated draft edit: let the original message take the normal query path.
     }
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE') {
@@ -4856,7 +4874,7 @@ export class ProcessLineWebhookUseCase {
       if (err instanceof LineDeliveryError) return { outcome: 'done' };
       if (saved?.uploaded) {
         const texts = await this.savedReceiptReplies(event, saved.companyId, saved.expenseId);
-        await this.deliverRequiredMessages(event, texts.map((text) => this.buildLosslessTextMessage(text))).catch(() => {});
+        await this.deliverRequiredMessages(event, texts.map((text) => buildLineAssistantTextCardMessage(text, this.config.webBaseUrl, saved!.companyId))).catch(() => {});
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, saved.companyId);
         return { outcome: 'done' };
       }
@@ -5583,8 +5601,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
       .includes(normalizeLineText(purposeHint).toLocaleLowerCase('th-TH')) ? purposeHint : undefined;
     const draftSuggestedCategoryId = effectiveCategory?.id ?? categorySuggestion?.expenseCategoryId;
-    const receiptDraft = expenseDraftConversationEnabled
-      ? await this.expenseDraftConversation!.startFromReceipt(ctx, {
+    if (expenseDraftConversationEnabled) await this.expenseDraftConversation!.startFromReceipt(ctx, {
         expenseId: intent.expenseId,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
@@ -5594,9 +5611,10 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
         // the suggestion here — it lands as the item's `suggestedCategoryId`, which the reply asks
         // the user to confirm and never applies on its own.
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
-      })
-      : undefined;
-    const replyTexts = receiptDraft?.replyTexts.length ? [...receiptDraft.replyTexts] : [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
+      });
+    // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
+    const replyTexts = [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
+      compact: true,
       hasDuplicate,
       fields: ocrFields,
       // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
@@ -5623,14 +5641,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       const last = replyTexts.length - 1;
       replyTexts[last] = `${replyTexts[last]}\n${trialReceiptCounterLineTh(trial.usedCount, trial.planLimit)}`;
     }
-    if (receiptDraft?.replyTexts.length) {
-      await this.deliverCompletedReplies(event, this.withDraftWebLink(replyTexts, companyId, intent.expenseId), companyId, access,
-        expenseDraftCardFacts(intent.expenseId, {
-          fields: ocrFields,
-          categoryName: effectiveCategory?.name || null,
-          ...(groundedPurpose ? { item: groundedPurpose } : {}),
-        }));
-    } else await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
+    await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
       userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5639,29 +5650,25 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
   }
 
-  /** Read-only recovery: list every currently missing source fact without reapplying financial rows. */
+  /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
   private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string): Promise<string[]> {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
-    const fallback = `📷 เก็บรูปและร่างแล้ว ยังไม่ยืนยันรายการค่ะ กรุณาเปิดร่างนี้เพื่อตรวจและเติมข้อมูล
-${link}`;
+    const fallback = `📷 เก็บรูปและร่างแล้วค่ะ ยังไม่ยืนยันรายการ\nเปิดดูรายการ: ${link}`;
     try {
       if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return [fallback];
       const access = await this.permissionResolver.resolveAccess(event.handoff.userId, companyId);
       const expense = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes ?? {});
       if (!expense || expense.createdByUserId !== event.handoff.userId) return [fallback];
-      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
-${link}`];
-      const categories = await this.expenseRepo.listCategories(companyId);
-      const state = sourceDraftState(expense, categories);
-      if (!state) return [fallback];
-      let summary = formatLineExpenseDraftReply({ state: { ...state, status: 'OPEN' }, categories,
-        label: expense.vendorNameSnapshot ?? expense.expenseNumber ?? expense.id });
-      summary = summary.replace('ตอบหลายข้อในข้อความเดียวได้ • พิมพ์ “พัก” เพื่อกลับมาต่อ • พิมพ์ “หมด” เพื่อจบการกรอก', 'เติมข้อมูลที่ยังขาดทั้งหมดได้ในร่างเดิมบนเว็บ');
-      return splitLineExpenseDraftReply(`📷 เก็บรูปและร่างแล้ว ยังไม่ยืนยันรายการ
-${summary}
-เปิดร่างเดิมหรือเติมข้อมูลทั้งหมดในเว็บ: ${link}`);
+      if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
+      return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
+        compact: true,
+        fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
+        charges: expense.charges,
+        hasDuplicate: Boolean(expense.duplicateOfExpenseId),
+        dateStatus: expense.aiVerificationSummaryJson?.dateStatus as ExpenseDocumentDateStatus | undefined,
+      })];
     } catch (error) {
-      this.logger.warn({ msg: 'line_receipt_missing_facts_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
+      this.logger.warn({ msg: 'line_receipt_summary_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
       return [fallback];
     }
   }
@@ -5700,17 +5707,16 @@ ${summary}
     const canContinue = Boolean(expense.primaryAttachmentId) && this.config.lineExpenseDraftConversationEnabled === true
       && (!event.pushTargetId || event.pushTargetId === event.lineUserId)
       && (expense.status === 'DRAFT' || expense.status === 'NEEDS_REVIEW');
-    const draft = canContinue ? await this.expenseDraftConversation?.startFromReceipt(ctx, {
+    if (canContinue) await this.expenseDraftConversation?.startFromReceipt(ctx, {
       expenseId: expense.id, chatKeyHash: chatKeyHashOf(event), webhookEventId: event.webhookEventId,
       ocrFields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
-    }) : undefined;
+    });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
-    if (draft?.replyTexts.length) await this.deliverCompletedReplies(event, this.withDraftWebLink(draft.replyTexts, ctx.companyId, expense.id), ctx.companyId, access);
-    else if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
+    if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
 ${link}`, ctx.companyId, access);
     else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
 ${link}`, ctx.companyId, access);
-    else await this.deliverCompletedReplies(event, await this.savedReceiptReplies(event, ctx.companyId, expense.id), ctx.companyId, access);
+    else await this.deliverCompletedReply(event, (await this.savedReceiptReplies(event, ctx.companyId, expense.id)).join('\n'), ctx.companyId, access);
     await this.recordDeliveredReceiptContinuation(event, ctx.companyId, ctx.userId, expense.id, ctx.scopes);
     await this.updateEventLog(event.webhookEventId, 'completed', undefined, ctx.companyId);
   }

@@ -100,6 +100,9 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   if (!isLineSignup(item) && item.emailMatchesExistingUser) {
     chips.push({ label: 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน', tone: 'info' });
   }
+  if (item.priorRejectedRequestId) {
+    chips.push({ label: `สมัครใหม่หลังถูกปฏิเสธ · คำขอเดิม ${item.priorRejectedRequestId}`, tone: 'warning' });
+  }
   if (item.emailPreviouslyUsed) {
     chips.push({ label: 'อีเมลเคยใช้แล้ว — ตรวจร้านเดิมก่อนอนุมัติ', tone: 'warning' });
   }

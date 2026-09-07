@@ -221,3 +221,46 @@ test('a saved intake can resume on a cleared device through the proof-bound retr
   await expect(page.locator('#progress-title')).toHaveText('รับคำขอแล้ว');
   await expect(page.locator('body')).not.toContainText('line-e2e-1');
 });
+
+for (const existingShop of [false, true]) {
+  test(`rejected applicant can reapply manually and reach support without chat APIs (existing shop ${existingShop})`, async ({ page, urls }, info) => {
+    expect(['localhost', '127.0.0.1']).toContain(new URL(urls.api).hostname);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockLineSdk(page, 'sandwich');
+    const companies = existingShop ? [{ companyId: 'owned-shop', companyName: 'ร้านเดิม', status: 'ACTIVE', canEnter: true }] : [];
+    const rejected = signupStatus({ state: 'REJECTED' }, companies);
+    await page.route(`${urls.api}/public/line-signups/me`, (route) => route.fulfill({ json: rejected }));
+    const help: unknown[] = [], submitted: any[] = [];
+    await page.route(`${urls.api}/public/line-signups/support`, async (route) => {
+      help.push(route.request().postDataJSON());
+      await route.fulfill({ status: 202, json: { received: true } });
+    });
+    await page.route(`${urls.api}/public/line-signups`, async (route) => {
+      submitted.push(route.request().postDataJSON());
+      await route.fulfill({ status: 202, json: signupStatus({ requestId: 'new-request', submissionId: submitted[0].submissionId }, companies) });
+    });
+    await page.goto(`${urls.api}/auth/line/link-page/signup`);
+    await expect(page.getByRole('button', { name: 'สมัครใหม่', exact: true })).toBeVisible();
+    await expect(page.locator('#progress-text')).toContainText('ไม่เปิดร้านอัตโนมัติ');
+    await expect(page.locator('body')).not.toContainText('line-e2e-1');
+    if (existingShop) await expect(page.getByRole('button', { name: 'เข้าใช้ ร้านเดิม', exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`rejected-reapply-${existingShop}-390.png`), fullPage: true });
+    await page.evaluate(() => { (window as any).liff.sendMessages = async () => { throw new Error('unavailable launch context'); }; });
+    await page.getByRole('button', { name: 'ติดต่อเจ้าหน้าที่', exact: true }).click();
+    await expect(page.locator('#status')).toContainText('รับเรื่องขอความช่วยเหลือแล้ว');
+    expect(help).toEqual([{ idToken: 'local.synthetic.token' }]);
+    await page.getByRole('button', { name: 'สมัครใหม่', exact: true }).click();
+    await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านใหม่อีกครั้ง');
+    await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
+    await page.getByLabel('อีเมลเจ้าของร้าน', { exact: true }).fill('new-contact@example.test');
+    const submit = page.getByRole('button', { name: 'ส่งคำขอให้ทีมงานตรวจสอบ', exact: true });
+    expect((await submit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await submit.click();
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].submissionId).not.toBe(rejected.progress.submissionId);
+    expect(submitted[0].intent).toBe(existingShop ? 'ADD_SHOP' : 'FIRST_SHOP');
+    await expect(page.locator('#progress-title')).toHaveText('รับคำขอแล้ว');
+    await page.reload();
+    expect(submitted).toHaveLength(1);
+  });
+}

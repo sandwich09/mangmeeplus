@@ -13,8 +13,17 @@ export type LineReplyMessage = {
   quickReply?: { items: LineQuickReplyItem[] };
 } & (
   | { type: 'text'; text: string }
-  | { type: 'flex'; altText: string; contents: Record<string, unknown> }
+  | { type: 'flex'; altText: string; canonicalText?: string; contents: Record<string, unknown> }
 );
+
+/** Internal recovery text stays in the durable outcome, never in the LINE wire schema. */
+function providerMessages(messages: LineReplyMessage[]): LineReplyMessage[] {
+  return messages.map((message) => {
+    if (message.type !== 'flex') return message;
+    const { canonicalText: _canonicalText, ...providerMessage } = message;
+    return providerMessage;
+  });
+}
 
 /** `failed_token` = LINE rejected the request (400): expired/used reply token
  *  or malformed message — the only class where a push fallback can still
@@ -38,6 +47,10 @@ export function parseOutcomeMessages(value: unknown): LineReplyMessage[] | null 
     && (message as { text: string }).text.length > 0 && (message as { text: string }).text.length <= 5000)
     || (message?.type === 'flex' && typeof (message as { altText?: unknown }).altText === 'string'
       && (message as { altText: string }).altText.length > 0 && (message as { altText: string }).altText.length <= 400
+      && ((message as { canonicalText?: unknown }).canonicalText === undefined
+        || (typeof (message as { canonicalText?: unknown }).canonicalText === 'string'
+          && (message as { canonicalText: string }).canonicalText.length > 0
+          && (message as { canonicalText: string }).canonicalText.length <= 5000))
       && !!(message as { contents?: unknown }).contents
       && typeof (message as { contents?: unknown }).contents === 'object'));
   return valid ? (value as LineReplyMessage[]) : null;
@@ -91,13 +104,13 @@ export class LineReplyAdapter {
   constructor(private readonly config: AppConfigService) {}
 
   async sendReply(replyToken: string, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
-    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages }, 'reply', messages);
+    return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages);
   }
 
   /** Push delivery consumes the OA monthly message quota (replies are free).
    *  Used for expired-token fallback, slow-turn feedback, and receipt acknowledgement (spec §10). */
   async sendPush(to: string, messages: LineReplyMessage[], operationId: string = randomUUID()): Promise<LineDeliveryResult> {
-    return this.postMessage(this.LINE_PUSH_URL, { to, messages }, 'push', messages, linePushRetryKey(operationId, to, messages));
+    return this.postMessage(this.LINE_PUSH_URL, { to, messages: providerMessages(messages) }, 'push', messages, linePushRetryKey(operationId, to, messages));
   }
 
   /** Best-effort typing indicator. One-on-one chats only; LINE dismisses it

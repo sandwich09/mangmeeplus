@@ -18,14 +18,16 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     const messages = splitLineExpenseDraftReply(text);
     assert.ok(messages.length <= 5, `${messages.length} messages`);
     assert.equal(messages.join(''), text);
-    for (const question of state.unresolvedQuestions) assert.ok(text.includes(question.id), question.id);
+    for (const item of state.items) assert.ok(text.includes(item.description!.slice(0, 60)), item.description);
+    assert.doesNotMatch(text, /D-[A-Z]|I\d{2}-/u);
+    assert.match(text, /ตอบรวมในข้อความเดียว/u);
     assert.throws(() => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'x', hints: { items: [...items, items[0]!] } }), /at most 40/);
   });
 
   it('never turns a summary financial1/100 into missing OCR item facts on initial bind or stale refresh', () => {
     const expense = { id: 'ex', companyId: 'co', createdByUserId: 'u', captureSource: 'LINE_UPLOAD', status: 'NEEDS_REVIEW',
       expenseDate: new Date(base.targetRevision), updatedAt: new Date(base.targetRevision), reviewedAt: null, vendorNameSnapshot: null, note: 'LINE receipt upload',
-      sourceChannelMetadataJson: null, aiVerificationSummaryJson: { chargeReconciliationStatus: 'SUMMARY_LINE', recognizedFields: { lines: [{ description: 'กระดาษ' }] } },
+      sourceChannelMetadataJson: null, aiVerificationSummaryJson: { chargeReconciliation: { status: 'SUMMARY_LINE' }, recognizedFields: { lines: [{ description: 'กระดาษ' }] } },
       lines: [{ id: 'summary', description: 'กระดาษ', quantity: '1', unitPrice: '100', expenseCategoryId: null, reviewStatus: 'REVIEWED' }] } as any;
     const bound = bindSourceDraftLines(empty(), expense, true);
     assert.equal(bound.items[0]!.quantity, undefined); assert.equal(bound.items[0]!.unitPrice, undefined);
@@ -38,6 +40,19 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     const mismatched = bindSourceDraftLines(completeSource, expense);
     assert.equal(mismatched.items[0]!.quantity, '2'); assert.equal(mismatched.items[0]!.unitPrice, '50');
     assert.equal(mismatched.items[0]!.lineId, undefined); assert.equal(mismatched.items[0]!.reviewRequired, true);
+  });
+
+  it('binds fractional reconciled OCR lines using the persisted nested reconciliation contract', () => {
+    const state = buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'TOMATO SOUP 0.63 243.75',
+      hints: { items: [{ sourceText: 'TOMATO SOUP 0.63 243.75', description: 'TOMATO SOUP', quantity: '0.63', totalAmount: '243.75' }] } });
+    const expense = { lines: [{ id: 'line-soup', description: 'TOMATO SOUP', quantity: '0.63', unitPrice: '386.9048', expenseCategoryId: 'cat', chargeKind: null }],
+      aiVerificationSummaryJson: { chargeReconciliation: { status: 'RECONCILED_ITEM_LINES' } } } as any;
+    const bound = bindSourceDraftLines(state, expense);
+    assert.equal(bound.items[0]!.lineId, 'line-soup');
+    assert.equal(bound.items[0]!.expenseCategoryId, 'cat');
+    assert.equal(bound.items[0]!.reviewRequired, undefined);
+    assert.equal(bound.items[0]!.unitPrice, '386.9048');
+    assert.equal(bindSourceDraftLines(state, { ...expense, aiVerificationSummaryJson: { chargeReconciliation: { status: 'SUMMARY_LINE' } } }).items[0]!.lineId, undefined);
   });
 
   it('keeps null unknown and free zero across patch/reload, preserves omitted fields, and rejects foreign or malformed input', () => {
