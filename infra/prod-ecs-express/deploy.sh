@@ -35,6 +35,9 @@ LINE_AI_FUSED_PLAN_SHADOW_ENABLED_INPUT="${LINE_AI_FUSED_PLAN_SHADOW_ENABLED:-}"
 LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT="${LINE_AI_PREPARED_SIMPLE_READ_ENABLED:-}"
 LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT="${LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES:-}"
 LINE_AI_DRAFT_EDIT_ENABLED_INPUT="${LINE_AI_DRAFT_EDIT_ENABLED:-}"
+# Owner 2026-09-07: activate receipt recovery and draft continuity in both environments.
+LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED_INPUT="${LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED:-true}"
+LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED_INPUT="${LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED:-true}"
 LINE_AI_BUFFER_DEBOUNCE_MS_INPUT="${LINE_AI_BUFFER_DEBOUNCE_MS:-}"
 EXTERNAL_SIGNUP_ENABLED_INPUT="${EXTERNAL_SIGNUP_ENABLED:-}"
 # Owner 2026-09-06: signup, auto approval and quota default to the UAT values in both environments.
@@ -281,6 +284,12 @@ case "$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT" in true|false) ;; *)
 esac
 case "$LINE_AI_DRAFT_EDIT_ENABLED_INPUT" in true|false) ;; *)
   echo "ERROR: LINE_AI_DRAFT_EDIT_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+case "$LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED must be exactly true or false" >&2; exit 2 ;;
+esac
+case "$LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED_INPUT" in true|false) ;; *)
+  echo "ERROR: LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED must be exactly true or false" >&2; exit 2 ;;
 esac
 # Family keys are `${tool}::${answerShape}` (apps/ai-gateway/.../prepared-simple-read-formatter.ts),
 # comma-separated. Reject anything outside that charset here: the value is interpolated into a task
@@ -551,6 +560,8 @@ SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED="$LINE_AI_FUSED_PLAN_SHADOW_ENABLED_IN
 SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED="$LINE_AI_PREPARED_SIMPLE_READ_ENABLED_INPUT"
 SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES="$LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES_INPUT"
 SERVING_LINE_AI_DRAFT_EDIT_ENABLED="$LINE_AI_DRAFT_EDIT_ENABLED_INPUT"
+SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED="$LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED_INPUT"
+SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED="$LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED_INPUT"
 SERVING_EXTERNAL_SIGNUP_ENABLED="$EXTERNAL_SIGNUP_ENABLED_INPUT"
 SERVING_LINE_SIGNUP_ENABLED="$LINE_SIGNUP_ENABLED_INPUT"
 SERVING_RECEIPT_QUOTA_ENFORCED="$RECEIPT_QUOTA_ENFORCED_INPUT"
@@ -571,6 +582,8 @@ if [ "$PRODUCTION_SERVING_MODE_INPUT" = maintenance_only ]; then
   SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED=false
   SERVING_LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES=""
   SERVING_LINE_AI_DRAFT_EDIT_ENABLED=false
+  SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED=false
+  SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED=false
   SERVING_EXTERNAL_SIGNUP_ENABLED=false
   # A quiesced runtime takes no new shops and refuses no receipts: both P10-L switches go dark with
   # every other customer-facing one.
@@ -1631,6 +1644,8 @@ api_container_json() {
     --arg lineAiFusedPlanShadowEnabled "$SERVING_LINE_AI_FUSED_PLAN_SHADOW_ENABLED" \
     --arg lineAiPreparedSimpleReadEnabled "$SERVING_LINE_AI_PREPARED_SIMPLE_READ_ENABLED" \
     --arg lineAiDraftEditEnabled "$SERVING_LINE_AI_DRAFT_EDIT_ENABLED" \
+    --arg lineExpenseDraftConversationEnabled "$SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED" \
+    --arg lineAiTerminalOutcomeReplayEnabled "$SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED" \
     --arg crmAiMinConfidence "${CRM_AI_MIN_CONFIDENCE:-0.7}" \
     --arg crmAiOutboundAllowedDomains "${CRM_AI_OUTBOUND_ALLOWED_DOMAINS:-}" \
     --arg workflowWebhookAllowedHosts "$WORKFLOW_WEBHOOK_ALLOWED_HOSTS" \
@@ -1733,6 +1748,8 @@ api_container_json() {
         {name:"LINE_AI_FUSED_PLAN_SHADOW_ENABLED", value:$lineAiFusedPlanShadowEnabled},
         {name:"LINE_AI_PREPARED_SIMPLE_READ_ENABLED", value:$lineAiPreparedSimpleReadEnabled},
         {name:"LINE_AI_DRAFT_EDIT_ENABLED", value:$lineAiDraftEditEnabled},
+        {name:"LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED", value:$lineExpenseDraftConversationEnabled},
+        {name:"LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED", value:$lineAiTerminalOutcomeReplayEnabled},
         {name:"WATCHDOG_JWT_ISSUER", value:$publicWebUrl},
         {name:"WATCHDOG_JWT_AUDIENCE", value:$jwtAudience},
         {name:"S3_BUCKET", value:$s3Bucket},
