@@ -188,6 +188,13 @@ workstation เพื่อทำ promotion. ค่า capacity/status ด้า
 
 ## 4. ดูตรงไหน
 
+**Production API boot กับอีเมลที่ปิดอยู่ (2026-09-07):** run `34072334980` ล้มก่อน migration เพราะ
+`deploy.sh` render `SES_FROM_ADDRESS=""` แต่ `apiConfigSchema` ยอมให้ละ field นี้ได้ ไม่ยอมรับค่าว่าง.
+`EMAIL_PROVIDER=disabled` ไม่ข้าม schema validation. Production workflow ต้องส่ง sender ที่ถูกต้อง
+ผ่าน `SES_FROM_ADDRESS` (fallback `contact@mangmeeplus.com` เหมือน UAT); ค่านี้ไม่เปิดส่งอีเมลหรือเพิ่ม
+สิทธิ์ SES. เมื่อวิเคราะห์ task ที่ exit ก่อน health ให้ดู startup log และตรวจ environment กับ schema
+จริงด้วยค่าลับจำลอง ไม่เก็บ runtime secret ลง log. หลักฐาน: `docs/agent-memory/production-disabled-email-env-2026-09-07.md`.
+
 ```sh
 # service จริง ๆ เป็นยังไง (อย่าใช้ describe-services)
 aws ecs describe-express-gateway-service \
