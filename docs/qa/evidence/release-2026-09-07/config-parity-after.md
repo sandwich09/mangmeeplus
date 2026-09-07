@@ -314,4 +314,3 @@ Secret references: matching key sets are checked separately; each runtime refere
 | `WATCHDOG_JWT_AUDIENCE` | [configured] | [configured] | Expected environment identity / infrastructure |
 | `WATCHDOG_JWT_ISSUER` | [configured] | [configured] | Expected environment identity / infrastructure |
 | `WATCHDOG_JWT_SECRET_SOURCE_ARN` | [configured] | [configured] | Expected environment identity / infrastructure |
-
