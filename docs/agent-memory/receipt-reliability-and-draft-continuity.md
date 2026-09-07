@@ -1,6 +1,6 @@
 # Agent Memory: receipt reliability and draft continuity
 
-Status: Implementation and combined local verification passed; preparing feature PR, GitHub CI and develop/main merges.
+Status: Implementation and combined local verification passed; develop PR #473 open, resolving its maintenance checksum preflight before final CI and develop/main merges.
 Owner: Coordinator, delegated GPT-6 Astra xhigh and GPT-5.6 Sol xhigh per user's explicit request.
 Scope: All 18 issue/acceptance entries since the first receipt incident; implement, verify, commit/push, PR/admin merge to develop and main. No deployment in this Git delivery request.
 Decisions:
@@ -35,5 +35,6 @@ Verification:
 - Combined review fixed legacy READY correction dead-end, unpersisted source completeness at final mutation, source-to-financial row identity/deletion, saved marker leakage across attempts, canonical JSONB push identity, and default role/navigation compatibility. No dependencies, schema migrations or runtime default changes.
 - CI invokes source/LINE continuation via the existing whole-chain catalog plus both new PostgreSQL suites. Spec coverage 3/3 and catalog contract 4/4 passed without package.json changes. Final diff check passed.
 - Existing whole-chain acceptance runner passed all eight repository suites (21 catalog scenarios); its three external-image/provider acceptance scenarios remain explicitly outside this local pass.
+- Integrated implementation committed/pushed as d4896759; develop PR https://github.com/MangmeeDev/mangmeeplus/pull/473. Initial CI 34102495652 stopped at stale maintenance pins before tests. Regenerated only the changed upload-intent digest and dependent validator digest using the existing pin-sync script; enforcement behavior is unchanged. Both pin/validator contract suites and pin --check pass.
 - Fetched origin develop/main: still 4b91953f /3720db9a; no open PRs when checked.
 Next: Commit scoped implementation/evidence files; push/admin-merge reviewed PRs to develop and main after CI; retain local test artifacts and remove only own disposable PostgreSQL container and local MinIO bucket. No deploy dispatch.
