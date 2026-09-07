@@ -972,6 +972,18 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /I01-PRICE/u);
   });
 
+  it('a passive draft rejected by the edit boundary does not turn unrelated chat into another questionnaire', async () => {
+    const h = makeHarness({
+      permissions: ['expense.receipt.line_upload', 'line.ai.query'],
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+      expenseDraftConversation: { routeContexts: async () => [], execute: async () => ({ handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] }) },
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ยอดขายวันนี้เท่าไร' });
+    assert.equal(h.turnRequests.length, 1);
+    assert.equal(h.turnRequests[0].messageText, 'ยอดขายวันนี้เท่าไร');
+    assert.doesNotMatch(h.replies.join(''), /กรุณาระบุ.*ยอด|ข้อมูลที่ต้องใช้|D-PURPOSE/u);
+  });
+
   it('sends durable draft questions to the router for a natural-language answer', async () => {
     const calls: any[] = [];
     const h = makeHarness({
@@ -1903,7 +1915,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(await replyFor('THB'), baseline, 'a baht document is byte-identical to before');
   });
 
-  it('starts the durable all-question workflow after a receipt OCR capture when the flag is on', async () => {
+  it('keeps receipt source facts durable but never forwards the automatic questionnaire', async () => {
     const starts: any[] = [];
     const { prisma, recordUpdates } = makePrisma();
     const ocrFields = {
@@ -1940,7 +1952,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(starts.length, 1);
     assert.equal(starts[0].expenseId, 'expense-1');
     assert.deepEqual(starts[0].ocrFields.lines, ocrFields.lines);
-    assert.match(h.replies[0] ?? '', /D-PURPOSE/u);
+    assert.doesNotMatch(h.replies[0] ?? '', /D-PURPOSE|ข้อมูลที่ยังต้องตอบ/u);
+    assert.match(h.replies[0] ?? '', /240.00 บาท|เปิดดูรายการ/u);
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {
@@ -2182,7 +2195,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(recordUpdates[1].data.lineMessageId, MEDIA_EVENT.lineMessageId);
     assert.equal(recordUpdates[1].data.captureSource, 'LINE_UPLOAD');
     assert.equal(pendingMediaRows.length, 0);
-    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(h.replies[0] ?? '', /เก็บรูปและร่างแล้ว/);
   });
 
   it('router and OCR unavailable persist clarification and never create an expense draft', async () => {
@@ -2246,7 +2259,7 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(recordUpdates[1].data.lineEventId, MEDIA_EVENT.webhookEventId);
     assert.equal(turnCreates.length, 1);
     assert.equal(turnCreates[0].data.intent, 'EVIDENCE_CAPTURE');
-    assert.match(turnCreates[0].data.replyPreview, /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
+    assert.match(turnCreates[0].data.replyPreview, /เก็บรูปและร่างแล้ว/);
     assert.equal(h.receiptContinuationCalls.length, 1);
     assert.equal(h.receiptContinuationCalls[0].expenseId, 'expense-1');
     assert.ok(h.receiptContinuationCalls[0].chatKeyHash && !h.receiptContinuationCalls[0].chatKeyHash.includes('line-user-secret'));
@@ -3619,17 +3632,17 @@ describe('LINE intake dispatch – multi-part terminal Flex (uat-correctness-lat
   const sent = (h: ReturnType<typeof makeHarness>) => (h.sentMessages[0] ?? []) as any[];
   const ANSWER = { ...TEXT_EVENT, messageText: 'ตอบคำถามในร่าง' };
 
-  it('OFF is the exact legacy shape: every part is text, quick reply only on the terminal one', async () => {
+  it('requested editing keeps all long text and a themed terminal even without the general presentation flag', async () => {
     const texts = ['ส่วนที่ 1', 'ส่วนที่ 2', LONG_TERMINAL];
     const h = multipartHarness(texts);
 
     await h.useCase.execute(ANSWER);
 
     const messages = sent(h);
-    assert.equal(messages.length, 3);
-    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text']);
-    assert.deepEqual(messages.map((m) => m.text), texts, 'no part is reshaped, reordered or truncated');
-    assert.deepEqual(messages.map((m) => m.quickReply !== undefined), [false, false, true]);
+    assert.equal(messages.length, 4);
+    assert.deepEqual(messages.map((m) => m.type), ['text', 'text', 'text', 'flex']);
+    assert.deepEqual(messages.slice(0, 3).map((m) => m.text), texts, 'no requested information is truncated');
+    assert.deepEqual(messages.map((m) => m.quickReply !== undefined), [false, false, false, true]);
   });
 
   it('ON with a short terminal keeps earlier parts lossless and turns the terminal into the Flex card', async () => {

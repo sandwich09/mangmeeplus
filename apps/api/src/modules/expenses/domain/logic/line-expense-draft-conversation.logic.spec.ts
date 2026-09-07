@@ -51,9 +51,9 @@ describe('LINE expense draft conversation logic', () => {
       'D-DATE', 'D-VENDOR', 'I01-QTY', 'I01-PRICE', 'I01-CATEGORY', 'I02-CATEGORY',
     ]);
     const reply = formatLineExpenseDraftReply({ state, categories });
-    assert.match(reply, /กระดาษ A4 — \? — \?/u);
-    assert.match(reply, /I01-QTY/u);
-    assert.match(reply, /I02-CATEGORY/u);
+    assert.match(reply, /กระดาษ A4: จำนวนและหน่วย และ ราคาต่อหน่วยหรือยอดรวม และ หมวดค่าใช้จ่าย/u);
+    assert.match(reply, /โน้ตบุ๊ก: หมวดค่าใช้จ่าย/u);
+    assert.doesNotMatch(reply, /D-[A-Z]|I\d{2}-|expense\.|asset\./u);
   });
 
   it('accepts several numbered answers, keeps the full snapshot, and leaves only real gaps', () => {
@@ -71,7 +71,7 @@ describe('LINE expense draft conversation logic', () => {
     assert.ok(answer.acceptedFields.includes('I02-CATEGORY'), JSON.stringify(answer.acceptedFields));
     assert.equal(answer.state.items[1]?.expenseCategoryId, 'cat-computer');
     assert.deepEqual(answer.state.unresolvedQuestions, []);
-    assert.match(formatLineExpenseDraftReply({ state: answer.state, categories, acceptedFields: answer.acceptedFields }), /1\) กระดาษ A4/u);
+    assert.match(formatLineExpenseDraftReply({ state: answer.state, categories, acceptedFields: answer.acceptedFields }), /กระดาษ A4/u);
     assert.equal(materializedLineExpenseDraftItems(answer.state).length, 2);
     // Expense §5.1: everything this lane collects is goods, and it SAYS so. An absent chargeKind
     // tells `updateExpenseDraft` to keep whatever that row already had, which is not what a
@@ -182,7 +182,7 @@ describe('LINE expense draft conversation logic', () => {
     const resumed = transitionLineExpenseDraft(ended, 'resume');
     assert.equal(resumed.status, 'OPEN');
     assert.equal(resumed.inputEndedAt, undefined);
-    assert.match(formatLineExpenseDraftReply({ state: ended, categories }), /ข้อมูลที่ยังไม่ครบ: D-DATE/u);
+    assert.match(formatLineExpenseDraftReply({ state: ended, categories }), /เก็บข้อมูลที่กรอกไว้แล้ว/u);
   });
 
   it('accepts a stable D-ITEMS answer without AI and creates one ref per named item', () => {

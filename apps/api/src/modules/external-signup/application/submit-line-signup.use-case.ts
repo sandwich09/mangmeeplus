@@ -378,12 +378,18 @@ export class SubmitLineSignupUseCase {
       });
       return;
     }
+    const priorRejection = await this.priorRejection(this.prisma.client, request);
+    if (priorRejection) {
+      await this.audit(request.id, 'signup.line.reapplication_review', correlationRequestId, {
+        reason: 'prior_rejection_manual_review', priorRequestId: priorRejection.id,
+      });
+    }
     if (repeatTrial && this.config.lineSignupApprovalMode === 'AUTO_FREE') {
       await this.audit(request.id, 'signup.line.auto_approve_repeat_trial', correlationRequestId, {
         reason: 'repeat_trial_manual_review',
       });
     }
-    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial && !emailConflict) {
+    if (this.config.lineSignupApprovalMode === 'AUTO_FREE' && !repeatTrial && !emailConflict && !priorRejection) {
       const actorUserId = (await this.adminNotify.activeSystemAdmins())[0]?.userId ?? null;
       const slot = actorUserId === null
         ? { claimed: false as const, approvedToday: 0 }
@@ -401,13 +407,19 @@ export class SubmitLineSignupUseCase {
         });
         return;
       }
-      await this.audit(
-        request.id,
-        actorUserId === null ? 'signup.line.auto_approve_no_actor' : 'signup.line.auto_approve_capped',
-        correlationRequestId,
-        { approvedToday: slot.approvedToday, dailyCap: this.config.lineSignupAutoDailyCap },
-      );
-      if (actorUserId !== null) await this.opsAlerts.raise('auto_cap_reached', now);
+      if ('priorRejectedRequestId' in slot && slot.priorRejectedRequestId) {
+        await this.audit(request.id, 'signup.line.reapplication_review', correlationRequestId, {
+          reason: 'prior_rejection_manual_review', priorRequestId: slot.priorRejectedRequestId,
+        });
+      } else {
+        await this.audit(
+          request.id,
+          actorUserId === null ? 'signup.line.auto_approve_no_actor' : 'signup.line.auto_approve_capped',
+          correlationRequestId,
+          { approvedToday: slot.approvedToday, dailyCap: this.config.lineSignupAutoDailyCap },
+        );
+        if (actorUserId !== null) await this.opsAlerts.raise('auto_cap_reached', now);
+      }
     }
 
     const expectedVersion = request.version;
@@ -424,10 +436,20 @@ export class SubmitLineSignupUseCase {
     await this.adminNotify.enqueue(request.id);
   }
 
+  private priorRejection(client: Pick<Prisma.TransactionClient, 'companySignupRequest'>, request: CompanySignupRequest) {
+    return client.companySignupRequest.findFirst({
+      where: {
+        id: { not: request.id }, source: SIGNUP_SOURCE_LINE_OA, state: 'REJECTED',
+        lineProviderUserId: request.lineProviderUserId, lineChannelId: request.lineChannelId,
+      },
+      orderBy: { createdAt: 'desc' }, select: { id: true },
+    });
+  }
+
   private async claimAutoApproveSlot(
     request: CompanySignupRequest,
     now: Date,
-  ): Promise<{ claimed: boolean; approvedToday: number }> {
+  ): Promise<{ claimed: boolean; approvedToday: number; priorRejectedRequestId?: string }> {
     const lockKey = `line-signup-auto-cap:${bangkokDayKey(now)}`;
     return this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${request.id}, 0))`;
@@ -442,6 +464,9 @@ export class SubmitLineSignupUseCase {
         });
         return { claimed: true, approvedToday };
       }
+      // Recheck at the claim boundary: changing contact data never clears rejection history.
+      const prior = await this.priorRejection(tx, current);
+      if (prior) return { claimed: false, approvedToday: 0, priorRejectedRequestId: prior.id };
       const approvedToday = await tx.companySignupRequest.count({
         where: { source: SIGNUP_SOURCE_LINE_OA, autoApproved: true, ...approvedOnOrCreatedToday(now) },
       });

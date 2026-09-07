@@ -617,13 +617,6 @@ export function materializedLineExpenseDraftItems(state: LineExpenseDraftContinu
   });
 }
 
-const ACCOUNTING_LABELS: Record<LineExpenseAccountingClass, string> = {
-  OPEX: 'ค่าใช้จ่าย', ASSET: 'สินทรัพย์', INVENTORY: 'สินค้าคงเหลือ', LIABILITY: 'หนี้สิน', REVENUE: 'รายรับ', UNKNOWN: 'รอตรวจ',
-};
-const ITEM_BEHAVIOR_LABELS: Record<LineExpenseItemBehavior, string> = {
-  STOCKABLE: 'สินค้าสต็อก', NON_STOCK: 'ไม่รับเข้าสต็อก', SERVICE: 'บริการ', UNKNOWN: 'รอตรวจ',
-};
-
 function acceptedFieldText(
   field: string,
   state: LineExpenseDraftContinuation,
@@ -633,12 +626,13 @@ function acceptedFieldText(
   if (field === 'D-VENDOR') return `ผู้ขาย ${state.header.vendorName}`;
   if (field === 'D-PURPOSE') return `วัตถุประสงค์ ${state.header.businessPurpose}`;
   const item = state.items.find((candidate) => field.startsWith(`${candidate.itemRef}-`));
-  if (!item) return field;
-  if (field.endsWith('-DESC')) return `${item.itemRef} ${item.description}`;
-  if (field.endsWith('-QTY')) return `${item.itemRef} จำนวน ${item.quantity}${item.unit ? ` ${item.unit}` : ''}`;
-  if (field.endsWith('-PRICE')) return `${item.itemRef} ${item.unitPrice ? `ราคา ${item.unitPrice} บาท/หน่วย` : `ยอดรวม ${item.totalAmount} บาท`}`;
-  if (field.endsWith('-CATEGORY')) return `${item.itemRef} หมวด ${categoryNames.get(item.expenseCategoryId ?? '') ?? 'รอตรวจ'}`;
-  return field;
+  if (!item) return 'ข้อมูลรายการ';
+  const subject = item.description ?? `รายการที่ ${state.items.indexOf(item) + 1}`;
+  if (field.endsWith('-DESC')) return subject;
+  if (field.endsWith('-QTY')) return `${subject} จำนวน ${item.quantity}${item.unit ? ` ${item.unit}` : ''}`;
+  if (field.endsWith('-PRICE')) return `${subject} ${item.unitPrice ? `ราคา ${item.unitPrice} บาท/หน่วย` : `ยอดรวม ${item.totalAmount} บาท`}`;
+  if (field.endsWith('-CATEGORY')) return `${subject} หมวด ${categoryNames.get(item.expenseCategoryId ?? '') ?? 'รอตรวจ'}`;
+  return subject;
 }
 
 export function formatLineExpenseDraftReply(input: {
@@ -646,6 +640,8 @@ export function formatLineExpenseDraftReply(input: {
   categories: readonly ExpenseCategorySummary[];
   acceptedFields?: string[];
   label?: string;
+  /** Questions are shown only during work the user explicitly asked to continue. */
+  includeQuestions?: boolean;
 }): string {
   const state = input.state;
   const names = new Map(input.categories.map((category) => [category.id, category.name]));
@@ -654,51 +650,27 @@ export function formatLineExpenseDraftReply(input: {
   if (input.acceptedFields?.length) {
     lines.push(state.items.length > 10 ? `บันทึกข้อมูลแล้ว ${input.acceptedFields.length} ข้อ — ดูข้อมูลปัจจุบันด้านล่าง` : `บันทึกแล้ว: ${input.acceptedFields.map((field) => acceptedFieldText(field, state, names)).join(' • ')}`);
   }
-  lines.push(`🧾 ร่างค่าใช้จ่าย ${input.label ?? state.expenseId}`);
-  lines.push(`วันที่: ${state.header.expenseDate ?? 'ยังไม่ทราบ'}`);
-  lines.push(`ผู้ขาย: ${state.header.vendorName ?? 'ยังไม่ทราบ'}`);
-  lines.push(`ใช้เพื่อ: ${state.header.businessPurpose ?? 'ยังไม่ทราบ'}`);
-  state.items.forEach((item, index) => {
-    const quantity = item.quantity ? `${item.quantity}${item.unit ? ` ${item.unit}` : ''}` : '?';
-    const price = item.unitPrice ? `${item.unitPrice} บาท/หน่วย` : item.totalAmount ? `รวม ${item.totalAmount} บาท` : '?';
-    const category = item.expenseCategoryId
-      ? names.get(item.expenseCategoryId) ?? 'หมวดที่เลือก'
-      : item.suggestedCategoryId ? `แนะนำ ${names.get(item.suggestedCategoryId) ?? 'รอตรวจ'}` : 'ยังไม่ระบุ';
-    lines.push(`${index + 1}) ${(item.description ?? item.sourceText).slice(0, 120)} — ${quantity} — ${price} — ${category.slice(0, 60)}`);
-    if (state.items.length > 10) return;
-    if (item.accountingClass) lines.push(`   ประเภททางบัญชีแนะนำ: ${ACCOUNTING_LABELS[item.accountingClass]} (รอตรวจ)`);
-    if (item.itemBehavior) lines.push(`   ลักษณะสินค้า/บริการ: ${ITEM_BEHAVIOR_LABELS[item.itemBehavior]} (รอตรวจ)`);
-    const accountHint = item.expenseCategoryId
-      ? input.categories.find((candidate) => candidate.id === item.expenseCategoryId)?.accountHintKey
-      : item.suggestedCategoryId
-        ? input.categories.find((candidate) => candidate.id === item.suggestedCategoryId)?.accountHintKey
-        : undefined;
-    if (accountHint) lines.push(`   บัญชีแนะนำ: ${accountHint} (รอตรวจ)`);
-    if (item.taxTreatment) lines.push(`   ภาษีแนะนำ: ${item.taxTreatment} (รอตรวจหลักฐาน)`);
-  });
+  lines.push('🧾 เก็บร่างค่าใช้จ่ายแล้วค่ะ');
+  if (state.header.vendorName) lines.push(`ร้าน: ${state.header.vendorName}`);
+  if (state.header.expenseDate) lines.push(`วันที่: ${new Date(`${state.header.expenseDate}T00:00:00Z`).toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })}`);
+  if (state.header.businessPurpose) lines.push(`ใช้เพื่อ: ${state.header.businessPurpose}`);
+  lines.push('ยังไม่ยืนยันรายการ');
   if (state.status === 'PAUSED' || state.status === 'PAUSED_INTERRUPTED') {
-    lines.push('', 'เก็บร่างแล้ว ยังไม่ยืนยันรายการ', 'พักร่างนี้ไว้แล้ว พิมพ์ “ต่อ” เมื่อต้องการทำต่อ');
+    return lines.join('\n');
   } else if (state.status === 'CANCELLED') {
     lines.push('', 'ยกเลิกการสนทนาร่างนี้แล้ว หลักฐานและร่างเดิมไม่ได้ถูกลบ');
   } else if (state.status === 'INPUT_ENDED_COMPLETE') {
     lines.push('', 'จบการกรอกแล้ว ร่างพร้อมให้ผู้มีสิทธิ์ตรวจสอบ (ยังไม่ลงบัญชี)');
   } else if (state.status === 'INPUT_ENDED_INCOMPLETE') {
-    lines.push(
-      '',
-      `จบการกรอกและเก็บร่างไว้ โดยยังขาด ${state.unresolvedQuestions.length} ข้อ (ยังไม่ลงบัญชี)`,
-      `ข้อมูลที่ยังไม่ครบ: ${[...new Set(state.unresolvedQuestions.map((question) => question.scope === 'DOCUMENT' ? `${question.id} ${question.prompt}` : `${question.id} ${fieldLabels[question.field] ?? question.prompt}`))].join(' • ')}`,
-      'พิมพ์ “ต่อ” หากต้องการกลับมาเติมภายหลัง',
-    );
-  } else if (state.unresolvedQuestions.length) {
-    lines.push('', 'ข้อมูลที่ยังต้องตอบทั้งหมด');
-    for (const question of state.unresolvedQuestions.filter((question) => question.scope === 'DOCUMENT')) lines.push(`${question.id} ${question.prompt}`);
+    lines.push('', 'เก็บข้อมูลที่กรอกไว้แล้วค่ะ');
+  } else if (input.includeQuestions !== false && state.unresolvedQuestions.length) {
+    lines.push('', 'ข้อมูลที่ต้องใช้สำหรับทำรายการนี้ต่อ');
+    for (const question of state.unresolvedQuestions.filter((question) => question.scope === 'DOCUMENT')) lines.push(`• ${question.prompt}`);
     for (const item of state.items) {
       const questions = state.unresolvedQuestions.filter((question) => question.itemRef === item.itemRef);
-      if (questions.length) lines.push(`${item.itemRef} ${(item.description ?? 'รายการนี้').slice(0, 60)}: ${questions.map((question) => `${question.id} ${fieldLabels[question.field] ?? question.field}`).join(' • ')}`);
+      if (questions.length) lines.push(`• ${(item.description ?? 'รายการนี้').slice(0, 60)}: ${questions.map((question) => fieldLabels[question.field] ?? 'ข้อมูลรายการ').join(' และ ')}`);
     }
-    lines.push('', 'ตอบหลายข้อในข้อความเดียวได้ • พิมพ์ “พัก” เพื่อกลับมาต่อ • พิมพ์ “หมด” เพื่อจบการกรอก');
-  } else {
-    lines.push('', 'ข้อมูลครบสำหรับส่งให้ผู้มีสิทธิ์ตรวจสอบแล้ว (ยังไม่ลงบัญชี)', 'พิมพ์ “หมด” เพื่อจบการกรอก หรือแก้ข้อมูลต่อได้');
+    lines.push('', 'ตอบรวมในข้อความเดียวได้ค่ะ');
   }
   return lines.join('\n');
 }

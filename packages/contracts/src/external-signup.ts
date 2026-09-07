@@ -155,6 +155,7 @@ export type AdminSignupQueueItemDto = {
   emailMatchesExistingUser: boolean;
   /** LINE submit found this address in an account, shop or earlier application; review before opening another shop. */
   emailPreviouslyUsed?: boolean;
+  priorRejectedRequestId?: string;
   /** Current persisted duplicate-contact routing result for LINE; false includes safe own-contact/history exclusions. */
   contactEmailConflict?: boolean;
   taxIdMatchesCompanyName?: string;

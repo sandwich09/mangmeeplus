@@ -146,7 +146,7 @@ export class SignupAdminQueueUseCase {
     const taxIds = [...new Set(requests.map((r) => r.taxId).filter((id): id is string => !!id))];
     const phones = [...new Set(requests.map((r) => r.phoneNumber).filter((phone): phone is string => !!phone))];
     const lineRequestIds = requests.filter((request) => request.source === SIGNUP_SOURCE_LINE_OA).map((request) => request.id);
-    const [users, companies, phoneMatches, priorCompanies, emailReviewEvidence, eligibleCompanies] = await Promise.all([
+    const [users, companies, phoneMatches, priorCompanies, emailReviewEvidence, eligibleCompanies, reapplicationEvidence] = await Promise.all([
       this.prisma.client.user.findMany({ where: { email: { in: emails } }, select: { email: true } }),
       taxIds.length
         ? this.prisma.client.company.findMany({ where: { taxId: { in: taxIds } }, select: { taxId: true, name: true } })
@@ -161,6 +161,10 @@ export class SignupAdminQueueUseCase {
         select: { targetId: true },
       }) : Promise.resolve([]),
       this.eligibleCompaniesForRequests(requests),
+      lineRequestIds.length ? this.prisma.client.auditLog.findMany({
+        where: { action: 'signup.line.reapplication_review', targetType: 'company_signup_request', targetId: { in: lineRequestIds } },
+        orderBy: { createdAt: 'desc' }, select: { targetId: true, metadataJson: true },
+      }) : Promise.resolve([]),
     ]);
     const knownEmails = new Set(users.map((u) => u.email));
     const companyByTaxId = new Map(companies.map((c) => [c.taxId, c.name]));
@@ -169,7 +173,8 @@ export class SignupAdminQueueUseCase {
     return {
       items: requests.map((request) =>
         ({ ...toQueueItem(request, knownEmails, companyByTaxId, phoneMatches, priorCompanies, eligibleCompanies, now),
-          ...(reusedEmailRequests.has(request.id) ? { emailPreviouslyUsed: true } : {}) })),
+          ...(reusedEmailRequests.has(request.id) ? { emailPreviouslyUsed: true } : {}),
+          priorRejectedRequestId: (reapplicationEvidence.find((row) => row.targetId === request.id)?.metadataJson as { priorRequestId?: string } | undefined)?.priorRequestId })),
       nextCursor,
       counts,
     };

@@ -95,7 +95,12 @@ function fakePrisma(options: { systemAdmins?: string[] } = {}) {
       },
       findUnique: async ({ where }: any) => requests.get(where.id) ?? null,
       findUniqueOrThrow: async ({ where }: any) => requests.get(where.id),
-      findFirst: async () => [...requests.values()][0] ?? null,
+      findFirst: async ({ where }: any) => [...requests.values()].find((row) =>
+        (!where.id?.not || row.id !== where.id.not)
+        && (!where.source || row.source === where.source)
+        && (!where.lineProviderUserId || row.lineProviderUserId === where.lineProviderUserId)
+        && (!where.lineChannelId || row.lineChannelId === where.lineChannelId)
+        && (!where.state || (typeof where.state === 'string' ? row.state === where.state : where.state.in.includes(row.state)))) ?? null,
       count: async ({ where }: any) => [...requests.values()].filter((row) =>
         row.autoApproved === where.autoApproved && row.source === where.source
         && (row.approvedAt

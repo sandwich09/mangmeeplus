@@ -1,5 +1,8 @@
 # LINE AI Expense Draft Conversation Specification
 
+2026-09-08 amendment: [Receipt UX and rejected reapplication](line-receipt-ux-signup-reapply-spec.md) supersedes automatic receipt questioning and terminal-rejection dead ends. Capture, permissions, audit and final-mutation boundaries remain.
+
+
 Status: IMPLEMENTED BEHIND A DEFAULT-OFF FLAG — deterministic repository behavior is proven; database-backed provider E2E and real LINE OA UAT remain release gates.
 
 Date: 2026-08-19

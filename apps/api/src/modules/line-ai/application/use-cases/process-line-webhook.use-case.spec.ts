@@ -1,11 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent } from './process-line-webhook.use-case';
+import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
 import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
@@ -37,6 +38,41 @@ const closedLaunchGate = {
 const brokenLaunchGate = {
   assertLaunchRouteOpen: async () => { throw new Error('connection terminated'); },
 } as any;
+
+describe('receipt owner summary and fallback', () => {
+  it('shows the printed 300 total, saves a passive draft, and exposes only a neutral button with no internal codes', () => {
+    const text = formatPaypersReply('https://app.example.test', 'co', 'internal-expense', {
+      compact: true, dateStatus: 'verified', fields: {
+        vendorName: 'PANDA MALA', grandTotalAmount: '300', expenseDate: '2026-09-07',
+        lines: [{ description: 'TOMATO SOUP', quantity: '0.63', amount: '243.75', evidenceSignal: 'TOMATO SOUP 0.63 243.75' }],
+      },
+    });
+    const card = buildLineAssistantTextCardMessage(text, 'https://app.example.test', 'co');
+    assert.equal(card.type, 'flex');
+    if (card.type !== 'flex') return;
+    const visible = JSON.stringify(card.contents.body);
+    assert.match(visible, /300.00 บาท/);
+    assert.match(visible, /ยังไม่ยืนยันรายการ/);
+    assert.doesNotMatch(visible, /internal-expense|expense\.|D-PURPOSE|I01-|https:|TOMATO|ตอบ|เติม/);
+    assert.equal((card.contents.footer as any).contents[0].action.label, 'เปิดดูรายการ');
+    const unknown = formatPaypersReply('https://app.example.test', 'co', 'e', { compact: true });
+    assert.match(unknown, /ยังอ่านยอดไม่ได้/);
+    assert.doesNotMatch(unknown, /0.00 บาท|ต้องตอบ/);
+    const unverified = formatPaypersReply('https://app.example.test', 'co', 'e', {
+      compact: true, dateStatus: 'unverified', fields: { expenseDate: '2026-09-07' },
+    });
+    assert.match(unverified, /วันที่: ยังรอตรวจสอบ/);
+    assert.doesNotMatch(unverified, /อ่านวันที่ไม่ได้|ใช้วันที่ส่ง/);
+  });
+
+  it('preserves the complete text and all warnings beyond the notification preview on Flex rejection', () => {
+    const text = 'รายละเอียดที่จำเป็น '.repeat(30) + '\n⚠️ พบไฟล์ที่อาจซ้ำ\nเปิดดูรายการ: https://app.example.test/companies/co/expenses/e';
+    const card = buildLineAssistantTextCardMessage(text, 'https://app.example.test', 'co');
+    const fallback = toCanonicalTextMessages([card])[0]!;
+    assert.equal(fallback.type, 'text');
+    if (fallback.type === 'text') assert.equal(fallback.text, text);
+  });
+});
 
 describe('OCR governance LINE reply UX', () => {
   it('explains disabled and monthly-limit refusals without losing the numbered manual path', () => {
@@ -1222,7 +1258,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(sentMessages[0]?.type, 'flex');
     assert.match(JSON.stringify(sentMessages[0]), /เดือนนี้ยังไม่มีค่าใช้จ่าย/);
-    assert.match(JSON.stringify(sentMessages[0]), /#22C55E/);
+    assert.match(JSON.stringify(sentMessages[0]), /#15803D/);
     assert.deepEqual(sentMessages[0]?.quickReply?.items.map((item: any) => item.action.label), ['ค่าใช้จ่ายเดือนนี้', '📊 ถามข้อมูล']);
   });
 
@@ -3296,7 +3332,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(initInputs[0].captureSource, 'LINE_UPLOAD');
     assert.equal(completeInputs[0].expenseId, 'expense-line-1');
     assert.equal(replies[0]?.type, 'flex');
-    assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.match(JSON.stringify(replies[0]), /เปิดดูรายการ/);
     assert.doesNotMatch(replies[0]?.contents?.body?.contents?.[0]?.text ?? '', /https?:\/\//);
     assert.equal(replies[0]?.contents?.footer?.contents?.[0]?.action?.uri, 'https://app.example.com/companies/company-1/expenses/expense-line-1');
     assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
@@ -3437,8 +3473,9 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.deepEqual(receiptOcrRequests[0].activeCategories, [{ id: 'cat-meals', name: 'ค่าอาหาร' }]);
     assert.equal(replies[0]?.type, 'flex');
     assert.match(JSON.stringify(replies[0]), /11,875.00/);
-    assert.match(JSON.stringify(replies[0]), /CA2025020012/);
-    assert.match(JSON.stringify(replies[0]), /ค่าอาหาร/);
+    assert.match(JSON.stringify(replies[0]), /เปิดดูรายการ/);
+    assert.doesNotMatch(JSON.stringify(replies[0]), /CA2025020012|expense\.meals|D-PURPOSE|I01-/);
+    assert.match(JSON.stringify(replies[0]), /ยังไม่ยืนยันรายการ/);
   });
 });
 
@@ -5391,10 +5428,9 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.equal(h.expense().aiVerificationSummaryJson.recognizedFields.grandTotalAmount, '120.00');
     assert.match(JSON.stringify(h.sends), /เก็บรูปและร่างแล้ว/);
     assert.match(JSON.stringify(h.sends), /saved-expense/);
-    assert.match(JSON.stringify(h.sends), /ข้อมูลที่ยังต้องตอบทั้งหมด/);
-    assert.match(JSON.stringify(h.sends), /D-DATE|D-VENDOR/);
-    assert.match(JSON.stringify(h.sends), /D-PURPOSE/);
-    assert.match(JSON.stringify(h.sends), /D-ITEMS/);
+    assert.doesNotMatch(JSON.stringify(h.sends), /ข้อมูลที่ยังต้องตอบทั้งหมด|D-DATE|D-VENDOR|D-PURPOSE|D-ITEMS/);
+    assert.match(JSON.stringify(h.sends), /เปิดดูรายการ/);
+    assert.equal(h.sends.at(-1)![0].type, 'flex');
     assert.doesNotMatch(JSON.stringify(h.sends), /ส่งรูปเดิมอีกครั้ง/);
     assert.doesNotMatch(JSON.stringify(h.logs), /raw-receipt-secret|unitPrice NaN/);
     assert.match(JSON.stringify(h.logs), /receipt_ocr_apply|P2009/);

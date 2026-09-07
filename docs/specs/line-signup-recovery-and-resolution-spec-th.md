@@ -1,5 +1,8 @@
 # LINE signup recovery และการจบเคสอย่างชัดเจน
 
+2026-09-08 amendment: [Receipt UX and rejected reapplication](line-receipt-ux-signup-reapply-spec.md) supersedes automatic receipt questioning and terminal-rejection dead ends. Capture, permissions, audit and final-mutation boundaries remain.
+
+
 Status: Approved implementation scope by Owner 2026-09-07; coordinator defines the bounded policies below from the accepted direction. Exact code contracts and verification evidence are maintained in the plan.
 Owner: GPT-6 Astra coordinator; implementation GPT-5.6 Sol, xhigh.
 Source: [R01–R14 business rules](../research/line-signup-business-rules-and-support-value-2026-09-07-th.md), [code audit G01–G05](../research/line-signup-rules-code-coverage-and-recovery-audit-2026-09-07-th.md).

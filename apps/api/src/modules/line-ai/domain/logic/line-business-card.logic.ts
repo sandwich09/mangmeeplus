@@ -89,7 +89,7 @@ function bubble(
       footer: { separator: true, separatorColor: THEME.border },
     },
     header: {
-      type: 'box', layout: 'vertical', backgroundColor: THEME.brand, paddingAll: '16px',
+      type: 'box', layout: 'vertical', backgroundColor: THEME.brandDark, paddingAll: '16px',
       contents: [{ type: 'text', text: title, color: THEME.surface, weight: 'bold', size: 'lg', wrap: true }],
     },
     body: {
@@ -100,7 +100,7 @@ function bubble(
         ...(badge ? [{ type: 'text', text: badge, color: THEME.brandDark, weight: 'bold', size: 'sm', wrap: true }] : []),
         // A row-only card passes no prose; LINE rejects an empty text element, so the row is omitted
         // rather than sent blank. Every prose caller passes non-empty text, so their bytes are unchanged.
-        ...(text ? [{ type: 'text', text, color: THEME.text, size: 'sm', wrap: true }] : []),
+        ...(text ? [{ type: 'text', text, color: THEME.text, size: 'md', wrap: true }] : []),
         ...(rows ?? []).map(({ label, value }) => ({
           type: 'box', layout: 'horizontal', spacing: 'sm',
           contents: [
@@ -222,6 +222,7 @@ export function buildLineAssistantTextCardMessage(
   return {
     type: 'flex',
     altText: preview(cardText, 400) || 'ข้อมูลจากน้องมั่งมี',
+    canonicalText: text,
     contents: bubble(
       { title, text: cardText, ...(badge ? { badge } : {}) },
       webBaseUrl, companyId, buttons,
@@ -264,9 +265,12 @@ export function buildExpenseDraftCardMessage(
   // Nothing grounded to show is not a card. The generic text card is still the honest render of the
   // same reply, so the turn degrades to it rather than shipping an empty ร่างค่าใช้จ่าย frame.
   if (rows.length === 0) return buildLineAssistantTextCardMessage(canonicalText, webBaseUrl, companyId);
+  const actionUrl = safeTenantLink(webBaseUrl, companyId, `/companies/${encodeURIComponent(companyId)}/expenses/${encodeURIComponent(facts.expenseId)}`);
+  const recoveryText = actionUrl && !canonicalText.includes(actionUrl) ? `${canonicalText}\nเปิดดูรายการ: ${actionUrl}` : canonicalText;
   return {
     type: 'flex',
     altText: preview(canonicalText, 400) || 'ร่างค่าใช้จ่าย',
+    canonicalText: recoveryText,
     contents: bubble(
       {
         title: 'ร่างค่าใช้จ่าย',

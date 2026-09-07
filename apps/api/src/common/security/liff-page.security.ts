@@ -647,6 +647,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const progress = envelope.progress;
     const companies = Array.isArray(envelope.eligibleCompanies) ? envelope.eligibleCompanies : [];
     lastSignupStatus = envelope;
+    document.getElementById('add-shop').textContent = 'เปิดร้านเพิ่ม';
 
     if (!progress) {
       if (companies.length > 0) {
@@ -733,8 +734,19 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       return;
     }
 
-    if (progress.state === 'REJECTED' || progress.state === 'SUSPENDED' || progress.state === 'EXPIRED') {
-      setProgress(progress.state === 'REJECTED' ? 'คำขอไม่ได้รับอนุมัติ' : progress.state === 'SUSPENDED' ? 'คำขอถูกระงับ' : 'คำขอนี้หมดอายุแล้ว',
+    if (progress.state === 'REJECTED') {
+      setProgress('คำขอก่อนหน้ายังไม่ได้รับอนุมัติ',
+        'สมัครใหม่ได้ค่ะ ทีมงานจะตรวจสอบคำขอใหม่ก่อนเปิดร้านให้ โดยไม่เปิดร้านอัตโนมัติ', progress);
+      renderEligibleCompanies(companies, '');
+      const reapply = document.getElementById('add-shop');
+      reapply.textContent = 'สมัครใหม่';
+      reapply.hidden = false;
+      showSupport();
+      return;
+    }
+
+    if (progress.state === 'SUSPENDED' || progress.state === 'EXPIRED') {
+      setProgress(progress.state === 'SUSPENDED' ? 'คำขอถูกระงับ' : 'คำขอนี้หมดอายุแล้ว',
         progress.companyCreated
           ? 'ร้านเคยเปิดสำเร็จแล้ว แต่ตอนนี้ยังเข้าใช้ไม่ได้ กรุณาติดต่อทีมงานเพื่อตรวจสิทธิ์ค่ะ'
           : 'ยังไม่ได้เปิดร้านจากคำขอนี้ กรุณาติดต่อทีมงานเพื่อตรวจสอบค่ะ', progress);
@@ -905,13 +917,20 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   async function sendSupportRequest() {
-    if (!liff.sendMessages) throw refusal(SUPPORT_NETWORK_GUIDANCE);
+    const idToken = currentIdToken();
+    if (!idToken) return;
+    let res;
+    let result;
     try {
-      await liff.sendMessages([{ type: 'text', text: 'ติดต่อเจ้าหน้าที่' }]);
-      setStatus('ส่งข้อความขอช่วยแล้วค่ะ\nกลับไปดูคำตอบในแชท หากยังไม่มีคำตอบตามเวลาทำการ ' + SUPPORT_TH, '', 'success');
-    } catch (error) {
-      throw refusal(SUPPORT_NETWORK_GUIDANCE);
-    }
+      res = await fetch(apiBase + '/public/line-signups/support', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ idToken })
+      });
+      if (res.ok) result = JSON.parse(await res.text());
+    } catch (error) { throw refusal(SUPPORT_NETWORK_GUIDANCE); }
+    if (res.status === 429) throw refusal({ tone: 'warning', text: 'วันนี้ส่งคำขอช่วยเหลือหลายครั้งแล้ว หากเร่งด่วนติดต่อทีมงานได้เลยค่ะ', advice: SUPPORT_TH });
+    if (!res.ok || !result || result.received !== true) throw refusal(SUPPORT_NETWORK_GUIDANCE);
+    setStatus('รับเรื่องขอความช่วยเหลือแล้วค่ะ ทีมงานจะตอบกลับในแชทนี้ตามเวลาทำการ ' + SUPPORT_TH, '', 'success');
   }
 
   function validReferralCode(value) {
@@ -1038,7 +1057,17 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     void runWith(retrySignupIntake, retryIntakeBtn, 'กำลังทำคำขอเดิมต่อ…');
   });
   const addShopBtn = document.getElementById('add-shop');
-  if (addShopBtn) addShopBtn.addEventListener('click', function () { showSignupForm('ADD_SHOP'); });
+  if (addShopBtn) addShopBtn.addEventListener('click', function () {
+    const reapplying = lastSignupStatus && lastSignupStatus.progress && lastSignupStatus.progress.state === 'REJECTED';
+    if (reapplying) clearSavedSubmission();
+    const hasCompanies = lastSignupStatus && lastSignupStatus.eligibleCompanies.length > 0;
+    showSignupForm(reapplying && !hasCompanies ? 'FIRST_SHOP' : 'ADD_SHOP');
+    if (reapplying) {
+      document.getElementById('form-title').textContent = 'สมัครเปิดร้านอีกครั้ง';
+      actionBtn.textContent = 'ส่งคำขอให้ทีมงานตรวจสอบ';
+      setStatus('ทีมงานจะตรวจสอบคำขอใหม่ก่อนเปิดร้านให้ค่ะ', '', 'info');
+    }
+  });
   const startExistingBtn = document.getElementById('start-existing');
   if (startExistingBtn) startExistingBtn.addEventListener('click', function () {
     void runWith(function () { return startSession(''); }, startExistingBtn, 'กำลังค้นหาร้าน…');
