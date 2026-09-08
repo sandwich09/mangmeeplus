@@ -273,8 +273,13 @@ export function buildBoundExpenseAccrualLines(
   const isClaim = source.sourceEventType === 'expense.claim.confirmed';
   return {
     lines: [
-      ...resolved.debits.map((debit) => ({
-        accountId: debit.accountCode, debitAmount: debit.amount, description: 'ค่าใช้จ่าย', ...ref,
+      ...resolved.debits.filter((debit) => !decimal(debit.amount).isZero()).map((debit) => ({
+        accountId: debit.accountCode,
+        // A separately mapped negative settlement adjustment reduces expense on the credit side.
+        ...(decimal(debit.amount).isNegative()
+          ? { creditAmount: d4(decimal(debit.amount).abs()) }
+          : { debitAmount: debit.amount }),
+        description: 'ค่าใช้จ่าย', ...ref,
       })),
       {
         accountId: isClaim ? bindings.employeePayableCode : bindings.accountsPayableCode,

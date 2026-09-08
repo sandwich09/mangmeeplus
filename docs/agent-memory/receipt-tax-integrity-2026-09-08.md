@@ -23,3 +23,6 @@ Found that AI Gateway production dependency installation uses `--no-optional`; a
 
 ## Final CI correction
 Linux/amd64 image build including real native rotation and executable image-security scanner passed. CI34215844701 passed typecheck, boot and PostgreSQL but full unit suite found one stale LINE-dispatch copy assertion expecting the retired combined VAT/WHT label. Update it to assert the separate VAT label and no invented WHT on unknown-tax input; product code unchanged. PR492→develop and PR493→main remain unmerged until final-head CI passes. Superseded runs are not deployment authority.
+
+## Adjacent signed-rounding ledger boundary
+A use-case regression confirmed a separately mapped negative settlement adjustment was emitted as a negative debit and rejected by journal balance validation before posting. Preserve the signed reviewed allocation by emitting a positive credit; omit zero account allocations. No account mapping, permission, confirmation, tax or balance guard is weakened. Existing WHT-on-governed-chart mapping remains explicitly unsupported rather than guessed. Focused ledger/tax/payment checks43 passed, plus the added zero-allocation test; API typecheck rerunning. This additional product fix supersedes candidate2d1411aa and CI34217161540/34217161719. UAT has not been dispatched.
