@@ -1866,6 +1866,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         </div>
       )}
       {productEntries.map(({ line, index }) => {
+        const taxAmounts = calculateManualExpenseTotals({ ...line, vatMode: values.vatMode });
         const descriptionIssue = fieldIssue(issues, `lines.${index}.description`);
         const quantityIssue = fieldIssue(issues, `lines.${index}.quantity`);
         const unitPriceIssue = fieldIssue(issues, `lines.${index}.unitPrice`);
@@ -1983,8 +1984,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               transactionContext="DOMESTIC_PURCHASE"
               direction="INPUT"
               documentDate={values.expenseDate}
-              netAmount={String(Math.max(0, Number(line.quantity || '0') * Number(line.unitPrice || '0') - Number(line.discountAmount || '0')))}
-              grossAmount={String(Math.max(0, Number(line.quantity || '0') * Number(line.unitPrice || '0') - Number(line.discountAmount || '0')))}
+              netAmount={String(taxAmounts.subtotal)}
+              grossAmount={String(taxAmounts.grandTotal)}
+              enteredTaxAmount={String(taxAmounts.vat)}
               value={line.taxCodeDefinitionId ?? ''}
               disabled={!isMutable || busy}
               labelAddon={<InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_code', locale)} />}
@@ -2003,7 +2005,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           document through the same preset the goods rows use. Single column: at 390px a two-up
           select and money field left neither readable. */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-        <h4 className="font-semibold text-gray-800">{t('expenses.charges_section', locale)}</h4>
+        <h4 className="font-semibold text-gray-800">{t(chargeEntries.some(({ line }) => line.chargeKind === 'ROUNDING') ? 'expenses.charges_and_adjustments_section' : 'expenses.charges_section', locale)}</h4>
         {isMutable && (
           <button type="button" className={ghostClass} disabled={busy} onClick={() => insertLine('SERVICE_CHARGE')}>{t('expenses.add_charge', locale)}</button>
         )}
@@ -2028,7 +2030,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           </div>
           <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor={`expense-charge-kind-${detail.id}-${index}`}>{t('expenses.charge_kind', locale)}</label>
+              <label className="mb-1 block text-xs font-medium text-gray-600" htmlFor={`expense-charge-kind-${detail.id}-${index}`}>{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_kind' : 'expenses.charge_kind', locale)}</label>
               <ThemedSelect
                 id={`expense-charge-kind-${detail.id}-${index}`}
                 className={validationInputClass(orderIssue)}
@@ -2055,11 +2057,12 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               <input type="text" className={inputClass} value={line.description} onChange={(e) => updateLine(index, 'description', stripDisallowed(e.target.value))} disabled={!isMutable || busy} />
             </label>
             <label>
-              <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.charge_amount', locale)}</span>
+              <span className="mb-1 block text-xs font-medium text-gray-600">{t(chargeKind === 'ROUNDING' ? 'expenses.adjustment_amount' : 'expenses.charge_amount', locale)}</span>
               {/* No `min`: ปัดเศษ is the one kind a bill prints as a deduction, and the validator is
                   what refuses a minus sign on any other kind. */}
               <input type="number" step="0.0001" className={validationInputClass(amountIssue ?? quantityIssue)} aria-invalid={amountIssue?.severity === 'error' || undefined} value={line.unitPrice} onChange={(e) => updateLine(index, 'unitPrice', normalizeDecimalInput(e.target.value))} disabled={!isMutable || busy} />
               <FieldIssueNote issue={amountIssue ?? quantityIssue} />
+              {chargeKind === 'ROUNDING' && <p className="mt-1 text-xs text-gray-500">{t('expenses.rounding_explanation', locale)}</p>}
             </label>
             {showsVatCard && <div>
               <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
@@ -2671,7 +2674,6 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   // applied first and the result priced as a single unit, then the lines are summed, so both paths
   // run one arithmetic whether or not a service charge line exists.
   const afterDiscount = lines.map((line) => Math.max(0, Number(line.quantity || '0') * Number(line.unitPrice || '0') - Number(line.discountAmount || '0')));
-  const amount = String(afterDiscount.reduce((sum, net) => sum + net, 0));
   const totals = lines.reduce((sum, line, index) => {
     const lineTotals = calculateManualExpenseTotals({ quantity: '1', unitPrice: afterDiscount[index]!, vatRate: line.vatRate, vatMode });
     return { subtotal: sum.subtotal + lineTotals.subtotal, vat: sum.vat + lineTotals.vat, grandTotal: sum.grandTotal + lineTotals.grandTotal };
@@ -2741,7 +2743,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
         </MangmeeCard>
         {showsTaxCapture(capture.mode) && <MangmeeCard className="space-y-3 p-4">
           {sectionTitle(ICON.receipt, 'expenses.manual_tax_section', 'expenses.manual_tax_helper')}
-          <TransactionTaxLineSelector companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={amount} grossAmount={amount} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? `${definition.externalCode} · ${definition.displayName}` : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
+          <TransactionTaxLineSelector companyId={companyId} branchId={branchId} sourceType="expense.record" sourceId="new-manual-expense" sourceLineId="line-1" transactionContext="DOMESTIC_PURCHASE" direction="INPUT" documentDate={expenseDate} netAmount={String(totals.subtotal)} grossAmount={String(totals.grandTotal)} enteredTaxAmount={String(totals.vat)} value={taxCodeDefinitionId} canConfigureTax={capture.canConfigureTax} onChange={(id, definition) => { setTaxCodeDefinitionId(id); setTaxCodeName(definition ? `${definition.externalCode} · ${definition.displayName}` : ''); setExternalTaxCode(definition?.externalCode); setVatRate(definition ? taxDefinitionRateForSource(definition.rate, 'expense') : ''); if (!vatModeTouched) setVatMode(!definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} />
           <div>
             <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
               <label htmlFor="manual-expense-vat-mode">{t('expenses.vat_mode', locale)}</label>

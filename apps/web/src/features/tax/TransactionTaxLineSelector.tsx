@@ -23,6 +23,7 @@ type Props = {
   currency?: string;
   netAmount: string;
   grossAmount: string;
+  enteredTaxAmount?: string;
   branchId?: string;
   value?: string;
   onChange: (definitionId: string, definition?: TaxCodeDefinitionDto) => void;
@@ -52,7 +53,7 @@ function taxChoiceLabel(item: TaxCodeDefinitionDto) {
 
 export function TransactionTaxLineSelector({
   companyId, sourceType, sourceId, sourceLineId, transactionContext, direction,
-  documentDate, currency = 'THB', netAmount, grossAmount, branchId, value = '',
+  documentDate, currency = 'THB', netAmount, grossAmount, enteredTaxAmount, branchId, value = '',
   onChange, disabled = false, allowNoTax = true,
   labelAddon, canConfigureTax = false, suggestedTaxCode = null,
 }: Props) {
@@ -110,11 +111,12 @@ export function TransactionTaxLineSelector({
       externalTaxCode: selected.externalCode,
       netAmount: netAmount || '0',
       grossAmount: grossAmount || netAmount || '0',
+      enteredTaxAmount,
     }, { profileId: selected.profileId, direction, sourceModule: sourceType.split('.')[0] })
       .then((result) => { if (!cancelled) { setPreview(result); setError(''); } })
       .catch((cause) => { if (!cancelled) setError(transactionTaxErrorMessage(cause)); });
     return () => { cancelled = true; };
-  }, [branchId, choices, companyId, currency, direction, disabled, documentDate, grossAmount, netAmount, sourceId, sourceLineId, sourceType, transactionContext, effectiveValue]);
+  }, [branchId, choices, companyId, currency, direction, disabled, documentDate, enteredTaxAmount, grossAmount, netAmount, sourceId, sourceLineId, sourceType, transactionContext, effectiveValue]);
 
   return (
     <div className="space-y-2" data-testid="transaction-tax-selector">
