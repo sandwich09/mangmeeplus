@@ -21,7 +21,7 @@ import { LineMessageBufferService, type LineBufferEnvelope } from '../line-messa
 import { LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE } from '../company-ocr-governance';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { emitLineAiTerminalOutcome } from '../../domain/logic/line-ai-terminal-outcome.logic';
-import { LineReplyAdapter, parseOutcomeMessages, safeLineErrorDetails } from '../../infrastructure/line-reply.adapter';
+import { LineReplyAdapter, parseOutcomeMessages, repairLegacyOutcomePreview, safeLineErrorDetails } from '../../infrastructure/line-reply.adapter';
 
 /** Past this age the employee has moved on; answering an hour-old question is worse than not
  *  answering it. Reaching it means the sweep itself was down, so the row is parked for ops
@@ -214,13 +214,25 @@ export class RecoverOrphanLineEventsUseCase {
     messagesJson: unknown,
   ): Promise<'replayed' | 'skipped'> {
     let messages = parseOutcomeMessages(messagesJson);
+    // These oversized previews were rejected locally before any provider attempt. Repair only
+    // that representation; a possibly accepted network payload must retain its retry identity.
+    if (!messages && row.errorCode === 'LINE_OUTCOME_NOT_RECORDED') {
+      messages = repairLegacyOutcomePreview(messagesJson);
+      if (messages) {
+        const repaired = await this.prisma.client.lineTurnOutcome.updateMany({
+          where: { webhookEventId: row.webhookEventId, deliveredAt: null, messagesJson: { equals: messagesJson as Prisma.InputJsonValue } },
+          data: { messagesJson: messages as unknown as Prisma.InputJsonValue },
+        });
+        if (repaired.count !== 1) return 'skipped';
+      }
+    }
     if (!messages) {
       await this.park(row, 'orphan_unreadable', 'ORPHAN_OUTCOME_UNREADABLE');
       return 'skipped';
     }
-    if (row.errorCode === 'LINE_OUTCOME_REPRESENTATION_PENDING' || row.errorCode === 'LINE_OUTCOME_NOT_RECORDED') {
+    if (row.errorCode === 'LINE_OUTCOME_REPRESENTATION_PENDING') {
       messages = messages.map((message) => message.type === 'flex'
-        ? { type: 'text' as const, text: message.altText, ...(message.quickReply ? { quickReply: message.quickReply } : {}) }
+        ? { type: 'text' as const, text: message.canonicalText ?? message.altText, ...(message.quickReply ? { quickReply: message.quickReply } : {}) }
         : message);
       const replaced = await this.prisma.client.lineTurnOutcome.updateMany({
         where: { webhookEventId: row.webhookEventId, deliveredAt: null, messagesJson: { equals: messagesJson as Prisma.InputJsonValue } },
