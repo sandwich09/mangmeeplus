@@ -16,14 +16,14 @@ const ctx: RequestContext = {
   scopes: {}, authProvider: 'watchdog',
 };
 
-function makeUseCase(missingFields: string[]) {
+function makeUseCase(missingFields: string[], summary: Record<string, unknown> = {}) {
   const updates: any[] = [];
   const repo = {
     findById: async () => ({
       id: 'exp-1', companyId: 'company-1', branchId: null, createdByUserId: 'user-1', status: 'NEEDS_REVIEW',
       sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', vatMode: 'VAT_INCLUDED',
       currency: 'THB', expenseDate: new Date('2026-08-04T00:00:00.000Z'),
-      aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields },
+      aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields, ...summary },
     }),
     findByIdWithRelations: async () => ({ lines: [] }),
     updateExpense: async (input: any) => { updates.push(input); return input; },
@@ -38,6 +38,23 @@ function makeUseCase(missingFields: string[]) {
 const nextMissing = (updates: any[]) => updates[0].aiVerificationSummaryJson?.missingFields;
 
 describe('UpdateExpenseDraftUseCase AI missingFields clearing', () => {
+  it('resolves explicit web dates while preserving raw OCR and unrelated findings; an omitted date is not reviewed', async () => {
+    for (const dateStatus of ['unverified', 'implausible', 'assumed']) {
+      const summary = { dateStatus, recognizedFields: { expenseDate: 'original OCR' },
+        reviewReasons: ['วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน', 'วันที่ผิดปกติ', 'ตรวจยอดภาษี'] };
+      const explicit = makeUseCase(['expenseDate', 'receipt_evidence'], summary);
+      await explicit.useCase.execute(ctx, 'exp-1', { expenseDate: '2026-08-04' });
+      const saved = explicit.updates[0].aiVerificationSummaryJson;
+      assert.equal(saved.dateStatus, 'verified');
+      assert.equal(saved.dateResolution.resolvedByUserId, ctx.userId);
+      assert.deepEqual(saved.recognizedFields, summary.recognizedFields);
+      assert.deepEqual(saved.reviewReasons, ['ตรวจยอดภาษี']);
+      assert.deepEqual(saved.missingFields, ['receipt_evidence']);
+      const omitted = makeUseCase(['expenseDate'], summary);
+      await omitted.useCase.execute(ctx, 'exp-1', { note: 'unrelated edit' });
+      assert.equal(omitted.updates[0].aiVerificationSummaryJson, undefined);
+    }
+  });
   it('clears the flag for each field the save supplies, under every alias', async () => {
     const { useCase, updates } = makeUseCase(['vendor', 'vendorName', 'vendorTaxId', 'documentNumber', 'expenseDate']);
 

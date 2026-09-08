@@ -1,5 +1,13 @@
 # Receipt single form and detailed LINE summary plan
 
+## Date-verification corrective pass — 2026-09-08
+
+1. Reproduce explicit stale dateStatus using existing browser and PostgreSQL fixtures; keep the actual final UI click and API/DB assertions.
+2. Synchronize manual date resolution at UpdateExpenseDraftUseCase for ordinary, source-only, combined and voluntary LINE saves; preserve unrelated findings and optimistic transaction boundaries. Enforce the same date rule in existing final source guard and repository transitions.
+3. Correct misleading complete-data copy and wrong step number without changing the stable form; verify themes, optional purpose, blank/omitted dates and legacy draft recovery.
+4. Run focused API/PG/web/browser checks and typechecks; review diff and full required PR CI, merge develop/main. New source supersedes the previously held candidate; freeze the new controller for its release.
+5. Deploy UAT once via canonical protocol, verify signed Passport, runtime/OPEN/deep DB/provider checks and automatic READY; repeat live Drtb UI through submission. Keep Production unchanged pending owner approval.
+
 1. Verify the current two-form render and source/financial save contracts; identify shared receipt formatter and recovery callers.
 2. Select exactly one editor from source completeness and existing permissions. Restore the normal review layout for readable receipts, including purpose/category resolution; keep partial saves and the original image for unreadable receipts.
 3. Remove raw question fallback from web labels and replace long initial missing lists with concise, accessible field guidance.
