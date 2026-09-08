@@ -168,6 +168,56 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
     await assert.rejects(() => repo.finalizeAndConfirmExpenseCas({ companyId, id: row.id, expectedUpdatedAt: ready.updatedAt, actorUserId: userId } as any, async () => { throw new Error('Final tax mutation must not run for incomplete source'); }), /Complete the saved source draft/);
   });
 
+  it('one review save binds same-named staged rows by scoped references without losing charges or purpose', async () => {
+    const id = await draft(1, true);
+    const before = await stored(id);
+    const metadata = before.sourceChannelMetadataJson as Record<string, any>;
+    const state = structuredClone(metadata.lineExpenseDraftContinuation) as any;
+    state.items.push({ itemRef: 'I02', sourceText: 'สินค้า1 1 15', description: 'สินค้า1', quantity: '1', unitPrice: '15', expenseCategoryId: categoryId });
+    state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, await repo.listCategories(companyId));
+    await client.expenseRecord.update({ where: { id }, data: { sourceChannelMetadataJson: { ...metadata, lineExpenseDraftContinuation: state } } });
+    const current = await stored(id);
+    const charge = current.lines.find((line) => line.chargeKind)!;
+    const product = current.lines.find((line) => !line.chargeKind)!;
+    await update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), note: 'LINE receipt upload · วัตถุประสงค์: ใช้สำนักงาน',
+      lines: [
+        { id: product.id, sourceItemRef: state.items[0].itemRef, lineNumber: 1, description: product.description, quantity: '1', unitPrice: '100', discountAmount: '10', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId },
+        { sourceItemRef: 'I02', lineNumber: 2, description: product.description, quantity: '1', unitPrice: '15', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId },
+        { id: charge.id, lineNumber: 3, description: charge.description, chargeKind: 'SERVICE_CHARGE', quantity: '1', unitPrice: '5', vatRate: '0', vatTreatment: 'NON_VAT' },
+      ],
+    });
+    const saved = await stored(id);
+    assert.equal(saved.lines.length, 3);
+    assert.equal(saved.lines[0]!.id, product.id);
+    assert.equal(saved.lines[2]!.id, charge.id);
+    assert.equal(String(saved.grandTotalAmount), '110');
+    const get = new GetExpenseUseCase(repo);
+    const projected = (await get.sourceDraft(ctx(['expense.review']), await get.execute(ctx(['expense.review']), id)))!;
+    assert.equal(projected.items.length, 2);
+    assert.equal(new Set(projected.items.map((item) => item.lineId)).size, 2);
+    assert.equal(projected.header.businessPurpose, 'ใช้สำนักงาน');
+    assert.deepEqual(projected.missingFields, []);
+    const body = { expectedUpdatedAt: saved.updatedAt.toISOString(), lines: [{ id: product.id, sourceItemRef: 'other-source', lineNumber: 1, description: 'ไม่แก้', quantity: '1', unitPrice: '999' }] };
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, body), /staged receipt row/);
+    await assert.rejects(() => update.execute(ctx(['expense.update']), id, { ...body, lines: [{ ...body.lines[0]!, sourceItemRef: state.items[0].itemRef }] }), /Only a reviewer/);
+    assert.equal(String((await stored(id)).grandTotalAmount), String(saved.grandTotalAmount));
+    await update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: saved.updatedAt.toISOString(), removedSourceItemRefs: ['I02'],
+      lines: [
+        { id: product.id, sourceItemRef: state.items[0].itemRef, lineNumber: 1, description: product.description, quantity: '1', unitPrice: '100', discountAmount: '10', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId },
+        { id: charge.id, lineNumber: 2, description: charge.description, chargeKind: 'SERVICE_CHARGE', quantity: '1', unitPrice: '5', vatRate: '0', vatTreatment: 'NON_VAT' },
+      ],
+    });
+    const afterRemoval = await get.execute(ctx(['expense.review']), id);
+    const remaining = (await get.sourceDraft(ctx(['expense.review']), afterRemoval))!;
+    assert.equal(remaining.items.length, 1);
+    assert.equal(afterRemoval.lines.length, 2);
+    assert.equal(Number(afterRemoval.grandTotalAmount), 95);
+    assert.ok(!remaining.items.some((item) => item.itemRef === 'I02'));
+
+  });
+
   it('blocks untouched OCR partials at every final seam and reopens legacy READY review for source correction', async () => {
     const row = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'NEEDS_REVIEW',
       captureSource: 'LINE_UPLOAD', expenseDate: new Date('2026-09-07'), note: 'LINE receipt upload',

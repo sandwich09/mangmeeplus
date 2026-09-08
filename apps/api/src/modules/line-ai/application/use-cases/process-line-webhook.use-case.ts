@@ -992,7 +992,7 @@ export function receiptCardDateLine(
   if (status === 'unverified' || !printed) {
     // Both halves: true about the reading AND about the record. UAT 2026-09-03 stored today's date
     // on a bill printing 03/09/69 and the sender had no way to know, nor to fix it from the chat.
-    return 'ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3/9/69" เพื่อแก้';
+    return 'ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน';
   }
   if (status === 'implausible') return `${printed} (ผิดปกติ ตรวจในเว็บ)`;
   if (status === 'assumed') return `${printed} (อ่านจากบิล แบบ วัน/เดือน)`;
@@ -5614,7 +5614,6 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       });
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
     const replyTexts = [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
-      compact: true,
       hasDuplicate,
       fields: ocrFields,
       // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
@@ -5661,7 +5660,8 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       if (!expense || expense.createdByUserId !== event.handoff.userId) return [fallback];
       if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
       return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
-        compact: true,
+        sourceDocumentType: expense.sourceDocumentType,
+        categoryName: expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find((category) => category.id === expense.expenseCategoryId)?.name : null,
         fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
         charges: expense.charges,
         hasDuplicate: Boolean(expense.duplicateOfExpenseId),

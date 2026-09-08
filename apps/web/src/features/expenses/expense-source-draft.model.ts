@@ -85,6 +85,7 @@ export function expenseSourceDraftMissingLabels(
 ): string[] {
   const itemNumbers = new Map(sourceDraft.items.map((item, index) => [item.itemRef, index + 1]));
   const fields: Record<string, { th: string; en: string }> = {
+    review: { th: 'ตรวจรายละเอียดรายการก่อนยืนยัน', en: 'Review this item before confirming' },
     expenseDate: { th: 'วันที่ในใบเสร็จ', en: 'Receipt date' },
     vendorName: { th: 'ชื่อร้านหรือผู้ขาย', en: 'Shop or vendor name' },
     businessPurpose: { th: 'ซื้อไปใช้ทำอะไร', en: 'Business purpose' },
@@ -97,7 +98,7 @@ export function expenseSourceDraftMissingLabels(
     expenseCategoryId: { th: 'หมวดค่าใช้จ่าย', en: 'Expense category' },
   };
   return sourceDraft.missingFields.map((missing) => {
-    const label = fields[missing.field]?.[locale] ?? missing.prompt;
+    const label = fields[missing.field]?.[locale] ?? (locale === 'th' ? 'ตรวจข้อมูลรายการนี้' : 'Review this information');
     const itemNumber = missing.itemRef ? itemNumbers.get(missing.itemRef) : undefined;
     if (!itemNumber) return label;
     return locale === 'th' ? `รายการที่ ${itemNumber}: ${label}` : `Item ${itemNumber}: ${label}`;

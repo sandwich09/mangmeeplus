@@ -3332,7 +3332,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(initInputs[0].captureSource, 'LINE_UPLOAD');
     assert.equal(completeInputs[0].expenseId, 'expense-line-1');
     assert.equal(replies[0]?.type, 'flex');
-    assert.match(JSON.stringify(replies[0]), /เปิดดูรายการ/);
+    assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
     assert.doesNotMatch(replies[0]?.contents?.body?.contents?.[0]?.text ?? '', /https?:\/\//);
     assert.equal(replies[0]?.contents?.footer?.contents?.[0]?.action?.uri, 'https://app.example.com/companies/company-1/expenses/expense-line-1');
     assert.ok(replies[0]?.quickReply?.items.some((item: any) => item.action.label === '📷 ถ่ายใบเสร็จ'));
@@ -3473,9 +3473,10 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.deepEqual(receiptOcrRequests[0].activeCategories, [{ id: 'cat-meals', name: 'ค่าอาหาร' }]);
     assert.equal(replies[0]?.type, 'flex');
     assert.match(JSON.stringify(replies[0]), /11,875.00/);
-    assert.match(JSON.stringify(replies[0]), /เปิดดูรายการ/);
-    assert.doesNotMatch(JSON.stringify(replies[0]), /CA2025020012|expense\.meals|D-PURPOSE|I01-/);
-    assert.match(JSON.stringify(replies[0]), /ยังไม่ยืนยันรายการ/);
+    assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
+    assert.match(JSON.stringify(replies[0]), /CA2025020012/);
+    assert.doesNotMatch(JSON.stringify(replies[0]), /expense\.meals|D-PURPOSE|I01-/);
+    assert.match(JSON.stringify(replies[0]), /รอตรวจสอบ/);
   });
 });
 
@@ -4099,7 +4100,7 @@ describe('receipt capture card: an unread date says so', () => {
 
   it('names the placeholder and the way to correct it', () => {
     const reply = card({ grandTotalAmount: '1789.04' });
-    assert.match(reply, /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน พิมพ์ "วันที่ 3\/9\/69" เพื่อแก้/);
+    assert.match(reply, /• วันที่เอกสาร – ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน/);
   });
 
   it('prints a date the document proved with no caveat at all', () => {
@@ -4117,7 +4118,7 @@ describe('receipt capture card: an unread date says so', () => {
 
     assert.match(withStatus('assumed', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569 \(อ่านจากบิล แบบ วัน\/เดือน\)/);
     assert.match(withStatus('implausible', '2019-01-05'), /• วันที่เอกสาร – 5 ม\.ค\. 2562 \(ผิดปกติ ตรวจในเว็บ\)/);
-    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังไม่ระบุ — ใช้วันที่ส่งไว้ก่อน/);
+    assert.match(withStatus('unverified', '2026-09-05'), /• วันที่เอกสาร – ยังอ่านวันที่ไม่ได้ ใช้วันที่ส่งไว้ก่อน/);
     assert.match(withStatus('verified', '2026-09-03'), /• วันที่เอกสาร – 3 ก\.ย\. 2569$/m);
   });
 
@@ -5426,10 +5427,10 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     await h.useCase.executeReceiptUpload(h.event());
     assert.equal(h.expense().primaryAttachmentId, 'original-attachment');
     assert.equal(h.expense().aiVerificationSummaryJson.recognizedFields.grandTotalAmount, '120.00');
-    assert.match(JSON.stringify(h.sends), /เก็บรูปและร่างแล้ว/);
+    assert.match(JSON.stringify(h.sends), /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
     assert.match(JSON.stringify(h.sends), /saved-expense/);
     assert.doesNotMatch(JSON.stringify(h.sends), /ข้อมูลที่ยังต้องตอบทั้งหมด|D-DATE|D-VENDOR|D-PURPOSE|D-ITEMS/);
-    assert.match(JSON.stringify(h.sends), /เปิดดูรายการ/);
+    assert.match(JSON.stringify(h.sends), /ตรวจสอบและยืนยันในเว็บแอป/);
     assert.equal(h.sends.at(-1)![0].type, 'flex');
     assert.doesNotMatch(JSON.stringify(h.sends), /ส่งรูปเดิมอีกครั้ง/);
     assert.doesNotMatch(JSON.stringify(h.logs), /raw-receipt-secret|unitPrice NaN/);
@@ -5443,7 +5444,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     await h.useCase.executeReceiptUpload(h.event());
     assert.equal(h.expense().primaryAttachmentId, 'original-attachment');
     assert.equal(h.counts().applied, 0);
-    assert.match(JSON.stringify(h.sends), /เก็บรูปและร่างแล้ว/);
+    assert.match(JSON.stringify(h.sends), /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว/);
     assert.doesNotMatch(JSON.stringify(h.sends), /ส่งรูปเดิมอีกครั้ง/);
   });
 

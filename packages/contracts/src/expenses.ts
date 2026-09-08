@@ -785,7 +785,9 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
   /** Interactive callers send the version they loaded; API PATCH/override routes require it. */
   expectedUpdatedAt?: string;
   /** Existing row identity survives edits/reordering; omit id for a new row. */
-  lines?: Array<CreateExpenseDraftInput['lines'][number] & { id?: string }>;
+  lines?: Array<CreateExpenseDraftInput['lines'][number] & { id?: string; /** Scoped staged row explicitly reviewed in the same form. */ sourceItemRef?: string }>;
+  /** Explicitly removed staged rows, scoped to this expense and reviewer-only. */
+  removedSourceItemRefs?: string[];
   /** Must be sent alone with expectedUpdatedAt. Null/blank clears a staged fact, absent preserves it. */
   sourceDraft?: ExpenseSourceDraftInput;
   vendorNameSnapshot?: string;

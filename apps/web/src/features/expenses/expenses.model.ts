@@ -447,6 +447,10 @@ export type ExpenseDetail = ExpenseSummary & {
 export type ExpenseDraftReviewValues = {
   vendorNameSnapshot: string;
   vendorTaxIdSnapshot: string;
+  /** Only LINE source drafts need the ordinary purpose field; preserve capture provenance. */
+  businessPurpose?: string;
+  removedSourceItemRefs?: string[];
+  originalNote?: string | null;
   /** '' = ยังไม่ระบุ. Only asked for when the document withholds tax (ภ.ง.ด.3 vs ภ.ง.ด.53). */
   vendorEntityKindSnapshot?: BuyerEntityKind | '';
   vendorDocumentNumber: string;
@@ -457,6 +461,7 @@ export type ExpenseDraftReviewValues = {
   lines: Array<{
     /** Existing rows keep their server identity; newly inserted review rows omit it. */
     id?: string;
+    sourceItemRef?: string;
     description: string;
     /** §5.1: charge rows live in the same array as products and always sort after them, so the
      *  line numbers the payload sends already satisfy the server's ordering rule. */
@@ -477,6 +482,35 @@ export type ExpenseDraftReviewValues = {
 };
 
 export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
+  const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
+  const lines: ExpenseDraftReviewValues['lines'] = detail.lines.map((line) => ({
+      id: line.id, description: line.description, chargeKind: line.chargeKind ?? null,
+      quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.discountAmount,
+      vatRate: line.vatRate ?? '', vatTreatment: line.vatTreatment ?? null, whtRate: line.whtRate,
+      expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
+      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? null,
+      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
+      transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
+  }));
+  // Show staged items that have no financial counterpart in the SAME review form. The partial
+  // editor owns unknown inputs; these values still pass the ordinary financial validator on save.
+  const assigned = new Set<string>();
+  for (const item of source?.items ?? []) {
+    const storedMatches = lines.filter((line) => line.id && !assigned.has(line.id)
+      && (item.lineId ? line.id === item.lineId : !line.chargeKind && line.description === item.description));
+    const matched = storedMatches.length === 1 ? storedMatches[0] : storedMatches.find((line) =>
+      Number(item.quantity) === Number(line.quantity) && item.unitPrice !== null && Number(item.unitPrice) === Number(line.unitPrice));
+    if (matched?.id) { matched.sourceItemRef = item.itemRef; assigned.add(matched.id); continue; }
+    const unitPrice = item.unitPrice ?? (item.totalAmount != null && Number(item.quantity) > 0
+      ? (Number(item.totalAmount) / Number(item.quantity)).toFixed(4) : '');
+    const chargeIndex = lines.findIndex((line) => line.chargeKind);
+    lines.splice(chargeIndex < 0 ? lines.length : chargeIndex, 0, {
+      sourceItemRef: item.itemRef,
+      description: item.description ?? '', quantity: item.quantity ?? '', unitPrice,
+      discountAmount: '0', vatRate: '', whtRate: null, expenseCategoryId: item.expenseCategoryId,
+      accountHintKey: null, taxCategory: null,
+    });
+  }
   return {
     vendorNameSnapshot: detail.vendorNameSnapshot ?? '',
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
@@ -486,23 +520,8 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vatMode: detail.vatMode,
     vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
-    lines: detail.lines.map((line) => ({
-      id: line.id,
-      description: line.description,
-      chargeKind: line.chargeKind ?? null,
-      quantity: line.quantity,
-      unitPrice: line.unitPrice,
-      discountAmount: line.discountAmount,
-      vatRate: line.vatRate ?? '',
-      vatTreatment: line.vatTreatment ?? null,
-      whtRate: line.whtRate,
-      expenseCategoryId: line.expenseCategoryId,
-      accountHintKey: line.accountHintKey,
-      taxCategory: line.taxCategory,
-      taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? null,
-      externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
-      transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
-    })),
+    ...(source && { businessPurpose: source.header.businessPurpose ?? '', originalNote: detail.note }),
+    lines,
   };
 }
 
@@ -552,6 +571,9 @@ export function removeExpenseReviewLine(
 ): ExpenseDraftReviewValues {
   return {
     ...values,
+    ...(values.lines[index]?.sourceItemRef && { removedSourceItemRefs: [
+      ...(values.removedSourceItemRefs ?? []), values.lines[index]!.sourceItemRef!,
+    ] }),
     lines: values.lines.filter((_, lineIndex) => lineIndex !== index),
     ...(values.vatSource?.lines?.length && {
       vatSource: {
@@ -620,6 +642,11 @@ export function formatTaxId(value: string): string {
 
 export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues): UpdateExpenseDraftInput {
   return {
+    ...(values.removedSourceItemRefs?.length && { removedSourceItemRefs: values.removedSourceItemRefs }),
+    ...(values.businessPurpose !== undefined && { note: [
+      ...(values.originalNote ?? '').split(' · ').filter((part) => part && !part.startsWith('วัตถุประสงค์:')),
+      ...(values.businessPurpose.trim() ? [`วัตถุประสงค์: ${values.businessPurpose.trim()}`] : []),
+    ].join(' · ') }),
     vendorNameSnapshot: values.vendorNameSnapshot.trim(),
     vendorTaxIdSnapshot: taxIdDigits(values.vendorTaxIdSnapshot),
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
@@ -630,6 +657,7 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
     ...(values.whtInput && { whtInput: values.whtInput }),
     lines: values.lines.map((line, index) => ({
       ...(line.id && { id: line.id }),
+      ...(line.sourceItemRef && { sourceItemRef: line.sourceItemRef }),
       lineNumber: index + 1,
       description: line.description.trim(),
       // ALWAYS sent, unlike the other optional line fields here. `lines` is a replacement and the
@@ -1192,8 +1220,10 @@ export function expenseSourceDraftViewState(
   return {
     sourceDraft,
     incomplete,
-    sourceOnly: Boolean(sourceDraft && !canMutateDraft
-      && (sourceDraft.canEdit || detail.status === 'READY_FOR_CONFIRMATION')),
+    sourceOnly: Boolean(sourceDraft && (
+      (!canMutateDraft && (sourceDraft.canEdit || detail.status === 'READY_FOR_CONFIRMATION'))
+      || sourceDraft.missingFields.some((missing) => ['expenseDate', 'vendorName', 'items', 'description', 'quantity', 'price', 'unitPrice', 'totalAmount'].includes(missing.field))
+    )),
     financialTotalUnknown: incomplete && detail.lines.length === 0,
   };
 }
