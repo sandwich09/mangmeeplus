@@ -5,6 +5,7 @@ import type { ExpenseCategorySummary, ExpenseSourceDraft } from '@watchdog-bms/c
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { getExpense, listExpenseCategories, updateExpenseSourceDraft } from './expenses.api';
 import type { ExpenseDetail } from './expenses.model';
 import {
@@ -117,7 +118,7 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
     <div className="mangmee-card space-y-4 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-base font-bold text-gray-900">{t('expenses.source_draft_title', locale)}</h2>
+          <h2 className="text-base font-bold text-gray-900">{t('expenses.vendor_and_lines', locale)}</h2>
           <p className="mt-1 text-sm leading-6 text-gray-600">{t('expenses.source_draft_help', locale)}</p>
         </div>
         <span className="rounded-full bg-warning-50 px-2.5 py-1 text-xs font-bold text-warning-700">
@@ -126,12 +127,12 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
       </div>
 
       {missingLabels.length > 0 && (
-        <div className="rounded-xl border border-warning-200 bg-warning-50 p-3">
-          <div className="text-sm font-bold text-warning-800">{t('expenses.source_draft_missing_title', locale)}</div>
+        <details className="rounded-xl border border-warning-200 bg-warning-50 p-3">
+          <summary className="cursor-pointer text-sm font-bold text-warning-800">{t('expenses.source_draft_missing_title', locale)} ({missingLabels.length})</summary>
           <ul className="mt-2 grid gap-1 text-sm text-warning-800 sm:grid-cols-2">
             {missingLabels.map((label, index) => <li key={`${sourceDraft.missingFields[index]?.id ?? index}`} className="flex gap-2"><span aria-hidden>•</span><span>{label}</span></li>)}
           </ul>
-        </div>
+        </details>
       )}
 
       {!sourceDraft.canEdit && (
@@ -215,7 +216,8 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
                   })}
                   <label className="block text-sm font-medium text-gray-700 sm:col-span-2 lg:col-span-3">
                     {t('expenses.category', locale)}
-                    <select value={item.expenseCategoryId} className={classes(inputClass, 'mt-1')}
+                    <ThemedSelect value={item.expenseCategoryId} className={classes(inputClass, 'mt-1')}
+                      disabled={!sourceDraft.canEdit || saving}
                       aria-label={`${t('expenses.source_draft_item_n', locale).replace('{n}', String(index + 1))} ${t('expenses.category', locale)}`}
                       onChange={(event) => editItem(index, 'expenseCategoryId', event.target.value)}>
                       <option value="">{t('expenses.category_unspecified', locale)}</option>
@@ -223,7 +225,7 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
                         <option value={item.expenseCategoryId}>{t('expenses.source_draft_saved_category', locale)}</option>
                       )}
                       {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                    </select>
+                    </ThemedSelect>
                     {missingNote('expenseCategoryId', item.itemRef)}
                   </label>
                 </div>

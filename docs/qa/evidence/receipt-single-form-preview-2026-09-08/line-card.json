@@ -1,0 +1,66 @@
+{
+  "type": "flex",
+  "altText": "🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n\n📋 ข้อมูลที่อ่านได้ตอนนี้:\n• ประเภทเอกสาร – รอตรวจสอบ\n• ยอดรวม – 300.00\n• ผู้ขาย/ผู้รับเงิน – PANDA MALA (บริษัท รวยเจริญดี จำกัด)\n• วันที่เอกสาร – 7 ก.ย. 2569\n• เลขที่เอกสาร – 00912/1\n• VAT / WHT / ภาษีซื้อ – VAT 19.63\n• หมวดหมู่ค่าใช้จ่าย – ค่าอาหารและเครื่องดื่ม",
+  "canonicalText": "🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n\n📋 ข้อมูลที่อ่านได้ตอนนี้:\n• ประเภทเอกสาร – รอตรวจสอบ\n• ยอดรวม – 300.00\n• ผู้ขาย/ผู้รับเงิน – PANDA MALA (บริษัท รวยเจริญดี จำกัด)\n• วันที่เอกสาร – 7 ก.ย. 2569\n• เลขที่เอกสาร – 00912/1\n• VAT / WHT / ภาษีซื้อ – VAT 19.63\n• หมวดหมู่ค่าใช้จ่าย – ค่าอาหารและเครื่องดื่ม\n\n✅ ตรวจสอบและยืนยันในเว็บแอป:\nhttps://uat.mangmeeplus.com/companies/preview-company/expenses/preview-receipt",
+  "contents": {
+    "type": "bubble",
+    "styles": {
+      "body": {
+        "backgroundColor": "#FFFFFF"
+      },
+      "footer": {
+        "separator": true,
+        "separatorColor": "#E3EBE5"
+      }
+    },
+    "header": {
+      "type": "box",
+      "layout": "vertical",
+      "backgroundColor": "#15803D",
+      "paddingAll": "16px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "ข้อมูลจากน้องมั่งมี",
+          "color": "#FFFFFF",
+          "weight": "bold",
+          "size": "lg",
+          "wrap": true
+        }
+      ]
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "md",
+      "paddingAll": "16px",
+      "contents": [
+        {
+          "type": "text",
+          "text": "🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)\n\n📋 ข้อมูลที่อ่านได้ตอนนี้:\n• ประเภทเอกสาร – รอตรวจสอบ\n• ยอดรวม – 300.00\n• ผู้ขาย/ผู้รับเงิน – PANDA MALA (บริษัท รวยเจริญดี จำกัด)\n• วันที่เอกสาร – 7 ก.ย. 2569\n• เลขที่เอกสาร – 00912/1\n• VAT / WHT / ภาษีซื้อ – VAT 19.63\n• หมวดหมู่ค่าใช้จ่าย – ค่าอาหารและเครื่องดื่ม",
+          "color": "#1A2E22",
+          "size": "md",
+          "wrap": true
+        }
+      ]
+    },
+    "footer": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "sm",
+      "paddingAll": "12px",
+      "contents": [
+        {
+          "type": "button",
+          "style": "primary",
+          "color": "#15803D",
+          "action": {
+            "type": "uri",
+            "label": "✅ ตรวจสอบและยืนยันในเว็บแอป",
+            "uri": "https://uat.mangmeeplus.com/companies/preview-company/expenses/preview-receipt"
+          }
+        }
+      ]
+    }
+  }
+}
