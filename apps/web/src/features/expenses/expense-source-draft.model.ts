@@ -79,38 +79,13 @@ export function expenseSourceDraftIssues(values: ExpenseSourceDraftFormValues): 
   ));
 }
 
-export function expenseSourceDraftMissingLabels(
-  sourceDraft: ExpenseSourceDraft,
-  locale: 'th' | 'en',
-): string[] {
-  const itemNumbers = new Map(sourceDraft.items.map((item, index) => [item.itemRef, index + 1]));
-  const fields: Record<string, { th: string; en: string }> = {
-    review: { th: 'ตรวจรายละเอียดรายการก่อนยืนยัน', en: 'Review this item before confirming' },
-    expenseDate: { th: 'วันที่ในใบเสร็จ', en: 'Receipt date' },
-    vendorName: { th: 'ชื่อร้านหรือผู้ขาย', en: 'Shop or vendor name' },
-    businessPurpose: { th: 'ซื้อไปใช้ทำอะไร', en: 'Business purpose' },
-    items: { th: 'สินค้าหรือบริการอย่างน้อยหนึ่งรายการ', en: 'At least one item or service' },
-    description: { th: 'ชื่อสินค้าหรือบริการ', en: 'Item or service name' },
-    quantity: { th: 'จำนวน', en: 'Quantity' },
-    unitPrice: { th: 'ราคาต่อหน่วย', en: 'Unit price' },
-    price: { th: 'ราคาต่อหน่วยหรือยอดรวม', en: 'Unit price or item total' },
-    totalAmount: { th: 'ยอดรวมรายการ', en: 'Item total' },
-    expenseCategoryId: { th: 'หมวดค่าใช้จ่าย', en: 'Expense category' },
-  };
-  return sourceDraft.missingFields.map((missing) => {
-    const label = fields[missing.field]?.[locale] ?? (locale === 'th' ? 'ตรวจข้อมูลรายการนี้' : 'Review this information');
-    const itemNumber = missing.itemRef ? itemNumbers.get(missing.itemRef) : undefined;
-    if (!itemNumber) return label;
-    return locale === 'th' ? `รายการที่ ${itemNumber}: ${label}` : `Item ${itemNumber}: ${label}`;
-  });
-}
-
 export function isExpenseSourceDraftMissing(
   sourceDraft: ExpenseSourceDraft,
   field: string,
   itemRef?: string,
 ): boolean {
-  const fields = field === 'unitPrice' || field === 'totalAmount' ? [field, 'price'] : [field];
+  const fields = field === 'unitPrice' ? ['unitPrice', 'totalAmount', 'price']
+    : field === 'totalAmount' ? ['totalAmount', 'price'] : [field];
   return sourceDraft.missingFields.some((missing) => fields.includes(missing.field)
     && (itemRef === undefined ? missing.scope === 'DOCUMENT' : missing.itemRef === itemRef));
 }

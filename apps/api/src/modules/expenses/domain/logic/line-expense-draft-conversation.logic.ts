@@ -197,7 +197,6 @@ export function collectLineExpenseDraftQuestions(
   const result: LineExpenseDraftQuestion[] = [];
   if (!state.header.expenseDate) result.push({ id: 'D-DATE', scope: 'DOCUMENT', field: 'expenseDate', prompt: 'วันที่ซื้อหรือวันที่จ่ายคือวันไหน?' });
   if (!state.header.vendorName) result.push({ id: 'D-VENDOR', scope: 'DOCUMENT', field: 'vendorName', prompt: 'ซื้อจากร้านหรือผู้ขายชื่ออะไร?' });
-  if (!state.header.businessPurpose) result.push({ id: 'D-PURPOSE', scope: 'DOCUMENT', field: 'businessPurpose', prompt: 'ค่าใช้จ่ายนี้ใช้เพื่อธุรกิจเรื่องอะไร?' });
   if (state.items.length === 0) result.push({ id: 'D-ITEMS', scope: 'DOCUMENT', field: 'items', prompt: 'มีสินค้าหรือบริการอะไรบ้าง?' });
   const names = new Map(categories.map((category) => [category.id, category.name]));
   for (const item of state.items) {
@@ -328,7 +327,14 @@ export function parseLineExpenseDraftContinuation(value: unknown): LineExpenseDr
     !question || typeof question !== 'object' || typeof question.id !== 'string'
     || typeof question.field !== 'string' || typeof question.prompt !== 'string'
     || question.prompt.length > 300)) return null;
-  return state as LineExpenseDraftContinuation;
+  const current = state as LineExpenseDraftContinuation;
+  if (!current.unresolvedQuestions.some((question) => question.id === 'D-PURPOSE')) return current;
+  const normalized = structuredClone(current);
+  normalized.unresolvedQuestions = normalized.unresolvedQuestions.filter((question) => question.id !== 'D-PURPOSE');
+  if (normalized.status.startsWith('INPUT_ENDED_')) {
+    normalized.status = normalized.unresolvedQuestions.length ? 'INPUT_ENDED_INCOMPLETE' : 'INPUT_ENDED_COMPLETE';
+  }
+  return normalized;
 }
 
 export function lineExpenseDraftControl(text: string): LineExpenseDraftControl | null {

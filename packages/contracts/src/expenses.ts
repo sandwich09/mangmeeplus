@@ -653,6 +653,7 @@ export type ExpenseSourceDraftItemInput = {
 export type ExpenseSourceDraftInput = {
   expenseDate?: string | null;
   vendorName?: string | null;
+  /** Optional context. An absent or blank purpose never blocks review or confirmation. */
   businessPurpose?: string | null;
   items?: ExpenseSourceDraftItemInput[];
 };
@@ -788,7 +789,9 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
   lines?: Array<CreateExpenseDraftInput['lines'][number] & { id?: string; /** Scoped staged row explicitly reviewed in the same form. */ sourceItemRef?: string }>;
   /** Explicitly removed staged rows, scoped to this expense and reviewer-only. */
   removedSourceItemRefs?: string[];
-  /** Must be sent alone with expectedUpdatedAt. Null/blank clears a staged fact, absent preserves it. */
+  /** Null/blank clears a staged fact; absent preserves it unless the same reviewer request supplies
+   * that ordinary header field. Originating uploaders send this alone with expectedUpdatedAt.
+   * Reviewers may send it with the financial form so both views save under one revision/transaction. */
   sourceDraft?: ExpenseSourceDraftInput;
   vendorNameSnapshot?: string;
   vendorTaxIdSnapshot?: string;

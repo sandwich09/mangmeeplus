@@ -12,7 +12,6 @@ import {
   expenseSourceDraftChanges,
   expenseSourceDraftFormValues,
   expenseSourceDraftIssues,
-  expenseSourceDraftMissingLabels,
   isExpenseSourceDraftMissing,
   type ExpenseSourceDraftFormValues,
 } from './expense-source-draft.model';
@@ -56,7 +55,6 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
 
   const changes = useMemo(() => expenseSourceDraftChanges(baseline, values), [baseline, values]);
   const issues = useMemo(() => expenseSourceDraftIssues(values), [values]);
-  const missingLabels = expenseSourceDraftMissingLabels(sourceDraft, locale);
   const hasIssue = (itemRef: string, field: 'quantity' | 'unitPrice' | 'totalAmount') => (
     issues.some((issue) => issue.itemRef === itemRef && issue.field === field)
   );
@@ -125,15 +123,6 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
           {t('expenses.source_draft_not_confirmed', locale)}
         </span>
       </div>
-
-      {missingLabels.length > 0 && (
-        <details className="rounded-xl border border-warning-200 bg-warning-50 p-3">
-          <summary className="cursor-pointer text-sm font-bold text-warning-800">{t('expenses.source_draft_missing_title', locale)} ({missingLabels.length})</summary>
-          <ul className="mt-2 grid gap-1 text-sm text-warning-800 sm:grid-cols-2">
-            {missingLabels.map((label, index) => <li key={`${sourceDraft.missingFields[index]?.id ?? index}`} className="flex gap-2"><span aria-hidden>•</span><span>{label}</span></li>)}
-          </ul>
-        </details>
-      )}
 
       {!sourceDraft.canEdit && (
         <p className="rounded-xl bg-gray-50 p-3 text-sm text-gray-600">{readOnlyMessage ?? t('expenses.source_draft_read_only', locale)}</p>

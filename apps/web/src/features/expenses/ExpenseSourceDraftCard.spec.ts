@@ -30,7 +30,7 @@ function render(canEdit = true, readOnlyMessage?: string): string {
   }));
 }
 
-test('renders every staged item, ordinary missing labels, known zero, and the partial-save action', () => {
+test('renders every staged item, inline missing hints, known zero, and the partial-save action', () => {
   const html = render();
   assert.equal((html.match(/data-source-draft-item="true"/g) ?? []).length, 3);
   assert.match(html, /aria-label="ข้อมูลบิลที่ยังไม่ครบ"/);
@@ -38,7 +38,7 @@ test('renders every staged item, ordinary missing labels, known zero, and the pa
   assert.match(html, /aria-label="ชื่อผู้ขาย"/);
   assert.match(html, /aria-label="ซื้อไปใช้ทำอะไร"/);
   assert.match(html, /ซื้อไปใช้ทำอะไร/);
-  assert.match(html, /รายการที่ 2: ราคาต่อหน่วยหรือยอดรวม/);
+  assert.doesNotMatch(html, /ข้อมูลที่ยังต้องเติม|รายการที่ 2: ราคาต่อหน่วยหรือยอดรวม/);
   assert.doesNotMatch(html, /D-PURPOSE|I-item-2-PRICE|item-2 ราคาเท่าไร/);
   assert.match(html, /aria-label="รายการที่ 1 ราคาต่อหน่วย"[^>]*value="0"/);
   assert.match(html, />เพิ่มรายการ<\/button>/);
