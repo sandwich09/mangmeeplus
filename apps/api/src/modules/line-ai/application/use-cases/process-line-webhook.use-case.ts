@@ -95,8 +95,8 @@ import { FEATURE_TEMPORARILY_UNAVAILABLE, loadEntitledFeatureKeys } from '../../
 import { ListApprovalQueueUseCase } from '../../../reimbursements/application/use-cases/reimbursement-approval.use-case';
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
-import type { BusinessDocumentClassification, ExpenseChargeSummary, ExpenseLineChargeKind, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrAdditionalCharge, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { EXPENSE_LINE_CHARGE_KIND_LABELS, RECEIPT_ADDITIONAL_CHARGE_KINDS, LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -120,8 +120,6 @@ import {
   displayReceiptQuotaLimit,
   receiptQuotaExceededShortTextTh,
   receiptQuotaExceededTextTh,
-  trialReceiptCounterLineTh,
-  TRIAL_COUNTER_TIER_KEY,
 } from '../../../system-partner-management/domain/logic/receipt-quota.logic';
 import { type CompanyOcrAdmissionIdentity, releaseCompanyOcrAdmission, LINE_RECEIPT_RETRY_LEASE_CODE, LINE_RECEIPT_RETRY_LEASE_MS, LINE_RECEIPT_RETRY_WAIT_CODE, claimReceiptQuotaNotice, receiptQuotaSnapshot, releaseReceiptQuotaNotice, RECEIPT_QUOTA_ERROR_CODE } from '../company-ocr-governance';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
@@ -939,26 +937,6 @@ function receiptItemLines(
   return [...items, ...chargeSummaryLines(charges)];
 }
 
-/** The Thai label for a charge kind the EXTRACTOR proposed. `EXPENSE_LINE_CHARGE_KIND_LABELS` is a
- *  plain object, so `[kind]` on model output resolves `constructor`/`__proto__` to an
- *  Object.prototype member — a truthy value `??` never replaces, which printed
- *  "function Object() { [native code] }" at the customer. A kind is a label only if it is a kind. */
-function chargeKindLabel(kind: string): string {
-  return (RECEIPT_ADDITIONAL_CHARGE_KINDS as readonly string[]).includes(kind)
-    ? EXPENSE_LINE_CHARGE_KIND_LABELS[kind as ExpenseLineChargeKind]
-    : 'ค่าใช้จ่ายเพิ่ม';
-}
-
-/** The one line a card may say about a charge the apply could NOT put on the record. It is money the
- *  document printed, so staying silent hides it; listing it under "ค่าใช้จ่ายเพิ่ม" the way a
- *  persisted row is listed claims a row that does not exist (UAT 2026-09-06). */
-function foldedChargeLine(charges: readonly ReceiptOcrAdditionalCharge[]): string {
-  const named = charges.slice(0, 3)
-    .map((charge) => `${chargeKindLabel(charge.kind)} ${moneyLabel(charge.amount)}`)
-    .join(', ');
-  return `➕ ${named} ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ`;
-}
-
 /** Spec §5.1: the charge block, in one place, so the receipt card and the check-bill reply cannot
  *  drift apart. `label` already comes from `EXPENSE_LINE_CHARGE_KIND_LABELS` via `expenseLineCharges`
  *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
@@ -1028,8 +1006,6 @@ export function formatPaypersReply(
   const vatValue = options.acceptedAmounts?.vatAmount ?? options.fields?.vatAmount;
   const vatMode = options.acceptedAmounts?.vatMode ?? options.fields?.vatMode;
   const whtValue = options.acceptedAmounts?.whtAmount ?? options.fields?.whtAmount;
-  const vatLabel = vatMode === 'NO_VAT' || vatMode === 'EXEMPT' ? 'ไม่มี VAT'
-    : vatValue && Number(vatValue) > 0 ? `${moneyLabel(vatValue)} บาท${!options.fields?.vatAmount ? ' (ระบบคำนวณ)' : ''}` : 'รอตรวจสอบ';
   const parts = options.compact ? [
     '🧾 เก็บรูปและร่างแล้วค่ะ',
     ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
@@ -1041,19 +1017,14 @@ export function formatPaypersReply(
     '🧾 บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว (รอตรวจสอบ)',
     '',
     '📋 ข้อมูลที่อ่านได้ตอนนี้:',
-    `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
-    `• ยอดรวม – ${amount}`,
     `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
+    `• ยอดรวม – ${amount}`,
+    `• ประเภทเอกสาร – ${docType ?? 'รอตรวจสอบ'}`,
     `• วันที่เอกสาร – ${receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified'))}`,
-    `• เลขที่เอกสาร – ${options.fields?.documentNumber ?? 'ยังไม่ระบุ'}`,
-    ...(options.acceptedAmounts?.discountAmount && Number(options.acceptedAmounts.discountAmount) > 0
-      ? [`• ส่วนลด – ${moneyLabel(options.acceptedAmounts.discountAmount)} บาท`] : []),
-    `• VAT – ${vatLabel}`,
-    ...(whtValue && Number(toMoney4(whtValue)) > 0 ? [
-      `• ภาษีหัก ณ ที่จ่าย – ${moneyLabel(whtValue)} บาท`,
-      ...(options.acceptedAmounts ? [`• ยอดจ่ายสุทธิ – ${moneyLabel(options.acceptedAmounts.netPayableAmount)} บาท`] : []),
-    ] : []),
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
+    ...(vatMode !== 'NO_VAT' && vatMode !== 'EXEMPT' && vatValue && Number(toMoney4(vatValue)) > 0
+      ? [`• VAT – ${moneyLabel(vatValue)} บาท`] : []),
+    ...(whtValue && Number(toMoney4(whtValue)) > 0 ? [`• WHT – ${moneyLabel(whtValue)} บาท`] : []),
   ];
   // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
   // happens to ask what was on the bill. A service charge is money the shop added — the row a
@@ -1069,8 +1040,16 @@ export function formatPaypersReply(
     && FOLDED_CHARGE_STATUSES.includes(options.chargeReconciliation.status)
     ? options.fields?.additionalCharges ?? []
     : [];
-  if (charges.length > 0) parts.push('', ...(options.compact ? chargeSummaryLines(charges).slice(0, 1) : chargeSummaryLines(charges)));
-  else if (folded.length > 0) parts.push('', foldedChargeLine(folded));
+  // Automatic summaries show one service-charge total. Rounding stays in the web review and
+  // explicit item answers; it must not look like another purchase or reduce the service total.
+  const additionalTotal = charges.filter((charge) => charge.kind !== 'ROUNDING')
+    .reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+  if (additionalTotal !== 0) parts.push(`• ค่าบริการอื่นๆ – ${moneyLabel(String(additionalTotal))} บาท`);
+  else if (charges.length === 0) {
+    const foldedAdditional = folded.filter((charge) => charge.kind !== 'ROUNDING');
+    const foldedTotal = foldedAdditional.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+    if (foldedTotal !== 0) parts.push(`• ค่าบริการอื่นๆ – ${moneyLabel(String(foldedTotal))} บาท (รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ)`);
+  }
   if (options.questionText && isReceiptItemQuestion(options.questionText)) {
     const itemLines = receiptItemLines(options.fields, charges);
     parts.push('', '🛒 รายการที่อ่านได้จากบิล:', ...(itemLines.length > 0
@@ -5711,18 +5690,6 @@ export class ProcessLineWebhookUseCase {
       // instead of printing whatever string happens to be there as though the page stated it.
       dateStatus,
     })];
-    // §15.1: the free trial — and only that tier — sees how much of its 15 is left. Both numbers come
-    // from the admission's own aggregate, read for the month the ADMISSION was counted in rather
-    // than off the clock: this reply is built seconds later, and on the night of the 31st those
-    // seconds land in the next month, where the aggregate is empty and the line would announce
-    // "อ่านครั้งที่ 1 จาก 15" to a shop that just spent its last read.
-    // Swallowed on failure: the receipt is already captured and its reply is what the shop is waiting
-    // for, so a counter that cannot be read loses its line, never the answer.
-    const trial = await receiptQuotaSnapshot(this.prisma, companyId, admissionAttempt.identity?.monthKey ?? routePlan.ocrMonthKey).catch(() => null);
-    if (admissionAttempt.usablePersisted && trial?.tierKey === TRIAL_COUNTER_TIER_KEY && trial.planLimit !== null) {
-      const last = replyTexts.length - 1;
-      replyTexts[last] = `${replyTexts[last]}\n${trialReceiptCounterLineTh(trial.usedCount, trial.planLimit)}`;
-    }
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
