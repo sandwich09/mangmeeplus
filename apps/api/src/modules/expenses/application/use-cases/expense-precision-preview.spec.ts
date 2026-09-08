@@ -101,7 +101,8 @@ test('preview rejects stale, unauthorized, other-tenant, foreign row and invalid
     if (variant === 'wht') input.whtInput = { inputType: 'AMOUNT', value: '999999' };
     if (variant === 'vat-source-shape') input.vatSource = { inputType: 'NONE', origin: 'AI', lines: [{ lineNumber: 2, inputType: 'AMOUNT', vatAmount: '0' }] } as any;
     if (variant === 'vat-source-row') input.vatSource = { inputType: 'NONE', lines: [{ lineNumber: 99, inputType: 'AMOUNT', vatAmount: '0' }] };
-    await assert.rejects(() => useCase.execute(actor, 'expense-1', input, { previewOnly: true, requireExpectedUpdatedAt: true }));
+    await assert.rejects(() => useCase.execute(actor, 'expense-1', input, { previewOnly: true, requireExpectedUpdatedAt: true }),
+      (error: any) => variant !== 'stale' || error.getResponse().code === 'EXPENSE_UPDATE_CONFLICT');
     assert.equal(state().writes, 0); assert.equal(state().audits, 0);
   }
 });

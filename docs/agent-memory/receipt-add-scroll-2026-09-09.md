@@ -35,3 +35,5 @@ Next: implement [approved precision spec](../specs/receipt-precision-review-spec
 - Release IDs: UAT not dispatched; READY not dispatched; Production held/not dispatched.
 
 - Integrated browser PASS at390/1280: actual full React review form + actual API calculator with in-memory repository; fuel2409.70, edited price2459.52, service2559.52, draft save/readback, error/retry without disabling Next, stale response ignored. `/tmp/receipt-precision-browser/results.json`, screenshots `money-390.png`/`money-1280.png`. Harness was corrected to advance revisions like the real repository; no product workaround. PostgreSQL CI and live UAT acceptance remain pending.
+
+- CI34266377082 failed the cross-module Thai error coverage guard: preview had invented EXPENSE_UPDATE_VERSION_CONFLICT. Reused existing repository/UI EXPENSE_UPDATE_CONFLICT and pinned stale-preview response to that code. Focused error translation/coverage and preview suites PASS before repush; no gate weakening. First candidate4361ed0b is superseded; no deploy dispatched.

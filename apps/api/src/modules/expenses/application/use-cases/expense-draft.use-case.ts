@@ -604,7 +604,7 @@ export class UpdateExpenseDraftUseCase {
     // review marking, source continuation update or audit. Save still repeats calculation and CAS.
     if (options.previewOnly) {
       if (!expectedUpdatedAt || expectedUpdatedAt.getTime() !== r.updatedAt.getTime()) {
-        throw new ConflictException({ code: 'EXPENSE_UPDATE_VERSION_CONFLICT', message: 'Expense changed; reload before reviewing totals.' });
+        throw new ConflictException({ code: 'EXPENSE_UPDATE_CONFLICT', message: 'Expense changed; reload before reviewing totals.' });
       }
       if (!totals || !resolvedLines) throw new BadRequestException('lines are required to preview receipt totals.');
       const sum = (predicate: (line: ExpenseLineInput) => boolean) => resolvedLines!
