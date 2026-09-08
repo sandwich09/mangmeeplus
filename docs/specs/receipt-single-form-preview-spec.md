@@ -1,5 +1,13 @@
 # Receipt single form and detailed LINE summary
 
+## Corrective date acceptance — 2026-09-08
+
+- An explicitly supplied valid receipt date through an authorized draft/review/source/voluntary LINE save resolves current unreadable/implausible/assumed date state in the same transaction, even when equal to the old upload-day placeholder. Preserve raw OCR evidence and record actor/date/time of resolution. Remove only date-specific stale reasons; retain tax/amount/classification findings.
+- An omitted date, OCR initialization, pause/resume, unrelated answer or empty source patch must not verify a placeholder. Explicitly clearing a staged date makes it unknown again. A stale, forbidden, invalid or cross-tenant save cannot leave resolved metadata behind.
+- Existing drafts recover by saving their date through the ordinary form; no migration, GET mutation, automatic historical verification or form redesign. Optional purpose remains blank and accepted money/category/row identities remain intact.
+- Ready/confirmation transitions enforce current date verification at the database transaction boundary as well as the UI. Unverified dates produce a readable message naming the date in step1. Reopening a rejected record remains possible.
+- Live acceptance repeats the actual Drtb save/reload/Next/final submit journey after UAT deployment; successful local synthetic tests or infrastructure readiness alone do not close acceptance. Production remains held for explicit new approval.
+
 Status: corrective implementation authorized on 2026-09-08 after live Drtb comparison; redeploy UAT, prepare Production configuration/evidence, then wait for explicit Production deployment approval.
 
 ## Product and acceptance

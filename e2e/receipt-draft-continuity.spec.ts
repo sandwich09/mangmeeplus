@@ -45,6 +45,7 @@ async function fixture(companyId: string, ownerId = 'seed-local-owner', ocrItems
     sourceChannelMetadataJson: { channel: 'LINE', kind: 'media', chatKeyHash: tag },
     aiVerificationSummaryJson: {
       status: 'partial', missingFields: ['expenseDate', 'vendorName'],
+      dateStatus: 'unverified', reviewReasons: ['วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน'],
       recognizedFields: { lines: ocrItems },
     },
   } });
@@ -143,11 +144,14 @@ for (const width of [390, 1280]) {
       const completed = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
       expect(completed.sourceDraft.missingFields).toEqual([]);
       expect(completed.sourceDraft.header.businessPurpose).toBeNull();
+      expect(completed.aiVerificationSummaryJson.dateStatus).toBe('verified');
+      expect(completed.aiVerificationSummaryJson.reviewReasons).not.toContain('วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน');
       expect(completed.lines).toHaveLength(2);
       expect(Number(completed.grandTotalAmount)).toBe(520);
       await expect(next).toBeEnabled();
       await next.click();
       await expect(page.getByText('ขั้นที่ 3:', { exact: true })).toBeVisible();
+      await expect(page.getByText('ยังไม่ระบุวันที่เอกสาร', { exact: true })).toHaveCount(0);
       await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
       const readyResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes(`${f.expense.id}/reviewer-mark-ready`));
       await page.getByRole('button', { name: 'ส่งตรวจสอบ', exact: true }).click();
