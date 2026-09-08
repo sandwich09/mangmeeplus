@@ -284,7 +284,7 @@ for (const width of [390, 1280]) {
   });
 }
 
-test('reviewer can supply an unknown quantity equal to the old financial placeholder', async ({ authedPage: page, api, companyId }) => {
+test('reviewer retains the accepted financial row while original OCR quantity stays evidence', async ({ authedPage: page, api, companyId }) => {
   test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
   const f = await fixture(companyId, 'seed-local-owner', [{ description: 'AMERICANO - ICED', amount: '55' }] as any);
   try {
@@ -303,17 +303,18 @@ test('reviewer can supply an unknown quantity equal to the old financial placeho
     await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
     const quantity = page.getByRole('spinbutton', { name: /^จำนวน/ });
     const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ });
-    await expect(quantity).toHaveValue('');
-    await expect(price).toHaveValue('');
+    await expect(quantity).toHaveValue('1');
+    await expect(price).toHaveValue('55');
     await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบยืนยันจำนวนที่อ่านไม่ได้');
     await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
     await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
     await page.reload();
-    await expect(quantity).toHaveValue('');
-    await expect(price).toHaveValue('');
+    await expect(quantity).toHaveValue('1');
+    await expect(price).toHaveValue('55');
     const partial = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
     expect(Number(partial.grandTotalAmount)).toBe(55);
-    expect(partial.sourceDraft.items[0].quantity).toBeNull();
+    expect(partial.sourceDraft.items[0].quantity).toBe('1');
+    expect(partial.aiVerificationSummaryJson.recognizedFields.lines[0].quantity).toBeUndefined();
     await quantity.fill('1');
     await price.fill('55');
     await page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ }).click();
@@ -494,6 +495,25 @@ for (const width of [390, 1280]) {
         await expect(payeeKind).toBeVisible();
         await expect(payeeKind).toHaveAttribute('aria-invalid', 'true');
         await expect(next).toBeDisabled();
+        await payeeKind.click();
+        await page.getByRole('option', { name: 'นิติบุคคล (ภ.ง.ด.53)', exact: true }).click();
+        const whtBase = page.getByRole('spinbutton', { name: /^ฐานคำนวณหัก ณ ที่จ่าย/ });
+        await whtBase.fill('1000');
+        await expect(next).toBeEnabled();
+        await saveDraft.click();
+        await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+        const taxes = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+        expect(taxes.whtInputJson).toMatchObject({ inputType: 'RATE', value: '3', baseAmount: '1000' });
+        expect(Number(taxes.whtAmount)).toBe(30);
+        expect(Number(taxes.netPayableAmount)).toBe(270);
+        expect(taxes.vatAmount).toBe(saved.vatAmount);
+        await page.reload();
+        await expect(whtBase).toHaveValue('1000');
+        await expect(withholding).toHaveValue('3');
+        await whtBase.fill('100000');
+        await expect(next).toBeDisabled();
+        await expect(page.getByRole('status').filter({ hasText: 'ยอดหัก ณ ที่จ่ายต้องไม่เกินฐานหักหรือยอดรวมเอกสาร' })).toBeVisible();
+        await whtBase.fill('');
         await withholding.fill('0');
         await expect(payeeKind).toHaveCount(0);
         await expect(next).toBeEnabled();

@@ -165,7 +165,7 @@ function fractionFromPercent(value: string): string {
 
 function rawAfterDiscount(line: ExpenseVatReconciliationLineInput): Decimal {
   const subtotal = decimal(line.quantity).mul(decimal(line.unitPrice)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-  const discount = Decimal.min(decimal(line.discountAmount), subtotal).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  const discount = Decimal.min(decimal(line.discountAmount), Decimal.max(subtotal, 0)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   return subtotal.minus(discount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 }
 

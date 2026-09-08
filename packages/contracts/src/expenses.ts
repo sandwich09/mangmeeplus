@@ -452,7 +452,12 @@ export type ExpenseCategorySummary = {
 };
 
 /** Source intent only: RATE uses percent (3 = 3%); AMOUNT uses baht. */
-export type ExpenseWhtInput = { inputType: 'RATE' | 'AMOUNT'; value: string };
+export type ExpenseWhtInput = {
+  inputType: 'RATE' | 'AMOUNT';
+  value: string;
+  /** Explicit withholding base in baht; omission preserves the accepted pre-VAT-base behavior. */
+  baseAmount?: string;
+};
 export type ExpenseWhtCapture = ExpenseWhtInput & { origin: 'REVIEWER' | 'OCR' };
 /** HTTP bodies are contract types rather than DTO classes; validate source intent at runtime. */
 /**
@@ -468,7 +473,7 @@ export function validateExpenseWhtInput(input: unknown): string | null {
   if (input === undefined) return null;
   if (!input || typeof input !== 'object' || Array.isArray(input)) return 'whtInput must be an object.';
   const value = input as Record<string, unknown>;
-  if (Object.keys(value).some((key) => key !== 'inputType' && key !== 'value')) {
+  if (Object.keys(value).some((key) => !['inputType', 'value', 'baseAmount'].includes(key))) {
     return 'whtInput contains server-owned or unsupported fields.';
   }
   if (value.inputType !== 'RATE' && value.inputType !== 'AMOUNT') return 'whtInput.inputType must be RATE or AMOUNT.';
@@ -476,6 +481,10 @@ export function validateExpenseWhtInput(input: unknown): string | null {
     return 'WHT value must be non-negative with at most two decimal places and fit Decimal(18,4).';
   }
   if (value.inputType === 'RATE' && Number(value.value) > 100) return 'WHT percent must be between 0 and 100.';
+  if (value.baseAmount !== undefined && (typeof value.baseAmount !== 'string'
+    || !/^(?:0|[1-9]\d{0,13})(?:\.\d{1,2})?$/.test(value.baseAmount))) {
+    return 'WHT base must be non-negative baht with at most two decimal places and fit Decimal(18,4).';
+  }
   return null;
 }
 /** An explicit zero treatment, independent of claimability and a selected Tax Code. */
@@ -664,6 +673,8 @@ export type ExpenseSourceDraft = {
   items: Array<{
     itemRef: string;
     lineId: string | null;
+    /** Explicitly added by the user, rather than an unaccepted OCR breakdown. */
+    newItem?: boolean;
     description: string | null;
     quantity: string | null;
     unitPrice: string | null;

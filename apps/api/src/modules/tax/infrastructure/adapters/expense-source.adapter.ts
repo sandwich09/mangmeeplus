@@ -15,7 +15,7 @@ import type { ExpenseSourceRow, ExpenseWhtSourceRow, TransactionTaxSourceLineRow
 function whtLineFacts(lines: Array<{ whtRate: unknown; taxableAmount: unknown }> | undefined, headerBase: string, input?: ExpenseWhtCapture | null) {
   // Explicit source is whole-bill even when a small line's WHT rounds to zero and the query
   // excludes that line. Legacy input still uses only the lines the user originally withheld on.
-  if (input) return { whtRate: input.inputType === 'RATE' ? Number(input.value).toFixed(4) : null, grossAmount: headerBase };
+  if (input) return { whtRate: input.inputType === 'RATE' ? Number(input.value).toFixed(4) : null, grossAmount: input.baseAmount ?? headerBase };
   const rates = new Set((lines ?? []).map(l => (l.whtRate === null || l.whtRate === undefined ? '' : String(l.whtRate))).filter(Boolean));
   const lineBase = (lines ?? []).reduce((sum, l) => sum + (Number(l.taxableAmount) || 0), 0);
   return {

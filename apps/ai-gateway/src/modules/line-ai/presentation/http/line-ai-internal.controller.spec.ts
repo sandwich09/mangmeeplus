@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
-import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson } from './line-ai-internal.controller';
+import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, receiptRereadImage, receiptItemsMismatch } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
@@ -870,10 +870,10 @@ describe('applyOcrValueCrossCheck identity fields (spec §19j)', () => {
     assert.equal(out.vendorTaxId, '0994000163011', 'gate drops the invention, recovery selects the printed run');
   });
 
-  it('never guesses between two printed tax ids (full tax invoice: seller + buyer)', () => {
+  it('recovers only the seller tax id when both parties are explicitly labelled', () => {
     const twoIds = 'ผู้ขาย บจก. ทดสอบ เลขประจำตัวผู้เสียภาษี 0105561000105\nผู้ซื้อ เลขประจำตัวผู้เสียภาษี 0994000163011\nรวม 100.00';
     const out = applyOcrValueCrossCheck({}, twoIds);
-    assert.equal(out.vendorTaxId, undefined);
+    assert.equal(out.vendorTaxId, '0105561000105');
     const kept = applyOcrValueCrossCheck({ vendorTaxId: '0105561000105' }, twoIds);
     assert.equal(kept.vendorTaxId, '0105561000105', 'a model selection that the text contains survives');
   });
@@ -1533,6 +1533,96 @@ describe('receipt OCR reuses the intake read', () => {
       const result = await controller.receiptOcr('secret', request({ documentText: PAGE }) as any);
       assert.equal(result.fields?.grandTotalAmount, undefined, 'a total absent from the page cannot survive');
       assert.ok(result.fields?.missingFields?.includes('grandTotalAmount'));
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+});
+
+
+describe('receipt tax integrity evidence and recovery', () => {
+  it('excludes the buyer and patient even when their tax ID is the only printed number', () => {
+    const page = '[SELLER]บริษัท ผู้ขายตัวอย่าง จำกัด[/SELLER]\n[BUYER]บริษัท ลูกค้า จำกัด\nTax ID 0100000000001[/BUYER]\nรวม 100.00';
+    const out = applyOcrValueCrossCheck({ vendorName: 'บริษัท ผู้ขายตัวอย่าง จำกัด', vendorIdentityEvidence: 'บริษัท ผู้ขายตัวอย่าง จำกัด', vendorTaxId: '0100000000001' }, page);
+    assert.equal(out.vendorTaxId, undefined);
+    assert.equal(out.vendorEntityKind, 'JURISTIC');
+    assert.equal(applyOcrValueCrossCheck({ vendorName: 'บริษัท ลูกค้า จำกัด', vendorIdentityEvidence: 'บริษัท ลูกค้า จำกัด', vendorEntityKind: 'JURISTIC' }, page).vendorEntityKind, undefined);
+    assert.equal(applyOcrValueCrossCheck({ vendorName: 'นาย สมชาย ตัวอย่าง', vendorIdentityEvidence: 'นาย สมชาย ตัวอย่าง' }, '[SELLER]นาย สมชาย ตัวอย่าง[/SELLER]\nรวม 100.00').vendorEntityKind, 'INDIVIDUAL');
+    assert.equal(applyOcrValueCrossCheck({}, 'ร้านตัวอย่าง\nเลขบัญชี 0100000000001\nรวม 100.00').vendorTaxId, undefined);
+  });
+
+  it('does not turn a no-VAT subtotal or withholding into VAT', () => {
+    const page = 'ใบเสร็จ\nVAT ไม่มี\nมูลค่าไม่มีหรือยกเว้นภาษี 70.50\nภาษีหัก ณ ที่จ่าย 2.71\nรวม 70.50';
+    const out = applyOcrValueCrossCheck({ vatMode: 'NO_VAT', vatAmount: '70.50', whtAmount: '2.71', whtRate: '0.03', grandTotalAmount: '70.50' }, page);
+    assert.equal(out.vatAmount, undefined);
+    assert.equal(out.whtAmount, '2.71');
+    assert.equal(out.whtRate, undefined, 'no printed percentage is no asserted rate');
+    assert.equal(out.vatMode, 'NO_VAT');
+  });
+
+  it('recovers the row marker only from one matching physical line and preserves signed rounding', () => {
+    const page = 'ผลไม้ 1 N 20.00\nเครื่องดื่ม 1 107.00\nRounding -0.72\nรวม 126.28';
+    const fields = { grandTotalAmount: '126.28', lines: [
+      { description: 'ผลไม้', quantity: '1', amount: '20.00', vatRate: '0', vatTreatment: 'NON_VAT', evidenceSignal: 'ผลไม้' },
+      { description: 'เครื่องดื่ม', quantity: '1', amount: '107.00', evidenceSignal: 'เครื่องดื่ม' },
+    ], additionalCharges: [{ kind: 'ROUNDING', description: 'Rounding', amount: '-0.72', vatRate: '0', evidenceSignal: 'Rounding -0.72' }] };
+    const parsed = parseReceiptOcrJson(JSON.stringify({ fields }), page, new Set());
+    assert.equal(parsed?.fields?.lines?.[0]?.vatRate, '0');
+    assert.equal(parsed?.fields?.lines?.[0]?.evidenceSignal, 'ผลไม้ 1 N 20.00');
+    assert.equal(parsed?.fields?.additionalCharges?.[0]?.amount, '-0.72');
+    const checked = applyOcrValueCrossCheck(parsed!.fields!, page);
+    assert.equal(checked.additionalCharges?.[0]?.amount, '-0.72');
+    assert.equal(receiptItemsMismatch({ ...fields, vatMode: 'VAT_INCLUDED' } as any), false);
+  });
+
+  it('repairs invalid structure once without extra image reads and preserves typed exhaustion', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    const page = 'ใบเสร็จ ร้านตัวอย่าง\nยอดรวม 65.00\nชำระแล้ว';
+    const payload = { classification: classification(), fields: { grandTotalAmount: '65.00' } };
+    try {
+      for (const failure of ['truncated', 'schema', 'json', 'exhausted']) {
+        let count = 0;
+        (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+          count++;
+          assert.ok(!command.input.messages.at(-1).content.some((part: any) => part.image));
+          const failedText = failure === 'schema' ? JSON.stringify({ fields: payload.fields }) : '{"fields":';
+          return { stopReason: count === 1 && failure === 'truncated' ? 'max_tokens' : 'end_turn',
+            output: { message: { content: [{ text: count === 1 || failure === 'exhausted' ? failedText : JSON.stringify(payload) }] } } };
+        };
+        const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock', bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+        const result = await controller.receiptOcr('secret', { requestId: 'repair', companyId: 'co', userId: 'u', documentText: page,
+          attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' } } as any);
+        assert.equal(count, 2);
+        assert.equal(result.status, failure === 'exhausted' ? 'failed' : 'ok');
+        if (failure === 'exhausted') assert.equal(result.errorCode, 'OCR_JSON_PARSE_FAILED');
+      }
+    } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+
+  it('offers an upright alternate view without modifying the original receipt bytes', async () => {
+    const sharp = (await import('sharp')).default;
+    const image = await sharp({ create: { width: 80, height: 40, channels: 3, background: '#ffffff' } }).png().toBuffer();
+    const original = image.toString('base64');
+    const alternate = await receiptRereadImage('image/png', original);
+    const meta = await sharp(Buffer.from(alternate.contentBase64, 'base64')).metadata();
+    assert.equal(meta.width, 40); assert.equal(meta.height, 80);
+    assert.equal(image.toString('base64'), original);
+  });
+
+  it('does not extract financial facts from a truncated first-stage page', async () => {
+    const original = BedrockRuntimeClient.prototype.send;
+    let calls = 0;
+    try {
+      (BedrockRuntimeClient.prototype as any).send = async () => {
+        calls++;
+        return { stopReason: 'max_tokens', output: { message: { content: [{ text: '{"natural_text":"ใบเสร็จ รายการแรก 65' }] } } };
+      };
+      const controller = new LineAiInternalController({ aiGatewayInternalSecret: 'secret', modelProvider: 'bedrock',
+        bedrockRegion: 'ap-southeast-1', bedrockModelId: 'm', documentAiModelId: 'm' } as any, {} as any);
+      const result = await controller.receiptOcr('secret', { requestId: 'incomplete-read', companyId: 'co', userId: 'u',
+        attachment: { mimeType: 'image/jpeg', contentBase64: 'ZmFrZQ==' } } as any);
+      assert.equal(calls, 1);
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'OCR_OUTPUT_TRUNCATED');
+      assert.equal(result.fields, undefined);
     } finally { (BedrockRuntimeClient.prototype as any).send = original; }
   });
 });
