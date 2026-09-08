@@ -910,7 +910,7 @@ export class PrismaExpenseRepository {
       if (rest.status === 'READY_FOR_CONFIRMATION' || rest.status === 'CONFIRMED') {
         const source = await tx.expenseRecord.findFirst({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
         assertExpenseSourceDraftComplete(source?.sourceChannelMetadataJson as Record<string, unknown> | null,
-          source?.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(source), lines: (source.lines ?? []).map(mapLine) } : undefined);
+          source ? { ...mapExpense(source), lines: (source.lines ?? []).map(mapLine) } : undefined);
       }
       const updated = await tx.expenseRecord.updateMany({
         where: { id, companyId, ...(expectedUpdatedAt && { updatedAt: expectedUpdatedAt }) },
@@ -2025,7 +2025,7 @@ export class PrismaExpenseRepository {
       const current = await tx.expenseRecord.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
-        current.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) } : undefined);
+        { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) });
       const changed = await tx.expenseRecord.updateMany({
         where: { id: input.id, companyId: input.companyId, status: 'READY_FOR_CONFIRMATION', updatedAt: input.expectedUpdatedAt },
         data: {
@@ -2076,7 +2076,7 @@ export class PrismaExpenseRepository {
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
       requireExpenseBranchId(current.branchId);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
-        current.captureSource === 'LINE_UPLOAD' ? { ...mapExpense(current), lines: current.lines.map(mapLine) } : undefined);
+        { ...mapExpense(current), lines: current.lines.map(mapLine) });
       if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) throw new ConflictException('expense_confirmation_source_version_changed');
       const substitute = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId: input.companyId, expenseId: input.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' },

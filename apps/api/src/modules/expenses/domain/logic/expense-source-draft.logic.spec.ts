@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyExpenseSourceDraftInput, bindSourceDraftLines, sourceDraftState, projectExpenseSourceDraft } from './expense-source-draft.logic';
+import { applyExpenseSourceDraftInput, assertExpenseSourceDraftComplete, bindSourceDraftLines, sourceDraftState, projectExpenseSourceDraft } from './expense-source-draft.logic';
 import { buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions, formatLineExpenseDraftReply, lineExpenseDraftControl, parseLineExpenseDraftContinuation, splitLineExpenseDraftReply } from './line-expense-draft-conversation.logic';
 
 const categories = [{ id: 'cat', companyId: 'co', status: 'ACTIVE', name: 'สำนักงาน', accountHintKey: 'office' }] as any;
@@ -8,6 +8,13 @@ const base = { workflowId: 'wf', companyId: 'co', userId: 'u', expenseId: 'ex', 
 const empty = () => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'กระดาษ', hints: { items: [{ sourceText: 'กระดาษ', description: 'กระดาษ' }] } });
 
 describe('shared receipt source facts (T10/T14–T18)', () => {
+  it('enforces the date guard on web receipts too, without blocking real assumed or legacy dates', () => {
+    for (const dateStatus of ['unverified', 'implausible']) assert.throws(() => assertExpenseSourceDraftComplete(null,
+      { captureSource: 'WEB_UPLOAD', aiVerificationSummaryJson: { dateStatus } } as any),
+    (error: any) => error?.getResponse?.()?.code === 'EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED');
+    for (const summary of [null, {}, { dateStatus: 'verified' }, { dateStatus: 'assumed' }]) assert.doesNotThrow(() =>
+      assertExpenseSourceDraftComplete(null, { captureSource: 'WEB_UPLOAD', aiVerificationSummaryJson: summary } as any));
+  });
   it('retains all40 items and all missing questions within five LINE messages;41 is explicit rejection', () => {
     const items = Array.from({ length: 40 }, (_, index) => ({ sourceText: `สินค้า${index + 1}${'ก'.repeat(110)}`, description: `สินค้า${index + 1}${'ก'.repeat(110)}` }));
     const state = buildInitialLineExpenseDraftContinuation({ ...base, messageText: items.map((item) => item.sourceText).join(' '), hints: { items } });

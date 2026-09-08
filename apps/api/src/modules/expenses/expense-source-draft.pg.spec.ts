@@ -89,6 +89,66 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
   const stored = (expenseId: string) => client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
   const durableLines = (row: Awaited<ReturnType<typeof stored>>) => row.lines.map(({ updatedAt: _updated, ...line }) => JSON.parse(JSON.stringify(line)));
 
+  it('resolves explicit dates through source, reviewer, combined and voluntary LINE saves without trusting omitted dates', async () => {
+    for (const mode of ['source', 'reviewer', 'combined', 'line'] as const) {
+      const id = await draft(), before = await stored(id);
+      const oldReason = 'วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน';
+      const unrelatedReason = 'ตรวจฐานหัก ณ ที่จ่ายกับค่าบริการ';
+      const raw = { expenseDate: 'OCR raw evidence', vendorName: 'ร้านเดิม' };
+      await client.expenseRecord.update({ where: { id }, data: { updatedAt: before.updatedAt,
+        aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'], reviewReasons: [oldReason, unrelatedReason], recognizedFields: raw } } });
+      const omitted = await update.execute(ctx(), id, { expectedUpdatedAt: before.updatedAt.toISOString(), sourceDraft: { businessPurpose: 'ใช้สำนักงาน' } });
+      assert.equal(((await stored(id)).aiVerificationSummaryJson as { dateStatus?: string } | null)?.dateStatus, 'unverified');
+      const chosen = mode === 'line' ? '2026-09-02' : '2026-09-01'; // explicitly confirming the old placeholder is valid
+      if (mode === 'line') {
+        const answered = await conversation.execute(lineCtx(), { chatKeyHash: 'chat', messageText: `D-DATE ${chosen}`, captureHints: { targetExpenseId: id } });
+        assert.ok(answered.acceptedFields.includes('D-DATE'));
+      } else {
+        await update.execute(ctx(mode === 'source' ? ['expense.receipt.upload'] : ['expense.review']), id, {
+          expectedUpdatedAt: omitted.updatedAt.toISOString(),
+          ...(mode !== 'source' ? { expenseDate: chosen } : {}),
+          ...(mode !== 'reviewer' ? { sourceDraft: { expenseDate: chosen } } : {}),
+        });
+      }
+      const saved = await stored(id), summary = saved.aiVerificationSummaryJson as any;
+      assert.equal(saved.expenseDate.toISOString().slice(0, 10), chosen);
+      assert.equal(summary.dateStatus, 'verified', mode);
+      assert.equal(summary.dateResolution.resolvedByUserId, userId);
+      assert.equal(summary.dateResolution.expenseDate, chosen);
+      assert.deepEqual(summary.recognizedFields, raw);
+      assert.deepEqual(summary.reviewReasons, [unrelatedReason]);
+      assert.deepEqual(durableLines(saved), durableLines(before));
+      await assert.rejects(() => update.execute(ctx(), id, { expectedUpdatedAt: before.updatedAt.toISOString(), sourceDraft: { expenseDate: null } }));
+      assert.equal(((await stored(id)).aiVerificationSummaryJson as { dateStatus?: string } | null)?.dateStatus, 'verified');
+      const ready = await new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id);
+      assert.equal(ready.status, 'READY_FOR_CONFIRMATION');
+    }
+  });
+
+  it('blocks unreadable dates at final mutations and can clear then explicitly re-confirm a staged date', async () => {
+    const id = await draft(), before = await stored(id);
+    await client.expenseRecord.update({ where: { id }, data: { updatedAt: before.updatedAt,
+      aiVerificationSummaryJson: { dateStatus: 'implausible', missingFields: [], reviewReasons: ['วันที่ผิดปกติ'] } } });
+    const isDateError = (error: any) => error?.getResponse?.()?.code === 'EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED';
+    await assert.rejects(() => new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id), isDateError);
+    await assert.rejects(() => repo.updateExpense({ id, companyId, updatedByUserId: userId, status: 'READY_FOR_CONFIRMATION' }), isDateError);
+    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', updatedAt: before.updatedAt } });
+    await assert.rejects(() => repo.confirmExpenseCas({ companyId, id, expectedUpdatedAt: before.updatedAt, actorUserId: userId,
+      expenseNumber: 'never-date', postingStatus: 'pending', vendorSnapshotJson: null, outboxEvent: { eventKey: 'never-date', payloadJson: {} } }), isDateError);
+    await assert.rejects(() => repo.finalizeAndConfirmExpenseCas({ companyId, id, expectedUpdatedAt: before.updatedAt, actorUserId: userId } as any,
+      async () => { throw new Error('Date guard must run before final tax mutation'); }), isDateError);
+    await client.expenseRecord.update({ where: { id }, data: { status: 'DRAFT', updatedAt: before.updatedAt } });
+    const reviewed = await update.execute(ctx(), id, { expectedUpdatedAt: before.updatedAt.toISOString(), sourceDraft: { expenseDate: '2026-09-01' } });
+    assert.equal(((await stored(id)).aiVerificationSummaryJson as { dateStatus?: string } | null)?.dateStatus, 'verified');
+    const cleared = await update.execute(ctx(), id, { expectedUpdatedAt: reviewed.updatedAt.toISOString(), sourceDraft: { expenseDate: null } });
+    assert.equal(((await stored(id)).aiVerificationSummaryJson as { dateStatus?: string } | null)?.dateStatus, 'unverified');
+    await assert.rejects(() => new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id));
+    await assert.rejects(() => update.execute(ctx(), id, { expectedUpdatedAt: cleared.updatedAt.toISOString(), sourceDraft: { expenseDate: '2026-02-30' } }));
+    assert.equal(((await stored(id)).aiVerificationSummaryJson as { dateStatus?: string } | null)?.dateStatus, 'unverified');
+    await update.execute(ctx(), id, { expectedUpdatedAt: cleared.updatedAt.toISOString(), sourceDraft: { expenseDate: '2026-09-01' } });
+    assert.equal((await new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id)).status, 'READY_FOR_CONFIRMATION');
+  });
+
   it('keeps the discounted 90 total and every row byte on purpose, pause, resume and unrelated/no-field turns', async () => {
     const id = await draft();
     const before = await stored(id);

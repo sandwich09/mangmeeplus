@@ -1,0 +1,118 @@
+{
+  "candidate": "67773ad3244560b606c250e6cdbc65d36acd1bb7",
+  "controller": "dde31797dc67461715fdfaba965a28ac38a0e06b",
+  "UAT_RUN_ID": 34181149388,
+  "READY_RUN_ID": 34182722501,
+  "PROD_RUN_ID": null,
+  "requested": "Corrective UAT deploy; Production preparation only",
+  "production": "HOLD_UNTIL_NEW_OWNER_APPROVAL",
+  "servingMode": "UAT live; existing Production live and OPEN unchanged",
+  "ownerReference": "thread 01a0778d-a88f-76c2-a9d4-334b53165360, 2026-09-08: freeze PANDA MALA form and remove missing-data overview; redeploy UAT, prepare config and wait for Production approval",
+  "state": "UAT_DEPLOY_AND_AUTOMATIC_READY_VERIFIED; LIVE_BROWSER_BLOCKED_STALE_DATE_STATUS; PRODUCTION_HELD",
+  "noNewFlags": true,
+  "mail": "Production disabled; UAT existing sandbox unchanged",
+  "configAudit": "Nine config schema checks PASS; four missing Production receipt flags plus warmup 15 covered by current workflow/deploy defaults",
+  "localVerification": {
+    "web": 1678,
+    "webFocused": 46,
+    "apiLine": 1328,
+    "apiExpectedSkips": 2,
+    "apiFocused": 37,
+    "postgres": 13,
+    "browser": 11,
+    "typecheck": "PASS"
+  },
+  "preflight": "PASS",
+  "developPr": 488,
+  "mainPr": 489,
+  "PR_CI_RUN_IDS": [
+    34180007551,
+    34180021014
+  ],
+  "localTestBucketCleaned": true,
+  "develop": "21b0282777bf8bd0e79f6156fb1b5c287dbebd17",
+  "dispatchAt": "2026-09-08T02:45:19.259944+00:00",
+  "mainFrozen": true,
+  "readyMode": "maintenance_closed; validation only; not authority for live promotion",
+  "passport": {
+    "contentSha256": "cc43bc0843f8ea5e79e0a5854f290f0cad7fcea4ebc5b392360a405995f2e569",
+    "artifactId": 10039443941,
+    "archiveSha256": "63f3c8e1f8621aca8cf15b0a39026f3a4cc68759385ba4524e734a30121e6b1c",
+    "issuedAtEpoch": 1788837153,
+    "expiresAtEpoch": 1788923553,
+    "signatureAndContract": "PASS"
+  },
+  "postDeployConfig": "PASS; exact new UAT source, eight flags true, warmup15, secret binding names complete, Production email disabled",
+  "uatRuntime": {
+    "at": "2026-09-08T03:14:06.863395+00:00",
+    "status": "PASS",
+    "checks": {
+      "deepDb": {
+        "service": "api",
+        "status": "ok",
+        "db": "ok",
+        "timestamp": "2026-09-08T03:14:04.871Z"
+      },
+      "/health": 200,
+      "/auth/line/link-page/signup": 200,
+      "/auth/line/link-page.js": 200,
+      "publicCustomerGate": "OPEN",
+      "publicLogin": 200,
+      "unauthenticatedMe": 401
+    }
+  },
+  "productionUnchanged": {
+    "at": "2026-09-08T03:36:27.337170+00:00",
+    "status": "PASS",
+    "customerChecks": {
+      "/api/v1/auth/platform-access": "OPEN",
+      "/login": 200
+    }
+  },
+  "liveBrowser": {
+    "date": "2026-09-08",
+    "status": "BLOCKED_STALE_DATE_STATUS",
+    "environment": "UAT, logged-in owner sandwich, Drtb, desktop Chrome",
+    "passed": ["ordinary three-step form", "themed category dropdown", "draft-save success toast", "saved date survives reload", "blank optional purpose advances through steps 1 to 3", "total55/VAT3.60/category preserved"],
+    "blocker": "Step3 still says document date is missing and disables Send for review after 2026-09-07 was saved through the visible form and persisted across reload.",
+    "dataMutation": "Saved document date 2026-09-07 from the original receipt; purpose left blank; duplicate-check action invoked. Record remains DRAFT; no final submission attempted because the button is disabled.",
+    "limitations": "Live evidence is browser save/reload and code tracing, not a direct live DB inspection. Local synthetic tests passed but omitted explicit AI dateStatus in the incomplete-date fixture.",
+    "report": "live-browser-report.md"
+  },
+  "ready": {
+    "contentSha256": "ca465f579a7bc20f1a7e6624cb34d22ed0f83fad4204a716e346db4a75699c87",
+    "artifactId": 10039888765,
+    "archiveSha256": "9260100aaf95ea201fe657906bcc9091393d60e1384b1bc09ab44c5ba0bbc7f9",
+    "signatureAndContract": "PASS",
+    "checks": {
+      "a5Reader": "PASS",
+      "artifactIntegrity": "PASS",
+      "awsPolicies": "PASS",
+      "imageSignatures": "PASS",
+      "legalMode": "PASS",
+      "productionRuntime": "PASS",
+      "serviceStability": "PASS"
+    },
+    "requestedMode": "maintenance_closed",
+    "pendingMigrationCount": 2,
+    "issuedAtEpoch": 1788838554,
+    "expiresAtEpoch": 1788923553,
+    "cloneRehearsal": "PASSED",
+    "pendingMigrations": [
+      "20260907130000_line_support_request_resolution",
+      "20260907190000_line_signup_recovery_resolution"
+    ],
+    "cleanup": {
+      "deleteCompletedAtEpoch": 1788838536,
+      "deleteRequestedAtEpoch": 1788838437,
+      "instanceAbsent": true,
+      "residualResourceCount": 0,
+      "secretDeleted": true,
+      "snapshotDeleted": true,
+      "taskStopped": true
+    }
+  },
+  "productionNext": "Resolve the live date-verification blocker and repeat actual UI submission before acceptance. After a verified corrective UAT and new owner approval, follow the canonical live READY path with current source/controller/expiry/baseline evidence. Never use automatic maintenance_closed READY for live promotion.",
+  "expiresAtBangkok": "2026-09-09T10:12:33+07:00",
+  "evidenceBranch": "codex/receipt-stable-release-evidence-20260908; documentation checkpoint only, held from main to preserve controller"
+}

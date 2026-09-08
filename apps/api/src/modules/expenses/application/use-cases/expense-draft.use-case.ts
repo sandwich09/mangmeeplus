@@ -39,6 +39,7 @@ import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, Pagin
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseLineChargeKind, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
 import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
+import { RECEIPT_REVIEW_REASONS } from '../services/receipt-ocr-apply.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
 import { assertExpenseRootOpen } from '../expense-launch-gate';
 import { ReserveDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/reserve-document-number.use-case';
@@ -272,6 +273,8 @@ export class UpdateExpenseDraftUseCase {
       sourceExpense?: ExpenseRecordWithRelations;
     } = {},
   ): Promise<ExpenseRecord> {
+    // Capture explicit intent before source/financial synchronization can supply stored values.
+    const dateReviewInput = input.sourceDraft?.expenseDate !== undefined ? input.sourceDraft.expenseDate : input.expenseDate || undefined;
     const r = await this.repo.findById(ctx.companyId, expenseId);
     if (!r) throw new NotFoundException(`Expense ${expenseId} not found`);
     assertBranchInScope(ctx, r.branchId);
@@ -702,6 +705,21 @@ export class UpdateExpenseDraftUseCase {
       state['materializedHeader'] = { expenseDate: input.expenseDate ?? r.expenseDate?.toISOString().slice(0, 10) ?? null,
         vendorName: input.vendorNameSnapshot ?? r.vendorNameSnapshot,
         businessPurpose: (input.note ?? r.note)?.split(' · ').find((part) => part.startsWith('วัตถุประสงค์: '))?.slice('วัตถุประสงค์: '.length).trim() || null };
+    }
+    if (dateReviewInput !== undefined) {
+      const expenseDate = dateReviewInput ? coerceCivilDate(dateReviewInput) : null;
+      const summary = options.lineDraftCollection?.aiVerificationSummaryJson ?? nextSummaryJson ?? r.aiVerificationSummaryJson ?? {};
+      const missing = Array.isArray(summary['missingFields']) ? summary['missingFields'].filter((field) => field !== 'expenseDate') : [];
+      const reasons = Array.isArray(summary['reviewReasons']) ? summary['reviewReasons'].filter((reason) =>
+        reason !== RECEIPT_REVIEW_REASONS.dateUnverified && reason !== RECEIPT_REVIEW_REASONS.dateImplausible) : [];
+      const resolved = { ...summary, dateStatus: expenseDate ? 'verified' : 'unverified',
+        missingFields: expenseDate ? missing : [...missing, 'expenseDate'],
+        reviewReasons: expenseDate ? reasons : [...reasons, RECEIPT_REVIEW_REASONS.dateUnverified],
+        dateResolution: { expenseDate, resolvedByUserId: ctx.userId, resolvedAt: new Date().toISOString() },
+      };
+      // Both routes write this with the date under the same CAS transaction. OCR evidence remains intact.
+      if (options.lineDraftCollection) options.lineDraftCollection.aiVerificationSummaryJson = resolved;
+      else nextSummaryJson = resolved;
     }
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,

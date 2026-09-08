@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
-import { coerceCivilDate, type ExpenseCategorySummary, type ExpenseSourceDraft, type ExpenseSourceDraftInput, type CreateExpenseDraftInput } from '@watchdog-bms/contracts';
+import { coerceCivilDate, expenseDateIsReadable, type ExpenseCategorySummary, type ExpenseSourceDraft, type ExpenseSourceDraftInput, type CreateExpenseDraftInput } from '@watchdog-bms/contracts';
 import type { ExpenseRecord, ExpenseRecordWithRelations } from '../models/expense.model';
 import { LINE_NOTE_PURPOSE_PREFIX } from './line-correction.logic';
 import { storedLineToInput } from './line-draft-update.logic';
@@ -251,12 +251,16 @@ export function sourceDraftSummary(summary: Record<string, unknown> | null, stat
 }
 
 export function assertExpenseSourceDraftComplete(metadata: Record<string, unknown> | null | undefined, expense?: Expense): void {
-  if (!metadata?.[EXPENSE_SOURCE_DRAFT_KEY] && expense?.captureSource !== 'LINE_UPLOAD') return;
   // OCR failure and disabled conversation collection still expose staged facts on GET. Enforce
   // those same facts before the first partial save, including legacy READY records.
-  const state = metadata?.[EXPENSE_SOURCE_DRAFT_KEY]
-    ? parseLineExpenseDraftContinuation(metadata[EXPENSE_SOURCE_DRAFT_KEY]) : expense ? sourceDraftState(expense, []) : null;
-  if (!state || collectLineExpenseDraftQuestions(state, []).length > 0) throw new BadRequestException({
-    code: 'EXPENSE_SOURCE_DRAFT_INCOMPLETE', message: 'Complete the saved source draft before submitting or confirming this expense.',
+  if (metadata?.[EXPENSE_SOURCE_DRAFT_KEY] || expense?.captureSource === 'LINE_UPLOAD') {
+    const state = metadata?.[EXPENSE_SOURCE_DRAFT_KEY]
+      ? parseLineExpenseDraftContinuation(metadata[EXPENSE_SOURCE_DRAFT_KEY]) : expense ? sourceDraftState(expense, []) : null;
+    if (!state || collectLineExpenseDraftQuestions(state, []).length > 0) throw new BadRequestException({
+      code: 'EXPENSE_SOURCE_DRAFT_INCOMPLETE', message: 'Complete the saved source draft before submitting or confirming this expense.',
+    });
+  }
+  if (expense && !expenseDateIsReadable(expense.aiVerificationSummaryJson)) throw new BadRequestException({
+    code: 'EXPENSE_DOCUMENT_DATE_REVIEW_REQUIRED', message: 'ตรวจวันที่ในใบเสร็จที่ขั้นตรวจข้อมูล แล้วบันทึกก่อนส่งตรวจหรือยืนยันค่ะ',
   });
 }
