@@ -1,0 +1,49 @@
+{
+  "sourceCommit": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+  "run": 34195025467,
+  "serving": {
+    "effectiveTarget": "all",
+    "requestedMode": "maintenance_closed"
+  },
+  "checks": {
+    "a5Reader": "PASS",
+    "artifactIntegrity": "PASS",
+    "awsPolicies": "PASS",
+    "imageSignatures": "PASS",
+    "legalMode": "PASS",
+    "productionRuntime": "PASS",
+    "serviceStability": "PASS"
+  },
+  "migrationStatus": "APPEND_ONLY_PENDING",
+  "pendingMigrations": [
+    {
+      "checksum": "0e3c38f93164d7aaab1ab6a4fde595eb0abe2d7acd22205fbf1d1375176233f4",
+      "name": "20260907130000_line_support_request_resolution"
+    },
+    {
+      "checksum": "a168567411b810a2786829a41b415bd3a0838a9d9c527f73cb6cace66e56edce",
+      "name": "20260907190000_line_signup_recovery_resolution"
+    }
+  ],
+  "rehearsalStatus": "PASSED",
+  "migrateDeploy": {
+    "durationMs": 1286,
+    "finishedAtEpochMs": 1788850264580,
+    "maxDurationMs": 1800000,
+    "startedAtEpochMs": 1788850263294
+  },
+  "schemaValidation": {
+    "status": "PASSED"
+  },
+  "cleanup": {
+    "deleteCompletedAtEpoch": 1788850447,
+    "deleteRequestedAtEpoch": 1788850347,
+    "instanceAbsent": true,
+    "residualResourceCount": 0,
+    "secretDeleted": true,
+    "snapshotDeleted": true,
+    "taskStopped": true
+  },
+  "artifactDigest": "sha256:60dd3b5800e612a75535e6878f5f90cfb000835b6558f31f2241575c3227a5bd",
+  "expiresAtEpoch": 1788935470
+}
