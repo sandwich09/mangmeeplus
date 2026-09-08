@@ -29,6 +29,7 @@ type ValidationMessageKey =
   | 'expenses.v_wht_unit'
   | 'expenses.v_wht_percent'
   | 'expenses.v_wht_amount'
+  | 'expenses.v_wht_base'
   | 'expenses.v_wht_exceeds_base'
   | 'expenses.v_total_mismatch'
   | 'expenses.v_total_zero'
@@ -231,17 +232,22 @@ export function validateExpenseReview(
 
   const totals = computedTotals(values);
   if (values.whtInput) {
-    const { inputType, value } = values.whtInput;
+    const { inputType, value, baseAmount } = values.whtInput;
     if (inputType !== 'RATE' && inputType !== 'AMOUNT') {
       addIssue(issues, 'whtInput.inputType', 'error', 'expenses.v_wht_unit');
+    } else if (baseAmount !== undefined && validateExpenseWhtInput({ inputType: 'AMOUNT', value: '0', baseAmount })) {
+      addIssue(issues, 'whtInput.baseAmount', 'error', 'expenses.v_wht_base');
     } else if (validateExpenseWhtInput(values.whtInput)) {
       addIssue(issues, 'whtInput.value', 'error', inputType === 'RATE' ? 'expenses.v_wht_percent' : 'expenses.v_wht_amount');
-    } else if (inputType === 'AMOUNT' && totals) {
+    } else if (totals) {
       // ponytail: the server owns VAT reconciliation. Inclusive source VAT can alter the accepted
       // base, so use gross as a safe upper bound there; the API enforces the exact pre-VAT cap.
       const hasVatSource = values.vatSource && (values.vatSource.inputType !== 'NONE' || values.vatSource.lines?.length);
-      const base = values.vatMode === 'VAT_INCLUDED' && hasVatSource ? totals.grandTotal : totals.subtotal;
-      if (Math.round(Number(value) * 100) > Math.round(base * 100)) {
+      const base = baseAmount !== undefined ? Number(baseAmount)
+        : values.vatMode === 'VAT_INCLUDED' && hasVatSource ? totals.grandTotal : totals.subtotal;
+      const withheld = inputType === 'AMOUNT' ? Number(value) : base * Number(value) / 100;
+      if ((inputType === 'AMOUNT' && Math.round(withheld * 100) > Math.round(base * 100))
+        || Math.round(withheld * 100) > Math.round(totals.grandTotal * 100)) {
         addIssue(issues, 'whtInput.value', 'error', 'expenses.v_wht_exceeds_base');
       }
     }

@@ -147,6 +147,26 @@ describe('authoritative whole-bill WHT', () => {
     assert.equal(result.totals.grandTotalAmount, '1234.5600');
     assert.equal(result.totals.netPayableAmount, '1204.5500');
   });
+  it('keeps an explicit withholding base separate from a coupon-discounted total', () => {
+    const result = bill(['70.50']);
+    assert.equal(applyExpenseWhtInput(result, { inputType: 'RATE', value: '1', baseAmount: '270.50' }), null);
+    assert.equal(result.totals.whtAmount, '2.7100');
+    assert.equal(result.totals.grandTotalAmount, '70.5000');
+    assert.equal(result.totals.netPayableAmount, '67.7900');
+    assert.equal(applyExpenseWhtInput(result, { inputType: 'AMOUNT', value: '2.71', baseAmount: '270.50' }), null);
+    assert.equal(result.totals.whtAmount, '2.7100');
+    assert.notEqual(applyExpenseWhtInput(result, { inputType: 'RATE', value: '100', baseAmount: '270.50' }), null);
+  });
+  it('never gives a settlement rounding row a withholding allocation', () => {
+    const result = reconcileExpenseVat({ vatMode: 'VAT_EXCLUDED', lines: [
+      { lineNumber: 1, quantity: '1', unitPrice: '1000', vatRate: '0.07' },
+      { lineNumber: 2, quantity: '1', unitPrice: '-0.50', vatRate: '0', chargeKind: 'ROUNDING' },
+    ] });
+    assert.equal(applyExpenseWhtInput(result, { inputType: 'RATE', value: '3', baseAmount: '1000' }), null);
+    assert.equal(result.lines[1]!.totals.whtAmount, '0.0000');
+    assert.equal(result.totals.grandTotalAmount, '1069.5000');
+    assert.equal(result.totals.netPayableAmount, '1039.5000');
+  });
   it('allocates exact residual satang by largest remainder and stable line number', () => {
     const result = bill(['1', '1', '1', '0']);
     applyExpenseWhtInput(result, { inputType: 'AMOUNT', value: '0.02' });

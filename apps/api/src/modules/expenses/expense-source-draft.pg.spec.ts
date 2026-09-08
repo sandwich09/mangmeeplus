@@ -305,6 +305,39 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
     assert.equal(completed.lines[0]!.id, product.id);
   });
 
+  it('full review replaces an unaccepted OCR breakdown without hidden blockers; partial save retains its evidence', async () => {
+    const id = await draft();
+    const first = await stored(id);
+    const metadata = first.sourceChannelMetadataJson as Record<string, any>;
+    const state = structuredClone(metadata.lineExpenseDraftContinuation);
+    state.items = Array.from({ length: 6 }, (_, i) => ({ itemRef: `I0${i + 1}`, sourceText: `รายละเอียด ${i}`, description: `รายละเอียด ${i}`, reviewRequired: true }));
+    state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, await repo.listCategories(companyId));
+    const evidence = { recognizedFields: { description: 'original OCR evidence', lines: state.items.map((item: any) => ({ description: item.description })) }, dateStatus: 'verified' };
+    await client.expenseRecord.update({ where: { id }, data: { sourceChannelMetadataJson: { ...metadata, lineExpenseDraftContinuation: state }, aiVerificationSummaryJson: evidence } });
+    let current = await stored(id);
+    await update.execute(ctx(['expense.review']), id, { expectedUpdatedAt: current.updatedAt.toISOString(), sourceDraft: { businessPurpose: 'ใช้สำนักงาน' } });
+    current = await stored(id);
+    assert.equal((current.sourceChannelMetadataJson as any).lineExpenseDraftContinuation.items.length, 6);
+    const product = current.lines[0]!;
+    await update.execute(ctx(['expense.review']), id, { expectedUpdatedAt: current.updatedAt.toISOString(), expenseDate: '2026-09-01',
+      vendorEntityKindSnapshot: 'JURISTIC', whtInput: { inputType: 'AMOUNT', value: '2.71', baseAmount: '270.50' },
+      lines: [{ id: product.id, lineNumber: 1, description: product.description, quantity: '1', unitPrice: '100', discountAmount: '10', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId }] });
+    const get = new GetExpenseUseCase(repo), loaded = await get.execute(ctx(['expense.review']), id);
+    const projected = (await get.sourceDraft(ctx(['expense.review']), loaded))!;
+    assert.equal(loaded.lines.length, 1);
+    assert.equal(projected.items.length, 1);
+    assert.deepEqual(projected.missingFields, []);
+    assert.equal(Number(loaded.grandTotalAmount), 90);
+    assert.equal(Number(loaded.whtAmount), 2.71);
+    assert.equal(Number(loaded.netPayableAmount), 87.29);
+    assert.equal(loaded.whtInputJson?.baseAmount, '270.50');
+    assert.deepEqual(loaded.aiVerificationSummaryJson?.recognizedFields, evidence.recognizedFields);
+    const saved = await stored(id);
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, { expectedUpdatedAt: saved.updatedAt.toISOString(), whtInput: { inputType: 'RATE', value: '100', baseAmount: '270.50' },
+      lines: [{ id: product.id, lineNumber: 1, description: product.description, quantity: '1', unitPrice: '100', discountAmount: '10', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId }] }));
+    assert.equal((await stored(id)).updatedAt.toISOString(), saved.updatedAt.toISOString(), 'invalid money fails atomically');
+  });
+
   it('one review save binds same-named staged rows by scoped references without losing charges or purpose', async () => {
     const id = await draft(1, true);
     const before = await stored(id);

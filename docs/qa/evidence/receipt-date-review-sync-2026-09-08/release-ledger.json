@@ -1,0 +1,84 @@
+{
+  "candidate": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+  "controller": "13a9ecf0f3a7a623cfa2c285212eba16d4383eaf",
+  "UAT_RUN_ID": 34193070736,
+  "READY_RUN_ID": 34195025467,
+  "PROD_RUN_ID": null,
+  "production": "HOLD_UNTIL_NEW_OWNER_APPROVAL",
+  "servingMode": "UAT live; Production unchanged",
+  "ownerReference": "Thread 01a0778d-a88f-76c2-a9d4-334b53165360: fix date blocker and related gaps, deploy UAT and retest; Production still held",
+  "PR_CI_RUN_IDS": [
+    34191737998,
+    34191759752
+  ],
+  "developPr": 490,
+  "mainPr": 491,
+  "noNewFlags": true,
+  "mail": "Production disabled; existing UAT sandbox unchanged",
+  "localVerification": {
+    "postgres": 15,
+    "apiFocused": 160,
+    "updatedFocused": 14,
+    "web": 1678,
+    "browser": 11,
+    "typecheck": "PASS",
+    "preflight": "PASS"
+  },
+  "localTestBucketCleaned": true,
+  "state": "UAT_PASS_READY_PASS_LIVE_UI_BLOCKED",
+  "develop": "20ab58a0017a479e54e8ba2b0688f4ee6bbd5525",
+  "mainFrozen": true,
+  "dispatchAt": "2026-09-08T06:03:52Z",
+  "evidenceBranch": "codex/receipt-date-release-evidence-20260908",
+  "readinessMode": "automatic maintenance_closed; not authorization for live Production",
+  "liveBrowser": "BLOCKED_MAC_LOCKED; owner unlock requested; actual post-release save/submit not yet tested",
+  "uatSigned": "PASS",
+  "uatArtifactDigest": "sha256:007ea4c19b8723870ad10138f6d77ef1e87ea78924004666684ed3306bf1dd58",
+  "uatPassportContentSha256": "a79f83b68d5fc7c50b72365728d8ef65f6db79f44746b67fec7ca7e28179ebcc",
+  "uatRuntime": "PASS",
+  "uatCustomerGate": "OPEN",
+  "lineProvider": "PASS HTTP200",
+  "productionUnchanged": "PASS live/OPEN",
+  "ciReusedRunId": 34191759752,
+  "actualDrtbPreservation": "PASS read-only post-deploy/pre-UI comparison",
+  "tunnel": "CLOSED",
+  "readySigned": "PASS",
+  "readyArtifactDigest": "sha256:60dd3b5800e612a75535e6878f5f90cfb000835b6558f31f2241575c3227a5bd",
+  "readyContentSha256": "0708470cbb5a0ba9e03ca3fe1706ec627deb365a64b291f723dac675bdac3472",
+  "readyChecks": {
+    "a5Reader": "PASS",
+    "artifactIntegrity": "PASS",
+    "awsPolicies": "PASS",
+    "imageSignatures": "PASS",
+    "legalMode": "PASS",
+    "productionRuntime": "PASS",
+    "serviceStability": "PASS"
+  },
+  "readyExpiresAtEpoch": 1788935470,
+  "migration": {
+    "status": "APPEND_ONLY_PENDING",
+    "pendingCount": 2,
+    "pending": [
+      {
+        "checksum": "0e3c38f93164d7aaab1ab6a4fde595eb0abe2d7acd22205fbf1d1375176233f4",
+        "name": "20260907130000_line_support_request_resolution"
+      },
+      {
+        "checksum": "a168567411b810a2786829a41b415bd3a0838a9d9c527f73cb6cace66e56edce",
+        "name": "20260907190000_line_signup_recovery_resolution"
+      }
+    ],
+    "rehearsal": "PASSED",
+    "cleanup": {
+      "deleteCompletedAtEpoch": 1788850447,
+      "deleteRequestedAtEpoch": 1788850347,
+      "instanceAbsent": true,
+      "residualResourceCount": 0,
+      "secretDeleted": true,
+      "snapshotDeleted": true,
+      "taskStopped": true
+    }
+  },
+  "finalCustomerAcceptance": "UAT infrastructure OPEN PASS; actual Drtb business UI pending; Production unchanged OPEN",
+  "next": "Unlock Mac; use logged-in Chrome owner Drtb page, save existing correct date, verify toast/reload, step1\u21922\u21923 and submit through UI; read-only DB compare afterwards. No direct API mutation or Production deploy."
+}

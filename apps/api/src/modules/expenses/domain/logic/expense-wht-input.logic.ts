@@ -21,16 +21,28 @@ export function applyExpenseWhtInput(
 ): string | null {
   if (!input) return null;
   const value = new Decimal(input.value);
-  const withheld = result.lines.filter((line) => !excludedLineNumbers.has(line.lineNumber));
+  const excluded = new Set([...excludedLineNumbers, ...result.lines
+    .filter((line) => line.chargeKind === 'ROUNDING' || new Decimal(line.totals.taxableAmount).lte(0))
+    .map((line) => line.lineNumber)]);
+  const withheld = result.lines.filter((line) => !excluded.has(line.lineNumber));
   for (const line of result.lines) {
-    if (excludedLineNumbers.has(line.lineNumber)) line.totals.whtAmount = '0.0000';
+    if (excluded.has(line.lineNumber)) line.totals.whtAmount = '0.0000';
   }
   const base = withheld.length === result.lines.length
     ? new Decimal(result.totals.taxableAmount)
     : withheld.reduce((sum, line) => sum.plus(line.totals.taxableAmount), new Decimal(0))
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-  if (input.inputType === 'AMOUNT' && value.gt(base)) return 'WHT amount cannot exceed the accepted pre-VAT amount.';
-  if (input.inputType === 'RATE') {
+  const sourceBase = input.baseAmount === undefined ? base : new Decimal(input.baseAmount);
+  const amount = input.inputType === 'AMOUNT' ? value
+    : input.baseAmount === undefined
+      ? withheld.reduce((sum, line) => sum.plus(new Decimal(line.totals.taxableAmount).mul(value).div(100)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)), new Decimal(0))
+      : sourceBase.mul(value).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+  if (input.inputType === 'AMOUNT' && amount.gt(sourceBase)) return 'WHT amount cannot exceed the accepted pre-VAT amount.';
+  if (amount.gt(result.totals.grandTotalAmount) || (amount.gt(0) && base.lte(0))) {
+    return 'WHT amount cannot exceed the document total or leave a negative payable.';
+  }
+  if (input.inputType === 'RATE' && input.baseAmount === undefined) {
     for (const line of withheld) {
       line.totals.whtAmount = new Decimal(line.totals.taxableAmount).mul(value).div(100)
         .toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(4);
@@ -38,10 +50,10 @@ export function applyExpenseWhtInput(
   } else {
     // Largest remainder allocates exact satang without inventing a four-decimal rate.
     const shares = withheld.map((line) => {
-      const raw = base.gt(0) ? value.mul(100).mul(line.totals.taxableAmount).div(base) : new Decimal(0);
+      const raw = base.gt(0) ? amount.mul(100).mul(line.totals.taxableAmount).div(base) : new Decimal(0);
       return { line, cents: raw.floor(), remainder: raw.minus(raw.floor()) };
     });
-    let remaining = value.mul(100).minus(shares.reduce((sum, share) => sum.plus(share.cents), new Decimal(0))).toNumber();
+    let remaining = amount.mul(100).minus(shares.reduce((sum, share) => sum.plus(share.cents), new Decimal(0))).toNumber();
     shares.sort((a, b) => b.remainder.cmp(a.remainder) || a.line.lineNumber - b.line.lineNumber);
     for (const share of shares) {
       if (remaining > 0) { share.cents = share.cents.plus(1); remaining -= 1; }

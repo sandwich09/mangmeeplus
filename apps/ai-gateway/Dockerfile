@@ -51,6 +51,14 @@ COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.jso
 COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./packages/config/dist
 COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./packages/contracts/dist
+# The production install omits optional packages; retain only sharp's Linux runtime like the API.
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.3/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.2/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+RUN sharp_dir="$(readlink -f './apps/ai-gateway/node_modules/sharp')" \
+  && mkdir -p "$sharp_dir/node_modules/@img" \
+  && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/" \
+  && rm -rf /tmp/sharp-native \
+  && node -e "const sharp=require('./apps/ai-gateway/node_modules/sharp');sharp({create:{width:4,height:2,channels:3,background:'white'}}).rotate(90).jpeg().toBuffer({resolveWithObject:true}).then(({info})=>{if(info.width!==2||info.height!==4)throw new Error('Receipt orientation runtime check failed');}).catch(error=>{console.error(error);process.exit(1);});"
 USER node
 WORKDIR /app/apps/ai-gateway
 EXPOSE 3002

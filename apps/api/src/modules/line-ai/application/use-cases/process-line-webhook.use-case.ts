@@ -85,7 +85,7 @@ import {
 } from '../../../data-model-core/domain/logic/attachment.logic';
 import { AttachmentMalwareScanner } from '../../../data-model-core/infrastructure/attachment-malware-scanner';
 import { deriveTaxEvidence, isExpenseExtractionEligible, isSuccessfulNonReceiptClassification, sourceDocumentTypeFromClassification, toSourceDocumentType } from '../../../expenses/domain/logic/expense-document.logic';
-import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion } from '../../../expenses/application/services/receipt-ocr-apply.service';
+import { isStaleOcrApply, ReceiptOcrApplyService, toMoney4, type ReceiptCategorySuggestion, type ReceiptOcrApplyOutcome } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { normalizeLineText, hashMessagePreview, parseBareCompanySelection, parseLineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import type { LineCompanyCommand } from '../../domain/logic/line-ai-classifier.logic';
 import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
@@ -1013,12 +1013,18 @@ export function formatPaypersReply(
   webBaseUrl: string | undefined,
   companyId: string,
   expenseId: string,
-  options: { hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
+  options: { acceptedAmounts?: ReceiptOcrApplyOutcome['acceptedAmounts']; hasDuplicate?: boolean; textOnly?: boolean; compact?: boolean; amount?: string | null; fields?: ReceiptOcrFieldResult | null; charges?: readonly ExpenseChargeSummary[]; chargeReconciliation?: { status: string; chargesApplied: number }; categoryName?: string | null; sourceDocumentType?: string | null; questionText?: string; dateStatus?: ExpenseDocumentDateStatus } = {},
 ): string {
   const link = absoluteWebLink(webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
-  const amountValue = options.fields?.grandTotalAmount ?? options.amount;
+  const amountValue = options.acceptedAmounts?.grandTotalAmount ?? options.fields?.grandTotalAmount ?? options.amount;
   const amount = amountValue && Number(toMoney4(amountValue)) > 0 ? Number(toMoney4(amountValue)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : 'ยังไม่ระบุ';
   const docType = options.sourceDocumentType ? SOURCE_DOC_TYPE_REPLY_LABELS[options.sourceDocumentType] : undefined;
+  const moneyLabel = (value: string) => Number(toMoney4(value)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const vatValue = options.acceptedAmounts?.vatAmount ?? options.fields?.vatAmount;
+  const vatMode = options.acceptedAmounts?.vatMode ?? options.fields?.vatMode;
+  const whtValue = options.acceptedAmounts?.whtAmount ?? options.fields?.whtAmount;
+  const vatLabel = vatMode === 'NO_VAT' || vatMode === 'EXEMPT' ? 'ไม่มี VAT'
+    : vatValue && Number(vatValue) > 0 ? `${moneyLabel(vatValue)} บาท${!options.fields?.vatAmount ? ' (ระบบคำนวณ)' : ''}` : 'รอตรวจสอบ';
   const parts = options.compact ? [
     '🧾 เก็บรูปและร่างแล้วค่ะ',
     ...(docType && options.sourceDocumentType !== 'RECEIPT' ? [`เอกสาร: ${docType}`] : []),
@@ -1035,7 +1041,13 @@ export function formatPaypersReply(
     `• ผู้ขาย/ผู้รับเงิน – ${options.fields?.vendorName ?? 'ยังไม่ระบุ'}`,
     `• วันที่เอกสาร – ${receiptCardDateLine(options.fields?.expenseDate, options.dateStatus ?? (options.fields?.expenseDate ? 'verified' : 'unverified'))}`,
     `• เลขที่เอกสาร – ${options.fields?.documentNumber ?? 'ยังไม่ระบุ'}`,
-    `• VAT / WHT / ภาษีซื้อ – ${options.fields?.vatAmount ? `VAT ${Number(toMoney4(options.fields.vatAmount)).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'รอตรวจสอบ'}`,
+    ...(options.acceptedAmounts?.discountAmount && Number(options.acceptedAmounts.discountAmount) > 0
+      ? [`• ส่วนลด – ${moneyLabel(options.acceptedAmounts.discountAmount)} บาท`] : []),
+    `• VAT – ${vatLabel}`,
+    ...(whtValue && Number(toMoney4(whtValue)) > 0 ? [
+      `• ภาษีหัก ณ ที่จ่าย – ${moneyLabel(whtValue)} บาท`,
+      ...(options.acceptedAmounts ? [`• ยอดจ่ายสุทธิ – ${moneyLabel(options.acceptedAmounts.netPayableAmount)} บาท`] : []),
+    ] : []),
     `• หมวดหมู่ค่าใช้จ่าย – ${options.categoryName ?? 'ยังไม่ระบุ'}`,
   ];
   // Journey J1 step 1: additional charges belong on the DEFAULT card, not only when the sender
@@ -5496,6 +5508,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     /** Spec §5.1: the charge rows the apply WROTE, for the card to print. Stays `[]` when the apply
      *  folded them (or was skipped as stale) — the card then says so rather than listing them. */
     let appliedCharges: ExpenseChargeSummary[] = [];
+    let acceptedAmounts: ReceiptOcrApplyOutcome['acceptedAmounts'];
     if (ocrFields) {
       const applyOutcome = await this.timeStage(event.webhookEventId, 'receipt_ocr_apply', () => this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
         ...(hintedCategory
@@ -5525,6 +5538,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
           }
         : undefined;
       appliedCharges = duplicateResult?.charges ?? [];
+      acceptedAmounts = duplicateResult?.acceptedAmounts;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -5615,6 +5629,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
     const replyTexts = [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
       hasDuplicate,
+      acceptedAmounts,
       fields: ocrFields,
       // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
       charges: appliedCharges,
@@ -5660,6 +5675,7 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
       if (!expense || expense.createdByUserId !== event.handoff.userId) return [fallback];
       if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
       return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
+        acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
         categoryName: expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find((category) => category.id === expense.expenseCategoryId)?.name : null,
         fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,

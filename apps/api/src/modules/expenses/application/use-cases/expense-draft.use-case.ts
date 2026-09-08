@@ -793,6 +793,13 @@ export class UpdateExpenseDraftUseCase {
             const prior = reviewSourceState ?? parseLineExpenseDraftContinuation(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]);
             if (!prior) throw new BadRequestException('Source draft cannot be read safely.');
             state.items = state.items.filter((item) => !removedSourceItems.includes(item.itemRef));
+            // A full financial review replaces the unaccepted OCR breakdown with the submitted
+            // rows. Keep original OCR in recognizedFields; do not leave hidden source questions
+            // or count those source rows a second time. Partial/source-only saves retain them.
+            if (!combinedReviewSourceInput && lines.some((line) => !line.chargeKind)) {
+              state.items = state.items.filter((item) => item.lineId || item.newItem
+                || sourceRows.some((line) => line.sourceItemRef === item.itemRef));
+            }
             // This is the explicit full review just submitted, not an OCR/position guess. Bind each
             // scoped source reference to the row written in this SAME transaction, including new rows
             // and duplicate descriptions. Later partial edits retain that persisted financial identity.

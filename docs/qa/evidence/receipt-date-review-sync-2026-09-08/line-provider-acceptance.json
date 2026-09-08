@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-08T06:31:09.335743+00:00",
+  "environment": "uat",
+  "endpoint": "https://wa-6ec8b40da38e4baaa1441b1844801d72.ecs.ap-southeast-1.on.aws/v1/line/webhook",
+  "active": true,
+  "success": true,
+  "statusCode": 200,
+  "reason": "OK"
+}

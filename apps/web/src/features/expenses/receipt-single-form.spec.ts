@@ -7,7 +7,7 @@ const source = {
   header: { expenseDate: '2026-09-07', vendorName: 'ร้านตัวอย่าง', businessPurpose: null },
   items: [
     { itemRef: 'I01', lineId: 'line-one', description: 'น้ำดื่ม', quantity: '2', unitPrice: '20', totalAmount: null, expenseCategoryId: 'category' },
-    { itemRef: 'I02', lineId: null, description: 'น้ำดื่ม', quantity: '1', unitPrice: '15', totalAmount: null, expenseCategoryId: 'category' },
+    { itemRef: 'I02', lineId: null, newItem: true, description: 'น้ำดื่ม', quantity: '1', unitPrice: '15', totalAmount: null, expenseCategoryId: 'category' },
   ],
   missingFields: [{ id: 'D-PURPOSE', scope: 'DOCUMENT' as const, field: 'businessPurpose', prompt: 'D-PURPOSE ใช้ทำอะไร' }],
 };
@@ -37,7 +37,7 @@ test('one form includes same-named staged items once, preserves stored money and
   assert.equal(payload.note, 'LINE receipt upload · วัตถุประสงค์: ใช้รับรองลูกค้า');
   assert.deepEqual(payload.lines?.map((line) => line.sourceItemRef), ['I01', 'I02']);
   assert.equal(payload.lines?.[0]?.vatTreatment, 'NON_VAT');
-  assert.equal(payload.sourceDraft?.businessPurpose, 'ใช้รับรองลูกค้า');
+  assert.equal(payload.sourceDraft, undefined, 'full review supplies one accepted financial representation');
 });
 
 test('removing a staged-only row is explicit in the same review save', () => {
@@ -67,13 +67,13 @@ test('partial source save with no financial rows omits tax inputs', () => {
   assert.equal('vatSource' in editedPayload, false, 'the UI blocks this save; omission preserves stored tax state');
 });
 
-test('Drtb keeps stored money, VAT, and category while source date and unknown numbers stay blank', () => {
+test('Drtb keeps accepted money and category while unknown source date and explicit new rows remain editable', () => {
   const drtbSource = {
     ...source,
     header: { expenseDate: null, vendorName: 'Drtb', businessPurpose: null },
     items: [
       { itemRef: 'I01', lineId: null, description: 'AMERICANO', quantity: null, unitPrice: null, totalAmount: '55', expenseCategoryId: null },
-      { itemRef: 'I02', lineId: null, description: 'น้ำดื่ม', quantity: null, unitPrice: null, totalAmount: null, expenseCategoryId: null },
+      { itemRef: 'I02', lineId: null, newItem: true, description: 'น้ำดื่ม', quantity: null, unitPrice: null, totalAmount: null, expenseCategoryId: null },
     ],
     missingFields: [
       { id: 'D-DATE', scope: 'DOCUMENT' as const, field: 'expenseDate', prompt: 'date' },
@@ -102,7 +102,7 @@ test('Drtb keeps stored money, VAT, and category while source date and unknown n
   const values = reviewValues(drtb);
   assert.equal(values.expenseDate, '');
   assert.deepEqual(values.lines.map(({ quantity, unitPrice, expenseCategoryId }) => ({ quantity, unitPrice, expenseCategoryId })), [
-    { quantity: '', unitPrice: '', expenseCategoryId: 'coffee-category' },
+    { quantity: '1', unitPrice: '51.40', expenseCategoryId: 'coffee-category' },
     { quantity: '', unitPrice: '', expenseCategoryId: null },
   ]);
   assert.deepEqual(values.vatSource, { inputType: 'AMOUNT', vatAmount: '3.60' });
@@ -116,7 +116,6 @@ test('Drtb keeps stored money, VAT, and category while source date and unknown n
     { id: 'line-coffee', quantity: '1', unitPrice: '51.40', expenseCategoryId: 'coffee-category' },
   ]);
   assert.deepEqual(payload.sourceDraft?.items, [
-    { itemRef: 'I01', description: 'AMERICANO', quantity: null, unitPrice: null, expenseCategoryId: 'coffee-category' },
     { itemRef: 'I02', description: 'น้ำดื่ม', quantity: '5', unitPrice: null, expenseCategoryId: null },
   ]);
 
@@ -128,4 +127,18 @@ test('Drtb keeps stored money, VAT, and category while source date and unknown n
   };
   const knownValues = reviewValues({ ...drtb, sourceDraft: knownSource } as ExpenseDetail);
   assert.equal(knownValues.lines[0]!.unitPrice, '51.40', 'source gross total does not overwrite stored pre-VAT money');
+});
+
+// Unaccepted OCR detail must never become a second purchase next to its financial summary.
+test('a summary and six unbound OCR rows render and submit only the summary', () => {
+  const original = { ...detail, sourceDraft: { ...source, items: Array.from({ length: 6 }, (_, i) => ({
+    itemRef: `I0${i + 1}`, lineId: null, description: `ocr-${i}`, quantity: '1', unitPrice: '10', totalAmount: null, expenseCategoryId: null,
+  })) } };
+  const values = reviewValues(original);
+  assert.equal(values.lines.length, 1);
+  assert.equal(values.lines[0]!.discountAmount, '5');
+  const payload = buildExpenseDraftReviewPayload(values, { sourceDraft: original.sourceDraft });
+  assert.equal(payload.lines!.length, 1);
+  assert.equal(payload.sourceDraft, undefined);
+  assert.equal(original.sourceDraft.items.length, 6, 'original evidence is not erased by projection');
 });
