@@ -1,6 +1,6 @@
 # Agent Memory: receipt-stable-review-release-2026-09-08
 
-Status: local corrective implementation and verification complete; preparing PR CI and UAT deployment. Production deployment awaits a new owner approval.
+Status: corrective UAT 34181149388 and automatic READY 34182722501 SUCCESS; signatures, runtime/deep-DB/customer-OPEN and clone rehearsal/cleanup all PASS. Production deployment awaits a new owner approval; live browser journey awaits Mac unlock.
 Owner: root
 Scope: stable PANDA MALA review form, removal of the redundant missing-data summary, atomic incomplete draft save; UAT redeploy and complete Production config/readiness preparation.
 Decisions: keep current Production live/OPEN and unchanged. Do not activate Production email. Existing legal-owner approval is historical evidence; latest owner explicitly holds the new Production deployment until approved.
@@ -13,7 +13,7 @@ Verification:
 - Production readback at 2026-09-08T01:13:02Z: all three services unchanged (source 604ac785479ced5b9858d0b46d89f8d11cf2b9f6, exact original image/revision/capacity), live, ACTIVE; public customer gate OPEN and login 200.
 - All three services passed current config schemas and validateProductionConfig for UAT, current Production and prepared Production (nine checks). Secret values were schema-valid surrogates only, never fetched; this verifies configuration shape, not live secret validity.
 - Release maintenance pins: 45 exact files current. Existing production-serving-mode executable contract passed, including enabled/disabled/live/maintenance feature switches and disabled-email behavior. No release script change needed.
-Next: finish focused API/web/browser proofs, merge passing exact PR head into develop/main, dispatch one UAT all-target run, verify signed Passport/runtime/customer journey and automatic READY; re-read config after deploy. Present UAT and Production preparation evidence, wait for new Production approval.
+Next: test Drtb in the logged-in browser after Mac unlock. Wait for new Production approval, then recheck expiry/controller/baseline and issue a live READY with the real owner reference before a live promotion. Main is frozen at dde31797dc67461715fdfaba965a28ac38a0e06b; do not merge the documentation-only checkpoint branch codex/receipt-stable-release-evidence-20260908 during the release hold.
 
 ## Configuration audit before corrective release
 
@@ -82,3 +82,22 @@ API audit identified D-PURPOSE collection as the shared requirement used by sour
 - Purpose containing the existing internal note delimiter cannot be represented safely. The one validation uses a typed error mapped to Thai that names the purpose field and allows leaving it blank; no technical diagnostic/reload loop. Focused source boundary test 6/6 and shared web error-message tests passed after that envelope change. Normal supplied purpose remains stored and blank purpose is optional.
 - Browser final run: 11/11 passed. No release workflow, dependency, database schema/migration or new flag changed in this correction.
 - Whitespace diff check passed. No package.json change. UAT read-only preflight passed.
+
+## Exact corrective release
+
+- Candidate: 67773ad3244560b606c250e6cdbc65d36acd1bb7. PR #488 -> develop 21b0282777bf8bd0e79f6156fb1b5c287dbebd17 and PR #489 -> main/controller dde31797dc67461715fdfaba965a28ac38a0e06b, both admin merge after full exact-head CI 34180007551 and 34180021014 SUCCESS. All six required jobs actually ran and passed, including Typecheck and Test with pnpm typecheck and pnpm test.
+- Candidate is an ancestor of both remote branches. ci.yml/deploy-uat.yml blob parity passed. UAT preflight rerun PASS immediately before dispatch.
+- Zero active UAT/READY/Production/recovery runs across queued/in_progress/waiting/requested/pending. The sole historical metadata row 31611733340 was excluded only after fresh verification of unchanged 2026-08-12 timestamp/head and zero jobs/check-runs, per the existing documented provider incident. No cancellation/rerun performed.
+- Single UAT all-target dispatch 34181149388 at 2026-09-08T02:45:21Z. Exact candidate/title/controller confirmed. Reused validated PR CI 34180021014; validation skips in the UAT reusable workflow are expected and backed by that full successful exact-head CI.
+- Production readback 2026-09-08T02:46:42Z: all three exact prior source/images/revisions/capacity unchanged, ACTIVE/live; public customer OPEN and login200. No Production deployment or gate/email mutation.
+- Live browser check remains pending because Mac is locked and CUA automatic unlock failed; owner was asked to unlock. Local real browser/API/PostgreSQL acceptance is complete, but is not represented as a post-deploy live Drtb test.
+- UAT 34181149388 SUCCESS. Passport content cc43bc0843f8ea5e79e0a5854f290f0cad7fcea4ebc5b392360a405995f2e569, artifact10039443941, archive SHA-256 63f3c8e1f8621aca8cf15b0a39026f3a4cc68759385ba4524e734a30121e6b1c; signed workflow/controller identity and full canonical validator PASS. Issued1788837153, expiry1788923553.
+- Post-deploy config readback 2026-09-08T03:11:38Z: new candidate across all three singleton services; all eight receipt/signup/quota flags true, AUTO_FREE, trial15. Config keys and secret binding names audited again, Production email remains disabled.
+- Runtime acceptance 2026-09-08T03:14:06Z: exact signed images/source, ACTIVE singleton and running tasks at capacity1/2; deep readiness API200/dbOK, health/signupHTML/signupJS200, public customer OPEN, login200, unauthenticated me401. Production independent readback03:14:02Z still exact old images/source/revisions/capacity and live/OPEN.
+- Automatic READY 34182722501 started03:12:42Z on frozen controller dde31797, workflow_run from this exact UAT. Validation only in maintenance_closed; cannot authorize a live promotion.
+- Migration count178, Prisma schema SHA0808c7a1188a56d49381ac28a2c5c4e23d68b723f3262cc027dbab6191e140f2 and repository catalog hash2ff6c2072c34b49218d470a6d246519874601e8a63c92f64339956fcf8ca2535 are unchanged from prior UAT. The signed catalog file hash changes only because sourceCommit binds the new candidate. No schema/migration change in this correction.
+- Automatic READY 34182722501 SUCCESS. Signed content ca465f579a7bc20f1a7e6624cb34d22ed0f83fad4204a716e346db4a75699c87, artifact10039888765, archive SHA-256 9260100aaf95ea201fe657906bcc9091393d60e1384b1bc09ab44c5ba0bbc7f9. Cosign workflow/controller identity, canonical full validator and all seven checks PASS.
+- Exact two pending migrations (line_support_request_resolution and line_signup_recovery_resolution) executed on the isolated clone; migration/schema/compatibility PASSED. Signed cleanup instanceAbsent/secretDeleted/snapshotDeleted/taskStopped true, residualResourceCount0. Independent RDS readback confirms only the original UAT/Production DBs remain, both available.
+- Final Production readback2026-09-08T03:36:27Z: exact original three source/images/revisions/capacity unchanged, ACTIVE/live, customerOPEN/login200. PROD_RUN_ID remains null. No live service, gate, email or customer DB migration changed.
+- Passport/READY expiry: 2026-09-09T10:12:33+07:00. The automatic maintenance_closed READY is preparation evidence only; live mode needs fresh owner approval and the dedicated live READY path, plus current expiry/drift checks.
+- Portable sanitized ledger: docs/qa/evidence/receipt-stable-review-2026-09-08/release-verification.json. Real browser/API/PG tests are local synthetic evidence; the live Drtb browser flow is still pending because Mac remains locked. Do not claim that journey was completed on the newly deployed UAT.
