@@ -40,6 +40,40 @@ const brokenLaunchGate = {
 } as any;
 
 describe('receipt owner summary and fallback', () => {
+  it('orders the five receipt facts and shows taxes and other charges only when nonzero', () => {
+    const options = {
+      sourceDocumentType: 'TAX_INVOICE', categoryName: 'ค่าอาหารและเครื่องดื่ม',
+      fields: { vendorName: 'PANDA MALA', documentNumber: '00912/1', expenseDate: '2026-09-07', vatAmount: '70', whtAmount: '30' },
+      acceptedAmounts: { grandTotalAmount: '1070', vatAmount: '70', whtAmount: '30', netPayableAmount: '1040', vatMode: 'VAT_INCLUDED' as const },
+      charges: [
+        { kind: 'SERVICE_CHARGE' as const, label: 'ค่าบริการ', amount: '100', vatAmount: '0' },
+        { kind: 'DELIVERY' as const, label: 'ค่าจัดส่ง', amount: '20', vatAmount: '0' },
+        { kind: 'ROUNDING' as const, label: 'ปัดเศษ', amount: '-0.01', vatAmount: '0' },
+      ],
+    };
+    const text = formatPaypersReply('https://app.example.test', 'co', 'internal-expense', options);
+    assert.deepEqual(text.split('\n').filter((line) => line.startsWith('• ')), [
+      '• ผู้ขาย/ผู้รับเงิน – PANDA MALA',
+      '• ยอดรวม – 1,070.00',
+      '• ประเภทเอกสาร – ใบกำกับภาษี',
+      '• วันที่เอกสาร – 7 ก.ย. 2569',
+      '• หมวดหมู่ค่าใช้จ่าย – ค่าอาหารและเครื่องดื่ม',
+      '• VAT – 70.00 บาท',
+      '• WHT – 30.00 บาท',
+      '• ค่าบริการอื่นๆ – 120.00 บาท',
+    ]);
+    const card = buildLineAssistantTextCardMessage(text, 'https://app.example.test', 'co');
+    assert.equal(card.type, 'flex');
+    assert.doesNotMatch(JSON.stringify(card.contents.body), /00912|ปัดเศษ|ส่วนลด|ยอดจ่ายสุทธิ|https:|internal-expense/);
+    for (const vatMode of ['VAT_INCLUDED', 'NO_VAT', 'EXEMPT'] as const) {
+      const absent = formatPaypersReply('https://app.example.test', 'co', 'e', {
+        ...options, charges: [], acceptedAmounts: { ...options.acceptedAmounts, vatMode, vatAmount: '0', whtAmount: '0' },
+      });
+      assert.equal(absent.split('\n').filter((line) => line.startsWith('• ')).length, 5);
+      assert.doesNotMatch(absent, /• VAT|• WHT|ค่าบริการอื่นๆ/);
+    }
+  });
+
   it('shows the printed 300 total, saves a passive draft, and exposes only a neutral button with no internal codes', () => {
     const text = formatPaypersReply('https://app.example.test', 'co', 'internal-expense', {
       compact: true, dateStatus: 'verified', fields: {
@@ -169,6 +203,27 @@ describe('check-bill LINE reply UX', () => {
     const reply = formatCheckBillDraftCreatedReply(
       { status: 'BLOCKED', replyText: 'x', pendingQuestion: 'ค่าใช้จ่ายนี้ใช้ทำอะไรคะ?' }, []);
     assert.equal(reply.includes('ค่าใช้จ่ายเพิ่ม'), false);
+  });
+
+  it('keeps rounding out of the automatic summary but available in requested item detail', () => {
+    const rounding = { kind: 'ROUNDING' as const, label: 'ปัดเศษ', amount: '-0.01', vatAmount: '0' };
+    const onlyRounding = formatPaypersReply('https://app.test', 'company-1', 'expense-1', { charges: [rounding] });
+    assert.doesNotMatch(onlyRounding, /ปัดเศษ|ค่าใช้จ่ายเพิ่ม|ค่าบริการอื่นๆ/);
+    const printed = formatPaypersReply('https://app.test', 'company-1', 'expense-1', { charges: [
+      { kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '136', vatAmount: '9.52' },
+      { ...rounding, amount: '-0.72' },
+    ] });
+    assert.match(printed, /• ค่าบริการอื่นๆ – 136\.00 บาท/);
+    assert.doesNotMatch(printed, /ปัดเศษ|ค่าใช้จ่ายเพิ่ม/);
+    const requested = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      charges: [rounding], questionText: 'บิลนี้มีรายการอะไรบ้าง',
+    });
+    assert.match(requested, /ปรับยอดปัดเศษ – -0\.01 บาท/);
+    const folded = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
+      fields: { additionalCharges: [{ kind: 'ROUNDING', description: 'ปัดเศษ', amount: '-0.72', evidenceSignal: 'Rounding -0.72' }] },
+      chargeReconciliation: { status: 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW', chargesApplied: 0 },
+    });
+    assert.doesNotMatch(folded, /ปัดเศษ|ค่าบริการอื่นๆ/);
   });
 
   /**
@@ -2899,21 +2954,18 @@ describe('ProcessLineWebhookUseCase', () => {
       assert.match(delivered[0].altText, /ช่วงทดลองให้ AI อ่านรูปได้ 15 ครั้ง/);
     });
 
-    it('appends the trial counter line for FREE_TRIAL_15 and for no other tier', async () => {
-      for (const [tierKey, expected] of [['FREE_TRIAL_15', true], ['STARTER_249', false]] as const) {
+    it('keeps the automatic receipt summary free of quota counters across tiers', async () => {
+      for (const tierKey of ['FREE_TRIAL_15', 'STARTER_249'] as const) {
         const state = makePrisma({ planTerm: { tierKey, monthlySlipLimit: 15 }, receiptsUsed: 3 });
         const { useCase, replies } = captureUseCase(state.prisma);
 
         await sendReceipt(useCase, `counter-${tierKey}`);
 
-        assert.equal(/อ่านครั้งที่ 3 จาก 15 ในช่วงทดลอง/.test(replies.join('\n')), expected, tierKey);
+        assert.doesNotMatch(replies.join('\n'), /อ่านครั้งที่/, tierKey);
       }
     });
 
-    it('counts in the month the ADMISSION landed in, not the month the reply is built in', async () => {
-      // A receipt admitted at 23:59 on the 31st is answered a few seconds into the 1st. Reading a
-      // fresh clock there would hit the NEW month's empty aggregate and tell a shop that just spent
-      // its last read that it was on read 1 of 15.
+    it('does not query presentation quota after an admitted receipt crosses the month boundary', async () => {
       const admissionMonth = '2026-08';
       assert.notEqual(admissionMonth, bangkokMonthKey(), 'the fixture must not be the current month');
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
@@ -2931,12 +2983,11 @@ describe('ProcessLineWebhookUseCase', () => {
 
       await sendReceipt(useCase, 'month-boundary');
 
-      assert.ok(monthsRead.includes(admissionMonth), `read ${JSON.stringify(monthsRead)}, wanted ${admissionMonth}`);
-      assert.ok(!monthsRead.includes(bangkokMonthKey()), 'never the wall-clock month');
-      assert.match(replies.join('\n'), /อ่านครั้งที่ 15 จาก 15 ในช่วงทดลอง/);
+      assert.deepEqual(monthsRead, [], 'successful summary needs no extra quota read');
+      assert.doesNotMatch(replies.join('\n'), /อ่านครั้งที่/);
     });
 
-    it('uses the fallback receipt admission month when routing did not admit the image', async () => {
+    it('still admits fallback OCR once without reading a presentation counter', async () => {
       const admissionMonth = '2026-08';
       assert.notEqual(admissionMonth, bangkokMonthKey(), 'the reply is built after the admitted month');
       const state = makePrisma({ planTerm: FREE_TRIAL, receiptsUsed: 15 });
@@ -2960,8 +3011,8 @@ describe('ProcessLineWebhookUseCase', () => {
       await sendReceipt(useCase, 'fallback-month-boundary');
 
       assert.equal(receiptAdmissions, 1);
-      assert.deepEqual(monthsRead, [admissionMonth], 'snapshot uses the receipt admission, never the reply clock');
-      assert.match(replies.join(' '), /อ่านครั้งที่ 15 จาก 15 ในช่วงทดลอง/);
+      assert.deepEqual(monthsRead, [], 'the receipt summary does not read a quota counter');
+      assert.doesNotMatch(replies.join(' '), /อ่านครั้งที่/);
     });
 
     it('does not announce a successful read counter for an uploaded source whose OCR application failed', async () => {
@@ -3474,7 +3525,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(replies[0]?.type, 'flex');
     assert.match(JSON.stringify(replies[0]), /11,875.00/);
     assert.match(JSON.stringify(replies[0]), /ตรวจสอบและยืนยันในเว็บแอป/);
-    assert.match(JSON.stringify(replies[0]), /CA2025020012/);
+    assert.doesNotMatch(JSON.stringify(replies[0]), /CA2025020012|เลขที่เอกสาร/);
     assert.doesNotMatch(JSON.stringify(replies[0]), /expense\.meals|D-PURPOSE|I01-/);
     assert.match(JSON.stringify(replies[0]), /รอตรวจสอบ/);
   });
@@ -4035,7 +4086,7 @@ describe('LINE grounded receipt item follow-up', () => {
     expense.charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' }];
     const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
     assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
-    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ – 152\.00/, 'the charge sits under its own heading, below the products');
+    assert.match(reply, /ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):\n• ค่าบริการ – 152\.00/, 'the charge sits under its own heading, below the products');
   });
 
   // UAT 2026-09-06: the follow-up read the OCR suggestion, so it answered "ค่าบริการ 13.00" about a
@@ -4129,7 +4180,7 @@ describe('receipt capture card: an unread date says so', () => {
   // three records showed "ค่าบริการ 13.00" in the chat and carried no charge row at all. The card
   // now prints the rows the apply actually persisted, which is the same `expenseLineCharges`
   // derivation the web summary and the S-3 read tool answer from.
-  it('lists the charges that were persisted, with a count and a total', () => {
+  it('summarizes the charges that were persisted in one total', () => {
     const reply = formatPaypersReply('https://app.test', 'company-1', 'expense-1', {
       fields: {
         grandTotalAmount: '1789.04',
@@ -4139,8 +4190,8 @@ describe('receipt capture card: an unread date says so', () => {
       } as never,
       charges: [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' }],
     });
-    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):/);
-    assert.match(reply, /• ค่าบริการ – 152\.00/);
+    assert.match(reply, /• ค่าบริการอื่นๆ – 152\.00 บาท/);
+    assert.doesNotMatch(reply, /รายการ รวม|• ค่าบริการ –/);
   });
 
   const foldedFields = {
@@ -4156,7 +4207,7 @@ describe('receipt capture card: an unread date says so', () => {
       charges: [],
       chargeReconciliation: { status: 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW', chargesApplied: 0 },
     });
-    assert.match(reply, /➕ ค่าบริการ 13\.00 ยังรวมอยู่ในยอดเดียว – ตรวจแยกบนเว็บ/);
+    assert.match(reply, /• ค่าบริการอื่นๆ – 13\.00 บาท \(รวมอยู่ในยอดเดียว รอตรวจสอบในเว็บ\)/);
     assert.equal(reply.includes('รายการ รวม'), false, 'a folded charge was never recorded as a row');
   });
 
@@ -4173,7 +4224,7 @@ describe('receipt capture card: an unread date says so', () => {
       chargeReconciliation: { status: 'SUMMARY_LINE', chargesApplied: 0 },
     });
     assert.equal(reply.includes('ยังรวมอยู่ในยอดเดียว'), false);
-    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 13\.00\):/, 'it lists what the record has');
+    assert.match(reply, /• ค่าบริการอื่นๆ – 13\.00 บาท/, 'it lists what the record has');
   });
 
   it('claims no fold when no apply outcome is known at all', () => {
@@ -4196,7 +4247,7 @@ describe('receipt capture card: an unread date says so', () => {
       charges: [],
       chargeReconciliation: { status: 'FOLDED_INTO_SUMMARY_NEEDS_REVIEW', chargesApplied: 0 },
     });
-    assert.match(reply, /➕ ค่าใช้จ่ายเพิ่ม 13\.00, ค่าใช้จ่ายเพิ่ม 1\.00 ยังรวมอยู่ในยอดเดียว/);
+    assert.match(reply, /• ค่าบริการอื่นๆ – 14\.00 บาท \(รวมอยู่ในยอดเดียว/);
     assert.equal(/native code|\[object Object\]|undefined/.test(reply), false, `no prototype member reached the card: ${reply}`);
   });
 
@@ -5442,6 +5493,58 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.equal(h.counts().ocrReads, 1);
     assert.equal(h.counts().initialized, 1);
     assert.match(JSON.stringify(h.sends[1]), /รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
+    const card = h.sends[1][0];
+    assert.equal(card.type, 'flex');
+    assert.equal(card.contents.header.backgroundColor, '#15803D');
+    assert.match(JSON.stringify(card.contents.body), /ยอดรวม – 120\.00 บาท/);
+    assert.match(JSON.stringify(card.contents.body), /รอคุณตรวจสอบและยืนยัน/);
+    assert.doesNotMatch(JSON.stringify(card.contents.body), /https?:|saved-expense|ข้อมูลที่ยังต้องตอบ/);
+    assert.equal(card.contents.footer.contents[0].action.label, 'เปิดใบเสร็จเดิม');
+    assert.match(card.contents.footer.contents[0].action.uri, /\/companies\/company-1\/expenses\/saved-expense$/);
+    assert.match(card.canonicalText, /\/companies\/company-1\/expenses\/saved-expense/);
+    assert.equal(h.counts().draftStarts, 0);
+  });
+
+  it('an exact-image duplicate shows current saved facts and final status instead of old OCR', async () => {
+    const h = receiptHarness({ replay: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    Object.assign(h.expense(), { status: 'CONFIRMED', vendorNameSnapshot: 'ผู้ขายที่แก้แล้ว', grandTotalAmount: '140.00' });
+    await h.useCase.executeReceiptUpload(h.event('duplicate-current', 'new-image'));
+    const card = h.sends.at(-1)![0];
+    assert.match(JSON.stringify(card.contents.body), /ผู้ขายที่แก้แล้ว/);
+    assert.match(JSON.stringify(card.contents.body), /140\.00/);
+    assert.match(JSON.stringify(card.contents.body), /ยืนยันรายการแล้ว/);
+    assert.doesNotMatch(JSON.stringify(card.contents.body), /รอคุณตรวจสอบ|120\.00/);
+    assert.deepEqual(h.outcomeStore.get('duplicate-current').messagesJson, [card]);
+    assert.equal(h.counts().ocrReads, 1);
+    assert.equal(h.counts().applied, 1);
+  });
+
+  it('replays a failed duplicate card delivery without restarting capture', async () => {
+    const h = receiptHarness({ replay: true, sendFails: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
+    const card = structuredClone(h.outcomeStore.get('duplicate-failed').messagesJson);
+    assert.equal(card[0].type, 'flex');
+    assert.equal(h.eventStore.get('duplicate-failed').status, 'delivery_pending');
+    const before = h.counts();
+    h.allowSend();
+    await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
+    assert.deepEqual(h.sends.at(-1), card);
+    assert.deepEqual(h.counts(), before);
+  });
+
+  it('does not expose a matching receipt from another creator or chat', async () => {
+    for (const outside of ['creator', 'chat'] as const) {
+      const h = receiptHarness();
+      await h.useCase.executeReceiptUpload(h.event());
+      h.expense().vendorNameSnapshot = 'private seller';
+      if (outside === 'creator') h.expense().createdByUserId = 'someone-else';
+      else h.expense().sourceChannelMetadataJson.chatKeyHash = 'different-chat';
+      await h.useCase.executeReceiptUpload(h.event(`new-${outside}`, `new-image-${outside}`));
+      assert.doesNotMatch(JSON.stringify(h.sends.at(-1)), /private seller|รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
+      assert.equal(h.counts().initialized, 2, 'the out-of-scope match is not reused');
+    }
   });
 
   it('retains usable OCR source and same image when applying financial rows fails, without leaking raw Prisma inputs', async () => {
@@ -5490,21 +5593,20 @@ describe('receipt reliability: saved facts, notification and provider-input cont
 });
 
 
-it('receipt card separates accepted VAT, WHT and net without publishing contradictory OCR money', () => {
+it('receipt card shows nonzero accepted taxes without publishing contradictory OCR money or extra breakdowns', () => {
   const reply = formatPaypersReply('https://app.test', 'company', 'expense', {
     fields: { grandTotalAmount: '999', vatAmount: '70.50', whtAmount: '2.71', vendorName: 'ร้านตัวอย่าง' },
     acceptedAmounts: { grandTotalAmount: '70.50', vatAmount: '0', whtAmount: '2.71', netPayableAmount: '67.79', vatMode: 'NO_VAT', discountAmount: '200' },
   });
   assert.match(reply, /ยอดรวม – 70.50/);
-  assert.match(reply, /VAT – ไม่มี VAT/);
-  assert.match(reply, /ภาษีหัก ณ ที่จ่าย – 2.71 บาท/);
-  assert.match(reply, /ยอดจ่ายสุทธิ – 67.79 บาท/);
-  assert.match(reply, /ส่วนลด – 200.00 บาท/);
+  assert.doesNotMatch(reply, /• VAT/);
+  assert.match(reply, /WHT – 2.71 บาท/);
+  assert.doesNotMatch(reply, /ยอดจ่ายสุทธิ|ส่วนลด/);
   assert.doesNotMatch(reply, /999|VAT 70.50|VAT \/ WHT/);
   const both = formatPaypersReply('https://app.test', 'company', 'expense', {
     fields: { vatAmount: '70' }, acceptedAmounts: { grandTotalAmount: '1070', vatAmount: '70', whtAmount: '30', netPayableAmount: '1040', vatMode: 'VAT_EXCLUDED' },
   });
   assert.match(both, /VAT – 70.00 บาท/);
-  assert.match(both, /ภาษีหัก ณ ที่จ่าย – 30.00 บาท/);
-  assert.match(both, /ยอดจ่ายสุทธิ – 1,040.00 บาท/);
+  assert.match(both, /WHT – 30.00 บาท/);
+  assert.doesNotMatch(both, /ยอดจ่ายสุทธิ/);
 });

@@ -334,6 +334,13 @@ describe('expenses.model', () => {
   });
 
   it('calculates manual-entry VAT and totals from the selected tax mode', () => {
+    const fuel = calculateManualExpenseTotals({ quantity: '61.488', unitPrice: '39.19', discountAmount: '0', vatRate: '0.07', vatMode: 'VAT_INCLUDED' });
+    assert.deepEqual(fuel, { subtotal: 2252.07, vat: 157.64, grandTotal: 2409.71 });
+    assert.equal(Math.round(fuel.subtotal * 0.07 * 100) / 100, 157.64,
+      'an EXCLUSIVE Tax Code must receive the net base, not the VAT-inclusive price');
+    assert.deepEqual(calculateManualExpenseTotals({ quantity: '1', unitPrice: '195', discountAmount: '15', vatRate: '0.07', vatMode: 'VAT_INCLUDED' }), {
+      subtotal: 168.22, vat: 11.78, grandTotal: 180,
+    });
     assert.deepEqual(calculateManualExpenseTotals({ quantity: '2', unitPrice: '100', vatMode: 'NO_VAT' }), {
       subtotal: 200, vat: 0, grandTotal: 200,
     });

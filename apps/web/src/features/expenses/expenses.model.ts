@@ -199,8 +199,9 @@ export function calculateManualExpenseTotals(input: {
   unitPrice: string | number;
   vatRate?: string | number | null;
   vatMode: ExpenseVatMode;
+  discountAmount?: string | number;
 }): { subtotal: number; vat: number; grandTotal: number } {
-  const subtotal = Math.max(0, moneyNumber(input.quantity) * moneyNumber(input.unitPrice));
+  const subtotal = Math.max(0, moneyNumber(input.quantity) * moneyNumber(input.unitPrice) - moneyNumber(input.discountAmount));
   const rate = Math.max(0, moneyNumber(input.vatRate));
   if (!rate || input.vatMode === 'NO_VAT') return { subtotal: roundMoney(subtotal), vat: 0, grandTotal: roundMoney(subtotal) };
   if (input.vatMode === 'VAT_INCLUDED') {
