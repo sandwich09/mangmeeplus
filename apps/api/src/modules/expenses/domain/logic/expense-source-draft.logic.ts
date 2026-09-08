@@ -168,6 +168,9 @@ export function applyExpenseSourceDraftInput(state: LineExpenseDraftContinuation
     if (value && field === 'expenseDate') {
       try { if (coerceCivilDate(value) !== value) invalid('Source date must be YYYY-MM-DD.'); } catch { invalid('Source date must be a real YYYY-MM-DD date.'); }
     }
+    if (value && field === 'businessPurpose' && value.includes(' · ')) throw new BadRequestException({
+      code: 'EXPENSE_PURPOSE_TEXT_INVALID', message: 'Source purpose cannot contain the note separator “ · ”.',
+    });
     if (value) next.header[field] = value; else delete next.header[field];
     acceptedFields.push(`D-${suffix}`);
   }

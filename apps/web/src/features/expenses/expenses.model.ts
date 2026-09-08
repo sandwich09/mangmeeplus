@@ -19,6 +19,7 @@ import type {
   RecordExpensePaymentInput,
   ExpenseDocumentDateStatus,
   ExpenseSourceDraft,
+  ExpenseSourceDraftInput,
 } from '@watchdog-bms/contracts';
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
@@ -483,6 +484,7 @@ export type ExpenseDraftReviewValues = {
 
 export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
+  let vatSource = expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson);
   const lines: ExpenseDraftReviewValues['lines'] = detail.lines.map((line) => ({
       id: line.id, description: line.description, chargeKind: line.chargeKind ?? null,
       quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.discountAmount,
@@ -492,33 +494,55 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
       externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
       transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
   }));
-  // Show staged items that have no financial counterpart in the SAME review form. The partial
-  // editor owns unknown inputs; these values still pass the ordinary financial validator on save.
+  // Show staged items that have no financial counterpart in the same review form. Draft saving
+  // keeps incomplete rows staged until their required financial facts are present.
   const assigned = new Set<string>();
   for (const item of source?.items ?? []) {
     const storedMatches = lines.filter((line) => line.id && !assigned.has(line.id)
       && (item.lineId ? line.id === item.lineId : !line.chargeKind && line.description === item.description));
     const matched = storedMatches.length === 1 ? storedMatches[0] : storedMatches.find((line) =>
       Number(item.quantity) === Number(line.quantity) && item.unitPrice !== null && Number(item.unitPrice) === Number(line.unitPrice));
-    if (matched?.id) { matched.sourceItemRef = item.itemRef; assigned.add(matched.id); continue; }
+    const missing = (fields: string[]) => source?.missingFields.some((field) =>
+      field.itemRef === item.itemRef && fields.includes(field.field));
     const unitPrice = item.unitPrice ?? (item.totalAmount != null && Number(item.quantity) > 0
       ? (Number(item.totalAmount) / Number(item.quantity)).toFixed(4) : '');
+    if (matched?.id) {
+      matched.sourceItemRef = item.itemRef;
+      if (item.quantity === null || missing(['quantity'])) matched.quantity = '';
+      else if (item.lineId) matched.quantity = item.quantity;
+      if (!unitPrice || missing(['price', 'unitPrice', 'totalAmount'])) matched.unitPrice = '';
+      else if (item.lineId) matched.unitPrice = unitPrice;
+      assigned.add(matched.id);
+      continue;
+    }
     const chargeIndex = lines.findIndex((line) => line.chargeKind);
-    lines.splice(chargeIndex < 0 ? lines.length : chargeIndex, 0, {
+    const at = chargeIndex < 0 ? lines.length : chargeIndex;
+    lines.splice(at, 0, {
       sourceItemRef: item.itemRef,
       description: item.description ?? '', quantity: item.quantity ?? '', unitPrice,
       discountAmount: '0', vatRate: '', whtRate: null, expenseCategoryId: item.expenseCategoryId,
       accountHintKey: null, taxCategory: null,
     });
+    if (vatSource.lines?.length) {
+      vatSource = {
+        ...vatSource,
+        lines: [
+          ...vatSource.lines.map((line) => ({
+            ...line, lineNumber: line.lineNumber > at ? line.lineNumber + 1 : line.lineNumber,
+          })),
+          { lineNumber: at + 1, inputType: 'NONE' as const },
+        ].sort((left, right) => left.lineNumber - right.lineNumber),
+      };
+    }
   }
   return {
-    vendorNameSnapshot: detail.vendorNameSnapshot ?? '',
+    vendorNameSnapshot: source?.header.vendorName === null ? '' : (detail.vendorNameSnapshot ?? ''),
     vendorTaxIdSnapshot: detail.vendorTaxIdSnapshot ?? '',
     vendorEntityKindSnapshot: detail.vendorEntityKindSnapshot ?? '',
     vendorDocumentNumber: detail.vendorDocumentNumber ?? '',
-    expenseDate: detail.expenseDate.slice(0, 10),
+    expenseDate: source?.header.expenseDate === null ? '' : (source?.header.expenseDate ?? detail.expenseDate.slice(0, 10)),
     vatMode: detail.vatMode,
-    vatSource: expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson),
+    vatSource,
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
     ...(source && { businessPurpose: source.header.businessPurpose ?? '', originalNote: detail.note }),
     lines,
@@ -640,22 +664,99 @@ export function formatTaxId(value: string): string {
     .join('-');
 }
 
-export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues): UpdateExpenseDraftInput {
+type ExpenseDraftReviewPayloadOptions = {
+  sourceDraft?: ExpenseSourceDraft | null;
+  originalLines?: ExpenseDetail['lines'];
+  partial?: boolean;
+};
+
+/** An incomplete source row remains staged until it has enough facts to become money. */
+export function incompleteSourceReviewLine(
+  line: ExpenseDraftReviewValues['lines'][number],
+  vatMode: ExpenseVatMode,
+): boolean {
+  return Boolean(line.sourceItemRef
+    && (!line.description.trim() || !line.quantity.trim() || !line.unitPrice.trim()
+      || (vatModeRequiresRate(vatMode) && !line.vatRate.trim())));
+}
+
+function reviewValuesForPartialSave(
+  values: ExpenseDraftReviewValues,
+  originalLines: ExpenseDetail['lines'] = [],
+): ExpenseDraftReviewValues {
+  const originalById = new Map(originalLines.map((line) => [line.id, line]));
+  const kept = values.lines.map((line, index) => ({ line, index }))
+    .filter(({ line }) => line.id || !incompleteSourceReviewLine(line, values.vatMode));
+  const lineNumbers = new Map(kept.map(({ index }, savedIndex) => [index + 1, savedIndex + 1]));
+  return {
+    ...values,
+    lines: kept.map(({ line }) => {
+      const original = line.id ? originalById.get(line.id) : undefined;
+      if (!line.sourceItemRef || !original) return line;
+      return {
+        ...line,
+        quantity: line.quantity.trim() ? line.quantity : original.quantity,
+        unitPrice: line.unitPrice.trim() ? line.unitPrice : original.unitPrice,
+      };
+    }),
+    ...(values.vatSource?.lines?.length && {
+      vatSource: {
+        ...values.vatSource,
+        lines: values.vatSource.lines.flatMap((line) => {
+          const lineNumber = lineNumbers.get(line.lineNumber);
+          return lineNumber ? [{ ...line, lineNumber }] : [];
+        }),
+      },
+    }),
+  };
+}
+
+function sourceReviewInput(
+  values: ExpenseDraftReviewValues,
+  sourceDraft: ExpenseSourceDraft,
+): ExpenseSourceDraftInput {
+  const sourceValue = (value: string | null | undefined) => value?.trim() || null;
+  return {
+    expenseDate: sourceDraft.header.expenseDate === null && values.expenseDate === ''
+      ? null : sourceValue(values.expenseDate),
+    vendorName: sourceValue(values.vendorNameSnapshot),
+    businessPurpose: sourceValue(values.businessPurpose),
+    items: values.lines.flatMap((line) => {
+      if (!line.sourceItemRef) return [];
+      return [{
+        itemRef: line.sourceItemRef,
+        description: sourceValue(line.description),
+        quantity: sourceValue(line.quantity),
+        unitPrice: sourceValue(line.unitPrice),
+        expenseCategoryId: sourceValue(line.expenseCategoryId),
+      }];
+    }),
+  };
+}
+
+export function buildExpenseDraftReviewPayload(
+  values: ExpenseDraftReviewValues,
+  options: ExpenseDraftReviewPayloadOptions = {},
+): UpdateExpenseDraftInput {
+  const payloadValues = options.partial ? reviewValuesForPartialSave(values, options.originalLines) : values;
+  const includeLines = !options.partial || payloadValues.lines.length > 0 || Boolean(values.removedSourceItemRefs?.length);
+  const includeTaxFacts = !options.partial || payloadValues.lines.length > 0;
   return {
     ...(values.removedSourceItemRefs?.length && { removedSourceItemRefs: values.removedSourceItemRefs }),
     ...(values.businessPurpose !== undefined && { note: [
       ...(values.originalNote ?? '').split(' · ').filter((part) => part && !part.startsWith('วัตถุประสงค์:')),
       ...(values.businessPurpose.trim() ? [`วัตถุประสงค์: ${values.businessPurpose.trim()}`] : []),
     ].join(' · ') }),
-    vendorNameSnapshot: values.vendorNameSnapshot.trim(),
+    ...((!options.sourceDraft || values.vendorNameSnapshot.trim()) && { vendorNameSnapshot: values.vendorNameSnapshot.trim() }),
     vendorTaxIdSnapshot: taxIdDigits(values.vendorTaxIdSnapshot),
     ...(values.vendorEntityKindSnapshot && { vendorEntityKindSnapshot: values.vendorEntityKindSnapshot }),
     vendorDocumentNumber: values.vendorDocumentNumber.trim(),
-    expenseDate: values.expenseDate,
+    ...((!options.sourceDraft || values.expenseDate) && { expenseDate: values.expenseDate }),
     vatMode: values.vatMode,
-    ...(values.vatSource && { vatSource: values.vatSource }),
-    ...(values.whtInput && { whtInput: values.whtInput }),
-    lines: values.lines.map((line, index) => ({
+    ...(includeTaxFacts && payloadValues.vatSource && { vatSource: payloadValues.vatSource }),
+    ...(includeTaxFacts && values.whtInput && { whtInput: values.whtInput }),
+    ...(options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
+    ...(includeLines && { lines: payloadValues.lines.map((line, index) => ({
       ...(line.id && { id: line.id }),
       ...(line.sourceItemRef && { sourceItemRef: line.sourceItemRef }),
       lineNumber: index + 1,
@@ -680,7 +781,7 @@ export function buildExpenseDraftReviewPayload(values: ExpenseDraftReviewValues)
       ...(line.taxCodeDefinitionId && { taxCodeDefinitionId: line.taxCodeDefinitionId }),
       ...(line.externalTaxCode && { externalTaxCode: line.externalTaxCode }),
       ...(line.transactionContext && { transactionContext: line.transactionContext }),
-    })),
+    })) }),
   };
 }
 
@@ -1220,10 +1321,7 @@ export function expenseSourceDraftViewState(
   return {
     sourceDraft,
     incomplete,
-    sourceOnly: Boolean(sourceDraft && (
-      (!canMutateDraft && (sourceDraft.canEdit || detail.status === 'READY_FOR_CONFIRMATION'))
-      || sourceDraft.missingFields.some((missing) => ['expenseDate', 'vendorName', 'items', 'description', 'quantity', 'price', 'unitPrice', 'totalAmount'].includes(missing.field))
-    )),
+    sourceOnly: Boolean(sourceDraft && !canMutateDraft && (sourceDraft.canEdit || detail.status === 'READY_FOR_CONFIRMATION')),
     financialTotalUnknown: incomplete && detail.lines.length === 0,
   };
 }

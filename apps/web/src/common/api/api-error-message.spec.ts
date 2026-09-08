@@ -22,6 +22,10 @@ test('explains source-draft validation, completion, and item races in plain Thai
   assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_SOURCE_DRAFT_INVALID' })), /ตรวจวันที่ จำนวน ราคา/);
   assert.match(apiErrorMessage(apiError('Bad Request', { status: 400, code: 'EXPENSE_SOURCE_DRAFT_INCOMPLETE' })), /ยังส่งตรวจหรือยืนยันไม่ได้/);
   assert.match(apiErrorMessage(apiError('Conflict', { status: 409, code: 'expense_source_line_identity_changed' })), /เปิดรายการใหม่/);
+  const purposeError = apiErrorMessage(apiError('Validation failed.', { statusCode: 400, code: 'EXPENSE_PURPOSE_TEXT_INVALID' }));
+  assert.match(purposeError, /ซื้อไปใช้ทำอะไร/);
+  assert.match(purposeError, /เว้นช่องนี้ไว้ได้/);
+  assert.doesNotMatch(purposeError, /EXPENSE_|โหลด/);
 });
 
 test('distinguishes a wrong current password from an expired session', () => {

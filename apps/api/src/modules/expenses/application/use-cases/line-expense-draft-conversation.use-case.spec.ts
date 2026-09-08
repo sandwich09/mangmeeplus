@@ -97,7 +97,7 @@ describe('LineExpenseDraftConversationUseCase', () => {
     assert.doesNotMatch(result.replyTexts.join('\n'), /D-PURPOSE|I01-CATEGORY|ข้อมูลที่ต้องใช้|ตอบรวม/u);
     const saved = h.updates[0].options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation;
     assert.equal(saved.status, 'PAUSED');
-    assert.ok(saved.unresolvedQuestions.some((question: any) => question.id === 'D-PURPOSE'));
+    assert.ok(!saved.unresolvedQuestions.some((question: any) => question.id === 'D-PURPOSE'));
     assert.equal(saved.items.length, 1);
     assert.equal(saved.items[0].quantity, '2');
     assert.ok(Object.values(saved.provenance).every((item: any) => item.source === 'LINE_MEDIA_OCR'));

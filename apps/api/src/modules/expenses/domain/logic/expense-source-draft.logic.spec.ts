@@ -12,7 +12,7 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     const items = Array.from({ length: 40 }, (_, index) => ({ sourceText: `สินค้า${index + 1}${'ก'.repeat(110)}`, description: `สินค้า${index + 1}${'ก'.repeat(110)}` }));
     const state = buildInitialLineExpenseDraftContinuation({ ...base, messageText: items.map((item) => item.sourceText).join(' '), hints: { items } });
     assert.equal(state.items.length, 40);
-    assert.equal(state.unresolvedQuestions.length, 123);
+    assert.equal(state.unresolvedQuestions.length, 122);
     assert.equal(parseLineExpenseDraftContinuation(JSON.parse(JSON.stringify(state)))?.items.length, 40);
     const text = formatLineExpenseDraftReply({ state, categories });
     const messages = splitLineExpenseDraftReply(text);
@@ -66,6 +66,8 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     for (const input of [null, { taxCode: 'I7' }, { items: [{ itemRef: 'I99' }] }, { items: [{ itemRef: 'I01' }, { itemRef: 'I01' }] },
       { items: [{ itemRef: 'I01', quantity: '0' }] }, { items: [{ itemRef: 'I01', unitPrice: 'NaN' }] }, { items: [{ itemRef: 'I01', unitPrice: 'Infinity' }] },
       { items: [{ itemRef: 'I01', expenseCategoryId: 'foreign' }] }, { expenseDate: '2026-02-30' }]) assert.throws(() => applyExpenseSourceDraftInput(empty(), input as any, categories), JSON.stringify(input));
+    assert.throws(() => applyExpenseSourceDraftInput(empty(), { businessPurpose: 'ประชุม · ลูกค้า' }, categories),
+      (error: any) => error?.getResponse?.()?.code === 'EXPENSE_PURPOSE_TEXT_INVALID');
   });
 
   it('recognizes ordinary Thai save-for-later words without any final mutation', () => {
@@ -73,5 +75,20 @@ describe('shared receipt source facts (T10/T14–T18)', () => {
     const state = empty(); state.items[0]!.quantity = '1'; state.items[0]!.unitPrice = '0'; state.items[0]!.expenseCategoryId = 'cat';
     state.header = { ...state.header, expenseDate: '2026-09-01', vendorName: 'ร้าน ก', businessPurpose: 'ใช้สำนักงาน' };
     assert.equal(collectLineExpenseDraftQuestions(state, categories).length, 0);
+  });
+
+  it('treats purpose as optional and removes a legacy exact-revision D-PURPOSE question on read', () => {
+    const state = empty();
+    state.header = { ...state.header, expenseDate: '2026-09-01', vendorName: 'ร้าน ก' };
+    state.items[0]!.quantity = '1'; state.items[0]!.unitPrice = '10'; state.items[0]!.expenseCategoryId = 'cat';
+    state.status = 'INPUT_ENDED_INCOMPLETE';
+    state.unresolvedQuestions = [{ id: 'D-PURPOSE', scope: 'DOCUMENT', field: 'businessPurpose', prompt: 'legacy' }];
+    const expense = { id: 'ex', companyId: 'co', createdByUserId: 'u', captureSource: 'LINE_UPLOAD', status: 'NEEDS_REVIEW',
+      expenseDate: new Date(base.targetRevision), updatedAt: new Date(base.targetRevision), reviewedAt: null, vendorNameSnapshot: 'ร้าน ก', note: 'LINE receipt upload',
+      sourceChannelMetadataJson: { lineExpenseDraftContinuation: state }, aiVerificationSummaryJson: null, lines: [] } as any;
+    const current = sourceDraftState(expense, categories)!;
+    assert.equal(current.header.businessPurpose, undefined);
+    assert.equal(current.status, 'INPUT_ENDED_COMPLETE');
+    assert.deepEqual(current.unresolvedQuestions, []);
   });
 });

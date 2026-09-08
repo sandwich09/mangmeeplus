@@ -64,98 +64,263 @@ async function fixture(companyId: string, ownerId = 'seed-local-owner', ocrItems
 }
 
 for (const width of [390, 1280]) {
-  test(`receipt partial draft saves and reloads all incomplete items at ${width}px`, async ({ authedPage: page, api, companyId }, info) => {
+  test(`incomplete receipt keeps the ordinary form and saves blank facts at ${width}px`, async ({ authedPage: page, api, companyId }, info) => {
     test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
     const f = await fixture(companyId);
     try {
+      await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'DRAFT' } });
       await page.setViewportSize({ width, height: 844 });
       await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
-      const source = page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true });
-      await expect(source).toBeVisible();
-      await expect(page.getByText(/ยังไม่ทราบวันที่ในบิล$/)).toBeVisible();
-      await expect(page.getByText('ยังสรุปยอดไม่ได้ ข้อมูลบิลยังไม่ครบ', { exact: true })).toBeVisible();
-      await expect(source.getByRole('region', { name: 'รายการที่ 1', exact: true })).toBeVisible();
-      await expect(source.getByRole('region', { name: 'รายการที่ 2', exact: true })).toBeVisible();
-      const categoryMenu = source.getByRole('combobox').first();
-      await categoryMenu.click();
-      const categoryList = page.getByRole('listbox');
-      await expect(categoryList).toBeVisible();
-      await expect(categoryList).toHaveClass(/bg-white/);
-      await expect(categoryList.getByRole('option', { selected: true })).toHaveClass(/text-brand-700/);
-      const menuBounds = await categoryList.boundingBox();
-      expect(menuBounds!.x).toBeGreaterThanOrEqual(0);
-      expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(width);
-      await page.screenshot({ path: info.outputPath(`receipt-partial-dropdown-${width}.png`) });
-      await categoryList.getByRole('option', { selected: true }).click();
-      await source.getByLabel('ชื่อผู้ขาย', { exact: true }).fill('ร้านทดสอบที่กรอกเอง');
-      await source.getByLabel('รายการที่ 1 จำนวน', { exact: true }).fill('5');
-      await expect(source.getByLabel('รายการที่ 1 ราคาต่อหน่วย', { exact: true })).toHaveValue('');
-      await source.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
-      await expect(source.getByRole('status')).toHaveText('เก็บร่างแล้ว ยังไม่ยืนยันรายการ');
-
-      const response = await api.get(`companies/${companyId}/expenses/${f.expense.id}`);
-      expect(response.ok()).toBe(true);
-      const saved = await response.json();
+      await expect(page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true })).toHaveCount(0);
+      await expect(page.getByText(/ข้อมูลที่ยังต้องเติม/)).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true })).toBeVisible();
+      await expect(page.getByText('ขั้นที่ 1:', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveCount(2);
+      const date = page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ });
+      // Unknown date is blank in the existing date field, never the upload-day fallback.
+      await expect(date).toContainText('เลือกวันที่');
+      const quantity = page.getByRole('spinbutton', { name: /^จำนวน/ }).first();
+      const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ }).first();
+      await expect(quantity).toHaveValue('');
+      await expect(price).toHaveValue('');
+      await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('ร้านทดสอบที่กรอกเอง');
+      await quantity.fill('5');
+      const savedResponse = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes(f.expense.id));
+      await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+      const saveResult = await savedResponse;
+      expect(saveResult.ok(), await saveResult.text()).toBe(true);
+      await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว กลับมาแก้ไขต่อได้');
+      const saved = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
       expect(saved.sourceDraft.header.vendorName).toBe('ร้านทดสอบที่กรอกเอง');
+      expect(saved.sourceDraft.header.expenseDate).toBeNull();
       expect(saved.sourceDraft.items).toHaveLength(2);
       expect(saved.sourceDraft.items[0].quantity).toBe('5');
       expect(saved.sourceDraft.items[0].unitPrice).toBeNull();
       expect(saved.sourceDraft.items[1].quantity).toBeNull();
       expect(saved.lines).toHaveLength(0);
       expect(saved.primaryAttachmentId).toBe(f.attachment.id);
-      expect(saved.sourceDraft.missingFields.some((field: { field: string }) => field.field === 'price')).toBe(true);
-      expect(['DRAFT', 'NEEDS_REVIEW']).toContain(saved.status);
-
+      expect(saved.status).toBe('DRAFT');
       await page.reload();
-      await expect(source.getByLabel('ชื่อผู้ขาย', { exact: true })).toHaveValue('ร้านทดสอบที่กรอกเอง');
-      await expect(source.getByLabel('รายการที่ 1 จำนวน', { exact: true })).toHaveValue('5');
-      await expect(source.getByLabel('รายการที่ 1 ราคาต่อหน่วย', { exact: true })).toHaveValue('');
-      await expect(source.getByRole('region', { name: 'รายการที่ 2', exact: true })).toBeVisible();
+      await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue('ร้านทดสอบที่กรอกเอง');
+      await expect(quantity).toHaveValue('5');
+      await expect(price).toHaveValue('');
+      await expect(date).toContainText('เลือกวันที่');
+      await expect(page.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
+      const categoryMenu = page.getByRole('combobox', { name: /^รายการที่ 1 / }).first();
+      await categoryMenu.click();
+      const categoryList = page.getByRole('listbox');
+      await expect(categoryList).toBeVisible();
+      await expect(categoryList.getByRole('option', { selected: true })).toHaveClass(/text-brand-700/);
+      const bounds = await categoryList.boundingBox();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: info.outputPath(`receipt-partial-dropdown-${width}.png`) });
+      await categoryList.getByRole('option', { selected: true }).click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await expectNoClientError(page);
-      await source.scrollIntoViewIfNeeded();
       await page.screenshot({ path: info.outputPath(`partial-draft-${width}.png`), fullPage: true });
+      // Every mandatory fact can be supplied through the visible original form. No hidden
+      // source-field requirement may block Next once these visible controls are complete.
+      const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE' } });
+      await date.click();
+      await page.getByRole('button', { name: 'วันนี้', exact: true }).click();
+      // Purpose is optional: deliberately leave it blank through API persistence and all steps.
+      await expect(page.getByRole('textbox', { name: /^ซื้อไปใช้ทำอะไร/ })).toHaveValue('');
+      for (let item = 0; item < 2; item += 1) {
+        await page.getByRole('spinbutton', { name: /^จำนวน/ }).nth(item).fill(item === 0 ? '5' : '2');
+        await page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ }).nth(item).fill(item === 0 ? '100' : '10');
+        await page.getByRole('combobox', { name: new RegExp(`^รายการที่ ${item + 1} `) }).click();
+        await page.getByRole('option', { name: category.name, exact: true }).click();
+      }
+      const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
+      await expect(next).toBeEnabled();
+      await expect(page.locator('[aria-invalid="true"]')).toHaveCount(0);
+      const completeResponse = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes(f.expense.id));
+      await next.click();
+      const completeResult = await completeResponse;
+      expect(completeResult.ok(), await completeResult.text()).toBe(true);
+      await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
+      const completed = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+      expect(completed.sourceDraft.missingFields).toEqual([]);
+      expect(completed.sourceDraft.header.businessPurpose).toBeNull();
+      expect(completed.lines).toHaveLength(2);
+      expect(Number(completed.grandTotalAmount)).toBe(520);
+      await expect(next).toBeEnabled();
+      await next.click();
+      await expect(page.getByText('ขั้นที่ 3:', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+      const readyResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes(`${f.expense.id}/reviewer-mark-ready`));
+      await page.getByRole('button', { name: 'ส่งตรวจสอบ', exact: true }).click();
+      const readyResult = await readyResponse;
+      expect(readyResult.ok(), await readyResult.text()).toBe(true);
+      const ready = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id } });
+      expect(ready.status).toBe('READY_FOR_CONFIRMATION');
+      expect(ready.note ?? '').not.toContain('วัตถุประสงค์:');
     } finally { await f.cleanup(); }
   });
 }
 
-test('source draft rejects stale browser save without replacing a newer vendor', async ({ authedPage: page, companyId }) => {
+test('incomplete ordinary draft rejects stale save without replacing a newer vendor', async ({ authedPage: page, companyId }) => {
   test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
   const f = await fixture(companyId);
   try {
+    await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'DRAFT' } });
     await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
-    const source = page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true });
-    await expect(source).toBeVisible();
-    await source.getByLabel('ชื่อผู้ขาย', { exact: true }).fill('ข้อมูลจากหน้าเก่า');
+    await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('ข้อมูลจากหน้าเก่า');
     await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { vendorNameSnapshot: 'ข้อมูลล่าสุดจากอีกหน้า' } });
     const failed = page.waitForResponse((response) => response.request().method() === 'PATCH' && response.url().includes(f.expense.id));
-    await source.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
+    await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
     expect((await failed).status()).toBe(409);
-    await expect(source.getByRole('alert')).toBeVisible();
+    await expect(page.locator('.toast-enter[role="alert"]')).toContainText('รายการถูกแก้ไข');
+    await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue('ข้อมูลจากหน้าเก่า');
     const record = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id } });
     expect(record.vendorNameSnapshot).toBe('ข้อมูลล่าสุดจากอีกหน้า');
   } finally { await f.cleanup(); }
 });
 
-test('reviewer can reopen a legacy READY partial without inventing financial rows', async ({ authedPage: page, companyId }) => {
+test('reviewer reopens legacy READY in the ordinary form without inventing financial rows', async ({ authedPage: page, companyId }) => {
   test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
   const f = await fixture(companyId);
   try {
-    // Represents a record moved to READY before the source-completeness guard existed.
     await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'READY_FOR_CONFIRMATION' } });
     await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
-    const source = page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true });
-    await expect(source.getByLabel('ชื่อผู้ขาย', { exact: true })).toBeDisabled();
-    await page.getByRole('button', { name: 'กลับไปเติมข้อมูลบิล', exact: true }).click();
-    await expect(source.getByLabel('ชื่อผู้ขาย', { exact: true })).toBeEnabled();
-    await source.getByLabel('ชื่อผู้ขาย', { exact: true }).fill('เติมต่อโดยไม่เดายอด');
-    await source.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
-    await expect(source.getByRole('status')).toHaveText('เก็บร่างแล้ว ยังไม่ยืนยันรายการ');
+    await expect(page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true })).toHaveCount(0);
+    const reopenButton = page.getByRole('button', { name: 'กลับไปเติมข้อมูลบิล', exact: true });
+    await reopenButton.click();
+    await expect(reopenButton).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeEnabled();
+    await page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('เติมต่อโดยไม่เดายอด');
+    await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
+    await expect(page.locator('.toast-enter[role="status"]')).toContainText('เก็บร่างแล้ว');
     const saved = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id }, include: { lines: true } });
     expect(saved.status).toBe('NEEDS_REVIEW');
     expect(saved.lines).toHaveLength(0);
     expect(saved.vendorNameSnapshot).toBe('เติมต่อโดยไม่เดายอด');
     expect(saved.primaryAttachmentId).toBe(f.attachment.id);
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toHaveValue('เติมต่อโดยไม่เดายอด');
+    await expect(page.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
+  } finally { await f.cleanup(); }
+});
+
+// Reproduces the Drtb projection gap: source gross 55 differs from the stored tax-exclusive
+// financial price 51.40. This is a synthetic reconciliation case, not a claim about its live VAT mode.
+for (const width of [390, 1280]) {
+  test(`Drtb-shaped coffee uses the PANDA form and retains money and category at ${width}px`, async ({ authedPage: page, api, companyId }, info) => {
+    test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
+    const f = await fixture(companyId, 'seed-local-owner', [{ description: 'AMERICANO - ICED', quantity: '1', unitPrice: '55' }] as any);
+    try {
+      const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE', accountHintKey: 'expense.meals' } });
+      const setup = await api.patch(`companies/${companyId}/expenses/${f.expense.id}/review-fields`, { data: {
+        expectedUpdatedAt: f.expense.updatedAt.toISOString(), vendorNameSnapshot: 'ร้านกาแฟทดสอบ Drtb', vendorDocumentNumber: '67',
+        vatMode: 'VAT_EXCLUDED', vatSource: { inputType: 'AMOUNT', vatAmount: '3.60' },
+        lines: [{ lineNumber: 1, description: 'AMERICANO - ICED', quantity: '1', unitPrice: '51.40', discountAmount: '0', vatRate: '0.07', expenseCategoryId: category.id }],
+      } });
+      expect(setup.ok(), await setup.text()).toBe(true);
+      await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: {
+        status: 'DRAFT', reviewedAt: null, sourceChannelMetadataJson: { channel: 'LINE', chatKeyHash: 'synthetic-drtb' },
+        aiVerificationSummaryJson: { status: 'partial', missingFields: ['expenseDate'], recognizedFields: {
+          grandTotalAmount: '55', vatAmount: '3.60', lines: [{ description: 'AMERICANO - ICED', quantity: '1', unitPrice: '55' }],
+        } },
+      } });
+      const before = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+      expect(before.sourceDraft.header.expenseDate).toBeNull();
+      expect(before.sourceDraft.items[0].expenseCategoryId).toBeNull();
+      expect(before.sourceDraft.missingFields.some((field: { field: string }) => field.field === 'review')).toBe(true);
+      expect(Number(before.grandTotalAmount)).toBe(55);
+      expect(Number(before.vatAmount)).toBe(3.6);
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
+      await expect(page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true })).toBeVisible();
+      await expect(page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true })).toHaveCount(0);
+      await expect(page.getByText(/ข้อมูลที่ยังต้องเติม/)).toHaveCount(0);
+      await expect(page.getByText('ขั้นที่ 1:', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveCount(1);
+      await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveValue('AMERICANO - ICED');
+      await expect(page.getByRole('spinbutton', { name: /^จำนวน/ })).toHaveValue('1');
+      expect(Number(await page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ }).inputValue())).toBe(51.4);
+      const categoryMenu = page.getByRole('combobox', { name: /^รายการที่ 1 / }).first();
+      await expect(categoryMenu).toContainText(category.name);
+      const date = page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ });
+      await expect(date).toContainText('เลือกวันที่');
+      await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบเก็บค่าเครื่องดื่มไว้ตรวจต่อ');
+      // A financial header edit and an unknown source fact must persist together in one PATCH.
+      await page.getByRole('textbox', { name: /^เลขที่เอกสาร/ }).fill('67-ทดสอบ');
+      const saves: string[] = [];
+      page.on('request', (request) => { if (request.method() === 'PATCH' && request.url().includes(f.expense.id)) saves.push(request.url()); });
+      await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+      await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+      expect(saves).toHaveLength(1);
+      const saved = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+      expect(saved.sourceDraft.header.expenseDate).toBeNull();
+      expect(saved.vendorDocumentNumber).toBe('67-ทดสอบ');
+      expect(saved.sourceDraft.header.businessPurpose).toBe('ทดสอบเก็บค่าเครื่องดื่มไว้ตรวจต่อ');
+      expect(saved.lines.map((line: { id: string }) => line.id)).toEqual(before.lines.map((line: { id: string }) => line.id));
+      expect(saved.lines[0].expenseCategoryId).toBe(category.id);
+      expect(Number(saved.grandTotalAmount)).toBe(55);
+      expect(Number(saved.vatAmount)).toBe(3.6);
+      expect(saved.primaryAttachmentId).toBe(f.attachment.id);
+      await page.reload();
+      await expect(date).toContainText('เลือกวันที่');
+      await expect(categoryMenu).toContainText(category.name);
+      await expect(page.getByRole('button', { name: 'ถัดไป', exact: true })).toBeDisabled();
+      await page.getByRole('heading', { name: 'ข้อมูลผู้ขายและรายการ', exact: true }).evaluate((element) => window.scrollBy(0, element.getBoundingClientRect().top - 190));
+      await page.screenshot({ path: info.outputPath(`drtb-stable-form-${width}.png`) });
+      await categoryMenu.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: info.outputPath(`drtb-stable-line-${width}.png`) });
+      // Once the synthetic receipt date is supplied, the same form progresses into the original tax step.
+      await date.click();
+      await page.getByRole('button', { name: 'วันนี้', exact: true }).click();
+      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+      await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true })).toHaveCount(0);
+      await expectNoClientError(page);
+    } finally { await f.cleanup(); }
+  });
+}
+
+test('reviewer can supply an unknown quantity equal to the old financial placeholder', async ({ authedPage: page, api, companyId }) => {
+  test.skip(!databaseUrl, 'requires the explicitly selected isolated receipt continuity DB');
+  const f = await fixture(companyId, 'seed-local-owner', [{ description: 'AMERICANO - ICED', amount: '55' }] as any);
+  try {
+    const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE', accountHintKey: 'expense.meals' } });
+    const setup = await api.patch(`companies/${companyId}/expenses/${f.expense.id}/review-fields`, { data: {
+      expectedUpdatedAt: f.expense.updatedAt.toISOString(), vendorNameSnapshot: 'ร้านกาแฟทดสอบ', vatMode: 'VAT_INCLUDED',
+      lines: [{ lineNumber: 1, description: 'AMERICANO - ICED', quantity: '1', unitPrice: '55', discountAmount: '0', vatRate: '0.07', expenseCategoryId: category.id }],
+    } });
+    expect(setup.ok(), await setup.text()).toBe(true);
+    await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: {
+      status: 'DRAFT', reviewedAt: null, sourceChannelMetadataJson: { channel: 'LINE', chatKeyHash: 'synthetic-unknown-quantity' },
+      aiVerificationSummaryJson: { status: 'partial', missingFields: ['expenseDate', 'quantity'], recognizedFields: {
+        grandTotalAmount: '55', lines: [{ description: 'AMERICANO - ICED', amount: '55' }],
+      } },
+    } });
+    await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
+    const quantity = page.getByRole('spinbutton', { name: /^จำนวน/ });
+    const price = page.getByRole('spinbutton', { name: /^ราคาต่อหน่วย/ });
+    await expect(quantity).toHaveValue('');
+    await expect(price).toHaveValue('');
+    await page.getByLabel('ซื้อไปใช้ทำอะไร', { exact: true }).fill('ทดสอบยืนยันจำนวนที่อ่านไม่ได้');
+    await page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+    await expect(page.locator('.toast-enter[role="status"]')).toContainText('บันทึกแบบร่างแล้ว');
+    await page.reload();
+    await expect(quantity).toHaveValue('');
+    await expect(price).toHaveValue('');
+    const partial = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+    expect(Number(partial.grandTotalAmount)).toBe(55);
+    expect(partial.sourceDraft.items[0].quantity).toBeNull();
+    await quantity.fill('1');
+    await price.fill('55');
+    await page.getByRole('combobox', { name: /^วันที่ค่าใช้จ่าย/ }).click();
+    await page.getByRole('button', { name: 'วันนี้', exact: true }).click();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+    await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
+    const reviewed = await (await api.get(`companies/${companyId}/expenses/${f.expense.id}`)).json();
+    expect(reviewed.sourceDraft.items[0].quantity).toBe('1');
+    expect(reviewed.sourceDraft.missingFields).toEqual([]);
+    expect(Number(reviewed.grandTotalAmount)).toBe(55);
+    expect(reviewed.lines).toHaveLength(1);
   } finally { await f.cleanup(); }
 });
 
@@ -198,7 +363,7 @@ test(`originating upload-only user can ${emptyOcr ? 'add an unreadable item and 
       await source.getByRole('button', { name: 'เพิ่มรายการ', exact: true }).click();
       await source.getByLabel('รายการที่ 1 รายละเอียด', { exact: true }).fill('รายการที่กรอกเอง');
     }
-    await source.getByLabel('ชื่อผู้ขาย', { exact: true }).fill('กรอกได้ด้วยสิทธิ์ส่งบิล');
+    await source.getByRole('textbox', { name: /^ชื่อผู้ขาย/ }).fill('กรอกได้ด้วยสิทธิ์ส่งบิล');
     await source.getByRole('button', { name: 'เก็บร่างไว้ก่อน', exact: true }).click();
     await expect(source.getByRole('status')).toHaveText('เก็บร่างแล้ว ยังไม่ยืนยันรายการ');
     const record = await f.client.expenseRecord.findUniqueOrThrow({ where: { id: f.expense.id } });
@@ -231,7 +396,7 @@ for (const width of [390, 1280]) {
       { description: 'COKE', quantity: '1', unitPrice: '25' },
     ] as any);
     try {
-      const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE' } });
+      const category = await f.client.expenseCategory.findFirstOrThrow({ where: { companyId, status: 'ACTIVE', accountHintKey: 'expense.meals' } });
       const setup = await api.patch(`companies/${companyId}/expenses/${f.expense.id}/review-fields`, { data: {
         expectedUpdatedAt: f.expense.updatedAt.toISOString(), expenseDate: '2026-09-07',
         vendorNameSnapshot: 'PANDA MALA (บริษัท รวยเจริญดี จำกัด)', vendorDocumentNumber: '00912/1',
@@ -244,14 +409,14 @@ for (const width of [390, 1280]) {
       await page.setViewportSize({ width, height: 844 });
       await page.goto(`/companies/${companyId}/expenses/${f.expense.id}`);
       const saveDraft = page.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true });
-      await expect(page.getByLabel('ชื่อผู้ขาย', { exact: true })).toBeVisible();
+      await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeVisible();
       await expect(saveDraft).toHaveCount(0); // NEEDS_REVIEW still saves via ถัดไป.
       // This synthetic row now exercises the exact DRAFT-only action without a production mutation.
       await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'DRAFT' } });
       await page.reload();
       await expect(saveDraft).toBeVisible();
       await expect(page.getByRole('region', { name: 'ข้อมูลบิลที่ยังไม่ครบ', exact: true })).toHaveCount(0);
-      const vendor = page.getByLabel('ชื่อผู้ขาย', { exact: true });
+      const vendor = page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ });
       await expect(vendor).toHaveCount(1);
       await expect(vendor).toHaveValue('PANDA MALA (บริษัท รวยเจริญดี จำกัด)');
       await expect(page.getByLabel('รายละเอียด', { exact: true })).toHaveCount(4);
@@ -316,6 +481,19 @@ for (const width of [390, 1280]) {
       expect(menuBounds!.x + menuBounds!.width).toBeLessThanOrEqual(width);
       await page.screenshot({ path: info.outputPath(`receipt-review-dropdown-${width}.png`) });
       await categoryList.getByRole('option', { name: category.name, exact: true }).click();
+      if (width === 390) {
+        const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
+        const payeeKind = page.getByRole('combobox', { name: 'ประเภทผู้รับเงิน (หัก ณ ที่จ่าย)', exact: true });
+        const withholding = page.getByRole('spinbutton', { name: /^อัตราหัก ณ ที่จ่าย/ });
+        await expect(payeeKind).toHaveCount(0);
+        await withholding.fill('3');
+        await expect(payeeKind).toBeVisible();
+        await expect(payeeKind).toHaveAttribute('aria-invalid', 'true');
+        await expect(next).toBeDisabled();
+        await withholding.fill('0');
+        await expect(payeeKind).toHaveCount(0);
+        await expect(next).toBeEnabled();
+      }
       await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
       await expect(page.getByText('ขั้นที่ 2:', { exact: true })).toBeVisible();
       await expect(saveDraft).toHaveCount(0);
@@ -323,7 +501,7 @@ for (const width of [390, 1280]) {
       await expect(saveDraft).toBeVisible();
       await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'READY_FOR_CONFIRMATION' } });
       await page.reload();
-      await expect(page.getByLabel('ชื่อผู้ขาย', { exact: true })).toBeVisible();
+      await expect(page.getByRole('textbox', { name: /^ชื่อผู้ขาย/ })).toBeVisible();
       await expect(saveDraft).toHaveCount(0);
       if (width === 390) {
         await f.client.expenseRecord.update({ where: { id: f.expense.id }, data: { status: 'DRAFT' } });

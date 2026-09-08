@@ -11,3 +11,19 @@ Completed locally: all five steps. The ordinary review form now includes purpose
 6. Owner approved the preview: rename the explicit financial-review action to “บันทึกแบบร่าง” and gate it to step 1 / DRAFT; verify save/reload, other-status omission and navigation. Refresh screenshots, merge reviewed CI-passing code into develop/main, then deploy UAT through the canonical protocol. Record candidate/controller, UAT/auto READY IDs, signed evidence and customer OPEN acceptance. Do not deploy Production.
 
 7. Owner follow-ups: audit dropdown theme (including the partial editor), replace the remaining native category select with the shared themed control, retain disabled authority and add accessible item labels. Add explicit draft-save success toast and truthful refresh-failure warning. Verify browser popup bounds/theme, API validation/permission/conflict/server/network errors and saved-but-readback-failed behavior.
+
+## Corrective plan after live Drtb comparison (2026-09-08)
+
+The completeness-based editor switch in step 2 is superseded by the owner's stable PANDA MALA form requirement. The added missing-data overview in step 3 is removed.
+
+1. Restore permission-based form selection. Reuse the existing financial review component for incomplete owner/reviewer receipts, preserving blank unknown source facts and accepted financial values/category/tax.
+2. Reuse source-draft input with the financial review save under reviewer-only authority where needed. Persist incomplete facts and financial changes in one transaction with revision checks; keep upload-only scope and strict completion/finalization gates.
+3. Remove the overview/list; retain field labels/inline warnings, themed controls and existing three-step layout. Keep draft-save step/status rules and truthful toast/error behavior.
+4. Verify Drtb-shaped unknown date + 55/VAT3.60 alongside PANDA MALA; incomplete quantities/prices, save/reload, conflict/failure, original attachment and row identities. Update actual component screenshots and record live test limitations.
+5. Let prior auto READY 34174423705 finish and prove cleanup. Merge the correction with passing exact-head CI into develop/main, fresh read-only preflight, then one UAT all-target dispatch and signed/runtime/customer OPEN acceptance. Prepare full UAT/Production config comparison and readiness evidence. Wait for owner approval before Production deployment; keep current Production live and mail unchanged.
+
+6. Owner asks to verify Next and hidden mandatory fields: check complete visible inputs through all three steps, preserve the WHT/payee conditional visibility predicate, and bind purpose/category completeness to their existing visible fields and error-focus action. Verify no-financial-row partial tax omission without discarding explicit tax edits.
+
+7. Follow-up supersedes the purpose mandate in step 6: make businessPurpose optional end-to-end while preserving financial category rules. Remove the generated purpose requirement, normalize legacy continuation projections and verify API/DB/READY behavior with blank purpose. Keep voluntary purpose entry/storage; test complete visible financial fields advancing without entering purpose.
+
+Corrective implementation/verification complete: stable three-step form, optional purpose end-to-end, source/finance atomic save, Next mandate/visibility, stale-write/error handling and legacy reopen/read normalization. Evidence: 11 browser, 13 real PostgreSQL, 1328 broader API/LINE (two environment-only skips), 1678 web, scoped checks and API/web typechecks passed. Current release preparation and exact run IDs are tracked in receipt-stable-review-release-2026-09-08 memory.
