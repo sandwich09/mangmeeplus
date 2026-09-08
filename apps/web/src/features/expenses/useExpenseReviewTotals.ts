@@ -1,0 +1,40 @@
+import { useEffect, useState } from 'react';
+import type { ExpenseDraftTotalsPreview, ExpenseVatMode } from '@watchdog-bms/contracts';
+import { previewExpenseDraftTotals } from './expenses.api';
+import { buildExpenseDraftReviewPayload, allowsDomesticInputTaxCode, clearExpenseTaxSelections, type ExpenseDetail, type ExpenseDraftReviewValues } from './expenses.model';
+import { err } from './ExpensesUi';
+
+export type ExpenseReviewTotalsState = {
+  revision: string;
+  status: 'loading' | 'ready' | 'error';
+  vatMode: ExpenseVatMode;
+  totals?: ExpenseDraftTotalsPreview;
+  message?: string;
+};
+
+/** Preview uses ERP's save calculator. Cancelled/older responses cannot replace newer edits. */
+export function useExpenseReviewTotals(companyId: string, detail: ExpenseDetail, values: ExpenseDraftReviewValues,
+  enabled: boolean, blockingMessage: string | null, retry: number,
+  onChange?: (state: ExpenseReviewTotalsState | null) => void) {
+  const [state, setState] = useState<ExpenseReviewTotalsState | null>(null);
+  const disallowsTaxCode = !allowsDomesticInputTaxCode(detail.sourceDocumentType, detail.taxEvidenceStatus);
+  const payload = JSON.stringify({ expectedUpdatedAt: detail.updatedAt,
+    ...buildExpenseDraftReviewPayload(disallowsTaxCode ? { ...values, lines: clearExpenseTaxSelections(values.lines) } : values,
+      { sourceDraft: detail.sourceDraft, originalLines: detail.lines }),
+    ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' }) });
+  useEffect(() => {
+    if (!enabled) { setState(null); onChange?.(null); return; }
+    const controller = new AbortController();
+    let active = true;
+    const publish = (next: ExpenseReviewTotalsState) => { if (active) { setState(next); onChange?.(next); } };
+    const common = { revision: `${detail.id}:${detail.updatedAt}`, vatMode: values.vatMode };
+    publish({ ...common, status: blockingMessage ? 'error' : 'loading', ...(blockingMessage && { message: blockingMessage }) });
+    const timer = blockingMessage ? undefined : window.setTimeout(() => {
+      void previewExpenseDraftTotals(companyId, detail.id, JSON.parse(payload), controller.signal)
+        .then((totals) => publish({ ...common, status: 'ready', totals }))
+        .catch((error) => publish({ ...common, status: 'error', message: err(error) }));
+    }, 300);
+    return () => { active = false; window.clearTimeout(timer); controller.abort(); };
+  }, [companyId, detail.id, detail.updatedAt, values.vatMode, enabled, blockingMessage, payload, retry, onChange]);
+  return state;
+}

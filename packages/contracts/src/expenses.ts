@@ -515,6 +515,27 @@ export function expenseChargeKindAllowsNegative(kind: ExpenseLineChargeKind): bo
   return kind === 'ROUNDING';
 }
 
+/** Existing OCR provenance, never a client-editable description or an amount heuristic. */
+export const EXPENSE_CALCULATED_ROUNDING_SOURCE = 'ระบบคำนวณส่วนต่างจากยอดสุทธิที่พิมพ์บนเอกสาร';
+export function isCalculatedExpenseRounding(line: { chargeKind?: ExpenseLineChargeKind | null; sourceLineText?: string | null }): boolean {
+  return line.chargeKind === 'ROUNDING' && line.sourceLineText === EXPENSE_CALCULATED_ROUNDING_SOURCE;
+}
+
+export type ExpenseDraftTotalsPreview = {
+  subtotalAmount: string;
+  discountAmount: string;
+  taxableAmount: string;
+  vatAmount: string;
+  whtAmount: string;
+  grandTotalAmount: string;
+  netPayableAmount: string;
+  outstandingAmount: string;
+  chargesTotalAmount: string;
+  calculatedAdjustmentAmount: string;
+  printedRoundingAmount: string;
+  vatCaptureSnapshotJson: ExpenseVatCaptureSnapshotV1 | null;
+};
+
 export type ExpenseLineSummary = {
   id: string;
   lineNumber: number;

@@ -15,6 +15,7 @@ import {
   vatSourceFromSnapshot,
 } from '../../domain/logic/expense-vat-reconciliation.logic';
 import { validateExpenseDraftAmounts, validateExpenseLineVatTreatments } from '../../domain/logic/expense-draft-amount-validation.logic';
+import { normalizeExpensePrecisionAdjustment } from '../../domain/logic/expense-precision-adjustment.logic';
 import { expenseTotalsIdentityError } from '../../domain/logic/expense-totals.logic';
 import { applyExpenseWhtInput, expenseWhtLineRate } from '../../domain/logic/expense-wht-input.logic';
 import { toSourceDocumentType } from '../../domain/logic/expense-document.logic';
@@ -37,7 +38,7 @@ import {
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseLineChargeKind, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
-import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
+import { isCalculatedExpenseRounding, type ExpenseDraftTotalsPreview, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { RECEIPT_REVIEW_REASONS } from '../services/receipt-ocr-apply.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -238,23 +239,7 @@ export class ListExpensesUseCase {
   }
 }
 
-@Injectable()
-export class UpdateExpenseDraftUseCase {
-  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService) {}
-
-  /**
-   * `options.db` lets a caller that already owns a transaction (LINE correction apply) run this
-   *  whole update inside it — the repository writes then join that transaction instead of opening
-   *  their own, which would deadlock on this method's own advisory lock and could not roll back
-   *  together. `options.suppressGenericAudit` is for callers that write their own, richer audit
-   *  row in the same transaction: the generic `expense.review.update` here is a post-commit
-   *  `void` log, so leaving it on would emit a success row for a mutation that later rolled back.
-   */
-  async execute(
-    ctx: RequestContext,
-    expenseId: string,
-    input: UpdateExpenseDraftInput,
-    options: {
+type UpdateExpenseDraftOptions = {
       db?: any;
       suppressGenericAudit?: boolean;
       requireExpectedUpdatedAt?: boolean;
@@ -271,8 +256,31 @@ export class UpdateExpenseDraftUseCase {
       /** Validated web source payload; never exposed as an HTTP option. */
       webSourceDraft?: boolean;
       sourceExpense?: ExpenseRecordWithRelations;
-    } = {},
-  ): Promise<ExpenseRecord> {
+  previewOnly?: boolean;
+};
+
+@Injectable()
+export class UpdateExpenseDraftUseCase {
+  constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService) {}
+
+  /**
+   * `options.db` lets a caller that already owns a transaction (LINE correction apply) run this
+   *  whole update inside it — the repository writes then join that transaction instead of opening
+   *  their own, which would deadlock on this method's own advisory lock and could not roll back
+   *  together. `options.suppressGenericAudit` is for callers that write their own, richer audit
+   *  row in the same transaction: the generic `expense.review.update` here is a post-commit
+   *  `void` log, so leaving it on would emit a success row for a mutation that later rolled back.
+   */
+  async execute(ctx: RequestContext, expenseId: string, input: UpdateExpenseDraftInput,
+    options: UpdateExpenseDraftOptions & { previewOnly: true }): Promise<ExpenseDraftTotalsPreview>;
+  async execute(ctx: RequestContext, expenseId: string, input: UpdateExpenseDraftInput,
+    options?: UpdateExpenseDraftOptions): Promise<ExpenseRecord>;
+  async execute(
+    ctx: RequestContext,
+    expenseId: string,
+    input: UpdateExpenseDraftInput,
+    options: UpdateExpenseDraftOptions = {},
+  ): Promise<ExpenseRecord | ExpenseDraftTotalsPreview> {
     // Capture explicit intent before source/financial synchronization can supply stored values.
     const dateReviewInput = input.sourceDraft?.expenseDate !== undefined ? input.sourceDraft.expenseDate : input.expenseDate || undefined;
     const r = await this.repo.findById(ctx.companyId, expenseId);
@@ -437,7 +445,7 @@ export class UpdateExpenseDraftUseCase {
     let lines = input.lines;
     const identityMode = Boolean(lines && (lines.some((line) => line.id !== undefined)
       || (!canCollectOwnLineDraft && canReview && hasSourceDraft)));
-    const identityExpense = identityMode ? reviewSourceExpense ?? await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {}) : undefined;
+    let identityExpense = identityMode ? reviewSourceExpense ?? await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {}) : undefined;
     if (identityMode && !identityExpense) throw new NotFoundException();
     if (identityMode && lines) {
       const used = new Set<string>();
@@ -506,17 +514,28 @@ export class UpdateExpenseDraftUseCase {
           storedKindsByDescription.has(stored.description) ? 'ambiguous' : stored.chargeKind,
         );
       }
-      const withChargeKinds = lines.map((line) => {
+      let withChargeKinds = lines.map((line) => {
         if (line.chargeKind !== undefined) return { ...line, chargeKind: line.chargeKind };
         const stored = storedKindsByDescription.get(line.description);
         return { ...line, chargeKind: stored === undefined || stored === 'ambiguous' ? null : stored };
       });
       // Spec §19c: VAT mode describes the document arithmetic; claimability is the separate axis below.
       const vatMode = input.vatMode ?? r.vatMode;
+      // Validate client shape before removing/remapping a system-owned row.
+      const rawVatSourceError = validateExpenseVatSourceInput(input.vatSource, vatMode, withChargeKinds.map((line) => line.lineNumber));
+      if (rawVatSourceError) throw new BadRequestException(rawVatSourceError);
+      let source = input.vatSource ?? vatSourceFromSnapshot(r.vatCaptureSnapshotJson) ?? { inputType: 'NONE' as const };
+      // Read provenance from this tenant's stored rows. HTTP cannot claim an adjustment is automatic.
+      if ([...storedLines.values()].some((line) => line.chargeKind === 'ROUNDING')) {
+        identityExpense ??= await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {});
+        if (!identityExpense) throw new NotFoundException();
+        const normalized = normalizeExpensePrecisionAdjustment(withChargeKinds, source, identityExpense, vatMode);
+        withChargeKinds = normalized.lines.map((line) => ({ ...line, chargeKind: line.chargeKind ?? null }));
+        source = normalized.source;
+      }
       const amountError = validateExpenseDraftAmounts({ vatMode, lines: withChargeKinds });
       if (amountError) throw new BadRequestException(amountError);
-      const source = input.vatSource ?? vatSourceFromSnapshot(r.vatCaptureSnapshotJson);
-      const vatSourceError = validateExpenseVatSourceInput(source, vatMode, lines.map((line) => line.lineNumber));
+      const vatSourceError = validateExpenseVatSourceInput(source, vatMode, withChargeKinds.map((line) => line.lineNumber));
       if (vatSourceError) throw new BadRequestException(vatSourceError);
       const vat = reconcileExpenseVat({
         vatMode,
@@ -579,6 +598,22 @@ export class UpdateExpenseDraftUseCase {
     } else if (input.vatSource !== undefined || input.whtInput !== undefined
       || (whtInput && input.vatMode !== undefined && input.vatMode !== r.vatMode)) {
       throw new BadRequestException('lines are required when updating vatSource or whtInput.');
+    }
+
+    // Read-only preview shares all calculation/permission guards above and exits BEFORE any write,
+    // review marking, source continuation update or audit. Save still repeats calculation and CAS.
+    if (options.previewOnly) {
+      if (!expectedUpdatedAt || expectedUpdatedAt.getTime() !== r.updatedAt.getTime()) {
+        throw new ConflictException({ code: 'EXPENSE_UPDATE_VERSION_CONFLICT', message: 'Expense changed; reload before reviewing totals.' });
+      }
+      if (!totals || !resolvedLines) throw new BadRequestException('lines are required to preview receipt totals.');
+      const sum = (predicate: (line: ExpenseLineInput) => boolean) => resolvedLines!
+        .filter(predicate).reduce((value, line) => value.plus(line.lineSubtotalAmount), new Decimal(0)).toFixed(4);
+      return { ...totals, outstandingAmount: Decimal.max(new Decimal(totals.netPayableAmount).minus(r.paidAmount), 0).toFixed(4),
+        chargesTotalAmount: sum((line) => !!line.chargeKind && line.chargeKind !== 'ROUNDING'),
+        calculatedAdjustmentAmount: sum(isCalculatedExpenseRounding),
+        printedRoundingAmount: sum((line) => line.chargeKind === 'ROUNDING' && !isCalculatedExpenseRounding(line)),
+        vatCaptureSnapshotJson: vatCaptureSnapshotJson ?? null };
     }
 
     const reviewedAt = canReview && !options.lineDraftCollection ? new Date() : undefined;

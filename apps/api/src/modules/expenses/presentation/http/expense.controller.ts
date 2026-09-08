@@ -409,6 +409,12 @@ export class ExpenseController {
     return detail;
   }
 
+  @Post(':expenseId/totals-preview')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  previewDraftTotals(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true, previewOnly: true });
+  }
+
   @Patch(':expenseId/review-fields')
   @RequirePermissions('expense.review')
   async updateReviewFields(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }) {

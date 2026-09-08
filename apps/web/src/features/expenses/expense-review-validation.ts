@@ -1,5 +1,5 @@
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
-import { EXPENSE_DECIMAL_18_4_PATTERN, validateExpenseWhtInput } from '@watchdog-bms/contracts';
+import { EXPENSE_DECIMAL_18_4_PATTERN, isCalculatedExpenseRounding, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { EXPENSE_LINE_CHARGE_KINDS, calculateManualExpenseTotals, expenseChargeKindAllowsNegative, expenseReviewWithholdsTax, expenseVatSourceValidationMessage, vatModeRequiresRate, vatRateFromPrintedAmount, type ExpenseDraftReviewValues } from './expenses.model';
 
 export type ExpenseFieldIssue = {
@@ -81,6 +81,7 @@ function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; c
   let charges = 0;
   let grandTotal = 0;
   for (const line of values.lines) {
+    if (isCalculatedExpenseRounding(line)) continue; // ERP recalculates this non-editable row.
     const quantity = numberValue(line.quantity);
     const unitPrice = numberValue(line.unitPrice);
     const discount = numberValue(line.discountAmount);
@@ -93,13 +94,14 @@ function computedTotals(values: ExpenseDraftReviewValues): { subtotal: number; c
     const afterDiscount = quantity * unitPrice - discount;
     const totals = calculateManualExpenseTotals({
       quantity: '1',
-      unitPrice: afterDiscount,
+      unitPrice: Math.abs(afterDiscount),
       vatRate: line.vatRate,
       vatMode: values.vatMode,
     });
-    if (line.chargeKind == null) subtotal += totals.subtotal;
-    else charges += totals.subtotal;
-    grandTotal += totals.grandTotal;
+    const sign = afterDiscount < 0 ? -1 : 1;
+    if (line.chargeKind == null) subtotal += sign * totals.subtotal;
+    else charges += sign * totals.subtotal;
+    grandTotal += sign * totals.grandTotal;
   }
   return { subtotal, charges, grandTotal };
 }
@@ -173,6 +175,7 @@ export function validateExpenseReview(
   // when the product comes later in the payload.
   const lastProductIndex = values.lines.reduce((last, line, index) => (line.chargeKind == null ? index : last), -1);
   values.lines.forEach((line, index) => {
+    if (isCalculatedExpenseRounding(line)) return;
     const prefix = `lines.${index}`;
     const description = line.description.trim();
     if (!description) addIssue(issues, `${prefix}.description`, 'error', 'expenses.v_description_required');

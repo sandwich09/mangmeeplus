@@ -41,7 +41,8 @@ import {
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
-import { expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
+import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
+import { isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
@@ -1218,11 +1219,13 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0 }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
   canReview: boolean;
+  onTotalsChange?: (state: ExpenseReviewTotalsState | null) => void;
+  totalsRetry?: number;
   /** Owner decision 2026-08-28: accepting the document VAT total rides on confirm, not on review, so
    *  a confirmer is never shown a refusal with no control that can clear it. */
   canConfirm: boolean;
@@ -1256,6 +1259,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const [vatEditors, setVatEditors] = useState<Record<number, { custom?: boolean }>>({});
   const [vatSourceDirty, setVatSourceDirty] = useState(false);
   const [taxFactsDirty, setTaxFactsDirty] = useState(false);
+  const addedLineKind = useRef<ExpenseLineChargeKind | null | undefined>(undefined);
   // The stored date, not the edited one: a reviewer mid-edit must not have the tax fields vanish
   // under their cursor. `hasRecordedTax` then keeps them visible for a document that already
   // carries VAT, whatever the workspace mode says (spec §7.5).
@@ -1272,7 +1276,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const whtValueIssue = fieldIssue(issues, 'whtInput.value') ?? fieldIssue(issues, 'whtRate');
   const whtUnitIssue = fieldIssue(issues, 'whtInput.inputType');
   const payeeEntityKindIssue = fieldIssue(issues, 'vendorEntityKindSnapshot');
-  const totalIssues = issues.filter((issue) => issue.field === 'total');
+
   const documentWhtRate = expenseDocumentWhtRate(values.lines);
   const whtInput: ExpenseWhtInput = values.whtInput ?? { inputType: 'RATE', value: expenseRateToPercent(documentWhtRate ?? '') };
   const withholdsTax = expenseReviewWithholdsTax(values, detail.whtAmount);
@@ -1291,8 +1295,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const firstBlockingMessage = firstBlockingIssue
     ? messageWithParams(t(firstBlockingIssue.messageKey, locale), firstBlockingIssue.params)
     : vatSourceError ?? sourceCategoryMessage;
+  const liveTotals = useExpenseReviewTotals(companyId, detail, values,
+    isMutable && (canReview || !detail.sourceDraft), firstBlockingMessage, totalsRetry, onTotalsChange);
+  const totalIssues = liveTotals?.status === 'ready' && liveTotals.totals && aiGrandTotal
+    && Math.abs(Number(liveTotals.totals.grandTotalAmount) - Number(aiGrandTotal)) > 0.05
+    ? [{ field: 'total', severity: 'warn' as const, messageKey: 'expenses.v_total_mismatch' as const,
+      params: { computed: Number(liveTotals.totals.grandTotalAmount).toFixed(2), ai: Number(aiGrandTotal).toFixed(2) } }]
+    : liveTotals ? [] : issues.filter((issue) => issue.field === 'total');
   const showsVatCard = showsTax || vatModeRequiresRate(values.vatMode) || vatSource.inputType !== 'NONE' || Boolean(vatSource.lines?.length) || withholdsTax;
-  const vatSnapshot = detail.vatCaptureSnapshotJson;
+  const vatSnapshot = liveTotals?.status === 'ready' ? liveTotals.totals?.vatCaptureSnapshotJson : detail.vatCaptureSnapshotJson;
   const snapshotSourceAmount = vatSnapshot?.source.vatAmount ?? (() => {
     const amounts = vatSnapshot?.source.lineSources
       ?.filter((line) => line.inputType === 'AMOUNT' || line.inputType === 'BOTH')
@@ -1310,7 +1321,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
     .sort(([left], [right]) => Number(left) - Number(right));
   const acceptedVatBase = vatBaseGroups.reduce((sum, [, amount]) => sum + amount, 0);
   const collapsesVatBase = vatBaseGroups.length === 1
-    && Math.abs(acceptedVatBase - Number(detail.taxableAmount)) < 0.005;
+    && (Math.abs(acceptedVatBase - Number(liveTotals?.totals?.taxableAmount ?? detail.taxableAmount)) < 0.005
+      || values.lines.every((line) => isCalculatedExpenseRounding(line) || Number(line.vatRate) > 0));
   const vatStatusLabel = vatSnapshot?.reconciliation.status === 'MATCHED' ? 'ตรงกับระบบ'
     : vatSnapshot?.reconciliation.status === 'REVIEWER_ACCEPTED' ? 'ผู้ตรวจยืนยันยอดตามเอกสาร'
     : vatSnapshot?.reconciliation.status === 'MISMATCH' ? 'ยอดไม่ตรง'
@@ -1365,7 +1377,19 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const insertLine = (chargeKind: ExpenseLineChargeKind | null) => {
     setVatSourceDirty(true);
     setValues((v) => insertExpenseReviewLine(v, chargeKind));
+    addedLineKind.current = chargeKind;
   };
+
+  useEffect(() => {
+    if (addedLineKind.current === undefined) return;
+    const kind = addedLineKind.current;
+    addedLineKind.current = undefined;
+    // The shared insertion rule adds the last product or charge; wait for that row to render.
+    const index = values.lines.reduce((last, line, at) => (line.chargeKind ?? null) === kind ? at : last, -1);
+    const heading = document.getElementById(`expense-review-line-${detail.id}-${index}`);
+    heading?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    heading?.focus({ preventScroll: true });
+  }, [detail.id, values.lines.length]);
 
   const removeLine = (index: number) => {
     setVatSourceDirty(true);
@@ -1377,7 +1401,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
    *  the VAT source and the saved payload all agree on. */
   const entries = values.lines.map((line, index) => ({ line, index }));
   const productEntries = entries.filter((entry) => entry.line.chargeKind == null);
-  const chargeEntries = entries.filter((entry) => entry.line.chargeKind != null);
+  const chargeEntries = entries.filter((entry) => entry.line.chargeKind != null && !isCalculatedExpenseRounding(entry.line));
 
   const setVatSourceType = (inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES') => {
     setVatSourceDirty(true);
@@ -1624,7 +1648,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_vat_mode', locale)} />
             {/* Spec §19g decision 3: the mode never names a rate; the rate comes from the lines. */}
             {vatModeRequiresRate(values.vatMode) && (
-              <span className="font-semibold text-gray-500">· {effectiveVatRateLabel(values.lines)}</span>
+              <span className="font-semibold text-gray-500">· {effectiveVatRateLabel(values.lines.filter((line) => !isCalculatedExpenseRounding(line)))}</span>
             )}
           </span>
           <ThemedSelect id={`expense-vat-mode-${detail.id}`} className={inputClass} value={values.vatMode} onChange={(e) => { setVatSourceDirty(true); setValues((v) => ({ ...v, vatMode: e.target.value as ExpenseDraftReviewValues['vatMode'] })); }} disabled={!isMutable || busy}>
@@ -1703,7 +1727,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             {vatSourceMode === 'LINES' && (
               <div className="space-y-2">
                 <p className="text-xs text-gray-500">ใช้เมื่อบิลมีหลายอัตราหรือบางรายการไม่เสีย VAT โดยกรอกตามแต่ละบรรทัดในเอกสาร</p>
-                {values.lines.map((_, index) => {
+                {values.lines.map((line, index) => {
+                  if (isCalculatedExpenseRounding(line)) return null;
                   const sourceLine = vatSource.lines?.find((line) => line.lineNumber === index + 1)
                     ?? { lineNumber: index + 1, inputType: 'NONE' as const };
                   return (
@@ -1742,22 +1767,22 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               </div>
             )}
             {vatSourceError && <p className="text-xs font-medium text-error-600">{vatSourceError}</p>}
-            {vatSourceDirty
-              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">กด “ถัดไป” เพื่อบันทึกและให้ระบบคำนวณเปรียบเทียบยอดล่าสุด</p>
+            {vatSourceDirty && liveTotals?.status !== 'ready'
+              ? <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-500">{liveTotals?.status === 'error' ? 'กรุณาตรวจข้อมูลเพื่อคำนวณยอดล่าสุด' : 'กำลังคำนวณยอดล่าสุด…'}</p>
               : vatSnapshot && (
                 <div className="rounded-lg bg-white px-3 py-2">
                   <MoneyRow label="VAT จากเอกสาร" value={snapshotSourceAmount ?? '0'} muted={snapshotSourceAmount === null} />
                   <MoneyRow label="VAT ที่ระบบคำนวณ" value={vatSnapshot.calculation.vatAmount} />
-                  <MoneyRow label="VAT ที่ใช้บันทึก" value={detail.vatAmount} />
+                  <MoneyRow label="VAT ที่ใช้บันทึก" value={liveTotals?.totals?.vatAmount ?? detail.vatAmount} />
                   {vatSnapshot.reconciliation.differenceAmount !== null && <MoneyRow label="ส่วนต่าง" value={vatSnapshot.reconciliation.differenceAmount} />}
                   <MoneyRow
                     label={collapsesVatBase ? 'ฐาน VAT (ยอดก่อน VAT ที่ใช้)' : 'ยอดก่อน VAT ที่ใช้'}
-                    value={detail.taxableAmount}
+                    value={liveTotals?.totals?.taxableAmount ?? detail.taxableAmount}
                   />
                   {!collapsesVatBase && vatBaseGroups.map(([rate, amount]) => (
                     <MoneyRow key={rate} label={`ฐาน VAT ${Number(rate)}% (ใช้จริง)`} value={amount.toFixed(4)} />
                   ))}
-                  <MoneyRow label="ยอดรวม (รวม VAT)" value={detail.grandTotalAmount} />
+                  <MoneyRow label="ยอดรวม (รวม VAT)" value={liveTotals?.totals?.grandTotalAmount ?? detail.grandTotalAmount} />
                   <p className="mt-1 text-xs text-gray-500">ยอดที่ใช้: {vatSnapshot.reconciliation.acceptedSource === 'SOURCE_AMOUNT' ? 'ตามเอกสาร' : 'ระบบคำนวณ'}</p>
                 </div>
               )}
@@ -1879,7 +1904,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         return (
         <div key={index} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-xs font-semibold text-gray-600">{t('expenses.line_number', locale)} {index + 1}</span>
+            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {index + 1}</span>
             {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_line_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -2014,7 +2039,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       {chargeEntries.length === 0 && (
         <p className="rounded-xl bg-gray-50 px-3 py-4 text-center text-xs text-gray-500">{t('expenses.no_charges', locale)}</p>
       )}
-      {chargeEntries.map(({ line, index }) => {
+      {chargeEntries.map(({ line, index }, chargeIndex) => {
         const chargeKind = line.chargeKind!;
         const amountIssue = fieldIssue(issues, `lines.${index}.unitPrice`);
         const quantityIssue = fieldIssue(issues, `lines.${index}.quantity`);
@@ -2025,7 +2050,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         return (
         <div key={`charge-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-xs font-semibold text-gray-600">{t('expenses.line_number', locale)} {index + 1}</span>
+            <span id={`expense-review-line-${detail.id}-${index}`} tabIndex={-1} className="text-xs font-semibold text-gray-600 focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">{t('expenses.line_number', locale)} {productEntries.length + chargeIndex + 1}</span>
             {isMutable && <button type="button" className="flex h-8 w-8 items-center justify-center rounded-lg text-error-500 transition hover:bg-error-50 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => removeLine(index)} title={t('expenses.delete', locale)} aria-label={`${t('expenses.delete_charge_aria', locale)} ${index + 1}`}>{ICON.trash}</button>}
           </div>
           <div className="grid grid-cols-1 gap-3">

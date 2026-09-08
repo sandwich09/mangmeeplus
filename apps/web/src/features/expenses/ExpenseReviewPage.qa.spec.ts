@@ -50,13 +50,11 @@ test('confirmed duplicate copy distinguishes the final decision from an unresolv
 test('the money card shows the additional charges between the discount and the tax base', () => {
   const rows = [...source.matchAll(/<MoneyRow label=\{t\('(expenses\.[a-z_]+)'/g)].map((match) => match[1]);
   assert.deepEqual(rows.slice(0, 4), [
-    'expenses.subtotal', 'expenses.discount', 'expenses.charges_total', 'expenses.taxable_base_ex_vat',
+    'expenses.subtotal', 'expenses.discount', 'expenses.charges_section', 'expenses.taxable_base_ex_vat',
   ]);
-  assert.match(source, /const chargesTotal = \(detail\.charges \?\? \[\]\)\.reduce/);
-  // Presence, not a non-zero sum: charges that cancel each other still explain why the goods
-  // subtotal and the tax base differ.
-  assert.match(source, /const hasCharges = \(detail\.charges \?\? \[\]\)\.length > 0;/);
-  assert.match(source, /\{hasCharges && <MoneyRow/, 'a bill with no charges keeps the card it had');
+  assert.match(source, /calculatedAdjustmentAmount/);
+  assert.match(source, /printedRounding !== 0 && <MoneyRow/);
+  assert.match(source, /chargesTotal !== 0 && <MoneyRow/);
   for (const locale of ['th', 'en'] as const) {
     assert.ok(workspaceDictionary[locale]['expenses.charges_total'].trim().length > 0);
   }
