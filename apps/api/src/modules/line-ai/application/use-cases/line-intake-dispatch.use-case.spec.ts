@@ -4149,6 +4149,9 @@ describe('receipt progress grounded in persisted records', () => {
     assert.equal(h.turnRequests.length, 0);
     assert.match(text, /3 ใบ/);
     for (const id of ['a', 'b', 'c']) assert.match(text, new RegExp(`/expenses/${id}`));
+    assert.match(text, /เปิดรายการที่ 1/);
+    assert.match(text, /เปิดรายการที่ 3/);
+    assert.doesNotMatch(text, /เปิดลิงก์ [123]/);
     assert.match(text, /บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน/);
     assert.doesNotMatch(text, /รอทีม|ประมวลผลเสร็จแล้ว|ส่งครบแล้ว/);
     assert.match(text, /ยังยืนยันผลของรูปนั้นไม่ได้/);

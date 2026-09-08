@@ -22,3 +22,5 @@ Next: Implement scoped fix, test, review CI and merge develop/main. Previously p
 - `git diff --check` passed. No frontend form/theme, API schema, database migration, model provider, quota, deployment controller or feature-flag change.
 
 Next: PR checks and admin merge into develop then main. UAT and Production remain on hold; previously parked outcomes require separate authorized recovery and cannot be resurrected merely by merging this patch. Seller spelling, incomplete page sets, document-type label specificity and weak category confidence remain separately tracked review gaps in the investigation; this patch does not certify accounting or identity accuracy.
+
+PR: #494 to develop. Additional shared-flow check: `node scripts/run-line-ai-whole-chain-acceptance.mjs` passed (4 catalog +4 harness +966 API +361 gateway tests; repository acceptance complete). Controlled external image scenarios remain explicitly unexecuted; this is not new live UAT acceptance. Result-list buttons identify their matching receipt position (เปิดรายการที่ 1/2/3) rather than generic links. Waiting for final-source CI before admin merge; no deploy dispatched.
