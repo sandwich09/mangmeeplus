@@ -37,6 +37,8 @@ export type LineRecentCaptureReader = {
     since: Date;
     scopes: { branchIds?: string[] };
     take: number;
+    /** Read-only progress may include extracting/finalized records; correction callers omit this. */
+    includeAllStatuses?: boolean;
   }): Promise<LineRecentCaptureRow[]>;
 };
 
@@ -48,6 +50,7 @@ export function listRecentLineCaptureCandidates(
     chatKeyHash: string;
     scopes: { branchIds?: string[] };
     take: number;
+    includeAllStatuses?: boolean;
   },
 ): Promise<LineRecentCaptureRow[]> {
   return reader.listRecentLineCaptures({
@@ -57,5 +60,6 @@ export function listRecentLineCaptureCandidates(
     since: new Date(Date.now() - LINE_RECENT_CAPTURE_WINDOW_MS),
     scopes: input.scopes,
     take: input.take,
+    ...(input.includeAllStatuses ? { includeAllStatuses: true } : {}),
   });
 }

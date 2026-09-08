@@ -5,6 +5,7 @@ import { ConflictException, UnprocessableEntityException } from '@nestjs/common'
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
 import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
+import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
@@ -168,6 +169,7 @@ function makeHarness(opts: {
   receiptOcrResult?: any;
   governReceiptAdmission?: boolean;
   receiptApplyError?: Error;
+  receiptApplyOutcome?: any;
   findExpenseByLineMessageId?: (companyId: string, lineMessageId: string) => Promise<any>;
   prisma?: any;
   /** Collects appendSubRequests calls so a test can assert what the next turn will carry. */
@@ -271,7 +273,7 @@ function makeHarness(opts: {
       updateExpenseCalls.push(input);
       return { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', ...input };
     },
-    findByIdWithRelations: async (_companyId: string, expenseId: string) => opts.expenseDetail ?? ({
+    findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? ({
       id: expenseId,
       primaryAttachmentId: 'pending-att-1',
       attachments: [{
@@ -351,7 +353,7 @@ function makeHarness(opts: {
         return opts.lineReplyResult ?? 'ok';
       },
     } as any,
-    { apply: async () => { if (opts.receiptApplyError) throw opts.receiptApplyError; return { candidatesCreated: 0 }; } } as any,
+    { apply: async () => { if (opts.receiptApplyError) throw opts.receiptApplyError; return opts.receiptApplyOutcome ?? { candidatesCreated: 0 }; } } as any,
     { assertClean: async () => undefined } as any,
     acceptedLegal,
     shadowProbe,
@@ -4128,4 +4130,103 @@ describe('LINE usable receipt allowance settlement', () => {
       }
     });
   }
+});
+
+describe('receipt progress grounded in persisted records', () => {
+  const recent = (id: string) => ({ id, expenseDate: new Date(), grandTotalAmount: '100.00', sourceDocumentType: 'RECEIPT', createdAt: new Date() });
+  const detail = (id: string) => ({
+    id, companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+    status: 'DRAFT', captureSource: 'LINE_UPLOAD', grandTotalAmount: '100.00', currency: 'THB', vendorDocumentNumber: id,
+    sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) },
+  });
+
+  it('answers the three-receipt incident without requiring a delivered continuation or invoking AI', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], scopes: { branchIds: ['branch-1'] },
+      recentCaptures: ['a', 'b', 'c'].map(recent), expenseDetail: detail });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'นานจัง เสร็จหรือยัง' });
+    const text = h.replies[0] ?? '';
+    assert.equal(h.routeRequests.length, 0);
+    assert.equal(h.turnRequests.length, 0);
+    assert.match(text, /3 ใบ/);
+    for (const id of ['a', 'b', 'c']) assert.match(text, new RegExp(`/expenses/${id}`));
+    assert.match(text, /บันทึกแบบร่างแล้ว รอคุณตรวจสอบและยืนยัน/);
+    assert.doesNotMatch(text, /รอทีม|ประมวลผลเสร็จแล้ว|ส่งครบแล้ว/);
+    assert.match(text, /ยังยืนยันผลของรูปนั้นไม่ได้/);
+    const query = h.candidateQueries.find((q) => q.includeAllStatuses);
+    assert.equal(query.companyId, 'company-1');
+    assert.equal(query.createdByUserId, 'user-1');
+    assert.equal(query.chatKeyHash, chatKeyHashOf(TEXT_EVENT));
+    assert.deepEqual(query.scopes, { branchIds: ['branch-1'] });
+    assert.equal(h.captured.length, 0);
+    assert.equal(h.ocrRequests.length, 0);
+  });
+
+  it('rechecks actor, company and chat provenance and never claims missing records completed', async () => {
+    for (const overrides of [{ companyId: 'other-company' }, { createdByUserId: 'other-user' },
+      { sourceChannelMetadataJson: { chatKeyHash: 'other-chat' } }, { captureSource: 'WEB_UPLOAD' }]) {
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [recent('private')],
+        expenseDetail: { ...detail('private'), ...overrides } });
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+      assert.doesNotMatch(h.replies[0] ?? '', /\/expenses\/private|100\.00/);
+      assert.match(h.replies[0] ?? '', /ยังยืนยันว่าอ่านเสร็จไม่ได้/);
+      assert.equal(h.routeRequests.length, 0);
+    }
+  });
+
+  it('separates an unfinished capture, a failed read and a confirmed record without presenting placeholder zero as a receipt total', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: ['pending', 'failed', 'confirmed'].map(recent),
+      expenseDetail: (id: string) => ({ ...detail(id), grandTotalAmount: id === 'confirmed' ? '120' : '0',
+        status: id === 'confirmed' ? 'CONFIRMED' : 'DRAFT',
+        ...(id === 'failed' ? { aiVerificationSummaryJson: { status: 'OCR_FAILED' } } : {}),
+        sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT), receiptCapturePending: id === 'pending' },
+      }) });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จอ่านครบหรือยัง' });
+    assert.match(h.replies[0] ?? '', /กำลังอ่านใบเสร็จ/);
+    assert.match(h.replies[0] ?? '', /เก็บภาพแล้ว แต่อ่านข้อมูลไม่สำเร็จ/);
+    assert.match(h.replies[0] ?? '', /120\.00 บาท[\s\S]*ยืนยันรายการแล้ว/);
+    assert.match(h.replies[0] ?? '', /บิล pending · ยังไม่ทราบยอด/);
+    assert.match(h.replies[0] ?? '', /บิล failed · ยังไม่ทราบยอด/);
+    assert.doesNotMatch(h.replies[0] ?? '', /· 0\.00 บาท/);
+    assert.equal(h.routeRequests.length, 0);
+  });
+
+  it('reports lookup failure honestly and does not ask the model to invent progress', async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [recent('a')],
+      expenseDetail: () => { throw new Error('internal database problem'); } });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+    assert.match(h.replies[0] ?? '', /ยังตรวจสอบสถานะใบเสร็จให้ไม่ได้/);
+    assert.doesNotMatch(h.replies[0] ?? '', /internal|database/);
+    assert.equal(h.routeRequests.length, 0);
+  });
+
+  it('does not widen correction permissions or intercept unrelated workflow questions', async () => {
+    for (const text of ['ยอดขายเสร็จหรือยัง', 'ถ้าอ่านบิลเสร็จแล้วจะทำอะไร', 'แก้บิลนี้ให้เสร็จ', 'ใบเสร็จนี้ VAT เท่าไร']) {
+      assert.equal(receiptStatusQuestion(text), null, text);
+    }
+    for (const text of ['นานจัง เสร็จหรือยัง', 'เสร็จยัง', 'อ่านเสร็จหรือยัง']) assert.equal(receiptStatusQuestion(text), 'contextual');
+    const h = makeHarness({ permissions: ['line.ai.query'], recentCaptures: [recent('private')], expenseDetail: detail });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' });
+    assert.equal(h.candidateQueries.length, 0, 'no capture/read authority means no receipt query');
+    assert.doesNotMatch(h.replies[0] ?? '', /\/expenses\/private/);
+    assert.equal(receiptProgressLabel('CONFIRMED'), 'ยืนยันรายการแล้ว');
+    assert.equal(receiptProgressLabel('VOIDED'), 'ยกเลิกรายการแล้ว');
+    assert.equal(receiptProgressLabel('EXTRACTING'), 'กำลังอ่านใบเสร็จ');
+    assert.equal(receiptProgressLabel('DRAFT', 'FAILED'), 'เก็บภาพแล้ว แต่อ่านข้อมูลไม่สำเร็จ');
+  });
+
+  it('does not fabricate missing fields when complete OCR omitted the optional missingFields array', async () => {
+    const { prisma, recordUpdates, updates } = makePrisma();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], prisma,
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
+      receiptOcrResult: validReceiptOcr({ classification: businessClassification({ amountSignals: ['2409.70'], evidenceSignals: ['receipt', 'total 2409.70'] }), fields: { vendorName: 'ร้านทดสอบ', expenseDate: '2026-09-08',
+        documentNumber: 'R-123', grandTotalAmount: '2409.70', vatAmount: '157.64', confidence: 0.98 } }),
+      receiptApplyOutcome: { candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', categoryId: 'cat', categoryName: 'ค่าเดินทาง' },
+    });
+    await h.useCase.executeReceiptUpload(MEDIA_EVENT);
+    assert.ok(recordUpdates.length > 0, JSON.stringify({ replies: h.replies, updates }));
+    assert.deepEqual(recordUpdates.at(-1).data.aiVerificationSummaryJson.missingFields, []);
+    const binding = updates.find((update) => update.data.companyId === 'company-1' && !update.data.status);
+    assert.ok(binding, 'company bound before delivery, without clearing envelope or advancing status');
+    assert.equal(binding.data.payloadJson, undefined);
+  });
 });

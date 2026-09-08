@@ -184,3 +184,24 @@ describe('PrismaExpenseRepository line substitute continuation window', () => {
     assert.equal(found[0]!.id, 'expense-new-5', 'newest first, unchanged');
   });
 });
+
+describe('recent LINE receipt status discovery', () => {
+  it('includes finalized states only for read-only status and keeps actor/chat/tenant/branch filters in SQL', async () => {
+    const queries: any[] = [];
+    const repo = new PrismaExpenseRepository({ client: { expenseRecord: { findMany: async (query: any) => { queries.push(query); return []; } } } } as any);
+    const input = { companyId: 'co-1', createdByUserId: 'user-1', chatKeyHash: 'chat-1', since: new Date(), scopes: { branchIds: ['branch-1'] }, take: 5 };
+    await repo.listRecentLineCaptures(input);
+    await repo.listRecentLineCaptures({ ...input, includeAllStatuses: true });
+    assert.deepEqual(queries[0].where.status.in, ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION']);
+    assert.equal(queries[1].where.status, undefined);
+    const { status: _status, ...correctionWhere } = queries[0].where;
+    assert.deepEqual(queries[1].where, correctionWhere);
+    assert.equal(correctionWhere.companyId, 'co-1');
+    assert.equal(correctionWhere.createdByUserId, 'user-1');
+    assert.deepEqual(correctionWhere.sourceChannelMetadataJson, { path: ['chatKeyHash'], equals: 'chat-1' });
+    assert.match(JSON.stringify(correctionWhere), /branch-1/);
+    assert.equal(queries[1].take, 5);
+    await repo.listRecentLineCaptures({ ...input, includeAllStatuses: true, scopes: { branchIds: [] } });
+    assert.deepEqual(queries[2].where.OR, [{ branchId: { in: [] } }, { branchId: null }], 'empty scope retains only existing company-central visibility');
+  });
+});

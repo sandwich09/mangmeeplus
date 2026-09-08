@@ -2626,13 +2626,14 @@ export class PrismaExpenseRepository {
     since: Date;
     scopes: { branchIds?: string[] };
     take: number;
+    includeAllStatuses?: boolean;
   }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; vendorDocumentNumber: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
         createdByUserId: input.createdByUserId,
         captureSource: 'LINE_UPLOAD',
-        status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any },
+        ...(input.includeAllStatuses ? {} : { status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any } }),
         createdAt: { gte: input.since },
         // Rows captured before chatKeyHash existed simply never match — accepted transitional gap.
         sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: input.chatKeyHash },

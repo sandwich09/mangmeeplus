@@ -5,6 +5,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppConfigService } from '../../../common/config/app-config.service';
+import { LINE_FLEX_PREVIEW_LIMIT, lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 
 type LineMessageAction = { type: 'message'; label: string; text: string };
 type LineCameraAction = { type: 'camera' | 'cameraRoll'; label: string };
@@ -46,14 +47,28 @@ export function parseOutcomeMessages(value: unknown): LineReplyMessage[] | null 
   const valid = messages.every((message) => (message?.type === 'text' && typeof (message as { text?: unknown }).text === 'string'
     && (message as { text: string }).text.length > 0 && (message as { text: string }).text.length <= 5000)
     || (message?.type === 'flex' && typeof (message as { altText?: unknown }).altText === 'string'
-      && (message as { altText: string }).altText.length > 0 && (message as { altText: string }).altText.length <= 400
+      && (message as { altText: string }).altText.length > 0 && (message as { altText: string }).altText.length <= LINE_FLEX_PREVIEW_LIMIT
       && ((message as { canonicalText?: unknown }).canonicalText === undefined
         || (typeof (message as { canonicalText?: unknown }).canonicalText === 'string'
           && (message as { canonicalText: string }).canonicalText.length > 0
           && (message as { canonicalText: string }).canonicalText.length <= 5000))
       && !!(message as { contents?: unknown }).contents
-      && typeof (message as { contents?: unknown }).contents === 'object'));
+      && typeof (message as { contents?: unknown }).contents === 'object'
+      && !Array.isArray((message as { contents?: unknown }).contents)));
   return valid ? (value as LineReplyMessage[]) : null;
+}
+
+/** Only repair the old code-point/UTF-16 mismatch; leave all other validation fail-closed.
+ * The caller must persist this representation before sending. Full body/actions/canonical text stay intact. */
+export function repairLegacyOutcomePreview(value: unknown): LineReplyMessage[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 5) return null;
+  const repaired = value.map((message) => message?.type === 'flex'
+    && typeof message.altText === 'string'
+    && message.altText.length > LINE_FLEX_PREVIEW_LIMIT
+    && Array.from(message.altText).length <= LINE_FLEX_PREVIEW_LIMIT
+    ? { ...message, altText: lineMessagePreview(message.altText) }
+    : message);
+  return parseOutcomeMessages(repaired);
 }
 
 // PostgreSQL JSONB reorders object keys. Canonical bytes keep first-push and restart identities equal.

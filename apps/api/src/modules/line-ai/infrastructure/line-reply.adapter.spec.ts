@@ -1,9 +1,37 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { LineReplyAdapter, linePushRetryKey, parseOutcomeMessages } from './line-reply.adapter';
+import { LineReplyAdapter, linePushRetryKey, parseOutcomeMessages, repairLegacyOutcomePreview } from './line-reply.adapter';
+import { buildLineAssistantTextCardMessage } from '../domain/logic/line-business-card.logic';
+import { lineMessagePreview } from '../domain/logic/line-message-preview.logic';
 import { buildPendingApprovalCard, buildStaffMainMenu } from '../domain/logic/line-staff-menu.logic';
 
 describe('LineReplyAdapter rich payload delivery', () => {
+  it('accepts Thai receipt previews with emoji without losing the full card or splitting a surrogate', () => {
+    for (const text of ['🧾📋' + 'ก'.repeat(398), 'ก'.repeat(398) + '🧾ต่อท้าย', 'ข้อมูล'.repeat(120) + ' 2,409.70 บาท']) {
+      const card = buildLineAssistantTextCardMessage(text, 'https://app.example.test', 'c1');
+      assert.equal(card.type, 'flex');
+      if (card.type !== 'flex') throw new Error('expected card');
+      assert.ok(card.altText.length <= 400);
+      assert.equal(card.altText, lineMessagePreview(text));
+      assert.doesNotMatch(card.altText, /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/u);
+      assert.ok(JSON.stringify(card.contents).includes(text), 'full visible receipt detail remains');
+      assert.ok(parseOutcomeMessages(JSON.parse(JSON.stringify([card]))));
+    }
+  });
+
+  it('repairs only the historical preview overflow and keeps strict parsing fail-closed', () => {
+    const full = '🧾📋' + 'ก'.repeat(398);
+    assert.equal(Array.from(full).length, 400);
+    assert.equal(full.length, 402);
+    const message = { type: 'flex', altText: full, canonicalText: full + ' รายละเอียดครบ', contents: { type: 'bubble' } };
+    assert.equal(parseOutcomeMessages([message]), null);
+    const repaired = repairLegacyOutcomePreview([message]);
+    assert.deepEqual(repaired, [{ ...message, altText: lineMessagePreview(full) }]);
+    assert.equal(message.altText, full, 'do not mutate stored input before CAS');
+    for (const invalid of [{ ...message, altText: 'ก'.repeat(401) }, { ...message, canonicalText: 3 }, { ...message, contents: [] }]) {
+      assert.equal(repairLegacyOutcomePreview([invalid]), null);
+    }
+  });
   it('keeps complete fallback text in durable replay but strips it from reply and push provider payloads', async () => {
     const originalFetch = globalThis.fetch;
     const canonicalText = 'รายละเอียด'.repeat(80) + ' เปิดดูรายการ https://app.example.test/companies/c/expenses/e';

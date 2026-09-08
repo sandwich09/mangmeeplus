@@ -37,6 +37,7 @@ function makeHarness(rows: Row[], opts: {
   outcomes?: Outcome[];
   pushResult?: string;
   pushThrows?: boolean;
+  outcomeCasWins?: boolean;
 } = {}) {
   const store = new Map(rows.map((row) => [row.id, { ...row }]));
   const outcomeStore = new Map((opts.outcomes ?? []).map((outcome) => [outcome.webhookEventId, { ...outcome }]));
@@ -52,8 +53,10 @@ function makeHarness(rows: Row[], opts: {
           && (where.deliveredAt !== null || outcome.deliveredAt === null)
         )),
         updateMany: async ({ where, data }: any) => {
+          if (where.messagesJson && opts.outcomeCasWins === false) return { count: 0 };
           const outcome = outcomeStore.get(where.webhookEventId);
-          if (!outcome || (where.deliveredAt === null && outcome.deliveredAt !== null)) return { count: 0 };
+          if (!outcome || (where.deliveredAt === null && outcome.deliveredAt !== null)
+            || (where.messagesJson && JSON.stringify(where.messagesJson.equals) !== JSON.stringify(outcome.messagesJson))) return { count: 0 };
           if (data.attempts?.increment) outcome.attempts += data.attempts.increment;
           if (data.deliveredAt) outcome.deliveredAt = data.deliveredAt;
           if (data.messagesJson) outcome.messagesJson = data.messagesJson;
@@ -161,6 +164,46 @@ describe('parseOutcomeMessages', () => {
 });
 
 describe('RecoverOrphanLineEventsUseCase', () => {
+  it('repairs the incident preview before replaying the same complete card, without intake or quota work', async () => {
+    const message = { ...STORED_MESSAGES[0], altText: '🧾📋' + 'ก'.repeat(398), canonicalText: 'รายละเอียดครบพร้อมลิงก์ตรวจสอบ' };
+    const h = makeHarness([
+      rowAt('emoji-result', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_OUTCOME_NOT_RECORDED' }),
+    ], { replayEnabled: true, outcomes: [{ webhookEventId: 'emoji-result', messagesJson: [message], attempts: 1, deliveredAt: null }] });
+    assert.equal((await h.useCase.execute()).replayed, 1);
+    const sent = h.pushes[0]!.messages[0];
+    assert.equal(sent.type, 'flex');
+    assert.ok(sent.altText.length <= 400);
+    assert.deepEqual(sent.contents, message.contents);
+    assert.equal(sent.canonicalText, message.canonicalText);
+    assert.deepEqual(h.outcomeStore.get('emoji-result')?.messagesJson, [sent]);
+    assert.equal(h.pushes[0]!.operationId, 'emoji-result');
+    assert.equal(h.enqueued.length, 0, 'no OCR, expense creation or quota re-admission');
+    await h.useCase.execute();
+    assert.equal(h.pushes.length, 1);
+  });
+
+  it('does not send a repaired card after losing either the representation or event claim', async () => {
+    for (const opts of [{ outcomeCasWins: false }, { casWins: false }]) {
+      const h = makeHarness([
+        rowAt('lost-repair', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode: 'LINE_OUTCOME_NOT_RECORDED' }),
+      ], { ...opts, replayEnabled: true, outcomes: [{ webhookEventId: 'lost-repair', messagesJson: [{ ...STORED_MESSAGES[0], altText: '🧾📋' + 'ก'.repeat(398) }], attempts: 1, deliveredAt: null }] });
+      await h.useCase.execute();
+      assert.equal(h.pushes.length, 0);
+      assert.equal(h.enqueued.length, 0);
+    }
+  });
+
+  it('keeps full canonical text on a provider-rejected Flex and preserves valid unsent cards', async () => {
+    for (const errorCode of ['LINE_OUTCOME_REPRESENTATION_PENDING', 'LINE_OUTCOME_NOT_RECORDED']) {
+      const message = { ...STORED_MESSAGES[0], canonicalText: 'รายละเอียดครบ '.repeat(80) };
+      const h = makeHarness([
+        rowAt('full-fallback', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode }),
+      ], { replayEnabled: true, outcomes: [{ webhookEventId: 'full-fallback', messagesJson: [message], attempts: 1, deliveredAt: null }] });
+      await h.useCase.execute();
+      assert.deepEqual(h.pushes[0]!.messages, errorCode === 'LINE_OUTCOME_REPRESENTATION_PENDING'
+        ? [{ type: 'text', text: message.canonicalText }] : [message]);
+    }
+  });
   it('replays an orphaned row through the buffer and marks it reclaimable', async () => {
     const { useCase, store, enqueued } = makeHarness([rowAt('e1', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000)]);
     const result = await useCase.execute();
@@ -311,7 +354,7 @@ describe('RecoverOrphanLineEventsUseCase', () => {
   });
 
   it('converts a provider-rejected representation without rerunning the business operation', async () => {
-    for (const errorCode of ['LINE_OUTCOME_REPRESENTATION_PENDING', 'LINE_OUTCOME_NOT_RECORDED']) {
+    for (const errorCode of ['LINE_OUTCOME_REPRESENTATION_PENDING']) {
       const { useCase, store, enqueued, pushes, outcomeStore } = makeHarness([
         rowAt('stale-flex-1', LINE_BUFFER_ORPHAN_REPROCESS_MS + 1_000, { status: 'delivery_pending', errorCode }),
       ], { replayEnabled: true, outcomes: [{ webhookEventId: 'stale-flex-1', messagesJson: STORED_MESSAGES, attempts: 1, deliveredAt: null }] });

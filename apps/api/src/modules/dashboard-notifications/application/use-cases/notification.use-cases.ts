@@ -1,3 +1,4 @@
+import { lineMessagePreview } from '../../../line-ai/domain/logic/line-message-preview.logic';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
@@ -728,7 +729,7 @@ function buildLineMessage(params: {
   const label = severityLabel[params.severity] ?? '📣 แจ้งเตือน';
   const title = Array.from(params.title.trim() || 'แจ้งเตือนจากมั่งมีพลัส').slice(0, 120).join('');
   const body = Array.from(params.body.trim()).slice(0, 1_000).join('');
-  const altText = Array.from(`[มั่งมีพลัส] ${label} ${title} ${body}`.trim()).slice(0, 400).join('');
+  const altText = lineMessagePreview(`[มั่งมีพลัส] ${label} ${title} ${body}`);
   const canOpen = /^https:\/\//i.test(deepLink);
 
   return {

@@ -1,5 +1,6 @@
 import { type LineAiAnswerCard, type LineAiTurnResponse } from '@watchdog-bms/contracts';
 import type { LineReplyMessage } from '../../infrastructure/line-reply.adapter';
+import { lineMessagePreview as preview } from './line-message-preview.logic';
 import {
   EMPLOYEE_DOOR_COMMAND,
   PACKAGE_CHANGE_COMMAND,
@@ -19,14 +20,6 @@ const THEME = {
 } as const;
 
 const bounded = (value: string, max: number) => Array.from(value.trim()).slice(0, max).join('');
-
-/** altText is what the chat list and the push notification show. Cutting it at the limit with no mark
- *  ends the preview mid-syllable and reads as a broken message, so a truncated one says it is
- *  truncated. Grapheme-safe like `bounded`; the ellipsis is counted inside the limit. */
-const preview = (value: string, max: number) => {
-  const characters = Array.from(value.trim());
-  return characters.length > max ? `${characters.slice(0, max - 1).join('')}…` : characters.join('');
-};
 
 /**
  * A URI button, one that sends a text command the webhook already answers (`โปรโมชั่น`), or one

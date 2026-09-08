@@ -27,6 +27,7 @@ import {
 } from '../../../expenses/application/use-cases/expense-upload.use-case';
 import { reconcileExpenseDuplicateCandidates } from '../../../expenses/application/services/expense-duplicate-detection';
 import { listRecentLineCaptureCandidates } from '../../../expenses/application/services/line-recent-capture';
+import { receiptProgressLabel, receiptStatusQuestion } from '../../domain/logic/line-receipt-status.logic';
 import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import type { ExpenseRecord } from '../../../expenses/domain/models/expense.model';
 import { pickLineDefaultBranchId } from '../../../expenses/domain/logic/line-receipt-branch.logic';
@@ -2581,6 +2582,15 @@ export class ProcessLineWebhookUseCase {
     event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
+    // Handoff is set only after company membership resolves. Bind tenant without advancing the
+    // event or clearing its recovery envelope; delivery failures must remain tenant-visible.
+    if (event.handoff) {
+      const bound = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId: event.webhookEventId, OR: [{ companyId: null }, { companyId: event.handoff.companyId }] },
+        data: { companyId: event.handoff.companyId },
+      });
+      if (bound.count !== 1) return 'failed_other';
+    }
     try {
       await event.beforeReply?.();
     } catch (error) {
@@ -2715,6 +2725,8 @@ export class ProcessLineWebhookUseCase {
     rejectedMessages?: LineReplyMessage[],
   ): Promise<{ messages: LineReplyMessage[]; accepted: boolean } | null> {
     try {
+      // Do not write an outcome that the replay reader cannot read back.
+      if (!parseOutcomeMessages(messages)) return null;
       const log = await this.prisma.client.lineWebhookEventLog.findUnique({
         where: { webhookEventId }, select: { companyId: true },
       });
@@ -3308,6 +3320,47 @@ export class ProcessLineWebhookUseCase {
     const activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
       : [];
+    const statusQuestion = receiptStatusQuestion(normalizedText);
+    if (statusQuestion && (statusQuestion === 'receipt' || openWaiting.length === 0)) {
+      const listLink = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
+      let reply = `ตอนนี้ยังตรวจสอบสถานะใบเสร็จให้ไม่ได้ค่ะ เปิดดูรายการล่าสุดได้ที่ ${listLink}`;
+      if (!canCaptureExpense) reply = receiptDeniedReply(resolvedAccess);
+      else try {
+        const rows = this.expenseRepo ? await listRecentLineCaptureCandidates(this.expenseRepo, {
+          companyId, userId: identity.userId, chatKeyHash: chatKeyHashOf(event), scopes: resolvedAccess.scopes,
+          take: 5, includeAllStatuses: true,
+        }) : [];
+        const lines: string[] = [];
+        for (const row of rows) {
+          const expense = await this.expenseRepo!.findByIdWithRelations(companyId, row.id, undefined, resolvedAccess.scopes);
+          if (!expense || expense.id !== row.id || expense.companyId !== companyId || expense.createdByUserId !== identity.userId
+            || expense.captureSource !== 'LINE_UPLOAD'
+            || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
+          const number = typeof expense.vendorDocumentNumber === 'string'
+            ? expense.vendorDocumentNumber.replace(/[\r\n]/gu, ' ').slice(0, 60) : '';
+          const verification = expense.aiVerificationSummaryJson?.status === 'OCR_FAILED' ? 'FAILED'
+            : expense.sourceChannelMetadataJson?.receiptCapturePending === true ? 'VERIFYING' : expense.aiVerificationStatus;
+          const amountValue = Number(expense.grandTotalAmount);
+          const amount = expense.grandTotalAmount == null || !Number.isFinite(amountValue)
+            || (amountValue === 0 && (verification === 'FAILED' || verification === 'VERIFYING' || expense.status === 'EXTRACTING'))
+            ? 'ยังไม่ทราบยอด'
+            : `${amountValue.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${expense.currency && expense.currency !== 'THB' ? expense.currency : 'บาท'}`;
+          lines.push(`${lines.length + 1}) ${number ? `บิล ${number} · ` : ''}${amount}\n${receiptProgressLabel(expense.status, verification)}\n${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expense.id}`)}`);
+        }
+        reply = lines.length
+          ? `ตรวจพบรายการล่าสุดจากแชทนี้ ${lines.length} ใบค่ะ\n\n${lines.join('\n\n')}\n\nถ้ายังมีรูปที่ไม่ปรากฏในรายการนี้ ระบบยังยืนยันผลของรูปนั้นไม่ได้ค่ะ\nดูรายการทั้งหมด: ${listLink}`
+          : `ยังไม่พบรายการจากแชทนี้ในช่วง 24 ชั่วโมงล่าสุด จึงยังยืนยันว่าอ่านเสร็จไม่ได้ค่ะ\nดูรายการในเว็บ: ${listLink}`;
+      } catch (error) {
+        this.logger.warn({ msg: 'line_receipt_status_unavailable', ...safeLineErrorDetails(error) });
+      }
+      await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
+      await this.persistIntakeTurn({
+        userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
+        userMessagePreview: normalizedText, replyText: reply, intent: 'UNKNOWN',
+      });
+      await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
+      return;
+    }
     const interruptExpenseDraft = async (excludeExpenseIds: string[] = []) => activeExpenseDrafts
       .some((draft) => draft.status === 'OPEN' && !excludeExpenseIds.includes(draft.expenseId))
       && this.expenseDraftConversation
@@ -5548,8 +5601,13 @@ ${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
           }
         : null;
     }
+    const capturedFields: Record<string, unknown> = {
+      vendor: ocrFields?.vendorName, expenseDate: ocrFields?.expenseDate,
+      documentNumber: ocrFields?.documentNumber, grandTotalAmount: ocrFields?.grandTotalAmount,
+      vatAmount: ocrFields?.vatAmount,
+    };
     const missingFields = new Set(ocrFields?.missingFields
-      ?? ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category']);
+      ?? Object.entries(capturedFields).filter(([, value]) => value == null || value === '').map(([field]) => field));
     if (effectiveCategory?.id) missingFields.delete('category');
     else missingFields.add('category');
     // Spec §5.2: an unverified date is a missing one, whatever the column holds. This is the flag the
