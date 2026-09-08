@@ -22,6 +22,7 @@ import type {
   UpdateSubstituteReceiptPolicyInput,
   UpdateExpenseDraftInput,
   ExpenseSourceDraftInput,
+  ExpenseDraftTotalsPreview,
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -128,6 +129,14 @@ export async function updateExpenseDraft(
   body: UpdateExpenseDraftInput & { expectedUpdatedAt: string },
 ): Promise<ExpenseSummary> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+/** No receipt mutation: same authoritative calculation as the following save. */
+export async function previewExpenseDraftTotals(companyId: string, expenseId: string,
+  body: UpdateExpenseDraftInput & { expectedUpdatedAt: string }, signal?: AbortSignal): Promise<ExpenseDraftTotalsPreview> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/totals-preview`, {
+    method: 'POST', body: JSON.stringify(body), signal, suppressErrorToast: true,
+  });
 }
 
 /** Source-fact saves stay on the narrow contract; they cannot carry financial review fields. */

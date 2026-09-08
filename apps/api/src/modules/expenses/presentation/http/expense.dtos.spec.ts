@@ -4,6 +4,7 @@ import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
   ConfirmExpenseDto,
+  ExpenseTotalsPreviewDto,
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
@@ -21,6 +22,31 @@ const run = (metatype: unknown, value: unknown) =>
   pipe.transform(value, { type: 'body', metatype: metatype as never });
 
 describe('expense body DTOs (audit H-23)', () => {
+  it('accepts the complete review-preview payload, including blank optional purpose, source refs and independent VAT/WHT', async () => {
+    const body = { expectedUpdatedAt: '2026-09-09T00:00:00.000Z', vendorNameSnapshot: 'ร้านทดสอบ',
+      vendorTaxIdSnapshot: '', vendorEntityKindSnapshot: 'JURISTIC', vendorDocumentNumber: '', expenseDate: '2026-09-07',
+      note: '', vatMode: 'VAT_INCLUDED', inputVatClaimStatus: 'NON_CLAIMABLE', removedSourceItemRefs: ['I02'],
+      vatSource: { inputType: 'BOTH', vatRatePercent: '7', vatAmount: '157.64' }, whtInput: { inputType: 'RATE', value: '0' },
+      lines: [{ id: 'line-1', sourceItemRef: 'I01', lineNumber: 1, description: 'Fuel', chargeKind: null,
+        quantity: '61.488', unitPrice: '39.19', discountAmount: '0', vatRate: '0.07', vatTreatment: null, whtRate: '0',
+        expenseCategoryId: 'category', accountHintKey: 'expense.travel', taxCategory: 'tax', taxCodeDefinitionId: 'code',
+        externalTaxCode: 'V7', transactionContext: 'DOMESTIC_PURCHASE' }] };
+    const result = await run(ExpenseTotalsPreviewDto, body);
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), body);
+    // Preview must not impose a line-count limit absent from draft save (e.g. multi-page retail bills).
+    assert.equal((await run(ExpenseTotalsPreviewDto, { ...body, lines: Array.from({ length: 60 }, (_, i) => ({ ...body.lines[0], lineNumber: i + 1 })) })).lines.length, 60);
+  });
+
+  it('rejects malformed preview bodies and injected server fields before the calculator runs', async () => {
+    const body = { expectedUpdatedAt: '2026-09-09T00:00:00.000Z', lines: [{ lineNumber: 1, description: 'Fuel', quantity: '1', unitPrice: '100' }] };
+    for (const invalid of [{}, { ...body, previewOnly: false }, { ...body, vendorNameSnapshot: null },
+      { ...body, lines: [] }, { ...body, vatSource: [] },
+      { ...body, lines: [{ ...body.lines[0], quantity: {} }] },
+      { ...body, lines: [{ ...body.lines[0], sourceLineText: 'forged evidence' }] }]) {
+      await assert.rejects(() => run(ExpenseTotalsPreviewDto, invalid), BadRequestException);
+    }
+  });
+
   it('binds document VAT acceptance to a reviewed version without changing ordinary confirmation', async () => {
     assert.equal((await run(ConfirmExpenseDto, {})).vatSourceOverride, undefined);
     const vatSourceOverride = { reason: 'Checked printed VAT', vatLineNumber: 1, expectedUpdatedAt: '2026-08-27T01:00:00.000Z' };

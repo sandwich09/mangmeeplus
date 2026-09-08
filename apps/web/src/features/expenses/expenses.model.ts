@@ -394,6 +394,7 @@ export type ExpenseDetail = ExpenseSummary & {
     id: string;
     lineNumber: number;
     description: string;
+    sourceLineText?: string | null;
     /** Non-null makes this an additional-charge row rather than a product row (spec §5.1). */
     chargeKind?: ExpenseLineChargeKind | null;
     quantity: string;
@@ -464,6 +465,8 @@ export type ExpenseDraftReviewValues = {
     /** Existing rows keep their server identity; newly inserted review rows omit it. */
     id?: string;
     sourceItemRef?: string;
+    /** Server-held evidence; never sent as editable provenance. */
+    sourceLineText?: string | null;
     description: string;
     /** §5.1: charge rows live in the same array as products and always sort after them, so the
      *  line numbers the payload sends already satisfy the server's ordering rule. */
@@ -487,7 +490,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
   let vatSource = expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson);
   const lines: ExpenseDraftReviewValues['lines'] = detail.lines.map((line) => ({
-      id: line.id, description: line.description, chargeKind: line.chargeKind ?? null,
+      id: line.id, description: line.description, chargeKind: line.chargeKind ?? null, sourceLineText: line.sourceLineText,
       quantity: line.quantity, unitPrice: line.unitPrice, discountAmount: line.discountAmount,
       vatRate: line.vatRate ?? '', vatTreatment: line.vatTreatment ?? null, whtRate: line.whtRate,
       expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
