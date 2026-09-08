@@ -46,3 +46,17 @@ Running 2 tests using 1 worker
 
 UAT read-only preflight
 UAT deploy readiness verified before image publication
+
+Expanded LINE intake + webhook checks
+  duration_ms: 4.043458
+  type: 'suite'
+  ...
+1..49
+# tests 446
+# suites 51
+# pass 446
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1091.65925

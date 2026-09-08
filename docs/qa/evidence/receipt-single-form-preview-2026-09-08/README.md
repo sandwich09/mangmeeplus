@@ -16,7 +16,7 @@ Web screenshots use synthetic PANDA MALA receipt facts, four financial rows, a 3
 | Check | Result |
 | --- | --- |
 | Focused web/model/component + shared error/fetch/theme suites | 190 passed |
-| LINE webhook/receipt/recovery suite | 242 passed |
+| LINE intake + webhook/receipt/recovery suites | 446 passed |
 | PostgreSQL source continuity/authority suite | 12 passed |
 | Browser continuity suite | 8 passed (390px and 1280px included) |
 | Screenshot framing rerun | 2 passed |
@@ -31,3 +31,5 @@ UAT deployment is authorized. The reviewed source branch is `codex/receipt-singl
 Owner follow-up 2026-09-08: preview approved and UAT deployment authorized (Production held). The normal-review action now reads “บันทึกแบบร่าง”, only on step 1 / exact DRAFT. Refreshed mobile/desktop screenshots show this rule. `verification.txt` records eight passing real local API/DB/browser cases including step/status visibility and partial-save continuity; `verification.txt` records 190 passing focused checks.
 
 Dropdown and feedback follow-ups: both category editors use the shared themed dropdown, explicitly disabled while read-only/saving. Eight real browser journeys passed with popup theme and mobile/desktop bounds, success toast, exactly one friendly error toast for validation/permission/conflict/server/network failures, preserved inputs and a truthful saved-but-readback-failed warning. Receipt detail screenshots remain synthetic. Final screenshot capture waits for the toast animation to finish. Production is still held.
+
+Initial PR CI 34171244080 found three intake tests that still expected the prior compact card. They now assert the requested detailed card while retaining persistence, routing and passive-questionnaire checks. Expanded intake/webhook tests passed 446/446. No runtime behavior was changed to satisfy the obsolete copy assertions.

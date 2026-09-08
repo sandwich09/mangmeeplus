@@ -1953,7 +1953,10 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(starts[0].expenseId, 'expense-1');
     assert.deepEqual(starts[0].ocrFields.lines, ocrFields.lines);
     assert.doesNotMatch(h.replies[0] ?? '', /D-PURPOSE|ข้อมูลที่ยังต้องตอบ/u);
-    assert.match(h.replies[0] ?? '', /240.00 บาท|เปิดดูรายการ/u);
+    assert.match(h.replies[0] ?? '', /ยอดรวม – 240\.00/u);
+    for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'เลขที่เอกสาร', 'VAT / WHT / ภาษีซื้อ', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
+      assert.ok((h.replies[0] ?? '').includes(label), `reference receipt summary includes ${label}`);
+    }
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {
@@ -2195,7 +2198,9 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(recordUpdates[1].data.lineMessageId, MEDIA_EVENT.lineMessageId);
     assert.equal(recordUpdates[1].data.captureSource, 'LINE_UPLOAD');
     assert.equal(pendingMediaRows.length, 0);
-    assert.match(h.replies[0] ?? '', /เก็บรูปและร่างแล้ว/);
+    assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/);
+    assert.match(h.replies[0] ?? '', /ยอดรวม – 120\.00/);
+    assert.match(h.replies[0] ?? '', /เลขที่เอกสาร – R-1/);
   });
 
   it('router and OCR unavailable persist clarification and never create an expense draft', async () => {
@@ -2259,7 +2264,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(recordUpdates[1].data.lineEventId, MEDIA_EVENT.webhookEventId);
     assert.equal(turnCreates.length, 1);
     assert.equal(turnCreates[0].data.intent, 'EVIDENCE_CAPTURE');
-    assert.match(turnCreates[0].data.replyPreview, /เก็บรูปและร่างแล้ว/);
+    assert.match(turnCreates[0].data.replyPreview, /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/);
+    assert.match(turnCreates[0].data.replyPreview, /ยอดรวม – 120\.00/);
     assert.equal(h.receiptContinuationCalls.length, 1);
     assert.equal(h.receiptContinuationCalls[0].expenseId, 'expense-1');
     assert.ok(h.receiptContinuationCalls[0].chatKeyHash && !h.receiptContinuationCalls[0].chatKeyHash.includes('line-user-secret'));
