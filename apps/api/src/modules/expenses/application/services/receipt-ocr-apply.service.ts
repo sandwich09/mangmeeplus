@@ -5,6 +5,7 @@ import Decimal from 'decimal.js';
 import {
   EXPENSE_LINE_CHARGE_KIND_LABELS,
   expenseLineCharges,
+  receiptPayeeEntityKind,
   isAssumedDateReading,
   RECEIPT_ADDITIONAL_CHARGE_KINDS,
   RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE,
@@ -132,6 +133,7 @@ const MAX_OCR_ITEM_LINES = 40;
  *  model already allows a zero unit price ("the general expense flow supports free-of-charge lines"),
  *  so rejecting the row here only served to delete the breakdown around it. */
 function nonNegativeMoney(value: string | undefined): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
   const n = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
@@ -147,6 +149,12 @@ function positiveMoney(value: string | undefined): number | undefined {
  *  TypeError that took the whole apply — and the draft — with it. */
 function ocrCharges(fields: ReceiptOcrFieldResult): readonly ReceiptOcrAdditionalCharge[] {
   return Array.isArray(fields.additionalCharges) ? fields.additionalCharges : [];
+}
+
+function ocrChargeAmount(charge: ReceiptOcrAdditionalCharge): number | undefined {
+  if (charge.kind !== 'ROUNDING') return positiveMoney(charge.amount);
+  const amount = Number(String(charge.amount ?? '').replace(/,/g, ''));
+  return Number.isFinite(amount) && amount !== 0 ? amount : undefined;
 }
 
 /** A VAT rate as the contracts express it: a decimal fraction in [0,1), e.g. "0.07" or "0". */
@@ -192,10 +200,18 @@ export function verifyDiscountAmount(fields: ReceiptOcrFieldResult): ReceiptOcrF
   const subtotal = positiveMoney(fields.subtotalAmount);
   const grand = positiveMoney(fields.grandTotalAmount);
   const vat = positiveMoney(fields.vatAmount);
+  // Some mixed-tax summaries print the AFTER-discount pre-VAT total beside the taxed-only
+  // base. Their difference is untaxed goods, never a second discount.
+  if (subtotal !== undefined && grand !== undefined && vat !== undefined
+    && positiveMoney(fields.taxableAmount) !== undefined
+    && subtotal > positiveMoney(fields.taxableAmount)! + VAT_TOLERANCE
+    && Math.abs(subtotal + vat - grand) <= VAT_TOLERANCE) {
+    return { ...fields, discountAmount: discount.toFixed(2) };
+  }
   const base = fields.vatMode === 'VAT_EXCLUDED'
     ? positiveMoney(fields.taxableAmount) ?? (grand !== undefined && vat !== undefined ? grand - vat : undefined)
     : grand;
-  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (positiveMoney(charge.amount) ?? 0), 0);
+  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
   const implied = subtotal !== undefined && base !== undefined ? subtotal + charges - base : undefined;
   if (implied !== undefined && Math.abs(implied - discount) <= VAT_TOLERANCE) {
     return printed > 0 ? fields : { ...fields, discountAmount: discount.toFixed(2) };
@@ -229,7 +245,23 @@ function printedVatMode(
 ): 'VAT_INCLUDED' | 'VAT_EXCLUDED' | null {
   const subtotal = positiveMoney(fields.subtotalAmount);
   if (subtotal === undefined || vat === undefined || grand === undefined) return null;
-  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (positiveMoney(charge.amount) ?? 0), 0);
+  const charges = ocrCharges(fields).reduce((sum, charge) => sum + (ocrChargeAmount(charge) ?? 0), 0);
+  // Printed item prices can be VAT-inclusive while the subtotal printed below them is pre-VAT
+  // (mixed supermarket bills). Test the actual item block before interpreting the summary label.
+  const items = usableItemLines(fields);
+  const quantity = positiveMoney(fields.quantity);
+  const unitPrice = positiveMoney(fields.unitPrice);
+  if (quantity && unitPrice) {
+    const extended = quantity * unitPrice - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges;
+    if (Math.abs(extended - grand) <= VAT_TOLERANCE) return 'VAT_INCLUDED';
+    if (Math.abs(extended + vat - grand) <= VAT_TOLERANCE) return 'VAT_EXCLUDED';
+  }
+  if (items.length >= 2) {
+    const itemBase = items.reduce((sum, item) => sum + (nonNegativeMoney(item.amount) ?? 0), 0)
+      - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges;
+    if (Math.abs(itemBase - grand) <= VAT_TOLERANCE) return 'VAT_INCLUDED';
+    if (Math.abs(itemBase + vat - grand) <= VAT_TOLERANCE) return 'VAT_EXCLUDED';
+  }
   const base = subtotal - (nonNegativeMoney(fields.discountAmount) ?? 0) + charges;
   if (Math.abs(base + vat - grand) <= VAT_TOLERANCE) return 'VAT_EXCLUDED';
   if (Math.abs(base - grand) <= VAT_TOLERANCE) return 'VAT_INCLUDED';
@@ -245,7 +277,10 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   let taxable = positiveMoney(fields.taxableAmount);
   let vat = positiveMoney(fields.vatAmount);
   let grand = positiveMoney(fields.grandTotalAmount);
-  if (taxable && vat && grand && Math.abs(taxable + vat - grand) > VAT_TOLERANCE) return out;
+  const hasPerChargeVatTreatment = ocrCharges(fields).some((charge) => charge.vatRate !== undefined);
+  const hasPerLineVatTreatment = usableItemLines(fields).some((line) => line.vatRate !== undefined);
+  if (taxable && vat && grand && Math.abs(taxable + vat - grand) > VAT_TOLERANCE
+    && !hasPerChargeVatTreatment && !hasPerLineVatTreatment) return out;
 
   if (taxable && grand && !vat && saneVat(grand - taxable, taxable)) {
     vat = grand - taxable;
@@ -259,13 +294,12 @@ export function completeVatFields(fields: ReceiptOcrFieldResult): ReceiptOcrFiel
   }
 
   const printed = Number.parseFloat(String(fields.vatRate ?? ''));
-  const hasPerChargeVatTreatment = ocrCharges(fields).some((charge) => charge.vatRate !== undefined);
   // Spec §19g decision 2: `printed >= 0` — a printed zero rate is a zero-rated supply and must
   // survive here, or §19f decision 3 only held because the old `defaultLineVatRate` fallback
   // happened to re-add a '0'. A printed 0 contradicted by a non-zero VAT amount still falls through
   // to the derived rate below, because the consistency test rejects it.
   const printedUsable = Number.isFinite(printed) && printed >= 0 && printed < 1
-    && (hasPerChargeVatTreatment || !taxable || !vat || Math.abs(taxable * printed - vat) <= VAT_TOLERANCE);
+    && (hasPerChargeVatTreatment || hasPerLineVatTreatment || !taxable || !vat || Math.abs(taxable * printed - vat) <= VAT_TOLERANCE);
   // A derived rate is only a rate while the implied ratio is sane — otherwise the pair is a
   // misread, and stamping vat/taxable on the line would re-inflate it on the next recompute.
   const derived = taxable && vat && saneVat(vat, taxable) ? Number((vat / taxable).toFixed(4)) : undefined;
@@ -298,7 +332,8 @@ export function ocrWhtInput(fields: ReceiptOcrFieldResult): ExpenseWhtCapture | 
       const number = new Decimal(raw.replace(/,/g, ''));
       const value = inputType === 'RATE' ? number.mul(100) : number;
       if (!value.isFinite() || value.decimalPlaces() > 2) continue;
-      const input = { inputType, value: value.toFixed(2) };
+      const base = nonNegativeMoney(fields.whtBaseAmount);
+      const input = { inputType, value: value.toFixed(2), ...(base !== undefined && { baseAmount: base.toFixed(2) }) };
       if (!validateExpenseWhtInput(input)) return { ...input, origin: 'OCR' };
     } catch { /* Invalid OCR evidence stays raw; it cannot authorize a money mutation. */ }
   }
@@ -593,14 +628,7 @@ function prepareOcrLines(
   const hadChargeSuggestions = ocrCharges(fields).length > 0;
   const charges = ocrCharges(fields).length <= MAX_OCR_ADDITIONAL_CHARGES
     ? ocrCharges(fields).filter((charge) => {
-        // Spec §5.1 says `ROUNDING` is the one kind a document may print negative and every other
-        // kind must be positive. Only the second half is enforced: `calcLineTotals` clamps a
-        // document discount with `min(discount, lineSubtotal)`, which on a negative subtotal
-        // cancels the row to zero — a negative rounding line would be dropped from the total
-        // rather than applied, which is worse than not accepting it.
-        // ponytail: `positiveMoney` for every kind; allow negative ROUNDING once `calcLineTotals`
-        // stops clamping against a negative subtotal (a shared money path — slice B territory).
-        const amount = positiveMoney(charge.amount);
+        const amount = ocrChargeAmount(charge);
         const rate = charge.vatRate === undefined ? undefined : Number(charge.vatRate);
         return Boolean(
           amount
@@ -608,7 +636,8 @@ function prepareOcrLines(
           && charge.description.trim() && charge.description.length <= 120
           && charge.evidenceSignal.trim() && charge.evidenceSignal.length <= 120
           && RECEIPT_ADDITIONAL_CHARGE_KINDS.includes(charge.kind)
-          && (rate === undefined || (Number.isFinite(rate) && rate >= 0 && rate < 1)),
+          && (rate === undefined || (Number.isFinite(rate) && rate >= 0 && rate < 1))
+          && (charge.kind !== 'ROUNDING' || rate === undefined || rate === 0),
         );
       })
     : [];
@@ -629,11 +658,11 @@ function prepareOcrLines(
     chargeKind: charge.kind,
     quantity: '1.0000',
     unitPrice: toMoney4(charge.amount),
-    vatRate: reading === 'document' ? charge.vatRate ?? defaultLineVatRate(fields) : charge.vatRate ?? null,
+    vatRate: charge.kind === 'ROUNDING' ? '0' : reading === 'document' ? charge.vatRate ?? defaultLineVatRate(fields) : charge.vatRate ?? null,
     // Spec §5.1: never spread the document's WHT rate onto a charge row. Doing so withheld tax on a
     // base nobody computed — and on a ROUNDING row, on money that was never a payment at all.
     whtRate: null,
-    needsReview: reading === 'unproven' && charge.vatRate === undefined,
+    needsReview: charge.kind !== 'ROUNDING' && reading === 'unproven' && charge.vatRate === undefined,
     sourceLineText: chargeSourceLineText(charge),
     aiLineConfidence: charge.confidence,
   }, vatMode));
@@ -747,6 +776,31 @@ function prepareOcrLines(
     if (unproven) return unproven;
   }
 
+  // A taxed-only base plus VAT below the gross proves a separate untaxed portion. Keep two
+  // net summary rows instead of inventing a blended VAT rate. The original discount stays in
+  // source evidence: allocating it over these net groups would invent a per-group allocation.
+  const taxBase = positiveMoney(fields.taxableAmount);
+  const sourceVat = positiveMoney(fields.vatAmount);
+  const sourceGross = positiveMoney(fields.grandTotalAmount);
+  const sourceRate = positiveMoney(fields.vatRate);
+  if (charges.length === 0 && taxBase && sourceVat && sourceGross && sourceRate
+    && ['VAT_INCLUDED', 'VAT_EXCLUDED'].includes(vatMode)
+    && Math.abs(taxBase * sourceRate - sourceVat) <= VAT_TOLERANCE
+    && sourceGross - taxBase - sourceVat > VAT_TOLERANCE) {
+    const netLabel = positiveMoney(fields.discountAmount) ? ' (รวมส่วนลดแล้ว)' : '';
+    const groups = [
+      prepareLine({ description: `ยอดสินค้าที่เสีย VAT${netLabel}`, quantity: '1',
+        unitPrice: (taxBase + (vatMode === 'VAT_INCLUDED' ? sourceVat : 0)).toFixed(2),
+        vatRate: sourceRate.toFixed(4), whtRate, needsReview: true }, vatMode),
+      prepareLine({ description: `ยอดสินค้าที่ไม่มี VAT${netLabel}`, quantity: '1',
+        unitPrice: (sourceGross - taxBase - sourceVat).toFixed(2),
+        vatRate: '0', whtRate, needsReview: true }, vatMode),
+    ];
+    const totals = reconciledTotals(groups, fields);
+    if (totals) return { status: 'SUMMARY_LINE', lines: groups, totals, chargesApplied: 0,
+      chargeReviewReasons: ['เก็บยอดสรุปแยกตามภาษีแล้ว รายละเอียดยังต้องตรวจจากเอกสาร'
+        + (netLabel ? ' ส่วนลดรวมอยู่ในยอดแล้ว ไม่ต้องหักซ้ำ' : '')] };
+  }
   const summaryVatRate = summaryLineVatRate(fields);
   const summary = prepareLine({
     description: fields.description ?? 'รายการตามใบเสร็จ (AI สรุปยอดรวม)',
@@ -755,6 +809,23 @@ function prepareOcrLines(
     vatRate: summaryVatRate,
     whtRate,
   }, vatMode, toMoney4(fields.discountAmount));
+  // Fractional quantities and rounded printed unit prices can differ from the printed payable
+  // by a satang. Preserve both printed inputs and name the calculated settlement adjustment.
+  const fractionalQuantity = positiveMoney(fields.quantity);
+  const printedUnitPrice = positiveMoney(fields.unitPrice);
+  const settlementDifference = sourceGross === undefined ? 0
+    : Math.round((sourceGross - Number(summary.totals.lineTotalAmount)) * 100) / 100;
+  if (!hadChargeSuggestions && fractionalQuantity && !Number.isInteger(fractionalQuantity)
+    && printedUnitPrice && Number(summary.unitPrice) === printedUnitPrice
+    && Math.abs(settlementDifference) > 0 && Math.abs(settlementDifference) <= 0.02) {
+    const rounding = prepareLine({ description: 'ปรับเศษจากจำนวนและราคาต่อหน่วย',
+      chargeKind: 'ROUNDING', quantity: '1', unitPrice: settlementDifference.toFixed(2),
+      vatRate: '0', whtRate: null, sourceLineText: 'ระบบคำนวณส่วนต่างจากยอดสุทธิที่พิมพ์บนเอกสาร' }, vatMode);
+    const lines = [summary, rounding];
+    const totals = reconciledTotals(lines, fields);
+    if (totals) return { status: 'RECONCILED_CHARGE_LINES', lines, totals,
+      chargesApplied: 1, chargeReviewReasons: [] };
+  }
   // Rows that were readable but would not reconcile outrank a folded charge: the arithmetic on the
   // page contradicts itself, which is a stronger signal than a charge the split could not place.
   const itemsSum = items.length >= 2
@@ -800,6 +871,7 @@ type AppliedReceiptCategory = {
 };
 
 type AppliedReceiptResult = AppliedReceiptCategory & {
+  acceptedAmounts?: { grandTotalAmount: string; vatAmount: string; whtAmount: string; netPayableAmount: string; vatMode: string; discountAmount?: string };
   chargeReconciliationStatus: ReceiptChargeReconciliationStatus;
   /** Only with ITEMS_DID_NOT_RECONCILE: what the printed rows add up to, for the reviewer to compare. */
   itemsSumAmount?: string;
@@ -865,6 +937,7 @@ export class ReceiptOcrApplyService {
       completed.expenseDateAssumptions,
     );
     const reviewReasons = [
+      ...(fields.missingFields?.includes('lines') ? ['อ่านรายละเอียดบางรายการไม่ครบ เก็บยอดรวมไว้แล้ว กรุณาตรวจรายการกับภาพใบเสร็จ'] : []),
       ...(dateReview.reason ? [dateReview.reason] : []),
       ...(prepared?.chargeReviewReasons ?? []),
     ];
@@ -890,6 +963,10 @@ export class ReceiptOcrApplyService {
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
           expenseCategoryId: true,
+          reviewedAt: true,
+          vendorEntityKindSnapshot: true,
+          grandTotalAmount: true, vatAmount: true, whtAmount: true, netPayableAmount: true, vatMode: true,
+          discountAmount: true,
           updatedAt: true,
           vatCaptureSnapshotJson: true,
           whtInputJson: true,
@@ -912,10 +989,20 @@ export class ReceiptOcrApplyService {
         return { stale: persistedCharges };
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
+      // Re-reading a receipt must not replace a reviewer's chosen identity.
+      if (currentExpense.reviewedAt) {
+        for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];
+      } else if (!currentExpense.vendorEntityKindSnapshot) {
+        const kind = receiptPayeeEntityKind(completed.vendorName, completed.vendorIdentityEvidence);
+        if (kind && kind === completed.vendorEntityKind) data['vendorEntityKindSnapshot'] = kind;
+      }
       const priorWht = currentExpense.whtInputJson as ExpenseWhtCapture | null;
       // A rerun may change line order/count. Never attach reviewed tax meaning to a new OCR row
       // by index, or erase a saved whole-bill amount/mixed historical rates with provider output.
-      const preserveReviewedLines = priorWht?.origin === 'REVIEWER'
+      const priorVat = currentExpense.vatCaptureSnapshotJson as ExpenseVatCaptureSnapshotV1 | null;
+      const preserveReviewedLines = Boolean(currentExpense.reviewedAt)
+        || (priorVat?.source.origin === 'REVIEWER' && (currentExpense.lines?.length ?? 0) > 0)
+        || priorWht?.origin === 'REVIEWER'
         || (currentExpense.lines ?? []).some((line) => line.vatTreatment != null)
         || new Set((currentExpense.lines ?? []).map((line) => line.whtRate?.toString() ?? '')).size > 1;
       if (preserveReviewedLines) delete data['vatMode'];
@@ -949,6 +1036,11 @@ export class ReceiptOcrApplyService {
           .map((line, index) => (line.chargeKind != null ? index + 1 : 0))
           .filter((lineNumber) => lineNumber > 0));
         const whtError = applyExpenseWhtInput(vat, whtInput, chargeLineNumbers);
+        if (whtError) {
+          applyExpenseWhtInput(vat, { inputType: 'AMOUNT', value: '0' });
+          reviewReasons.push('ยอดภาษีหัก ณ ที่จ่ายไม่สอดคล้องกับยอดเอกสาร กรุณาตรวจในเว็บ');
+          data['aiVerificationStatus'] = 'NEEDS_REVIEW';
+        }
         // Invalid printed WHT stays review evidence, never a negative payable or inferred rate.
         const acceptedWhtInput = whtError ? null : whtInput;
         prepared = {
@@ -1026,8 +1118,11 @@ export class ReceiptOcrApplyService {
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
       await tx.expenseRecord.update({ where: { id: expenseId }, data });
+      const acceptedAmounts = Object.fromEntries(['grandTotalAmount', 'vatAmount', 'whtAmount', 'netPayableAmount', 'vatMode', 'discountAmount']
+        .map((key) => [key, String(data[key] ?? currentExpense[key as keyof typeof currentExpense] ?? (key === 'vatMode' ? 'NO_VAT' : '0'))])) as NonNullable<AppliedReceiptResult['acceptedAmounts']>;
       if (!lineTotal || preserveReviewedLines) {
         return {
+          acceptedAmounts,
           categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
           categoryName: effectiveCategory?.name ?? null,
           categoryAutoFilled,
@@ -1073,6 +1168,7 @@ export class ReceiptOcrApplyService {
         } });
       }
       return {
+        acceptedAmounts,
         categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
         categoryName: effectiveCategory?.name ?? null,
         categoryAutoFilled,

@@ -813,6 +813,7 @@ describe('ReceiptOcrApplyService.apply', () => {
     });
     assert.deepEqual(result, {
       candidatesCreated: 0,
+      acceptedAmounts: { discountAmount: '0.0000', grandTotalAmount: '65.0000', vatAmount: '0.0000', whtAmount: '0.0000', netPayableAmount: '65.0000', vatMode: 'NO_VAT' },
       categoryId: 'cat-meals',
       categoryName: 'ค่าอาหาร',
       categoryAutoFilled: true,
@@ -1709,5 +1710,99 @@ describe('apply: outcomes that write no lines still report the charges the recor
     assert.deepEqual(outcome.reviewReasons, []);
     assert.equal(outcome.chargesApplied, 0);
     assert.equal(outcome.chargeReconciliationStatus, 'SUMMARY_LINE');
+  });
+});
+
+
+describe('receipt tax integrity regressions', () => {
+  it('keeps a mixed-tax net summary without inventing a blended rate or discount allocation', async () => {
+    const fields = { grandTotalAmount: '15532', subtotalAmount: '14576.73', taxableAmount: '13646.73',
+      discountAmount: '345', vatAmount: '955.27', vatRate: '0.07', vatMode: 'VAT_EXCLUDED' };
+    const result = await applyFields(fields);
+    assert.equal(result.lines.length, 2);
+    assert.deepEqual(result.lines.map((line) => line.vatRate), ['0.0700', '0']);
+    assert.equal(result.record.grandTotalAmount, '15532.0000');
+    assert.equal(result.record.vatAmount, '955.2700');
+    assert.equal(result.record.discountAmount, '0.0000', 'net summary already includes discount');
+    assert.equal(result.record.aiVerifiedFieldsJson.discountAmount, '345', 'printed discount remains source evidence');
+    assert.equal(result.record.vatCaptureSnapshotJson.reconciliation.status, 'MATCHED');
+    assert.ok(result.result.reviewReasons.some((reason) => reason.includes('ไม่ต้องหักซ้ำ')));
+    assert.ok(result.lines.every((line) => line.reviewStatus === 'NEEDS_REVIEW'));
+  });
+
+  it('keeps printed litres and inclusive unit price, with a named one-satang calculated adjustment', async () => {
+    const result = await applyFields({ quantity: '61.488', unitPrice: '39.19', subtotalAmount: '2252.06',
+      taxableAmount: '2252.06', vatAmount: '157.64', vatRate: '0.07', grandTotalAmount: '2409.70', vatMode: 'VAT_EXCLUDED' });
+    assert.equal(result.record.vatMode, 'VAT_INCLUDED');
+    assert.equal(result.line.quantity, '61.4880');
+    assert.equal(result.line.unitPrice, '39.1900');
+    assert.equal(result.lines.at(-1).chargeKind, 'ROUNDING');
+    assert.equal(result.lines.at(-1).unitPrice, '-0.01');
+    assert.equal(result.record.grandTotalAmount, '2409.7000');
+    assert.equal(result.record.vatAmount, '157.6400');
+    assert.equal(result.record.taxableAmount, '2252.0600');
+  });
+
+  it('does not turn rows on an incomplete page into a final transaction total', () => {
+    assert.equal(receiptFallbackLineTotal({ lines: [{ description: 'หน้ารายการสินค้า', quantity: '1', amount: '445', confidence: 0.9, evidenceSignal: 'หน้ารายการสินค้า 445' }] }), undefined);
+  });
+
+  it('keeps six mixed-tax grocery rows and printed VAT instead of a blended rate', async () => {
+    const amounts = ['219', '20', '105', '18', '18', '20'];
+    const fields = { grandTotalAmount: '400', subtotalAmount: '389.47', taxableAmount: '150.47', vatAmount: '10.53', vatRate: '0.07', vatMode: 'VAT_EXCLUDED',
+      lines: amounts.map((amount, index) => ({ description: `สินค้า ${index}`, quantity: index === 2 ? '3' : '1', amount,
+        evidenceSignal: `สินค้า ${index} ${amount}`, confidence: 0.95, ...(index < 2 ? { vatRate: '0', vatTreatment: 'NON_VAT' } : {}) })) };
+    const result = await applyFields(fields);
+    assert.equal(result.lines.length, 6);
+    assert.equal(result.record.grandTotalAmount, '400.0000');
+    assert.equal(result.record.vatAmount, '10.5300');
+    assert.equal(result.record.vatMode, 'VAT_INCLUDED');
+    assert.deepEqual(result.lines.slice(0, 2).map((line) => line.vatAmount), ['0.0000', '0.0000']);
+    assert.equal(result.record.vatCaptureSnapshotJson.reconciliation.status, 'MATCHED');
+    assert.equal(result.result.acceptedAmounts?.vatAmount, '10.5300');
+  });
+
+  it('keeps service and negative rounding as separate rows with the exact receipt total', async () => {
+    const result = await applyFields({ grandTotalAmount: '1600', subtotalAmount: '1360', vatAmount: '104.72', vatRate: '0.07', vatMode: 'VAT_EXCLUDED',
+      lines: ['450', '260', '40', '360', '50', '200'].map((amount, i) => ({ description: `อาหาร ${i}`, quantity: '1', amount, evidenceSignal: `อาหาร ${i} ${amount}`, confidence: 0.9 })),
+      additionalCharges: [
+        { kind: 'SERVICE_CHARGE', description: 'Service charge', amount: '136', vatRate: '0.07', evidenceSignal: 'Service charge 136', confidence: 0.9 },
+        { kind: 'ROUNDING', description: 'Rounding', amount: '-0.72', vatRate: '0', evidenceSignal: 'Rounding -0.72', confidence: 0.9 },
+      ] });
+    assert.equal(result.lines.length, 8);
+    assert.equal(result.record.grandTotalAmount, '1600.0000');
+    assert.equal(result.record.vatAmount, '104.7200');
+    assert.equal(result.lines.at(-1).vatAmount, '0.0000');
+    assert.equal(result.lines.at(-1).whtAmount, '0.0000');
+    assert.equal(result.lines.at(-1).unitPrice, '-0.7200');
+  });
+
+  it('prefills only an evidenced issuer kind and preserves a reviewer identity on reread', async () => {
+    const fields = { grandTotalAmount: '70.50', vatMode: 'NO_VAT', whtAmount: '2.71', whtBaseAmount: '270.50',
+      vendorName: 'บริษัท ขนส่งตัวอย่าง จำกัด', vendorIdentityEvidence: 'บริษัท ขนส่งตัวอย่าง จำกัด', vendorEntityKind: 'JURISTIC', vendorTaxId: '0100000000001' };
+    const initial = await applyFields(fields);
+    assert.equal(initial.record.vendorEntityKindSnapshot, 'JURISTIC');
+    assert.equal(initial.record.whtInputJson.baseAmount, '270.50');
+    assert.equal(initial.record.netPayableAmount, '67.7900');
+    const reviewed = await applyFields(fields, null, { vendorEntityKindSnapshot: 'INDIVIDUAL', reviewedAt: new Date('2026-09-01') });
+    assert.equal(reviewed.record.vendorEntityKindSnapshot, undefined);
+    assert.equal(reviewed.record.vendorNameSnapshot, undefined);
+    assert.equal(reviewed.record.vendorTaxIdSnapshot, undefined);
+    assert.deepEqual(reviewed.lines, [], 'rereading cannot replace reviewed financial rows');
+    assert.equal(reviewed.record.grandTotalAmount, undefined);
+    const vatReviewed = await applyFields(fields, { version: 1, source: { origin: 'REVIEWER' } }, {
+      lines: [{ whtRate: null, vatTreatment: null, chargeKind: null, lineSubtotalAmount: '70.50', vatAmount: '0' }],
+    });
+    assert.deepEqual(vatReviewed.lines, []);
+    assert.equal(vatReviewed.record.vatCaptureSnapshotJson, undefined);
+    const unknown = await applyFields({ ...fields, vendorIdentityEvidence: 'ชื่อลูกค้าไม่ใช่ผู้ขาย' });
+    assert.equal(unknown.record.vendorEntityKindSnapshot, undefined);
+  });
+
+  it('does not persist rejected withholding through legacy prepared rates', async () => {
+    const result = await applyFields({ grandTotalAmount: '70.50', vatMode: 'NO_VAT', whtRate: '0.5', whtBaseAmount: '270.50' });
+    assert.equal(result.record.whtAmount, '0.0000');
+    assert.equal(result.record.netPayableAmount, '70.5000');
+    assert.ok(result.result.reviewReasons.some((reason) => reason.includes('หัก ณ ที่จ่าย')));
   });
 });

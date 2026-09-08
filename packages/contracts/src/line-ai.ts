@@ -269,6 +269,9 @@ export type ReceiptOcrLineItem = {
 
 export type ReceiptOcrFieldResult = {
   vendorName?: string;
+  /** Exact issuer-name evidence; never a buyer, patient or cashier block. */
+  vendorIdentityEvidence?: string;
+  vendorEntityKind?: 'INDIVIDUAL' | 'JURISTIC';
   vendorTaxId?: string;
   vendorBranchCode?: string;
   documentNumber?: string;
@@ -291,6 +294,8 @@ export type ReceiptOcrFieldResult = {
   vatAmount?: string;
   whtRate?: string;
   whtAmount?: string;
+  /** Only an explicitly labelled printed withholding base, not VAT-base or inverse arithmetic. */
+  whtBaseAmount?: string;
   grandTotalAmount?: string;
   /**
    * ISO 4217 code of the money PRINTED ON THE DOCUMENT, when the page shows one (a ฿/$/€/¥ symbol,
@@ -305,7 +310,7 @@ export type ReceiptOcrFieldResult = {
    *  description/quantity/unitPrice above stays the whole-document summary the draft uses whenever
    *  these rows are absent or fail reconciliation. */
   lines?: ReceiptOcrLineItem[];
-  /** Positive printed charges only; discounts/negative rounding stay in discountAmount. */
+  /** Printed charges; only ROUNDING may be negative. Discounts/coupons stay in discountAmount. */
   additionalCharges?: ReceiptOcrAdditionalCharge[];
   /** Optional reporting-category suggestion. It is advisory until the API revalidates
    *  tenant, active state, confidence, and preservation of any reviewed category. */
@@ -321,6 +326,16 @@ export type ReceiptOcrFieldResult = {
 
 /** Shared API auto-fill gate for receipt reporting-category suggestions. */
 export const RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE = 0.85;
+
+/** A suggested payee kind needs an evidenced issuer name, not a tax number or a trade name alone. */
+export function receiptPayeeEntityKind(name: string | undefined, evidence: string | undefined): 'INDIVIDUAL' | 'JURISTIC' | undefined {
+  if (!name?.trim() || !evidence?.trim() || name.length > 200 || evidence.length > 320) return undefined;
+  const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/g, ' ').trim().toUpperCase();
+  if (!normalize(evidence).includes(normalize(name))) return undefined;
+  if (/^(?:บริษัท|บมจ\.?|ห้างหุ้นส่วนจำกัด|ห้างหุ้นส่วนสามัญนิติบุคคล|หจก\.?)|\b(?:CO(?:MPANY)?\.?\s*,?\s*(?:LTD\.?|LIMITED)|PUBLIC COMPANY|LIMITED|LLC|INCORPORATED|PLC)\b/i.test(name.trim())) return 'JURISTIC';
+  if (/^(?:นาย|นางสาว|นาง|น\.ส\.)\s*\S|^(?:Mr\.?|Mrs\.?|Ms\.?|Miss)\s+\S/i.test(name.trim())) return 'INDIVIDUAL';
+  return undefined;
+}
 
 export const BUSINESS_DOCUMENT_CONTENT_KINDS = [
   'DOCUMENT', 'MULTI_DOCUMENT', 'NON_DOCUMENT_IMAGE', 'UNREADABLE', 'AMBIGUOUS',

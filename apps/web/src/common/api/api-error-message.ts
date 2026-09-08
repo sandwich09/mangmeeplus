@@ -454,6 +454,8 @@ const UPLOAD_CONTENT_REJECTED =
 
 /** Full English messages the user can actually hit in the expense/substitute journeys. */
 const MESSAGE_LABELS: Record<string, string> = {
+  'WHT amount cannot exceed the accepted pre-VAT amount.': 'ยอดภาษีหัก ณ ที่จ่ายเกินฐานที่ใช้คำนวณ กรุณาตรวจยอดและฐานภาษี',
+  'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดภาษีหัก ณ ที่จ่ายเกินยอดเอกสาร กรุณาตรวจยอดและฐานภาษี',
   'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',
   'Tax branch code must be 5 digits.': 'รหัสสาขาภาษีต้องเป็นตัวเลข 5 หลัก หรือเว้นว่างหากไม่มี',
   'Branch code must be 1-20 uppercase alphanumeric characters, underscores, or hyphens.': 'รหัสสาขาต้องยาว 1–20 ตัว ใช้ A–Z, 0–9, ขีดกลาง หรือขีดล่างเท่านั้น',

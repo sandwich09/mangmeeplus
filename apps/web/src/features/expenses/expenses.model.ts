@@ -494,27 +494,23 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
       externalTaxCode: line.taxSnapshot?.externalTaxCode ?? null,
       transactionContext: line.taxSnapshot?.taxContext ?? 'DOMESTIC_PURCHASE',
   }));
-  // Show staged items that have no financial counterpart in the same review form. Draft saving
-  // keeps incomplete rows staged until their required financial facts are present.
+  // A rejected OCR breakdown is evidence, not additional purchases beside an accepted summary.
+  // Explicit user additions and drafts with no financial rows still need their editable rows.
+  const hasFinancialProducts = detail.lines.some((line) => !line.chargeKind);
   const assigned = new Set<string>();
   for (const item of source?.items ?? []) {
     const storedMatches = lines.filter((line) => line.id && !assigned.has(line.id)
       && (item.lineId ? line.id === item.lineId : !line.chargeKind && line.description === item.description));
     const matched = storedMatches.length === 1 ? storedMatches[0] : storedMatches.find((line) =>
       Number(item.quantity) === Number(line.quantity) && item.unitPrice !== null && Number(item.unitPrice) === Number(line.unitPrice));
-    const missing = (fields: string[]) => source?.missingFields.some((field) =>
-      field.itemRef === item.itemRef && fields.includes(field.field));
     const unitPrice = item.unitPrice ?? (item.totalAmount != null && Number(item.quantity) > 0
       ? (Number(item.totalAmount) / Number(item.quantity)).toFixed(4) : '');
     if (matched?.id) {
-      matched.sourceItemRef = item.itemRef;
-      if (item.quantity === null || missing(['quantity'])) matched.quantity = '';
-      else if (item.lineId) matched.quantity = item.quantity;
-      if (!unitPrice || missing(['price', 'unitPrice', 'totalAmount'])) matched.unitPrice = '';
-      else if (item.lineId) matched.unitPrice = unitPrice;
+      if (item.lineId) matched.sourceItemRef = item.itemRef;
       assigned.add(matched.id);
       continue;
     }
+    if (hasFinancialProducts && !item.newItem) continue;
     const chargeIndex = lines.findIndex((line) => line.chargeKind);
     const at = chargeIndex < 0 ? lines.length : chargeIndex;
     lines.splice(at, 0, {
@@ -543,7 +539,8 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     expenseDate: source?.header.expenseDate === null ? '' : (source?.header.expenseDate ?? detail.expenseDate.slice(0, 10)),
     vatMode: detail.vatMode,
     vatSource,
-    ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value } }),
+    ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value,
+      ...(detail.whtInputJson.baseAmount !== undefined && { baseAmount: detail.whtInputJson.baseAmount }) } }),
     ...(source && { businessPurpose: source.header.businessPurpose ?? '', originalNote: detail.note }),
     lines,
   };
@@ -755,7 +752,7 @@ export function buildExpenseDraftReviewPayload(
     vatMode: values.vatMode,
     ...(includeTaxFacts && payloadValues.vatSource && { vatSource: payloadValues.vatSource }),
     ...(includeTaxFacts && values.whtInput && { whtInput: values.whtInput }),
-    ...(options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
+    ...(options.partial && options.sourceDraft && { sourceDraft: sourceReviewInput(values, options.sourceDraft) }),
     ...(includeLines && { lines: payloadValues.lines.map((line, index) => ({
       ...(line.id && { id: line.id }),
       ...(line.sourceItemRef && { sourceItemRef: line.sourceItemRef }),

@@ -1,0 +1,75 @@
+{
+  "at": "2026-09-08T06:32:54.205379+00:00",
+  "source": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+  "services": [
+    {
+      "service": "api-web",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:d74768654331bf95b6e32b9088c8242b3308804d99ef215118e88b753d9953d2",
+      "source": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+      "capacity": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      },
+      "runningTasks": 1,
+      "flags": {
+        "LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED": "true",
+        "LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED": "true",
+        "LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED": "true",
+        "LINE_AI_FLEX_TEXT_FALLBACK_ENABLED": "true",
+        "LINE_AI_DRAFT_EDIT_ENABLED": "true",
+        "LINE_SIGNUP_ENABLED": "true",
+        "EXTERNAL_SIGNUP_ENABLED": "true",
+        "RECEIPT_QUOTA_ENFORCED": "true",
+        "LINE_SIGNUP_APPROVAL_MODE": "AUTO_FREE",
+        "LINE_SIGNUP_WARMUP_SLIPS": "15",
+        "EMAIL_PROVIDER": "ses"
+      }
+    },
+    {
+      "service": "ai-gateway",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:c4da1785cc9e51478f853fb37206e875535b34904796510cdb67120a158d2ff7",
+      "source": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+      "capacity": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      },
+      "runningTasks": 1,
+      "flags": {
+        "LINE_AI_DRAFT_EDIT_ENABLED": "true"
+      }
+    },
+    {
+      "service": "workers",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:a8a4fd737343214d41512684d7b396fe08bd39e58443abc15ba83fe49f96a3d2",
+      "source": "88a08ae3e8e93fe12840f1c46c006945fb96b3c8",
+      "capacity": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      },
+      "runningTasks": 1,
+      "flags": {}
+    }
+  ],
+  "checks": {
+    "deepDb": {
+      "service": "api",
+      "status": "ok",
+      "db": "ok",
+      "timestamp": "2026-09-08T06:32:52.713Z"
+    },
+    "/health": 200,
+    "/auth/line/link-page/signup": 200,
+    "/auth/line/link-page.js": 200,
+    "publicCustomerGate": "OPEN",
+    "publicLogin": 200,
+    "unauthenticatedMe": 401
+  },
+  "apiBase": "https://wa-6ec8b40da38e4baaa1441b1844801d72.ecs.ap-southeast-1.on.aws/v1",
+  "status": "PASS"
+}

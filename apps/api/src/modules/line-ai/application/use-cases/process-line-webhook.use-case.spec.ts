@@ -5466,3 +5466,23 @@ describe('receipt reliability: saved facts, notification and provider-input cont
   });
 
 });
+
+
+it('receipt card separates accepted VAT, WHT and net without publishing contradictory OCR money', () => {
+  const reply = formatPaypersReply('https://app.test', 'company', 'expense', {
+    fields: { grandTotalAmount: '999', vatAmount: '70.50', whtAmount: '2.71', vendorName: 'ร้านตัวอย่าง' },
+    acceptedAmounts: { grandTotalAmount: '70.50', vatAmount: '0', whtAmount: '2.71', netPayableAmount: '67.79', vatMode: 'NO_VAT', discountAmount: '200' },
+  });
+  assert.match(reply, /ยอดรวม – 70.50/);
+  assert.match(reply, /VAT – ไม่มี VAT/);
+  assert.match(reply, /ภาษีหัก ณ ที่จ่าย – 2.71 บาท/);
+  assert.match(reply, /ยอดจ่ายสุทธิ – 67.79 บาท/);
+  assert.match(reply, /ส่วนลด – 200.00 บาท/);
+  assert.doesNotMatch(reply, /999|VAT 70.50|VAT \/ WHT/);
+  const both = formatPaypersReply('https://app.test', 'company', 'expense', {
+    fields: { vatAmount: '70' }, acceptedAmounts: { grandTotalAmount: '1070', vatAmount: '70', whtAmount: '30', netPayableAmount: '1040', vatMode: 'VAT_EXCLUDED' },
+  });
+  assert.match(both, /VAT – 70.00 บาท/);
+  assert.match(both, /ภาษีหัก ณ ที่จ่าย – 30.00 บาท/);
+  assert.match(both, /ยอดจ่ายสุทธิ – 1,040.00 บาท/);
+});

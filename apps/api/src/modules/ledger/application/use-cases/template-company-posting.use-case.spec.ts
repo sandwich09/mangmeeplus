@@ -175,10 +175,32 @@ function postingHarness() {
       },
     } as any,
   );
-  return { useCase, created };
+  return { useCase, created, expense };
 }
 
 describe('template-company posting with reviewed category bindings', () => {
+  it('omits a zero category allocation without creating an invalid empty journal line', async () => {
+    const { useCase, created, expense } = postingHarness();
+    expense.grandTotalAmount = '700';
+    expense.lines[1]!.taxableAmount = '0';
+    await useCase.execute(ctx, { sourceType: 'expense.record', sourceId: 'expense-1' });
+    assert.equal(created[0].lines.length, 2);
+    assert.equal(created[0].lines.some((line: any) => line.accountId === 'acc:5330-01'), false);
+  });
+
+  it('posts a negative settlement adjustment as a positive credit on its reviewed account', async () => {
+    const { useCase, created, expense } = postingHarness();
+    expense.grandTotalAmount = '699.28';
+    expense.lines[1]!.taxableAmount = '-0.72';
+    await useCase.execute(ctx, { sourceType: 'expense.record', sourceId: 'expense-1' });
+    assert.equal(created.length, 1);
+    const adjustment = created[0].lines.find((line: any) => line.accountId === 'acc:5330-01');
+    assert.equal(Number(adjustment.creditAmount), 0.72);
+    assert.equal(Number(adjustment.debitAmount ?? 0), 0);
+    assert.ok(created[0].lines.every((line: any) => Number(line.debitAmount ?? 0) >= 0 && Number(line.creditAmount ?? 0) >= 0));
+    assert.equal(created[0].lines.reduce((sum: number, line: any) => sum + Math.round(Number(line.debitAmount ?? 0) * 100) - Math.round(Number(line.creditAmount ?? 0) * 100), 0), 0);
+  });
+
   it('posts a governed company to its reviewed per-category accounts', async () => {
     const { useCase, created } = postingHarness();
 

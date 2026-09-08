@@ -1954,9 +1954,10 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(starts[0].ocrFields.lines, ocrFields.lines);
     assert.doesNotMatch(h.replies[0] ?? '', /D-PURPOSE|ข้อมูลที่ยังต้องตอบ/u);
     assert.match(h.replies[0] ?? '', /ยอดรวม – 240\.00/u);
-    for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'เลขที่เอกสาร', 'VAT / WHT / ภาษีซื้อ', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
+    for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'เลขที่เอกสาร', 'VAT – รอตรวจสอบ', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
       assert.ok((h.replies[0] ?? '').includes(label), `reference receipt summary includes ${label}`);
     }
+    assert.doesNotMatch(h.replies[0] ?? '', /VAT \/ WHT|ภาษีหัก ณ ที่จ่าย/u, 'an unknown-tax receipt does not invent withholding');
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {

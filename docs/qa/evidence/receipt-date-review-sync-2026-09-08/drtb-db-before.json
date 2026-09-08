@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-08T05:47:17.840Z",
+  "environment": "uat",
+  "readOnly": true,
+  "expense": {
+    "id": "cmtrycweh001d231i4jexgvri",
+    "status": "DRAFT",
+    "expenseDate": "2026-09-07 00:00:00",
+    "vendorNameSnapshot": "บริษัท วันทูทูว์ จำกัด",
+    "grandTotalAmount": "55.0000",
+    "vatAmount": "3.6000",
+    "note": "LINE receipt upload",
+    "updatedAt": "2026-09-08 05:17:51.078",
+    "dateStatus": "unverified",
+    "dateResolution": null,
+    "missingFields": [],
+    "reviewReasons": [
+      "วันที่บนเอกสารยังอ่านไม่ได้ – ใช้วันที่ส่งไว้ก่อน"
+    ],
+    "sourceHeader": {
+      "vendorName": "บริษัท วันทูทูว์ จำกัด",
+      "expenseDate": "2026-09-07",
+      "provisionalExpenseDate": "2026-09-08"
+    }
+  },
+  "lines": [
+    {
+      "id": "cmtrycwpa001m231i30d6eo9x",
+      "lineNumber": 1,
+      "description": "AMERICANO - ICED",
+      "quantity": "1.0000",
+      "unitPrice": "51.4000",
+      "lineTotalAmount": "55.0000",
+      "vatAmount": "3.6000",
+      "expenseCategoryId": "cmtrt5rrs00ol1o48xbwwz3fp"
+    }
+  ]
+}

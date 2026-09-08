@@ -1,0 +1,55 @@
+{
+  "at": "2026-09-08T06:55:39.729870+00:00",
+  "status": "PASS",
+  "servicesUnchanged": [
+    {
+      "cluster": "watchdog-bms-prod",
+      "service": "watchdog-bms-api-web-pub",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-api@sha256:bb95dbbddec4cf7b0b03e3c4bf9049cc342bd7c476539d55de4529ae9a2ccb6d",
+      "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "serving": "live",
+      "status": "ACTIVE",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-api-web-pub/0906917618815202536",
+      "scaling": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      }
+    },
+    {
+      "cluster": "watchdog-bms-prod",
+      "service": "watchdog-bms-ai-gateway-v2",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-ai-gateway@sha256:5fa4fbf544c0dc779f62cc134923846394d2e81bda17eba960c550c99ea4a253",
+      "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "serving": "live",
+      "status": "ACTIVE",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-ai-gateway-v2/8694278832001086731",
+      "scaling": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      }
+    },
+    {
+      "cluster": "watchdog-bms-prod",
+      "service": "watchdog-bms-workers",
+      "image": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/watchdog-bms-workers@sha256:9cfebca4d7a3b69b4f1ca7d53b1116bae261281b5702bd9f03a4297657e5e2fc",
+      "source": "604ac785479ced5b9858d0b46d89f8d11cf2b9f6",
+      "serving": "live",
+      "status": "ACTIVE",
+      "revision": "arn:aws:ecs:ap-southeast-1:311414082667:service-revision/watchdog-bms-prod/watchdog-bms-workers/4762463421542925421",
+      "scaling": {
+        "minTaskCount": 1,
+        "maxTaskCount": 2,
+        "autoScalingMetric": "AVERAGE_CPU",
+        "autoScalingTargetValue": 70
+      }
+    }
+  ],
+  "customerChecks": {
+    "/api/v1/auth/platform-access": "OPEN",
+    "/login": 200
+  }
+}

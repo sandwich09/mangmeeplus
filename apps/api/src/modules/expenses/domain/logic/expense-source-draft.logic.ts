@@ -133,6 +133,7 @@ export function projectExpenseSourceDraft(state: LineExpenseDraftContinuation, c
     status: state.status, canEdit,
     header: { expenseDate: state.header.expenseDate ?? null, vendorName: state.header.vendorName ?? null, businessPurpose: state.header.businessPurpose ?? null },
     items: state.items.map((item) => ({ itemRef: item.itemRef, lineId: item.lineId ?? null, description: item.description ?? null,
+      ...(item.newItem && { newItem: true }),
       quantity: item.quantity ?? null, unitPrice: item.unitPrice ?? null, totalAmount: item.totalAmount ?? null, expenseCategoryId: item.expenseCategoryId ?? null })),
     missingFields: state.unresolvedQuestions.map(({ id, scope, itemRef, field, prompt }) => ({ id, scope, ...(itemRef ? { itemRef } : {}), field, prompt })),
   };

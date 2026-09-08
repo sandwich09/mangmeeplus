@@ -61,6 +61,15 @@ describe('ExpenseSourceAdapter WHT source facts', () => {
     assert.equal(source?.whtRate, '3.0000');
     assert.equal(source?.whtAmount, '3');
   });
+  it('projects the explicit base without back-solving the rounded withholding amount', async () => {
+    for (const inputType of ['RATE', 'AMOUNT']) {
+      const [source] = await adapter({ ...whtRow([], 'JURISTIC'), taxableAmount: '70.50', whtAmount: '2.71',
+        whtInputJson: { inputType, value: inputType === 'RATE' ? '1' : '2.71', baseAmount: '270.50', origin: 'REVIEWER' },
+      }).findConfirmedWithWhtByCompany('company-1');
+      assert.equal(source?.grossAmount, '270.50');
+      assert.equal(source?.whtRate, inputType === 'RATE' ? '1.0000' : null);
+    }
+  });
 
   it('carries the payee class and branch code, scales the line rate to a percent, and bases gross on the withholding lines only', async () => {
     const row = whtRow([{ whtRate: '0.0300', taxableAmount: '1000' }], 'INDIVIDUAL');

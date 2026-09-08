@@ -1538,7 +1538,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       setInfo(t('expenses.review_saved', locale));
       if (explicitDraftSave) toast.success(t(detail.status === 'DRAFT' ? 'expenses.review_draft_saved' : 'expenses.source_draft_saved', locale));
       return true;
-    } catch (e) { setError(err(e)); return false; }
+    } catch (e) { const message = err(e); setError(message); if (explicitDraftSave) toast.error(message); return false; }
     finally { setBusy(false); }
   };
   useEffect(() => {
@@ -2115,7 +2115,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 className={validationInputClass(whtUnitIssue)}
                 aria-invalid={whtUnitIssue?.severity === 'error' || undefined}
                 value={whtInput.inputType}
-              onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { inputType: event.target.value as ExpenseWhtInput['inputType'], value: '' } })); }}
+              onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: event.target.value as ExpenseWhtInput['inputType'], value: '' } })); }}
                 disabled={!isMutable || busy}
               >
                 <option value="RATE">{t('expenses.wht_unit_percent', locale)}</option>
@@ -2135,13 +2135,26 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                 className={validationInputClass(whtValueIssue)}
                 aria-invalid={whtValueIssue?.severity === 'error' || undefined}
                 value={whtInput.value}
-                onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { inputType: whtInput.inputType, value: event.target.value } })); }}
+                onChange={(event) => { setTaxFactsDirty(true); setValues((current) => ({ ...current, whtInput: { ...current.whtInput, inputType: whtInput.inputType, value: event.target.value } })); }}
                 disabled={!isMutable || busy}
               />
               <FieldIssueNote issue={whtValueIssue} />
             </label>
           </div>
           {!values.whtInput && documentWhtRate === null && <p className="mt-1 text-xs text-warning-700">{t('expenses.wht_multiple_rates_hint', locale)}</p>}
+          {(Number(whtInput.value) > 0 || whtInput.baseAmount !== undefined) && <label className="mt-3 block">
+            <span className="mb-1 block text-sm font-medium text-gray-700">{t('expenses.wht_base', locale)}</span>
+            <input type="number" inputMode="decimal" min="0" step="0.01"
+              aria-invalid={Boolean(fieldIssue(issues, 'whtInput.baseAmount'))}
+              className={validationInputClass(fieldIssue(issues, 'whtInput.baseAmount'))}
+              value={whtInput.baseAmount ?? ''} disabled={!isMutable || busy}
+              onChange={(event) => { setTaxFactsDirty(true); const base = event.target.value;
+                setValues((current) => { const next = { ...whtInput, ...current.whtInput };
+                  if (base === '') delete next.baseAmount; else next.baseAmount = base;
+                  return { ...current, whtInput: next }; }); }} />
+            <FieldIssueNote issue={fieldIssue(issues, 'whtInput.baseAmount')} />
+            <span className="mt-1 block text-xs text-gray-500">{t('expenses.wht_base_hint', locale)}</span>
+          </label>}
           <p className="mt-1 text-xs text-gray-500">{t(whtInput.inputType === 'AMOUNT' ? 'expenses.wht_amount_hint' : 'expenses.wht_percent_hint', locale)}</p>
         </div>
       )}
