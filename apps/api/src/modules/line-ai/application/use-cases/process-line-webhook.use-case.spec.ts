@@ -865,7 +865,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.equal(identityQueries[1].providerChannelId, undefined);
     // Identity resolved, so the turn reaches the permission gate instead of the unlinked reply.
     assert.match(replies[0] ?? '', /ไม่มีสิทธิ์/);
-    assert.equal((updates[0] as any).data.status, 'forbidden');
+    assert.equal((updates.find((update: any) => update.data.status) as any).data.status, 'forbidden');
   });
 
   it('preflights legal acceptance with the server-resolved company and membership only', async () => {
@@ -1037,7 +1037,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     assert.equal(getAiGatewayCalled(), false);
     assert.match(replies[0] ?? '', /ไม่มีสิทธิ์/);
-    assert.equal((updates[0] as any).data.status, 'forbidden');
+    assert.equal((updates.find((update: any) => update.data.status) as any).data.status, 'forbidden');
   });
 
   it('denies the whole turn when ai_line_assistant entitlement is toggled off', async () => {
@@ -1051,7 +1051,7 @@ describe('ProcessLineWebhookUseCase', () => {
     // An ORDINARY question keeps the bare line: only a capability question earns the entitlement
     // card below it (Owner 2026-09-06, §8.2).
     assert.equal(sentMessageBatches[0]?.length, 1);
-    assert.equal((updates[0] as any).data.status, 'feature_disabled');
+    assert.equal((updates.find((update: any) => update.data.status) as any).data.status, 'feature_disabled');
   });
 
   it('denies when entitlements are configured but ai_line_assistant has no row (deny-by-default once configured)', async () => {
@@ -1061,7 +1061,7 @@ describe('ProcessLineWebhookUseCase', () => {
     await useCase.execute({ ...BASE_EVENT });
 
     assert.equal(getAiGatewayCalled(), false);
-    assert.equal((updates[0] as any).data.status, 'feature_disabled');
+    assert.equal((updates.find((update: any) => update.data.status) as any).data.status, 'feature_disabled');
   });
 
   // --- AI-lane kill switch: the `ai_line_assistant` launch route (plan §P3 item 1) ---------------
@@ -3957,7 +3957,7 @@ describe('LINE webhook shadow coverage (piece 5)', () => {
       { surface: 'line.webhook.employee', companyId: 'company-1', featureKey: 'ai_line_assistant' },
     ]);
     // SHADOW ONLY: the existing refusal is untouched.
-    assert.equal((updates[0] as any).data.status, 'feature_disabled');
+    assert.equal((updates.find((update: any) => update.data.status) as any).data.status, 'feature_disabled');
   });
 
   it('records the receipt-capture entry path as well as the AI-query one', async () => {
@@ -4780,6 +4780,28 @@ function makeDeliveryRun(opts: {
 }
 
 describe('ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default off)', () => {
+  it('refuses an unreadable incoming outcome before writing or sending it', async () => {
+    const { prisma, turnOutcomeWrites } = makePrisma();
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true } });
+    const result = await (useCase as any).sendMessages(BASE_EVENT, [{ type: 'flex', altText: 'ก'.repeat(401), contents: { type: 'bubble' } }]);
+    assert.equal(result, 'failed_other');
+    assert.equal(turnOutcomeWrites.length, 0);
+    assert.equal(sentMessageBatches.length, 0);
+  });
+
+  it('cannot bind or send an outcome under another event tenant', async () => {
+    const { prisma, turnOutcomeWrites } = makePrisma();
+    prisma.client.lineWebhookEventLog.updateMany = async (query: any) => {
+      assert.deepEqual(query.where.OR, [{ companyId: null }, { companyId: 'co-1' }]);
+      assert.deepEqual(query.data, { companyId: 'co-1' });
+      return { count: 0 };
+    };
+    const { useCase, sentMessageBatches } = makeUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true } });
+    const result = await (useCase as any).sendMessages({ ...BASE_EVENT, handoff: { companyId: 'co-1', userId: 'u-1' } }, [{ type: 'text', text: 'ข้อมูลที่ตรวจพบ' }]);
+    assert.equal(result, 'failed_other');
+    assert.equal(turnOutcomeWrites.length, 0);
+    assert.equal(sentMessageBatches.length, 0);
+  });
   it('writes NOTHING and delivers the exact legacy payload while the flag is off', async () => {
     const off = makeDeliveryRun();
     await off.run();
