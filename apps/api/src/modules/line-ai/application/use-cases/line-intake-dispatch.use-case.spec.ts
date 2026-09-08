@@ -1956,10 +1956,10 @@ describe('LINE intake dispatch – media path', () => {
     assert.deepEqual(starts[0].ocrFields.lines, ocrFields.lines);
     assert.doesNotMatch(h.replies[0] ?? '', /D-PURPOSE|ข้อมูลที่ยังต้องตอบ/u);
     assert.match(h.replies[0] ?? '', /ยอดรวม – 240\.00/u);
-    for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'เลขที่เอกสาร', 'VAT – รอตรวจสอบ', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
+    for (const label of ['ประเภทเอกสาร', 'ผู้ขาย/ผู้รับเงิน', 'วันที่เอกสาร', 'หมวดหมู่ค่าใช้จ่าย', 'ตรวจสอบและยืนยันในเว็บแอป']) {
       assert.ok((h.replies[0] ?? '').includes(label), `reference receipt summary includes ${label}`);
     }
-    assert.doesNotMatch(h.replies[0] ?? '', /VAT \/ WHT|ภาษีหัก ณ ที่จ่าย/u, 'an unknown-tax receipt does not invent withholding');
+    assert.doesNotMatch(h.replies[0] ?? '', /เลขที่เอกสาร|• VAT|• WHT/u, 'the concise summary omits document number and unknown taxes');
   });
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {
@@ -2203,7 +2203,8 @@ describe('LINE intake dispatch – media path', () => {
     assert.equal(pendingMediaRows.length, 0);
     assert.match(h.replies[0] ?? '', /บันทึกข้อมูลค่าใช้จ่ายเบื้องต้นแล้ว \(รอตรวจสอบ\)/);
     assert.match(h.replies[0] ?? '', /ยอดรวม – 120\.00/);
-    assert.match(h.replies[0] ?? '', /เลขที่เอกสาร – R-1/);
+    assert.equal(recordUpdates[0].data.aiVerificationSummaryJson.recognizedFields.documentNumber, 'R-1');
+    assert.doesNotMatch(h.replies[0] ?? '', /เลขที่เอกสาร/);
   });
 
   it('router and OCR unavailable persist clarification and never create an expense draft', async () => {
@@ -4111,9 +4112,9 @@ describe('LINE usable receipt allowance settlement', () => {
       assert.equal(events.length, retained ? 1 : 0);
       assert.equal(credits.filter((entry) => entry.action === 'receipt.ocr.admission.compensated').length, retained ? 0 : 1);
       if (scenario === 'success' || scenario === 'delivery_failure') {
-        assert.match(h.replies.join(' '), /อ่านครั้งที่ 1 จาก 15/);
         assert.equal(h.completeCalls.length, 1);
-      } else assert.doesNotMatch(h.replies.join(' '), /อ่านครั้งที่/);
+      }
+      assert.doesNotMatch(h.replies.join(' '), /อ่านครั้งที่/);
       if (substitute) {
         assert.equal(h.attachMediaCalls.length, 1, 'existing work claims the supporting/payment image');
         if (scenario !== 'substitute_failure') {
