@@ -936,8 +936,7 @@ function receiptItemLines(
 ): string[] {
   const items = (fields?.lines ?? []).slice(0, 10)
     .map((line) => `• ${line.description} × ${line.quantity} – ${moneyLabel(line.amount)}`);
-  const chargeRows = charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`);
-  return chargeRows.length > 0 ? [...items, 'ค่าใช้จ่ายเพิ่ม:', ...chargeRows] : items;
+  return [...items, ...chargeSummaryLines(charges)];
 }
 
 /** The Thai label for a charge kind the EXTRACTOR proposed. `EXPENSE_LINE_CHARGE_KIND_LABELS` is a
@@ -965,10 +964,15 @@ function foldedChargeLine(charges: readonly ReceiptOcrAdditionalCharge[]): strin
  *  — never from model prose. Empty for a record with no charge rows: no heading, no block. */
 function chargeSummaryLines(charges: readonly ExpenseChargeSummary[]): string[] {
   if (charges.length === 0) return [];
-  const total = charges.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
+  const additional = charges.filter((charge) => charge.kind !== 'ROUNDING');
+  const rounding = charges.filter((charge) => charge.kind === 'ROUNDING');
+  const total = additional.reduce((sum, charge) => sum + Number(toMoney4(charge.amount)), 0);
   return [
-    `➕ ค่าใช้จ่ายเพิ่ม (${charges.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
-    ...charges.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
+    ...(additional.length ? [
+      `➕ ค่าใช้จ่ายเพิ่ม (${additional.length} รายการ รวม ${total.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}):`,
+      ...additional.slice(0, 10).map((charge) => `• ${charge.label} – ${moneyLabel(charge.amount)}`),
+    ] : []),
+    ...rounding.slice(0, 10).map((charge) => `• ปรับยอดปัดเศษ – ${moneyLabel(charge.amount)} บาท`),
   ];
 }
 
@@ -5132,9 +5136,15 @@ export class ProcessLineWebhookUseCase {
     for (const expenseId of exactIds ?? []) {
       const exact = await this.expenseRepo!.findById(companyId, expenseId);
       if (!exact || exact.createdByUserId !== ctx.userId || exact.captureSource !== 'LINE_UPLOAD'
+        || !isBranchInScope(ctx.scopes ?? {}, exact.branchId)
         || exact.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
-      await this.deliverReply(event, `📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ เปิดรายการเดิมได้ที่
-${this.config.webBaseUrl}/companies/${companyId}/expenses/${exact.id}`);
+      await this.deliverCompletedReply(event, [
+        '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ',
+        ...(exact.vendorNameSnapshot ? [`ผู้ขาย – ${exact.vendorNameSnapshot}`] : []),
+        `ยอดรวม – ${moneyLabel(exact.grandTotalAmount)} บาท`,
+        `สถานะ – ${receiptProgressLabel(exact.status, exact.aiVerificationStatus)}`,
+        `เปิดใบเสร็จเดิม: ${absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${exact.id}`)}`,
+      ].join('\n'), companyId, access);
       await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
       return;
     }

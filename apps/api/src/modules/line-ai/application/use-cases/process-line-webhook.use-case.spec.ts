@@ -171,6 +171,19 @@ describe('check-bill LINE reply UX', () => {
     assert.equal(reply.includes('ค่าใช้จ่ายเพิ่ม'), false);
   });
 
+  it('separates signed rounding from additional charges without dropping the adjustment', () => {
+    const rounding = { kind: 'ROUNDING' as const, label: 'ปัดเศษ', amount: '-0.01', vatAmount: '0' };
+    const onlyRounding = formatPaypersReply('https://app.test', 'company-1', 'expense-1', { charges: [rounding] });
+    assert.match(onlyRounding, /ปรับยอดปัดเศษ – -0\.01 บาท/);
+    assert.doesNotMatch(onlyRounding, /ค่าใช้จ่ายเพิ่ม/);
+    const printed = formatPaypersReply('https://app.test', 'company-1', 'expense-1', { charges: [
+      { kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '136', vatAmount: '9.52' },
+      { ...rounding, amount: '-0.72' },
+    ] });
+    assert.match(printed, /ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 136\.00\)/);
+    assert.match(printed, /ปรับยอดปัดเศษ – -0\.72 บาท/);
+  });
+
   /**
    * F6, through the real `resolvePendingCheckBillAction`. Answering "1" on a check bill runs the
    * same apply as the photo lane, and then overwrote `aiVerificationSummaryJson` from scratch — so
@@ -4035,7 +4048,7 @@ describe('LINE grounded receipt item follow-up', () => {
     expense.charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '152.0000', vatAmount: '10.6400' }];
     const reply = formatGroundedReceiptFollowUp('https://app.test', 'company-1', expense, undefined, 'บิลนี้ซื้ออะไรบ้าง');
     assert.match(reply, /ข้าวผัด × 2 – 300\.00/);
-    assert.match(reply, /ค่าใช้จ่ายเพิ่ม:\n• ค่าบริการ – 152\.00/, 'the charge sits under its own heading, below the products');
+    assert.match(reply, /ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 152\.00\):\n• ค่าบริการ – 152\.00/, 'the charge sits under its own heading, below the products');
   });
 
   // UAT 2026-09-06: the follow-up read the OCR suggestion, so it answered "ค่าบริการ 13.00" about a
@@ -5442,6 +5455,58 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.equal(h.counts().ocrReads, 1);
     assert.equal(h.counts().initialized, 1);
     assert.match(JSON.stringify(h.sends[1]), /รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
+    const card = h.sends[1][0];
+    assert.equal(card.type, 'flex');
+    assert.equal(card.contents.header.backgroundColor, '#15803D');
+    assert.match(JSON.stringify(card.contents.body), /ยอดรวม – 120\.00 บาท/);
+    assert.match(JSON.stringify(card.contents.body), /รอคุณตรวจสอบและยืนยัน/);
+    assert.doesNotMatch(JSON.stringify(card.contents.body), /https?:|saved-expense|ข้อมูลที่ยังต้องตอบ/);
+    assert.equal(card.contents.footer.contents[0].action.label, 'เปิดใบเสร็จเดิม');
+    assert.match(card.contents.footer.contents[0].action.uri, /\/companies\/company-1\/expenses\/saved-expense$/);
+    assert.match(card.canonicalText, /\/companies\/company-1\/expenses\/saved-expense/);
+    assert.equal(h.counts().draftStarts, 0);
+  });
+
+  it('an exact-image duplicate shows current saved facts and final status instead of old OCR', async () => {
+    const h = receiptHarness({ replay: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    Object.assign(h.expense(), { status: 'CONFIRMED', vendorNameSnapshot: 'ผู้ขายที่แก้แล้ว', grandTotalAmount: '140.00' });
+    await h.useCase.executeReceiptUpload(h.event('duplicate-current', 'new-image'));
+    const card = h.sends.at(-1)![0];
+    assert.match(JSON.stringify(card.contents.body), /ผู้ขายที่แก้แล้ว/);
+    assert.match(JSON.stringify(card.contents.body), /140\.00/);
+    assert.match(JSON.stringify(card.contents.body), /ยืนยันรายการแล้ว/);
+    assert.doesNotMatch(JSON.stringify(card.contents.body), /รอคุณตรวจสอบ|120\.00/);
+    assert.deepEqual(h.outcomeStore.get('duplicate-current').messagesJson, [card]);
+    assert.equal(h.counts().ocrReads, 1);
+    assert.equal(h.counts().applied, 1);
+  });
+
+  it('replays a failed duplicate card delivery without restarting capture', async () => {
+    const h = receiptHarness({ replay: true, sendFails: true });
+    await h.useCase.executeReceiptUpload(h.event());
+    await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
+    const card = structuredClone(h.outcomeStore.get('duplicate-failed').messagesJson);
+    assert.equal(card[0].type, 'flex');
+    assert.equal(h.eventStore.get('duplicate-failed').status, 'delivery_pending');
+    const before = h.counts();
+    h.allowSend();
+    await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
+    assert.deepEqual(h.sends.at(-1), card);
+    assert.deepEqual(h.counts(), before);
+  });
+
+  it('does not expose a matching receipt from another creator or chat', async () => {
+    for (const outside of ['creator', 'chat'] as const) {
+      const h = receiptHarness();
+      await h.useCase.executeReceiptUpload(h.event());
+      h.expense().vendorNameSnapshot = 'private seller';
+      if (outside === 'creator') h.expense().createdByUserId = 'someone-else';
+      else h.expense().sourceChannelMetadataJson.chatKeyHash = 'different-chat';
+      await h.useCase.executeReceiptUpload(h.event(`new-${outside}`, `new-image-${outside}`));
+      assert.doesNotMatch(JSON.stringify(h.sends.at(-1)), /private seller|รูปนี้ตรงกับบิลที่เก็บไว้แล้ว/);
+      assert.equal(h.counts().initialized, 2, 'the out-of-scope match is not reused');
+    }
   });
 
   it('retains usable OCR source and same image when applying financial rows fails, without leaking raw Prisma inputs', async () => {
