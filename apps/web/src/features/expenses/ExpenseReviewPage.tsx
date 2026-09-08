@@ -33,8 +33,9 @@ import {
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
   expenseConfirmBlocker, expenseDocumentDateStatus, EXPENSE_DATE_STATUS_LABELS,
 } from './expenses.model';
+import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
-import { todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -78,6 +79,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const onRefresh = () => undefined;
   const onGoJournal = () => router.push(`/companies/${companyId}/journal?sourceId=${encodeURIComponent(expenseId)}`);
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
+  const [reviewTotals, setReviewTotals] = useState<ExpenseReviewTotalsState | null>(null);
+  const [totalsRetry, setTotalsRetry] = useState(0);
   // Called before the loading/error early returns — hooks cannot live behind them.
   const capture = useExpenseCapturePolicy(companyId, detail?.expenseDate ?? undefined);
   const toast = useToast();
@@ -843,17 +846,36 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       </MangmeeCard>
     </div>
   );
-  // One number for the whole group: the charge rows the API already grouped and labelled. The row
-  // is shown whenever a charge EXISTS, not when the sum is non-zero — a bill whose charges happen
-  // to cancel (a service charge against a rounding deduction) still has to explain why the goods
-  // subtotal and the tax base differ, and a 0.00 that is really there is information.
-  const chargesTotal = (detail.charges ?? []).reduce((sum, charge) => sum + Number(charge.amount), 0);
-  const hasCharges = (detail.charges ?? []).length > 0;
+  const currentPreview = reviewTotals?.revision === `${detail.id}:${detail.updatedAt}` ? reviewTotals : null;
+  const previewTotals = currentPreview?.status === 'ready' ? currentPreview.totals : undefined;
+  const money = previewTotals ?? detail;
+  const calculationPending = currentPreview?.status === 'loading';
+  const calculationError = currentPreview?.status === 'error';
+  const moneyVatMode = currentPreview?.vatMode ?? detail.vatMode;
+  const moneyHasVat = vatModeRequiresRate(moneyVatMode) || Number(money.vatAmount) > 0;
+  const moneyHasWht = Number(money.whtAmount) > 0;
+  const sumLines = (predicate: (line: ExpenseDetail['lines'][number]) => boolean) => detail.lines
+    .filter(predicate).reduce((sum, line) => sum + Number(line.lineSubtotalAmount), 0);
+  const automaticAdjustment = previewTotals ? Number(previewTotals.calculatedAdjustmentAmount) : sumLines(isCalculatedExpenseRounding);
+  const chargesTotal = previewTotals ? Number(previewTotals.chargesTotalAmount)
+    : sumLines((line) => !!line.chargeKind && line.chargeKind !== 'ROUNDING');
+  const printedRounding = previewTotals ? Number(previewTotals.printedRoundingAmount)
+    : sumLines((line) => line.chargeKind === 'ROUNDING' && !isCalculatedExpenseRounding(line));
+  // The invisible precision residual belongs to the displayed goods subtotal, not to services.
+  // Stored rows retain the exact evidence and the API still verifies their financial identity.
+  const displayedSubtotal = (Number(money.subtotalAmount) + automaticAdjustment).toFixed(2);
   const moneyCard = (
     <div ref={moneyRef} className="scroll-mt-24">
       <MangmeeCard className="p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.money_section_title', locale)}</h3>
-        {financialTotalUnknown ? (
+        {calculationPending || calculationError ? (
+          <div role="status" aria-live="polite" className="mt-3 rounded-xl bg-gray-50 p-4 text-sm text-gray-600">
+            {calculationPending ? 'กำลังคำนวณยอดล่าสุด…' : <>
+              <p>ยังแสดงยอดล่าสุดไม่ได้: {currentPreview?.message || 'กรุณาตรวจข้อมูลแล้วลองอีกครั้ง'}</p>
+              <button type="button" className={cx(ghostClass, 'mt-2')} onClick={() => setTotalsRetry((n) => n + 1)}>คำนวณอีกครั้ง</button>
+            </>}
+          </div>
+        ) : financialTotalUnknown && !previewTotals ? (
           <p role="status" className="mt-3 rounded-xl bg-warning-50 px-4 py-3 text-sm font-semibold text-warning-800">
             {t('expenses.source_draft_total_unknown', locale)}
           </p>
@@ -868,37 +890,38 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
             </p>
           )}
           <div className="mt-2">
-          <MoneyRow label={t('expenses.subtotal', locale)} value={detail.subtotalAmount} />
-          {Number(detail.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={detail.discountAmount} negative />}
+          <MoneyRow label={t('expenses.subtotal', locale)} value={displayedSubtotal} />
+          {Number(money.discountAmount) > 0 && <MoneyRow label={t('expenses.discount', locale)} value={money.discountAmount} negative />}
           {/* Spec §5.1: the goods subtotal no longer includes the additional charges, so the column
               only adds up if they are shown — between the discount and the tax base, which is the
               order the arithmetic runs in (subtotal − discount + charges = base). */}
-          {hasCharges && <MoneyRow label={t('expenses.charges_total', locale)} value={chargesTotal.toFixed(4)} />}
-          {showsVat && <MoneyRow label={t('expenses.taxable_base_ex_vat', locale)} value={detail.taxableAmount} muted />}
+          {chargesTotal !== 0 && <MoneyRow label={t('expenses.charges_section', locale)} value={chargesTotal.toFixed(2)} />}
+          {printedRounding !== 0 && <MoneyRow label="ปัดเศษตามใบเสร็จ" value={printedRounding.toFixed(2)} />}
+          {moneyHasVat && <MoneyRow label={t('expenses.taxable_base_ex_vat', locale)} value={money.taxableAmount} muted />}
           {/* Spec §19g decision 3: mode + the rate the lines actually carry, so "VAT ฿0.00" can no
               longer sit under a label that claims 7%. */}
-          {showsVat && <>
-            <MoneyRow label={<AiFieldLabel label={`${t('expenses.vat', locale)} (${expenseValueLabel(EXPENSE_VAT_MODE_LABELS, detail.vatMode, 'รอตรวจ VAT')}${vatModeRequiresRate(detail.vatMode) ? ` · ${effectiveVatRateLabel(detail.lines)}` : ''})`} field="vatAmount" summary={aiMap} />} value={detail.vatAmount} />
-            <AiFieldMissingHint field="vatAmount" summary={aiMap} />
+          {moneyHasVat && <>
+            <MoneyRow label={<AiFieldLabel label={`${t('expenses.vat', locale)} (${expenseValueLabel(EXPENSE_VAT_MODE_LABELS, moneyVatMode, 'รอตรวจ VAT')}${!previewTotals && vatModeRequiresRate(detail.vatMode) ? ` · ${effectiveVatRateLabel(detail.lines.filter((line) => !isCalculatedExpenseRounding(line)))}` : ''})`} field="vatAmount" summary={previewTotals ? null : aiMap} />} value={money.vatAmount} />
+            <AiFieldMissingHint field="vatAmount" summary={previewTotals ? null : aiMap} />
           </>}
           <div className="mt-1 flex flex-wrap items-center justify-between border-t border-dashed border-gray-200 py-3">
-            <span className="text-sm font-semibold text-gray-700"><AiFieldLabel label={t('expenses.grand_total', locale)} field="total" summary={aiMap} /></span>
-            <span className="tabular-nums text-2xl font-black text-gray-900">{baht(detail.grandTotalAmount)}</span>
+            <span className="text-sm font-semibold text-gray-700"><AiFieldLabel label={t('expenses.grand_total', locale)} field="total" summary={previewTotals ? null : aiMap} /></span>
+            <span className="tabular-nums text-2xl font-black text-gray-900">{baht(money.grandTotalAmount)}</span>
           </div>
-          <AiFieldMissingHint field="total" summary={aiMap} />
-          {hasWht && (
+          <AiFieldMissingHint field="total" summary={previewTotals ? null : aiMap} />
+          {moneyHasWht && (
             <div className="flex flex-wrap items-center justify-between py-1.5 text-sm">
               <span className="text-gray-500">{t('expenses.wht', locale)}</span>
-              <span className="tabular-nums font-semibold text-error-500">- {baht(detail.whtAmount)}</span>
+              <span className="tabular-nums font-semibold text-error-500">- {baht(money.whtAmount)}</span>
             </div>
           )}
           <div className="mt-2 flex flex-wrap items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
             <div>
-              <div className="text-xs font-semibold text-brand-700">{t(hasWht ? 'expenses.amount_due_after_wht' : 'expenses.amount_due', locale)}</div>
+              <div className="text-xs font-semibold text-brand-700">{t(moneyHasWht ? 'expenses.amount_due_after_wht' : 'expenses.amount_due', locale)}</div>
               <div className="mt-1"><StatusBadge status={detail.paymentStatus} /></div>
             </div>
             <div className="text-right">
-              <div className="tabular-nums text-2xl font-black text-brand-700">{baht(detail.outstandingAmount)}</div>
+              <div className="tabular-nums text-2xl font-black text-brand-700">{baht(money.outstandingAmount)}</div>
               {Number(detail.paidAmount) > 0 && <div className="tabular-nums text-xs text-gray-500">{t('expenses.paid_prefix', locale)} {baht(detail.paidAmount)}</div>}
             </div>
           </div>
@@ -909,7 +932,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   );
   const vendorCard = (
     <div ref={vendorRef} className="scroll-mt-24" tabIndex={-1}>
-      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
+      <ExpenseReviewEditSection companyId={companyId} detail={detail} isMutable={canMutateDraft && !readySourceDraftMessage} canReview={canReview} canConfirm={canConfirm} showSaveDraft={step === 'data'} saveRef={reviewSaveRef} vatOverrideRef={vatOverrideRef} onValidationChange={onDataValidationChange} onTotalsChange={setReviewTotals} totalsRetry={totalsRetry} onSaved={async () => { setDetail(await getExpense(companyId, expenseId)); onRefresh(); }} />
     </div>
   );
   const documentReviewCard = (

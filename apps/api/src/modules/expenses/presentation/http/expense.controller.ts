@@ -2,6 +2,7 @@ import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res
 import type { Response } from 'express';
 import {
   ConfirmExpenseDto,
+  ExpenseTotalsPreviewDto,
   CreateSignatureAssetDto,
   ReasonOptionalDto,
   ReasonRequiredDto,
@@ -407,6 +408,12 @@ export class ExpenseController {
     const expense = await this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true });
     const { sourceChannelMetadataJson: _metadata, lineMessageId: _message, lineEventId: _event, ...detail } = expense;
     return detail;
+  }
+
+  @Post(':expenseId/totals-preview')
+  @RequireAnyPermission('expense.update', 'expense.review')
+  previewDraftTotals(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: ExpenseTotalsPreviewDto) {
+    return this.update.execute(ctx, expenseId, body, { requireExpectedUpdatedAt: true, previewOnly: true });
   }
 
   @Patch(':expenseId/review-fields')

@@ -64,9 +64,9 @@ test('the add buttons delegate to the shared ordering rule', () => {
 
 test('charge rows render in their own group, keyed by the shared array index', () => {
   assert.match(source, /const productEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind == null\);/);
-  assert.match(source, /const chargeEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind != null\);/);
+  assert.match(source, /const chargeEntries = entries\.filter\(\(entry\) => entry\.line\.chargeKind != null && !isCalculatedExpenseRounding\(entry\.line\)\);/);
   assert.match(source, /\{productEntries\.map\(\(\{ line, index \}\) => \{/);
-  assert.match(source, /\{chargeEntries\.map\(\(\{ line, index \}\) => \{/);
+  assert.match(source, /\{chargeEntries\.map\(\(\{ line, index \}, chargeIndex\) => \{/);
   assert.match(source, /t\(chargeEntries\.some\(\(\{ line \}\) => line\.chargeKind === 'ROUNDING'\) \? 'expenses\.charges_and_adjustments_section' : 'expenses\.charges_section', locale\)/);
   assert.match(source, /chargeKind === 'ROUNDING' \? 'expenses\.adjustment_amount' : 'expenses\.charge_amount'/);
   assert.match(source, /t\('expenses\.add_charge', locale\)/);
