@@ -18,6 +18,10 @@
 import { Type } from 'class-transformer';
 import {
   IsInt,
+  IsArray,
+  IsObject,
+  ArrayMinSize,
+  ArrayMaxSize,
   IsISO8601,
   IsIn,
   IsNotEmpty,
@@ -31,6 +35,47 @@ import {
 } from 'class-validator';
 import { CIVIL_DATE_PATTERN, EXPENSE_PAYMENT_METHODS, type RecordExpensePaymentInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN, POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
+import { BUYER_ENTITY_KINDS, EXPENSE_LINE_CHARGE_KINDS, TRANSACTION_TAX_CONTEXTS,
+  type BuyerEntityKind, type CreateExpenseDraftInput, type ExpenseVatMode, type ExpenseVatSourceInput, type ExpenseWhtInput, type InputVatClaimStatus } from '@watchdog-bms/contracts';
+
+/** Preview accepts the existing review form's fields only. Domain money/source validators still
+ * own semantics; these DTOs reject type confusion and server-owned fields before calculation. */
+export class ExpenseTotalsPreviewLineDto {
+  @IsInt() @Min(1) lineNumber!: number;
+  @IsString() description!: string;
+  @IsString() quantity!: string;
+  @IsString() unitPrice!: string;
+  @IsOptional() @IsIn(EXPENSE_LINE_CHARGE_KINDS) chargeKind?: CreateExpenseDraftInput['lines'][number]['chargeKind'];
+  @IsOptional() @IsIn(['ZERO_RATED', 'EXEMPT', 'NON_VAT']) vatTreatment?: CreateExpenseDraftInput['lines'][number]['vatTreatment'];
+  @ValidateIf((_o, v) => v !== undefined) @IsString() id?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() sourceItemRef?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() discountAmount?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() vatRate?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() whtRate?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() expenseCategoryId?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() accountHintKey?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() taxCategory?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() taxCodeDefinitionId?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() externalTaxCode?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsIn(TRANSACTION_TAX_CONTEXTS) transactionContext?: CreateExpenseDraftInput['lines'][number]['transactionContext'];
+}
+
+export class ExpenseTotalsPreviewDto {
+  @IsString() @IsISO8601({ strict: true }) expectedUpdatedAt!: string;
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => ExpenseTotalsPreviewLineDto)
+  lines!: ExpenseTotalsPreviewLineDto[];
+  @ValidateIf((_o, v) => v !== undefined) @IsString() vendorNameSnapshot?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() vendorTaxIdSnapshot?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsIn(BUYER_ENTITY_KINDS) vendorEntityKindSnapshot?: BuyerEntityKind;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() vendorDocumentNumber?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() @IsISO8601({ strict: true }) expenseDate?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() note?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsIn(['NO_VAT', 'VAT_INCLUDED', 'VAT_EXCLUDED', 'EXEMPT', 'NEEDS_REVIEW']) vatMode?: ExpenseVatMode;
+  @ValidateIf((_o, v) => v !== undefined) @IsIn(['CLAIMABLE', 'NON_CLAIMABLE', 'NEEDS_REVIEW']) inputVatClaimStatus?: InputVatClaimStatus;
+  @ValidateIf((_o, v) => v !== undefined) @IsObject() vatSource?: ExpenseVatSourceInput;
+  @ValidateIf((_o, v) => v !== undefined) @IsObject() whtInput?: ExpenseWhtInput;
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) removedSourceItemRefs?: string[];
+}
 
 /** Shared upload-intent shape: the client names a file, the server reserves storage for it. */
 export class UploadIntentDto {
