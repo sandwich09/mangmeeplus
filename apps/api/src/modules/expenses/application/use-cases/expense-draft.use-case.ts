@@ -58,6 +58,14 @@ function requirePerm(ctx: RequestContext, perm: string, action: string) {
   if (!hasPerm(ctx, perm)) throw new ForbiddenException(`Missing permission: ${perm} for ${action}`);
 }
 
+function sameDecimal(left: unknown, right: unknown): boolean {
+  try { return new Decimal(String(left)).eq(String(right)); } catch { return false; }
+}
+
+function sameDecimalProduct(total: unknown, quantity: unknown, unitPrice: unknown): boolean {
+  try { return new Decimal(String(total)).eq(new Decimal(String(quantity)).mul(String(unitPrice))); } catch { return false; }
+}
+
 // 10D branch ABAC: membership branch scope governs reads and writes; null branchId = company-central.
 function assertBranchInScope(ctx: RequestContext, branchId: string | null | undefined) {
   if (!isBranchInScope(ctx.scopes ?? {}, branchId)) {
@@ -200,6 +208,10 @@ export class GetExpenseUseCase {
     if (expense.captureSource !== 'LINE_UPLOAD') return null;
     const state = sourceDraftState(expense, await this.repo.listCategories(ctx.companyId));
     if (!state) return null;
+    // Keep legacy read responses aligned with the current collection rule without writing on GET.
+    // In particular, a retired D-PURPOSE question must not survive in the AI summary beside the
+    // normalized source projection and re-arm a client-side blocker.
+    expense.aiVerificationSummaryJson = sourceDraftSummary(expense.aiVerificationSummaryJson, state);
     const permitted = hasPerm(ctx, 'expense.review') || (expense.createdByUserId === ctx.userId
       && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission)));
     const active = permitted && await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, expense.branchId);
@@ -267,11 +279,17 @@ export class UpdateExpenseDraftUseCase {
 
     const canReview = hasPerm(ctx, 'expense.review');
     const isOwner = r.createdByUserId === ctx.userId;
+    let combinedReviewSourceState: ReturnType<typeof sourceDraftState> = null;
+    let combinedReviewSourceExpense: ExpenseRecordWithRelations | undefined;
+    let combinedReviewSourceInput: UpdateExpenseDraftInput['sourceDraft'];
     if (input.sourceDraft !== undefined) {
-      if (Object.keys(input).some((key) => !['expectedUpdatedAt', 'sourceDraft'].includes(key))) {
+      const sourceOnly = !Object.keys(input).some((key) => !['expectedUpdatedAt', 'sourceDraft'].includes(key));
+      if (!sourceOnly && !canReview) {
         throw new BadRequestException('sourceDraft must be sent alone with expectedUpdatedAt.');
       }
-      if (r.captureSource !== 'LINE_UPLOAD' || !SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
+      const sourceStatusMutable = SOURCE_DRAFT_MUTABLE_STATUSES.includes(r.status)
+        || (!sourceOnly && canReview && r.status === 'READY_FOR_CONFIRMATION');
+      if (r.captureSource !== 'LINE_UPLOAD' || !sourceStatusMutable
         || (!canReview && !(isOwner && ['expense.create', 'expense.receipt.upload', 'expense.receipt.line_upload'].some((permission) => hasPerm(ctx, permission))))
         || !await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, r.branchId)) {
         throw new ForbiddenException('Source draft editing requires an active originating uploader or reviewer.');
@@ -282,21 +300,44 @@ export class UpdateExpenseDraftUseCase {
       const categories = await this.repo.listCategories(ctx.companyId);
       const initial = sourceDraftState(expense, categories);
       if (!initial) throw new BadRequestException('Source draft cannot be read safely.');
-      const changed = applyExpenseSourceDraftInput(initial, input.sourceDraft, categories);
+      const source = input.sourceDraft;
+      const changed = applyExpenseSourceDraftInput(initial, source, categories);
+      if (!sourceOnly) {
+        const sourcePurpose = changed.state.header.businessPurpose ?? '';
+        const financialPurpose = input.note?.split(' · ').find((part) => part.startsWith('วัตถุประสงค์: '))?.slice('วัตถุประสงค์: '.length).trim() ?? '';
+        if ((source.expenseDate !== undefined && input.expenseDate !== undefined && (changed.state.header.expenseDate ?? '') !== input.expenseDate)
+          || (source.vendorName !== undefined && input.vendorNameSnapshot !== undefined && (changed.state.header.vendorName ?? '') !== input.vendorNameSnapshot.trim())
+          || (source.businessPurpose !== undefined && input.note !== undefined && sourcePurpose !== financialPurpose)) {
+          throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Source and financial header facts disagree.' });
+        }
+        if (source.expenseDate === undefined && input.expenseDate !== undefined) changed.state.header.expenseDate = input.expenseDate;
+        else if (source.expenseDate !== undefined && input.expenseDate === undefined && changed.state.header.expenseDate) input = { ...input, expenseDate: changed.state.header.expenseDate };
+        if (source.vendorName === undefined && input.vendorNameSnapshot !== undefined) {
+          if (input.vendorNameSnapshot.trim()) changed.state.header.vendorName = input.vendorNameSnapshot.trim(); else delete changed.state.header.vendorName;
+        } else if (source.vendorName !== undefined && input.vendorNameSnapshot === undefined) input = { ...input, vendorNameSnapshot: changed.state.header.vendorName ?? '' };
+        if (source.businessPurpose === undefined && input.note !== undefined) {
+          if (financialPurpose) changed.state.header.businessPurpose = financialPurpose; else delete changed.state.header.businessPurpose;
+        } else if (source.businessPurpose !== undefined && input.note === undefined) input = { ...input, note: withPurposeNote(expense.note, sourcePurpose) };
+      }
       changed.state = bindSourceDraftLines(changed.state, expense);
       changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
-      const lines = sourceDraftFinancialLines(changed.state, expense, changed.acceptedFields, categories);
-      const nextUpdatedAt = new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1));
-      changed.state.targetRevision = nextUpdatedAt.toISOString();
-      const source = input.sourceDraft;
-      const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '') : undefined;
-      options = { ...options, requireExpectedUpdatedAt: true, webSourceDraft: true, sourceExpense: expense,
-        lineDraftCollection: { nextUpdatedAt, sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: changed.state },
-          aiVerificationSummaryJson: sourceDraftSummary(expense.aiVerificationSummaryJson, changed.state) } };
-      input = { expectedUpdatedAt: input.expectedUpdatedAt,
-        ...(source.expenseDate !== undefined && changed.state.header.expenseDate ? { expenseDate: changed.state.header.expenseDate } : {}),
-        ...(source.vendorName !== undefined ? { vendorNameSnapshot: changed.state.header.vendorName ?? '' } : {}),
-        ...(note !== undefined ? { note } : {}), ...(lines ? { lines } : {}) };
+      if (sourceOnly) {
+        const lines = sourceDraftFinancialLines(changed.state, expense, changed.acceptedFields, categories);
+        const nextUpdatedAt = new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1));
+        changed.state.targetRevision = nextUpdatedAt.toISOString();
+        const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '') : undefined;
+        options = { ...options, requireExpectedUpdatedAt: true, webSourceDraft: true, sourceExpense: expense,
+          lineDraftCollection: { nextUpdatedAt, sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: changed.state },
+            aiVerificationSummaryJson: sourceDraftSummary(expense.aiVerificationSummaryJson, changed.state) } };
+        input = { expectedUpdatedAt: input.expectedUpdatedAt,
+          ...(source.expenseDate !== undefined && changed.state.header.expenseDate ? { expenseDate: changed.state.header.expenseDate } : {}),
+          ...(source.vendorName !== undefined ? { vendorNameSnapshot: changed.state.header.vendorName ?? '' } : {}),
+          ...(note !== undefined ? { note } : {}), ...(lines ? { lines } : {}) };
+      } else {
+        combinedReviewSourceState = changed.state;
+        combinedReviewSourceExpense = expense;
+        combinedReviewSourceInput = source;
+      }
     }
     const canCollectOwnLineDraft = Boolean(options.lineDraftCollection)
       && (ctx.authProvider === 'line' || options.webSourceDraft)
@@ -344,10 +385,11 @@ export class UpdateExpenseDraftUseCase {
     // A receipt can reach the web without a LINE continuation (OCR failure or collection off).
     // Preserve that same source projection through review, and reopen incomplete legacy READY
     // records so the existing source form provides the correction path.
-    const reviewSourceExpense = !canCollectOwnLineDraft && canReview && r.captureSource === 'LINE_UPLOAD'
-      && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
+    const reviewSourceExpense = combinedReviewSourceState ? combinedReviewSourceExpense
+      : !canCollectOwnLineDraft && canReview && r.captureSource === 'LINE_UPLOAD' && !r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]
       ? await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {}) : undefined;
-    const reviewSourceState = reviewSourceExpense ? sourceDraftState(reviewSourceExpense, await this.repo.listCategories(ctx.companyId)) : null;
+    const reviewSourceState = combinedReviewSourceState
+      ?? (reviewSourceExpense ? sourceDraftState(reviewSourceExpense, await this.repo.listCategories(ctx.companyId)) : null);
     const hasSourceDraft = Boolean(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY] || reviewSourceState);
     const persistedSourceState = parseLineExpenseDraftContinuation(r.sourceChannelMetadataJson?.[EXPENSE_SOURCE_DRAFT_KEY]);
     const reopenSourceReview = !canCollectOwnLineDraft && canReview && r.status === 'READY_FOR_CONFIRMATION'
@@ -376,6 +418,17 @@ export class UpdateExpenseDraftUseCase {
           throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Unknown, repeated or mismatched staged receipt row.' });
         }
         seen.add(item.itemRef);
+      }
+      for (const patch of combinedReviewSourceInput?.items ?? []) {
+        if (!patch.itemRef) continue;
+        const line = sourceRows.find((candidate) => candidate.sourceItemRef === patch.itemRef);
+        if (!line) continue;
+        const contradicts = (patch.description != null && patch.description.trim() !== '' && patch.description.trim() !== line.description.trim())
+          || (patch.quantity != null && patch.quantity !== '' && !sameDecimal(patch.quantity, line.quantity))
+          || (patch.unitPrice != null && patch.unitPrice !== '' && !sameDecimal(patch.unitPrice, line.unitPrice))
+          || (patch.totalAmount != null && patch.totalAmount !== '' && !sameDecimalProduct(patch.totalAmount, line.quantity, line.unitPrice))
+          || (patch.expenseCategoryId != null && patch.expenseCategoryId !== '' && patch.expenseCategoryId !== line.expenseCategoryId);
+        if (contradicts) throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Source facts and reviewed financial row disagree.' });
       }
     }
     let lines = input.lines;
@@ -711,10 +764,11 @@ export class UpdateExpenseDraftUseCase {
           const saved = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, tx, ctx.scopes ?? {});
           if (!saved) throw new NotFoundException();
           const categories = await this.repo.listCategories(ctx.companyId);
+          if (combinedReviewSourceState) combinedReviewSourceState.targetRevision = saved.updatedAt.toISOString();
           let state = sourceDraftState(reviewSourceState
             ? { ...saved, sourceChannelMetadataJson: { ...saved.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: reviewSourceState } } : saved, categories);
           if (!state) throw new BadRequestException('Source draft cannot be read safely.');
-          if (input.expenseDate) state.header.expenseDate = input.expenseDate;
+          if (input.expenseDate && combinedReviewSourceInput?.expenseDate === undefined) state.header.expenseDate = input.expenseDate;
           if (canReview && identityMode && lines) {
             // A reviewer explicitly replaced the financial row set. Only its proven bound source
             // items may disappear; unresolved source items without a line id remain staged.
@@ -728,9 +782,17 @@ export class UpdateExpenseDraftUseCase {
               const item = state.items.find((item) => item.itemRef === reviewed.sourceItemRef);
               const line = saved.lines.find((line) => line.lineNumber === reviewed.lineNumber);
               if (!item || !line || line.chargeKind) throw new BadRequestException({ code: 'EXPENSE_SOURCE_DRAFT_RELOAD_REQUIRED', message: 'Reviewed source row is unavailable.' });
-              item.lineId = line.id; item.description = line.description; item.quantity = line.quantity; item.unitPrice = line.unitPrice;
-              if (line.expenseCategoryId) item.expenseCategoryId = line.expenseCategoryId; else delete item.expenseCategoryId;
-              delete item.totalAmount; delete item.reviewRequired;
+              item.lineId = line.id;
+              if (!combinedReviewSourceInput) {
+                item.description = line.description; item.quantity = line.quantity; item.unitPrice = line.unitPrice;
+                if (line.expenseCategoryId) item.expenseCategoryId = line.expenseCategoryId; else delete item.expenseCategoryId;
+                delete item.totalAmount;
+              } else if (!item.expenseCategoryId && line.expenseCategoryId) {
+                // Category is the reviewer's accounting decision on this explicitly scoped row.
+                // Unknown receipt quantity/price remain unknown, but that accepted category is final.
+                item.expenseCategoryId = line.expenseCategoryId;
+              }
+              delete item.reviewRequired;
             }
             const deleted = new Set(prior.items.filter((item) => item.lineId && !saved.lines.some((line) => line.id === item.lineId)).map((item) => item.itemRef));
             state.items = state.items.filter((item) => !deleted.has(item.itemRef));
@@ -751,6 +813,13 @@ export class UpdateExpenseDraftUseCase {
                 ...(line.expenseCategoryId ? { expenseCategoryId: line.expenseCategoryId } : {}) });
             }
             state = bindSourceDraftLines(state, saved);
+          }
+          if (combinedReviewSourceInput) {
+            (state as typeof state & { materializedHeader?: Record<string, string | null> }).materializedHeader = {
+              expenseDate: saved.expenseDate?.toISOString().slice(0, 10) ?? null,
+              vendorName: saved.vendorNameSnapshot ?? null,
+              businessPurpose: saved.note?.split(' · ').find((part) => part.startsWith('วัตถุประสงค์: '))?.slice('วัตถุประสงค์: '.length).trim() || null,
+            };
           }
           state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);
           await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,

@@ -9,7 +9,7 @@ import { PrismaExpenseRepository } from './infrastructure/prisma-expense.reposit
 import { UpdateExpenseDraftUseCase, GetExpenseUseCase, MarkExpenseReadyUseCase } from './application/use-cases/expense-draft.use-case';
 import { LineExpenseDraftConversationUseCase } from './application/use-cases/line-expense-draft-conversation.use-case';
 import { buildInitialLineExpenseDraftContinuation, collectLineExpenseDraftQuestions } from './domain/logic/line-expense-draft-conversation.logic';
-import { bindSourceDraftLines } from './domain/logic/expense-source-draft.logic';
+import { bindSourceDraftLines, sourceDraftState } from './domain/logic/expense-source-draft.logic';
 
 const databaseUrl = process.env.RECEIPT_SOURCE_DRAFT_TEST_DATABASE_URL;
 describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !databaseUrl }, () => {
@@ -168,6 +168,83 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
     await assert.rejects(() => repo.finalizeAndConfirmExpenseCas({ companyId, id: row.id, expectedUpdatedAt: ready.updatedAt, actorUserId: userId } as any, async () => { throw new Error('Final tax mutation must not run for incomplete source'); }), /Complete the saved source draft/);
   });
 
+  it('atomically saves the Drtb financial form while keeping unknown source facts staged', async () => {
+    const id = await draft(), before = await stored(id), product = before.lines[0]!;
+    const metadata = structuredClone(before.sourceChannelMetadataJson) as Record<string, any>;
+    const state = metadata.lineExpenseDraftContinuation;
+    state.header = { vendorName: 'PANDA MALA', businessPurpose: 'ประชุมลูกค้า' };
+    state.items[0] = { ...state.items[0], description: 'AMERICANO', totalAmount: '55', reviewRequired: true };
+    delete state.items[0].quantity; delete state.items[0].unitPrice; delete state.items[0].expenseCategoryId; delete state.items[0].materializedFacts;
+    state.materializedHeader = { expenseDate: '2026-09-01', vendorName: 'PANDA MALA', businessPurpose: 'ประชุมลูกค้า' };
+    state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, await repo.listCategories(companyId));
+    await client.$transaction(async (tx) => {
+      await tx.expenseLine.update({ where: { id: product.id }, data: { description: 'AMERICANO', quantity: '1', unitPrice: '55',
+        discountAmount: '0', taxableAmount: '51.40', vatRate: '0.07', vatTreatment: null, vatAmount: '3.60', lineSubtotalAmount: '55', lineTotalAmount: '55' } });
+      await tx.expenseRecord.update({ where: { id }, data: { vendorNameSnapshot: 'PANDA MALA', note: 'LINE receipt upload · วัตถุประสงค์: ประชุมลูกค้า',
+        vatMode: 'VAT_INCLUDED', subtotalAmount: '55', discountAmount: '0', taxableAmount: '51.40', vatAmount: '3.60',
+        grandTotalAmount: '55', netPayableAmount: '55', outstandingAmount: '55', sourceChannelMetadataJson: metadata, updatedAt: before.updatedAt } });
+    });
+    const current = await stored(id);
+    const line = { id: product.id, sourceItemRef: 'I01', lineNumber: 1, description: 'AMERICANO', chargeKind: null,
+      quantity: '1', unitPrice: '55', discountAmount: '0', vatRate: '0.07', expenseCategoryId: categoryId } as const;
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), expenseDate: '2026-09-01', sourceDraft: { expenseDate: null }, lines: [line],
+    }), /Source and financial header facts disagree/);
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), sourceDraft: { items: [{ itemRef: 'I01', quantity: '2' }] }, lines: [line],
+    }), /Source facts and reviewed financial row disagree/);
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), sourceDraft: { items: [{ itemRef: 'I01', quantity: null }] },
+      lines: [{ ...line, quantity: 'invalid' }],
+    }), (error: any) => error?.getStatus?.() === 400);
+    assert.equal((await stored(id)).updatedAt.toISOString(), current.updatedAt.toISOString());
+
+    await update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), vendorNameSnapshot: 'PANDA MALA',
+      note: 'LINE receipt upload · วัตถุประสงค์: ประชุมลูกค้า', vatMode: 'VAT_INCLUDED',
+      sourceDraft: { expenseDate: null, vendorName: 'PANDA MALA', businessPurpose: 'ประชุมลูกค้า',
+        items: [{ itemRef: 'I01', description: 'AMERICANO', quantity: null, unitPrice: null, expenseCategoryId: null }] },
+      lines: [line],
+    });
+    const saved = await stored(id);
+    assert.equal(saved.expenseDate.toISOString().slice(0, 10), '2026-09-01');
+    assert.equal(saved.lines[0]!.id, product.id); assert.equal(saved.lines[0]!.expenseCategoryId, categoryId);
+    assert.equal(saved.lines[0]!.unitPrice.toString(), '55'); assert.equal(saved.lines[0]!.vatAmount.toString(), '3.6');
+    assert.equal(saved.grandTotalAmount.toString(), '55');
+    const get = new GetExpenseUseCase(repo), projection = (await get.sourceDraft(ctx(['expense.review']), await get.execute(ctx(['expense.review']), id)))!;
+    assert.equal(projection.header.expenseDate, null); assert.equal(projection.items[0]!.quantity, null);
+    assert.equal(projection.items[0]!.unitPrice, null); assert.equal(projection.items[0]!.totalAmount, '55');
+    assert.equal(projection.items[0]!.expenseCategoryId, categoryId);
+    assert.ok(!projection.missingFields.some((field) => field.field === 'expenseCategoryId'));
+    assert.ok(projection.missingFields.some((field) => field.field === 'expenseDate'));
+    assert.ok(projection.missingFields.some((field) => field.field === 'quantity'));
+    await assert.rejects(() => new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id), /Complete the saved source draft/);
+
+    const durable = durableLines(saved), source = structuredClone(saved.sourceChannelMetadataJson);
+    await assert.rejects(() => update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: current.updatedAt.toISOString(), vendorNameSnapshot: 'STALE',
+      sourceDraft: { vendorName: 'STALE', items: [{ itemRef: 'I01', quantity: '2', unitPrice: '30' }] },
+      lines: [{ ...line, quantity: '2', unitPrice: '30' }],
+    }), /changed by another user/);
+    const afterStale = await stored(id);
+    assert.equal(afterStale.vendorNameSnapshot, 'PANDA MALA'); assert.deepEqual(durableLines(afterStale), durable);
+    assert.deepEqual(afterStale.sourceChannelMetadataJson, source);
+
+    await update.execute(ctx(['expense.review']), id, {
+      expectedUpdatedAt: saved.updatedAt.toISOString(), expenseDate: '2026-09-01', vendorNameSnapshot: 'PANDA MALA',
+      note: 'LINE receipt upload · วัตถุประสงค์: ประชุมลูกค้า', vatMode: 'VAT_INCLUDED',
+      sourceDraft: { expenseDate: '2026-09-01', vendorName: 'PANDA MALA', businessPurpose: 'ประชุมลูกค้า',
+        items: [{ itemRef: 'I01', description: 'AMERICANO', quantity: '1', unitPrice: '55', expenseCategoryId: categoryId }] },
+      lines: [line],
+    });
+    const completed = await stored(id);
+    const completedSource = (await get.sourceDraft(ctx(['expense.review']), await get.execute(ctx(['expense.review']), id)))!;
+    assert.equal(completedSource.items[0]!.quantity, '1'); assert.equal(completedSource.items[0]!.unitPrice, '55');
+    assert.deepEqual(completedSource.missingFields, []);
+    assert.equal((await new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), id)).status, 'READY_FOR_CONFIRMATION');
+    assert.equal(completed.lines[0]!.id, product.id);
+  });
+
   it('one review save binds same-named staged rows by scoped references without losing charges or purpose', async () => {
     const id = await draft(1, true);
     const before = await stored(id);
@@ -218,31 +295,56 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
 
   });
 
-  it('blocks untouched OCR partials at every final seam and reopens legacy READY review for source correction', async () => {
+  it('blocks real OCR gaps, retires legacy purpose requirements and confirms with blank optional purpose', async () => {
     const row = await client.expenseRecord.create({ data: { companyId, branchId, createdByUserId: userId, status: 'NEEDS_REVIEW',
       captureSource: 'LINE_UPLOAD', expenseDate: new Date('2026-09-07'), note: 'LINE receipt upload',
       aiVerificationSummaryJson: { recognizedFields: { vendorName: 'ร้าน ABC', lines: [{ description: 'กระดาษ' }] }, missingFields: ['expenseDate', 'quantity', 'price'] } } });
     const get = new GetExpenseUseCase(repo);
-    const untouched = (await get.sourceDraft(ctx(), await get.execute(ctx(), row.id)))!;
+    const loaded = await get.execute(ctx(), row.id);
+    const untouched = (await get.sourceDraft(ctx(), loaded))!;
     assert.ok(untouched.missingFields.some((field) => field.field === 'quantity'));
     assert.equal((await stored(row.id)).sourceChannelMetadataJson, null);
+    const legacy = sourceDraftState(loaded, await repo.listCategories(companyId))!;
+    legacy.status = 'INPUT_ENDED_INCOMPLETE';
+    legacy.unresolvedQuestions.push({ id: 'D-PURPOSE', scope: 'DOCUMENT', field: 'businessPurpose', prompt: 'legacy required purpose' });
+    await client.expenseRecord.update({ where: { id: row.id }, data: {
+      sourceChannelMetadataJson: { lineExpenseDraftContinuation: legacy },
+      aiVerificationSummaryJson: { ...(loaded.aiVerificationSummaryJson ?? {}), missingFields: ['expenseDate', 'quantity', 'price', 'businessPurpose'],
+        lineDraftQuestionIds: legacy.unresolvedQuestions.map((question) => question.id), collectionState: legacy.status },
+      updatedAt: row.updatedAt,
+    } });
+    const legacyLoaded = await get.execute(ctx(), row.id);
+    const legacyProjection = (await get.sourceDraft(ctx(), legacyLoaded))!;
+    assert.ok(!legacyProjection.missingFields.some((field) => field.field === 'businessPurpose'));
+    assert.ok(!(legacyLoaded.aiVerificationSummaryJson?.['missingFields'] as string[]).includes('businessPurpose'));
+    assert.ok(!(legacyLoaded.aiVerificationSummaryJson?.['lineDraftQuestionIds'] as string[]).includes('D-PURPOSE'));
     await assert.rejects(() => new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), row.id), /Complete the saved source draft/);
     await assert.rejects(() => repo.updateExpense({ id: row.id, companyId, updatedByUserId: userId, status: 'READY_FOR_CONFIRMATION' }), /Complete the saved source draft/);
     await client.expenseRecord.update({ where: { id: row.id }, data: { status: 'READY_FOR_CONFIRMATION' } });
     const ready = await stored(row.id);
     const readonly = (await get.sourceDraft(ctx(['expense.review']), await get.execute(ctx(['expense.review']), row.id)))!;
-    assert.equal(readonly.canEdit, false); assert.deepEqual(readonly.missingFields, untouched.missingFields);
+    assert.equal(readonly.canEdit, false);
+    assert.ok(readonly.missingFields.some((field) => field.field === 'quantity'));
+    assert.ok(!readonly.missingFields.some((field) => field.field === 'businessPurpose'));
     await assert.rejects(() => repo.confirmExpenseCas({ companyId, id: row.id, expectedUpdatedAt: ready.updatedAt, actorUserId: userId, expenseNumber: 'never', postingStatus: 'pending', vendorSnapshotJson: null, outboxEvent: { eventKey: 'never', payloadJson: {} } }), /Complete the saved source draft/);
     await assert.rejects(() => repo.finalizeAndConfirmExpenseCas({ companyId, id: row.id, expectedUpdatedAt: ready.updatedAt, actorUserId: userId } as any, async () => { throw new Error('Final tax mutation must not run for incomplete source'); }), /Complete the saved source draft/);
     const reviewed = await update.execute(ctx(['expense.review']), row.id, { expectedUpdatedAt: ready.updatedAt.toISOString(), expenseDate: '2026-09-07', vendorNameSnapshot: 'ร้าน ABC',
-      lines: [{ lineNumber: 1, description: 'กระดาษ', quantity: '2', unitPrice: '50', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId }] });
-    assert.equal(reviewed.status, 'NEEDS_REVIEW');
-    const editable = (await get.sourceDraft(ctx(), await get.execute(ctx(), row.id)))!;
-    assert.equal(editable.canEdit, true); assert.equal(editable.items[0]!.quantity, '2');
-    assert.deepEqual(editable.missingFields.map((field) => field.field), ['businessPurpose']);
-    const partial = await stored(row.id);
-    await update.execute(ctx(), row.id, { expectedUpdatedAt: partial.updatedAt.toISOString(), sourceDraft: { businessPurpose: 'ใช้สำนักงาน' } });
-    assert.equal((await new MarkExpenseReadyUseCase(repo).execute(ctx(['expense.review']), row.id)).status, 'READY_FOR_CONFIRMATION');
+      sourceDraft: { expenseDate: '2026-09-07', vendorName: 'ร้าน ABC', items: [{ itemRef: 'I01', description: 'กระดาษ', quantity: '2', unitPrice: '50', expenseCategoryId: categoryId }] },
+      lines: [{ sourceItemRef: 'I01', lineNumber: 1, description: 'กระดาษ', quantity: '2', unitPrice: '50', vatRate: '0', vatTreatment: 'NON_VAT', expenseCategoryId: categoryId }] });
+    assert.equal(reviewed.status, 'READY_FOR_CONFIRMATION');
+    const completedLoaded = await get.execute(ctx(), row.id);
+    const completed = (await get.sourceDraft(ctx(), completedLoaded))!;
+    assert.equal(completed.canEdit, false); assert.equal(completed.items[0]!.quantity, '2');
+    assert.equal(completed.header.businessPurpose, null);
+    assert.deepEqual(completed.missingFields, []);
+    const readyForConfirm = await stored(row.id);
+    const savedState = (readyForConfirm.sourceChannelMetadataJson as any).lineExpenseDraftContinuation;
+    assert.ok(!savedState.unresolvedQuestions.some((question: any) => question.id === 'D-PURPOSE'));
+    assert.ok(!((readyForConfirm.aiVerificationSummaryJson as any)?.missingFields as string[]).includes('businessPurpose'));
+    const confirmed = await repo.confirmExpenseCas({ companyId, id: row.id, expectedUpdatedAt: readyForConfirm.updatedAt,
+      actorUserId: userId, expenseNumber: `${tag}-optional-purpose`, postingStatus: 'pending', vendorSnapshotJson: null,
+      outboxEvent: { eventKey: `${tag}:optional-purpose`, payloadJson: {} } });
+    assert.equal(confirmed.status, 'CONFIRMED');
   });
 
   it('reconciles explicit reviewer deletion by row id while preserving charges and unresolved unmaterialized source items', async () => {

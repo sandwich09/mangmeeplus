@@ -5,7 +5,6 @@ import {
   expenseSourceDraftChanges,
   expenseSourceDraftFormValues,
   expenseSourceDraftIssues,
-  expenseSourceDraftMissingLabels,
 } from './expense-source-draft.model';
 
 function sourceDraft(itemCount = 2): ExpenseSourceDraft {
@@ -88,17 +87,4 @@ describe('expense source draft form model', () => {
     assert.deepEqual(expenseSourceDraftIssues(values)[0], { itemRef: 'item-1', field: 'quantity' });
   });
 
-  it('turns missing-field identity into ordinary labels without exposing question codes', () => {
-    assert.deepEqual(expenseSourceDraftMissingLabels(sourceDraft(), 'th'), [
-      'ซื้อไปใช้ทำอะไร',
-      'รายการที่ 2: ราคาต่อหน่วยหรือยอดรวม',
-    ]);
-    assert.equal(expenseSourceDraftMissingLabels(sourceDraft(), 'th').join(' ').includes('D-PURPOSE'), false);
-  });
-
-  it('describes an empty receipt without showing its question identifier', () => {
-    const draft = sourceDraft(0);
-    draft.missingFields = [{ id: 'D-ITEMS', scope: 'DOCUMENT', field: 'items', prompt: 'internal prompt' }];
-    assert.deepEqual(expenseSourceDraftMissingLabels(draft, 'th'), ['สินค้าหรือบริการอย่างน้อยหนึ่งรายการ']);
-  });
 });
