@@ -17,3 +17,6 @@ Next: final diff/docs, commit/push PR and genuine exact-head CI, merge develop/m
 
 ## Git and release ledger
 Branch `codex/receipt-tax-integrity-20260908` from refreshed develop20ab58a0017a479e54e8ba2b0688f4ee6bbd5525. Preserved documentation commits80789389/3dd5e5dc. Previous UAT34193070736/READY34195025467 are historical only. New candidate/controller/UAT/READY pending; Production none. Main freeze begins before canonical release dispatch.
+
+## Packaging review after opening PR492
+Found that AI Gateway production dependency installation uses `--no-optional`; adding sharp alone passes workstation tests but omits Linux native runtime. Reuse the existing API Dockerfile's exact sharp/libvips copies and execute a synthetic rotation in the final image build. Synchronize the two maintenance enforcement hash files; no gate weakening or legacy deployment. Initial CI34215497106 is superseded by the packaging fix; only the final exact-head run may authorize release. Local Linux/amd64 Docker build and image-security suite now running.
