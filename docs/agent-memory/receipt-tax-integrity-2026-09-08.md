@@ -20,3 +20,6 @@ Branch `codex/receipt-tax-integrity-20260908` from refreshed develop20ab58a0017a
 
 ## Packaging review after opening PR492
 Found that AI Gateway production dependency installation uses `--no-optional`; adding sharp alone passes workstation tests but omits Linux native runtime. Reuse the existing API Dockerfile's exact sharp/libvips copies and execute a synthetic rotation in the final image build. Synchronize the two maintenance enforcement hash files; no gate weakening or legacy deployment. Initial CI34215497106 is superseded by the packaging fix; only the final exact-head run may authorize release. Local Linux/amd64 Docker build and image-security suite now running.
+
+## Final CI correction
+Linux/amd64 image build including real native rotation and executable image-security scanner passed. CI34215844701 passed typecheck, boot and PostgreSQL but full unit suite found one stale LINE-dispatch copy assertion expecting the retired combined VAT/WHT label. Update it to assert the separate VAT label and no invented WHT on unknown-tax input; product code unchanged. PR492→develop and PR493→main remain unmerged until final-head CI passes. Superseded runs are not deployment authority.
