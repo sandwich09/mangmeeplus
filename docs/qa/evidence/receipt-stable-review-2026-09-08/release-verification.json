@@ -8,7 +8,7 @@
   "production": "HOLD_UNTIL_NEW_OWNER_APPROVAL",
   "servingMode": "UAT live; existing Production live and OPEN unchanged",
   "ownerReference": "thread 01a0778d-a88f-76c2-a9d4-334b53165360, 2026-09-08: freeze PANDA MALA form and remove missing-data overview; redeploy UAT, prepare config and wait for Production approval",
-  "state": "UAT_DEPLOY_AND_AUTOMATIC_READY_VERIFIED; LIVE_BROWSER_PENDING_MAC_UNLOCK; PRODUCTION_HELD",
+  "state": "UAT_DEPLOY_AND_AUTOMATIC_READY_VERIFIED; LIVE_BROWSER_BLOCKED_STALE_DATE_STATUS; PRODUCTION_HELD",
   "noNewFlags": true,
   "mail": "Production disabled; UAT existing sandbox unchanged",
   "configAudit": "Nine config schema checks PASS; four missing Production receipt flags plus warmup 15 covered by current workflow/deploy defaults",
@@ -69,7 +69,16 @@
       "/login": 200
     }
   },
-  "liveBrowser": "PENDING_MAC_UNLOCK; local browser/API/PostgreSQL acceptance complete",
+  "liveBrowser": {
+    "date": "2026-09-08",
+    "status": "BLOCKED_STALE_DATE_STATUS",
+    "environment": "UAT, logged-in owner sandwich, Drtb, desktop Chrome",
+    "passed": ["ordinary three-step form", "themed category dropdown", "draft-save success toast", "saved date survives reload", "blank optional purpose advances through steps 1 to 3", "total55/VAT3.60/category preserved"],
+    "blocker": "Step3 still says document date is missing and disables Send for review after 2026-09-07 was saved through the visible form and persisted across reload.",
+    "dataMutation": "Saved document date 2026-09-07 from the original receipt; purpose left blank; duplicate-check action invoked. Record remains DRAFT; no final submission attempted because the button is disabled.",
+    "limitations": "Live evidence is browser save/reload and code tracing, not a direct live DB inspection. Local synthetic tests passed but omitted explicit AI dateStatus in the incomplete-date fixture.",
+    "report": "live-browser-report.md"
+  },
   "ready": {
     "contentSha256": "ca465f579a7bc20f1a7e6624cb34d22ed0f83fad4204a716e346db4a75699c87",
     "artifactId": 10039888765,
@@ -103,7 +112,7 @@
       "taskStopped": true
     }
   },
-  "productionNext": "After new owner approval and live browser acceptance: recheck frozen controller/expiry/baseline; issue live READY with a real owner reference. Never use automatic maintenance_closed READY for live promotion.",
+  "productionNext": "Resolve the live date-verification blocker and repeat actual UI submission before acceptance. After a verified corrective UAT and new owner approval, follow the canonical live READY path with current source/controller/expiry/baseline evidence. Never use automatic maintenance_closed READY for live promotion.",
   "expiresAtBangkok": "2026-09-09T10:12:33+07:00",
   "evidenceBranch": "codex/receipt-stable-release-evidence-20260908; documentation checkpoint only, held from main to preserve controller"
 }

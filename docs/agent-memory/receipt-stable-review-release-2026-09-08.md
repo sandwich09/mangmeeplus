@@ -1,10 +1,10 @@
 # Agent Memory: receipt-stable-review-release-2026-09-08
 
-Status: corrective UAT 34181149388 and automatic READY 34182722501 SUCCESS; signatures, runtime/deep-DB/customer-OPEN and clone rehearsal/cleanup all PASS. Production deployment awaits a new owner approval; live browser journey awaits Mac unlock.
+Status: corrective UAT 34181149388 and automatic READY 34182722501 infrastructure checks PASS. Resumed live Drtb browser journey is BLOCKED: saved date persists but stale AI date verification disables step3 submission. Production remains held; do not treat infrastructure success as completed customer-journey acceptance.
 Owner: root
 Scope: stable PANDA MALA review form, removal of the redundant missing-data summary, atomic incomplete draft save; UAT redeploy and complete Production config/readiness preparation.
 Decisions: keep current Production live/OPEN and unchanged. Do not activate Production email. Existing legal-owner approval is historical evidence; latest owner explicitly holds the new Production deployment until approved.
-Open questions: none for implementation or UAT. Production approval pending after reviewable UAT result.
+Open questions: live date-verification correction and regression coverage remain outstanding; Production approval pending after a passing UAT journey.
 Artifacts: receipt-single-form-preview spec/plan/memory; /tmp/mangmee-release-receipt-stable-20260908/ (sanitized config audit and future exact release ledger).
 Verification:
 - Prior UAT 34172988969 SUCCESS (candidate bd1ceff8de86a05b59c7046bb248982855001ca2, controller be43fca70870e1ee87685312adbfd1db9cb8da74).
@@ -13,7 +13,7 @@ Verification:
 - Production readback at 2026-09-08T01:13:02Z: all three services unchanged (source 604ac785479ced5b9858d0b46d89f8d11cf2b9f6, exact original image/revision/capacity), live, ACTIVE; public customer gate OPEN and login 200.
 - All three services passed current config schemas and validateProductionConfig for UAT, current Production and prepared Production (nine checks). Secret values were schema-valid surrogates only, never fetched; this verifies configuration shape, not live secret validity.
 - Release maintenance pins: 45 exact files current. Existing production-serving-mode executable contract passed, including enabled/disabled/live/maintenance feature switches and disabled-email behavior. No release script change needed.
-Next: test Drtb in the logged-in browser after Mac unlock. Wait for new Production approval, then recheck expiry/controller/baseline and issue a live READY with the real owner reference before a live promotion. Main is frozen at dde31797dc67461715fdfaba965a28ac38a0e06b; do not merge the documentation-only checkpoint branch codex/receipt-stable-release-evidence-20260908 during the release hold.
+Next: report and address the live stale date-verification blocker, then repeat the actual UI submission with explicit OCR dateStatus regression coverage. Production requires a verified corrective UAT plus new owner approval and fresh canonical live readiness evidence. Main is frozen at dde31797dc67461715fdfaba965a28ac38a0e06b; do not merge the documentation-only checkpoint branch codex/receipt-stable-release-evidence-20260908 during the release hold.
 
 ## Configuration audit before corrective release
 
@@ -101,3 +101,13 @@ API audit identified D-PURPOSE collection as the shared requirement used by sour
 - Final Production readback2026-09-08T03:36:27Z: exact original three source/images/revisions/capacity unchanged, ACTIVE/live, customerOPEN/login200. PROD_RUN_ID remains null. No live service, gate, email or customer DB migration changed.
 - Passport/READY expiry: 2026-09-09T10:12:33+07:00. The automatic maintenance_closed READY is preparation evidence only; live mode needs fresh owner approval and the dedicated live READY path, plus current expiry/drift checks.
 - Portable sanitized ledger: docs/qa/evidence/receipt-stable-review-2026-09-08/release-verification.json. Real browser/API/PG tests are local synthetic evidence; the live Drtb browser flow is still pending because Mac remains locked. Do not claim that journey was completed on the newly deployed UAT.
+
+## Resumed live browser test after unlock — supersedes pending status above
+
+- Owner asked to continue testing and report. Tested logged-in sandwich / Drtb, expense cmtrycweh001d231i4jexgvri, AMERICANO - ICED total55. Original enlarged receipt date is 2026-09-07 (not July).
+- Saved that date through the ordinary form; actual success toast appeared and reload retained the date. Purpose remained blank, quantity1/base51.40/VAT3.60/total55/category preserved. Themed category dropdown checked. Next advances through all three steps; draft-save button is absent after step1.
+- BLOCKER: step3 still reports the date missing and disables Send for review. Duplicate checking finishes without removing the blocker. No final submission/confirmation/payment/deletion or direct database edit performed. Record remains DRAFT.
+- Code-backed cause: update clears missingFields but retains explicit dateStatus and old date reason; sourceDraftSummary spreads those unchanged. Shared date-status reader prioritizes explicit status; step3 completion/button uses that reader. Thus the actual visible date and terminal validation disagree.
+- Coverage gap proven: incomplete-date browser fixtures omit explicit dateStatus; they do click the real final button and verify POST/DB, but only exercise the fallback reader. PostgreSQL source-draft fixtures also omit explicit dateStatus.
+- Live persistence was checked through actual save/reload, not direct live DB inspection. No raw live AI summary was captured. Browser error/warn logs empty; desktop live test only. No corrective application code or deployment in this test.
+- Evidence and corrective direction: docs/qa/evidence/receipt-stable-review-2026-09-08/live-browser-report.md and live-browser/ screenshots. Ledger now records BLOCKED_STALE_DATE_STATUS independently of infrastructure PASS. Production held; cannot accept this candidate's full customer journey yet.
