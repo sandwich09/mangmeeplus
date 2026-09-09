@@ -22,18 +22,18 @@
   },
   "pnpm": {
     "overrides": {
-      "@svgr/plugin-svgo>svgo": "3.3.4",
+      "@svgr/plugin-svgo>svgo": "3.3.5",
       "@swc/cli>minimatch": "10.2.5",
       "brace-expansion": "5.0.9",
       "browserslist": "^4.28.7",
       "deepmerge-ts": ">=8.0.0",
       "fast-uri": "^3.1.6",
-      "js-yaml": "4.3.1",
-      "multer": "2.2.0",
+      "js-yaml": "4.3.2",
+      "multer": "2.3.0",
       "mysql2": "^3.22.0",
       "nanoid": "^3.3.17",
       "postcss": "^8.5.18",
-      "sharp": "^0.35.3"
+      "sharp": "^0.35.4"
     }
   },
   "devDependencies": {

@@ -21,7 +21,7 @@ function renderCenter(permissions: string[]): string {
   const noop = () => undefined;
   return renderToStaticMarkup(React.createElement(
     AppRouterContext.Provider,
-    { value: { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop } },
+    { value: { back: noop, forward: noop, refresh: noop, push: noop, replace: noop, prefetch: noop, bfcacheId: 'test' } },
     React.createElement(
       ToastContext.Provider,
       { value: { success: noop, warning: noop, error: noop } },
