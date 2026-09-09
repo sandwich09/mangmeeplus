@@ -1,6 +1,6 @@
 # Agent Memory: Substitute receipt signing integration
 
-Status: scoped integration commit verified on latest develop; ready for PR CI and branch merge.
+Status: PR504 (develop) and PR505 (main) opened; correcting runner font setup before final CI and merge.
 Owner: /root
 Scope: user authorized commit, push and merge of the completed substitute receipt company/personal funding and digital/paper signing work, including local review fixes. No deployment requested.
 Decisions:
@@ -20,3 +20,9 @@ Integration evidence:
 - Integration API suites: 370/370 passed, zero skips, including seven PostgreSQL funding/concurrency/correction/paper cases. /tmp/substitute-integration-api-tests.log.
 - Web signing/preview/API/signature/guide suites: 55/55 passed, zero skips. /tmp/substitute-integration-web-tests.log.
 - Source diff check passed. Local review services remain on the original checkout. No deployment performed.
+
+PR/CI follow-up:
+- PR504 https://github.com/MangmeeDev/mangmeeplus/pull/504 and PR505 https://github.com/MangmeeDev/mangmeeplus/pull/505 initially used head 698f7db4a77c8a911281f00629f1ce6c1dc08391.
+- CI34385156442 and CI34385177385 both stopped before application tests at Install production PDF fonts: the runner Chrome feed dl.google.com returned an APT Hash Sum mismatch. Security, secret scan, config and migration checks passed. Did not rerun unchanged jobs.
+- Scope addition: font setup restricts APT sources to the Ubuntu distro source file for the two required Ubuntu packages. It still validates signed package metadata and requires fc-match to resolve Noto Sans Thai; no ignore-error or checksum bypass.
+- Verified the exact workflow shell in a disposable Ubuntu24.04 container with an intentionally broken unrelated APT feed: font installation succeeds and fc-match prints Noto Sans Thai. /tmp/substitute-ci-font-check.log. bash syntax and scoped diff checks pass.
