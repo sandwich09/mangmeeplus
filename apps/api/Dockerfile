@@ -106,8 +106,8 @@ COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.jso
 COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./packages/config/dist
 COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.json ./packages/contracts/package.json
 COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./packages/contracts/dist
-COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.3/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
-COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.2/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
+COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
 RUN sharp_dir="$(readlink -f './apps/api/node_modules/sharp')" \
   && mkdir -p "$sharp_dir/node_modules/@img" \
   && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/" \

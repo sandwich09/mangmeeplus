@@ -1,6 +1,6 @@
 # Agent Memory: Receipt VAT input and warning UX
 
-Status: implementation verified; PRs #500 (develop) and #501 (main) pending final exact-head CI and merge. Owner authorized both merges and UAT deployment; Production remains held.
+Status: exact-head CI passed; PRs #500 (develop) and #501 (main) merged. UAT 34307378432 failed before rollout; native image pin repair in progress on codex/receipt-sharp-runtime-pins-20260909. Owner authorized both merges and UAT deployment; Production remains held.
 Owner: Codex.
 Scope: document/line VAT source unit changes, global number-input spinners, VAT spacing, operator tax preview, warning navigation.
 
@@ -40,3 +40,21 @@ Scope: document/line VAT source unit changes, global number-input spinners, VAT 
 - New release is permitted after exact-head CI/merge. Ledger `/tmp/mangmee-vat-ux-uat-20260909/release-ledger.json` will record candidate/controller, UAT/READY IDs, signed artifacts and post-deploy acceptance. Production is HELD for separate explicit approval.
 
 Next: finish exact-head CI, merge reviewed candidate into develop and main, single canonical UAT deployment, then runtime/signature and actual browser acceptance. Preserve original user tabs and receipt edits; use an isolated synthetic UAT draft for write/readback tests.
+
+## Release execution (operator record)
+
+- Candidate `580da9c896ebf526aac3c70766e78d6f388a9dde`; successful exact PR CI `34306044254` / `34306044546` (actual tests, DB, security and config checks passed).
+- develop merge `86f60cd5247f356771386847544437160f039bae`; main/controller `e878ab1cbb2913e13854a43cd230ed483500d466`; all three file trees identical and candidate reachable in both branches.
+- UAT `34307378432`, attempt 1, target all, controller verified; no other active UAT/READY/Production run at dispatch. Final UAT AWS preflight passed. Main frozen. No Production dispatch.
+- Synthetic draft `cmttjb3ob013k1z4jwk7aokyv` in Drtb, label `UAT VAT UX TEST 580da9c8`, initial 107.00, prepared through authenticated UI for post-deploy save/readback testing. Customer original receipt and user tabs preserved.
+- This operator record is local evidence; do not push a new controller commit during READY.
+
+## UAT image-build failure and repair
+
+- UAT `34307378432` attempt 1 terminal FAILED before runtime rollout; no valid new Passport/READY. Previous deployed source remains `4e78ccc28551a454754573fcb9768d818a49af02` until a successful new release.
+- First failure: AI Docker COPY still referenced native sharp 0.35.3 / libvips 1.3.2 while the security dependency fix locked 0.35.4 / 1.3.3. Local JS tests/build did not exercise the Linux COPY paths. The security test repeated the old literal pins and therefore missed the drift.
+- Small repair: update all three native-copy Dockerfiles (API, combined API/Web, AI), replace literal version assertions with a guard matching both native packages against pnpm-lock.yaml, and regenerate the existing maintenance hashes. Workers/release tools have no such COPY path. Workers were cancelled by the image matrix after AI failed; both release-tool jobs completed their existing build/verification boundaries. No runtime, IAM, migration or security-policy relaxation.
+- Regression proof: new guard fails immediately against old Docker paths with the upgraded lockfile (`native-pins-regression-before.log`). Actual Linux/amd64 AI image build, its in-image sharp rotate/JPEG check and exported-filesystem allowlist pass. API/Web image and full release-security checks are being verified before a new exact-head CI and release; no blind UAT retry.
+- Repair evidence remains under `/tmp/mangmee-vat-ux-uat-20260909/`. Main may advance for this repair only after terminal failed UAT; it will be frozen again at the next dispatch. Production remains held.
+
+- Local combined image build initially found the development-only generated-client symlink copied from this worktree (ENOTDIR); removed only that symlink, preserving its root target, and rebuilt using the same clean-source generation path as CI. No repository code change for that local setup issue.
