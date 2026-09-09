@@ -73,7 +73,7 @@ describe('expense review preview lifecycle', () => {
 
 describe('substitute-receipt wizard preview lifecycle', () => {
   it('binds every async preview to the active company, expense, and evidence revision', () => {
-    assert.match(wizardSource, /const previewScope = \[\s*companyId,[\s\S]*receiptEvidence\?\.updatedAt \?\? '',\s*\]\.join/);
+    assert.match(wizardSource, /const previewScope = \[\s*companyId,[\s\S]*receiptEvidence\?\.updatedAt \?\? '',[\s\S]*signerPosition[\s\S]*\]\.join/);
     assert.match(wizardSource, /requestId === previewRequestRef\.current && requestScope === previewScopeRef\.current/);
     for (const [start, end] of [
       ['const previewPrepared = async', 'const certify = async'],
@@ -100,7 +100,7 @@ describe('substitute-receipt wizard preview lifecycle', () => {
 
 describe('legacy document-review preview lifecycle', () => {
   it('invalidates pending previews when the active evidence revision changes', () => {
-    assert.match(legacyReviewSource, /const previewScope = \[\s*companyId,\s*detail\.id,[\s\S]*detail\.substituteReceiptEvidence\?\.updatedAt \?\? '',\s*\]\.join/);
+    assert.match(legacyReviewSource, /const previewScope = \[\s*companyId,\s*detail\.id,[\s\S]*detail\.substituteReceiptEvidence\?\.updatedAt \?\? '',[\s\S]*signerPosition[\s\S]*\]\.join/);
     assert.match(legacyReviewSource, /return \(\) => \{ previewRequestRef\.current \+= 1; \};\s*\}, \[companyId, detail\.id, detail\.substituteReceiptEvidence\?\.id, detail\.substituteReceiptEvidence\?\.updatedAt\]\);/);
   });
 

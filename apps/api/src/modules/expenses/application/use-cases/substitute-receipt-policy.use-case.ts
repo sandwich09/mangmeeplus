@@ -51,9 +51,11 @@ export class GetSubstituteReceiptPolicyUseCase {
 
   async executeRuntime(ctx: RequestContext): Promise<SubstituteReceiptRuntimePolicy> {
     // R9: the signing UI asks for an upload only when this caller has no reusable signature yet.
-    const [policy, reusableSignature] = await Promise.all([
+    const [policy, reusableSignature, signerJobTitle, company] = await Promise.all([
       this.repo.getSubstituteReceiptPolicy(ctx.companyId),
       this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId),
+      this.repo.getSignerJobTitle(ctx.companyId, ctx.userId),
+      this.repo.getSubstituteCompanyContext(ctx.companyId, null),
     ]);
     const approvalMode = policy?.approvalMode ?? 'OWNER_SELF';
     return {
@@ -63,6 +65,8 @@ export class GetSubstituteReceiptPolicyUseCase {
       cashEvidencePolicy: policy?.cashEvidencePolicy ?? 'ALLOW_SUPPORTING_EVIDENCE_ONLY',
       cashEvidenceInstructions: policy?.cashEvidenceInstructions ?? null,
       hasReusableSignature: Boolean(reusableSignature),
+      canApproveForCompany: ctx.permissions.includes('expense.confirm') && (approvalMode === 'OWNER_SELF' || Boolean(policy?.approverUserIds.includes(ctx.userId))),
+      signerJobTitle, companyName: company.name, companyNameSource: company.nameSource,
       // A8: “ใช้ลายเซ็นที่บันทึกไว้” asked the signer to certify a legal document with an image they
       // had never seen. This is that image — resolved for THIS caller only, by the same
       // derived-first lookup that will certify with it, so no permission question arises.

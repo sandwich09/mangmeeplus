@@ -101,7 +101,8 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
           <div className="grid content-start gap-5">
             <MangmeeCard className="p-5 sm:p-6">
-              <h2 className="text-xl font-extrabold text-gray-900">รูปแบบการอนุมัติ</h2>
+              <h2 className="text-xl font-extrabold text-gray-900">รูปแบบการอนุมัติและตรวจรับ</h2>
+              <p className="mt-2 text-sm leading-6 text-gray-500">สำหรับฉบับกระดาษ การตั้งค่านี้กำหนดผู้มีสิทธิ์ตรวจรับด้วย หากต้องการระบุผู้ตรวจรับ ให้เลือกกำหนดรายชื่อด้านล่าง ผู้ตรวจรับต้องมีสิทธิ์ยืนยันค่าใช้จ่าย</p>
               <div className="mt-4 grid gap-3">
                 <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${approvalMode === 'OWNER_SELF' ? 'border-brand-200 bg-brand-25' : 'border-gray-200'}`}>
                   <input type="radio" name="approval-mode" checked={approvalMode === 'OWNER_SELF'} onChange={() => { setApprovalMode('OWNER_SELF'); setSaved(false); }} className="mt-1 accent-brand-700" />
@@ -113,7 +114,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                 <label className={`flex cursor-pointer gap-3 rounded-xl border p-4 ${approvalMode === 'DESIGNATED_APPROVERS' ? 'border-brand-200 bg-brand-25' : 'border-gray-200'}`}>
                   <input type="radio" name="approval-mode" checked={approvalMode === 'DESIGNATED_APPROVERS'} onChange={() => { setApprovalMode('DESIGNATED_APPROVERS'); setSaved(false); }} className="mt-1 accent-brand-700" />
                   <span>
-                    <span className="font-bold text-gray-900">กำหนดผู้อนุมัติแยกจากผู้จ่ายเงิน</span>
+                    <span className="font-bold text-gray-900">กำหนดรายชื่อผู้อนุมัติ / ผู้ตรวจรับ</span>
                     <span className="mt-1 block text-sm leading-6 text-gray-500">เหมาะกับกิจการที่ต้องการแบ่งหน้าที่ ระบบจะบังคับให้ผู้จ่ายเงินและผู้อนุมัติเป็นคนละคน</span>
                   </span>
                 </label>
@@ -121,11 +122,11 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
             </MangmeeCard>
 
             <MangmeeCard className="p-5 sm:p-6">
-              <h2 className="text-xl font-extrabold text-gray-900">ผู้อนุมัติที่ได้รับมอบหมาย</h2>
+              <h2 className="text-xl font-extrabold text-gray-900">ผู้อนุมัติออนไลน์ / ผู้ตรวจรับฉบับกระดาษ</h2>
               <p className="mt-2 text-sm leading-6 text-gray-500">
                 {approvalMode === 'OWNER_SELF'
-                  ? 'เลือกไว้ล่วงหน้าได้ ระบบจะใช้เมื่อสลับไปโหมดกำหนดผู้อนุมัติ'
-                  : 'แสดงเฉพาะพนักงานที่ยังใช้งานและมีสิทธิ์ยืนยันค่าใช้จ่าย ผู้จ่ายเงินจะอนุมัติเอกสารของตนเองไม่ได้'}
+                  ? 'ขณะนี้ใช้สิทธิ์ยืนยันค่าใช้จ่ายในการตรวจรับ รายชื่อด้านล่างยังไม่มีผล ให้เลือก “กำหนดรายชื่อผู้อนุมัติ / ผู้ตรวจรับ” ก่อน แล้วเลือกรายชื่อและบันทึก'
+                  : 'รายชื่อที่เลือกมีสิทธิ์อนุมัติเอกสารออนไลน์และตรวจรับฉบับกระดาษ โดยต้องเป็นสมาชิกที่ยังใช้งานและมีสิทธิ์ยืนยันค่าใช้จ่าย การลงนามของผู้รับรองและผู้อนุมัติต้องแยกคนกัน'}
               </p>
               {settings?.invalidApproverUserIds.length ? (
                 <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -139,7 +140,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                       type="checkbox"
                       checked={approverUserIds.includes(candidate.userId)}
                       onChange={() => toggleApprover(candidate.userId)}
-                      className="mt-1 h-4 w-4 accent-brand-700"
+                      className="mt-1 h-4 w-4 shrink-0 accent-brand-700"
                     />
                     <span>
                       <span className="block font-bold text-gray-900">{candidate.displayName}</span>

@@ -2720,7 +2720,15 @@ model SignatureFillRecord {
 
 // Immutable, versioned company evidence for a real expense whose receipt could
 // not be obtained. This is supporting accounting evidence, never a tax invoice.
+enum SubstituteReceiptFundingSource {
+  COMPANY
+  PERSONAL_ADVANCE
+}
+
 model ExpenseSubstituteReceiptEvidence {
+  correctionOfEvidenceId          String?
+  correctionReason                String?
+  fundingSource                   SubstituteReceiptFundingSource?
   id                              String                           @id @default(cuid())
   companyId                       String
   expenseId                       String
@@ -2729,6 +2737,9 @@ model ExpenseSubstituteReceiptEvidence {
   status                          SubstituteReceiptEvidenceStatus  @default(PREPARED)
   documentNumber                  String
   idempotencyKey                  String
+  paperFormSnapshotJson           Json?
+  paperSubmissionJson             Json?
+  paperReviewedByUserId            String?
   snapshotJson                    Json?
   snapshotChecksumSha256          String?
   originalSourceDocumentType      SourceDocumentType
@@ -2743,7 +2754,7 @@ model ExpenseSubstituteReceiptEvidence {
   preparedByUserId                String
   preparedAt                      DateTime
   expenseUpdatedAtAtPreparation   DateTime
-  payerUserId                     String
+  payerUserId                     String?
   payerName                       String
   payeeName                       String?
   payeeAddress                    String?

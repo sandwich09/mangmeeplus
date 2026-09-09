@@ -3,6 +3,7 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 import { describe, it } from 'node:test';
 import { createHash } from 'node:crypto';
 import {
+  PaperSubstituteReceiptUseCase,
   ApproveSubstituteReceiptUseCase,
   CertifySubstituteReceiptUseCase,
   DownloadSubstituteReceiptFormPdfUseCase,
@@ -50,7 +51,7 @@ function prepared(overrides: Record<string, unknown> = {}) {
   return {
     id: 'sub-1', companyId: 'co-1', expenseId: 'exp-1', branchId: null, version: 1, status: 'PREPARED',
     documentNumber: 'SRC-EXP-1-V1', idempotencyKey: 'idem-1', snapshotJson: null, snapshotChecksumSha256: null,
-    originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE',
+    originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', fundingSource: 'COMPANY' as const, reasonCode: 'PAYEE_CANNOT_ISSUE',
     missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ', businessPurpose: 'ซื้อวัตถุดิบ',
     paymentEvidenceAttachmentIds: [], supportingAttachmentIds: ['att-source'], paymentDate: now, paymentMethod: 'CASH', note: null,
     preparedByUserId: 'finance-1', preparedAt: now, expenseUpdatedAtAtPreparation: now,
@@ -81,6 +82,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       execute: async (input: any) => { notifications.push(input); return {}; },
     } as any);
     await useCase.execute(ctx('finance-1'), 'exp-1', {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       payeeAddress: '  1 ถนนทดสอบ  ', payeeTaxId: '1-2345-67890-12-3',
@@ -121,6 +123,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     await new PrepareSubstituteReceiptUseCase(repo, audit, {
       execute: async () => { notificationCount += 1; return {}; },
     } as any).execute(ctx('payer-1'), 'exp-1', {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       paymentMethod: 'CASH', idempotencyKey: 'idem-1', expectedExpenseUpdatedAt: now.toISOString(),
@@ -130,6 +133,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
 
   it('requires a payee name without a vendor snapshot and requires 13 tax-ID digits', async () => {
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       paymentMethod: 'CASH' as const, idempotencyKey: 'idem-1', expectedExpenseUpdatedAt: now.toISOString(),
@@ -149,6 +153,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
   it('rejects valid receipts and quantity-only/zero-value documents', async () => {
     const make = (row: any) => new PrepareSubstituteReceiptUseCase({ findByIdWithRelations: async () => row } as any, audit, notification);
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'OTHER' as const, missingReceiptReason: 'x', businessPurpose: 'y', payerUserId: 'payer-1',
       supportingAttachmentIds: ['att-source'], idempotencyKey: 'idem-1', expectedExpenseUpdatedAt: now.toISOString(),
     };
@@ -176,6 +181,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared({ originalSourceDocumentType: 'NEEDS_REVIEW' }); },
     } as any;
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'RECEIPT_UNAVAILABLE' as const,
       missingReceiptReason: 'ชำระแล้วแต่ร้านไม่ออกใบเสร็จฉบับสุดท้าย',
       businessPurpose: 'รับรองลูกค้า', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
@@ -198,7 +204,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
   it('requires separate actual payment proof for check bills regardless of cash policy, finance override, or a previously resolved route', async () => {
     let writes = 0;
     const checkBillSummary = { status: 'NOT_EXPENSE_DOCUMENT', classification: { documentKind: 'ORDER_OR_CHECK_BILL' } };
-    const input = { reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'ชำระแล้วแต่ไม่มีใบเสร็จ',
+    const input = { fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const, reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'ชำระแล้วแต่ไม่มีใบเสร็จ',
       businessPurpose: 'รับรองลูกค้า', payerUserId: 'payer-1', expectedExpenseUpdatedAt: now.toISOString(),
       idempotencyKey: 'check-payment', routeCheckBill: true as const, paymentEvidenceAttachmentIds: [] as string[] };
     const make = (summary: any, policy: any, attachments: any[] = [], extra: any = {}) => new PrepareSubstituteReceiptUseCase({
@@ -268,6 +274,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       createPreparedSubstituteEvidence: async () => { throw stale; },
     } as any, audit, notification);
     await assert.rejects(() => useCase.execute(ctx(), 'exp-1', {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
       expectedExpenseUpdatedAt: now.toISOString(), idempotencyKey: 'stale-prepare',
     }), (error) => error === stale);
@@ -276,6 +283,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
   it('rejects certificate layouts beyond the shared line bounds before preparation', async () => {
     const make = (row: any) => new PrepareSubstituteReceiptUseCase({ findByIdWithRelations: async () => row } as any, audit, notification);
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'OTHER' as const, missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
       supportingAttachmentIds: ['att-source'], idempotencyKey: 'idem-layout', expectedExpenseUpdatedAt: now.toISOString(),
     };
@@ -306,6 +314,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
     };
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'OTHER' as const, missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
       paymentMethod: 'CASH' as const, idempotencyKey: 'idem-evidence', expectedExpenseUpdatedAt: now.toISOString(),
     };
@@ -355,6 +364,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     } as any;
 
     await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx('finance-1'), 'exp-1', {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', payerUserId: 'payer-1',
       supportingAttachmentIds: Array.from({ length: limits.maxEvidenceAttachments }, (_, index) => `att-${index}`),
       paymentMethod: 'CASH', idempotencyKey: 'idem-boundary', expectedExpenseUpdatedAt: now.toISOString(),
@@ -377,6 +387,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared(); },
     };
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       paymentMethod: 'CASH' as const, idempotencyKey: 'idem-1', expectedExpenseUpdatedAt: now.toISOString(),
@@ -406,6 +417,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
       createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared({ supportingAttachmentIds: [] }); },
     } as any;
     const input = {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'วินมอเตอร์ไซค์ไม่ออกใบเสร็จ',
       businessPurpose: 'เดินทางไปพบลูกค้า', payerUserId: 'payer-1',
       paymentMethod: 'CASH' as const, idempotencyKey: 'idem-none', expectedExpenseUpdatedAt: now.toISOString(),
@@ -435,17 +447,58 @@ describe('PrepareSubstituteReceiptUseCase', () => {
 });
 
 describe('substitute receipt signing lifecycle', () => {
+  it('accepts omitted positions through digital and legacy paper certification and approval', async () => {
+    for (const signatureMode of ['DIGITAL', 'PAPER']) {
+      let evidence = prepared({ signatureMode, ...(signatureMode === 'PAPER' ? { wetSignedScanAttachmentId: 'scan', wetSignedScanChecksumSha256: 'scan-sha' } : {}), supportingAttachmentIds: [] });
+      let issuedInput: any;
+      const repo = {
+        findSubstituteEvidence: async () => evidence,
+        findById: async () => expense(), findByIdWithRelations: async () => expense(),
+        findSubstituteEvidenceAttachments: async () => [],
+        getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: null, branchName: null }),
+        findPersonalSignatureAttachment: async () => ({ id: 'sig', bucket: 'b', objectKey: 'sig', mimeType: 'image/png', byteSize: png.length, checksumSha256: null }),
+        getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['approver-1'] }),
+        listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้อนุมัติ' }],
+        findActiveMemberIdentity: async () => ({ userId: 'approver-1', displayName: 'ผู้อนุมัติ' }),
+        markSubstituteEvidenceCertified: async (input: any) => {
+          evidence = prepared({ ...evidence, ...input, status: 'PAYER_CERTIFIED', certifiedArtifactChecksumSha256: input.artifact.checksumSha256 });
+          return evidence;
+        },
+        issueSubstituteEvidence: async (input: any) => { issuedInput = input; return prepared({ ...evidence, status: 'ISSUED' }); },
+      } as any;
+      const storage = { getObject: async () => ({ bytes: png }), putObject: async (input: any) => ({ bucket: 'b', objectKey: input.objectKey, byteSize: input.bytes.length }), deleteObject: async () => {} } as any;
+      const previewCase = new PreviewSubstituteReceiptUseCase(repo);
+      const certifyCase = new CertifySubstituteReceiptUseCase(repo, storage, audit, notification, cleanup);
+      const approveCase = new ApproveSubstituteReceiptUseCase(repo, storage, audit, cleanup);
+      const preview = await previewCase.execute(ctx(), 'exp-1', 'sub-1', {});
+      for (const position of [123, 'ก'.repeat(121)]) {
+        await assert.rejects(previewCase.execute(ctx(), 'exp-1', 'sub-1', { payerPosition: position } as any), /payerPosition/);
+        await assert.rejects(certifyCase.execute(ctx(), 'exp-1', 'sub-1', { certificationAcknowledged: true, payerPosition: position } as any), /payerPosition/);
+        await assert.rejects(approveCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, approverPosition: position } as any), /approverPosition/);
+      }
+      const certifyInput = { certificationAcknowledged: true as const, signatureAttachmentId: 'sig', previewChecksumSha256: preview.previewChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() };
+      await assert.rejects(certifyCase.execute(ctx(), 'exp-1', 'sub-1', { ...certifyInput, payerPosition: 'เปลี่ยนหลังตรวจ' }), /preview no longer matches/);
+      await certifyCase.execute(ctx(), 'exp-1', 'sub-1', certifyInput);
+      assert.equal(evidence.payerPosition, '');
+      assert.equal(evidence.snapshotJson.payer.position, '');
+      assert.doesNotMatch(evidence.snapshotJson.certificationText, /ตำแหน่ง/);
+      await approveCase.execute(ctx('approver-1', ['expense.confirm']), 'exp-1', 'sub-1', { approvalAcknowledged: true, signatureAttachmentId: 'sig', certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256, expectedVersion: 1, expectedEvidenceUpdatedAt: now.toISOString() });
+      assert.equal(issuedInput.approverPosition, '');
+    }
+  });
+
   it('allows only the selected payer and stores a signed immutable snapshot', async () => {
     const evidence = prepared();
     const storageWrites: any[] = [];
     let certifiedInput: any;
+    let companyReads = 0;
     const notifications: any[] = [];
     const repo = {
       findSubstituteEvidence: async () => evidence,
       findByIdWithRelations: async () => expense(),
       findPersonalSignatureAttachment: async () => ({ id: 'sig-payer', bucket: 'b', objectKey: 'sig', mimeType: 'image/png', byteSize: png.length, checksumSha256: null }),
       findSubstituteEvidenceAttachments: async () => [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
-      getSubstituteCompanyContext: async () => ({ name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null }),
+      getSubstituteCompanyContext: async () => ({ name: ++companyReads <= 2 ? 'บริษัท ทดสอบ จำกัด' : 'Unreviewed B', taxId: '0101', branchName: null }),
       markSubstituteEvidenceCertified: async (input: any) => { certifiedInput = input; return prepared({ status: 'PAYER_CERTIFIED' }); },
       getSubstituteReceiptPolicy: async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['payer-1', 'approver-1'] }),
       listEligibleSubstituteReceiptApprovers: async () => [
@@ -479,6 +532,8 @@ describe('substitute receipt signing lifecycle', () => {
     assert.deepEqual(notifications.map((item) => item.recipientUserIds), [['approver-1']]);
     assert.equal(notifications[0].triggerKey, 'expense.substitute_receipt_approval_pending');
     assert.equal(notifications[0].sourceId, 'sub-1');
+    assert.equal(companyReads, 2, 'certification must reuse its reviewed business snapshot');
+    assert.equal(certifiedInput.snapshotJson.company.name, 'บริษัท ทดสอบ จำกัด');
   });
 
   // Guard for the collision that silently dropped every approver notification: prepare and certify
@@ -499,6 +554,7 @@ describe('substitute receipt signing lifecycle', () => {
     await new PrepareSubstituteReceiptUseCase(prepareRepo, audit, {
       execute: async (input: any) => { prepareNotifications.push(input); return {}; },
     } as any).execute(ctx('finance-1'), 'exp-1', {
+      fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
       reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายในตลาดไม่ออกใบเสร็จ',
       businessPurpose: 'ซื้อวัตถุดิบ', payerUserId: 'payer-1', supportingAttachmentIds: ['att-source'],
       paymentMethod: 'CASH', idempotencyKey: 'idem-dedup', expectedExpenseUpdatedAt: now.toISOString(),
@@ -550,7 +606,7 @@ describe('substitute receipt signing lifecycle', () => {
         businessPurpose: 'ซื้อวัตถุดิบ',
         lines: Array.from({ length: 9 }, (_, index) => ({ description: `รายการ ${index + 1}`, quantity: '1', amount: '7.22' })),
       },
-      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
+      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', fundingSource: 'COMPANY' as const, reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
       payer: { userId: 'payer-1', name: 'สมชาย', position: 'พนักงาน', certifiedAt: now.toISOString() },
       certificationText: buildSubstituteCertificationText('สมชาย', 'พนักงาน'), evidence: [], note: null,
     };
@@ -623,7 +679,7 @@ describe('substitute receipt signing lifecycle', () => {
       documentNumber: 'SRC-EXP-1-V1', version: 1,
       company: { name: 'บริษัท ทดสอบ จำกัด', taxId: '0101', branchName: null },
       expense: { id: 'exp-1', expenseNumber: 'EXP-1', expenseDate: now.toISOString(), paymentDate: now.toISOString(), currency: 'THB', grandTotalAmount: '65.00', paymentMethod: 'CASH', paymentReference: null, category: 'cat-1', businessPurpose: 'ซื้อวัตถุดิบ', lines: [{ description: 'ผักสด', quantity: '1', amount: '65.00' }] },
-      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
+      originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', fundingSource: 'COMPANY' as const, reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
       payer: { userId: 'payer-1', name: 'สมชาย', position: 'พนักงาน', certifiedAt: now.toISOString() },
       certificationText: buildSubstituteCertificationText('สมชาย', 'พนักงาน'), evidence: [], note: null,
     };
@@ -1089,6 +1145,7 @@ describe('R7 — LINE may prepare; LINE may not sign, approve, or download', () 
   }
 
   const input = {
+    fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const,
     reasonCode: 'PAYEE_CANNOT_ISSUE' as const, missingReceiptReason: 'วินไม่ออกใบเสร็จ',
     businessPurpose: 'ไปพบลูกค้า', payerUserId: 'payer-1', paymentMethod: 'CASH' as const,
     idempotencyKey: 'workflow-1', continuationId: 'workflow-1', expectedExpenseUpdatedAt: now.toISOString(),
@@ -1431,5 +1488,112 @@ describe('one current personal signature per owner (D14)', () => {
     const { repo, rows } = store([existing()]);
     await repo.createSignatureAsset(newSignature({ status: 'REJECTED' }));
     assert.equal(rows.find((row) => row.id === 'sig-old')!.status, 'ACTIVE');
+  });
+});
+
+
+describe('paper signing without account identities', () => {
+  const form = { schemaVersion: 2, documentNumber: 'SRC-1', version: 1, company: { name: 'บริษัท ทดสอบ จำกัด', taxId: '0100000000000', branchName: null },
+    expense: { id: 'exp-1', expenseNumber: null, expenseDate: now.toISOString(), paymentDate: now.toISOString(), grandTotalAmount: '65', currency: 'THB', paymentMethod: 'CASH', paymentReference: null, category: null, businessPurpose: 'ทดสอบ', lines: [] },
+    payer: { userId: null, name: '________', position: '________', certifiedAt: now.toISOString() }, certificationText: 'ข้าพเจ้า ________ ตำแหน่ง ________',
+    originalSourceDocumentType: 'EXPENSE_NOTE_TEXT', reasonCode: 'OTHER', missingReceiptReason: 'ทดสอบ', evidence: [], note: null };
+  function setup(overrides: Record<string, unknown> = {}) {
+    const evidence = prepared({ payerUserId: null, payerName: '', signatureMode: 'PAPER', paperFormSnapshotJson: form, supportingAttachmentIds: [], ...overrides });
+    const repo = { findSubstituteEvidence: async () => evidence, findByIdWithRelations: async () => expense(), findSubstituteEvidenceAttachments: async () => [] } as any;
+    const useCase = new PaperSubstituteReceiptUseCase(repo, audit, {} as any, {} as any, {} as any, cleanup);
+    return { repo, useCase, evidence };
+  }
+  it('submits blank positions, captures uploader name and preserves required signer facts', async () => {
+    const { repo, evidence } = setup();
+    const { default: sharp } = await import('sharp');
+    const bytes = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#222' } }).png().toBuffer();
+    const checksum = createHash('sha256').update(bytes).digest('hex');
+    const attachment = { id: 'scan', branchId: null, status: 'ACTIVE', bucket: 'b', objectKey: 'scan', mimeType: 'image/png', checksumSha256: checksum, byteSize: bytes.length };
+    repo.findSubstitutePaperUpload = async () => attachment;
+    repo.findMemberDisplayName = async (companyId: string, userId: string) => {
+      assert.equal(companyId, 'co-1'); assert.equal(userId, 'payer-1'); return 'ผู้จัดทำเอกสาร';
+    };
+    repo.submitSubstitutePaper = async (input: any) => {
+      evidence.paperSubmissionJson = input.submission; evidence.wetSignedScanAttachmentId = 'scan'; evidence.wetSignedScanChecksumSha256 = checksum; return evidence;
+    };
+    const storage = { getObject: async () => ({ bytes }) } as any;
+    const useCase = new PaperSubstituteReceiptUseCase(repo, audit, {} as any, {} as any, storage, cleanup);
+    const input = { payer: { name: 'ผู้รับรอง', signedOn: '2026-07-13' }, approver: { name: 'ผู้อนุมัติ', position: '  ', signedOn: '2026-07-13' }, samePerson: false, formMatchesAcknowledged: true as const, attachmentId: 'scan', checksumSha256: checksum, byteSize: bytes.length, expectedEvidenceUpdatedAt: now.toISOString() };
+    for (const role of ['payer', 'approver'] as const) {
+      for (const position of [123, 'ก'.repeat(121)]) await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', { ...input, [role]: { ...input[role], position } } as any), /position/);
+      await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', { ...input, [role]: { ...input[role], name: '' } }), /name/);
+      await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', { ...input, [role]: { ...input[role], signedOn: '' } }), /signedOn/);
+    }
+    await useCase.submit(ctx(), 'exp-1', 'sub-1', input);
+    assert.equal(evidence.status, 'PREPARED');
+    assert.equal(evidence.paperSubmissionJson.payer.position, '');
+    assert.equal(evidence.paperSubmissionJson.approver.position, '');
+    assert.equal(evidence.paperSubmissionJson.uploadedByName, 'ผู้จัดทำเอกสาร');
+    repo.findMemberDisplayName = async () => { throw new Error('exact retry must retain captured name'); };
+    await useCase.submit(ctx(), 'exp-1', 'sub-1', input);
+  });
+
+  it('reviews paper using the captured uploader name or a scoped legacy name, never an account ID', async () => {
+    const { renderSubstituteReceiptAttestationSvg } = await import('../../domain/logic/substitute-receipt.logic');
+    for (const uploadedByName of ['ชื่อขณะอัปโหลด', undefined]) {
+      const submission = { payer: { name: 'ผู้รับรอง', position: '', signedOn: '2026-07-13' }, approver: { name: 'ผู้อนุมัติ', position: '', signedOn: '2026-07-13' }, samePerson: false, uploadedByUserId: 'uploader-id', uploadedByName, uploadedAt: now.toISOString() };
+      const checksum = createHash('sha256').update(png).digest('hex');
+      const { repo, evidence } = setup({ paperSubmissionJson: submission, wetSignedScanAttachmentId: 'scan', wetSignedScanChecksumSha256: checksum });
+      repo.findActiveMemberIdentity = async () => ({ displayName: 'ผู้ตรวจรับ' });
+      repo.findMemberDisplayName = async (companyId: string, userId: string) => { assert.equal(uploadedByName, undefined); assert.equal(companyId, 'co-1'); assert.equal(userId, 'uploader-id'); return 'ชื่อสมาชิกเดิม'; };
+      repo.findSubstituteArtifactAttachment = async () => ({ bucket: 'b', objectKey: 'scan', mimeType: 'image/png' });
+      repo.getSubstituteCompanyContext = async () => form.company;
+      repo.getSubstituteReceiptPolicy = async () => ({ approvalMode: 'DESIGNATED_APPROVERS', approverUserIds: ['reviewer-id'] });
+      repo.listEligibleSubstituteReceiptApprovers = async () => [{ userId: 'reviewer-id' }];
+      let issued: any;
+      repo.issueSubstituteEvidence = async (input: any) => { issued = input; return prepared({ ...evidence, status: 'ISSUED' }); };
+      const expectedSnapshot = { ...form, payer: { userId: null, name: submission.payer.name, position: '', certifiedAt: submission.payer.signedOn, roleLabel: 'ผู้รับรองการจ่าย' }, certificationText: buildSubstituteCertificationText(submission.payer.name, '', true), paperReview: { ...submission, uploadedByName: uploadedByName ?? 'ชื่อสมาชิกเดิม', reviewerUserId: 'reviewer-id', reviewerName: 'ผู้ตรวจรับ' } };
+      // Public acceptance must bind its SVG to the reviewed facts and scan.
+      delete (expectedSnapshot.paperReview as any).payer; delete (expectedSnapshot.paperReview as any).approver;
+      const svg = renderSubstituteReceiptAttestationSvg(expectedSnapshot as any, { snapshotChecksumSha256: canonicalSnapshotHash(expectedSnapshot as any), wetSignedScanChecksumSha256: checksum, approver: { userId: null, name: 'ผู้อนุมัติ', position: '', approvedAt: '2026-07-13' } });
+      const storage = { getObject: async () => ({ bytes: png }), putObject: async (input: any) => { assert.equal(input.bytes.toString(), svg.toString()); return { bucket: 'b', objectKey: 'issued', byteSize: input.bytes.length }; } } as any;
+      const useCase = new PaperSubstituteReceiptUseCase(repo, audit, {} as any, {} as any, storage, cleanup);
+      await useCase.accept(ctx('reviewer-id', ['expense.confirm']), 'exp-1', 'sub-1', { previewChecksumSha256: createHash('sha256').update(Buffer.concat([svg, Buffer.from(checksum)])).digest('hex'), expectedEvidenceUpdatedAt: now.toISOString(), factsAndSignaturesAcknowledged: true, approverAuthorityAcknowledged: true, originalRetainedAcknowledged: true });
+      assert.equal(issued.paperAcceptance.snapshot.paperReview.uploadedByName, uploadedByName ?? 'ชื่อสมาชิกเดิม');
+      assert.equal(issued.approverPosition, '');
+      assert.doesNotMatch(svg.toString(), /uploader-id|reviewer-id|SHA-256|version 1|บัญชีผู้ตรวจรับ|ผู้ตรวจรับในระบบ|ผู้รับรอง ·|ผู้อนุมัติ ·|มิใช่ใบกำกับภาษี/);
+    }
+  });
+  it('does not let an uploader certify an external paper signer through the digital endpoint', async () => {
+    const { repo } = setup();
+    await assert.rejects(new PreviewSubstituteReceiptUseCase(repo).execute(ctx(), 'exp-1', 'sub-1', { payerPosition: 'พนักงาน' }), /Only the selected actual payer/);
+  });
+  it('requires preparer permission and branch scope for paper uploads', async () => {
+    const { useCase, repo } = setup();
+    repo.findByIdWithRelations = async () => expense({ branchId: 'branch-1' });
+    const file = { originalFileName: 'scan.pdf', mimeType: 'application/pdf', byteSize: 10 };
+    await assert.rejects(useCase.initUpload(ctx('u', []), 'exp-1', 'sub-1', file), /ไม่มีสิทธิ์/);
+    const scoped = ctx(); scoped.scopes = { branchIds: ['other-branch'] };
+    await assert.rejects(useCase.initUpload(scoped, 'exp-1', 'sub-1', file), /Branch/);
+  });
+  it('rejects stale source, digital route, and unprepared paper form', async () => {
+    for (const override of [{ expenseUpdatedAtAtPreparation: new Date(0) }, { signatureMode: 'DIGITAL' }, { paperFormSnapshotJson: null }]) {
+      const { useCase } = setup(override);
+      await assert.rejects(useCase.initUpload(ctx(), 'exp-1', 'sub-1', { originalFileName: 'scan.pdf', mimeType: 'application/pdf', byteSize: 10 }));
+    }
+  });
+  it('validates real signer dates and two-role declaration before completing or linking uploads', async () => {
+    const { useCase } = setup();
+    const input: any = { payer: { name: 'สมชาย', position: 'พนักงาน', signedOn: '2026-02-30' }, approver: { name: 'สมชาย', position: 'กรรมการ', signedOn: '2026-07-13' }, samePerson: false, formMatchesAcknowledged: true };
+    await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /วันที่/);
+    input.payer.signedOn = '2026-07-13';
+    await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /ชื่อผู้ลงนามตรงกัน/);
+  });
+  it('does not accept an upload as an issued document without all review acknowledgements', async () => {
+    const { useCase } = setup();
+    await assert.rejects(useCase.accept(ctx('reviewer', ['expense.confirm']), 'exp-1', 'sub-1', {} as any), /ยืนยันครบ/);
+  });
+  it('renders both blank paper signer blocks without a saved signature or account name', async () => {
+    const { renderSubstituteReceiptSvg } = await import('../../domain/logic/substitute-receipt.logic');
+    const svg = renderSubstituteReceiptSvg(form as any, undefined, undefined, undefined, { paperForm: true }).toString();
+    assert.equal((svg.match(/ชื่อ \(________________________________\)/g) ?? []).length, 2);
+    assert.equal((svg.match(/วันที่ ________/g) ?? []).length, 2);
+    assert.doesNotMatch(svg, /<image|ตัวอย่างก่อนลงนาม|รอผู้อนุมัติลงนาม|ลงนามโดยเจ้าของกิจการ/);
+    assert.match(svg, /ข้าพเจ้า ________ ตำแหน่ง \(ถ้ามี\) ________/);
   });
 });

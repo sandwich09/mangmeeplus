@@ -10,6 +10,7 @@ import {
   planSubstituteReceiptRasterSlices,
   renderSubstituteReceiptPaperArtifactPdf,
   renderSubstituteReceiptPdf,
+  renderSubstitutePaperPreviewPages,
   substituteWetSignedScanRejection,
   SUBSTITUTE_RECEIPT_PDF_LIMITS,
 } from './substitute-receipt-pdf.logic';
@@ -48,6 +49,23 @@ async function extractPageTexts(bytes: Buffer): Promise<string[]> {
 }
 
 describe('substitute receipt PDF', () => {
+  it('renders every uploaded scan and attestation page for browsers without a PDF viewer', async () => {
+    const scan = await PDFDocument.create();
+    scan.addPage([400, 600]).drawText('LOCAL TEST SCAN ONE', { x: 40, y: 400 });
+    scan.addPage([400, 600]).drawText('LOCAL TEST SCAN TWO', { x: 40, y: 400 });
+    const artifact = await renderSubstituteReceiptPaperArtifactPdf({ bytes: Buffer.from(await scan.save()), mimeType: 'application/pdf' }, thaiSvg);
+    const pages = await renderSubstitutePaperPreviewPages(artifact);
+    assert.equal(pages.length, 3);
+    assert.notEqual(pages[0], pages[1]);
+    for (const page of pages) {
+      assert.match(page, /^data:image\/jpeg;base64,/);
+      const image = sharp(Buffer.from(page.split(',')[1]!, 'base64'));
+      const metadata = await image.metadata();
+      assert.ok(metadata.width! <= 1600 && metadata.height! <= 2400);
+      const stats = await image.stats();
+      assert.ok(stats.channels.some((channel) => channel.min < 200), 'page has visible ink');
+    }
+  });
   it('keeps long signer labels inside their columns in the PDF rasterizer', async () => {
     for (const [center, label] of [
       [240, 'QACOMPLETE UI Regression · QA LOCAL TEST ONLY — simulated payer'],
@@ -336,6 +354,25 @@ describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
     });
     // The attestation's own "Page 1/1" is corrected to its real position in the composed file.
     assert.doesNotMatch(texts[2] ?? '', /Page 1\/1/);
+  });
+
+  it('omits generated paper footers while retaining original scan content and state stamps', async () => {
+    const scan = await PDFDocument.create();
+    scan.addPage([400, 600]).drawText('ORIGINAL SCAN FOOTER', { x: 20, y: 20, size: 10 });
+    const bytes = Buffer.from(await scan.save());
+    for (const stateStamp of [undefined, 'VOID', 'SUPERSEDED'] as const) {
+      const data = await renderSubstituteReceiptPaperArtifactPdf(
+        { bytes, mimeType: 'application/pdf' }, thaiSvg, 'SUB-202608-00007',
+        { omitPageFooter: true, stateStamp },
+      );
+      const texts = await extractPageTexts(data);
+      assert.equal(texts.length, 2);
+      assert.match(texts[0]!, /ORIGINAL SCAN FOOTER/);
+      for (const text of texts) {
+        assert.doesNotMatch(text, /ID:|Page \d+\/\d+|SHA256:/);
+        if (stateStamp) assert.match(text, new RegExp(stateStamp));
+      }
+    }
   });
 
   it('refuses media it cannot reproduce, and keeps the page ceiling for a multi-page scan', async () => {

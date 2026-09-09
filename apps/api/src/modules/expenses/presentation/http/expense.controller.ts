@@ -1,6 +1,9 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  CorrectSubstituteDocumentDto,
+  SubmitSubstituteReceiptPaperDto,
+  AcceptSubstituteReceiptPaperDto,
   ConfirmExpenseDto,
   ExpenseTotalsPreviewDto,
   CreateSignatureAssetDto,
@@ -41,6 +44,7 @@ import {
   ListAllExpenseCategoriesUseCase,
 } from '../../application/use-cases/expense-document.use-case';
 import {
+  PaperSubstituteReceiptUseCase,
   ApproveSubstituteReceiptUseCase,
   CertifySubstituteReceiptUseCase,
   CompleteSubstituteSignatureUploadUseCase,
@@ -112,6 +116,7 @@ export class ExpenseController {
     private readonly lineSubstituteReceiptContinuation: LineSubstituteReceiptContinuationUseCase,
     private readonly previewSubstituteReceipt: PreviewSubstituteReceiptUseCase,
     private readonly certifySubstituteReceipt: CertifySubstituteReceiptUseCase,
+    private readonly paperSubstituteReceipt: PaperSubstituteReceiptUseCase,
     private readonly approveSubstituteReceipt: ApproveSubstituteReceiptUseCase,
     private readonly substituteReceiptPayers: ListSubstituteReceiptPayersUseCase,
     private readonly substituteReceiptHistory: ListSubstituteReceiptHistoryUseCase,
@@ -267,6 +272,12 @@ export class ExpenseController {
     return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
   }
 
+  @Post(':expenseId/substitute-receipt/:evidenceId/correct-document')
+  @RequirePermissions('expense.review')
+  correctSubstituteDocument(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: CorrectSubstituteDocumentDto) {
+    return this.prepareSubstituteReceipt.executeCorrection(ctx, expenseId, evidenceId, body);
+  }
+
   @Get(':expenseId/substitute-receipt/continuations/:workflowId')
   @RequirePermissions('expense.review')
   loadLineSubstituteContinuation(
@@ -303,6 +314,14 @@ export class ExpenseController {
       type: 'application/pdf',
       disposition: `attachment; filename="${fileName}"`,
     });
+  }
+
+  @Get(':expenseId/substitute-receipt/:evidenceId/artifact-preview')
+  @RequireAnyPermission('expense.read', 'expense.read_related', 'expense.read_own', 'expense.review', 'expense.confirm')
+  async previewIssuedSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string,
+    @Param('evidenceId') evidenceId: string, @Res({ passthrough: true }) response: Response) {
+    response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+    return this.downloadSubstituteReceiptPdf.preview(ctx, expenseId, evidenceId);
   }
 
   // R8: derived on demand from the PREPARED snapshot, never stored, never "issued". `expense.review`
@@ -343,6 +362,30 @@ export class ExpenseController {
     @Body() body: PreviewSubstituteReceiptInput,
   ) {
     return this.previewSubstituteReceipt.execute(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/paper/upload-intent')
+  @RequirePermissions('expense.review')
+  initPaperUpload(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: UploadIntentDto) {
+    return this.paperSubstituteReceipt.initUpload(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/paper/submit')
+  @RequirePermissions('expense.review')
+  submitPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: SubmitSubstituteReceiptPaperDto) {
+    return this.paperSubstituteReceipt.submit(ctx, expenseId, evidenceId, body);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/paper/preview')
+  @RequireAnyPermission('expense.review', 'expense.confirm')
+  previewPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string) {
+    return this.paperSubstituteReceipt.preview(ctx, expenseId, evidenceId);
+  }
+
+  @Post(':expenseId/substitute-receipt/:evidenceId/paper/accept')
+  @RequirePermissions('expense.confirm')
+  acceptPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AcceptSubstituteReceiptPaperDto) {
+    return this.paperSubstituteReceipt.accept(ctx, expenseId, evidenceId, body);
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/signature-upload-intent')

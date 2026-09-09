@@ -49,9 +49,14 @@ export type SubstituteReceiptEvidenceRef = {
 };
 
 export type SubstituteReceiptSnapshot = {
+  schemaVersion?: 2;
+  correction?: { evidenceId: string; reason: string };
+  fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
+  paymentStatement?: string;
+  paperReview?: { uploadedByUserId: string; uploadedByName?: string; uploadedAt: string; reviewerUserId: string; reviewerName: string; samePerson: boolean };
   documentNumber: string;
   version: number;
-  company: { name: string; branchName: string | null; taxId: string | null };
+  company: { name: string; nameSource?: 'REGISTERED' | 'DISPLAY_NAME'; branchName: string | null; taxId: string | null };
   expense: {
     id: string;
     expenseNumber: string | null;
@@ -59,6 +64,8 @@ export type SubstituteReceiptSnapshot = {
     paymentDate: string | null;
     currency: string;
     grandTotalAmount: string;
+    netPayableAmount?: string;
+    whtAmount?: string;
     paymentMethod: string | null;
     paymentReference: string | null;
     category: string | null;
@@ -69,21 +76,21 @@ export type SubstituteReceiptSnapshot = {
   reasonCode: string;
   missingReceiptReason: string;
   payee?: { name: string; address: string | null; taxId: string | null };
-  payer: { userId: string; name: string; position: string; certifiedAt: string };
+  payer: { userId: string | null; name: string; position: string; certifiedAt: string; roleLabel?: 'ผู้รับรองการจ่าย' };
   certificationText: string;
   evidence: SubstituteReceiptEvidenceRef[];
   note: string | null;
 };
 
 export type SubstituteReceiptApprover = {
-  userId: string;
+  userId: string | null;
   name: string;
   position: string;
   approvedAt: string;
 };
 
-export function buildSubstituteCertificationText(name: string, position: string): string {
-  return `ข้าพเจ้า ${name} ตำแหน่ง ${positionLabel(position)} ขอรับรองว่ารายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้`;
+export function buildSubstituteCertificationText(name: string, position: string, literal = false): string {
+  return `ข้าพเจ้า ${name}${position.trim() ? ` ตำแหน่ง ${literal ? position : positionLabel(position)}` : ''} ขอรับรองว่ารายจ่ายข้างต้นนี้ไม่อาจเรียกเก็บใบเสร็จรับเงินจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้`;
 }
 
 export function thaiBahtText(value: string): string {
@@ -144,7 +151,7 @@ export function renderSubstituteReceiptSvg(
   payerSignatureDataUrl?: string,
   approver?: SubstituteReceiptApprover,
   approverSignatureDataUrl?: string,
-  options: { unsignedForm?: boolean } = {},
+  options: { unsignedForm?: boolean; paperForm?: boolean } = {},
 ): Buffer {
   if (payerSignatureDataUrl) assertSignatureDataUrl(payerSignatureDataUrl);
   if (approver && !approverSignatureDataUrl) throw new Error('Approver signature is required.');
@@ -179,15 +186,16 @@ export function renderSubstituteReceiptSvg(
   const tableBottom = rowY + 68;
   const reasonLines = wrapText(`เหตุผลที่ไม่สามารถเรียกใบเสร็จ: ${snapshot.missingReceiptReason}`, 735);
   const purposeLines = wrapText(`วัตถุประสงค์ทางธุรกิจ: ${snapshot.expense.businessPurpose}`, 735);
-  const noteLines = snapshot.note ? wrapText(`หมายเหตุ: ${snapshot.note}`, 735) : [];
+  const fundingNote = snapshot.fundingSource ? `${snapshot.paymentStatement ?? `แหล่งเงิน: ${snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน (ยังไม่ใช่การจ่ายคืนจากบริษัท)'}`} · สุทธิจ่าย ${money(snapshot.expense.netPayableAmount ?? snapshot.expense.grandTotalAmount)} บาท · หัก ณ ที่จ่าย ${money(snapshot.expense.whtAmount ?? '0')} บาท` : '';
+  const noteLines = [...wrapText(fundingNote, 735), ...(snapshot.correction ? wrapText(`แก้เฉพาะชื่อ/ตำแหน่งจาก ${snapshot.correction.evidenceId}: ${snapshot.correction.reason}`, 735) : []), ...(snapshot.note ? wrapText(`หมายเหตุ: ${snapshot.note}`, 735) : [])];
   const reasonY = tableBottom + 38;
   const purposeY = reasonY + reasonLines.length * 22 + 12;
   const noteY = purposeY + purposeLines.length * 22 + 12;
   const certificationTop = noteY + noteLines.length * 22 + 10;
-  const certificationText = snapshot.certificationText.replace(
+  const certificationText = snapshot.payer.position ? snapshot.certificationText.replace(
     `ตำแหน่ง ${snapshot.payer.position}`,
-    `ตำแหน่ง ${positionLabel(snapshot.payer.position)}`,
-  );
+    `ตำแหน่ง${options.paperForm ? ' (ถ้ามี)' : ''} ${(snapshot.schemaVersion === 2 ? snapshot.payer.position : positionLabel(snapshot.payer.position))}`,
+  ) : snapshot.certificationText;
   const certificationLines = wrapText(certificationText, 720);
   const certificationHeight = Math.max(62, certificationLines.length * 22 + 28);
   const evidenceTitleY = certificationTop + certificationHeight + 38;
@@ -207,7 +215,7 @@ export function renderSubstituteReceiptSvg(
     evidenceBreaks.push(evidenceY);
   }
   const signaturesStart = evidenceY + 58;
-  const selfSigned = approver?.userId === snapshot.payer.userId;
+  const selfSigned = Boolean(approver?.userId && approver.userId === snapshot.payer.userId);
   const height = signaturesStart + 220 + (selfSigned ? 28 : 0);
   // The PDF renderer maps these SVG-space positions to raster rows and prefers them over its
   // legacy low-ink fallback. They are boundaries between logical blocks, never arbitrary text rows.
@@ -234,16 +242,22 @@ export function renderSubstituteReceiptSvg(
   const approverBlock = approver && approverSignatureDataUrl
     ? `<image href="${approverSignatureDataUrl}" x="500" y="${approverSignatureY}" width="220" height="78" preserveAspectRatio="xMidYMid meet"/>
        <line x1="480" y1="${signaturesStart + 92}" x2="750" y2="${signaturesStart + 92}" stroke="#222"/>
-       <text x="615" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(`${approver.name} · ${positionLabel(approver.position)}`, 270)}>${xml(approver.name)} · ${xml(positionLabel(approver.position))}</text>
+       <text x="615" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(signerNameWithPosition(approver, snapshot.schemaVersion), 270)}>${xml(signerNameWithPosition(approver, snapshot.schemaVersion))}</text>
        <text x="615" y="${signaturesStart + 140}" text-anchor="middle">ผู้อนุมัติ · ${xml(formatDate(approver.approvedAt))}</text>`
     : `<text x="615" y="${signaturesStart + 75}" text-anchor="middle" fill="#777">รอผู้อนุมัติลงนาม</text>`;
 
+  const paperSignatureBlock = (x: number, role: string) => `
+    <text x="${x}" y="${signaturesStart + 15}" text-anchor="middle" font-weight="700">${role}</text>
+    <line x1="${x - 135}" y1="${signaturesStart + 92}" x2="${x + 135}" y2="${signaturesStart + 92}" stroke="#222"/>
+    <text x="${x}" y="${signaturesStart + 118}" text-anchor="middle">ชื่อ (________________________________)</text>
+    <text x="${x}" y="${signaturesStart + 150}" text-anchor="middle">ตำแหน่ง (ถ้ามี) _______________________</text>
+    <text x="${x}" y="${signaturesStart + 182}" text-anchor="middle">วันที่ ________ / ________ / ____________</text>`;
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" data-pdf-breaks="${pdfBreaks.join(',')}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_TITLE)}">
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
-    <text x="425" y="${options.unsignedForm ? 82 : 76}" text-anchor="middle"${documentNumberAttributes}>${xml(documentNumberLine)}</text>
+    ${options.paperForm ? '' : `<text x="425" y="${options.unsignedForm ? 82 : 76}" text-anchor="middle"${documentNumberAttributes}>${xml(documentNumberLine)}</text>`}
     <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
     <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
@@ -277,13 +291,15 @@ export function renderSubstituteReceiptSvg(
     ${multilineText(60, certificationTop + 27, certificationLines, 22)}
     <text x="50" y="${evidenceTitleY}" font-weight="700">หลักฐานประกอบ/หลักฐานการจ่ายที่เชื่อมโยง</text>
     ${evidence}
+    ${options.paperForm ? paperSignatureBlock(240, 'ผู้รับรองการจ่าย') + paperSignatureBlock(615, 'ผู้อนุมัติ') : `
     ${payerSignatureBlock}
     <line x1="105" y1="${signaturesStart + 92}" x2="375" y2="${signaturesStart + 92}" stroke="#222"/>
-    <text x="240" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(`${snapshot.payer.name} · ${positionLabel(snapshot.payer.position)}`, 270)}>${xml(snapshot.payer.name)} · ${xml(positionLabel(snapshot.payer.position))}</text>
-    <text x="240" y="${signaturesStart + 140}" text-anchor="middle">ผู้จ่ายเงิน/ผู้รับรอง${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
+    <text x="240" y="${signaturesStart + 116}" text-anchor="middle"${fitToWidth(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion), 270)}>${xml(signerNameWithPosition(snapshot.payer, snapshot.schemaVersion))}</text>
+    <text x="240" y="${signaturesStart + 140}" text-anchor="middle">${xml(snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง')}${payerSignatureDataUrl ? ` · ${xml(formatDate(snapshot.payer.certifiedAt))}` : ' · รอลงนาม'}</text>
     ${approverBlock}
+    `}
     ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
-    <text x="425" y="${height - 48}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>${options.unsignedForm ? `\n    <text x="425" y="${height - 24}" text-anchor="middle" font-size="14" font-weight="700" fill="#c62828">${SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE}</text>` : ''}
+    ${options.unsignedForm && !options.paperForm ? `<text x="425" y="${height - 24}" text-anchor="middle" font-size="14" font-weight="700" fill="#c62828">${SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE}</text>` : ''}
   </g>
 </svg>`;
   return Buffer.from(svg, 'utf8');
@@ -295,8 +311,7 @@ export function renderSubstituteReceiptSvg(
  * this page in the artifact, so nothing here is a signature box: it is the system's own statement
  * of what was certified, by whom, when, and against which two checksums.
  *
- * A page of its own rather than a flag on `renderSubstituteReceiptSvg`: that sheet's whole layout
- * is signature blocks, and every DIGITAL artifact must keep rendering byte-for-byte as before.
+ * Separate from `renderSubstituteReceiptSvg`, whose signature blocks belong to online signing.
  */
 export function renderSubstituteReceiptAttestationSvg(
   snapshot: SubstituteReceiptSnapshot,
@@ -306,9 +321,11 @@ export function renderSubstituteReceiptAttestationSvg(
     approver?: SubstituteReceiptApprover;
   },
 ): Buffer {
+  const title = snapshot.paperReview ? 'บันทึกตรวจรับฉบับลงนามบนกระดาษ' : SUBSTITUTE_RECEIPT_ATTESTATION_TITLE;
   const facts: Array<[string, string]> = [
-    ['เลขที่เอกสาร', `${snapshot.documentNumber} · version ${snapshot.version}`],
+    ['เลขที่เอกสาร', snapshot.paperReview ? snapshot.documentNumber : `${snapshot.documentNumber} · version ${snapshot.version}`],
     ['บริษัท', snapshot.company.name],
+    ...(snapshot.fundingSource ? [[snapshot.paymentStatement ? 'การชำระเงิน' : 'แหล่งเงิน', snapshot.paymentStatement ?? (snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')] as [string, string]] : []),
     ['สาขา', snapshot.company.branchName ?? 'สำนักงานใหญ่'],
     ['เลขประจำตัวผู้เสียภาษี', snapshot.company.taxId ?? '-'],
     ['เลขอ้างอิงรายการ', snapshot.expense.expenseNumber ?? snapshot.documentNumber],
@@ -320,19 +337,25 @@ export function renderSubstituteReceiptAttestationSvg(
     ['จำนวนเงิน (ตัวอักษร)', thaiBahtText(snapshot.expense.grandTotalAmount)],
     ['วัตถุประสงค์ทางธุรกิจ', snapshot.expense.businessPurpose],
     ['เหตุผลที่ไม่มีใบเสร็จ', snapshot.missingReceiptReason],
-    ['ผู้จ่ายเงิน/ผู้รับรอง', `${snapshot.payer.name} · ${positionLabel(snapshot.payer.position)}`],
+    [snapshot.payer.roleLabel ?? 'ผู้จ่ายเงิน/ผู้รับรอง', signerNameWithPosition(snapshot.payer, snapshot.schemaVersion)],
     ['รับรองเมื่อ', formatDate(snapshot.payer.certifiedAt)],
-    ['ผู้อนุมัติ', input.approver ? `${input.approver.name} · ${positionLabel(input.approver.position)}` : 'รออนุมัติ'],
+    ['ผู้อนุมัติ', input.approver ? signerNameWithPosition(input.approver, snapshot.schemaVersion) : 'รออนุมัติ'],
     ['อนุมัติเมื่อ', input.approver ? formatDate(input.approver.approvedAt) : '-'],
+    ...(snapshot.paperReview ? [
+      ['ผู้อัปโหลด', snapshot.paperReview.uploadedByName ?? '-'],
+      ['อัปโหลดเมื่อ', snapshot.paperReview.uploadedAt],
+      ['ผู้ตรวจรับ', snapshot.paperReview.reviewerName],
+      ['ลงนามสองฐานะโดยคนเดียว', snapshot.paperReview.samePerson ? 'ใช่ (ตามนโยบายบริษัท)' : 'ไม่ใช่'],
+    ] as Array<[string, string]> : []),
   ];
   // A checksum is one token or it is not a checksum: these print on one line, condensed if need be,
   // never wrapped — a hash split across two tspans cannot be compared by eye or by search.
-  const checksums: Array<[string, string]> = [
+  const checksums: Array<[string, string]> = snapshot.paperReview ? [] : [
     ['SHA-256 ของข้อมูลที่รับรอง', input.snapshotChecksumSha256],
     ['SHA-256 ของภาพฟอร์มที่ลงนามด้วยมือ', input.wetSignedScanChecksumSha256],
   ];
   const noticeLines = wrapText(
-    'เอกสารนี้ออกตามเส้นทางลงนามด้วยมือ ลายมือชื่อผู้จ่ายเงินและผู้อนุมัติปรากฏบนภาพฟอร์มที่แนบไว้เป็นหน้าแรกของเอกสารฉบับนี้ ระบบเก็บข้อมูลที่รับรองไว้เป็นต้นฉบับเชิงโครงสร้างพร้อมค่าตรวจสอบทั้งสองค่าด้านบน',
+    snapshot.paperReview ? 'ชื่อ วันที่ลงนาม และตำแหน่ง (ถ้ามี) ถอดจากฉบับกระดาษ ผู้ตรวจรับตรวจความตรงกันของข้อมูล ลายเซ็น และอำนาจผู้อนุมัติ การตรวจรับนี้ไม่ใช่การลงลายมือชื่อแทนบุคคลบนกระดาษ โปรดเก็บต้นฉบับกระดาษประกอบเอกสารนี้' : 'เอกสารนี้ออกตามเส้นทางลงนามด้วยมือ ลายมือชื่อผู้จ่ายเงินและผู้อนุมัติปรากฏบนภาพฟอร์มที่แนบไว้เป็นหน้าแรกของเอกสารฉบับนี้ ระบบเก็บข้อมูลที่รับรองไว้เป็นต้นฉบับเชิงโครงสร้างพร้อมค่าตรวจสอบทั้งสองค่าด้านบน',
     740,
   );
   let y = 150;
@@ -350,21 +373,29 @@ export function renderSubstituteReceiptAttestationSvg(
     return markup;
   }).join('');
   const noticeY = y + 26;
-  const height = noticeY + noticeLines.length * 22 + 60;
+  const height = noticeY + noticeLines.length * 22 + (snapshot.paperReview ? 28 : 60);
   return Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" role="img" aria-label="${xml(SUBSTITUTE_RECEIPT_ATTESTATION_TITLE)}">
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="${height}" viewBox="0 0 850 ${height}" role="img" aria-label="${xml(title)}">
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-    <text x="425" y="52" text-anchor="middle" font-size="24" font-weight="700">${SUBSTITUTE_RECEIPT_ATTESTATION_TITLE}</text>
+    <text x="425" y="52" text-anchor="middle" font-size="24" font-weight="700">${title}</text>
     <text x="425" y="82" text-anchor="middle" fill="#555">${SUBSTITUTE_RECEIPT_TITLE}</text>
     <line x1="45" y1="110" x2="805" y2="110" stroke="#444"/>
     ${rows}
     ${checksumRows}
     <line x1="45" y1="${noticeY - 20}" x2="805" y2="${noticeY - 20}" stroke="#bbb"/>
     ${multilineText(50, noticeY, noticeLines, 22, 740)}
-    <text x="425" y="${height - 22}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>
+    ${snapshot.paperReview ? '' : `<text x="425" y="${height - 22}" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>`}
   </g>
 </svg>`, 'utf8');
+}
+
+/** Remove only the former system footer from a derived printout; retain the stored SVG unchanged. */
+export function withoutSubstituteReceiptFooter(svg: Buffer): Buffer {
+  return Buffer.from(svg.toString('utf8').replace(
+    /<text x="425" y="\d+" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง<\/text>/u,
+    '',
+  ), 'utf8');
 }
 
 export function wrapText(value: unknown, maxWidth: number, fontSize?: number): string[] {
@@ -427,6 +458,10 @@ function graphemeWidth(segment: string): number {
   if (/^[ซฆทพฟษหฬ]/.test(segment)) return 11.3;
   if (/^[เรใะวาำงโๆไ]/.test(segment)) return 6.8;
   return 9.7;
+}
+
+function signerNameWithPosition(signer: { name: string; position: string }, schemaVersion?: number): string {
+  return signer.position.trim() ? `${signer.name} · ${schemaVersion === 2 ? signer.position : positionLabel(signer.position)}` : signer.name;
 }
 
 function positionLabel(value: string): string {

@@ -582,7 +582,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Audit H-11: isZeroAmount only ever rendered a warning below and was missing from this gate, so
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
   // reviewer is told before the round trip, and the button no longer disagrees with the rule.
-  const canConfirmExpense = canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
+  const personalSubstitute = detail.substituteReceiptEvidence?.fundingSource === 'PERSONAL_ADVANCE';
+  const canConfirmExpense = !personalSubstitute && canConfirm && detail.status === 'READY_FOR_CONFIRMATION' && !sourceDraftIncomplete && !hasDuplicates && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && !ocrTotalUnacknowledged && !isZeroAmount;
   // Owner requirement 2026-08-28: the reason used to live only in the button's `title`, i.e. a hover
   // tooltip — and expenses get reviewed on a phone, where nothing hovers. One helper decides it now,
   // both footers use it, and it is rendered as text under the button instead of hidden behind a cursor.
@@ -592,7 +593,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       substituteReady, ocrTotalUnacknowledged, isZeroAmount, classificationBlockMessage,
     })
     : null;
-  const confirmBlockedText = sourceDraftIncomplete
+  const confirmBlockedText = personalSubstitute ? 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินต้องดำเนินการแยกตามขั้นตอนการเงิน' : sourceDraftIncomplete
     ? t('expenses.source_draft_blocks_progress', locale)
     : confirmBlocker ? (confirmBlocker.literal ?? t(confirmBlocker.key!, locale)) : null;
   const confirmBlockedNotice = confirmBlockedText ? (
@@ -1114,12 +1115,13 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
+        {personalSubstitute && <p className="text-sm text-gray-600">พนักงานจ่ายร้านเต็มจำนวนแล้ว ใบรับรองนี้ยังไม่ถือว่าบริษัทจ่ายคืนให้พนักงาน</p>}
         {Boolean(detail.sourceReimbursementRequestId) && (
           <p className="text-sm text-gray-500">
             รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อการเงินบันทึกจ่ายใบเบิก
           </p>
         )}
-        {isConfirmed && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (
+        {isConfirmed && !personalSubstitute && caps.canRecordPayment && Number(detail.outstandingAmount) > 0 && !detail.sourceReimbursementRequestId && (
           <form onSubmit={(event) => { event.preventDefault(); void submitPayment(); }} className="space-y-3">
             <fieldset disabled={actionLoading} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <label className="space-y-1 text-sm text-gray-700">

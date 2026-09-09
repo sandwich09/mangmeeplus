@@ -25,6 +25,8 @@ const MAX_VALUE_LENGTH = 500;
 const INELIGIBLE_CODES = new Set(['expense_status_ineligible', 'source_type_ineligible', 'valid_receipt_normal_path', 'classification_ineligible', 'document_kind_ineligible', 'currency_not_supported', 'active_substitute_evidence_exists']);
 
 export type LineSubstituteReceiptValues = {
+  fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE';
+  paidInFullAcknowledged?: boolean;
   reasonCode?: SubstituteReceiptReasonCode;
   missingReceiptReason?: string;
   businessPurpose?: string;
@@ -374,6 +376,12 @@ function extractValues(
 ): LineSubstituteReceiptValues {
   const values: LineSubstituteReceiptValues = {};
   const declarative = nonQuestionLines(text);
+  const companyFull = /บริษัทจ่ายเต็ม(?:จำนวน)?/u.test(declarative);
+  const personalFull = /(?:พนักงาน|ฉัน|ผม|ดิฉัน|หนู)(?:ใช้เงินส่วนตัว)?(?:สำรอง)?จ่ายเต็ม(?:จำนวน)?/u.test(declarative);
+  const unsupportedFunding = /บางส่วน|ทยอย|แบ่งจ่าย|หารจ่าย|เงินผสม/u.test(declarative) || (companyFull && personalFull);
+  if (!unsupportedFunding && companyFull) { values.fundingSource = 'COMPANY'; values.paidInFullAcknowledged = true; }
+  if (!unsupportedFunding && personalFull) { values.fundingSource = 'PERSONAL_ADVANCE'; values.paidInFullAcknowledged = true; }
+  if (unsupportedFunding) values.paidInFullAcknowledged = false;
   const reasonCode = reasonCodeOf(declarative);
   if (reasonCode) values.reasonCode = reasonCode;
   const missingReceiptReason = labeled(declarative, LABELS.missingReceiptReason);
@@ -496,6 +504,7 @@ function preflight(
   if (expense.substituteReceiptEvidence && expense.substituteReceiptEvidence.status !== 'SUPERSEDED') {
     result.push(blocker('active_substitute_evidence_exists', 'รายการนี้มีใบรับรองแทนใบเสร็จที่ยังใช้งานอยู่แล้ว'));
   }
+  if (!values.fundingSource || values.paidInFullAcknowledged !== true) result.push(blocker('funding_source_required', 'เลือกบริษัทจ่ายเต็มจำนวน หรือพนักงานสำรองจ่ายเต็มจำนวน (ไม่รองรับแบ่งจ่าย)', true));
   if (!values.reasonCode) result.push(blocker('reason_code_required', 'ระบุกรณีที่ไม่มี/ใช้ใบเสร็จเดิมไม่ได้', true));
   if (!currentValue(values, 'missingReceiptReason', storedMissingReceiptReason(expense))) {
     result.push(blocker('missing_receipt_reason_required', 'ระบุเหตุผลที่ไม่มีใบเสร็จ', true));
@@ -587,6 +596,7 @@ function questionFor(code: string, categories: Array<{ id: string; name: string 
  *  in that map but is only ever read while the evidence question is the pending one, so listing it
  *  here would offer an edit that quietly does nothing. */
 const EDITABLE_FIELD_HINTS: ReadonlyArray<readonly [keyof LineSubstituteReceiptValues, string]> = [
+  ['fundingSource', 'บริษัทจ่ายเต็มจำนวน หรือ พนักงานสำรองจ่ายเต็มจำนวน'],
   ['reasonCode', 'ใบเสร็จหาย'],
   ['missingReceiptReason', 'เหตุผล: ผู้ขายไม่ออกใบเสร็จ'],
   ['businessPurpose', 'วัตถุประสงค์: ไปพบลูกค้า'],
@@ -605,6 +615,7 @@ const FIELD_BY_BLOCKER: Record<string, keyof LineSubstituteReceiptValues> = {
   payer_required: 'payerUserId',
   payee_required: 'payeeName',
   payment_method_required: 'paymentMethod',
+  funding_source_required: 'fundingSource',
   payment_date_required: 'paymentDate',
   supporting_evidence_required: 'evidenceNone',
 };
@@ -912,7 +923,9 @@ const VALUE_LABELS: Record<string, string> = {
   reasonCode: 'กรณีที่ใช้ใบเสร็จเดิมไม่ได้',
   missingReceiptReason: 'เหตุผลที่ไม่มีใบเสร็จ',
   businessPurpose: 'วัตถุประสงค์ทางธุรกิจ',
-  payerUserId: 'ผู้จ่ายเงินจริง',
+  fundingSource: 'แหล่งเงิน (จ่ายเต็มจำนวน)',
+  paidInFullAcknowledged: 'ยืนยันจ่ายเต็มจำนวน',
+  payerUserId: 'ผู้ดำเนินการจ่ายและรับรอง',
   payeeName: 'ผู้รับเงิน/ผู้ขาย',
   paymentMethod: 'วิธีชำระเงิน',
   paymentDate: 'วันที่ชำระเงินจริง',
@@ -973,6 +986,8 @@ function expenseLabel(expense: ExpenseRecordWithRelations): string {
 function echoLines(values: LineSubstituteReceiptValues, categories: Array<{ id: string; name: string }>): string[] {
   return Object.entries(values).map(([field, value]) => {
     const shown = field === 'reasonCode' ? REASON_CODE_LABELS[value as SubstituteReceiptReasonCode]
+      : field === 'fundingSource' ? (value === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')
+      : field === 'paidInFullAcknowledged' ? (value === true ? 'ยืนยันแล้ว' : 'ยังไม่ยืนยันจ่ายเต็มจากแหล่งเดียว')
       : field === 'paymentMethod' ? PAYMENT_METHOD_LABELS[value as ExpensePaymentMethod]
       : field === 'payerUserId' ? 'คุณ (ผู้ส่งข้อความ)'
       : field === 'evidenceNone' ? 'ไม่มีไฟล์ประกอบ'
@@ -2073,6 +2088,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         missingReceiptReason: values.missingReceiptReason ?? storedMissingReceiptReason(expense) ?? '',
         businessPurpose: values.businessPurpose!,
         payerUserId: values.payerUserId!,
+        fundingSource: values.fundingSource!, paidInFullAcknowledged: true,
         ...(values.payeeName ? { payeeName: values.payeeName } : {}),
         ...(values.paymentMethod ? { paymentMethod: values.paymentMethod } : {}),
         ...(values.paymentDate ? { paymentDate: values.paymentDate } : {}),

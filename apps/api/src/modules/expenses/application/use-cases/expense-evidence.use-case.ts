@@ -115,7 +115,7 @@ export class CreateAccountantPackageUseCase {
 
     const company = await this.prisma.client.company.findUnique({
       where: { id: ctx.companyId },
-      select: { name: true, taxId: true },
+      select: { name: true, registeredName: true, taxId: true },
     });
     const userIds = [...new Set(page.rows.flatMap((r) => [r.createdByUserId, r.reviewedByUserId].filter((v): v is string => !!v)))];
     const users = userIds.length > 0
@@ -129,13 +129,22 @@ export class CreateAccountantPackageUseCase {
     const branchCodes = new Map(branches.map((branch) => [branch.id, branch.code]));
     const issuedSubstitutes = page.rows.length
       ? await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
-        where: { companyId: ctx.companyId, expenseId: { in: page.rows.map((row) => row.id) }, status: 'ISSUED' },
-        select: { expenseId: true, artifactAttachmentId: true, wetSignedScanAttachmentId: true },
-      })
-      : [];
-    const substituteArtifactByExpense = new Map(
-      issuedSubstitutes.filter((row) => row.artifactAttachmentId).map((row) => [row.expenseId, row.artifactAttachmentId!]),
-    );
+        where: { companyId: ctx.companyId, expenseId: { in: page.rows.map(row => row.id) }, issuedAt: { not: null } },
+        orderBy: { version: 'asc' },
+        select: { id: true, expenseId: true, version: true, status: true, fundingSource: true, payerName: true, snapshotJson: true,
+          snapshotChecksumSha256: true, correctionOfEvidenceId: true, correctionReason: true, artifactAttachmentId: true, wetSignedScanAttachmentId: true },
+      }) : [];
+    const certificatesFor = (id: string) => issuedSubstitutes.filter(row => row.expenseId === id);
+    const currentCertificate = (id: string) => certificatesFor(id).reverse().find(row => row.status === 'ISSUED');
+    const substituteArtifactByExpense = new Map(page.rows.flatMap(row => {
+      const cert = currentCertificate(row.id);
+      return cert?.artifactAttachmentId ? [[row.id, cert.artifactAttachmentId] as const] : [];
+    }));
+    const certificateAttachmentIds = [...new Set(issuedSubstitutes.flatMap(row => [row.artifactAttachmentId, row.wetSignedScanAttachmentId]).filter((id): id is string => !!id))];
+    const certificateAttachments = certificateAttachmentIds.length ? await this.prisma.client.attachmentObject.findMany({ where: { companyId: ctx.companyId, id: { in: certificateAttachmentIds } } }) : [];
+    const attachmentsFor = (row: typeof page.rows[number]) => [...new Map([...row.attachments, ...certificateAttachments
+      .filter(file => certificatesFor(row.id).some(cert => cert.artifactAttachmentId === file.id || cert.wetSignedScanAttachmentId === file.id))
+      .map(file => ({ ...file, purpose: 'expense.review.evidence' }))].map(file => [file.id, file])).values()];
     // R11: the hand-signed scan belongs to the certificate, not to the expense's supporting evidence.
     const wetSignedScansByExpense = new Map<string, string[]>();
     for (const row of issuedSubstitutes) {
@@ -147,7 +156,7 @@ export class CreateAccountantPackageUseCase {
 
     const indexRows = page.rows.map((r) => buildAccountantIndexRow({
       aiVerificationSummaryJson: r.aiVerificationSummaryJson as Record<string, unknown> | null,
-      companyName: company?.name ?? ctx.companyId,
+      companyName: (currentCertificate(r.id)?.snapshotJson as any)?.company?.name ?? (company?.registeredName?.trim() || company?.name || ctx.companyId),
       companyTaxId: company?.taxId ?? null,
       branchCode: r.branchId ? branchCodes.get(r.branchId) ?? null : null,
       expenseId: r.id,
@@ -165,7 +174,7 @@ export class CreateAccountantPackageUseCase {
       requesterName: null,
       uploaderName: userName.get(r.createdByUserId) ?? null,
       reviewerName: r.reviewedByUserId ? userName.get(r.reviewedByUserId) ?? null : null,
-      vendorNameSnapshot: r.vendorNameSnapshot,
+      vendorNameSnapshot: (currentCertificate(r.id)?.snapshotJson as any)?.payee?.name ?? r.vendorNameSnapshot,
       vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,
       vendorBranchCodeSnapshot: r.vendorBranchCodeSnapshot,
       vendorDocumentNumber: r.vendorDocumentNumber,
@@ -189,8 +198,16 @@ export class CreateAccountantPackageUseCase {
       substituteReceiptRef: substituteArtifactByExpense.has(r.id)
         ? evidenceRef(r.expenseNumber, r.id, substituteArtifactByExpense.get(r.id)!)
         : null,
+      fundingSource: currentCertificate(r.id)?.fundingSource ?? (certificatesFor(r.id).length ? 'LEGACY_UNSPECIFIED' : null),
+      certifyingPayerName: currentCertificate(r.id)?.payerName,
+      substituteEvidenceProvenance: certificatesFor(r.id).length ? JSON.stringify(certificatesFor(r.id).map(cert => ({
+        expenseId: cert.expenseId, evidenceId: cert.id, version: cert.version, status: cert.status,
+        snapshotChecksumSha256: cert.snapshotChecksumSha256, correctionOfEvidenceId: cert.correctionOfEvidenceId,
+        correctionReason: cert.correctionReason, artifactAttachmentId: cert.artifactAttachmentId,
+        webUrl: `/companies/${ctx.companyId}/expenses/${cert.expenseId}`,
+      }))) : null,
       primaryAttachmentId: r.primaryAttachmentId,
-      attachments: r.attachments.map(toAttachmentRef),
+      attachments: attachmentsFor(r).map(toAttachmentRef),
       wetSignedScanAttachmentIds: wetSignedScansByExpense.get(r.id) ?? [],
       webUrl: `/companies/${ctx.companyId}/expenses/${r.id}`,
       notes: r.internalMemo,
@@ -200,7 +217,7 @@ export class CreateAccountantPackageUseCase {
     const evidenceManifest: EvidenceManifestEntry[] = [];
     const skippedEvidence: SkippedEvidenceEntry[] = [];
     for (const r of page.rows) {
-      for (const attachment of r.attachments) {
+      for (const attachment of attachmentsFor(r)) {
         if (attachment.status !== 'ACTIVE' && attachment.status !== 'active') continue;
         try {
           const signed = await this.downloadUrl.execute(ctx, { attachmentId: attachment.id });
