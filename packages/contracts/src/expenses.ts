@@ -984,7 +984,11 @@ export type SignatureFillRecordSummary = {
 
 // ---- Substitute receipt certificate (ใบรับรองแทนใบเสร็จรับเงิน) ----
 
+export type SubstituteReceiptFundingSource = 'COMPANY' | 'PERSONAL_ADVANCE';
+
 export type SubstituteReceiptListItem = {
+  signatureMode?: SubstituteReceiptSignatureMode;
+  fundingSource?: SubstituteReceiptFundingSource | null;
   evidenceId: string;
   expenseId: string;
   documentNumber: string;
@@ -998,7 +1002,10 @@ export type SubstituteReceiptListItem = {
   payeeTaxId: string | null;
   currency: string;
   grandTotalAmount: string;
-  payerUserId: string;
+  paperFormPrepared?: boolean;
+  paperSubmission?: SubstituteReceiptPaperSubmission | null;
+  paperReviewedByUserId?: string | null;
+  payerUserId: string | null;
   payerName: string;
   approverUserId: string | null;
   approverName: string | null;
@@ -1023,6 +1030,9 @@ export type SubstituteReceiptListResult = {
 };
 
 export type SubstituteReceiptEvidenceSummary = {
+  correctionOfEvidenceId?: string | null;
+  correctionReason?: string | null;
+  fundingSource?: SubstituteReceiptFundingSource | null;
   id: string;
   expenseId: string;
   version: number;
@@ -1034,7 +1044,10 @@ export type SubstituteReceiptEvidenceSummary = {
   payeeName: string | null;
   payeeAddress: string | null;
   payeeTaxId: string | null;
-  payerUserId: string;
+  paperFormPrepared?: boolean;
+  paperSubmission?: SubstituteReceiptPaperSubmission | null;
+  paperReviewedByUserId?: string | null;
+  payerUserId: string | null;
   payerName: string;
   businessPurpose: string;
   paymentEvidenceAttachmentIds: string[];
@@ -1066,16 +1079,55 @@ export type SubstituteReceiptEvidenceSummary = {
 
 export type SubstituteReceiptSignatureMode = 'DIGITAL' | 'PAPER';
 
+export type SubstituteReceiptPaperSigner = { name: string; position: string; signedOn: string };
+export type SubstituteReceiptPaperSignerInput = Omit<SubstituteReceiptPaperSigner, 'position'> & { position?: string };
+export type SubstituteReceiptPaperSigners = {
+  payer: SubstituteReceiptPaperSigner;
+  approver: SubstituteReceiptPaperSigner;
+  samePerson: boolean;
+};
+export type SubstituteReceiptPaperSubmission = SubstituteReceiptPaperSigners & {
+  uploadedByUserId: string;
+  uploadedByName?: string;
+  uploadedAt: string;
+};
+export type SubmitSubstituteReceiptPaperInput = {
+  payer: SubstituteReceiptPaperSignerInput;
+  approver: SubstituteReceiptPaperSignerInput;
+  samePerson: boolean;
+  attachmentId: string;
+  checksumSha256: string;
+  byteSize: number;
+  formMatchesAcknowledged: true;
+  expectedEvidenceUpdatedAt: string;
+};
+export type AcceptSubstituteReceiptPaperInput = {
+  previewChecksumSha256: string;
+  expectedEvidenceUpdatedAt: string;
+  factsAndSignaturesAcknowledged: true;
+  approverAuthorityAcknowledged: true;
+  originalRetainedAcknowledged: true;
+};
+export type SubstituteReceiptPaperPreview = {
+  pdfDataUrl: string;
+  pageImageDataUrls: string[];
+  previewChecksumSha256: string;
+};
+
 export type SupersedeSubstituteReceiptInput = {
   reason: string;
   expectedEvidenceUpdatedAt: string;
 };
 
 export type GenerateSubstituteReceiptInput = {
+  fundingSource: SubstituteReceiptFundingSource;
+  paidInFullAcknowledged: true;
   reasonCode: SubstituteReceiptReasonCode;
   missingReceiptReason: string;
   businessPurpose: string;
-  payerUserId: string;
+  /** PAPER permits people without login accounts; DIGITAL still requires an active member. */
+  signatureMode?: SubstituteReceiptSignatureMode;
+  payerUserId?: string;
   payeeName?: string;
   payeeAddress?: string;
   payeeTaxId?: string;
@@ -1103,6 +1155,8 @@ export type LineSubstituteReceiptPrefill = {
   status: 'OPEN' | 'PAUSED';
   routeCheckBill?: true;
   acceptedValues: {
+    fundingSource?: SubstituteReceiptFundingSource;
+    paidInFullAcknowledged?: boolean;
     reasonCode?: SubstituteReceiptReasonCode;
     missingReceiptReason?: string;
     businessPurpose?: string;
@@ -1119,7 +1173,7 @@ export type LineSubstituteReceiptPrefill = {
 };
 
 export type PreviewSubstituteReceiptInput = {
-  payerPosition: string;
+  payerPosition?: string;
 };
 
 export type SubstituteReceiptPreview = {
@@ -1128,7 +1182,7 @@ export type SubstituteReceiptPreview = {
 };
 
 export type CertifySubstituteReceiptInput = {
-  payerPosition: string;
+  payerPosition?: string;
   certificationAcknowledged: true;
   previewChecksumSha256: string;
   /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
@@ -1140,7 +1194,7 @@ export type CertifySubstituteReceiptInput = {
 };
 
 export type ApproveSubstituteReceiptInput = {
-  approverPosition: string;
+  approverPosition?: string;
   approvalAcknowledged: true;
   certifiedArtifactChecksumSha256: string;
   /** R9: omit to sign with the signer's ACTIVE personal signature asset; a per-evidence upload wins. */
@@ -1175,6 +1229,10 @@ export type SubstituteReceiptRuntimePolicy = Pick<
 > & {
   /** R9: the caller already has an ACTIVE personal signature, so signing needs no upload. */
   hasReusableSignature: boolean;
+  signerJobTitle?: string | null;
+  canApproveForCompany?: boolean;
+  companyName?: string;
+  companyNameSource?: 'REGISTERED' | 'DISPLAY_NAME';
   /** A8: the same image the certificate will carry, so nobody signs blind. Short-lived signed URL,
    *  minted only for the caller's OWN reusable signature. Absent when there is none. */
   reusableSignaturePreviewUrl?: string | null;
@@ -1306,6 +1364,9 @@ export const ACCOUNTANT_INDEX_COLUMNS = [
   // a document date the receipt printed from the upload day a failed read left behind — both are
   // just a date in `document_date`.
   'document_date_status',
+  'funding_source',
+  'certifying_payer_name',
+  'substitute_evidence_provenance',
 ] as const;
 
 export type AccountantIndexColumn = (typeof ACCOUNTANT_INDEX_COLUMNS)[number];
@@ -1357,6 +1418,9 @@ export const ACCOUNTANT_INDEX_COLUMN_LABELS: Record<AccountantIndexColumn, strin
   notes: 'หมายเหตุ',
   additional_charges_amount: 'ค่าใช้จ่ายเพิ่ม',
   document_date_status: 'สถานะวันที่เอกสาร',
+  funding_source: 'แหล่งเงิน',
+  certifying_payer_name: 'ผู้จ่ายและรับรอง',
+  substitute_evidence_provenance: 'ต้นทางใบรับรองและประวัติแก้ไข',
 };
 
 /** Everyday view: what a non-accountant needs to read the export at a glance. */

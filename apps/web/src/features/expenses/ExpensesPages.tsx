@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
+import { SubstituteSignerPositionField } from './SubstituteSignerPositionField';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -581,6 +582,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   const [subPaymentDate, setSubPaymentDate] = useState(detail.paidAt?.slice(0, 10) ?? todayCivilDate());
   const [supportingUploadFile, setSupportingUploadFile] = useState<File | null>(null);
   const [paymentUploadFile, setPaymentUploadFile] = useState<File | null>(null);
+  const [fundingSource, setFundingSource] = useState<'' | 'COMPANY' | 'PERSONAL_ADVANCE'>('');
+  const [paidInFullAcknowledged, setPaidInFullAcknowledged] = useState(false);
   const [signerPosition, setSignerPosition] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
@@ -593,6 +596,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     detail.id,
     detail.substituteReceiptEvidence?.id ?? '',
     detail.substituteReceiptEvidence?.updatedAt ?? '',
+    signerPosition, fundingSource, payerId,
   ].join('\u0000');
   const previewScopeRef = useRef(previewScope);
   previewScopeRef.current = previewScope;
@@ -779,6 +783,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     return intent.attachmentId;
   };
   const prepareSubstitute = async () => {
+    if (!fundingSource || !paidInFullAcknowledged) throw new Error('เลือกแหล่งเงินและยืนยันว่าจ่ายเต็มจำนวนแล้ว');
+
     assertAllowed(subReason, subPurpose);
     if (!payerCandidates.some((payer) => payer.userId === payerId)) throw new Error('กรุณาเลือกผู้จ่ายเงินจริงจากรายชื่อสมาชิกที่โหลดสำเร็จ');
     await generateSubstituteReceipt(companyId, detail.id, {
@@ -786,6 +792,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       missingReceiptReason: subReason,
       businessPurpose: subPurpose,
       payerUserId: payerId,
+      fundingSource, paidInFullAcknowledged: true,
       supportingAttachmentIds: selectedSupportingIds,
       paymentEvidenceAttachmentIds: selectedPaymentIds,
       paymentDate: subPaymentDate,
@@ -934,14 +941,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     ...(requiresPaymentEvidence && selectedPaymentIds.length === 0 ? ['หลักฐานการชำระเงิน'] : []),
   ];
   const certifyBlockers = [
-    ...(!signerPosition.trim() ? ['ตำแหน่งของผู้จ่ายเงิน'] : []),
-    ...(!previewChecksum ? ['กดสร้างและตรวจตัวอย่างก่อนลงนาม'] : []),
     ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
+    ...(!previewChecksum ? ['กดสร้างและตรวจตัวอย่างก่อนลงนาม'] : []),
   ];
   const approveBlockers = [
-    ...(!certifiedPreviewed ? ['เปิดตรวจฉบับที่ผู้จ่ายลงนาม'] : []),
-    ...(!signerPosition.trim() ? ['ตำแหน่งของผู้อนุมัติ'] : []),
     ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
+    ...(!certifiedPreviewed ? ['เปิดตรวจฉบับที่ผู้จ่ายลงนาม'] : []),
   ];
   const blockedNote = (labels: string[]) => labels.length === 0 ? null : (
     <p className="text-xs leading-5 text-gray-600"><span className="font-bold text-warning-700">ยังกดไม่ได้ · ต้องทำให้ครบก่อน:</span> {labels.join(' · ')}</p>
@@ -1060,6 +1065,20 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       </DocumentReviewContainer>
       {showSub && isMutable && canReview && canShowInlineSubstitute && (
         <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
+        <div className="space-y-3 sm:col-span-2">
+                  <label className="block text-sm font-semibold">แหล่งเงิน
+                    <ThemedSelect className={inputClass} required aria-label="แหล่งเงิน" value={fundingSource} onChange={(event) => { setFundingSource(event.target.value as typeof fundingSource); setPaidInFullAcknowledged(false); }}>
+                      <option value="">เลือกแหล่งเงิน</option>
+                      <option value="COMPANY">บริษัทจ่ายเต็มจำนวน</option>
+                      <option value="PERSONAL_ADVANCE">พนักงานสำรองจ่ายเต็มจำนวน</option>
+                    </ThemedSelect>
+                  </label>
+                  <p className="text-sm text-gray-600">บริษัทในเอกสาร: {substitutePolicy?.companyName ?? 'กำลังโหลดชื่อบริษัท'}</p>
+                  {substitutePolicy?.companyNameSource === 'DISPLAY_NAME' && <p className="text-xs text-warning-700">ยังไม่มีชื่อจดทะเบียนที่บันทึกไว้ กรุณาตรวจข้อมูลบริษัทก่อนลงนาม</p>}
+                  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={paidInFullAcknowledged} onChange={event => setPaidInFullAcknowledged(event.target.checked)} />ยืนยันว่าจ่ายเต็มจำนวนจากแหล่งเงินที่เลือกแล้ว ไม่มีการแบ่งจ่าย</label>
+                  {fundingSource === 'PERSONAL_ADVANCE' && <p className="text-sm text-gray-600">การออกใบรับรองยังไม่บันทึกเงินออกบริษัท พนักงานนำหลักฐานนี้ไปเบิกคืน</p>}
+                </div>
+
           <p className="text-xs text-warning-700">{t('expenses.substitute_hint', locale)}</p>
           <p className="text-xs font-semibold text-error-700">หากใบกำกับภาษีสูญหายและต้องการใช้ภาษีซื้อ ให้ขอใบแทนจากผู้ขาย เอกสารภายในนี้ใช้แทนไม่ได้</p>
           <ThemedSelect className={inputClass} value={subReasonCode} onChange={(event) => setSubReasonCode(event.target.value as typeof subReasonCode)}>
@@ -1129,13 +1148,12 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                 : evidence.status === 'ISSUED' ? 'expenses.substitute_hub.open_document' : 'expenses.substitute_hub.view_history', locale)}
             </span>
           </Link>
-          {evidence.status === 'PREPARED' && evidence.payerUserId !== userId && <p>รอผู้จ่ายเงินจริงเข้าสู่ระบบเพื่อลงนามรับรองด้วยตนเอง</p>}
+          {evidence.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId ? <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/${evidence.id}`}>ดำเนินการฉบับลงนามบนกระดาษ</Link> : evidence.status === 'PREPARED' && evidence.payerUserId !== userId && <p>รอผู้รับรองการจ่ายเข้าสู่ระบบเพื่อลงนามด้วยตนเอง</p>}
           {evidence.status === 'PREPARED' && evidence.payerUserId === userId && (
             <div className="space-y-2 rounded-lg bg-white p-2">
               <p className="font-semibold">ผู้จ่ายเงินรับรองด้วยตนเอง</p>
-              <input className={inputClass} maxLength={120} placeholder="ตำแหน่งตามจริงของผู้จ่าย เช่น เจ้าของกิจการ" value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
-              <p className="text-gray-500">ตำแหน่งในเอกสารเป็นข้อมูลที่ผู้ลงนามรับรองเอง ไม่ได้ดึงจากบทบาทหรือชื่อผู้ใช้ในระบบ</p>
-              <button className={ghostClass} disabled={busy || !signerPosition.trim()} onClick={() => run(previewPreparedSubstitute, 'สร้างตัวอย่างสำหรับตรวจแล้ว', false, true)}>สร้างและตรวจตัวอย่างก่อนลงนาม</button>
+              <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={substitutePolicy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
+              <p className="text-gray-500">ตำแหน่ง (ถ้ามี) ระบุตามจริงหรือเว้นว่างได้ ข้อมูลนี้ไม่ใช่สิทธิ์อนุมัติในระบบ</p>
               <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
               <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
               {signaturePreview && (
@@ -1152,6 +1170,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                   {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
                 </div>
               )}
+              <button className={previewChecksum ? ghostClass : btnClass} disabled={busy} onClick={() => run(previewPreparedSubstitute, 'สร้างตัวอย่างสำหรับตรวจแล้ว', false, true)}>สร้างและตรวจตัวอย่างก่อนลงนาม</button>
               <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
               <button className={btnClass} disabled={busy || certifyBlockers.length > 0} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
               {blockedNote(certifyBlockers)}
@@ -1162,9 +1181,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           {evidence.status === 'PAYER_CERTIFIED' && canApproveEvidence && (
             <div className="space-y-2 rounded-lg bg-white p-2">
               <p className="font-semibold">อนุมัติโดยผู้มีอำนาจ</p>
-              <button className={ghostClass} disabled={busy || !evidence.certifiedArtifactAttachmentId} onClick={() => run(() => openSubstituteArtifact(evidence.certifiedArtifactAttachmentId, true), 'เปิดฉบับที่ผู้จ่ายลงนามแล้ว', false, true)}>เปิดตรวจฉบับที่ผู้จ่ายลงนาม</button>
-              <input className={inputClass} maxLength={120} placeholder="ตำแหน่งตามจริงของผู้อนุมัติ เช่น เจ้าของกิจการ" value={signerPosition} onChange={(event) => setSignerPosition(stripDisallowed(event.target.value))} />
-              <p className="text-gray-500">ตำแหน่งในเอกสารเป็นข้อมูลที่ผู้ลงนามรับรองเอง ไม่ได้ดึงจากบทบาทหรือชื่อผู้ใช้ในระบบ</p>
+              <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={substitutePolicy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
+              <p className="text-gray-500">ตำแหน่ง (ถ้ามี) ระบุตามจริงหรือเว้นว่างได้ ข้อมูลนี้ไม่ใช่สิทธิ์อนุมัติในระบบ</p>
               <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
               <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
               {signaturePreview && (
@@ -1181,6 +1199,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
                   {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
                 </div>
               )}
+              <button className={certifiedPreviewed ? ghostClass : btnClass} disabled={busy || !evidence.certifiedArtifactAttachmentId} onClick={() => run(() => openSubstituteArtifact(evidence.certifiedArtifactAttachmentId, true), 'เปิดฉบับที่ผู้จ่ายลงนามแล้ว', false, true)}>เปิดตรวจฉบับที่ผู้จ่ายลงนาม</button>
               <button className={btnClass} disabled={busy || approveBlockers.length > 0} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
               {blockedNote(approveBlockers)}
             </div>

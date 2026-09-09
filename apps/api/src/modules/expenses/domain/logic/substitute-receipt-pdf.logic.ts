@@ -1,6 +1,36 @@
 import { createHash } from 'node:crypto';
+import { dirname } from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import sharp from 'sharp';
+import { withoutSubstituteReceiptFooter } from './substitute-receipt.logic';
+
+// Keep the native ESM import intact in the API's CommonJS build, as in the bank PDF reader.
+const loadPdfjs = (): Promise<any> => Function('return import("pdfjs-dist/legacy/build/pdf.mjs")')();
+
+/** Render the actual composed PDF for browsers without a native PDF viewer. */
+export async function renderSubstitutePaperPreviewPages(bytes: Buffer): Promise<string[]> {
+  const pdfjs = await loadPdfjs();
+  const resources = dirname(require.resolve('pdfjs-dist/package.json'));
+  const task = pdfjs.getDocument({ data: new Uint8Array(bytes), isEvalSupported: false,
+    standardFontDataUrl: `${resources}/standard_fonts/`, cMapUrl: `${resources}/cmaps/`, cMapPacked: true });
+  try {
+    const document = await task.promise;
+    // At most five scan pages plus the existing six-page attestation ceiling.
+    if (document.numPages < 1 || document.numPages > 11) throw new Error('เอกสารมีจำนวนหน้าเกินขอบเขตที่รองรับ');
+    const pages: string[] = [];
+    for (let number = 1; number <= document.numPages; number += 1) {
+      const page = await document.getPage(number);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(1600 / base.width, 2400 / base.height, 2) });
+      const canvas = document.canvasFactory.create(Math.ceil(viewport.width), Math.ceil(viewport.height));
+      try {
+        await page.render({ canvasContext: canvas.context, viewport }).promise;
+        pages.push(`data:image/jpeg;base64,${canvas.canvas.toBuffer('image/jpeg', 90).toString('base64')}`);
+      } finally { document.canvasFactory.destroy(canvas); page.cleanup(); }
+    }
+    return pages;
+  } finally { await task.destroy(); }
+}
 
 const A4_WIDTH = 595.28;
 const A4_HEIGHT = 841.89;
@@ -184,14 +214,14 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
   scan: { bytes: Buffer; mimeType: string },
   attestationSvg: Buffer,
   documentNumber?: string,
-  options: { stateStamp?: 'VOID' | 'SUPERSEDED' } = {},
+  options: { stateStamp?: 'VOID' | 'SUPERSEDED'; omitPageFooter?: boolean } = {},
 ): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   await addWetSignedScanPages(pdf, scan);
   // The attestation is rendered UNSTAMPED here and the whole document is stamped below, so the scan
   // pages and the attestation carry one identical mark instead of two sizes of the same word.
   const attestation = await PDFDocument.load(
-    await renderSubstituteReceiptPdf(attestationSvg, documentNumber, { omitPageFooter: true }),
+    await renderSubstituteReceiptPdf(options.omitPageFooter ? withoutSubstituteReceiptFooter(attestationSvg) : attestationSvg, documentNumber, { omitPageFooter: true }),
   );
   const attestationPages = await pdf.copyPages(attestation, attestation.getPageIndices());
   for (const page of attestationPages) pdf.addPage(page);
@@ -216,6 +246,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
         opacity: 0.32,
       });
     }
+    if (options.omitPageFooter) return;
     // R11 identity: every page of a composed artifact says which document it belongs to and where
     // it sits, so a scan page separated from the attestation is still traceable — and the
     // attestation's own "Page 1/1" is corrected to its real position in the composed file.
@@ -239,13 +270,17 @@ async function addWetSignedScanPages(pdf: PDFDocument, scan: { bytes: Buffer; mi
   if (scan.mimeType === 'application/pdf') {
     const source = await PDFDocument.load(scan.bytes);
     // +1 for the attestation page the composed artifact always ends with.
-    if (source.getPageCount() + 1 > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) {
+    if (source.getPageCount() < 1 || source.getPageCount() + 1 > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages) {
       throw new Error(`Substitute-receipt PDF exceeds the ${SUBSTITUTE_RECEIPT_PDF_LIMITS.maxPages}-page safety limit.`);
     }
     return (await pdf.copyPages(source, source.getPageIndices())).map((page) => pdf.addPage(page));
   }
   if (scan.mimeType !== 'image/jpeg' && scan.mimeType !== 'image/png') {
     throw new Error('A wet-signed scan must be a JPEG, PNG, or PDF.');
+  }
+  const metadata = await sharp(scan.bytes, { limitInputPixels: SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels }).metadata();
+  if (!metadata.width || !metadata.height || metadata.width * metadata.height > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxRasterPixels) {
+    throw new Error('Wet-signed scan image exceeds the supported pixel limit.');
   }
   const image = scan.mimeType === 'image/jpeg' ? await pdf.embedJpg(scan.bytes) : await pdf.embedPng(scan.bytes);
   const page = pdf.addPage([A4_WIDTH, A4_HEIGHT]);

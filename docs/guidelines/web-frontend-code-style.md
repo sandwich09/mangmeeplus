@@ -44,6 +44,10 @@ apps/web/src/common/
   utils/
 ```
 
+## Numeric Input Appearance
+
+Hide native up/down steppers for every `input[type="number"]` through the shared rules in `apps/web/app/globals.css`, including plain inputs and fields in modals. Keep numeric types, `inputMode`, limits and step validation appropriate to the field. Do not duplicate spinner-hiding CSS in each feature or change data-entry semantics just to remove the arrows.
+
 ## Separation Rule
 
 Do not mix page markup, business logic, constants, models, API calls, and CSS in one file.

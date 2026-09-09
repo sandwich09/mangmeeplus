@@ -477,6 +477,10 @@ export async function supersedeSubstituteReceipt(
   });
 }
 
+export async function correctSubstituteDocument(companyId: string, expenseId: string, evidenceId: string, body: { reason: string; expectedEvidenceUpdatedAt: string }): Promise<SubstituteReceiptEvidenceSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/correct-document`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function initPersonalSignatureUpload(
   companyId: string,
   expenseId: string,
@@ -628,4 +632,29 @@ function downloadBlob(blob: Blob, fileName: string): void {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
+}
+
+export async function submitSubstitutePaperFile(companyId: string, expenseId: string, evidenceId: string, file: File, input: Omit<import('@watchdog-bms/contracts').SubmitSubstituteReceiptPaperInput, 'attachmentId' | 'checksumSha256' | 'byteSize'>): Promise<SubstituteReceiptEvidenceSummary> {
+  assertAllowedUploadFile(file);
+  if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type) || file.size > 10_000_000) throw new Error('ใช้ PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 MB');
+  const base = `/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper`;
+  const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(`${base}/upload-intent`, {
+    method: 'POST', body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size }),
+  });
+  const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+  const checksumSha256 = Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
+  return apiFetch(`${base}/submit`, { method: 'POST', body: JSON.stringify({ ...input, attachmentId: intent.attachmentId, checksumSha256, byteSize: file.size }) });
+}
+
+export function previewIssuedSubstitutePaper(companyId: string, expenseId: string, evidenceId: string): Promise<import('@watchdog-bms/contracts').SubstituteReceiptPaperPreview> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/artifact-preview`);
+}
+
+export function previewSubstitutePaper(companyId: string, expenseId: string, evidenceId: string): Promise<import('@watchdog-bms/contracts').SubstituteReceiptPaperPreview> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper/preview`, { method: 'POST' });
+}
+
+export function acceptSubstitutePaper(companyId: string, expenseId: string, evidenceId: string, input: import('@watchdog-bms/contracts').AcceptSubstituteReceiptPaperInput): Promise<SubstituteReceiptEvidenceSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper/accept`, { method: 'POST', body: JSON.stringify(input) });
 }

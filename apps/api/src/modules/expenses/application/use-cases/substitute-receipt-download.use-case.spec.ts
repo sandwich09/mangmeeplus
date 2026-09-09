@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import { createHash } from 'node:crypto';
 import { PDFDocument } from 'pdf-lib';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { DownloadSubstituteReceiptFormPdfUseCase, DownloadSubstituteReceiptPdfUseCase } from './substitute-receipt.use-case';
 import { SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON } from '../../infrastructure/prisma-expense.repository';
 import {
@@ -11,12 +12,29 @@ import {
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
 
-const issuedSvg = Buffer.from(`
+const cleanIssuedSvg = Buffer.from(`
   <svg xmlns="http://www.w3.org/2000/svg" width="850" height="180" viewBox="0 0 850 180">
     <rect width="850" height="180" fill="#fff"/>
     <text x="425" y="90" text-anchor="middle" font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="24">ใบรับรองแทนใบเสร็จรับเงิน</text>
   </svg>
 `);
+const oldSystemFooter = '<text x="425" y="150" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง</text>';
+const issuedSvg = Buffer.from(cleanIssuedSvg.toString().replace('</svg>', `${oldSystemFooter}</svg>`));
+
+async function assertNoPageFooter(bytes: Buffer, stateStamp?: string) {
+  const task = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
+  const pdf = await task.promise;
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const content = await (await pdf.getPage(pageNumber)).getTextContent();
+      const text = content.items.map((item) => 'str' in item ? item.str : '').join(' ');
+      assert.doesNotMatch(text, /ID:|SHA256:|Page \d+\/\d+/);
+      if (stateStamp) assert.ok(text.includes(stateStamp));
+    }
+  } finally {
+    await task.destroy();
+  }
+}
 
 function useCase(status: 'ISSUED' | 'SUPERSEDED', supersedeReason: string | null) {
   const audit = { log: mock.fn(async (_entry: unknown) => undefined) };
@@ -49,6 +67,7 @@ describe('DownloadSubstituteReceiptPdfUseCase cancelled artifacts', () => {
 
     const pdf = await PDFDocument.load(result.data);
     assert.match(pdf.getSubject() ?? '', /State: VOID/);
+    await assertNoPageFooter(result.data, 'VOID');
     assert.equal(result.fileName, 'SRC-202608-00001-VOID.pdf');
     assert.equal((audit.log.mock.calls[0]?.arguments[0] as any).metadataJson.derivedStamp, 'VOID');
   });
@@ -62,6 +81,7 @@ describe('DownloadSubstituteReceiptPdfUseCase cancelled artifacts', () => {
 
     const pdf = await PDFDocument.load(result.data);
     assert.match(pdf.getSubject() ?? '', /State: SUPERSEDED/);
+    await assertNoPageFooter(result.data, 'SUPERSEDED');
     assert.equal(result.fileName, 'SRC-202608-00001-SUPERSEDED.pdf');
   });
 });
@@ -100,7 +120,7 @@ function formExpense(expenseUpdatedAt = preparedAt) {
 function formRepo(status = 'PREPARED', expenseUpdatedAt = preparedAt) {
   return {
     findSubstituteEvidence: mock.fn(async () => ({
-      id: 'evidence-1', status, documentNumber: 'SUB-202608-00007', version: 1,
+      id: 'evidence-1', status, signatureMode: 'DIGITAL', documentNumber: 'SUB-202608-00007', version: 1,
       reasonCode: 'PAYEE_CANNOT_ISSUE', missingReceiptReason: 'วินไม่ออกใบเสร็จ', businessPurpose: 'ไปพบลูกค้า',
       paymentEvidenceAttachmentIds: [], supportingAttachmentIds: [],
       paymentDate: preparedAt, paymentMethod: 'CASH', note: null,
@@ -128,6 +148,7 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
   it('renders a PREPARED evidence as an UNSIGNED-stamped PDF that is never stored, and audits the egress', async () => {
     const useCase = formUseCase();
     const result = await useCase.execute({ ...webCtx, requestId: 'request-9' }, 'expense-1', 'evidence-1');
+    await assertNoPageFooter(result.data, 'UNSIGNED');
 
     const pdf = await PDFDocument.load(result.data);
     assert.match(pdf.getSubject() ?? '', /State: UNSIGNED/);
@@ -144,7 +165,7 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
     });
   });
 
-  it('prints the incompleteness line and a large document number, and leaves the signed layout byte-identical', async () => {
+  it('keeps the unsigned status notice and omits the signed certificate footer', async () => {
     const form = renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, { unsignedForm: true }).toString('utf8');
     const signed = renderSubstituteReceiptSvg(snapshot()).toString('utf8');
 
@@ -154,12 +175,9 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
       'D9 reads this number off a photographed sheet, so it prints at title size');
     assert.ok(form.includes('รอลงนาม') && form.includes('รอผู้อนุมัติลงนาม'), 'both signature boxes stay blank');
 
-    // The signed/issued path must be byte-for-byte what it was before the form option existed:
-    // the exact heading line, no notice, and no whitespace-only line where the notice would go.
     assert.equal(signed.includes(SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE), false);
     assert.ok(signed.includes('<text x="425" y="76" text-anchor="middle" fill="#555">เลขที่ SUB-202608-00007 · version 1</text>'));
-    assert.ok(signed.endsWith('โดยลำพัง</text>\n  </g>\n</svg>'),
-      'the optional notice row leaves no whitespace-only line behind it on the signed path');
+    assert.doesNotMatch(signed, /มิใช่ใบกำกับภาษี/);
     assert.deepEqual(
       renderSubstituteReceiptSvg(snapshot()),
       renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, {}),
@@ -225,6 +243,17 @@ function paperUseCase(scan: { bytes: Buffer; mimeType: string }, attestation = i
 }
 
 describe('R11 — the paper-route issued artifact', () => {
+  it('previews every issued page and enforces the existing expense-read boundary', async () => {
+    const { instance, audit } = paperUseCase({ bytes: await scanPdf([[200, 300], [200, 300]]), mimeType: 'application/pdf' });
+    const ctx = { companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog' } as any;
+    const preview = await instance.preview(ctx, 'expense-1', 'evidence-1');
+    assert.equal(preview.pageImageDataUrls.length, 3);
+    assert.match(preview.pdfDataUrl, /^data:application\/pdf;base64,/);
+    assert.equal(audit.log.mock.callCount(), 1);
+    (instance as any).getExpense.execute = async () => { throw new Error('expense read denied'); };
+    await assert.rejects(() => instance.preview(ctx, 'expense-1', 'evidence-1'), /expense read denied/);
+    assert.equal(audit.log.mock.callCount(), 1, 'refused read does not generate another artifact');
+  });
   it('serves the scan pages first and the system attestation page last', async () => {
     const scan = await scanPdf([[200, 300], [200, 300]]);
     const { instance, audit, lookups } = paperUseCase({ bytes: scan, mimeType: 'application/pdf' });
@@ -284,8 +313,9 @@ describe('R11 — the paper-route issued artifact', () => {
     );
   });
 
-  it('leaves the digital route rendering exactly one page from the stored SVG', async () => {
+  it('downloads an existing digital certificate without generated footers and preserves its stored SVG', async () => {
     const { instance } = useCase('ISSUED', null);
+    const storedDigest = createHash('sha256').update(issuedSvg).digest('hex');
 
     const result = await instance.execute({
       companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog',
@@ -294,8 +324,10 @@ describe('R11 — the paper-route issued artifact', () => {
     const pdf = await PDFDocument.load(result.data);
     assert.equal(pdf.getPageCount(), 1);
     assert.equal((pdf.getSubject() ?? '').includes('Wet-signed scan'), false);
-    assert.match(pdf.getSubject() ?? '', /^Source SHA256: [0-9a-f]{64}$/);
+    assert.equal(pdf.getSubject(), `Source SHA256: ${createHash('sha256').update(cleanIssuedSvg).digest('hex')}`);
+    assert.equal(createHash('sha256').update(issuedSvg).digest('hex'), storedDigest);
+    assert.ok(issuedSvg.toString().includes(oldSystemFooter));
+    await assertNoPageFooter(result.data);
     assert.equal(result.fileName, 'SUB-202608-00001.pdf'.replace('SUB', 'SRC'));
   });
 });
-

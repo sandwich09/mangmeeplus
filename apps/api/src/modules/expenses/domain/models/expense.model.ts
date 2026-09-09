@@ -135,6 +135,9 @@ export type ExpenseRecordWithRelations = ExpenseRecord & {
 };
 
 export type SubstituteReceiptEvidenceRecord = {
+  correctionOfEvidenceId?: string | null;
+  correctionReason?: string | null;
+  fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
   id: string;
   companyId: string;
   expenseId: string;
@@ -143,6 +146,9 @@ export type SubstituteReceiptEvidenceRecord = {
   status: SubstituteReceiptEvidenceStatus;
   documentNumber: string;
   idempotencyKey: string;
+  paperFormSnapshotJson?: Record<string, unknown> | null;
+  paperSubmissionJson?: import('@watchdog-bms/contracts').SubstituteReceiptPaperSubmission | null;
+  paperReviewedByUserId?: string | null;
   snapshotJson: Record<string, unknown> | null;
   snapshotChecksumSha256: string | null;
   originalSourceDocumentType: SourceDocumentType;
@@ -157,7 +163,7 @@ export type SubstituteReceiptEvidenceRecord = {
   preparedByUserId: string;
   preparedAt: Date;
   expenseUpdatedAtAtPreparation: Date;
-  payerUserId: string;
+  payerUserId: string | null;
   payerName: string;
   payeeName: string | null;
   payeeAddress: string | null;

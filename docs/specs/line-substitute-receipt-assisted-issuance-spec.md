@@ -1,5 +1,7 @@
 # LINE Substitute-Receipt Assisted Issuance Spec
 
+2026-09-09 follow-up implemented and locally verified: [[specs/substitute-receipt-company-payer-spec|Company versus personal funding, signer identity and snapshot correctness]]. Its LINE scope adds explicit funding source to continuation/provenance and web handoff while retaining this spec's authenticated-web signing boundary.
+
 ## 1. Status
 
 v0.4, 2026-08-20. **Implemented** on branch `codex/line-substitute-receipt-assisted-issuance`: plan phases 1-5 (= §18 steps 1-5) plus phase 6 ("signature flow reality", from an end-to-end audit that found the digital-signature journey severed by pre-existing gaps) and phase 7 ("personal signatures", implementing D14 which supersedes D10/D11: no approval step at all — a signature is a personal, owner-visible, self-managed asset usable the moment it is saved). Owner decisions D10-D14 (2026-08-20, §4) record the day's product calls, including next-turn ISSUED delivery and the group-chat guard's defense-in-depth status. Every phase passed an adversarial review round before commit; deviations from this spec are marked in place (§8.8, §12.3, §16, §19) and in the plan's implementation log.

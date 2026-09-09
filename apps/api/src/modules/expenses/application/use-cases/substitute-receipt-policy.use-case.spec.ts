@@ -16,6 +16,8 @@ describe('substitute receipt company policy', () => {
   it('returns a ready owner-self permissive cash default without a policy row', async () => {
     let reusableSignature: unknown = null;
     const repo = {
+      getSignerJobTitle: async () => null,
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัททดสอบ', nameSource: 'REGISTERED_NAME' }),
       getSubstituteReceiptPolicy: async () => null,
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
       findReusableSignatureAsset: async () => reusableSignature,
@@ -44,6 +46,8 @@ describe('substitute receipt company policy', () => {
   it('allows OWNER_SELF with no approvers and rejects an empty DESIGNATED_APPROVERS list', async () => {
     let saved: any;
     const repo = {
+      getSignerJobTitle: async () => null,
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัททดสอบ', nameSource: 'REGISTERED_NAME' }),
       getSubstituteReceiptPolicy: async () => saved ? {
         id: 'policy-1', ...saved, createdByUserId: 'owner-1', updatedByUserId: 'owner-1',
         createdAt: new Date(), updatedAt: new Date(),
@@ -79,6 +83,8 @@ describe('substitute receipt company policy', () => {
       createdByUserId: 'owner-1', updatedByUserId: 'owner-1', createdAt: new Date(), updatedAt: new Date(),
     };
     const repo = {
+      getSignerJobTitle: async () => null,
+      getSubstituteCompanyContext: async () => ({ name: 'บริษัททดสอบ', nameSource: 'REGISTERED_NAME' }),
       getSubstituteReceiptPolicy: async () => saved ? policy : null,
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1', displayName: 'ผู้จัดการ' }],
       upsertSubstituteReceiptPolicy: async (input: any) => { saved = input; return policy; },

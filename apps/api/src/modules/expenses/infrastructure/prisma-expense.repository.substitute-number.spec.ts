@@ -24,6 +24,7 @@ function preparedInput() {
     expenseId: 'expense-secret-cuid',
     branchId: null,
     expectedExpenseUpdatedAt: UPDATED_AT,
+    fundingSource: 'COMPANY' as const,
     originalSourceDocumentType: 'EXPENSE_NOTE_TEXT',
     reasonCode: 'RECEIPT_UNAVAILABLE',
     missingReceiptReason: 'ผู้ขายไม่ออกใบเสร็จ',
@@ -46,11 +47,12 @@ function preparedInput() {
 
 function makeRepo(existing: Record<string, any> | null = null, sourceChannelMetadataJson: Record<string, unknown> | null = null) {
   const tx: any = {
+    attachmentLink: { findMany: async () => [] },
     $executeRaw: mock.fn(async () => undefined),
     expenseRecord: {
       findFirst: mock.fn(async () => ({
         id: 'expense-secret-cuid', companyId: 'company-1', expenseNumber: null,
-        status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT,
+        status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT, paidAmount: '0', netPayableAmount: '100',
         sourceChannelMetadataJson,
       })),
       updateMany: mock.fn(async () => ({ count: 1 })),
@@ -109,7 +111,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
   it('returns an idempotent retry without consuming another number', async () => {
     const input = preparedInput();
     const existing = {
-      id: 'evidence-1', status: 'PREPARED', version: 1, documentNumber: 'SRC-202608-00001',
+      fundingSource: input.fundingSource, id: 'evidence-1', status: 'PREPARED', version: 1, documentNumber: 'SRC-202608-00001',
       companyId: input.companyId, expenseId: input.expenseId, branchId: input.branchId,
       reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason,
       businessPurpose: input.businessPurpose, payerUserId: input.payerUserId,
@@ -153,7 +155,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     };
     const { repo, tx } = makeRepo(null);
     tx.expenseRecord.findFirst = mock.fn(async () => ({
-      id: 'expense-secret-cuid', companyId: 'company-1', status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT,
+      id: 'expense-secret-cuid', companyId: 'company-1', status: 'NEEDS_REVIEW', updatedAt: UPDATED_AT, paidAmount: '0', netPayableAmount: '100',
       sourceChannelMetadataJson: null, aiVerificationSummaryJson: summary,
     }));
 
@@ -180,4 +182,19 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
     assert.equal(reserveNumberInTransaction.mock.calls.length, 0);
     assert.equal(commitNumberInTransaction.mock.calls.length, 0);
   });
+});
+
+it('uses the saved legal name, including explicit fallback for blank profiles', async () => {
+  for (const [registeredName, expected, source] of [[' บริษัท ทดสอบ จำกัด ', 'บริษัท ทดสอบ จำกัด', 'REGISTERED'], [null, 'Display Brand', 'DISPLAY_NAME'], ['   ', 'Display Brand', 'DISPLAY_NAME']]) {
+    const repo = new PrismaExpenseRepository({ client: { company: { findFirst: async () => ({ registeredName, name: 'Display Brand', taxId: '123' }) } } } as any);
+    const result = await repo.getSubstituteCompanyContext('company-1', null);
+    assert.equal(result.name, expected); assert.equal(result.nameSource, source);
+  }
+});
+
+it('reads position from this signer and company only without directory access', async () => {
+  let query: any;
+  const repo = new PrismaExpenseRepository({ client: { employeeAccessProfile: { findFirst: async (input: any) => { query = input; return { jobTitle: ' ผู้จัดการ ' }; } } } } as any);
+  assert.equal(await repo.getSignerJobTitle('company-1', 'signer-1'), 'ผู้จัดการ');
+  assert.deepEqual(query, { where: { companyId: 'company-1', userId: 'signer-1' }, select: { jobTitle: true } });
 });

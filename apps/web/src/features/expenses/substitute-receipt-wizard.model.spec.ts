@@ -193,14 +193,14 @@ test('evaluates policy-driven evidence requirements', () => {
 
 test('evaluates the shared payer and approver signing requirements', () => {
   assert.deepEqual(evaluateSigningReadiness({
-    position: '', previewed: false, signatureReady: false, acknowledged: false,
+    previewed: false, signatureReady: false, acknowledged: false,
   }), {
     ready: false,
-    missing: ['position', 'preview', 'signature', 'acknowledgement'],
-    missingCount: 4,
+    missing: ['preview', 'signature', 'acknowledgement'],
+    missingCount: 3,
   });
   assert.deepEqual(evaluateSigningReadiness({
-    position: 'เจ้าของกิจการ', previewed: true, signatureReady: true, acknowledged: true,
+    previewed: true, signatureReady: true, acknowledged: true,
   }), { ready: true, missing: [], missingCount: 0 });
 });
 
@@ -219,11 +219,11 @@ test('R9: offers the saved signature by default and lets a fresh one win', () =>
   // the signer just picked or drew.
   assert.equal(source(true, true, false), 'none');
   assert.deepEqual(evaluateSigningReadiness({
-    position: 'เจ้าของกิจการ', previewed: true, acknowledged: true,
+    previewed: true, acknowledged: true,
     signatureReady: source(true, false, false) !== 'none',
   }), { ready: true, missing: [], missingCount: 0 });
   assert.deepEqual(evaluateSigningReadiness({
-    position: 'เจ้าของกิจการ', previewed: true, acknowledged: true,
+    previewed: true, acknowledged: true,
     signatureReady: source(true, true, false) !== 'none',
   }), { ready: false, missing: ['signature'], missingCount: 1 });
 });
@@ -374,7 +374,7 @@ const draft = {
   payeeName: 'วินมอเตอร์ไซค์',
   payeeAddress: 'ปากซอย',
   payeeTaxId: '1234567890123',
-  payerId: 'payer-1',
+  payerId: 'payer-1', fundingSource: '' as const, paidInFullAcknowledged: false,
   paymentMethod: 'CASH' as const,
   paymentDate: '2026-08-19',
   supportingIds: ['attachment-1'],
@@ -482,4 +482,11 @@ test('never seeds the certificate reason with the LINE capture marker', async ()
   assert.equal(model.payerWrittenMissingReason('ผู้ขายรายย่อยไม่ออกใบเสร็จ'), 'ผู้ขายรายย่อยไม่ออกใบเสร็จ');
   assert.equal(model.payerWrittenMissingReason(null), '');
   assert.equal(model.payerWrittenMissingReason(undefined), '');
+});
+
+test('allows shared expense facts before choosing an account or signing method', () => {
+  const result = evaluateDetailsReadiness({ payeeName: 'ร้านทดสอบ', payeeAddress: '', payeeTaxId: '', vendorNameSnapshot: null,
+    missingReason: 'ไม่ออกใบเสร็จ', businessPurpose: 'ซื้อของใช้ในบริษัท', payerId: '', payerEligible: false, requirePayer: false, paymentDate: '2026-09-09' });
+  assert.equal(result.ready, true);
+  assert.equal(wizardJourneyStage('method'), 'sign');
 });

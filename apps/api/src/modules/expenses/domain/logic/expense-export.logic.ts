@@ -64,6 +64,9 @@ export type AccountantIndexSource = {
   paidAt: string | null;
   paymentReference: string | null;
   substituteReceiptRef: string | null;
+  fundingSource?: string | null;
+  certifyingPayerName?: string | null;
+  substituteEvidenceProvenance?: string | null;
   primaryAttachmentId: string | null;
   attachments: ExpenseAttachmentRef[];
   /** R11: ids that carry this expense's hand-signed certificate, never its supporting evidence. */
@@ -139,6 +142,9 @@ export function buildAccountantIndexRow(source: AccountantIndexSource): Accounta
     paid_at: source.paidAt ?? '',
     payment_reference: source.paymentReference ?? '',
     substitute_receipt_ref: source.substituteReceiptRef ?? '',
+    funding_source: source.fundingSource ?? '',
+    certifying_payer_name: source.certifyingPayerName ?? '',
+    substitute_evidence_provenance: source.substituteEvidenceProvenance ?? '',
     primary_evidence_ref: primary ? evidenceRef(source.expenseNumber, source.expenseId, primary.id) : '',
     supporting_evidence_refs: supporting.map((a) => evidenceRef(source.expenseNumber, source.expenseId, a.id)).join(','),
     web_url: source.webUrl,
