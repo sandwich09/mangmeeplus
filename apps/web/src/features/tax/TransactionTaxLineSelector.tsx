@@ -155,9 +155,10 @@ export function TransactionTaxLineSelector({
         </p>
       )}
       {error && <p role="alert" className="text-xs text-red-700">{error}</p>}
-      {preview && (
+      {preview && (sourceType !== 'expense.record' || preview.warnings.length > 0 || preview.errors.length > 0) && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${preview.errors.length ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
-          {preview.components.map((component) => (
+          {/* Receipt totals already include document VAT reconciliation and precision adjustments. */}
+          {sourceType !== 'expense.record' && preview.components.map((component) => (
             <div key={component.componentKey} className="flex flex-wrap gap-x-3 gap-y-1">
               <strong>{component.componentKey}</strong>
               <span>ฐาน {component.snapshot.taxBaseAmount}</span>

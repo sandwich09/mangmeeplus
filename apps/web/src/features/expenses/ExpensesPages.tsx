@@ -35,7 +35,7 @@ import {
   effectiveVatRateLabel, vatModeRequiresRate,
   PAYEE_ENTITY_KIND_LABELS, AI_SUGGESTION_FIELD_LABELS, applyExpenseAiSuggestion, expenseAiSuggestion, expenseAiCategorySuggestion,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS,
-  insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange,
+  insertExpenseReviewLine, removeExpenseReviewLine, applyChargeKindChange, changeExpenseVatSourceType,
   formatTaxId, taxIdDigits, reviewValues, incompleteSourceReviewLine,
   expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
@@ -1406,56 +1406,13 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   const setVatSourceType = (inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES') => {
     setVatSourceDirty(true);
     setTaxFactsDirty(true);
-    setValues((state) => ({
-      ...state,
-      vatSource: inputType === 'LINES'
-        ? {
-            inputType: 'NONE',
-            lines: state.lines.map((line, index) => {
-              const existing = state.vatSource?.lines?.find((sourceLine) => sourceLine.lineNumber === index + 1);
-              if (existing) return { ...existing, lineNumber: index + 1 };
-              const vatRatePercent = expenseRateToPercent(line.vatRate);
-              return vatRatePercent === null
-                ? { lineNumber: index + 1, inputType: 'NONE' as const }
-                : { lineNumber: index + 1, inputType: 'RATE' as const, vatRatePercent };
-            }),
-          }
-        : {
-            inputType,
-            ...((inputType === 'RATE' || inputType === 'BOTH') && {
-              vatRatePercent: state.vatSource?.lines
-                ? expenseRateToPercent(state.lines.find((line) => Number(line.vatRate) > 0)?.vatRate
-                  ?? state.lines.find((line) => line.vatRate.trim() !== '')?.vatRate ?? '')
-                : state.vatSource?.vatRatePercent ?? '',
-            }),
-            ...((inputType === 'AMOUNT' || inputType === 'BOTH') && { vatAmount: state.vatSource?.lines ? '' : state.vatSource?.vatAmount ?? '' }),
-          },
-    }));
+    setValues((state) => changeExpenseVatSourceType(state, inputType));
   };
 
   const setVatLineSourceType = (index: number, inputType: 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE') => {
     setVatSourceDirty(true);
     setTaxFactsDirty(true);
-    setValues((state) => {
-      const existing = state.vatSource?.lines?.find((line) => line.lineNumber === index + 1);
-      const vatRatePercent = existing?.vatRatePercent ?? expenseRateToPercent(state.lines[index]?.vatRate ?? '') ?? '';
-      return {
-        ...state,
-        vatSource: {
-          inputType: 'NONE',
-          lines: state.lines.map((_, lineIndex) => {
-            const current = state.vatSource?.lines?.find((line) => line.lineNumber === lineIndex + 1);
-            if (lineIndex !== index) return current ?? { lineNumber: lineIndex + 1, inputType: 'NONE' as const };
-            return {
-              lineNumber: index + 1,
-              inputType,
-              ...((inputType === 'RATE' || inputType === 'BOTH') && { vatRatePercent }),
-              ...((inputType === 'AMOUNT' || inputType === 'BOTH') && { vatAmount: existing?.vatAmount ?? '' }),
-            };
-          }),
-        },
-      };
-    });
+    setValues((state) => changeExpenseVatSourceType(state, inputType, index));
   };
 
   const setVatLineSourceValue = (index: number, field: 'vatRatePercent' | 'vatAmount', value: string) => {
@@ -1465,10 +1422,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       ...state,
       vatSource: {
         inputType: 'NONE',
-        lines: state.lines.map((_, lineIndex) => {
+        lines: state.lines.flatMap((line, lineIndex) => {
+          if (isCalculatedExpenseRounding(line)) return [];
           const current = state.vatSource?.lines?.find((line) => line.lineNumber === lineIndex + 1)
             ?? { lineNumber: lineIndex + 1, inputType: 'NONE' as const };
-          return lineIndex === index ? { ...current, [field]: value } : current;
+          return [lineIndex === index ? { ...current, [field]: value } : current];
         }),
       },
     }));
@@ -1671,12 +1629,12 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
             {capture.mode === 'SIMPLE' && (
               <p className="rounded-lg bg-white px-3 py-2 text-xs text-gray-600">VAT นี้เป็นส่วนหนึ่งของต้นทุนและขอคืนไม่ได้ ระบบเก็บเพื่อให้ยอดเอกสารและฐานหัก ณ ที่จ่ายถูกต้อง</p>
             )}
-            <label>
+            <label className="block">
               <span className="mb-1 block text-xs font-medium text-gray-600">เอกสารระบุ VAT เป็นหน่วยใด</span>
               <ThemedSelect
                 className={inputClass}
                 value={vatSourceMode}
-                aria-invalid={Boolean(vatSourceError) || undefined}
+                aria-label="เอกสารระบุ VAT เป็นหน่วยใด"
                 onChange={(event) => setVatSourceType(event.target.value as 'RATE' | 'AMOUNT' | 'BOTH' | 'NONE' | 'LINES')}
                 disabled={!isMutable || busy}
               >
@@ -1698,11 +1656,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                       max="99.9999"
                       step="0.0001"
                       className={cx(inputClass, 'pr-10')}
-                      value={vatSource.vatRatePercent ?? ''}
+                      aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: vatSource.vatRatePercent }, values.vatMode)) || undefined} value={vatSource.vatRatePercent ?? ''}
                       onChange={(event) => setDocumentVatPercent(event.target.value)}
                       disabled={!isMutable || busy}
                     />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
+                    <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
                   </div>
                 </label>
               )}
@@ -1715,11 +1673,11 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                       min="0"
                       step="0.01"
                       className={cx(inputClass, 'pr-14')}
-                      value={vatSource.vatAmount ?? ''}
+                      aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: vatSource.vatAmount }, values.vatMode)) || undefined} value={vatSource.vatAmount ?? ''}
                       onChange={(event) => setDocumentVatAmount(event.target.value)}
                       disabled={!isMutable || busy}
                     />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
+                    <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
                   </div>
                 </label>
               )}
@@ -1749,15 +1707,15 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
                         {(sourceLine.inputType === 'RATE' || sourceLine.inputType === 'BOTH') && (
                           <label className="relative">
                             <span className="sr-only">อัตรา VAT จากเอกสาร รายการ {index + 1}</span>
-                            <input type="number" min="0" max="99.9999" step="0.0001" className={cx(inputClass, 'pr-10')} value={sourceLine.vatRatePercent ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatRatePercent', event.target.value)} disabled={!isMutable || busy} />
-                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
+                            <input type="number" min="0" max="99.9999" step="0.0001" className={cx(inputClass, 'pr-10')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'RATE', vatRatePercent: sourceLine.vatRatePercent }, values.vatMode)) || undefined} value={sourceLine.vatRatePercent ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatRatePercent', event.target.value)} disabled={!isMutable || busy} />
+                            <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">%</span>
                           </label>
                         )}
                         {(sourceLine.inputType === 'AMOUNT' || sourceLine.inputType === 'BOTH') && (
                           <label className="relative">
                             <span className="sr-only">VAT จากเอกสาร รายการ {index + 1}</span>
-                            <input type="number" min="0" step="0.01" className={cx(inputClass, 'pr-14')} value={sourceLine.vatAmount ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatAmount', event.target.value)} disabled={!isMutable || busy} />
-                            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
+                            <input type="number" min="0" step="0.01" className={cx(inputClass, 'pr-14')} aria-invalid={Boolean(expenseVatSourceValidationMessage({ inputType: 'AMOUNT', vatAmount: sourceLine.vatAmount }, values.vatMode)) || undefined} value={sourceLine.vatAmount ?? ''} onChange={(event) => setVatLineSourceValue(index, 'vatAmount', event.target.value)} disabled={!isMutable || busy} />
+                            <span aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-500">บาท</span>
                           </label>
                         )}
                       </div>

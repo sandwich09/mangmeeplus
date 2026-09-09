@@ -27,7 +27,7 @@ import {
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
-  expenseDocumentDateStatus, expenseDateIsReadable,
+  expenseDocumentDateStatus, expenseDateIsReadable, isCalculatedExpenseRounding,
 } from '@watchdog-bms/contracts';
 export { isExpensePending } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -783,6 +783,32 @@ export function buildExpenseDraftReviewPayload(
       ...(line.externalTaxCode && { externalTaxCode: line.externalTaxCode }),
       ...(line.transactionContext && { transactionContext: line.transactionContext }),
     })) }),
+  };
+}
+
+/** A newly selected document unit must not resurrect evidence from the previous unit. */
+export function changeExpenseVatSourceType(
+  values: ExpenseDraftReviewValues,
+  inputType: ExpenseVatSourceInput['inputType'] | 'LINES',
+  lineIndex?: number,
+): ExpenseDraftReviewValues {
+  const currentType = lineIndex === undefined
+    ? values.vatSource?.lines?.length ? 'LINES' : values.vatSource?.inputType ?? 'NONE'
+    : values.vatSource?.lines?.find((line) => line.lineNumber === lineIndex + 1)?.inputType ?? 'NONE';
+  if (inputType === currentType) return values;
+  const perLine = inputType === 'LINES' || lineIndex !== undefined;
+  return {
+    ...values,
+    vatSource: perLine ? {
+      inputType: 'NONE',
+      lines: values.lines.flatMap((line, index) => {
+        if (isCalculatedExpenseRounding(line)) return [];
+        const previous = values.vatSource?.lines?.find((source) => source.lineNumber === index + 1);
+        return [lineIndex !== undefined && index !== lineIndex
+          ? previous ?? { lineNumber: index + 1, inputType: 'NONE' }
+          : { lineNumber: index + 1, inputType: inputType === 'LINES' ? 'NONE' : inputType }];
+      }),
+    } : { inputType },
   };
 }
 
