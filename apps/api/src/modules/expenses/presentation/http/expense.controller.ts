@@ -1,6 +1,9 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  CorrectSubstituteDocumentDto,
+  SubmitSubstituteReceiptPaperDto,
+  AcceptSubstituteReceiptPaperDto,
   ConfirmExpenseDto,
   ExpenseTotalsPreviewDto,
   CreateSignatureAssetDto,
@@ -81,7 +84,7 @@ import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
-  AcceptSubstituteReceiptPaperInput, SubmitSubstituteReceiptPaperInput, SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
+  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
   PreviewSubstituteReceiptInput,
@@ -271,7 +274,7 @@ export class ExpenseController {
 
   @Post(':expenseId/substitute-receipt/:evidenceId/correct-document')
   @RequirePermissions('expense.review')
-  correctSubstituteDocument(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: { reason: string; expectedEvidenceUpdatedAt: string }) {
+  correctSubstituteDocument(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: CorrectSubstituteDocumentDto) {
     return this.prepareSubstituteReceipt.executeCorrection(ctx, expenseId, evidenceId, body);
   }
 
@@ -369,7 +372,7 @@ export class ExpenseController {
 
   @Post(':expenseId/substitute-receipt/:evidenceId/paper/submit')
   @RequirePermissions('expense.review')
-  submitPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: SubmitSubstituteReceiptPaperInput) {
+  submitPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: SubmitSubstituteReceiptPaperDto) {
     return this.paperSubstituteReceipt.submit(ctx, expenseId, evidenceId, body);
   }
 
@@ -381,7 +384,7 @@ export class ExpenseController {
 
   @Post(':expenseId/substitute-receipt/:evidenceId/paper/accept')
   @RequirePermissions('expense.confirm')
-  acceptPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AcceptSubstituteReceiptPaperInput) {
+  acceptPaper(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AcceptSubstituteReceiptPaperDto) {
     return this.paperSubstituteReceipt.accept(ctx, expenseId, evidenceId, body);
   }
 

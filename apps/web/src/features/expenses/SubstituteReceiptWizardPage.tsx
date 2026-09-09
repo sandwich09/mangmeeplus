@@ -1906,8 +1906,8 @@ export function SubstituteReceiptWizardPage({
                     <summary className="min-h-11 cursor-pointer py-2 font-semibold underline underline-offset-2">{t('expenses.substitute_wizard.consent_more', locale)}</summary>
                     <p className="pb-2 leading-6">{t('expenses.substitute_wizard.consent_details', locale)}</p>
                   </details>
-                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold text-gray-800">
-                    <input className="mt-0.5 h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold leading-6 text-gray-800">
+                    <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
                     <span>{t('expenses.substitute_wizard.consent_confirm', locale)}<RequiredMark /></span>
                   </label>
                 </div>
@@ -2052,7 +2052,7 @@ export function SubstituteReceiptWizardPage({
                   <p className="text-sm text-gray-600">บริษัทในเอกสาร: {policy?.companyName ?? 'กำลังโหลดชื่อบริษัท'} <button type="button" className="underline" onClick={() => window.location.reload()}>โหลดข้อมูลล่าสุด</button></p>
                   {policy?.companyNameSource === 'DISPLAY_NAME' && <p className="text-xs text-warning-700">ยังไม่มีชื่อจดทะเบียนที่บันทึกไว้ กรุณาตรวจข้อมูลบริษัทก่อนลงนาม</p>}
                   {detail && <p className="text-sm text-gray-600">ยอดรวม {Number(detail.grandTotalAmount).toLocaleString('th-TH')} บาท · หัก ณ ที่จ่าย {Number(detail.whtAmount).toLocaleString('th-TH')} บาท · สุทธิจ่ายร้าน {Number(detail.netPayableAmount).toLocaleString('th-TH')} บาท{fundingSource === 'COMPANY' && (Number(detail.paidAmount) === 0 ? ' — เมื่อออกใบรับรองจะบันทึกการจ่ายเต็มยอดครั้งแรก' : Number(detail.outstandingAmount) <= 0 ? ' — บริษัทบันทึกจ่ายเต็มแล้ว จะไม่เพิ่มการจ่ายซ้ำ' : ' — มีการบันทึกจ่ายบางส่วนแล้ว ไม่รองรับในขั้นตอนนี้')}</p>}
-                  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={paidInFullAcknowledged} onChange={event => setPaidInFullAcknowledged(event.target.checked)} />ยืนยันว่าใช้เงินที่เลือกชำระเต็มจำนวนแล้ว ไม่มีการแบ่งจ่าย</label>
+                  <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={paidInFullAcknowledged} onChange={event => setPaidInFullAcknowledged(event.target.checked)} /><span>ยืนยันว่าใช้เงินที่เลือกชำระเต็มจำนวนแล้ว ไม่มีการแบ่งจ่าย</span></label>
                   {fundingSource === 'PERSONAL_ADVANCE' && <p className="text-sm text-gray-600">การออกใบรับรองยังไม่บันทึกว่าบริษัทจ่ายคืนให้พนักงาน</p>}
                 </div>
 
@@ -2126,8 +2126,8 @@ export function SubstituteReceiptWizardPage({
                 'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition',
                 ids.includes(attachment.id) ? 'border-brand-200 bg-brand-25 text-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-50',
               )}>
-                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                  <input className="h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => {
+                <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 leading-6">
+                  <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => {
                     const nextIds = event.target.checked
                       ? [...new Set([...ids, attachment.id])]
                       : ids.filter((id) => id !== attachment.id);

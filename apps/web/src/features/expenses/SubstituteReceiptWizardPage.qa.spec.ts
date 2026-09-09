@@ -15,5 +15,6 @@ test('pending certificates expose the existing guarded cancellation and revision
 test('a cancelled version does not claim successful issuance or offer confirmation next steps', () => {
   const done = source.slice(source.indexOf('const renderDoneStep'), source.indexOf('const renderVersionHistory'));
   assert.ok(done.includes("receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_title' : 'expenses.substitute_hub.status_superseded'"));
-  assert.ok(done.includes("{receiptEvidence.status === 'ISSUED' && <div"));
+  assert.ok(done.includes("{receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource !== 'PERSONAL_ADVANCE' && <div"));
+  assert.ok(done.includes("{receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' && <div"));
 });

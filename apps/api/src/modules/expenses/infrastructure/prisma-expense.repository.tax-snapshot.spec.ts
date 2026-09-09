@@ -20,6 +20,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       branch: { findFirst: async () => ({ id: 'branch-1' }) },
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
+      attachmentLink: { findMany: async () => [] },
       expenseSubstituteReceiptEvidence: { findFirst: async () => null },
       expenseRecord: {
         create: async ({ data }: any) => { stored = { id: 'expense-1', ...data }; return stored; },
@@ -124,6 +125,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       journalEntry: { findMany: async () => [] },
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
+      attachmentLink: { findMany: async () => [] },
       expenseSubstituteReceiptEvidence: { findFirst: async () => null },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),

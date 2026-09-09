@@ -140,7 +140,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                       type="checkbox"
                       checked={approverUserIds.includes(candidate.userId)}
                       onChange={() => toggleApprover(candidate.userId)}
-                      className="mt-1 h-4 w-4 accent-brand-700"
+                      className="mt-1 h-4 w-4 shrink-0 accent-brand-700"
                     />
                     <span>
                       <span className="block font-bold text-gray-900">{candidate.displayName}</span>

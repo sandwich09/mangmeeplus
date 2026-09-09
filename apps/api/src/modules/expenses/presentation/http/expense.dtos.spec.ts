@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
+  CorrectSubstituteDocumentDto,
+  SubmitSubstituteReceiptPaperDto,
+  AcceptSubstituteReceiptPaperDto,
   ConfirmExpenseDto,
   ExpenseTotalsPreviewDto,
   CreateSignatureAssetDto,
@@ -22,6 +25,46 @@ const run = (metatype: unknown, value: unknown) =>
   pipe.transform(value, { type: 'body', metatype: metatype as never });
 
 describe('expense body DTOs (audit H-23)', () => {
+  it('validates paper signer identities while allowing an omitted or blank position', async () => {
+    const body = { payer: { name: 'ผู้จ่ายจริง', signedOn: '2026-09-09' },
+      approver: { name: 'ผู้อนุมัติ', position: '', signedOn: '2026-09-09' }, samePerson: false,
+      attachmentId: 'scan-1', checksumSha256: 'a'.repeat(64), byteSize: 100,
+      formMatchesAcknowledged: true, expectedEvidenceUpdatedAt: '2026-09-09T12:00:00.000Z' };
+    assert.deepEqual(JSON.parse(JSON.stringify(await run(SubmitSubstituteReceiptPaperDto, body))), body);
+    for (const invalid of [{ ...body, payer: null }, { ...body, payer: {} },
+      { ...body, payer: { ...body.payer, name: {} } },
+      { ...body, approver: { ...body.approver, position: 123 } },
+      { ...body, payer: { ...body.payer, signedOn: '2026-02-30' } },
+      { ...body, payer: { ...body.payer, userId: 'forged' } },
+      { ...body, uploadedByUserId: 'forged' }, { ...body, byteSize: '100' },
+      { ...body, checksumSha256: 'invalid' }, { ...body, samePerson: 'false' },
+      { ...body, formMatchesAcknowledged: false }, { ...body, expectedEvidenceUpdatedAt: '' }]) {
+      await assert.rejects(() => run(SubmitSubstituteReceiptPaperDto, invalid), BadRequestException);
+    }
+  });
+
+  it('requires the reviewed paper checksum, source version and explicit acceptance declarations', async () => {
+    const body = { previewChecksumSha256: 'a'.repeat(64), expectedEvidenceUpdatedAt: '2026-09-09T12:00:00.000Z',
+      factsAndSignaturesAcknowledged: true, approverAuthorityAcknowledged: true, originalRetainedAcknowledged: true };
+    assert.deepEqual(JSON.parse(JSON.stringify(await run(AcceptSubstituteReceiptPaperDto, body))), body);
+    for (const key of Object.keys(body)) {
+      const missing = { ...body } as Record<string, unknown>;
+      delete missing[key];
+      await assert.rejects(() => run(AcceptSubstituteReceiptPaperDto, missing), BadRequestException);
+      await assert.rejects(() => run(AcceptSubstituteReceiptPaperDto, { ...body, [key]: false }), BadRequestException);
+    }
+    await assert.rejects(() => run(AcceptSubstituteReceiptPaperDto, { ...body, reviewerUserId: 'forged' }), BadRequestException);
+  });
+
+  it('validates correction reasons and concurrency tokens without accepting financial overrides', async () => {
+    const body = { reason: 'แก้ชื่อบริษัท', expectedEvidenceUpdatedAt: '2026-09-09T12:00:00.000Z' };
+    assert.equal((await run(CorrectSubstituteDocumentDto, body)).reason, body.reason);
+    for (const invalid of [{ reason: body.reason }, { ...body, reason: {} },
+      { ...body, expectedEvidenceUpdatedAt: 'yesterday' }, { ...body, paidAmount: '999' }]) {
+      await assert.rejects(() => run(CorrectSubstituteDocumentDto, invalid), BadRequestException);
+    }
+  });
+
   it('accepts the complete review-preview payload, including blank optional purpose, source refs and independent VAT/WHT', async () => {
     const body = { expectedUpdatedAt: '2026-09-09T00:00:00.000Z', vendorNameSnapshot: 'ร้านทดสอบ',
       vendorTaxIdSnapshot: '', vendorEntityKindSnapshot: 'JURISTIC', vendorDocumentNumber: '', expenseDate: '2026-09-07',
