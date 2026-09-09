@@ -58,6 +58,7 @@ import {
   lateDocumentDays,
   expenseVatSourceFromSnapshot,
   expenseVatSourceValidationMessage,
+  changeExpenseVatSourceType,
   insertExpenseReviewLine,
   type ExpenseDraftReviewValues,
   type ExpenseDetail,
@@ -529,6 +530,48 @@ describe('expenses.model', () => {
     assert.deepEqual(payload.lines!.map((line) => line.vatTreatment), ['ZERO_RATED', 'EXEMPT', 'NON_VAT', null]);
     assert.ok(payload.lines!.every((line) => line.vatRate === '0' && !line.taxCodeDefinitionId));
     assert.deepEqual(values.lines.map((line) => vatRatePreset(line.vatRate, line.vatTreatment)), ['zero', 'exempt', 'nonVat', 'unknownZero']);
+  });
+
+  it('clears previous VAT evidence on every explicit unit change without changing accounting lines', () => {
+    const values = reviewValues({ vendorNameSnapshot: 'ร้านทดสอบ', vendorDocumentNumber: 'TEST',
+      expenseDate: '2026-09-07', vatMode: 'VAT_INCLUDED', lines: [1, 2].map((lineNumber) => ({
+        lineNumber, description: 'สินค้า', quantity: '1', unitPrice: '107', discountAmount: '0', vatRate: '0.07',
+      })),
+    } as ExpenseDetail);
+    for (const from of ['NONE', 'RATE', 'AMOUNT', 'BOTH', 'LINES'] as const) {
+      const previous = { ...values, vatSource: from === 'LINES'
+        ? { inputType: 'NONE' as const, lines: [{ lineNumber: 1, inputType: 'BOTH' as const, vatRatePercent: '7', vatAmount: '157.64' }] }
+        : { inputType: from, vatRatePercent: '7', vatAmount: '157.64' } };
+      for (const to of ['NONE', 'RATE', 'AMOUNT', 'BOTH', 'LINES'] as const) {
+        const changed = changeExpenseVatSourceType(previous, to);
+        if (from === to) {
+          assert.equal(changed, previous, 'selecting the same unit again must not erase entered evidence');
+          continue;
+        }
+        assert.equal(changed.lines, previous.lines, 'a source-unit change must not silently change the line VAT');
+        const source = buildExpenseDraftReviewPayload(changed).vatSource!;
+        assert.deepEqual(source, to === 'LINES'
+          ? { inputType: 'NONE', lines: [1, 2].map((lineNumber) => ({ lineNumber, inputType: 'NONE' })) }
+          : { inputType: to });
+        assert.equal(Boolean(expenseVatSourceValidationMessage(source, 'VAT_INCLUDED')), !['NONE', 'LINES'].includes(to));
+      }
+    }
+    const other = { lineNumber: 2, inputType: 'BOTH' as const, vatRatePercent: '7', vatAmount: '7.00' };
+    const perLine = { ...values, vatSource: { inputType: 'NONE' as const, lines: [
+      { lineNumber: 1, inputType: 'BOTH' as const, vatRatePercent: '7', vatAmount: '7.00' }, other,
+    ] } };
+    for (const to of ['NONE', 'RATE', 'AMOUNT', 'BOTH'] as const) {
+      if (to === 'BOTH') {
+        assert.equal(changeExpenseVatSourceType(perLine, to, 0), perLine);
+        continue;
+      }
+      const source = changeExpenseVatSourceType(perLine, to, 0).vatSource!;
+      assert.deepEqual(source.lines, [{ lineNumber: 1, inputType: to }, other]);
+      assert.equal(source.lines![1], other, 'changing one line leaves other evidence intact');
+    }
+    assert.deepEqual(changeExpenseVatSourceType(values, 'BOTH', 0).vatSource?.lines,
+      [{ lineNumber: 1, inputType: 'BOTH' }, { lineNumber: 2, inputType: 'NONE' }],
+      'a line without previous source evidence must not acquire a required hidden amount');
   });
 
   it('hydrates normalized source VAT and validates missing unit values', () => {

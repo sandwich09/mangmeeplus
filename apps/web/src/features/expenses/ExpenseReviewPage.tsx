@@ -698,12 +698,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         {guided && (
           <>
             {step === 'data' && validationBlockMessage && (
-              <div className="max-w-lg text-sm text-error-600">
+              <div className="max-w-lg rounded-lg border border-warning-100 bg-warning-50 px-3 py-2 text-sm text-warning-700">
                 <p id={`expense-review-block-${detail.id}`} role="status">{validationBlockMessage}</p>
-                <button type="button" className="mt-1 font-semibold underline underline-offset-2" onClick={() => {
+                <button type="button" className="mt-1 rounded font-semibold underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" onClick={() => {
                   const section = vendorRef.current;
                   const target = section?.querySelector<HTMLElement>('[aria-invalid="true"]') ?? section;
-                  target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                  target?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
                   target?.focus({ preventScroll: true });
                 }}>{t('expenses.v_fix_fields', locale)}</button>
               </div>
