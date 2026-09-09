@@ -2,6 +2,18 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
+# Native COPY paths must follow the lockfile, not independently repeat an old version pin.
+python3 - "$repo_root" <<'PY'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+lock = (root / 'pnpm-lock.yaml').read_text()
+for path in ['apps/api/Dockerfile', 'apps/ai-gateway/Dockerfile', 'infra/api-web/Dockerfile.api-web']:
+    dockerfile = (root / path).read_text()
+    for name in ['sharp-linux-x64', 'sharp-libvips-linux-x64']:
+        match = re.search(rf'^COPY --from=deps /app/node_modules/.pnpm/@img\+{name}@([0-9.]+)/node_modules/@img/{name} ', dockerfile, re.M)
+        assert match, f'{path}: missing native {name} COPY'
+        assert f"  '@img/{name}@{match[1]}':" in lock, f'{path}: {name}@{match[1]} is absent from pnpm-lock.yaml'
+PY
 scanner="$repo_root/infra/docker/verify-production-image.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-bms-image-spec.XXXXXX")"
 trap 'rm -rf "$fixture"' EXIT
@@ -906,11 +918,8 @@ grep -Fq 'AWS credentials may have expired' "$wait_helper"
 grep -Fq 'if [ "$new_url" != "$current_url" ]; then' "$repo_root/infra/prod-ecs-express/deploy.sh"
 grep -Fq "require('./apps/api/node_modules/sharp')" "$repo_root/apps/api/Dockerfile"
 grep -Fq "require('./apps/ai-gateway/node_modules/sharp')" "$repo_root/apps/ai-gateway/Dockerfile"
-grep -Fq '@img+sharp-linux-x64@0.35.3' "$repo_root/apps/ai-gateway/Dockerfile"
 grep -Fq 'Receipt orientation runtime check failed' "$repo_root/apps/ai-gateway/Dockerfile"
 grep -Fq "require('./api-runtime/apps/api/node_modules/sharp')" "$repo_root/infra/api-web/Dockerfile.api-web"
-grep -Fq '@img+sharp-linux-x64@0.35.3' "$repo_root/apps/api/Dockerfile"
-grep -Fq '@img+sharp-linux-x64@0.35.3' "$repo_root/infra/api-web/Dockerfile.api-web"
 grep -Fq 'HOSTNAME=0.0.0.0 PORT="${WEB_PORT:-3002}"' "$repo_root/infra/api-web/start-api-web-runtime.sh"
 grep -Fq 'clamav-1.5.3.linux.x86_64.deb' "$repo_root/infra/api-web/Dockerfile.api-web"
 grep -Fq 'ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436' "$repo_root/infra/api-web/Dockerfile.api-web"
