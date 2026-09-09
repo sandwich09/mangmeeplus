@@ -6,6 +6,8 @@ Implemented and locally verified for checklist items 09, 09A, and 09B. Productio
 
 Company approver and cash-evidence settings follow-up: [[plans/substitute-receipt-company-policy-plan|Substitute Receipt Company Policy Plan]]
 
+2026-09-09 implemented locally: [[specs/substitute-receipt-company-payer-spec|Full company/personal funding, signer position and legal-name snapshots]], with [[plans/substitute-receipt-company-payer-plan|verification evidence]]. Scope is substitute receipts only; reimbursement workflow changes are excluded. This follow-up supersedes the funding/correction behavior described below where inconsistent.
+
 Execution role: the primary WatchDog/Codex agent owns implementation. Claude CLI is optional and read-only for development review and test verification only; it must not implement, edit, stage, commit, or deploy. If private-repository review is blocked by platform policy, record that limitation and use an internal independent review instead.
 
 Linked plan: [[plans/expense-receipt-upload-plan|Expense Receipt Upload Plan]]

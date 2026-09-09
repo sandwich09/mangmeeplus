@@ -1,6 +1,8 @@
 'use client';
 
 import Link from 'next/link';
+import { SubstitutePaperDocumentPreview, SubstitutePaperSigningPanel } from './SubstitutePaperSigningPanel';
+import { SubstituteSignerPositionField } from './SubstituteSignerPositionField';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
@@ -10,6 +12,7 @@ import {
   type ExpensePaymentMethod,
   type LineSubstituteReceiptPrefill,
   type SubstituteReceiptEvidenceSummary,
+  type SubstituteReceiptPaperPreview,
   type SubstituteReceiptReasonCode,
   type SubstituteReceiptRuntimePolicy,
 } from '@watchdog-bms/contracts';
@@ -27,6 +30,7 @@ import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import {
   approveSubstituteReceipt,
+  correctSubstituteDocument,
   certifySubstituteReceipt,
   completePersonalSignatureUpload,
   createExpenseDraft,
@@ -46,6 +50,7 @@ import {
   listSubstituteReceiptPayers,
   loadLineSubstituteReceiptPrefill,
   previewSubstituteReceipt,
+  previewIssuedSubstitutePaper,
   supersedeSubstituteReceipt,
   updateExpenseReviewFields,
   uploadExpenseEvidenceFile,
@@ -398,6 +403,7 @@ function SignatureFields({
 }) {
   const locale = useWorkspaceLocale();
   const [method, setMethod] = useState<'draw' | 'upload'>('draw');
+  const [replacingSignature, setReplacingSignature] = useState(false);
   const selectMethod = (next: 'draw' | 'upload') => {
     setMethod(next);
     onSelect(null);
@@ -462,7 +468,7 @@ function SignatureFields({
   if (!savedSignatureAvailable) return fields;
   return (
     <div className="space-y-3">
-      {savedSignatureUsed && (
+      {savedSignatureUsed && !replacingSignature && (
         <>
           <p className="rounded-xl border border-brand-100 bg-brand-50 px-3 py-2 text-sm font-semibold text-brand-700">
             {t('expenses.substitute_wizard.saved_signature_used', locale)}
@@ -475,7 +481,9 @@ function SignatureFields({
         </>
       )}
       {/* Uncontrolled on purpose: the only way to prepare a file is to open this first. */}
-      <details className="rounded-xl border border-gray-200 p-3">
+      {/* Hide the saved preview when opening the editor, before a stroke can start.
+          Removing it on pointer-down moves the canvas underneath the pointer. */}
+      <details className="rounded-xl border border-gray-200 p-3" onToggle={event => setReplacingSignature(event.currentTarget.open)}>
         <summary className="cursor-pointer text-sm font-semibold text-gray-700">
           {t('expenses.substitute_wizard.saved_signature_replace', locale)}
         </summary>
@@ -548,7 +556,8 @@ export function SubstituteReceiptWizardPage({
   const [payeeName, setPayeeName] = useState('');
   const [payeeAddress, setPayeeAddress] = useState('');
   const [payeeTaxId, setPayeeTaxId] = useState('');
-  const [payerId, setPayerId] = useState(userId);
+  const [payerId, setPayerId] = useState('');
+  const [signingMethod, setSigningMethod] = useState<'' | 'DIGITAL' | 'PAPER'>('');
   const [payers, setPayers] = useState<Array<{ userId: string; displayName: string }>>([]);
   const [payersLoading, setPayersLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<ExpensePaymentMethod>('CASH');
@@ -561,6 +570,8 @@ export function SubstituteReceiptWizardPage({
   const [manualLines, setManualLines] = useState<ManualLineEditor[]>([blankManualLine('manual-line-1')]);
   const [manualValidationAttempted, setManualValidationAttempted] = useState(false);
   const [manualAnnouncement, setManualAnnouncement] = useState('');
+  const [fundingSource, setFundingSource] = useState<'' | 'COMPANY' | 'PERSONAL_ADVANCE'>('');
+  const [paidInFullAcknowledged, setPaidInFullAcknowledged] = useState(false);
   const [signerPosition, setSignerPosition] = useState('');
   const [signatureFile, setSignatureFile] = useState<File | null>(null);
   const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
@@ -571,6 +582,7 @@ export function SubstituteReceiptWizardPage({
   const [certificationAcknowledged, setCertificationAcknowledged] = useState(false);
   const [approvalAcknowledged, setApprovalAcknowledged] = useState(false);
   const [preview, setPreview] = useState<WizardPreviewSource | null>(null);
+  const [paperArtifactPreview, setPaperArtifactPreview] = useState<SubstituteReceiptPaperPreview | null>(null);
   const previewRequestRef = useRef(0);
   const previewUrlRef = useRef<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -588,7 +600,8 @@ export function SubstituteReceiptWizardPage({
   const newRouteRef = useRef<HTMLButtonElement>(null);
   const pendingFocusTargetRef = useRef<'candidate' | 'manual' | 'selection' | 'details' | null>(null);
   const [focusRevision, setFocusRevision] = useState(0);
-  const signerPositionRef = useRef<HTMLInputElement>(null);
+  const versionHistoryRef = useRef<HTMLDetailsElement>(null);
+  const supersedeReasonRef = useRef<HTMLTextAreaElement>(null);
   /** Which expense's saved draft has already been applied — persistence starts only after that. */
   const [draftHydratedFor, setDraftHydratedFor] = useState<string | null>(null);
   const previewScope = [
@@ -598,6 +611,7 @@ export function SubstituteReceiptWizardPage({
     detail?.id ?? '',
     receiptEvidence?.id ?? '',
     receiptEvidence?.updatedAt ?? '',
+    signerPosition, fundingSource, payerId,
   ].join('\u0000');
   const previewScopeRef = useRef(previewScope);
   previewScopeRef.current = previewScope;
@@ -635,12 +649,14 @@ export function SubstituteReceiptWizardPage({
     previewRequestRef.current += 1;
     releasePreviewUrl();
     setPreview(null);
+    setPaperArtifactPreview(null);
   }, [releasePreviewUrl]);
 
   useEffect(() => {
     previewRequestRef.current += 1;
     releasePreviewUrl();
     setPreview(null);
+    setPaperArtifactPreview(null);
     setPreviewChecksum(null);
     setCertifiedPreviewed(false);
     return () => {
@@ -674,7 +690,7 @@ export function SubstituteReceiptWizardPage({
   // W2: the prepare blockers that live on the expense itself. Evaluated as soon as an expense is
   // chosen so they are visible before anything is typed, not one per failed จัดทำเอกสาร.
   const expensePrerequisites = detail ? evaluateExpensePrerequisites(detail) : null;
-  const expenseIneligible = detail ? !isSubstituteReceiptCandidateOtherwiseEligible(detail) : false;
+  const expenseIneligible = receiptEvidence?.correctionOfEvidenceId ? false : detail ? !isSubstituteReceiptCandidateOtherwiseEligible(detail) : false;
   const selectedPaymentCount = detail?.attachments.filter((attachment) => paymentIds.includes(attachment.id)
     && attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence'
     && !detail.attachments.some((source) => source.id === attachment.id && source.purpose !== 'expense.payment.evidence')
@@ -747,7 +763,8 @@ export function SubstituteReceiptWizardPage({
       && attachment.purpose !== 'expense.payment.evidence').map((attachment) => attachment.id));
     setPaymentIds(nextDetail.attachments.filter((attachment) => attachment.status === 'ACTIVE'
       && attachment.purpose === 'expense.payment.evidence').map((attachment) => attachment.id));
-    setPayerId(userId);
+    setPayerId('');
+    setFundingSource(''); setPaidInFullAcknowledged(false);
   }, [userId]);
 
   useEffect(() => {
@@ -779,7 +796,10 @@ export function SubstituteReceiptWizardPage({
           setPayeeAddress(target.payeeAddress ?? '');
           setPayeeTaxId(target.payeeTaxId ?? '');
           setReasonCode(target.reasonCode);
-          setPayerId(target.payerUserId);
+          setPayerId(target.payerUserId ?? '');
+          setSigningMethod(target.signatureMode ?? 'DIGITAL');
+          setFundingSource(target.fundingSource ?? '');
+          setPaidInFullAcknowledged(Boolean(target.fundingSource));
           setPaymentMethod(target.paymentMethod ?? 'CASH');
           setPaymentDate(target.paymentDate?.slice(0, 10) ?? todayIso());
           setSupportingIds(target.supportingAttachmentIds);
@@ -802,6 +822,8 @@ export function SubstituteReceiptWizardPage({
             if (values.businessPurpose) setBusinessPurpose(values.businessPurpose);
             if (values.payeeName) setPayeeName(values.payeeName);
             if (values.payerUserId) setPayerId(values.payerUserId);
+            if (values.fundingSource) setFundingSource(values.fundingSource);
+            setPaidInFullAcknowledged(values.paidInFullAcknowledged === true);
             if (values.paymentMethod) setPaymentMethod(values.paymentMethod);
             if (values.paymentDate) setPaymentDate(values.paymentDate);
             setLinePrefill(nextLinePrefill);
@@ -867,7 +889,7 @@ export function SubstituteReceiptWizardPage({
         setPayers(items);
         setPayerId((current) => items.some((item) => item.userId === current)
           ? current
-          : (items.find((item) => item.userId === userId)?.userId ?? items[0]?.userId ?? ''));
+          : '');
       })
       .catch((cause) => { if (!cancelled) setError(err(cause)); })
       .finally(() => { if (!cancelled) setPayersLoading(false); });
@@ -893,6 +915,8 @@ export function SubstituteReceiptWizardPage({
       setPayeeName(stored.payeeName);
       setPayeeAddress(stored.payeeAddress);
       setPayeeTaxId(stored.payeeTaxId);
+      setFundingSource(stored.fundingSource ?? '');
+      setPaidInFullAcknowledged(stored.paidInFullAcknowledged === true);
       if (stored.payerId) setPayerId(stored.payerId);
       setPaymentMethod(stored.paymentMethod);
       if (stored.paymentDate) setPaymentDate(stored.paymentDate);
@@ -909,12 +933,12 @@ export function SubstituteReceiptWizardPage({
       step: draftStep,
       consent, reasonCode, missingReason, businessPurpose,
       payeeName, payeeAddress, payeeTaxId,
-      payerId, paymentMethod, paymentDate,
+      payerId, fundingSource, paidInFullAcknowledged, paymentMethod, paymentDate,
       supportingIds, paymentIds,
     });
   }, [
     businessPurpose, companyId, consent, draftHydratedFor, draftScopeId, draftStep, missingReason,
-    paymentDate, paymentIds, paymentMethod, payeeAddress, payeeName, payeeTaxId, payerId,
+    paymentDate, paymentIds, paymentMethod, payeeAddress, payeeName, payeeTaxId, payerId, fundingSource, paidInFullAcknowledged,
     reasonCode, supportingIds, userId,
   ]);
 
@@ -1062,12 +1086,10 @@ export function SubstituteReceiptWizardPage({
     assertAllowed(payeeName, payeeAddress, missingReason, businessPurpose);
     const firstPayeeIssue = Object.values(payeeIdentityIssues)[0];
     if (firstPayeeIssue) throw new Error(t(PAYEE_ISSUE_KEYS[firstPayeeIssue], locale));
-    if (!missingReason.trim() || !businessPurpose.trim() || !payerId || !paymentDate) {
+    if (!missingReason.trim() || !businessPurpose.trim() || !paymentDate || !fundingSource || !paidInFullAcknowledged) {
       throw new Error(t('expenses.substitute_wizard.details_required', locale));
     }
-    if (!payers.some((payer) => payer.userId === payerId)) {
-      throw new Error(t('expenses.substitute_wizard.payer_required', locale));
-    }
+
     await updateExpenseReviewFields(companyId, detail.id, {
       expectedUpdatedAt: detail.updatedAt,
       missingReceiptReason: missingReason.trim(),
@@ -1123,10 +1145,11 @@ export function SubstituteReceiptWizardPage({
     assertAllowed(payeeName, payeeAddress, missingReason, businessPurpose);
     const firstPayeeIssue = Object.values(payeeIdentityIssues)[0];
     if (firstPayeeIssue) throw new Error(t(PAYEE_ISSUE_KEYS[firstPayeeIssue], locale));
-    if (!missingReason.trim() || !businessPurpose.trim() || !payerId || !paymentDate
-      || !payers.some((payer) => payer.userId === payerId)) {
+    if (!missingReason.trim() || !businessPurpose.trim() || !paymentDate || !signingMethod
+      || (signingMethod === 'DIGITAL' && (!payerId || !payers.some((payer) => payer.userId === payerId)))) {
       throw new Error(t('expenses.substitute_wizard.details_required', locale));
     }
+    if (!fundingSource || !paidInFullAcknowledged) throw new Error('เลือกเงินที่ใช้ชำระและยืนยันว่าจ่ายเต็มจำนวนแล้ว');
     if (!policy?.ready) throw new Error(t('expenses.substitute_wizard.policy_not_ready', locale));
     if (selectedEvidenceRenderabilityIssue) {
       throw new Error(evidenceRenderabilityIssueMessage(selectedEvidenceRenderabilityIssue, locale));
@@ -1138,7 +1161,9 @@ export function SubstituteReceiptWizardPage({
       reasonCode,
       missingReceiptReason: missingReason.trim(),
       businessPurpose: businessPurpose.trim(),
-      payerUserId: payerId,
+      signatureMode: signingMethod,
+      ...(signingMethod === 'DIGITAL' ? { payerUserId: payerId } : {}),
+      fundingSource, paidInFullAcknowledged: true,
       ...(payeeName.trim() ? { payeeName: payeeName.trim() } : {}),
       ...(payeeAddress.trim() ? { payeeAddress: payeeAddress.trim() } : {}),
       ...(payeeTaxId ? { payeeTaxId } : {}),
@@ -1252,7 +1277,6 @@ export function SubstituteReceiptWizardPage({
   const previewPrepared = async () => {
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
     assertAllowed(signerPosition);
-    if (!signerPosition.trim()) throw new Error(t('expenses.substitute_wizard.position_required', locale));
     const requestId = ++previewRequestRef.current;
     const requestScope = previewScopeRef.current;
     setPreviewChecksum(null);
@@ -1268,7 +1292,7 @@ export function SubstituteReceiptWizardPage({
       name: `${receiptEvidence.documentNumber} · ${t('expenses.substitute_wizard.preview_document', locale)}`,
       mimeType: 'image/svg+xml',
       url: result.svgDataUrl,
-      onViewed: () => setPreviewChecksum(result.previewChecksumSha256),
+      onViewed: () => { if (isPreviewRequestCurrent(requestId, requestScope)) setPreviewChecksum(result.previewChecksumSha256); },
     });
   };
 
@@ -1315,7 +1339,7 @@ export function SubstituteReceiptWizardPage({
         : receiptEvidence.documentNumber,
       mimeType: 'image/svg+xml',
       url,
-      ...(certified ? { onViewed: () => setCertifiedPreviewed(true) } : {}),
+      ...(certified ? { onViewed: () => { if (isPreviewRequestCurrent(requestId, requestScope)) setCertifiedPreviewed(true); } } : {}),
     });
   };
 
@@ -1323,6 +1347,12 @@ export function SubstituteReceiptWizardPage({
     if (!detail || !receiptEvidence) throw new Error(t('expenses.substitute_wizard.document_not_ready', locale));
     const requestId = ++previewRequestRef.current;
     const requestScope = previewScopeRef.current;
+    if (receiptEvidence.signatureMode === 'PAPER') {
+      const result = await previewIssuedSubstitutePaper(companyId, detail.id, receiptEvidence.id);
+      if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+      setPaperArtifactPreview(result);
+      return;
+    }
     let blob;
     try {
       blob = await fetchSubstituteReceiptPdfBlob(companyId, detail.id, receiptEvidence.id);
@@ -1424,7 +1454,9 @@ export function SubstituteReceiptWizardPage({
   const turn = receiptEvidence
     ? resolveSubstituteTurn({ status: receiptEvidence.status, payerUserId: receiptEvidence.payerUserId, userId, mayApprove })
     : null;
-  const turnLabel = !turn || turn.stage === 'done' ? null
+  const turnLabel = receiptEvidence?.status === 'PREPARED' && receiptEvidence.signatureMode === 'PAPER' && !receiptEvidence.payerUserId
+    ? receiptEvidence.paperSubmission ? 'รอตรวจรับฉบับลงนาม' : 'รออัปโหลดฉบับลงนาม'
+    : !turn || turn.stage === 'done' ? null
     : turn.mine ? t('expenses.substitute_wizard.turn_mine', locale)
       : turn.waitingFor === 'payer'
         ? t('expenses.substitute_wizard.waiting_payer', locale).replace('{name}', receiptEvidence?.payerName ?? '')
@@ -1442,7 +1474,7 @@ export function SubstituteReceiptWizardPage({
           {receiptEvidence.payeeTaxId && <p>{t('expenses.substitute_wizard.payee_tax_id', locale)}: {receiptEvidence.payeeTaxId}</p>}
           <p>{t(REASON_KEYS[receiptEvidence.reasonCode], locale)} · {receiptEvidence.missingReceiptReason}</p>
           <p>{receiptEvidence.businessPurpose}</p>
-          <p>{receiptEvidence.payerName} · {t(PAYMENT_KEYS[receiptEvidence.paymentMethod ?? 'CASH'], locale)} · {dateShort(receiptEvidence.paymentDate)}</p>
+          <p>{t('expenses.substitute_wizard.payer', locale)}: {receiptEvidence.payerName} · {t(PAYMENT_KEYS[receiptEvidence.paymentMethod ?? 'CASH'], locale)} · {dateShort(receiptEvidence.paymentDate)}</p>
         </MangmeeCard>
       );
     }
@@ -1874,8 +1906,8 @@ export function SubstituteReceiptWizardPage({
                     <summary className="min-h-11 cursor-pointer py-2 font-semibold underline underline-offset-2">{t('expenses.substitute_wizard.consent_more', locale)}</summary>
                     <p className="pb-2 leading-6">{t('expenses.substitute_wizard.consent_details', locale)}</p>
                   </details>
-                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold text-gray-800">
-                    <input className="mt-0.5 h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+                  <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-warning-200 bg-white p-3 text-sm font-semibold leading-6 text-gray-800">
+                    <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
                     <span>{t('expenses.substitute_wizard.consent_confirm', locale)}<RequiredMark /></span>
                   </label>
                 </div>
@@ -1907,13 +1939,14 @@ export function SubstituteReceiptWizardPage({
     businessPurpose,
     payerId,
     payerEligible: payers.some((payer) => payer.userId === payerId),
+    requirePayer: false,
     paymentDate,
   }) : null;
   const detailsStepReadinessItems = detailsReadiness ? [
     { label: t('expenses.substitute_wizard.payee_name', locale), complete: !detailsReadiness.missing.includes('payeeName') },
     { label: t('expenses.substitute_wizard.missing_reason', locale), complete: !detailsReadiness.missing.includes('missingReason') },
     { label: t('expenses.substitute_wizard.business_purpose', locale), complete: !detailsReadiness.missing.includes('businessPurpose') },
-    { label: t('expenses.substitute_wizard.payer', locale), complete: !detailsReadiness.missing.includes('payer') },
+    { label: 'เงินที่ใช้ชำระและยืนยันการจ่ายเต็มจำนวน', complete: Boolean(fundingSource && paidInFullAcknowledged) },
     { label: t('expenses.substitute_wizard.payment_date', locale), complete: !detailsReadiness.missing.includes('paymentDate') },
     ...(payeeAddress.trim() ? [{ label: t('expenses.substitute_wizard.payee_address', locale), complete: !detailsReadiness.missing.includes('payeeAddress') }] : []),
     ...(payeeTaxId.trim() ? [{ label: t('expenses.substitute_wizard.payee_tax_id', locale), complete: !detailsReadiness.missing.includes('payeeTaxId') }] : []),
@@ -2008,16 +2041,21 @@ export function SubstituteReceiptWizardPage({
                 </div>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
-                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
-                  <span className="mb-1 block">{t('expenses.substitute_wizard.payer', locale)}<RequiredMark /></span>
-                  <ThemedSelect className={inputClass} required value={payerId} aria-label={t('expenses.substitute_wizard.payer', locale)} onChange={(event) => setPayerId(event.target.value)} disabled={payersLoading}>
-                    <option value="">{t('expenses.substitute_wizard.select_payer', locale)}</option>
-                    {payers.map((payer) => <option key={payer.userId} value={payer.userId}>{payer.displayName}</option>)}
-                  </ThemedSelect>
-                  <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.payer_help', locale)}</span>
-                  {payersLoading && <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payers_loading', locale)}</p>}
-                  {!payersLoading && payers.length === 0 && <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-normal leading-5 text-warning-700">{t('expenses.substitute_wizard.payer_empty', locale)}</p>}
-                </label>
+<div className="space-y-3 sm:col-span-2">
+                  <label className="block text-sm font-semibold">ใช้เงินของใครชำระรายการนี้?
+                    <ThemedSelect className={inputClass} required aria-label="ใช้เงินของใครชำระรายการนี้?" value={fundingSource} onChange={(event) => { setFundingSource(event.target.value as typeof fundingSource); setPaidInFullAcknowledged(false); }}>
+                      <option value="">เลือกเงินที่ใช้ชำระ</option>
+                      <option value="COMPANY">เงินของ{policy?.companyName ?? 'บริษัท'} — จ่ายเต็มจำนวน</option>
+                      <option value="PERSONAL_ADVANCE">เงินส่วนตัวของพนักงาน — สำรองจ่ายเต็มจำนวน</option>
+                    </ThemedSelect>
+                  </label>
+                  <p className="text-sm text-gray-600">บริษัทในเอกสาร: {policy?.companyName ?? 'กำลังโหลดชื่อบริษัท'} <button type="button" className="underline" onClick={() => window.location.reload()}>โหลดข้อมูลล่าสุด</button></p>
+                  {policy?.companyNameSource === 'DISPLAY_NAME' && <p className="text-xs text-warning-700">ยังไม่มีชื่อจดทะเบียนที่บันทึกไว้ กรุณาตรวจข้อมูลบริษัทก่อนลงนาม</p>}
+                  {detail && <p className="text-sm text-gray-600">ยอดรวม {Number(detail.grandTotalAmount).toLocaleString('th-TH')} บาท · หัก ณ ที่จ่าย {Number(detail.whtAmount).toLocaleString('th-TH')} บาท · สุทธิจ่ายร้าน {Number(detail.netPayableAmount).toLocaleString('th-TH')} บาท{fundingSource === 'COMPANY' && (Number(detail.paidAmount) === 0 ? ' — เมื่อออกใบรับรองจะบันทึกการจ่ายเต็มยอดครั้งแรก' : Number(detail.outstandingAmount) <= 0 ? ' — บริษัทบันทึกจ่ายเต็มแล้ว จะไม่เพิ่มการจ่ายซ้ำ' : ' — มีการบันทึกจ่ายบางส่วนแล้ว ไม่รองรับในขั้นตอนนี้')}</p>}
+                  <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={paidInFullAcknowledged} onChange={event => setPaidInFullAcknowledged(event.target.checked)} /><span>ยืนยันว่าใช้เงินที่เลือกชำระเต็มจำนวนแล้ว ไม่มีการแบ่งจ่าย</span></label>
+                  {fundingSource === 'PERSONAL_ADVANCE' && <p className="text-sm text-gray-600">การออกใบรับรองยังไม่บันทึกว่าบริษัทจ่ายคืนให้พนักงาน</p>}
+                </div>
+
                 <label className="block text-sm font-semibold text-gray-700">
                   <span className="mb-1 block">{t('expenses.substitute_wizard.payment_method', locale)}<RequiredMark /></span>
                   <ThemedSelect className={inputClass} required value={paymentMethod} aria-label={t('expenses.substitute_wizard.payment_method', locale)} onChange={(event) => setPaymentMethod(event.target.value as ExpensePaymentMethod)}>
@@ -2035,7 +2073,7 @@ export function SubstituteReceiptWizardPage({
           <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => { setActiveStep('expense'); requestWorkflowFocus('selection'); }}>{t('expenses.substitute_wizard.back', locale)}</button>
             <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
-              <button type="button" className={btnClass} disabled={busy || payersLoading || detailsStepBlockers.length > 0} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
+              <button type="button" className={btnClass} disabled={busy || detailsStepBlockers.length > 0} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={detailsStepBlockers} />
             </div>
           </div>
@@ -2088,8 +2126,8 @@ export function SubstituteReceiptWizardPage({
                 'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition',
                 ids.includes(attachment.id) ? 'border-brand-200 bg-brand-25 text-gray-800' : 'border-gray-200 text-gray-600 hover:bg-gray-50',
               )}>
-                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                  <input className="h-4 w-4 accent-[var(--color-brand-600)]" type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => {
+                <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 leading-6">
+                  <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={ids.includes(attachment.id)} onChange={(event) => {
                     const nextIds = event.target.checked
                       ? [...new Set([...ids, attachment.id])]
                       : ids.filter((id) => id !== attachment.id);
@@ -2231,11 +2269,11 @@ export function SubstituteReceiptWizardPage({
           <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
             <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
-              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.prepare', locale)}</button>
+              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => setActiveStep('method')}>ถัดไป: เลือกวิธีลงนาม</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={evidenceStepBlockers} />
             </div>
           </div>
-          <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{t('expenses.substitute_wizard.next_step_certify', locale)}</p>
+          <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">เลือกลงนามออนไลน์ หรือพิมพ์ให้กรอกและเซ็นบนกระดาษ</p>
         </div>
         <ReadinessCard
           title={t('expenses.substitute_wizard.readiness_title', locale)}
@@ -2247,6 +2285,36 @@ export function SubstituteReceiptWizardPage({
       </div>
     </div>
   );
+
+  const renderMethodStep = () => <MangmeeCard className="space-y-5 p-5">
+    <h2 className="text-xl font-bold">เลือกวิธีลงนาม</h2>
+    <p className="text-sm text-gray-600">ข้อมูลและหลักฐานพร้อมแล้ว เลือกวิธีที่ผู้รับรองการจ่ายและผู้อนุมัติจะใช้กับเอกสารฉบับนี้</p>
+    <fieldset className="grid gap-4 sm:grid-cols-2"><legend className="sr-only">วิธีลงนาม</legend>
+      <label className={cx('cursor-pointer rounded-2xl border p-4', signingMethod === 'DIGITAL' ? 'border-brand-500 bg-brand-50' : 'border-gray-200')}>
+        <input type="radio" name="signing-method" value="DIGITAL" checked={signingMethod === 'DIGITAL'} onChange={() => setSigningMethod('DIGITAL')} /> <span className="font-bold">ลงนามออนไลน์</span>
+        <span className="mt-2 block text-sm">ผู้รับรองและผู้อนุมัติเข้าบัญชีของตนเองเพื่อตรวจและลงนาม</span>
+      </label>
+      <label className={cx('cursor-pointer rounded-2xl border p-4', signingMethod === 'PAPER' ? 'border-brand-500 bg-brand-50' : 'border-gray-200')}>
+        <input type="radio" name="signing-method" value="PAPER" checked={signingMethod === 'PAPER'} onChange={() => setSigningMethod('PAPER')} /> <span className="font-bold">พิมพ์และเซ็นบนกระดาษ</span>
+        <span className="mt-2 block text-sm">เว้นชื่อ ตำแหน่ง และลายเซ็นให้กรอกเอง รองรับคนไม่มีบัญชี จากนั้นอัปโหลดฉบับลงนามครบเพื่อตรวจรับ</span>
+      </label>
+    </fieldset>
+    {signingMethod === 'DIGITAL' && <div>                <label className="block text-sm font-semibold text-gray-700 sm:col-span-2">
+                  <span className="mb-1 block">{t('expenses.substitute_wizard.payer', locale)}<RequiredMark /></span>
+                  <ThemedSelect className={inputClass} required value={payerId} aria-label={t('expenses.substitute_wizard.payer', locale)} onChange={(event) => setPayerId(event.target.value)} disabled={payersLoading}>
+                    <option value="">{t('expenses.substitute_wizard.select_payer', locale)}</option>
+                    {payers.map((payer) => <option key={payer.userId} value={payer.userId}>{payer.displayName}</option>)}
+                  </ThemedSelect>
+                  <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.payer_help', locale)}</span>
+                  {fundingSource && <span className="mt-1 block text-xs font-normal text-gray-500">{t(fundingSource === 'COMPANY' ? 'expenses.substitute_wizard.company_payer_help' : 'expenses.substitute_wizard.personal_payer_help', locale)}</span>}
+                  {payersLoading && <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payers_loading', locale)}</p>}
+                  {!payersLoading && payers.length === 0 && <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-normal leading-5 text-warning-700">{t('expenses.substitute_wizard.payer_empty', locale)}</p>}
+                </label></div>}
+    {signingMethod === 'PAPER' && <p className="rounded-xl bg-sky-50 p-4 text-sm leading-6">กรอกชื่อและเซ็นทั้งผู้รับรองการจ่ายและผู้อนุมัติบนกระดาษให้ครบ ผู้จัดทำอัปโหลดแทนได้ ผู้มีสิทธิ์ของบริษัทจะตรวจรับอีกครั้งก่อนเป็นเอกสารฉบับสมบูรณ์</p>}
+    <div className="flex flex-wrap gap-3"><button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('evidence')}>ย้อนกลับ: หลักฐาน</button>
+      <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} onClick={() => void run(prepare)}>{!signingMethod ? 'เลือกวิธีลงนามก่อน' : signingMethod === 'PAPER' ? 'เตรียมแบบฟอร์มสำหรับเซ็นบนกระดาษ' : 'เริ่มลงนามออนไลน์'}</button></div>
+    <p className="text-xs text-gray-500">เมื่อเริ่มแล้ว ข้อมูลและวิธีลงนามจะถูกผูกกับเวอร์ชันนี้ หากต้องเปลี่ยนให้ยกเลิกและจัดทำเวอร์ชันใหม่</p>
+  </MangmeeCard>;
 
   const renderWaiting = (message: string) => (
     <div className="space-y-4">
@@ -2267,19 +2335,21 @@ export function SubstituteReceiptWizardPage({
 
   const renderCertifyStep = () => {
     if (!receiptEvidence) return null;
+    if (receiptEvidence.signatureMode === 'PAPER' && !receiptEvidence.payerUserId) return <SubstitutePaperSigningPanel key={receiptEvidence.id}
+      companyId={companyId} evidence={receiptEvidence} canPrepare={canReview} canAccept={mayApprove && policy?.canApproveForCompany !== false}
+      allowSamePerson={policy?.approvalMode === 'OWNER_SELF' && canSelfApprove}
+      onChange={(updated) => { setReceiptEvidence(updated); setActiveStep(resolveWizardStep(updated)); void getExpense(companyId, updated.expenseId).then(setDetail); }} />;
     if (receiptEvidence.payerUserId !== userId) {
       return renderWaiting(t('expenses.substitute_wizard.waiting_payer', locale).replace('{name}', receiptEvidence.payerName));
     }
     const signingReadiness = evaluateSigningReadiness({
-      position: signerPosition,
       previewed: Boolean(previewChecksum),
       signatureReady: paperSignature || signatureSource !== 'none',
       acknowledged: certificationAcknowledged,
     });
     const certifyItems = [
-      { label: t('expenses.substitute_wizard.payer_position', locale), complete: !signingReadiness.missing.includes('position') },
-      { label: t('expenses.substitute_wizard.preview_document', locale), complete: !signingReadiness.missing.includes('preview') },
       ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !signingReadiness.missing.includes('signature') }]),
+      { label: t('expenses.substitute_wizard.preview_document', locale), complete: !signingReadiness.missing.includes('preview') },
       { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !signingReadiness.missing.includes('acknowledgement') },
     ];
     const certifyBlockers = certifyItems.filter((item) => !item.complete).map((item) => item.label);
@@ -2306,28 +2376,24 @@ export function SubstituteReceiptWizardPage({
                 <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
               </div>
               <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
-                <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.payer_position', locale)}<RequiredMark /></span>
-                <input ref={signerPositionRef} className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setPreviewChecksum(null); }} />
+                <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.payer_position', locale)}</span>
+                <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={policy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
                 <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
               </label>
               <div className="rounded-2xl border border-gray-200 p-4">
+                <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
+                {paperSignature
+                  ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
+                  : <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
+              </div>
+              <div className="rounded-2xl border border-gray-200 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.preview_document', locale)}<RequiredMark /></p>
+                  <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.preview_document', locale)}<RequiredMark /></p>
                   {previewChecksum && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.preview_help', locale)}</p>
-                {/* W6: this button used to sit dead with no explanation while the readiness list
-                    still counted it as outstanding. It now names the field and jumps to it. */}
-                {!signerPosition.trim() && (
-                  <p className="mt-2 flex flex-wrap items-center gap-2 rounded-xl bg-warning-50 px-3 py-2 text-xs font-semibold leading-5 text-warning-700">
-                    <span>{t('expenses.substitute_wizard.preview_blocked_position', locale)}</span>
-                    <button type="button" className="font-extrabold text-brand-700 underline underline-offset-2" onClick={() => signerPositionRef.current?.focus()}>
-                      {t('expenses.substitute_wizard.go_to_position', locale)}
-                    </button>
-                  </p>
-                )}
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className={ghostClass} title={signerPosition.trim() ? undefined : t('expenses.substitute_wizard.preview_blocked_position', locale)} disabled={busy || !signerPosition.trim()} onClick={() => void run(previewPrepared)}>
+                  <button type="button" className={previewChecksum ? ghostClass : btnClass} disabled={busy} onClick={() => void run(previewPrepared)}>
                     <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
                   </button>
                   {/* R8: the printable route out of this step — same document, both signature boxes
@@ -2337,12 +2403,6 @@ export function SubstituteReceiptWizardPage({
                   </button>
                 </div>
                 <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.download_form_help', locale)}</p>
-              </div>
-              <div className="rounded-2xl border border-gray-200 p-4">
-                <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
-                {paperSignature
-                  ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
-                  : <SignatureFields key="certify" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
               </div>
               <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
                 <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
@@ -2371,15 +2431,13 @@ export function SubstituteReceiptWizardPage({
     if (!receiptEvidence) return null;
     if (!mayApprove) return renderWaiting(t('expenses.substitute_wizard.waiting_approver', locale));
     const approvalReadiness = evaluateSigningReadiness({
-      position: signerPosition,
       previewed: certifiedPreviewed,
       signatureReady: paperSignature || signatureSource !== 'none',
       acknowledged: approvalAcknowledged,
     });
     const approveItems = [
-      { label: t('expenses.substitute_wizard.open_certified', locale), complete: !approvalReadiness.missing.includes('preview') },
-      { label: t('expenses.substitute_wizard.approver_position', locale), complete: !approvalReadiness.missing.includes('position') },
       ...(paperSignature ? [] : [{ label: t('expenses.substitute_wizard.signature_title', locale), complete: !approvalReadiness.missing.includes('signature') }]),
+      { label: t('expenses.substitute_wizard.open_certified', locale), complete: !approvalReadiness.missing.includes('preview') },
       { label: t('expenses.substitute_wizard.acknowledgement_short', locale), complete: !approvalReadiness.missing.includes('acknowledgement') },
     ];
     const approveBlockers = approveItems.filter((item) => !item.complete).map((item) => item.label);
@@ -2404,29 +2462,29 @@ export function SubstituteReceiptWizardPage({
               </div>
               <RequiredLegend label={t('expenses.substitute_wizard.required_legend', locale)} />
             </div>
+            <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
+              <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.approver_position', locale)}</span>
+              {/* Same rule as the payer step: editing the position invalidates the reviewed badge. */}
+              <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={policy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
+              <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
+            </label>
+            <div className="rounded-2xl border border-gray-200 p-4">
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
+              {paperSignature
+                ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
+                : <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
+            </div>
             <div className="rounded-2xl border border-gray-200 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">1</span>{t('expenses.substitute_wizard.open_certified', locale)}<RequiredMark /></p>
+                <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.open_certified', locale)}<RequiredMark /></p>
                 {certifiedPreviewed && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
               </div>
-              <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
+              <button type="button" className={cx(certifiedPreviewed ? ghostClass : btnClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_certified', locale)}</span>
               </button>
               {!receiptEvidence.certifiedArtifactAttachmentId && (
                 <p className="mt-2 text-xs font-semibold leading-5 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
               )}
-            </div>
-            <label className="block rounded-2xl border border-gray-200 p-4 text-sm font-semibold text-gray-700">
-              <span className="mb-1 flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">2</span>{t('expenses.substitute_wizard.approver_position', locale)}<RequiredMark /></span>
-              {/* Same rule as the payer step: editing the position invalidates the reviewed badge. */}
-              <input ref={signerPositionRef} className={inputClass} required maxLength={120} value={signerPosition} onChange={(event) => { setSignerPosition(stripDisallowed(event.target.value)); setCertifiedPreviewed(false); }} />
-              <span className="mt-1 block text-xs font-normal text-gray-500">{t('expenses.substitute_wizard.position_help', locale)}</span>
-            </label>
-            <div className="rounded-2xl border border-gray-200 p-4">
-              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.signature_title', locale)}{!paperSignature && <RequiredMark />}</p>
-              {paperSignature
-                ? <p className="text-sm leading-6 text-gray-600">{t('expenses.substitute_wizard.paper_signature_notice', locale)}</p>
-                : <SignatureFields key="approve" signatureFile={signatureFile} signaturePreview={signaturePreview} busy={busy} savedSignatureAvailable={policy?.hasReusableSignature ?? false} savedSignatureUsed={signatureSource === 'signature_library'} savedSignaturePreviewUrl={policy?.reusableSignaturePreviewUrl ?? null} onSelect={selectSignatureFile} onDrawChange={setSignatureDrawn} onClean={() => void run(buildTransparentSignature)} onDrawn={selectDrawnSignature} />}
             </div>
             <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
               <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={approvalAcknowledged} onChange={(event) => setApprovalAcknowledged(event.target.checked)} />
@@ -2458,7 +2516,7 @@ export function SubstituteReceiptWizardPage({
             {t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_hub.status_issued' : 'expenses.substitute_hub.status_superseded', locale)}
           </MangmeeBadge>
           <h2 className="mt-4 text-2xl font-extrabold tracking-tight text-gray-900">{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_title' : 'expenses.substitute_hub.status_superseded', locale)}</h2>
-          <p className="mt-2 text-sm leading-6 text-gray-600">{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_help' : 'expenses.substitute_wizard.superseded', locale)}</p>
+          <p className="mt-2 text-sm leading-6 text-gray-600">{receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' ? 'จัดเก็บใบรับรองพร้อมลายมือชื่อแล้ว เอกสารระบุว่าพนักงานใช้เงินส่วนตัวจ่ายเต็มจำนวน' : t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.done_help' : 'expenses.substitute_wizard.superseded', locale)}</p>
           <p className="mx-auto mt-4 w-fit rounded-xl border border-brand-100 bg-white px-4 py-2 font-mono text-lg font-extrabold text-gray-900 shadow-sm">{receiptEvidence.documentNumber}</p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             {receiptEvidence.artifactAttachmentId && (
@@ -2471,7 +2529,7 @@ export function SubstituteReceiptWizardPage({
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}</span>
               </button>
             )}
-            <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t(receiptEvidence.status === 'ISSUED' ? 'expenses.substitute_wizard.back_to_expense' : 'expenses.substitute_wizard.view_expense', locale)}</Link>
+            <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>{t(receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource !== 'PERSONAL_ADVANCE' ? 'expenses.substitute_wizard.back_to_expense' : 'expenses.substitute_wizard.view_expense', locale)}</Link>
           </div>
           {/* The issued file is offered only once it exists; when it does not, say so rather than
               leaving the row of actions one button short with no explanation. */}
@@ -2479,7 +2537,8 @@ export function SubstituteReceiptWizardPage({
             <p className="mt-4 text-sm font-semibold leading-6 text-warning-700">{t('expenses.substitute_wizard.document_not_ready', locale)}</p>
           )}
         </div>
-        {receiptEvidence.status === 'ISSUED' && <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
+        {receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource === 'PERSONAL_ADVANCE' && <div className="border-t border-gray-100 p-5"><p className="text-sm">ใบรับรองระบุว่าพนักงานจ่ายร้านเต็มจำนวนแล้ว การออกใบรับรองยังไม่ถือว่าบริษัทจ่ายคืนให้พนักงาน</p></div>}
+        {receiptEvidence.status === 'ISSUED' && receiptEvidence.fundingSource !== 'PERSONAL_ADVANCE' && <div className="grid gap-px border-t border-gray-100 bg-gray-100 text-left sm:grid-cols-3">
           {([
             ['1', 'expenses.substitute_wizard.done_next_store'],
             ['2', 'expenses.substitute_wizard.done_next_confirm'],
@@ -2497,8 +2556,11 @@ export function SubstituteReceiptWizardPage({
 
   // A prepared/certified version may also need correction before anyone can safely sign it.
   // Keep the existing permission, source-state and reason guards on every wizard stage.
+  const canChangePayer = canReview && receiptEvidence && !receiptEvidence.correctionOfEvidenceId
+    && ['PREPARED', 'PAYER_CERTIFIED'].includes(receiptEvidence.status)
+    && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
   const renderVersionHistory = () => receiptEvidence && detail && (
-      <details className="rounded-2xl border border-gray-200 bg-white p-4">
+      <details ref={versionHistoryRef} className="rounded-2xl border border-gray-200 bg-white p-4">
         <summary className="cursor-pointer font-bold text-gray-900">{t('expenses.substitute_wizard.history_title', locale)}</summary>
         <div className="mt-4 space-y-3">
           <ul className="space-y-2 text-sm text-gray-600">
@@ -2509,23 +2571,35 @@ export function SubstituteReceiptWizardPage({
               </li>
             ))}
           </ul>
-          {canReview && receiptEvidence.status !== 'SUPERSEDED' && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && (
+          {canReview && receiptEvidence.status === 'ISSUED' && detail.status !== 'VOIDED' && <div className="space-y-2 border-t border-gray-100 pt-3">
+            <label className="block text-sm font-semibold">เหตุผลแก้ชื่อบริษัทหรือตำแหน่ง
+              <textarea className={inputClass} maxLength={500} value={supersedeReason} onChange={event => setSupersedeReason(stripDisallowed(event.target.value))} />
+            </label>
+            <p className="text-xs text-gray-600">คงเอกสารเดิม ยอดจ่าย และบัญชีไว้ ผู้ลงนามเดิมตรวจและลงนามฉบับแก้อีกครั้ง</p>
+            <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(async () => {
+              const next = await correctSubstituteDocument(companyId, detail.id, receiptEvidence.id, { reason: supersedeReason.trim(), expectedEvidenceUpdatedAt: receiptEvidence.updatedAt });
+              setReceiptEvidence(next); setActiveStep('certify'); setSignerPosition('');
+              router.push(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(next.id)}`);
+            })}>แก้เฉพาะชื่อ/ตำแหน่ง</button>
+          </div>}
+          {canReview && receiptEvidence.status !== 'SUPERSEDED' && (['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) || (receiptEvidence.correctionOfEvidenceId && receiptEvidence.status !== 'ISSUED')) && (
             <div className="space-y-2 border-t border-gray-100 pt-3">
+              {canChangePayer && <p className="text-sm text-gray-600">{receiptEvidence.signatureMode === 'PAPER' && !receiptEvidence.payerUserId ? 'เมื่อต้องแก้ข้อมูล เปลี่ยนไฟล์ หรือเปลี่ยนวิธีลงนาม ให้ยกเลิกเวอร์ชันนี้ก่อนและจัดทำใหม่' : t('expenses.substitute_wizard.change_payer_help', locale)}</p>}
               <label className="block text-sm font-semibold text-gray-700">
                 <span className="mb-1 block">{t('expenses.substitute_wizard.supersede_reason', locale)}<RequiredMark /></span>
-                <textarea className={inputClass} required rows={3} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} />
+                <textarea ref={supersedeReasonRef} className={inputClass} required rows={3} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} />
               </label>
               <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(supersede)}>{t('expenses.substitute_wizard.supersede_action', locale)}</button>
             </div>
           )}
           {canReview && receiptEvidence.status === 'SUPERSEDED' && (
             <button type="button" className={btnClass} onClick={() => {
-              const previousPayerId = receiptEvidence.payerUserId;
-              initializeDraft(detail);
-              setPayerId(previousPayerId);
+              setPayerId('');
+              setPaidInFullAcknowledged(false);
               setReceiptEvidence(null);
               setConsent(true);
               setActiveStep('details');
+              requestWorkflowFocus('details');
             }}>{t('expenses.substitute_wizard.create_revision', locale)}</button>
           )}
         </div>
@@ -2537,6 +2611,7 @@ export function SubstituteReceiptWizardPage({
   else if (activeStep === 'expense') content = renderExpenseStep();
   else if (activeStep === 'details') content = renderDetailsStep();
   else if (activeStep === 'evidence') content = renderEvidenceStep();
+  else if (activeStep === 'method') content = renderMethodStep();
   else if (activeStep === 'certify') content = renderCertifyStep();
   else if (activeStep === 'approve') content = renderApproveStep();
   else content = renderDoneStep();
@@ -2583,11 +2658,25 @@ export function SubstituteReceiptWizardPage({
                 }))}
               />
             </MangmeeCard>
+            {receiptEvidence && receiptEvidence.payerUserId && ['PREPARED', 'PAYER_CERTIFIED'].includes(receiptEvidence.status) && (
+              <MangmeeCard className="space-y-2 p-4">
+                <p className="font-bold text-gray-900">{t('expenses.substitute_wizard.payer', locale)}: {receiptEvidence.payerName}</p>
+                <p className="text-sm text-gray-600">{t('expenses.substitute_wizard.payer_help', locale)}</p>
+                {canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={() => {
+                  if (versionHistoryRef.current) versionHistoryRef.current.open = true;
+                  supersedeReasonRef.current?.scrollIntoView({ block: 'center' });
+                  supersedeReasonRef.current?.focus({ preventScroll: true });
+                }}>{t('expenses.substitute_wizard.change_payer', locale)}</button>}
+              </MangmeeCard>
+            )}
             {content}
             {renderVersionHistory()}
           </div>
         )}
       </MangmeePage>
+      {paperArtifactPreview && receiptEvidence && <SubstitutePaperDocumentPreview
+        key={paperArtifactPreview.previewChecksumSha256} documentNumber={receiptEvidence.documentNumber}
+        preview={paperArtifactPreview} onClose={closePreview} />}
       {preview && <DocumentPreviewModal
         source={preview}
         closeLabel={t('expenses.close', locale)}

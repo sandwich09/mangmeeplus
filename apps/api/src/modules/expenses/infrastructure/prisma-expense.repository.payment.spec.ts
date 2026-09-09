@@ -32,6 +32,8 @@ function harness(overrides: Record<string, unknown> = {}) {
     $transaction: async (work: (tx: any) => Promise<unknown>) => {
       const draft = structuredClone(state);
       const tx = {
+        attachmentLink: { findMany: async () => [] },
+        expenseSubstituteReceiptEvidence: { findFirst: async () => null },
         $executeRaw: async () => 0,
         expenseRecord: {
           findFirst: async ({ where }: any) => where.companyId === draft.expense.companyId && where.id === draft.expense.id ? draft.expense : null,

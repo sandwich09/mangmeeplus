@@ -434,6 +434,19 @@ body {
     box-shadow 0.2s ease;
 }
 
+/* Hide native number steppers app-wide, including plain inputs and modal fields.
+   Keep type="number" so numeric validation and keyboard entry still work. */
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 /* iOS Safari auto-zooms any focused text control below 16px. Below sm, force the
    16px floor on EVERY text-entry control — !important on purpose so feature-local
    utilities (text-sm, text-[15px]) cannot reintroduce the zoom. Media-scoped, so

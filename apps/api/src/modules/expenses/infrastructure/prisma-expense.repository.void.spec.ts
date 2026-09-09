@@ -100,6 +100,8 @@ function fakeClient(seed: {
     taxPeriod: table(s.taxPeriods),
     journalEntry,
     expenseSubstituteReceiptEvidence: table(s.substituteEvidence),
+    attachmentLink: table([]),
+    reimbursementLine: table([]),
     documentNumber: table(s.documentNumbers),
   };
 }

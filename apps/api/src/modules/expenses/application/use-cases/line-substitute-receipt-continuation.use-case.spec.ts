@@ -226,7 +226,7 @@ async function readyHarness(overrides: Parameters<typeof harness>[0] = {}) {
     ...overrides,
   });
   const asked = await h.useCase.execute(ctx(), {
-    messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+    messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน', chatKeyHash: 'chat-hash',
     recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
   });
   return { ...h, asked };
@@ -358,7 +358,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       }),
     });
     const asked = await h.useCase.execute(ctx(), {
-      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
     });
     assert.equal(asked.status, 'BLOCKED');
@@ -384,7 +384,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       }),
     });
     const asked = await h.useCase.execute(ctx(), {
-      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
     assert.deepEqual(asked.blockers.map((item) => item.code), ['supporting_evidence_required']);
@@ -485,7 +485,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
         'หมวด: ค่าเดินทาง',
         'ชำระด้วยเงินสด',
         'วันที่จ่าย: 15 สิงหาคม 2569',
-        'ฉันเป็นผู้จ่าย',
+        'ฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
         'ไม่มีใบเสร็จ',
       ].join('\n'),
       chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE,
@@ -496,7 +496,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.match(result.replyText, /• ยอดเงิน: 50/);
     assert.match(result.replyText, /• หมวดค่าใช้จ่าย: ค่าเดินทาง/, 'a typed category is resolved to its name, not dropped');
     assert.match(result.replyText, /• วิธีชำระเงิน: เงินสด/);
-    assert.match(result.replyText, /• ผู้จ่ายเงินจริง: คุณ \(ผู้ส่งข้อความ\)/);
+    assert.match(result.replyText, /• ผู้ดำเนินการจ่ายและรับรอง: คุณ \(ผู้ส่งข้อความ\)/);
     assert.match(result.replyText, /• กรณีที่ใช้ใบเสร็จเดิมไม่ได้: ไม่มีใบเสร็จ\/ใบเสร็จหาย/);
     assert.match(result.replyText, /• วันที่ชำระเงินจริง: 15 ส\.ค\. 2569/);
     assert.equal(/^• .*: *$/mu.test(result.replyText), false, 'no echoed bullet is left dangling without a value');
@@ -575,10 +575,13 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       'no bare relative tenant path survives once the absolute links are stripped');
 
     const withoutBase = harness();
+    const savedWebBase = process.env.WEB_BASE_URL;
+    delete process.env.WEB_BASE_URL;
     const relative = await withoutBase.useCase.execute(ctx(), {
       messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
+    if (savedWebBase !== undefined) process.env.WEB_BASE_URL = savedWebBase;
     assert.ok(relative.webPath?.startsWith('/companies/company-1/'), 'an unset base degrades to the relative path');
     assert.equal(relative.replyText.includes('http'), false);
   });
@@ -597,7 +600,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
         'เหตุผล: ร้านค้าไม่สามารถออกใบเสร็จได้',
         'วัตถุประสงค์: เดินทางไปพบลูกค้า',
         'ผู้รับเงิน: ร้านรถเช่า เอ',
-        'ฉันเป็นผู้จ่าย',
+        'ฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
         'วันที่จ่าย: 15 สิงหาคม 2569',
         'ชำระด้วยเงินสด',
       ].join('\n'),
@@ -642,7 +645,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     const openToMissingReason = async () => {
       const h = harness();
       await h.useCase.execute(ctx(), {
-        messageText: 'ทำใบรับรองแทนใบเสร็จ', chatKeyHash: 'chat-hash',
+        messageText: 'ทำใบรับรองแทนใบเสร็จ บริษัทจ่ายเต็มจำนวน', chatKeyHash: 'chat-hash',
         recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
       });
       await h.useCase.execute(ctx(), { messageText: 'ใบเสร็จหาย', chatKeyHash: 'chat-hash', recentCandidates: [] });
@@ -808,7 +811,7 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       }),
     });
     const result = await h.useCase.execute(ctx(), {
-      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย',
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
       chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }],
     });
@@ -1704,7 +1707,7 @@ describe('LINE substitute-receipt incoming media (spec §11, R10)', () => {
       }),
     });
     const asked = await h.useCase.execute(ctx(), {
-      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash',
+      messageText: 'ไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน', chatKeyHash: 'chat-hash',
       recentCandidates: [{ id: 'expense-1', label: 'โน้ตค่าใช้จ่าย · 200.00' }], webBaseUrl: WEB_BASE,
     });
     assert.ok(asked.blockers.some((item) => item.code === 'supporting_evidence_required'));
@@ -1937,7 +1940,7 @@ describe('B1 — the expense category is a collectable field, asked in Thai', ()
       'ไม่มีใบเสร็จ',
       'เหตุผล: วินมอเตอร์ไซค์ไม่ออกใบเสร็จให้',
       'วัตถุประสงค์: ไปพบลูกค้า',
-      'ฉันเป็นผู้จ่าย',
+      'ฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
     ]) {
       await h.useCase.execute(ctx(), { messageText, chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     }
@@ -1986,7 +1989,7 @@ describe('B2 — the capture-time missing-receipt marker is never an answer and 
       const h = harness({ expense: captured(marker), signature: { id: 'signature-1' } });
 
       const started = await h.useCase.execute(ctx(), {
-        messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน\nไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย',
+        messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน\nไม่มีใบเสร็จ\nวัตถุประสงค์: ไปพบลูกค้า\nฉันเป็นผู้จ่าย บริษัทจ่ายเต็มจำนวน',
         chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'x' }], webBaseUrl: WEB_BASE,
       });
 
@@ -2306,4 +2309,29 @@ describe('isCanonicalSubstituteStart – anchored explicit-start predicate (NFC-
       assert.equal(isCanonicalSubstituteStart(s), false, s);
     }
   });
+});
+
+describe('full funding declarations', () => {
+  it('a human payer alone never implies the funding source', async () => {
+    const h = harness();
+    const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองแทนใบเสร็จ ฉันเป็นผู้จ่าย', chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'ค่าใช้จ่าย' }] });
+    assert.ok(result.blockers.some(b => b.code === 'funding_source_required'));
+    assert.equal(h.prepares.length, 0);
+  });
+  for (const text of ['ฉันสำรองจ่ายเต็มจำนวน', 'บริษัทจ่ายเต็มจำนวน']) {
+    it(`accepts an explicit full source: ${text}`, async () => {
+      const h = harness();
+      const result = await h.useCase.execute(ctx(), { messageText: `ทำใบรับรองแทนใบเสร็จ ${text}`, chatKeyHash: 'chat-hash', recentCandidates: [{ id: 'expense-1', label: 'ค่าใช้จ่าย' }] });
+      assert.equal(result.blockers.some(b => b.code === 'funding_source_required'), false);
+      assert.doesNotMatch(result.replyText, /COMPANY|PERSONAL_ADVANCE|: true/);
+    });
+  }
+  for (const text of ['จ่ายบางส่วน', 'พนักงานสองคนหารจ่าย', 'บริษัทจ่ายเต็มจำนวน ฉันจ่ายเต็มจำนวน']) {
+    it(`revokes a prior full declaration when the user corrects it: ${text}`, async () => {
+      const h = await readyHarness();
+      const result = await h.useCase.execute(ctx(), { messageText: text, chatKeyHash: 'chat-hash', recentCandidates: [] });
+      assert.ok(result.blockers.some(b => b.code === 'funding_source_required'));
+      assert.equal(h.prepares.length, 0);
+    });
+  }
 });

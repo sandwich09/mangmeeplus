@@ -64,7 +64,7 @@ describe('accountant index is independent of expense capture mode', () => {
     // consumer's offsets intact — the point of the original assertion. Slice A's
     // `document_date_status` sorts after this one by name, so the pair sits at the tail in that
     // order and nothing before them moved.
-    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-2), ['additional_charges_amount', 'document_date_status']);
+    assert.deepEqual(ACCOUNTANT_INDEX_COLUMNS.slice(-5, -3), ['additional_charges_amount', 'document_date_status']);
   });
 
   it('writes the CSV in the full fixed column order, tax columns included', () => {

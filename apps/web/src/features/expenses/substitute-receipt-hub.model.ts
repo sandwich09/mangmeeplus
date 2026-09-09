@@ -28,7 +28,7 @@ export function buildSubstituteReceiptHubModel(
   const waitingForSignature = items.filter(
     (item) => item.status === 'PREPARED' && item.payerUserId === input.userId,
   );
-  const waitingForApproval = items.filter((item) => item.status === 'PAYER_CERTIFIED'
+  const waitingForApproval = items.filter((item) => (item.status === 'PAYER_CERTIFIED' || (item.status === 'PREPARED' && Boolean(item.paperSubmission)))
     && mayApproveSubstituteReceipt({
       userId: input.userId,
       payerUserId: item.payerUserId,
@@ -47,8 +47,8 @@ export function buildSubstituteReceiptHubModel(
       (sum, item) => sum + (Number(item.grandTotalAmount) || 0),
       0,
     ),
-    awaitingSignatureCount: items.filter((item) => item.status === 'PREPARED').length,
-    awaitingApprovalCount: items.filter((item) => item.status === 'PAYER_CERTIFIED').length,
+    awaitingSignatureCount: items.filter((item) => item.status === 'PREPARED' && !item.paperSubmission).length,
+    awaitingApprovalCount: items.filter((item) => (item.status === 'PAYER_CERTIFIED' || (item.status === 'PREPARED' && Boolean(item.paperSubmission)))).length,
     supersededCount: items.filter((item) => item.status === 'SUPERSEDED').length,
   };
 }

@@ -29,6 +29,7 @@ import {
   ListAllExpenseCategoriesUseCase,
 } from './application/use-cases/expense-document.use-case';
 import {
+  PaperSubstituteReceiptUseCase,
   ApproveSubstituteReceiptUseCase,
   CertifySubstituteReceiptUseCase,
   CompleteSubstituteSignatureUploadUseCase,
@@ -113,6 +114,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     PrepareSubstituteReceiptUseCase,
     PreviewSubstituteReceiptUseCase,
     CertifySubstituteReceiptUseCase,
+    PaperSubstituteReceiptUseCase,
     ApproveSubstituteReceiptUseCase,
     ListSubstituteReceiptHistoryUseCase,
     ListSubstituteReceiptPayersUseCase,

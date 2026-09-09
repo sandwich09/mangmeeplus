@@ -9,7 +9,7 @@ import {
   type SubstituteReceiptReasonCode,
 } from '@watchdog-bms/contracts';
 
-export type WizardStep = 'expense' | 'details' | 'evidence' | 'certify' | 'approve' | 'done';
+export type WizardStep = 'expense' | 'details' | 'evidence' | 'method' | 'certify' | 'approve' | 'done';
 export type WizardEntryMode = 'existing' | 'new';
 export type WizardJourneyStage = 'expense' | 'prepare' | 'sign' | 'done';
 
@@ -76,7 +76,7 @@ export type DetailsReadinessIssue =
 export type EvidenceReadinessIssue = 'policy' | 'paymentEvidence' | 'renderability';
 export type SubstituteReceiptRenderabilityIssue = 'too_many_lines' | 'line_description_too_long';
 export type SubstituteReceiptEvidenceRenderabilityIssue = 'too_many_evidence' | 'evidence_filename_too_long';
-export type SigningReadinessIssue = 'position' | 'preview' | 'signature' | 'acknowledgement';
+export type SigningReadinessIssue = 'preview' | 'signature' | 'acknowledgement';
 
 export type PayeeIdentityIssue =
   | 'payee_name_required'
@@ -90,6 +90,7 @@ const JOURNEY_STAGE_BY_STEP: Record<WizardStep, WizardJourneyStage> = {
   expense: 'expense',
   details: 'prepare',
   evidence: 'prepare',
+  method: 'sign',
   certify: 'sign',
   approve: 'sign',
   done: 'done',
@@ -279,6 +280,7 @@ export function evaluateDetailsReadiness(input: {
   businessPurpose: string;
   payerId: string;
   payerEligible: boolean;
+  requirePayer?: boolean;
   paymentDate: string;
 }): WizardReadiness<DetailsReadinessIssue> {
   const identityIssues = validatePayeeIdentity(input);
@@ -288,7 +290,7 @@ export function evaluateDetailsReadiness(input: {
   if (identityIssues.payeeTaxId) missing.push('payeeTaxId');
   if (!input.missingReason.trim()) missing.push('missingReason');
   if (!input.businessPurpose.trim()) missing.push('businessPurpose');
-  if (!input.payerId.trim() || !input.payerEligible) missing.push('payer');
+  if (input.requirePayer !== false && (!input.payerId.trim() || !input.payerEligible)) missing.push('payer');
   if (!input.paymentDate.trim()) missing.push('paymentDate');
   return readiness(missing);
 }
@@ -325,13 +327,11 @@ export function resolveWizardSignatureSource(input: {
 }
 
 export function evaluateSigningReadiness(input: {
-  position: string;
   previewed: boolean;
   signatureReady: boolean;
   acknowledged: boolean;
 }): WizardReadiness<SigningReadinessIssue> {
   const missing: SigningReadinessIssue[] = [];
-  if (!input.position.trim()) missing.push('position');
   if (!input.previewed) missing.push('preview');
   if (!input.signatureReady) missing.push('signature');
   if (!input.acknowledged) missing.push('acknowledgement');
@@ -351,7 +351,7 @@ export function hasSelfApprovalExemptRole(roles: readonly string[] | undefined):
 
 export function mayApproveSubstituteReceipt(input: {
   userId: string;
-  payerUserId: string;
+  payerUserId: string | null;
   canConfirm: boolean;
   canSelfApprove: boolean;
   approvalMode: SubstituteReceiptApprovalMode | null | undefined;
@@ -384,7 +384,7 @@ export type SubstituteTurn = {
 
 export function resolveSubstituteTurn(input: {
   status: SubstituteReceiptEvidenceStatus;
-  payerUserId: string;
+  payerUserId: string | null;
   userId: string;
   mayApprove: boolean;
 }): SubstituteTurn {
@@ -430,6 +430,8 @@ export const SUBSTITUTE_WIZARD_DRAFT_VERSION = 1;
 export type SubstituteWizardDraftStep = Extract<WizardStep, 'expense' | 'details' | 'evidence'>;
 
 export type SubstituteWizardDraft = {
+  fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | '';
+  paidInFullAcknowledged?: boolean;
   step: SubstituteWizardDraftStep;
   consent: boolean;
   reasonCode: SubstituteReceiptReasonCode;
@@ -505,6 +507,8 @@ export function parseSubstituteWizardDraft(
     payeeName: textField(values['payeeName']),
     payeeAddress: textField(values['payeeAddress']),
     payeeTaxId: textField(values['payeeTaxId']),
+    fundingSource: values['fundingSource'] === 'COMPANY' || values['fundingSource'] === 'PERSONAL_ADVANCE' ? values['fundingSource'] : '',
+    paidInFullAcknowledged: values['paidInFullAcknowledged'] === true,
     payerId: textField(values['payerId']),
     paymentMethod: DRAFT_PAYMENT_METHODS.find((method) => method === values['paymentMethod']) ?? 'CASH',
     paymentDate: textField(values['paymentDate']),

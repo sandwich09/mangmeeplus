@@ -1,3 +1,5 @@
+import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
+import { assertFullSubstitutePayment } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -257,6 +259,7 @@ function mapSignatureAsset(s: any): SignatureAssetRecord {
 function mapSubstituteEvidence(row: any): SubstituteReceiptEvidenceRecord {
   return {
     ...row,
+    fundingSource: row.fundingSource ?? null,
     snapshotJson: row.snapshotJson ?? null,
     paymentEvidenceAttachmentIds: Array.isArray(row.paymentEvidenceAttachmentIds) ? row.paymentEvidenceAttachmentIds : [],
     supportingAttachmentIds: Array.isArray(row.supportingAttachmentIds) ? row.supportingAttachmentIds : [],
@@ -267,6 +270,8 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
   return {
     id: row.id,
     expenseId: row.expenseId,
+    fundingSource: row.fundingSource ?? null,
+    correctionOfEvidenceId: row.correctionOfEvidenceId ?? null, correctionReason: row.correctionReason ?? null,
     version: row.version,
     status: row.status,
     documentNumber: row.documentNumber,
@@ -300,6 +305,9 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
     issuedAt: row.issuedAt?.toISOString() ?? null,
     supersedeReason: row.supersedeReason,
     signatureMode: row.signatureMode,
+    paperFormPrepared: Boolean(row.paperFormSnapshotJson),
+    paperSubmission: row.paperSubmissionJson ?? null,
+    paperReviewedByUserId: row.paperReviewedByUserId ?? null,
     wetSignedScanAttachmentId: row.wetSignedScanAttachmentId,
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -351,6 +359,8 @@ export class PrismaExpenseRepository {
       // Key first: conflicting uses on different expenses must serialize too. ReadCommitted
       // sees the first writer's committed row after waiting; Serializable can keep a stale snapshot.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.idempotencyKey}:expense-payment-command`}))`;
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      await assertFundingMutation(tx, input.companyId, input.expenseId, 'payment');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:expense-record-lifecycle`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
       if (!current) throw new NotFoundException(`Expense ${input.expenseId} not found`);
@@ -809,7 +819,7 @@ export class PrismaExpenseRepository {
           id: true,
           expenseId: true,
           documentNumber: true,
-          version: true,
+          version: true, fundingSource: true, signatureMode: true, paperSubmissionJson: true, paperReviewedByUserId: true,
           status: true,
           paymentDate: true,
           payeeName: true,
@@ -871,6 +881,7 @@ export class PrismaExpenseRepository {
       if (rest[f] !== undefined) data[f] = rest[f];
     }
     return this.runInTx(db, async (tx: any) => {
+      await lockExpenseFunding(tx, companyId, id);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${id}:substitute-receipt`}))`;
       // `vendorEntityKindSnapshot` is deliberately NOT material. The payee taxpayer class is never
       // printed on the ใบรับรองแทนใบเสร็จ artifact (`substitute-receipt.logic.ts`), so locking it buys
@@ -969,6 +980,8 @@ export class PrismaExpenseRepository {
   }): Promise<import('@watchdog-bms/contracts').SubstituteReceiptEvidenceSummary> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: {
@@ -977,8 +990,10 @@ export class PrismaExpenseRepository {
         },
       });
       if (!evidence) throw new ConflictException({ code: 'substitute_evidence_stale', message: 'Substitute evidence changed. Reload before cancelling or correcting it.' });
+      if (!evidence.correctionOfEvidenceId) await assertFundingMutation(tx, input.companyId, input.expenseId, 'supersede');
+      if (evidence.correctionOfEvidenceId && evidence.status === 'ISSUED') throw new ConflictException('Create a new document correction instead of cancelling the issued correction.');
       const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
-      if (!expense || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
+      if (!expense || (!evidence.correctionOfEvidenceId && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status))) {
         throw new ConflictException({ code: 'substitute_evidence_expense_confirmed', message: 'Only an unconfirmed expense can cancel or replace substitute evidence.' });
       }
       const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
@@ -987,33 +1002,22 @@ export class PrismaExpenseRepository {
       });
       if (changed.count !== 1) throw new ConflictException({ code: 'substitute_evidence_stale', message: 'Substitute evidence changed while superseding.' });
       if (evidence.status === 'ISSUED') {
-        // Issuing marked the expense PAID and recorded a payment (issueSubstituteEvidence);
-        // superseding the certificate must take both back. The expense is still unconfirmed
-        // here, so its payments can only have come from issuance and are never posted —
-        // voiding them needs no GL reversal.
-        await tx.expensePayment.updateMany({
-          where: { companyId: input.companyId, expenseId: input.expenseId, status: 'RECORDED', postingStatus: 'pending' },
-          data: {
-            status: 'VOIDED', voidedByUserId: input.actorUserId, voidedAt: new Date(),
-            postingStatus: 'not_required', postingError: null,
-          },
-        });
         await tx.expenseRecord.updateMany({ where: { id: input.expenseId, companyId: input.companyId }, data: {
-          missingReceiptReason: null,
-          substituteReceiptGeneratedAt: null,
-          substituteReceiptGeneratedByUserId: null,
-          paidAmount: '0.0000',
-          outstandingAmount: calcPaymentAmounts(expense.netPayableAmount.toString(), '0').outstandingAmount,
-          paymentStatus: 'UNPAID',
-          paymentMethod: null,
-          paidAt: null,
-          updatedByUserId: input.actorUserId,
+          substituteReceiptGeneratedAt: null, substituteReceiptGeneratedByUserId: null, updatedByUserId: input.actorUserId,
         } });
       }
       return toSubstituteEvidenceSummary(mapSubstituteEvidence(
         await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }),
       ));
     });
+  }
+
+  async findMemberDisplayName(companyId: string, userId: string): Promise<string | null> {
+    const membership = await this.prisma.client.companyMembership.findFirst({
+      where: { companyId, userId },
+      select: { user: { select: { displayName: true } } },
+    });
+    return membership?.user.displayName ?? null;
   }
 
   async findActiveMemberIdentity(companyId: string, userId: string, branchId: string | null): Promise<{ userId: string; displayName: string } | null> {
@@ -1117,13 +1121,18 @@ export class PrismaExpenseRepository {
     };
   }
 
-  async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{ name: string; taxId: string | null; branchName: string | null }> {
+  async getSignerJobTitle(companyId: string, userId: string): Promise<string | null> {
+    const profile = await this.prisma.client.employeeAccessProfile.findFirst({ where: { companyId, userId }, select: { jobTitle: true } });
+    return profile?.jobTitle?.trim() || null;
+  }
+
+  async getSubstituteCompanyContext(companyId: string, branchId: string | null): Promise<{ name: string; nameSource: 'REGISTERED' | 'DISPLAY_NAME'; taxId: string | null; branchName: string | null }> {
     const company = await this.prisma.client.company.findFirst({ where: { id: companyId }, select: { registeredName: true, name: true, taxId: true } });
     if (!company) throw new Error(`Company ${companyId} not found`);
     const branch = branchId
       ? await this.prisma.client.branch.findFirst({ where: { id: branchId, companyId }, select: { name: true } })
       : null;
-    return { name: company.registeredName ?? company.name, taxId: company.taxId, branchName: branch?.name ?? null };
+    return { name: company.registeredName?.trim() || company.name, nameSource: company.registeredName?.trim() ? 'REGISTERED' : 'DISPLAY_NAME', taxId: company.taxId, branchName: branch?.name ?? null };
   }
 
   async findSubstituteEvidenceAttachments(
@@ -1219,6 +1228,7 @@ export class PrismaExpenseRepository {
   }): Promise<{ documentNumber: string; linked: boolean }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId },
@@ -1364,11 +1374,61 @@ export class PrismaExpenseRepository {
     return null;
   }
 
+  async freezeSubstitutePaperForm(companyId: string, expenseId: string, evidenceId: string, snapshot: Record<string, unknown>) {
+    return this.prisma.client.$transaction(async (tx) => {
+      await lockExpenseFunding(tx, companyId, expenseId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: evidenceId, companyId, expenseId } });
+      const expense = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
+      if (!evidence || !expense || evidence.status !== 'PREPARED' || evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null
+        || expense.updatedAt.getTime() !== evidence.expenseUpdatedAtAtPreparation.getTime()) throw new ConflictException('substitute_paper_form_changed');
+      if (evidence.paperFormSnapshotJson) return mapSubstituteEvidence(evidence);
+      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.update({ where: { id: evidenceId }, data: { paperFormSnapshotJson: snapshot as Prisma.InputJsonValue } }));
+    });
+  }
+
+  async findSubstitutePaperUpload(companyId: string, evidenceId: string, attachmentId: string, userId: string) {
+    const row = await this.prisma.client.attachmentObject.findFirst({ where: { id: attachmentId, companyId, uploadedByUserId: userId } });
+    const metadata = row?.metadataJson as Record<string, unknown> | null;
+    return row && metadata?.generatedFor === 'substitute_receipt_paper' && metadata.evidenceId === evidenceId ? row : null;
+  }
+
+  async submitSubstitutePaper(input: {
+    companyId: string; expenseId: string; evidenceId: string; expectedUpdatedAt: Date;
+    attachmentId: string; checksumSha256: string;
+    submission: import('@watchdog-bms/contracts').SubstituteReceiptPaperSubmission;
+  }): Promise<SubstituteReceiptEvidenceRecord> {
+    return this.prisma.client.$transaction(async (tx) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.attachmentId}:attachment-retention`}))`;
+      const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId } });
+      const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+      if (!evidence || !expense || evidence.status !== 'PREPARED' || evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null
+        || !evidence.paperFormSnapshotJson || evidence.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()
+        || evidence.wetSignedScanAttachmentId || expense.updatedAt.getTime() !== evidence.expenseUpdatedAtAtPreparation.getTime()) throw new ConflictException('substitute_paper_submission_changed');
+      const attachment = await tx.attachmentObject.findFirst({ where: { id: input.attachmentId, companyId: input.companyId, branchId: evidence.branchId,
+        status: 'ACTIVE', uploadedByUserId: input.submission.uploadedByUserId, checksumSha256: input.checksumSha256 } });
+      const metadata = attachment?.metadataJson as Record<string, unknown> | null;
+      if (!attachment || metadata?.generatedFor !== 'substitute_receipt_paper' || metadata.evidenceId !== evidence.id) throw new ConflictException('substitute_paper_upload_unavailable');
+      if (await tx.attachmentLink.count({ where: { attachmentId: attachment.id } })) throw new ConflictException('substitute_paper_upload_already_linked');
+      await tx.attachmentLink.create({ data: { companyId: input.companyId, attachmentId: attachment.id, targetType: 'expense.record', targetId: input.expenseId,
+        purpose: 'expense.review.evidence', linkedByUserId: input.submission.uploadedByUserId } });
+      return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.update({ where: { id: evidence.id }, data: {
+        wetSignedScanAttachmentId: attachment.id, wetSignedScanChecksumSha256: input.checksumSha256,
+        paperSubmissionJson: input.submission, payerName: input.submission.payer.name, payerPosition: input.submission.payer.position,
+      } }));
+    });
+  }
+
   async createPreparedSubstituteEvidence(input: {
     companyId: string;
     expenseId: string;
     branchId: string | null;
     expectedExpenseUpdatedAt: Date;
+    fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
+    correctionOfEvidenceId?: string;
+    correctionReason?: string;
     originalSourceDocumentType: string;
     reasonCode: string;
     missingReceiptReason: string;
@@ -1378,7 +1438,8 @@ export class PrismaExpenseRepository {
     paymentDate: Date | null;
     paymentMethod: string | null;
     note: string | null;
-    payerUserId: string;
+    payerUserId: string | null;
+    signatureMode?: 'DIGITAL' | 'PAPER';
     payerName: string;
     payeeName: string;
     payeeAddress: string | null;
@@ -1393,12 +1454,24 @@ export class PrismaExpenseRepository {
   }): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
+      if (!input.correctionOfEvidenceId) await assertFundingMutation(tx, input.companyId, input.expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      // A cancelled correction may be restarted; network retries of a pending correction reuse it.
+      const latestCorrection = input.correctionOfEvidenceId ? await tx.expenseSubstituteReceiptEvidence.findFirst({
+        where: { companyId: input.companyId, expenseId: input.expenseId, correctionOfEvidenceId: input.correctionOfEvidenceId }, orderBy: { version: 'desc' },
+      }) : null;
+      const idempotencyKey = latestCorrection && ['PREPARED', 'PAYER_CERTIFIED'].includes(latestCorrection.status)
+        ? latestCorrection.idempotencyKey
+        : latestCorrection ? `${input.idempotencyKey}:${latestCorrection.id}` : input.idempotencyKey;
       const existing = await tx.expenseSubstituteReceiptEvidence.findFirst({
-        where: { companyId: input.companyId, expenseId: input.expenseId, idempotencyKey: input.idempotencyKey },
+        where: { companyId: input.companyId, expenseId: input.expenseId, idempotencyKey },
       });
       if (existing) {
-        const same = existing.reasonCode === input.reasonCode
+        const same = (existing.correctionOfEvidenceId ?? undefined) === input.correctionOfEvidenceId
+          && (existing.correctionReason ?? undefined) === input.correctionReason
+          && existing.fundingSource === input.fundingSource
+          && existing.reasonCode === input.reasonCode
           && existing.missingReceiptReason === input.missingReceiptReason
           && existing.businessPurpose === input.businessPurpose
           && existing.payerUserId === input.payerUserId
@@ -1419,6 +1492,18 @@ export class PrismaExpenseRepository {
       if (!expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()) {
         throw new ConflictException({ code: 'expense_stale_reload', message: 'Expense changed after review. Reload before preparing substitute evidence.' });
       }
+      const correction = input.correctionOfEvidenceId ? await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: input.correctionOfEvidenceId, companyId: input.companyId, expenseId: input.expenseId, status: 'ISSUED' } }) : null;
+      if (input.correctionOfEvidenceId) {
+        if (!correction?.snapshotJson || expense.status === 'VOIDED') throw new ConflictException('substitute_correction_source_changed');
+        for (const key of ['fundingSource', 'payerUserId', 'payerName', 'payeeName', 'payeeAddress', 'payeeTaxId', 'paymentMethod', 'businessPurpose', 'missingReceiptReason', 'reasonCode', 'note'] as const) {
+          if ((correction[key] ?? null) !== (input[key] ?? null)) throw new ConflictException('substitute_correction_financial_fields_locked');
+        }
+        if (correction.paymentDate?.getTime() !== input.paymentDate?.getTime()
+          || JSON.stringify(correction.paymentEvidenceAttachmentIds) !== JSON.stringify(input.paymentEvidenceAttachmentIds)
+          || JSON.stringify(correction.supportingAttachmentIds) !== JSON.stringify(input.supportingAttachmentIds)) throw new ConflictException('substitute_correction_financial_fields_locked');
+        const company = await tx.company.findFirst({ where: { id: input.companyId }, select: { taxId: true } });
+        if (company?.taxId !== correction.snapshotJson.company.taxId) throw new ConflictException('substitute_correction_company_identity_changed');
+      } else assertFullSubstitutePayment(input.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
       const preparedAt = new Date();
       const currentSummary = expense.aiVerificationSummaryJson && typeof expense.aiVerificationSummaryJson === 'object'
         && !Array.isArray(expense.aiVerificationSummaryJson)
@@ -1465,7 +1550,7 @@ export class PrismaExpenseRepository {
         };
         sourceChannelMetadataJson = metadata as Record<string, unknown>;
       }
-      const safeUpdate = await tx.expenseRecord.updateMany({
+      const safeUpdate = correction ? { count: 1 } : await tx.expenseRecord.updateMany({
         where: {
           id: input.expenseId,
           companyId: input.companyId,
@@ -1485,9 +1570,11 @@ export class PrismaExpenseRepository {
       if (safeUpdate.count !== 1) throw new Error('Expense changed after review. Reload before preparing substitute evidence.');
       const safeExpense = await tx.expenseRecord.findFirstOrThrow({ where: { id: input.expenseId, companyId: input.companyId } });
       const pendingCertified = await tx.expenseSubstituteReceiptEvidence.findFirst({
-        where: { companyId: input.companyId, expenseId: input.expenseId, status: 'PAYER_CERTIFIED' },
+        where: { companyId: input.companyId, expenseId: input.expenseId, OR: [
+          { status: 'PAYER_CERTIFIED' }, { status: 'PREPARED', signatureMode: 'PAPER', payerUserId: null },
+        ] },
       });
-      if (pendingCertified) throw new Error('A payer-certified version is already waiting for approval.');
+      if (pendingCertified) throw new ConflictException('มีเวอร์ชันที่รอลงนามบนกระดาษหรือรออนุมัติอยู่ กรุณายกเลิกเวอร์ชันนั้นก่อนจัดทำใหม่');
       await tx.expenseSubstituteReceiptEvidence.updateMany({
         where: { companyId: input.companyId, expenseId: input.expenseId, status: 'PREPARED' },
         data: { status: 'SUPERSEDED', supersededAt: new Date(), supersedeReason: 'CORRECTED_VERSION_PREPARED' },
@@ -1501,7 +1588,7 @@ export class PrismaExpenseRepository {
         branchId: input.branchId ?? undefined,
         documentType: SUBSTITUTE_RECEIPT_DOCUMENT_TYPE,
         periodKey: civilPeriodKey(civilDate(preparedAt)),
-        idempotencyKey: `${input.expenseId}:${input.idempotencyKey}`,
+        idempotencyKey: `${input.expenseId}:${idempotencyKey}`,
         reservedByUserId: input.preparedByUserId,
       });
       const evidence = await tx.expenseSubstituteReceiptEvidence.create({
@@ -1511,8 +1598,11 @@ export class PrismaExpenseRepository {
           branchId: input.branchId,
           version,
           documentNumber: reserved.documentNumber,
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey,
           originalSourceDocumentType: input.originalSourceDocumentType,
+          fundingSource: input.fundingSource,
+          correctionOfEvidenceId: input.correctionOfEvidenceId ?? null, correctionReason: input.correctionReason ?? null,
+          ...(correction ? { snapshotJson: correction.snapshotJson } : {}),
           reasonCode: input.reasonCode,
           missingReceiptReason: input.missingReceiptReason,
           businessPurpose: input.businessPurpose,
@@ -1525,6 +1615,7 @@ export class PrismaExpenseRepository {
           preparedFromChannel: input.preparedFromChannel,
           preparedAt,
           expenseUpdatedAtAtPreparation: safeExpense.updatedAt,
+          signatureMode: input.signatureMode ?? 'DIGITAL',
           payerUserId: input.payerUserId,
           payerName: input.payerName,
           payeeName: input.payeeName,
@@ -1561,6 +1652,7 @@ export class PrismaExpenseRepository {
   }): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${attachmentId}:attachment-retention`}))`;
@@ -1572,6 +1664,12 @@ export class PrismaExpenseRepository {
         || evidence.payerUserId !== input.payerUserId || evidence.updatedAt.getTime() !== input.expectedEvidenceUpdatedAt.getTime()) {
         throw new Error('Substitute evidence changed or the payer does not match. Reload before certifying.');
       }
+      const expense = await tx.expenseRecord.findFirst({ where: { id: input.expenseId, companyId: input.companyId } });
+      if (!expense || expense.updatedAt.getTime() !== evidence.expenseUpdatedAtAtPreparation.getTime()
+        || (!evidence.correctionOfEvidenceId && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) || expense.status === 'VOIDED') {
+        throw new ConflictException('Expense changed after the reviewed preview. Reload before certifying.');
+      }
+      if (!evidence.correctionOfEvidenceId) assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
       const activeAttachments = await tx.attachmentObject.count({
         where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
       });
@@ -1620,6 +1718,11 @@ export class PrismaExpenseRepository {
   }
 
   async issueSubstituteEvidence(input: {
+    paperAcceptance?: {
+      snapshot: import('../domain/logic/substitute-receipt.logic').SubstituteReceiptSnapshot;
+      snapshotChecksumSha256: string;
+      scanChecksumSha256: string;
+    };
     companyId: string;
     expenseId: string;
     evidenceId: string;
@@ -1642,14 +1745,22 @@ export class PrismaExpenseRepository {
   }): Promise<SubstituteReceiptEvidenceRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
       for (const attachmentId of [...new Set(input.referencedAttachmentIds)].sort()) {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${attachmentId}:attachment-retention`}))`;
       }
       const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: input.evidenceId, companyId: input.companyId, expenseId: input.expenseId } });
-      if (!evidence || evidence.status !== 'PAYER_CERTIFIED' || evidence.version !== input.expectedVersion
+      if (!evidence || evidence.status !== (input.paperAcceptance ? 'PREPARED' : 'PAYER_CERTIFIED') || evidence.version !== input.expectedVersion
         || evidence.updatedAt.getTime() !== input.expectedEvidenceUpdatedAt.getTime()) {
         throw new Error('Substitute evidence changed. Reload before approval.');
+      }
+      if (input.paperAcceptance && (evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null
+        || !evidence.paperFormSnapshotJson || !evidence.paperSubmissionJson
+        || evidence.wetSignedScanChecksumSha256 !== input.paperAcceptance.scanChecksumSha256
+        || !input.referencedAttachmentIds.includes(evidence.wetSignedScanAttachmentId)
+        || (evidence.paperSubmissionJson.samePerson && !input.allowSelfApproval))) {
+        throw new ConflictException('substitute_paper_submission_changed');
       }
       if (!input.allowSelfApproval && evidence.payerUserId === input.approverUserId) {
         throw new Error('The payer cannot approve their own substitute receipt.');
@@ -1658,6 +1769,16 @@ export class PrismaExpenseRepository {
         where: { id: input.expenseId, companyId: input.companyId, updatedAt: input.expectedExpenseUpdatedAt },
       });
       if (!expense) throw new Error('Expense details changed after payer certification. Finance must prepare a new version.');
+      if (evidence.correctionOfEvidenceId) {
+        const original = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: evidence.correctionOfEvidenceId, companyId: input.companyId, expenseId: input.expenseId, status: 'ISSUED' } });
+        const company = await tx.company.findFirst({ where: { id: input.companyId }, select: { taxId: true } });
+        if (!original || (input.paperAcceptance ? original.paperReviewedByUserId : original.approverUserId) !== input.approverUserId || expense.status === 'VOIDED'
+          || company?.taxId !== original.snapshotJson?.company?.taxId
+          || evidence.snapshotJson?.company?.taxId !== original.snapshotJson?.company?.taxId) {
+          throw new ConflictException('substitute_correction_source_changed');
+        }
+      } else await assertFundingMutation(tx, input.companyId, input.expenseId, 'prepare');
+      if (!evidence.correctionOfEvidenceId) assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
       const activeAttachments = await tx.attachmentObject.count({
         where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
       });
@@ -1682,16 +1803,25 @@ export class PrismaExpenseRepository {
         data: { status: 'SUPERSEDED', supersededAt: now, supersedeReason: 'NEW_VERSION_ISSUED' },
       });
       const changed = await tx.expenseSubstituteReceiptEvidence.updateMany({
-        where: { id: evidence.id, companyId: input.companyId, status: 'PAYER_CERTIFIED', updatedAt: input.expectedEvidenceUpdatedAt },
+        where: { id: evidence.id, companyId: input.companyId, status: input.paperAcceptance ? 'PREPARED' : 'PAYER_CERTIFIED', updatedAt: input.expectedEvidenceUpdatedAt },
         data: {
-          status: 'ISSUED', approverUserId: input.approverUserId, approverName: input.approverName,
+          status: 'ISSUED', approverUserId: input.paperAcceptance ? null : input.approverUserId, approverName: input.approverName,
           approverPosition: input.approverPosition,
           ...(input.approverSignatureAttachmentId ? { approverSignatureAttachmentId: input.approverSignatureAttachmentId } : {}),
-          approvedAt: now, artifactAttachmentId: attachment.id, checksumSha256: input.artifact.checksumSha256,
+          ...(input.paperAcceptance ? {
+            paperReviewedByUserId: input.approverUserId,
+            snapshotJson: input.paperAcceptance.snapshot,
+            snapshotChecksumSha256: input.paperAcceptance.snapshotChecksumSha256,
+            payerName: input.paperAcceptance.snapshot.payer.name,
+            payerPosition: input.paperAcceptance.snapshot.payer.position,
+            certifiedAt: new Date(input.paperAcceptance.snapshot.payer.certifiedAt),
+          } : {}),
+          approvedAt: input.paperAcceptance ? new Date(evidence.paperSubmissionJson.approver.signedOn) : now, artifactAttachmentId: attachment.id, checksumSha256: input.artifact.checksumSha256,
           issuedByUserId: input.approverUserId, issuedAt: now,
         },
       });
       if (changed.count !== 1) throw new Error('Substitute evidence changed while approving.');
+      if (evidence.correctionOfEvidenceId) return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }));
       if (!evidence.paymentDate || !evidence.paymentMethod) {
         throw new Error('Certified substitute evidence is missing payment date or method.');
       }
@@ -1700,12 +1830,17 @@ export class PrismaExpenseRepository {
       if (paidBefore.lt(0) || paidBefore.minus(payable).gt(SETTLE_EPSILON)) {
         throw new Error('Expense payment totals are inconsistent. Reload before approval.');
       }
-      const paymentAmount = payable.minus(paidBefore);
+      const isCompanyPayment = evidence.fundingSource === 'COMPANY';
+      if (isCompanyPayment && !paidBefore.isZero() && ((expense.paymentMethod && expense.paymentMethod !== evidence.paymentMethod)
+        || (expense.paidAt && expense.paidAt.getTime() !== evidence.paymentDate.getTime()))) throw new ConflictException('substitute_existing_payment_details_mismatch');
+      const paymentAmount = isCompanyPayment && paidBefore.isZero() ? payable : new Decimal(0);
       if (paymentAmount.gt(0)) {
         await tx.expensePayment.create({ data: {
           companyId: input.companyId,
           expenseId: input.expenseId,
           amount: paymentAmount.toFixed(4),
+          idempotencyKey: `substitute-receipt:${evidence.id}`,
+          payloadFingerprint: canonicalFingerprint({ expenseId: expense.id, amount: paymentAmount.toFixed(4), paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate.toISOString() }),
           currency: expense.currency,
           paymentMethod: evidence.paymentMethod,
           paidAt: evidence.paymentDate,
@@ -1724,8 +1859,10 @@ export class PrismaExpenseRepository {
         taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
         // Never write the recorded paid amount back down: the guard above forgives a sub-satang
         // overshoot, so paidBefore can sit a fraction past the payable and still settle here.
-        paidAmount: Decimal.max(paidBefore, payable).toFixed(4), outstandingAmount: '0.0000', paymentStatus: 'PAID',
-        paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate,
+        ...(isCompanyPayment ? {
+          paidAmount: Decimal.max(paidBefore, payable).toFixed(4), outstandingAmount: '0.0000', paymentStatus: 'PAID',
+          ...(paidBefore.isZero() ? { paymentMethod: evidence.paymentMethod, paidAt: evidence.paymentDate } : {}),
+        } : {}),
         substituteReceiptGeneratedAt: now, substituteReceiptGeneratedByUserId: input.approverUserId,
         reviewedByUserId: input.approverUserId, reviewedAt: now, updatedByUserId: input.approverUserId,
       } });
@@ -1907,6 +2044,8 @@ export class PrismaExpenseRepository {
     paymentReversals: Array<{ paymentId: string; reversalEntryNumber: string }> | string = [],
   ): Promise<{ expense: ExpenseRecord; reversalEntryId: string | null; paymentReversalEntryId: string | null; paymentReversalEntryIds: Array<{ paymentId: string; reversalEntryId: string }> }> {
     return await (this.prisma.client as any).$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, companyId, expenseId);
+      await assertFundingMutation(tx, companyId, expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
       const voidedAt = new Date();
       const claimed = await tx.expenseRecord.updateMany({
@@ -2021,6 +2160,8 @@ export class PrismaExpenseRepository {
   }): Promise<ExpenseRecord> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.id);
+      await assertFundingMutation(tx, input.companyId, input.id, 'confirm');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
@@ -2068,6 +2209,8 @@ export class PrismaExpenseRepository {
   }, finalizeTax: ExpenseTaxFinalizer): Promise<{ expense: ExpenseRecord; finalized: ExpenseLineInput[] }> {
     const client = this.prisma.client as any;
     return client.$transaction(async (tx: any) => {
+      await lockExpenseFunding(tx, input.companyId, input.id);
+      await assertFundingMutation(tx, input.companyId, input.id, 'confirm');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
       const current = await tx.expenseRecord.findFirst({
         where: { id: input.id, companyId: input.companyId },
@@ -2340,6 +2483,7 @@ export class PrismaExpenseRepository {
 
   async upsertLines(companyId: string, expenseId: string, lines: ExpenseLineInput[], db?: any, preserveLineIdentity = false): Promise<void> {
     await this.runInTx(db, async (tx: any) => {
+      await lockExpenseFunding(tx, companyId, expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
       const signedEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId, expenseId, status: { in: ['PAYER_CERTIFIED', 'ISSUED'] } }, select: { id: true },

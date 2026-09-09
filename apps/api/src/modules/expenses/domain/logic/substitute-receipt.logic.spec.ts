@@ -1,8 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText } from './substitute-receipt.logic';
+import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptFooter } from './substitute-receipt.logic';
 
 describe('substitute receipt evidence', () => {
+  it('removes only the former system footer from a derived receipt or attestation and preserves its source', () => {
+    const notice = 'เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง';
+    const body = `<svg><text x="50" y="140">${notice}</text><text x="50" y="180">ผู้ตรวจรับ สมชาย</text>`;
+    const source = `${body}<text x="425" y="900" text-anchor="middle" font-size="12" fill="#555">${notice}</text></svg>`;
+    const original = Buffer.from(source);
+    assert.equal(withoutSubstituteReceiptFooter(original).toString(), `${body}</svg>`);
+    assert.equal(original.toString(), source);
+  });
+
   it('renders Thai baht text without losing satang', () => {
     assert.equal(thaiBahtText('0'), 'ศูนย์บาทถ้วน');
     assert.equal(thaiBahtText('21.25'), 'ยี่สิบเอ็ดบาทยี่สิบห้าสตางค์');
@@ -51,7 +60,7 @@ describe('substitute receipt evidence', () => {
     assert.doesNotMatch(artifact, /EXPENSE_NOTE_TEXT|CASH|expense\.receipt\.supporting|att-secret-id|exp-secret-id/);
     assert.doesNotMatch(artifact, /สมชาย <script>/);
     assert.match(artifact, /สมชาย &lt;script&gt;/);
-    assert.match(artifact, /มิใช่ใบกำกับภาษี/);
+    assert.doesNotMatch(artifact, /มิใช่ใบกำกับภาษี/);
     assert.doesNotMatch(artifact, /ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ/);
     assert.doesNotMatch(artifact, /<script|foreignObject|onload=/);
     const selfSignedArtifact = renderSubstituteReceiptSvg(
@@ -93,6 +102,16 @@ describe('substitute receipt evidence', () => {
     };
     const legacy = renderSubstituteReceiptSvg(legacySnapshot).toString('utf8');
     assert.doesNotMatch(legacy, /ผู้รับเงิน:|ที่อยู่:|เลขประจำตัวประชาชน/);
+    assert.match(legacy, /ผู้จ่ายเงิน\/ผู้รับรอง · รอลงนาม/);
+    const certifierSnapshot = {
+      ...legacySnapshot,
+      payer: { ...legacySnapshot.payer, roleLabel: 'ผู้รับรองการจ่าย' as const },
+    };
+    const certifier = renderSubstituteReceiptSvg(certifierSnapshot).toString('utf8');
+    assert.match(certifier, /ผู้รับรองการจ่าย · รอลงนาม/);
+    assert.doesNotMatch(certifier, /ผู้จ่ายเงิน\/ผู้รับรอง/);
+    assert.notEqual(canonicalSnapshotHash(certifierSnapshot), canonicalSnapshotHash(legacySnapshot));
+    assert.equal(renderSubstituteReceiptSvg(legacySnapshot).toString('utf8'), legacy);
 
     const captured = renderSubstituteReceiptSvg({
       ...legacySnapshot,

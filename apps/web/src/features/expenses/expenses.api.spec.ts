@@ -77,7 +77,7 @@ describe('expenses.api URL helpers', () => {
   });
 
   it('carries same-expense routing and renders one localized actionable toast from a coded prepare rejection', async () => {
-    const input = { reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'paid without final receipt',
+    const input = { fundingSource: 'COMPANY' as const, paidInFullAcknowledged: true as const, reasonCode: 'RECEIPT_UNAVAILABLE' as const, missingReceiptReason: 'paid without final receipt',
       businessPurpose: 'business meal', payerUserId: 'payer-1', routeCheckBill: true as const,
       paymentMethod: 'CASH' as const, expectedExpenseUpdatedAt: '2026-08-27T00:00:00.000Z', idempotencyKey: 'same-expense' };
     for (const locale of ['th', 'en'] as const) {

@@ -6,7 +6,8 @@
  * `reason` is the sharpest case: several handlers call `reason.trim()`, so a JSON object in that
  * field was a 500, which is the same type-confusion the audit found in reimbursement.
  *
- * Only the inline-literal bodies are here. The rest of this controller's bodies are imported
+ * Inline-literal bodies and new paper-signing/correction endpoints are validated here.
+ * The remaining legacy controller bodies are imported
  * contract types whose field sets have to be read from the contract before they can be declared;
  * guessing them would trade a skipped validation for a `forbidNonWhitelisted` 400 on a legitimate
  * request, which is worse.
@@ -18,6 +19,7 @@
 import { Type } from 'class-transformer';
 import {
   IsInt,
+  IsBoolean,
   IsArray,
   IsObject,
   ArrayMinSize,
@@ -33,7 +35,8 @@ import {
   ValidateNested,
   ValidateIf,
 } from 'class-validator';
-import { CIVIL_DATE_PATTERN, EXPENSE_PAYMENT_METHODS, type RecordExpensePaymentInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { CIVIL_DATE_PATTERN, EXPENSE_PAYMENT_METHODS, type RecordExpensePaymentInput, type ExpensePaymentMethod,
+  type SubmitSubstituteReceiptPaperInput, type AcceptSubstituteReceiptPaperInput, type SubstituteReceiptPaperSignerInput } from '@watchdog-bms/contracts';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN, POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { BUYER_ENTITY_KINDS, EXPENSE_LINE_CHARGE_KINDS, TRANSACTION_TAX_CONTEXTS,
   type BuyerEntityKind, type CreateExpenseDraftInput, type ExpenseVatMode, type ExpenseVatSourceInput, type ExpenseWhtInput, type InputVatClaimStatus } from '@watchdog-bms/contracts';
@@ -105,6 +108,35 @@ export class ReceiptUploadCompletionDto extends UploadCompletionDto {
 /** Reject / void / signature-reject: the handlers trim this, so it has to be a string. */
 export class ReasonRequiredDto {
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+}
+
+export class CorrectSubstituteDocumentDto extends ReasonRequiredDto {
+  @IsString() @IsISO8601({ strict: true }) expectedEvidenceUpdatedAt!: string;
+}
+
+export class SubstituteReceiptPaperSignerDto implements SubstituteReceiptPaperSignerInput {
+  @IsString() @IsNotEmpty() name!: string;
+  @ValidateIf((_object, value) => value !== undefined) @IsString() position?: string;
+  @Matches(CIVIL_DATE_PATTERN) @IsISO8601({ strict: true }) signedOn!: string;
+}
+
+export class SubmitSubstituteReceiptPaperDto implements SubmitSubstituteReceiptPaperInput {
+  @IsObject() @ValidateNested() @Type(() => SubstituteReceiptPaperSignerDto) payer!: SubstituteReceiptPaperSignerDto;
+  @IsObject() @ValidateNested() @Type(() => SubstituteReceiptPaperSignerDto) approver!: SubstituteReceiptPaperSignerDto;
+  @IsBoolean() samePerson!: boolean;
+  @IsString() @IsNotEmpty() attachmentId!: string;
+  @Matches(/^[a-f0-9]{64}$/) checksumSha256!: string;
+  @IsInt() @Min(1) byteSize!: number;
+  @IsIn([true]) formMatchesAcknowledged!: true;
+  @IsString() @IsISO8601({ strict: true }) expectedEvidenceUpdatedAt!: string;
+}
+
+export class AcceptSubstituteReceiptPaperDto implements AcceptSubstituteReceiptPaperInput {
+  @Matches(/^[a-f0-9]{64}$/) previewChecksumSha256!: string;
+  @IsString() @IsISO8601({ strict: true }) expectedEvidenceUpdatedAt!: string;
+  @IsIn([true]) factsAndSignaturesAcknowledged!: true;
+  @IsIn([true]) approverAuthorityAcknowledged!: true;
+  @IsIn([true]) originalRetainedAcknowledged!: true;
 }
 
 /** Duplicate dismiss / confirm: the note is genuinely optional here. */

@@ -7,6 +7,7 @@ import type {
   SubstituteReceiptApprovalMode,
   SubstituteReceiptEvidenceStatus,
   SubstituteReceiptListResult,
+  SubstituteReceiptPaperPreview,
 } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -21,7 +22,9 @@ import {
   fetchSubstituteReceiptPdfBlob,
   getSubstituteReceiptRuntimePolicy,
   listCompanySubstituteReceipts,
+  previewIssuedSubstitutePaper,
 } from './expenses.api';
+import { SubstitutePaperDocumentPreview } from './SubstitutePaperSigningPanel';
 import {
   baht0,
   btnClass,
@@ -81,6 +84,7 @@ export function SubstituteReceiptHubPage({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [preview, setPreview] = useState<DocumentPreviewSource | null>(null);
+  const [paperPreview, setPaperPreview] = useState<SubstituteReceiptPaperPreview | null>(null);
   const [previewTarget, setPreviewTarget] = useState<IssuedArtifactPreviewTarget | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const previewRequestRef = useRef(0);
@@ -96,6 +100,7 @@ export function SubstituteReceiptHubPage({
     previewRequestRef.current += 1;
     releasePreviewUrl();
     setPreview(null);
+    setPaperPreview(null);
     setPreviewTarget(null);
     setPreviewLoadingId(null);
   }, [releasePreviewUrl]);
@@ -152,6 +157,12 @@ export function SubstituteReceiptHubPage({
     setPreviewLoadingId(target.evidenceId);
     setActionError(null);
     try {
+      if (result?.items.find((item) => item.evidenceId === target.evidenceId)?.signatureMode === 'PAPER') {
+        const next = await previewIssuedSubstitutePaper(companyId, target.expenseId, target.evidenceId);
+        if (requestId !== previewRequestRef.current) return;
+        setPreviewTarget(target); setPaperPreview(next);
+        return;
+      }
       const blob = await fetchSubstituteReceiptPdfBlob(companyId, target.expenseId, target.evidenceId);
       if (requestId !== previewRequestRef.current) return;
       const url = URL.createObjectURL(blob);
@@ -305,12 +316,12 @@ export function SubstituteReceiptHubPage({
                     <tr key={item.evidenceId}>
                       <td className="whitespace-nowrap font-semibold text-gray-900">{item.documentNumber}</td>
                       <td className="whitespace-nowrap">{dateShort(item.paymentDate ?? item.expenseDate)}</td>
-                      <td>{item.payeeName ?? t('expenses.substitute_hub.payee_missing', locale)}</td>
+                      <td>{item.payeeName ?? t('expenses.substitute_hub.payee_missing', locale)}<div className="mt-1 text-xs text-gray-500">{item.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : item.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานจ่ายเต็มจำนวน' : 'เอกสารเดิม: ยังไม่ระบุแหล่งเงิน'} · {item.payerName || (item.signatureMode === 'PAPER' ? 'กรอกผู้ลงนามบนกระดาษ' : '—')}</div></td>
                       <td className="whitespace-nowrap text-right tabular-nums">{baht0(item.grandTotalAmount)}</td>
                       <td>
                         <div className="space-y-1">
                           <StatusBadge status={STATUS_BADGES[item.status]} />
-                          <div className="text-xs text-gray-500">{t(STATUS_LABEL_KEYS[item.status], locale)}</div>
+                          <div className="text-xs text-gray-500">{item.status === 'PREPARED' && item.signatureMode === 'PAPER' && !item.payerUserId ? item.paperSubmission ? 'รอตรวจรับฉบับลงนาม' : 'รอฉบับลงนามบนกระดาษ' : t(STATUS_LABEL_KEYS[item.status], locale)}</div>
                         </div>
                       </td>
                       <td>
@@ -372,13 +383,13 @@ export function SubstituteReceiptHubPage({
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <div className="truncate font-semibold text-gray-900">{item.documentNumber}</div>
-                          <div className="mt-0.5 truncate text-sm text-gray-600">{item.payeeName ?? t('expenses.substitute_hub.payee_missing', locale)}</div>
+                          <div className="mt-0.5 truncate text-sm text-gray-600">{item.payeeName ?? t('expenses.substitute_hub.payee_missing', locale)}</div><div className="mt-1 text-xs text-gray-500">{item.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : item.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานจ่ายเต็มจำนวน' : 'เอกสารเดิม: ยังไม่ระบุแหล่งเงิน'} · {item.payerName || (item.signatureMode === 'PAPER' ? 'กรอกผู้ลงนามบนกระดาษ' : '—')}</div>
                         </div>
                         <div className="shrink-0 text-right font-bold tabular-nums text-gray-900">{baht0(item.grandTotalAmount)}</div>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <StatusBadge status={STATUS_BADGES[item.status]} />
-                        <span className="text-xs text-gray-500">{t(STATUS_LABEL_KEYS[item.status], locale)}</span>
+                        <span className="text-xs text-gray-500">{item.status === 'PREPARED' && item.signatureMode === 'PAPER' && !item.payerUserId ? item.paperSubmission ? 'รอตรวจรับฉบับลงนาม' : 'รอฉบับลงนามบนกระดาษ' : t(STATUS_LABEL_KEYS[item.status], locale)}</span>
                       </div>
                       <div className="mt-2 text-xs text-gray-500">{dateShort(item.paymentDate ?? item.expenseDate)}</div>
                     </div>
@@ -417,6 +428,8 @@ export function SubstituteReceiptHubPage({
         </div>
       ) : null}
       </MangmeePage>
+      {paperPreview && previewTarget && <SubstitutePaperDocumentPreview key={paperPreview.previewChecksumSha256}
+        documentNumber={previewTarget.documentNumber} preview={paperPreview} onClose={closePreview} />}
       {preview && <DocumentPreviewModal
         source={preview}
         closeLabel={t('expenses.close', locale)}
