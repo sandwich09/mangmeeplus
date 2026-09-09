@@ -1,6 +1,6 @@
 # Agent Memory: Receipt VAT input and warning UX
 
-Status: implemented and locally verified on `codex/receipt-vat-input-ux-20260909`; not merged or deployed.
+Status: implementation verified; PRs #500 (develop) and #501 (main) pending final exact-head CI and merge. Owner authorized both merges and UAT deployment; Production remains held.
 Owner: Codex.
 Scope: document/line VAT source unit changes, global number-input spinners, VAT spacing, operator tax preview, warning navigation.
 
@@ -24,5 +24,19 @@ Scope: document/line VAT source unit changes, global number-input spinners, VAT 
 - `/tmp/receipt-precision-browser/tax-copy.cjs` proves the real tax selector still resolves tax and displays configuration errors while omitting duplicate technical line amounts/account/report counts only for expense records. No tax calculation, backend permission, DTO contract, DB schema or migration change.
 - Browser checks found the old per-line value handler reintroduced the hidden automatic-rounding row as a source entry; it now excludes that row consistently with the unit switch helper.
 
-Release: previous UAT 34271465242 passed. Previous READY 34273932168 failed at RDS clone connectivity/cleanup; do not retry or start a new automatic READY until the failure and cleanup boundary are resolved. Production remains held. No new release dispatched.
-Next: reviewed integration/exact-head CI when continuing the release; retain failed READY evidence in `/tmp/mangmee-receipt-precision-uat-20260909` and resolve its first failing boundary before another deployment/readiness attempt. This change set has not been merged or pushed to UAT.
+## Release prerequisite: dependency security fixes
+
+- Exact-head CI runs 34305163212 / 34305165959 on df5e046fc2bd54c55e2eeb83c44347ac8a49c570 failed the existing HIGH security audit: newly published Next.js, sharp, multer, js-yaml and SVGO advisories. No audit waiver or check change.
+- Upgrade only affected dependencies/overrides: Next.js locked 16.3.4, sharp 0.35.4, multer 2.3.0, js-yaml 4.3.2, SVGO 3.3.5, and required transitive/native packages. Next generated its new root-params type reference during the build; its AppRouterInstance also requires bfcacheId, so the existing notification test router fixture supplies a stable test value. No package scripts or metadata edits.
+- Installed in the isolated worktree after unlinking its own shared dependency/dist symlinks; the user's root dependency installation was preserved.
+- `pnpm security:audit` PASS: zero HIGH/CRITICAL (13 moderate and 1 low remain below the existing gate). Lockfile frozen install PASS.
+- Updated dependencies: production Next webpack build PASS (including actual SVG loader); focused web tests 143 PASS; API upload/attachment/preview tests 64 PASS; AI image/controller tests 73 PASS. Web typecheck, the 3 notification render tests, and actual React/API browser tests at 390/1280px also PASS with the upgraded dependencies. Evidence `/tmp/mangmee-vat-ux-uat-20260909/`.
+
+## Previous READY failure resolved
+
+- Previous UAT 34271465242 passed. READY 34273932168 remains FAILED and is not promoted to a valid signed READY by this investigation.
+- Read-only CloudTrail and exact resource lookups prove the migration rehearsal passed, DB deletion succeeded, and the failure was a transient RDS endpoint timeout during cleanup readback. Reconstructed A5 result validates both pending migrations, schema and compatibility as PASSED.
+- Repeated current readback: clone DB, source snapshot, managed secret and task ENI absent; unique task definition revision 1 INACTIVE; no active task under the exact startedBy. No IAM change, retry, new clone or manual deletion was needed. Evidence `/tmp/mangmee-receipt-precision-uat-20260909/cleanup-readback-current.json`, `ready-cloudtrail-safe.json`, `recovered-clone-result.json`.
+- New release is permitted after exact-head CI/merge. Ledger `/tmp/mangmee-vat-ux-uat-20260909/release-ledger.json` will record candidate/controller, UAT/READY IDs, signed artifacts and post-deploy acceptance. Production is HELD for separate explicit approval.
+
+Next: finish exact-head CI, merge reviewed candidate into develop and main, single canonical UAT deployment, then runtime/signature and actual browser acceptance. Preserve original user tabs and receipt edits; use an isolated synthetic UAT draft for write/readback tests.
