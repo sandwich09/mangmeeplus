@@ -1,7 +1,10 @@
+import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbursementSource, sourceError, type SourceLine } from './reimbursement-source';
+import { isDeepStrictEqual } from 'node:util';
+import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { ReimbursementClaimSignatureRole, ReimbursementRequestStatus } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
-import type { Prisma } from '../../../generated/prisma/client';
+import { Prisma } from '../../../generated/prisma/client';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import type { ReservedDocumentNumberRecord } from '../../data-model-core/domain/models/document-sequence.model';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
@@ -292,12 +295,56 @@ export class PrismaReimbursementRepository {
     }
   }
 
+  async resolveSourceLines<T extends SourceLine>(companyId: string, requesterUserId: string, branchId: string, currency: string, lines: readonly T[]) {
+    return resolveReimbursementSourceLines(this.prisma.client, companyId, requesterUserId, branchId, currency, lines);
+  }
+
+  async listReimbursementRequesters(companyId: string, branchId: string, ownUserId?: string) {
+    const rows = await (this.prisma.client as any).companyMembership.findMany({
+      where: { companyId, status: 'ACTIVE', ...(ownUserId ? { userId: ownUserId } : {}), user: { status: 'ACTIVE' }, OR: [
+        { branchScopeMode: 'ALL_BRANCHES' }, { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: branchId }, { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: { some: { branchId } } },
+      ] }, select: { userId: true, user: { select: { displayName: true } } }, orderBy: { user: { displayName: 'asc' } },
+    });
+    return rows.map((row: any) => ({ userId: row.userId as string, displayName: row.user.displayName as string }));
+  }
+
+  async listReimbursementSources(companyId: string, branchId: string, requesterUserId: string, search: string, expenseId?: string): Promise<import('@watchdog-bms/contracts').ReimbursementSourceOption[]> {
+    const tx = this.prisma.client as any;
+    const certificates = await tx.expenseSubstituteReceiptEvidence.findMany({ where: { companyId, branchId, payerUserId: requesterUserId }, select: { expenseId: true } });
+    const rows = await tx.expenseRecord.findMany({
+      where: { companyId, branchId, sourceReimbursementRequestId: null, ...(expenseId ? { id: expenseId } : {}), OR: [{ createdByUserId: requesterUserId }, { id: { in: certificates.map((row: any) => row.expenseId) } }],
+        ...(search ? { AND: [{ OR: [{ vendorNameSnapshot: { contains: search, mode: 'insensitive' } }, { vendorDocumentNumber: { contains: search, mode: 'insensitive' } }, { note: { contains: search, mode: 'insensitive' } }] }] } : {}),
+      }, include: { lines: { orderBy: { lineNumber: 'asc' } }, expenseCategory: true }, orderBy: [{ expenseDate: 'desc' }, { id: 'desc' }], take: 50,
+    });
+    return Promise.all(rows.map(async (row: any) => {
+      let snapshot; let reason;
+      try {
+        snapshot = await readReimbursementSource(tx, companyId, requesterUserId, branchId, row.currency, row.id);
+        // Read-only option hint; the final submit performs the locked duplicate check.
+        const hit = await tx.reimbursementLine.findFirst({ where: { companyId, linkedExpenseId: row.id, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } } } });
+        if (hit) reason = 'expense_already_claimed';
+      } catch (error: any) { const response = error.getResponse?.(); reason = typeof response === 'object' ? response.code : 'reimbursement_source_unavailable'; }
+      return { expenseId: row.id, label: [snapshot?.certificate?.documentNumber ?? row.vendorDocumentNumber ?? row.expenseNumber, row.vendorNameSnapshot].filter(Boolean).join(' · ') || row.lines.map((line: any) => line.description).join('; ').slice(0, 100) || 'ค่าใช้จ่าย',
+        eligible: !reason, reason, updatedAt: row.updatedAt.toISOString(), incurredDate: row.expenseDate?.toISOString().slice(0, 10) ?? '',
+        description: row.lines.map((line: any) => line.description).join('; ').slice(0, 500), purpose: snapshot?.certificate?.businessPurpose ?? '', categoryKey: row.expenseCategory?.id ?? 'other', categoryLabel: row.expenseCategory?.name,
+        amount: dec(row.netPayableAmount), currency: row.currency, snapshot,
+      };
+    }));
+  }
+
+  async assertReimbursementRequester(companyId: string, branchId: string, requesterUserId: string) {
+    const [member] = await this.listReimbursementRequesters(companyId, branchId, requesterUserId);
+    if (!member) throw sourceError('reimbursement_requester_unavailable');
+    return member;
+  }
+
   // ---- Request ----
 
   async createRequest(data: CreateReimbursementRequestData): Promise<ReimbursementRequestRecord> {
     requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
+      await assertReimbursementSources(tx, data);
       const created = await tx.reimbursementRequest.create({
         data: {
           companyId: data.companyId,
@@ -348,7 +395,12 @@ export class PrismaReimbursementRepository {
         data: { ...data, updatedAt: this.nextVersion(expectedUpdatedAt) },
       });
       if (changed.count !== 1) throw this.draftChanged();
-      if (lines) await this.replaceLines(tx, companyId, requestId, lines);
+      const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId, id: requestId }, include: { lines: true } });
+      await assertReimbursementSources(tx, { ...sourceRequest, lines: lines ?? sourceRequest.lines.map((line: any) => ({ ...line, sourceExpenseSnapshot: line.sourceExpenseSnapshotJson, attachmentSnapshot: line.attachmentSnapshotJson })) });
+      if (lines) {
+        await this.replaceLines(tx, companyId, requestId, lines);
+        await tx.reimbursementClaimSignature.deleteMany({ where: { companyId, reimbursementRequestId: requestId } });
+      }
       const row = await tx.reimbursementRequest.findFirstOrThrow({
         where: { id: requestId, companyId },
         include: { lines: { orderBy: { lineNo: 'asc' } } },
@@ -397,6 +449,8 @@ export class PrismaReimbursementRepository {
       await this.lockRequest(tx, data.companyId, data.requestId);
       await this.lockEvidence(tx, data.companyId, data.evidence);
       await this.assertEvidenceAvailable(tx, data.companyId, data.requestId, data.evidence);
+      const sourceRequest = await tx.reimbursementRequest.findFirstOrThrow({ where: { companyId: data.companyId, id: data.requestId }, include: { lines: true } });
+      await assertReimbursementSources(tx, this.toRequest(sourceRequest));
 
       const reserved = await this.documentNumbers.reserveNumberInTransaction(tx, {
         companyId: data.companyId,
@@ -752,13 +806,7 @@ export class PrismaReimbursementRepository {
     companyId: string,
     evidence: { attachmentIds: string[]; expenseIds: string[] },
   ): Promise<void> {
-    const keys = [
-      ...evidence.attachmentIds.map((id) => `attachment:${id}`),
-      ...evidence.expenseIds.map((id) => `expense:${id}`),
-    ].filter((key, index, all) => all.indexOf(key) === index).sort();
-    for (const key of keys) {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:reimbursement-evidence:${key}`}))`;
-    }
+    await lockFundingEvidence(tx, companyId, evidence);
   }
 
   private async assertEvidenceAvailable(
@@ -865,6 +913,8 @@ export class PrismaReimbursementRepository {
         amount: line.amount,
         attachmentId: line.attachmentId ?? null,
         linkedExpenseId: line.linkedExpenseId ?? null,
+        sourceExpenseSnapshotJson: line.sourceExpenseSnapshot ?? Prisma.DbNull,
+        attachmentSnapshotJson: line.attachmentSnapshot ?? Prisma.DbNull,
       };
       await tx.reimbursementLine.upsert({
         where: { reimbursementRequestId_lineNo: { reimbursementRequestId: requestId, lineNo: line.lineNo } },
@@ -914,6 +964,7 @@ export class PrismaReimbursementRepository {
 
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
+      await assertReimbursementSources(tx, request);
       const storedHash = this.assertApprovalSnapshot(request, data.expectedApprovalSnapshotHash);
       if (!request.currentApprovalStepId) throw new ConflictException('stale_approval_snapshot');
       const step = await tx.reimbursementApprovalStep.findFirst({
@@ -1008,6 +1059,7 @@ export class PrismaReimbursementRepository {
       }
       const request = this.toRequest(row);
       this.assertDecisionBranch(request.branchId, data.scopes);
+      await assertReimbursementSources(tx, request);
       if (request.financeReviewStatus === 'APPROVED_FOR_PAYMENT') {
         if (request.financeReviewedByUserId !== data.actorUserId || !request.financeReviewedAt) {
           throw new ConflictException('finance_approval_already_decided');
@@ -1205,6 +1257,7 @@ export class PrismaReimbursementRepository {
         }
       }
 
+      await assertReimbursementSources(tx, request);
       const lines = request.lines ?? [];
       const itemByLineId = new Map(data.items.map((item) => [item.reimbursementLineId, item]));
       if (!lines.length || itemByLineId.size !== lines.length
@@ -1220,6 +1273,7 @@ export class PrismaReimbursementRepository {
         // "source changed" and finance review could never complete for them.
         if ((item.branchId ?? null) !== (request.branchId ?? null)
           || item.expenseDate.getTime() !== line.incurredDate.getTime()
+          || !isDeepStrictEqual(item.sourceChannelMetadataJson.reimbursementSource, line.sourceExpenseSnapshot)
           || !d(item.grandTotalAmount).eq(d(line.amount))) {
           throw new ConflictException('reimbursement_projection_source_changed');
         }
@@ -1254,6 +1308,7 @@ export class PrismaReimbursementRepository {
             sourceChannelMetadataJson: item.sourceChannelMetadataJson,
             vendorNameSnapshot: item.vendorNameSnapshot,
             note: item.description,
+            ...(line.sourceExpenseSnapshot?.classification ?? {}),
             primaryAttachmentId: item.attachmentId ?? null,
             missingReceiptReason: item.missingReceiptReason ?? null,
             createdByUserId: data.decisionActorUserId,
@@ -1267,7 +1322,15 @@ export class PrismaReimbursementRepository {
             outstandingAmount: item.outstandingAmount,
           },
         });
-        await tx.expenseLine.create({
+        if (item.sourceCostLines) {
+          if (!item.sourceCostLines.length || !item.sourceCostLines.reduce((sum, cost) => sum.add(cost.amount), d('0')).eq(item.grandTotalAmount)) throw sourceError('reimbursement_source_fields_mismatch');
+          await tx.expenseLine.createMany({ data: item.sourceCostLines.map((cost, index) => ({
+            companyId: data.companyId, expenseId: expense.id, lineNumber: index + 1, description: cost.description, chargeKind: cost.chargeKind,
+            expenseCategoryId: cost.expenseCategoryId, accountHintKey: cost.accountHintKey, taxCategory: cost.taxCategory,
+            quantity: '1', unitPrice: cost.amount, discountAmount: '0', taxableAmount: cost.amount,
+            vatAmount: '0', whtAmount: '0', lineSubtotalAmount: cost.amount, lineTotalAmount: cost.amount,
+          })) });
+        } else await tx.expenseLine.create({
           data: {
             companyId: data.companyId,
             expenseId: expense.id,
@@ -1300,15 +1363,7 @@ export class PrismaReimbursementRepository {
             skipDuplicates: true,
           });
         }
-        await tx.reimbursementLine.updateMany({
-          where: {
-            id: line.id,
-            companyId: data.companyId,
-            reimbursementRequestId: data.requestId,
-            linkedExpenseId: null,
-          },
-          data: { linkedExpenseId: expense.id },
-        });
+        // Source evidence stays unchanged; projection identity is sourceReimbursementLineId.
         results.push({ reimbursementLineId: line.id, expenseId: expense.id, created: true });
       }
       return results;
@@ -1960,6 +2015,7 @@ export class PrismaReimbursementRepository {
       if (request.paymentStatus === 'PAID') throw new ConflictException('reimbursement_payment_already_recorded');
       if (request.cancellationPendingAt) throw new ConflictException('reimbursement_cancellation_pending');
       requireTransactionBranchId(request.branchId);
+      await assertReimbursementSources(tx, this.toRequest(request));
       await this.assertClaimProjectionsReady(tx, this.toRequest(request));
 
       const policy = effectivePolicyForRequest(this.toRequest(request), effectivePolicy(await tx.reimbursementPolicy.findFirst({
@@ -2694,6 +2750,8 @@ export class PrismaReimbursementRepository {
       amount: dec(row.amount),
       attachmentId: opt(row.attachmentId),
       linkedExpenseId: opt(row.linkedExpenseId),
+      sourceExpenseSnapshot: row.sourceExpenseSnapshotJson ?? undefined,
+      attachmentSnapshot: row.attachmentSnapshotJson ?? undefined,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

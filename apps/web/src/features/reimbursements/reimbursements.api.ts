@@ -4,7 +4,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
 import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
 import { prepareReceiptFile } from '../expenses/expense-upload.logic';
-import type { ReimbursementApproverRoleOption, ReimbursementPolicySummary } from '@watchdog-bms/contracts';
+import type { ReimbursementApproverRoleOption, ReimbursementPolicySummary, ReimbursementSourceOptions } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
   const q = new URLSearchParams();
@@ -16,6 +16,10 @@ function qs(params?: Record<string, unknown>): string {
 }
 
 const base = (companyId: string) => `/companies/${companyId}/reimbursements`;
+
+export function getReimbursementSourceOptions(companyId: string, params: { branchId: string; requesterUserId: string; search?: string; expenseId?: string }) {
+  return apiFetch<ReimbursementSourceOptions>(`${base(companyId)}/source-options${qs(params)}`);
+}
 
 // ---- Requests ----
 
@@ -71,6 +75,7 @@ export function toLineInputs(lines: any[]): Record<string, unknown>[] {
     categoryLabel: line.categoryLabelSnapshot,
     amount: line.amount,
     attachmentId: line.attachmentId ?? null,
+    sourceExpenseUpdatedAt: line.sourceExpenseSnapshot?.expenseUpdatedAt,
     linkedExpenseId: line.linkedExpenseId ?? null,
   }));
 }

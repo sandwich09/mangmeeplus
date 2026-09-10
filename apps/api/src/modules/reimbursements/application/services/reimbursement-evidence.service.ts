@@ -19,7 +19,7 @@ export class ReimbursementEvidenceService {
   // Evidence must belong to the request's REQUESTER, not the caller — finance may
   // update/submit on the requester's behalf without owning the receipt. Applied
   // per line: one bad row fails the whole claim.
-  async validate(ctx: RequestContext, requesterUserId: string, refs: readonly EvidenceRef[], branchId: string | null | undefined): Promise<void> {
+  async validate(ctx: RequestContext, requesterUserId: string, refs: readonly EvidenceRef[], branchId: string | null | undefined, retainedAttachmentOwners: ReadonlyMap<string, string> = new Map()): Promise<void> {
     const sourceBranchId = requireTransactionBranchId(branchId);
     for (const ref of refs) {
       if (ref.attachmentId !== undefined && ref.attachmentId !== null) {
@@ -28,7 +28,7 @@ export class ReimbursementEvidenceService {
           !attachment
           || attachment.companyId !== ctx.companyId
           || attachment.status !== 'ACTIVE'
-          || attachment.uploadedByUserId !== requesterUserId
+          || (attachment.uploadedByUserId !== requesterUserId && !ref.linkedExpenseId && retainedAttachmentOwners.get(ref.attachmentId) !== attachment.uploadedByUserId && !(ctx.permissions.includes('reimbursement.finance_review') && attachment.uploadedByUserId === ctx.userId))
         ) {
           throw new UnprocessableEntityException('invalid_primary_attachment');
         }
@@ -37,7 +37,9 @@ export class ReimbursementEvidenceService {
 
       if (ref.linkedExpenseId !== undefined && ref.linkedExpenseId !== null) {
         const expense = await this.expenses.findById(ctx.companyId, ref.linkedExpenseId);
-        if (!expense || expense.companyId !== ctx.companyId || expense.createdByUserId !== requesterUserId) {
+        const certificate = expense && expense.createdByUserId !== requesterUserId
+          ? await this.expenses.findSubstituteEvidence(ctx.companyId, expense.id) : null;
+        if (!expense || expense.companyId !== ctx.companyId || (expense.createdByUserId !== requesterUserId && certificate?.payerUserId !== requesterUserId)) {
           throw new UnprocessableEntityException('invalid_linked_expense');
         }
         this.assertEvidenceBranch(expense.branchId, sourceBranchId);

@@ -108,6 +108,7 @@ export type ConfirmValidationInput = {
   vatMode: string;
   inputVatClaimStatus: string;
   hasMissingReceiptPermission?: boolean;
+  hasLinkedClaimEvidence?: boolean;
   aiVerifiedFieldsJson?: Record<string, unknown> | null;
   aiVerificationSummaryJson?: Record<string, unknown> | null;
 };
@@ -284,10 +285,10 @@ export function validateConfirm(input: ConfirmValidationInput): string | null {
   if (input.duplicateStatus === 'POSSIBLE_DUPLICATE' || input.duplicateStatus === 'CONFIRMED_DUPLICATE') {
     return 'Expense has unresolved duplicate warning. Dismiss or override before confirming.';
   }
-  if (!input.primaryAttachmentId && !input.missingReceiptReason) {
+  if (!input.primaryAttachmentId && !input.missingReceiptReason && !input.hasLinkedClaimEvidence) {
     return 'Expense requires a receipt attachment or a missing receipt reason.';
   }
-  if (!input.hasMissingReceiptPermission && !input.primaryAttachmentId) {
+  if (!input.hasMissingReceiptPermission && !input.primaryAttachmentId && !input.hasLinkedClaimEvidence) {
     return 'Finance permission required to confirm expense without receipt attachment.';
   }
   if (!input.expenseDate) {

@@ -92,6 +92,11 @@ export class PreviewReimbursementClaimFormUseCase {
         description: line.description,
         purpose: line.purpose ?? null,
         amount: line.amount,
+        ...(line.sourceExpenseSnapshot && { sourceReference: [
+          line.sourceExpenseSnapshot.seller.name,
+          line.sourceExpenseSnapshot.seller.documentNumber,
+          line.sourceExpenseSnapshot.certificate?.documentNumber,
+        ].filter(Boolean).join(' · ') }),
       })),
       hasReceiptEvidence: lines.some(isLineEvidenced),
       missingReceiptReason: req.missingReceiptReason ?? null,

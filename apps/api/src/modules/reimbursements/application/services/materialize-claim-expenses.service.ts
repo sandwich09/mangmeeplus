@@ -1,7 +1,8 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { ReimbursementRequestRecord, MaterializeClaimExpenseItem } from '../../domain/models/reimbursement.model';
 import { normalizeReimbursementAmount } from '../../domain/logic/reimbursement.logic';
-import { expenseTotalsIdentityError } from '../../../expenses/domain/logic/expense-totals.logic';
+import type { ExpenseLineChargeKind } from '@watchdog-bms/contracts';
+import { calcDocumentTotals, expenseTotalsIdentityError } from '../../../expenses/domain/logic/expense-totals.logic';
 
 /**
  * Pure mapping for the caller-owned projection transaction. Every claim line
@@ -26,10 +27,10 @@ export class MaterializeClaimExpensesService {
         expenseDate: line.incurredDate,
         description,
         vendorNameSnapshot,
-        attachmentId: line.attachmentId ?? null,
+        attachmentId: line.sourceExpenseSnapshot ? null : line.attachmentId ?? null,
         // No receipt on this line: carry the request's missing-receipt reason so
         // finance does not retype it. Lines with an attachment leave it null.
-        missingReceiptReason: line.attachmentId ? null : (request.missingReceiptReason ?? null),
+        missingReceiptReason: line.attachmentId || line.sourceExpenseSnapshot ? null : (request.missingReceiptReason ?? null),
         // Created READY_FOR_CONFIRMATION so finance confirms it on the normal
         // expense path (numbering/outbox/postingStatus behave identically to a
         // manual confirm). captureSource API_INTERNAL: no user upload happened.
@@ -53,7 +54,13 @@ export class MaterializeClaimExpensesService {
         vendorDocumentNumber: request.requestNo
           ? (lineCount > 1 ? `${request.requestNo}-${line.lineNo}` : request.requestNo)
           : null,
-        sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED' },
+        sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED', ...(line.sourceExpenseSnapshot ? { reimbursementSource: line.sourceExpenseSnapshot } : {}) },
+        ...(line.sourceExpenseSnapshot && { sourceCostLines: line.sourceExpenseSnapshot.lines.map(sourceLine => ({
+          description: String(sourceLine.description ?? line.description), chargeKind: (sourceLine.chargeKind as ExpenseLineChargeKind | null) ?? null, amount: String(sourceLine.lineTotalAmount),
+          expenseCategoryId: (sourceLine.expenseCategoryId as string | null) ?? line.sourceExpenseSnapshot!.classification.expenseCategoryId,
+          accountHintKey: (sourceLine.accountHintKey as string | null) ?? line.sourceExpenseSnapshot!.classification.accountHintKey,
+          taxCategory: (sourceLine.taxCategory as string | null) ?? line.sourceExpenseSnapshot!.classification.taxCategory,
+        })) }),
         subtotalAmount: amount,
         discountAmount: zero,
         taxableAmount: amount,
@@ -74,17 +81,22 @@ export class MaterializeClaimExpensesService {
         },
       };
     })
-      // Expense §5.1: this is one of the few writers that fills the expense HEADER totals from its
-      // own figure rather than deriving them from the line it also writes. The two are equal by
-      // construction today, and the assertion is here so they cannot quietly stop being — a
-      // projection whose header disagrees with its single line is an employee payable nobody can
-      // reconcile. A claim line never carries a chargeKind: it is the claim's own amount, not a
-      // service charge on a receipt.
+      // Keep additional charges/rounding out of the goods subtotal while retaining
+      // the full gross cost and original account classification on each source row.
       .map((item) => {
+        const lines = item.sourceCostLines ? item.sourceCostLines.map(cost => ({
+          chargeKind: cost.chargeKind, lineSubtotalAmount: cost.amount, discountAmount: '0',
+          taxableAmount: cost.amount, vatAmount: '0', whtAmount: '0', lineTotalAmount: cost.amount,
+        })) : [{ ...item.line, chargeKind: null }];
+        if (item.sourceCostLines) {
+          const totals = calcDocumentTotals({ lines });
+          if (totals.netPayableAmount !== item.netPayableAmount) throw new UnprocessableEntityException('reimbursement_source_fields_mismatch');
+          item.subtotalAmount = totals.subtotalAmount;
+        }
         const error = expenseTotalsIdentityError({
           vatMode: 'NO_VAT',
           totals: item,
-          lines: [{ ...item.line, chargeKind: null }],
+          lines,
         });
         if (error) throw new UnprocessableEntityException(`reimbursement_projection_totals_mismatch: ${error}`);
         return item;

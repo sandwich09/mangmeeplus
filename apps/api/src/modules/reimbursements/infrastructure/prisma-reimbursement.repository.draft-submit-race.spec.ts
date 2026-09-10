@@ -7,6 +7,11 @@ import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastr
 import { MaterializeClaimExpensesService } from '../application/services/materialize-claim-expenses.service';
 import { computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from './prisma-reimbursement.repository';
+import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources, assertProjectionSource } from './reimbursement-source';
+import { ConfirmExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
+import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
+import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
+import { PrismaExpenseRepository } from '../../expenses/infrastructure/prisma-expense.repository';
 
 const TAG = `reimbursement-draft-race-${process.pid}`;
 const periodKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -69,7 +74,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
   });
 
   after(async () => {
-    if (reachable) await clients[0]!.company.deleteMany({ where: { id: companyId } });
+    if (reachable) {
+      await clients[0]!.expenseSubstituteReceiptEvidence.deleteMany({ where: { companyId } });
+      await clients[0]!.company.deleteMany({ where: { id: companyId } });
+    }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
 
@@ -593,4 +601,199 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     assert.equal(after.status, 'PENDING_APPROVAL');
     assert.equal(after.approvalSteps[0]?.status, 'PENDING');
   });
+
+  let sourceSequence = 0;
+  async function sourceFixture(withCertificate = true) {
+    const db = clients[0]!;
+    const index = ++sourceSequence;
+    const at = new Date('2026-08-22T00:00:00Z');
+    const payer = `${TAG}-user`;
+    const expense = await db.expenseRecord.create({ data: {
+      companyId, branchId, createdByUserId: withCertificate ? `${TAG}-finance` : payer,
+      expenseDate: at, vendorNameSnapshot: 'ร้านต้นทาง', vendorDocumentNumber: `SOURCE-${index}`, status: 'NEEDS_REVIEW',
+      vatMode: 'NO_VAT', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+      subtotalAmount: '100', taxableAmount: '100', grandTotalAmount: '100', netPayableAmount: '100', outstandingAmount: '100',
+      lines: { create: [{ companyId, lineNumber: 1, description: 'ค่าเดินทาง', quantity: '1', unitPrice: '60', taxableAmount: '60', lineSubtotalAmount: '60', lineTotalAmount: '60', accountHintKey: 'travel' },
+        { companyId, lineNumber: 2, description: 'ค่าส่งสินค้า', quantity: '1', unitPrice: '40', taxableAmount: '40', lineSubtotalAmount: '40', lineTotalAmount: '40', accountHintKey: 'delivery' }] },
+    } });
+    const file = await db.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${TAG}/${index}`, originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
+      checksumSha256: 'b'.repeat(64), uploadedByUserId: payer, status: 'ACTIVE' } });
+    await db.attachmentLink.create({ data: { companyId, attachmentId: file.id, targetType: 'expense.record', targetId: expense.id, purpose: 'expense.receipt.primary', linkedByUserId: payer } });
+    const certificate = withCertificate ? await db.expenseSubstituteReceiptEvidence.create({ data: {
+      companyId, branchId, expenseId: expense.id, version: 1, status: 'ISSUED', fundingSource: 'PERSONAL_ADVANCE', signatureMode: 'DIGITAL',
+      documentNumber: `SRC-202608-SOURCE-${index}`, idempotencyKey: `${TAG}-source-${index}`, originalSourceDocumentType: 'RECEIPT',
+      reasonCode: 'RECEIPT_UNAVAILABLE', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้ในกิจการ', paymentEvidenceAttachmentIds: [], supportingAttachmentIds: [],
+      paymentDate: at, paymentMethod: 'CASH', preparedByUserId: `${TAG}-finance`, preparedAt: at, expenseUpdatedAtAtPreparation: expense.updatedAt,
+      payerUserId: payer, payerName: 'พนักงานผู้จ่าย', artifactAttachmentId: file.id, checksumSha256: file.checksumSha256,
+      snapshotJson: { test: index }, snapshotChecksumSha256: file.checksumSha256, payerPosition: '', certifiedAt: at,
+      payerSignatureAttachmentId: file.id, payerSignatureChecksumSha256: file.checksumSha256, certifiedArtifactAttachmentId: file.id, certifiedArtifactChecksumSha256: file.checksumSha256,
+      approverUserId: `${TAG}-finance`, approverName: 'ผู้อนุมัติ', approverPosition: '', approverSignatureAttachmentId: file.id, approvedAt: at, issuedByUserId: `${TAG}-finance`, issuedAt: at,
+    } }) : null;
+    const input = { lineNo: 1, incurredDate: at, description: 'เบิกคืนจากค่าใช้จ่าย', categoryKey: 'travel', amount: '100.0000', linkedExpenseId: expense.id, sourceExpenseUpdatedAt: expense.updatedAt.toISOString() };
+    return { db, expense, file, certificate, payer, input };
+  }
+
+  async function claimFromSource(source: Awaited<ReturnType<typeof sourceFixture>>) {
+    const lines = await resolveReimbursementSourceLines(source.db, companyId, source.payer, branchId, 'THB', [source.input]);
+    return repos[0]!.createRequest({ companyId, branchId, requesterUserId: source.payer, requesterDisplayNameSnapshot: 'พนักงานผู้จ่าย',
+      createdByUserId: `${TAG}-finance`, reason: 'ทดสอบหลักฐานต้นทาง', currency: 'THB', categoryKey: 'travel', amount: '100.0000', incurredDate: source.input.incurredDate,
+      receiptRequirementStatus: 'ATTACHED', lines });
+  }
+
+  it('imports the actual payer independently of the preparer and retains source facts after JSONB round-trip', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture();
+    const options = await repos[0]!.listReimbursementSources(companyId, branchId, source.payer, 'ร้านต้นทาง');
+    assert.equal(options.find(row => row.expenseId === source.expense.id)?.eligible, true);
+    assert.equal(options.find(row => row.expenseId === source.expense.id)?.purpose, 'ใช้ในกิจการ');
+    const request = await claimFromSource(source);
+    const snapshot = request.lines![0]!.sourceExpenseSnapshot!;
+    assert.equal(request.requesterUserId, source.payer);
+    assert.notEqual(request.createdByUserId, request.requesterUserId);
+    assert.equal(snapshot.seller.documentNumber, source.expense.vendorDocumentNumber);
+    assert.equal(snapshot.paymentDate, '2026-08-22T00:00:00.000Z');
+    assert.equal(snapshot.certificate?.artifactChecksumSha256, 'b'.repeat(64));
+    assert.deepEqual(snapshot.lines.map(line => line.accountHintKey), ['travel', 'delivery']);
+    await source.db.$transaction(tx => assertReimbursementSources(tx, request));
+    const [projection] = new MaterializeClaimExpensesService().buildItems(request);
+    assert.equal(projection!.attachmentId, null);
+    assert.deepEqual(projection!.sourceCostLines?.map(line => [line.amount, line.accountHintKey]), [['60', 'travel'], ['40', 'delivery']]);
+  });
+
+  it('rejects wrong tenant/branch/payee, company money, unissued/paper-unlinked evidence, tax handoff and amount/date tampering', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture();
+    const read = (company = companyId, user = source.payer, branch = branchId) => readReimbursementSource(source.db, company, user, branch, 'THB', source.expense.id);
+    await assert.rejects(() => read('other-company'), error => errorCode(error) === 'reimbursement_source_unavailable');
+    await assert.rejects(() => read(companyId, source.payer, 'other-branch'), error => errorCode(error) === 'REIMBURSEMENT_EVIDENCE_BRANCH_MISMATCH');
+    await assert.rejects(() => read(companyId, `${TAG}-finance`), error => errorCode(error) === 'reimbursement_source_wrong_payer');
+    for (const [patch, code] of [[{ fundingSource: 'COMPANY' }, 'reimbursement_source_not_personal'], [{ fundingSource: 'PERSONAL_ADVANCE', status: 'PREPARED' }, 'reimbursement_source_not_issued'],
+      [{ status: 'ISSUED', payerUserId: null, signatureMode: 'PAPER', approverUserId: null, payerSignatureAttachmentId: null, approverSignatureAttachmentId: null,
+        wetSignedScanAttachmentId: source.file.id, wetSignedScanChecksumSha256: source.file.checksumSha256, paperFormSnapshotJson: {}, paperSubmissionJson: {}, paperReviewedByUserId: `${TAG}-finance` }, 'reimbursement_source_payer_unlinked']] as const) {
+      await source.db.expenseSubstituteReceiptEvidence.update({ where: { id: source.certificate!.id }, data: patch });
+      await assert.rejects(() => read(), error => errorCode(error) === code);
+    }
+    await source.db.expenseSubstituteReceiptEvidence.update({ where: { id: source.certificate!.id }, data: { payerUserId: source.payer, signatureMode: 'DIGITAL', payerSignatureAttachmentId: source.file.id, approverUserId: `${TAG}-finance`, approverSignatureAttachmentId: source.file.id } });
+    for (const patch of [{ amount: '99.00' }, { incurredDate: new Date('2026-08-23T00:00:00Z') }]) {
+      await assert.rejects(() => resolveReimbursementSourceLines(source.db, companyId, source.payer, branchId, 'THB', [{ ...source.input, ...patch }]), error => errorCode(error) === 'reimbursement_source_fields_mismatch');
+    }
+    await source.db.expenseRecord.update({ where: { id: source.expense.id }, data: { whtAmount: '3' } });
+    await assert.rejects(() => read(), error => errorCode(error) === 'reimbursement_source_tax_review_required');
+  });
+
+  it('requires draft refresh after source edits and locks ordinary expense edits after submit', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture(false);
+    let request = await claimFromSource(source);
+    const expenses = new PrismaExpenseRepository({ client: source.db } as any);
+    await expenses.updateExpense({ companyId, id: source.expense.id, updatedByUserId: source.payer, vendorNameSnapshot: 'ร้านที่แก้ชื่อแล้ว' });
+    await assert.rejects(() => source.db.$transaction(tx => assertReimbursementSources(tx, request)), error => errorCode(error) === 'reimbursement_source_changed');
+    const fresh = await readReimbursementSource(source.db, companyId, source.payer, branchId, 'THB', source.expense.id);
+    const refreshedLines = await resolveReimbursementSourceLines(source.db, companyId, source.payer, branchId, 'THB', [{ ...source.input, sourceExpenseUpdatedAt: fresh.expenseUpdatedAt }]);
+    request = await repos[0]!.updateDraftRequest(companyId, request.id, request.updatedAt, { updatedByUserId: source.payer }, refreshedLines);
+    const submission = submitInput(request);
+    submission.evidence.expenseIds = [source.expense.id];
+    await repos[0]!.submitDraftAtomic(submission);
+    await assert.rejects(() => expenses.updateExpense({ companyId, id: source.expense.id, updatedByUserId: source.payer, vendorNameSnapshot: 'ห้ามแก้ระหว่างเบิก' }), error => errorCode(error) === 'substitute_source_has_live_claim');
+    assert.equal((await source.db.expenseRecord.findUniqueOrThrow({ where: { id: source.expense.id } })).vendorNameSnapshot, 'ร้านที่แก้ชื่อแล้ว');
+  });
+
+  it('prevents claiming one expense twice through different receipt files and catches a newly linked manual receipt', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture(false);
+    await assert.rejects(() => resolveReimbursementSourceLines(source.db, companyId, source.payer, branchId, 'THB', [source.input, { ...source.input, lineNo: 2, linkedExpenseId: undefined, attachmentId: source.file.id }]), error => errorCode(error) === 'expense_already_claimed');
+    await assert.rejects(() => source.db.$transaction(tx => assertReimbursementSources(tx, { companyId, branchId, currency: 'THB', requesterUserId: source.payer, lines: [{ ...source.input, linkedExpenseId: null, attachmentId: source.file.id }] })), error => errorCode(error) === 'reimbursement_source_review_required');
+    const first = await claimFromSource(source); const second = await claimFromSource(source);
+    const submissions = [first, second].map(request => ({ ...submitInput(request), evidence: { expenseIds: [source.expense.id], attachmentIds: [] } }));
+    const outcomes = await Promise.allSettled(submissions.map((input, index) => repos[index]!.submitDraftAtomic(input)));
+    assert.equal(outcomes.filter(outcome => outcome.status === 'fulfilled').length, 1);
+    const failure = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult;
+    assert.match(errorMessage(failure.reason) ?? JSON.stringify(failure.reason.getResponse?.()), /already_claimed/);
+  });
+
+  it('rejects source changes at claim-born confirmation, without attaching the original receipt twice', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture();
+    const request = await claimFromSource(source);
+    await source.db.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'FINANCE_REVIEW' } });
+    const projection = { companyId, branchId, currency: 'THB', netPayableAmount: '100', sourceReimbursementRequestId: request.id, sourceReimbursementLineId: request.lines![0]!.id,
+      sourceChannelMetadataJson: { reimbursementSource: request.lines![0]!.sourceExpenseSnapshot } };
+    await source.db.$transaction(tx => assertProjectionSource(tx, companyId, projection));
+    await source.db.attachmentObject.update({ where: { id: source.file.id }, data: { checksumSha256: 'c'.repeat(64) } });
+    await assert.rejects(() => source.db.$transaction(tx => assertProjectionSource(tx, companyId, projection)), error => errorCode(error) === 'reimbursement_source_not_issued');
+  });
+
+  it('retains a finance-owned upload for the employee while rejecting unvalidated or changed files', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture(false);
+    await source.db.attachmentLink.deleteMany({ where: { attachmentId: source.file.id } });
+    await source.db.attachmentObject.update({ where: { id: source.file.id }, data: { uploadedByUserId: `${TAG}-finance` } });
+    const files = new PrismaAttachmentRepository({ client: source.db } as any);
+    const evidence = new ReimbursementEvidenceService(files, new PrismaExpenseRepository({ client: source.db } as any));
+    const ctx = { companyId, userId: source.payer, scopes: {}, permissions: ['reimbursement.submit'] } as any;
+    const refs = [{ attachmentId: source.file.id }];
+    await assert.rejects(() => evidence.validate(ctx, source.payer, refs, branchId), /invalid_primary_attachment/);
+    await evidence.validate({ ...ctx, userId: `${TAG}-finance`, permissions: ['reimbursement.finance_review'] }, source.payer, refs, branchId);
+    const lines = await resolveReimbursementSourceLines(source.db, companyId, source.payer, branchId, 'THB', [{ ...source.input, linkedExpenseId: null, attachmentId: source.file.id }]);
+    const request = await repos[0]!.createRequest({ companyId, branchId, requesterUserId: source.payer, createdByUserId: `${TAG}-finance`,
+      requesterDisplayNameSnapshot: 'พนักงาน', reason: 'การเงินแนบให้พนักงาน', currency: 'THB', categoryKey: 'travel', amount: '100.0000', incurredDate: source.input.incurredDate, receiptRequirementStatus: 'ATTACHED', lines });
+    const retained = new Map(request.lines!.map(line => [line.attachmentSnapshot!.id, line.attachmentSnapshot!.uploadedByUserId]));
+    await evidence.validate(ctx, source.payer, refs, branchId, retained);
+    await source.db.$transaction(tx => assertReimbursementSources(tx, request));
+    const input = submitInput(request, { attachmentIds: [source.file.id] });
+    await repos[0]!.submitDraftAtomic(input);
+    await assert.rejects(() => files.markDeleted({ companyId, id: source.file.id }), error => errorCode(error) === 'substitute_source_has_live_claim');
+    await source.db.attachmentObject.update({ where: { id: source.file.id }, data: { checksumSha256: 'd'.repeat(64) } });
+    await assert.rejects(() => source.db.$transaction(tx => assertReimbursementSources(tx, request)), error => errorCode(error) === 'reimbursement_source_changed');
+  });
+
+  it('freezes generic file deletion and new evidence links after a source is submitted', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture(false);
+    const request = await claimFromSource(source);
+    await repos[0]!.submitDraftAtomic({ ...submitInput(request), evidence: { expenseIds: [source.expense.id], attachmentIds: [] } });
+    const files = new PrismaAttachmentRepository({ client: source.db } as any);
+    await assert.rejects(() => files.markDeleted({ companyId, id: source.file.id }), error => errorCode(error) === 'substitute_source_has_live_claim');
+    const { id: _id, metadataJson: _metadata, ...copy } = source.file;
+    const extra = await source.db.attachmentObject.create({ data: { ...copy, objectKey: `${copy.objectKey}-extra` } });
+    await assert.rejects(() => files.linkToTarget({ companyId, attachmentId: extra.id, targetType: 'expense.record', targetId: source.expense.id, purpose: 'expense.payment.evidence', linkedByUserId: source.payer }), error => errorCode(error) === 'substitute_source_has_live_claim');
+    assert.equal((await source.db.attachmentObject.findUniqueOrThrow({ where: { id: source.file.id } })).status, 'ACTIVE');
+    assert.equal(await source.db.attachmentLink.count({ where: { attachmentId: extra.id } }), 0);
+  });
+
+  it('confirms source-backed gross costs and pays the employee once without settling the original expense twice', async (t) => {
+    if (!reachable) return t.skip('no database reachable');
+    const source = await sourceFixture();
+    let request = await claimFromSource(source);
+    // Policy/route unit tests exercise the decision. Here use a recorded finance decision
+    // to exercise the actual database materialization, expense confirmation and payout.
+    await source.db.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'FINANCE_REVIEW', financeReviewStatus: 'APPROVED_FOR_PAYMENT', financeReviewedByUserId: `${TAG}-finance` } });
+    request = (await repos[0]!.findRequestById(companyId, request.id))!;
+    const items = new MaterializeClaimExpensesService().buildItems(request);
+    const [projection] = await repos[0]!.prepareClaimProjections({ companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: `${TAG}-finance`, scopes: {}, items });
+    const expenses = new PrismaExpenseRepository({ client: source.db } as any);
+    const confirm = new ConfirmExpenseUseCase(expenses, { log: async () => undefined } as any, { resolveLines: async () => [] } as any,
+      { execute: async () => ({ id: `reserve-${request.id}`, documentNumber: `EXP-${request.id}` }) } as any,
+      { execute: async () => undefined } as any, { execute: async () => undefined } as any, {} as any);
+    const confirmed = await confirm.executeForReimbursement({ companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any, projection!.expenseId,
+      { reimbursementRequestId: request.id, reimbursementLineId: request.lines![0]!.id, branchId, allowMissingReceiptWithReason: false });
+    assert.equal(confirmed.status, 'CONFIRMED');
+    assert.equal(confirmed.primaryAttachmentId, null);
+    const cost = await source.db.expenseLine.findMany({ where: { expenseId: projection!.expenseId }, orderBy: { lineNumber: 'asc' } });
+    assert.deepEqual(cost.map(line => [line.lineTotalAmount.toString(), line.accountHintKey]), [['60', 'travel'], ['40', 'delivery']]);
+    await source.db.reimbursementRequest.update({ where: { id: request.id }, data: { status: 'READY_FOR_PAYMENT' } });
+    const input = { companyId, reimbursementRequestId: request.id, idempotencyKey: `${TAG}-pay-${request.id}`, paidAmount: '100.0000', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date(), paidByUserId: `${TAG}-finance` };
+    const paid = await repos[0]!.recordPaymentAtomic(input);
+    assert.equal(paid.created, true);
+    assert.equal(paid.request.status, 'PAID');
+    assert.equal((await repos[0]!.recordPaymentAtomic(input)).created, false);
+    assert.equal(await source.db.reimbursementPayment.count({ where: { reimbursementRequestId: request.id } }), 1);
+    const original = await source.db.expenseRecord.findUniqueOrThrow({ where: { id: source.expense.id } });
+    assert.equal(original.status, 'NEEDS_REVIEW');
+    assert.equal(original.paidAmount.toString(), '0');
+    assert.equal((await source.db.expenseRecord.findUniqueOrThrow({ where: { id: projection!.expenseId } })).paidAmount.toString(), '100');
+    assert.equal(await source.db.expensePayment.count({ where: { companyId } }), 0);
+    assert.equal((await repos[0]!.findRequestById(companyId, request.id))!.lines![0]!.linkedExpenseId, source.expense.id);
+  });
+
 });
