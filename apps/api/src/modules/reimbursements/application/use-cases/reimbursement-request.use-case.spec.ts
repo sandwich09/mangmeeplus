@@ -245,6 +245,20 @@ function useCases(state: { repo: any; calls?: { audits: any[] } }) {
   };
 }
 
+describe('preparing reimbursement for another member', () => {
+  it('requires finance authority and keeps the selected recipient separate from the preparer', async () => {
+    const state = fakeRepo();
+    const cases = useCases(state);
+    const input = { reason: 'prepare for employee', requesterUserId: 'staff-1', lines: [inputLine({ attachmentId: 'att-1' })] };
+    await assert.rejects(cases.create.execute(ctx({ userId: 'other-staff' }), input), /Cannot prepare a reimbursement for another member/);
+    assert.equal(state.request, null);
+    const created = await cases.create.execute(ctx({ userId: 'finance-1', permissions: ['reimbursement.create', 'reimbursement.finance_review'] }), input);
+    assert.equal(created.requesterUserId, 'staff-1');
+    const saved = await state.repo.findRequestById('co-1', created.id);
+    assert.equal(saved.createdByUserId, 'finance-1');
+  });
+});
+
 describe('every company role own reimbursement journey', () => {
   const roles = { ...ROLE_GRANTS, CUSTOM_READONLY: compileRole({ entitledFeatureKeys: null }).permissionKeys };
   for (const [role, permissions] of Object.entries(roles).filter(([key]) => key !== 'SYSTEM_ADMIN')) {

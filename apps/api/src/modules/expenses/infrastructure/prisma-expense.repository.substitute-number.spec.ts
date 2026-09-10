@@ -47,6 +47,7 @@ function preparedInput() {
 function makeRepo(existing: Record<string, any> | null = null, sourceChannelMetadataJson: Record<string, unknown> | null = null) {
   const tx: any = {
     attachmentLink: { findMany: async () => [] },
+    reimbursementLine: { findFirst: async () => null },
     $executeRaw: mock.fn(async () => undefined),
     expenseRecord: {
       findFirst: mock.fn(async () => ({

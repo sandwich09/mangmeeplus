@@ -34,6 +34,7 @@ function harness(overrides: Record<string, unknown> = {}) {
       const tx = {
         attachmentLink: { findMany: async () => [] },
         expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+        reimbursementLine: { findFirst: async () => null },
         $executeRaw: async () => 0,
         expenseRecord: {
           findFirst: async ({ where }: any) => where.companyId === draft.expense.companyId && where.id === draft.expense.id ? draft.expense : null,

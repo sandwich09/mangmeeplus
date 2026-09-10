@@ -44,11 +44,23 @@ describe('CreateReimbursementRequestDto', () => {
   it('rejects server-owned header fields, above all a client-sent total', async () => {
     for (const poison of [
       { amount: '999.00' }, { categoryKey: 'travel' }, { incurredDate: '2026-01-05' },
-      { companyId: 'other-tenant' }, { status: 'APPROVED' }, { requesterUserId: 'someone-else' },
+      { companyId: 'other-tenant' }, { status: 'APPROVED' }, { createdByUserId: 'someone-else' },
       { primaryAttachmentId: 'att-1' }, { receiptRequirementStatus: 'WAIVED_BY_POLICY' },
     ]) {
       await rejects(CreateReimbursementRequestDto, { ...validCreate, ...poison });
     }
+  });
+
+  it('accepts a recipient identifier for use-case authorization while rejecting forged source facts', async () => {
+    const out = await pipe.transform({ ...validCreate, requesterUserId: 'employee-1' }, { type: 'body', metatype: CreateReimbursementRequestDto });
+    assert.equal(out.requesterUserId, 'employee-1');
+    for (const requesterUserId of ['', 123, 'x'.repeat(65)]) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, requesterUserId });
+    }
+    for (const field of ['sourceExpenseSnapshot', 'sourceExpenseSnapshotJson', 'attachmentSnapshot', 'attachmentSnapshotJson']) {
+      await rejects(CreateReimbursementRequestDto, { ...validCreate, lines: [{ ...validLine, [field]: { id: 'forged' } }] });
+    }
+    await rejects(UpdateReimbursementDraftDto, { requesterUserId: 'other-employee' });
   });
 
   it('requires at least one line and caps the claim at 50', async () => {

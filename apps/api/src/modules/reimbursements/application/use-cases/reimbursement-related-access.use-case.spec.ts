@@ -53,7 +53,7 @@ describe('reimbursement related-view ABAC', () => {
     assert.equal(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.get), undefined);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.get), ['account.session.read']);
     assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.listApprovalQueue), ['account.session.read']);
-    assert.deepEqual(Reflect.getMetadata(REQUIRED_PERMISSIONS_KEY, prototype.update), ['reimbursement.update_own_draft']);
+    assert.deepEqual(Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, prototype.update), ['reimbursement.update_own_draft', 'reimbursement.finance_review']);
     // Approve/reject are gated by exact frozen assignment or current permission in the
     // use case and repeated inside the transaction; the route-level session permission only
     // makes the dynamic authorization path explicit to the global guard.
