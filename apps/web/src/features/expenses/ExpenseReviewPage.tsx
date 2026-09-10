@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { useConfirm } from '@/common/components/modal/use-confirm';
 import { Modal } from '@/common/components/modal/Modal';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
 import { CoverLoader } from '@/common/components/state/CoverLoader';
@@ -20,7 +21,7 @@ import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import {
   acknowledgeOcrTotal, confirmDuplicate, confirmExpense, deleteExpense, dismissDuplicate, fetchAttachmentPreviewBlob, getExpense,
   markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, rejectExpense,
-  requestExpenseExtraction, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
+  requestExpenseExtraction, removeExpenseReceipt, runDuplicateCheck, updateExpenseReviewFields, uploadExpenseEvidenceFile, voidExpense,
 } from './expenses.api';
 import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
@@ -35,7 +36,7 @@ import {
 } from './expenses.model';
 import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
-import { isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod } from '@watchdog-bms/contracts';
+import { isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -70,6 +71,9 @@ const VIEWER_TOP_REM = APP_HEADER_REM + STEPPER_REM;
 const VIEWER_BOTTOM_GAP_REM = 6; // clearance for the sticky action bar
 const PAYMENT_SAVED_REFRESH_NOTICE = 'บันทึกการจ่ายแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาตรวจประวัติการจ่าย หรือกด “ลองบันทึกรายการเดิมอีกครั้ง” เพื่อโหลดข้อมูล โดยไม่เพิ่มยอดจ่ายซ้ำ';
 type ExpensePreviewSource = DocumentPreviewSource & { hideOpenNewTab?: boolean; onViewed?: () => void };
+const isRemovableFilePurpose = (purpose: string): purpose is NonNullable<RemoveExpenseReceiptInput['purpose']> =>
+  purpose === 'expense.receipt.primary' || purpose === 'expense.receipt.supporting'
+  || purpose === 'expense.payment.evidence' || purpose === 'expense.review.evidence';
 
 export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, canSelfApprove }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
   const router = useRouter();
@@ -84,6 +88,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // Called before the loading/error early returns — hooks cannot live behind them.
   const capture = useExpenseCapturePolicy(companyId, detail?.expenseDate ?? undefined);
   const toast = useToast();
+  const { confirm, confirmDialog } = useConfirm();
+  const [receiptRemoving, setReceiptRemoving] = useState(false);
+  const receiptRemovalPending = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -388,6 +395,37 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   // primary now goes through the same read, so the fields the reviewer checks belong to the file on
   // screen. Past drafting the record keeps today's behaviour: an approver's numbers are not
   // rewritten under them. The server retires the file being replaced (CompleteReceiptUploadUseCase).
+  const removeExpenseFile = async (attachment: ExpenseDetail['attachments'][number]) => {
+    const purpose = attachment.purpose;
+    if (!detail || receiptRemovalPending.current || !isRemovableFilePurpose(purpose)) return;
+    const primary = purpose === 'expense.receipt.primary';
+    receiptRemovalPending.current = true;
+    setReceiptRemoving(true);
+    try {
+      const accepted = await confirm({
+        title: locale === 'th' ? 'ลบไฟล์นี้ออกจากรายการ?' : 'Remove this file?',
+        message: locale === 'th'
+          ? `ลบไฟล์ “${attachment.originalFileName}” ออกจากรายการนี้โดยไม่ต้องอัปโหลดใหม่ รายการค่าใช้จ่ายและยอดที่บันทึกไว้จะยังอยู่${primary ? " ผลตรวจจากใบเสร็จเดิมจะถูกล้าง กรุณาตรวจข้อมูลและหลักฐานอีกครั้ง" : " ไฟล์อื่นในรายการจะยังอยู่"}`
+          : `Remove “${attachment.originalFileName}” without uploading a replacement. Saved expense details and amounts remain.${primary ? " Receipt verification will be cleared; review the data and evidence again." : " Other files remain attached."}`,
+        confirmLabel: locale === 'th' ? 'ลบไฟล์' : 'Remove file',
+        cancelLabel: locale === 'th' ? 'ยกเลิก' : 'Cancel',
+        variant: 'danger',
+      });
+      if (!accepted) return;
+      setError(null);
+      await removeExpenseReceipt(companyId, expenseId, attachment.id, { expectedUpdatedAt: detail.updatedAt, purpose });
+      extractionRunIdRef.current += 1;
+      extractionAttemptRef.current = null;
+      extractionRequestRunningRef.current = false;
+      writeExpenseExtractionAttempt(availableExpenseSessionStorage(window), companyId, expenseId, null);
+      setNotice(null);
+      setViewerIndex(0);
+      await load();
+      toast.success(locale === 'th' ? 'ลบไฟล์ออกจากรายการแล้ว' : 'File removed');
+    } catch (error) { setError(err(error)); }
+    finally { receiptRemovalPending.current = false; setReceiptRemoving(false); }
+  };
+
   const attachPrimaryReceipt = async (file: File, branchId: string | null) => {
     const reread = shouldRereadReplacedReceipt({ status: detail?.status ?? '', canExtract });
     setReceiptUploading(true); setError(null);
@@ -1177,7 +1215,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         className="hidden"
         type="file"
         accept={ATTACHMENT_UPLOAD_ACCEPT}
-        disabled={receiptUploading}
+        disabled={receiptUploading || receiptRemoving}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = '';
@@ -1187,6 +1225,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     </label>
   );
   const replaceReceiptControl = receiptFileInput(t('expenses.replace_receipt', locale));
+  const removeReceiptControl = (attachment: ExpenseDetail['attachments'][number] | undefined) =>
+    attachment && isRemovableFilePurpose(attachment.purpose) && canMutateDraft
+      && ['DRAFT', 'NEEDS_REVIEW'].includes(detail.status) && detail.paymentStatus === 'UNPAID' ? (
+        <button type="button" className={cx(ghostClass, 'text-error-700')} disabled={receiptRemoving || receiptUploading || extractionLoading || actionLoading || stepSaving}
+          aria-label={`${locale === 'th' ? 'ลบไฟล์' : 'Remove file'} ${attachment.originalFileName}`} title={locale === 'th' ? 'ลบไฟล์' : 'Remove file'}
+          onClick={() => void removeExpenseFile(attachment)}>
+          {ICON.trash}
+        </button>
+      ) : null;
+
   const attachReceiptControl = canMutateDraft && (
     <label className="cursor-pointer">
       <span className={cx(ghostClass, 'inline-flex')}>{receiptUploading ? uploadBusyLabel : t('expenses.attach_receipt', locale)}</span>
@@ -1194,7 +1242,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
         className="hidden"
         type="file"
         accept={ATTACHMENT_UPLOAD_ACCEPT}
-        disabled={receiptUploading}
+        disabled={receiptUploading || receiptRemoving}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = '';
@@ -1206,6 +1254,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
 
   return (
     <>
+      {confirmDialog}
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
         {readySourceDraftMessage && canReview && (
@@ -1266,18 +1315,19 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between gap-2 border-b border-gray-100 bg-white px-4 py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-white px-4 py-2.5">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-gray-800">{activeAttachment?.originalFileName}</div>
                       <div className="text-xs text-gray-500">{activeAttachment && isWetSignedScanAttachment(activeAttachment.id, detail.substituteReceiptEvidence)
                         ? t('expenses.attachment.wet_signed_scan', locale)
                         : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
                     </div>
-                    <div className="flex flex-shrink-0 items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {/* Owner 2026-08-28: "เผื่ออัพโหลดผิด". Re-uploading has always worked on the server —
                           the newest primary upload becomes the receipt — but the control was rendered only
                           while there were zero attachments, so a wrong file could never be corrected here. */}
                       {replaceReceiptControl}
+                      {removeReceiptControl(activeAttachment)}
                       {attachments.length > 1 && (
                         <>
                           <button type="button" className={ghostClass} onClick={() => setViewerIndex(Math.max(0, safeViewerIndex - 1))} disabled={safeViewerIndex <= 0} aria-label={t('expenses.viewer_prev', locale)}>‹</button>
@@ -1322,10 +1372,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                     <div className="flex justify-end border-b border-gray-100 px-5 py-2">{replaceReceiptControl}</div>
                   )}
                   {attachments.map((attachment) => (
+                    <div key={`${attachment.id}:${attachment.purpose}`} className="flex items-center gap-2 border-b border-gray-100 pr-5 last:border-b-0">
                     <button
-                      key={attachment.id}
                       type="button"
-                      className="flex w-full items-center gap-3 border-b border-gray-100 px-5 py-3 text-left last:border-b-0 hover:bg-gray-100 disabled:opacity-60"
+                      className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-5 text-left hover:bg-gray-100 disabled:opacity-60"
                       onClick={() => void openPreview(attachment)}
                       disabled={previewLoading}
                     >
@@ -1338,6 +1388,9 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                       </div>
                       <span className="flex-shrink-0 text-xs font-semibold text-brand-600">{previewLoading ? t('expenses.opening', locale) : t('expenses.view_file', locale)}</span>
                     </button>
+
+                    {removeReceiptControl(attachment)}
+                    </div>
                   ))}
                 </div>
               )}

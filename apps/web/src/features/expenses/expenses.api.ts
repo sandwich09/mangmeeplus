@@ -12,6 +12,7 @@ import type {
   LineSubstituteReceiptPrefill,
   PreviewSubstituteReceiptInput,
   RecordExpensePaymentInput,
+  RemoveExpenseReceiptInput,
   SourceDocumentType,
   SubstituteReceiptEvidenceSummary,
   SubstituteReceiptListFilter,
@@ -110,6 +111,10 @@ export async function listExpenses(
 
 export async function getExpense(companyId: string, expenseId: string): Promise<ExpenseDetail> {
   return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}`);
+}
+
+export async function removeExpenseReceipt(companyId: string, expenseId: string, attachmentId: string, body: RemoveExpenseReceiptInput): Promise<void> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/receipts/${attachmentId}`, { method: 'DELETE', body: JSON.stringify(body) });
 }
 
 export async function deleteExpense(companyId: string, expenseId: string): Promise<void> {

@@ -27,7 +27,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
   const revision = `${evidence.id}:${evidence.updatedAt}`;
   const revisionRef = useRef(revision);
   revisionRef.current = revision;
-  useEffect(() => { setViewedHash(null); setPreview(null); setChecks([false, false, false]); }, [revision]);
+  useEffect(() => { setViewedHash(null); setPreview(null); setChecks([false, false, false]); setFile(null); setMatches(false); }, [revision]);
   const run = async (action: () => Promise<void>) => {
     if (busy) return;
     setBusy(true); setError('');
@@ -55,9 +55,9 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
           const current = history.find((item) => item.id === evidence.id);
           if (current) onChange(current);
         })}>1. ดาวน์โหลดแบบฟอร์มไปกรอกและเซ็น</button>
-        <p className="text-sm text-gray-600">ข้อมูลรายจ่ายถูกตรึงแล้ว หากต้องแก้ไขหรือเปลี่ยนวิธีลงนาม ให้ยกเลิกและจัดทำเวอร์ชันใหม่ด้านล่าง</p>
+        <p className="text-sm text-gray-600">หากแก้ข้อมูลที่หน้ารายการค่าใช้จ่าย ให้ดาวน์โหลดแบบฟอร์มล่าสุดไปลงนามใหม่ เอกสารใช้เลขเดิม และฉบับที่เคยเซ็นจะอยู่ในประวัติ</p>
         <h3 className="font-bold">2. อัปโหลดฉบับที่กรอกและลงนามครบทั้งสองส่วน</h3>
-        <ThemedFile accept="application/pdf,image/png,image/jpeg" aria-label="ฉบับลงนามบนกระดาษ" onChange={(picked) => { setFile(picked); setMatches(false); }} />
+        <ThemedFile file={file} accept="application/pdf,image/png,image/jpeg" aria-label="ฉบับลงนามบนกระดาษ" onChange={(picked) => { setFile(picked); setMatches(false); }} />
         <p className="text-xs text-gray-500">PDF ไม่เกิน 5 หน้า หรือภาพ PNG/JPEG ขนาดไม่เกิน 10 MB ให้เห็นครบทุกหน้าและอ่านได้ชัดเจน</p>
         <div className="grid gap-4 md:grid-cols-2">{signerFields('ผู้รับรองการจ่าย', payer, setPayer)}{signerFields('ผู้อนุมัติ', approver, setApprover)}</div>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={samePerson} onChange={(event) => setSamePerson(event.target.checked)} /><span>ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)</span></label>

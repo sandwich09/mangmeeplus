@@ -106,6 +106,7 @@ import {
   substituteReceiptRenderabilityIssue,
   validatePayeeIdentity,
   wizardJourneyStage,
+  currentSubstituteRevision,
   writeSubstituteWizardDraft,
   type CandidateSortKey,
   type ExpensePrerequisiteIssue,
@@ -577,6 +578,7 @@ export function SubstituteReceiptWizardPage({
   const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
   const [signatureDrawn, setSignatureDrawn] = useState(false);
   const [signaturePreview, setSignaturePreview] = useState<{ original: string; cleaned: string } | null>(null);
+  const previewEvidenceRevisionRef = useRef<string | null>(null);
   const [previewChecksum, setPreviewChecksum] = useState<string | null>(null);
   const [certifiedPreviewed, setCertifiedPreviewed] = useState(false);
   const [certificationAcknowledged, setCertificationAcknowledged] = useState(false);
@@ -783,9 +785,11 @@ export function SubstituteReceiptWizardPage({
             getExpense(companyId, expenseId),
             listSubstituteReceiptHistory(companyId, expenseId),
           ]);
-          const target = nextHistory.find((item) => item.id === evidenceId);
+          const requested = nextHistory.find((item) => item.id === evidenceId);
+          const target = requested ? currentSubstituteRevision(nextHistory, requested) : undefined;
           if (!target) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
           if (cancelled) return;
+          if (target.id !== evidenceId) router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(target.id)}`);
           setDetail(nextDetail);
           setReceiptEvidence(target);
           setHistory(nextHistory);
@@ -895,6 +899,28 @@ export function SubstituteReceiptWizardPage({
       .finally(() => { if (!cancelled) setPayersLoading(false); });
     return () => { cancelled = true; };
   }, [canReview, companyId, detail, receiptEvidence, userId]);
+
+  useEffect(() => {
+    if (!detail || !receiptEvidence || busy) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const rows = await listSubstituteReceiptHistory(companyId, detail.id);
+        if (cancelled) return;
+        const requested = rows.find((item) => item.id === receiptEvidence.id);
+        const current = requested ? currentSubstituteRevision(rows, requested) : undefined;
+        if (!current || current.updatedAt === receiptEvidence.updatedAt) return;
+        const fresh = await getExpense(companyId, detail.id);
+        if (cancelled) return;
+        setHistory(rows); setReceiptEvidence(current); setDetail(fresh);
+        setPreviewChecksum(null); setCertifiedPreviewed(false); setCertificationAcknowledged(false); setApprovalAcknowledged(false);
+        setInfo('เอกสารอัปเดตตามข้อมูลล่าสุดแล้ว กรุณาตรวจเอกสารก่อนลงนาม');
+        if (current.id !== receiptEvidence.id) { setActiveStep(resolveWizardStep(current)); router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(current.id)}`); }
+      } catch (cause) { if (!cancelled) setError(err(cause)); }
+    };
+    window.addEventListener('focus', refresh);
+    return () => { cancelled = true; window.removeEventListener('focus', refresh); };
+  }, [companyId, detail?.id, receiptEvidence?.id, receiptEvidence?.updatedAt, busy, router]);
 
   // W1: only the pre-prepare steps need saving — once evidence exists the server status resumes the
   // wizard on its own, and a prepared certificate must never be re-seeded from stale typing.
@@ -1288,6 +1314,7 @@ export function SubstituteReceiptWizardPage({
       throw cause;
     }
     if (!isPreviewRequestCurrent(requestId, requestScope)) return;
+    previewEvidenceRevisionRef.current = result.expectedEvidenceUpdatedAt ?? receiptEvidence.updatedAt;
     commitPreview(requestId, requestScope, {
       name: `${receiptEvidence.documentNumber} · ${t('expenses.substitute_wizard.preview_document', locale)}`,
       mimeType: 'image/svg+xml',
@@ -1308,7 +1335,7 @@ export function SubstituteReceiptWizardPage({
       previewChecksumSha256: previewChecksum,
       ...signature,
       expectedVersion: receiptEvidence.version,
-      expectedEvidenceUpdatedAt: receiptEvidence.updatedAt,
+      expectedEvidenceUpdatedAt: previewEvidenceRevisionRef.current ?? receiptEvidence.updatedAt,
     });
     setReceiptEvidence(result);
     setDetail((current) => current ? { ...current, substituteReceiptEvidence: result } : current);
@@ -2606,6 +2633,19 @@ export function SubstituteReceiptWizardPage({
       </details>
   );
 
+  const reviewingPreparedStep = Boolean(receiptEvidence && ['expense', 'details', 'evidence'].includes(activeStep));
+  const navigatePreparedStep = (step: WizardStep) => {
+    if (busy) return;
+    setActiveStep(step);
+    setError(null);
+  };
+  const returnToSigning = () => { if (receiptEvidence) navigatePreparedStep(resolveWizardStep(receiptEvidence)); };
+  const showRevisionAction = () => {
+    if (versionHistoryRef.current) versionHistoryRef.current.open = true;
+    supersedeReasonRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    supersedeReasonRef.current?.focus({ preventScroll: true });
+  };
+
   let content: ReactNode = null;
   if (receiptEvidence && (activeStep === 'expense' || activeStep === 'details' || activeStep === 'evidence')) content = renderReadOnlySummary(activeStep);
   else if (activeStep === 'expense') content = renderExpenseStep();
@@ -2655,6 +2695,10 @@ export function SubstituteReceiptWizardPage({
                   key: stage,
                   label: t(JOURNEY_STAGE_KEYS[stage], locale),
                   state: index === activeJourneyIndex ? 'current' : index < activeJourneyIndex ? 'done' : 'upcoming',
+                  ...(receiptEvidence && stage !== 'done' ? {
+                    onSelect: () => stage === 'sign' ? returnToSigning() : navigatePreparedStep(stage === 'expense' ? 'expense' : 'details'),
+                    disabled: busy,
+                  } : {}),
                 }))}
               />
             </MangmeeCard>
@@ -2669,7 +2713,22 @@ export function SubstituteReceiptWizardPage({
                 }}>{t('expenses.substitute_wizard.change_payer', locale)}</button>}
               </MangmeeCard>
             )}
+            {receiptEvidence && activeJourneyStage === 'sign' && (
+              <div><button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('evidence')}>ย้อนกลับ: ข้อมูลและหลักฐาน</button></div>
+            )}
             {content}
+            {reviewingPreparedStep && (
+              <MangmeeCard className="space-y-3 p-4">
+                <p className="text-sm text-gray-600">ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่</p>
+                <div className="flex flex-wrap gap-2">
+                  {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'evidence' ? 'details' : 'expense')}>ย้อนกลับ</button>}
+                  {activeStep !== 'evidence' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'expense' ? 'details' : 'evidence')}>ถัดไป: {activeStep === 'expense' ? 'ข้อมูล' : 'หลักฐาน'}</button>}
+                  <button type="button" className={btnClass} disabled={busy} onClick={returnToSigning}>กลับไปลงนามและอนุมัติ</button>
+                  {canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>แก้ไขข้อมูลค่าใช้จ่าย</Link>}
+                  {canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={showRevisionAction}>เปลี่ยนวิธีลงนาม</button>}
+                </div>
+              </MangmeeCard>
+            )}
             {renderVersionHistory()}
           </div>
         )}

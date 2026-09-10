@@ -58,6 +58,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       journalEntry: { findMany: async () => [] },
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
+      attachmentLink: { findMany: async () => [] },
       expenseSubstituteReceiptEvidence: { findFirst: async () => null },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),
@@ -69,7 +70,6 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
         },
       },
       expenseRecord: { findFirst: async () => ({ id: 'expense-1', lines: [...persisted.values()], duplicateCandidates: [] }) },
-      attachmentLink: { findMany: async () => [] },
     };
     const repo = new PrismaExpenseRepository({ client } as any);
     const treatments = ['ZERO_RATED', 'EXEMPT', 'NON_VAT', undefined] as const;
@@ -92,13 +92,13 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       journalEntry: { findMany: async () => [] },
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
+      attachmentLink: { findMany: async () => [] },
       expenseSubstituteReceiptEvidence: { findFirst: async () => null },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),
         upsert: async ({ create }: any) => { persistedLine = { id: 'line-1', ...create }; return persistedLine; },
       },
       expenseRecord: { findFirst: async () => ({ id: 'expense-1', lines: [persistedLine], duplicateCandidates: [] }) },
-      attachmentLink: { findMany: async () => [] },
     };
     const repo = new PrismaExpenseRepository({ client } as any);
     await repo.upsertLines('company-1', 'expense-1', [{

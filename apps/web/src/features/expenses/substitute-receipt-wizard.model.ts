@@ -555,3 +555,9 @@ export function clearSubstituteWizardDraft(
   try { storage?.removeItem(substituteWizardDraftKey(companyId, expenseId, userId)); }
   catch { /* see writeSubstituteWizardDraft */ }
 }
+
+/** A source edit creates an internal revision of the same document after signatures exist. */
+export function currentSubstituteRevision<T extends { id: string; documentNumber: string; version: number; status: string }>(history: T[], requested: T): T {
+  return history.filter((item) => item.documentNumber === requested.documentNumber && item.status !== 'SUPERSEDED')
+    .reduce((latest, item) => item.version > latest.version ? item : latest, requested);
+}

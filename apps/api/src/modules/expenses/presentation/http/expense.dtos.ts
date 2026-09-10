@@ -191,3 +191,11 @@ export class CreateSignatureAssetDto {
   @IsString() @IsOptional() @MaxLength(128) checksumSha256?: string;
   @Type(() => Number) @IsInt() @Min(0) @IsOptional() byteSize?: number;
 }
+
+export class RemoveExpenseReceiptDto {
+  @IsOptional()
+  @IsIn(['expense.receipt.primary', 'expense.receipt.supporting', 'expense.payment.evidence', 'expense.review.evidence'])
+  purpose?: 'expense.receipt.primary' | 'expense.receipt.supporting' | 'expense.payment.evidence' | 'expense.review.evidence';
+  @IsISO8601()
+  expectedUpdatedAt!: string;
+}

@@ -244,6 +244,8 @@ export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'c
   id: string;
   companyId: string;
   updatedByUserId: string;
+  /** Internal permission-checked reviewer save; never accepted from an HTTP body. */
+  refreshSubstituteEvidence?: { requestId: string };
   expectedUpdatedAt?: Date;
   /** Internal CAS callers may pin the next revision so persisted continuation metadata can point
    * at the exact same revision. This is not exposed by the HTTP update contract. */

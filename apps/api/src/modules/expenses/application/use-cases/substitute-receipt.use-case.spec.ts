@@ -1508,7 +1508,7 @@ describe('paper signing without account identities', () => {
     const { default: sharp } = await import('sharp');
     const bytes = await sharp({ create: { width: 100, height: 100, channels: 3, background: '#222' } }).png().toBuffer();
     const checksum = createHash('sha256').update(bytes).digest('hex');
-    const attachment = { id: 'scan', branchId: null, status: 'ACTIVE', bucket: 'b', objectKey: 'scan', mimeType: 'image/png', checksumSha256: checksum, byteSize: bytes.length };
+    const attachment = { id: 'scan', branchId: null, status: 'ACTIVE', bucket: 'b', objectKey: 'scan', mimeType: 'image/png', checksumSha256: checksum, byteSize: bytes.length, metadataJson: { formChecksumSha256: canonicalSnapshotHash(form as any) } };
     repo.findSubstitutePaperUpload = async () => attachment;
     repo.findMemberDisplayName = async (companyId: string, userId: string) => {
       assert.equal(companyId, 'co-1'); assert.equal(userId, 'payer-1'); return 'ผู้จัดทำเอกสาร';
@@ -1524,6 +1524,9 @@ describe('paper signing without account identities', () => {
       await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', { ...input, [role]: { ...input[role], name: '' } }), /name/);
       await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', { ...input, [role]: { ...input[role], signedOn: '' } }), /signedOn/);
     }
+    attachment.metadataJson.formChecksumSha256 = 'old-form';
+    await assert.rejects(useCase.submit(ctx(), 'exp-1', 'sub-1', input), /ดาวน์โหลดแบบฟอร์มล่าสุด/);
+    attachment.metadataJson.formChecksumSha256 = canonicalSnapshotHash(form as any);
     await useCase.submit(ctx(), 'exp-1', 'sub-1', input);
     assert.equal(evidence.status, 'PREPARED');
     assert.equal(evidence.paperSubmissionJson.payer.position, '');

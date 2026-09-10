@@ -758,6 +758,7 @@ export class UpdateExpenseDraftUseCase {
     }
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+      ...(ctx.authProvider !== 'line' ? { refreshSubstituteEvidence: { requestId: ctx.requestId } } : {}),
       ...(reopenSourceReview && { status: 'NEEDS_REVIEW' }),
       ...(expectedUpdatedAt && { expectedUpdatedAt }),
       ...(input.branchId !== undefined && { branchId: input.branchId }),
