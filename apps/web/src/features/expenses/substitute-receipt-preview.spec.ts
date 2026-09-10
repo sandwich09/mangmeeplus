@@ -18,10 +18,20 @@ describe('check-bill canonical preparation wiring', () => {
     assert.match(wizardSource, /paymentCount: selectedPaymentCount/);
     assert.match(wizardSource, /String\(selectedCount\)/, 'a stale selected id must not count as a ready evidence file');
   });
-  it('uses canonical new preparation while retaining the PREPARED editing and signing path', () => {
-    assert.match(legacyReviewSource, /href=\{substituteReceiptPreparationHref\(companyId, detail\.id, detail\.aiVerificationSummaryJson\)\}/);
-    assert.match(legacyReviewSource, /showSub && isMutable && canReview && canShowInlineSubstitute/);
-    assert.match(legacyReviewSource, /isCheckBillClassification\(detail\.aiVerificationSummaryJson\) \? \{ routeCheckBill: true as const \}/);
+  it('routes both expense entry points to the canonical wizard without an embedded signing path', () => {
+    for (const source of [legacyReviewSource, reviewSource]) {
+      assert.match(source, /expenseSubstituteReceiptAction\(companyId, detail\.id, detail\.aiVerificationSummaryJson/);
+      assert.match(source, /href=\{substituteAction\.href\}/);
+    }
+    const section = sourceSection(legacyReviewSource, 'export function DocumentReviewSection', 'type EditableReviewLineField');
+    assert.doesNotMatch(section, /generateSubstituteReceipt|certifySubstituteReceipt|approveSubstituteReceipt|supersedeSubstituteReceipt|listSubstituteReceiptPayers/);
+    assert.match(section, /!classificationBlocked && \(!evidence \|\| evidence\.status === 'SUPERSEDED'\)/);
+    assert.match(section, /aria-disabled=\{busy \|\| dirty\}/);
+    assert.match(section, /if \(busy \|\| dirty\) event\.preventDefault\(\)/);
+    const navigate = sourceSection(reviewSource, 'const openSubstituteReceipt = async', 'const ocrTotalUnacknowledged');
+    assert.match(navigate, /if \(aiReading \|\| stepSaving \|\| evidenceDirty\) return/);
+    assert.ok(navigate.indexOf('await reviewSaveRef.current()') < navigate.indexOf('router.push(substituteAction.href)'));
+    assert.match(navigate, /if \(!saved\) return/);
   });
 });
 
@@ -33,20 +43,22 @@ function sourceSection(source: string, start: string, end: string): string {
   return source.slice(startIndex, endIndex);
 }
 
-describe('substitute-receipt issued document preview', () => {
-  it('only publishes the newest authenticated PDF response', () => {
-    assert.match(hubSource, /fetchSubstituteReceiptPdfBlob\(companyId, target\.expenseId, target\.evidenceId\)/);
+describe('substitute-receipt state-aware document preview', () => {
+  it('only publishes the newest authenticated preview and invalidates close/company changes', () => {
+    assert.match(hubSource, /previewIssuedSubstitutePaper\(companyId, item\.expenseId, item\.evidenceId\)/);
     assert.match(hubSource, /const requestId = \+\+previewRequestRef\.current/);
-    assert.match(hubSource, /if \(requestId !== previewRequestRef\.current\) return/);
-    assert.match(hubSource, /previewUrlRef\.current = url/);
+    assert.match(hubSource, /if \(requestId === previewRequestRef\.current\) setPreview/);
+    assert.match(hubSource, /previewRequestRef\.current \+= 1/);
+    assert.match(hubSource, /\[companyId, closePreview\]/);
   });
 
-  it('invalidates close and unmount, revokes Blob URLs, and retries the same target', () => {
-    assert.match(hubSource, /previewRequestRef\.current \+= 1/);
+  it('releases PDF URLs and waits for every page before allowing printing', () => {
     assert.match(hubSource, /URL\.revokeObjectURL\(url\)/);
-    assert.match(hubSource, /onClose=\{closePreview\}/);
-    assert.match(hubSource, /onRetry=\{previewTarget \? \(\) => loadIssuedArtifactPreview\(previewTarget\) : undefined\}/);
-    assert.match(hubSource, /disabled=\{previewLoadingId === item\.evidenceId\}/);
+    assert.match(hubSource, /target\.data\.pdfDataUrl\.startsWith\(prefix\)/);
+    assert.doesNotMatch(hubSource, /fetch\(target\.data\.pdfDataUrl\)/);
+    assert.match(hubSource, /loaded\.length !== pages\.length/);
+    assert.match(hubSource, /pages\.map\(\(page, index\)/);
+    assert.match(hubSource, /printSurface/);
   });
 });
 
@@ -66,7 +78,6 @@ describe('expense review preview lifecycle', () => {
     assert.match(reviewSource, /\[companyId, expenseId, detail\?\.substituteReceiptEvidence\?\.id, detail\?\.substituteReceiptEvidence\?\.updatedAt, releasePreviewUrl\]/);
     assert.match(reviewSource, /if \(requestId !== previewRequestRef\.current\) \{\s*if \(source\.url\.startsWith\('blob:'\)\) URL\.revokeObjectURL\(source\.url\)/);
     assert.match(reviewSource, /onViewed: \(\) => \{\s*if \(requestId !== previewRequestRef\.current\) return;/);
-    assert.match(reviewSource, /onOpenFile=\{showPreview\}/);
     assert.match(reviewSource, /onClose=\{closePreview\}/);
   });
 });
@@ -95,23 +106,5 @@ describe('substitute-receipt wizard preview lifecycle', () => {
     assert.match(wizardSource, /setPreviewChecksum\(null\);[\s\S]*await previewSubstituteReceipt/);
     assert.match(wizardSource, /if \(certified\) setCertifiedPreviewed\(false\)/);
     assert.match(wizardSource, /onClose=\{closePreview\}/);
-  });
-});
-
-describe('legacy document-review preview lifecycle', () => {
-  it('invalidates pending previews when the active evidence revision changes', () => {
-    assert.match(legacyReviewSource, /const previewScope = \[\s*companyId,\s*detail\.id,[\s\S]*detail\.substituteReceiptEvidence\?\.updatedAt \?\? '',[\s\S]*signerPosition[\s\S]*\]\.join/);
-    assert.match(legacyReviewSource, /return \(\) => \{ previewRequestRef\.current \+= 1; \};\s*\}, \[companyId, detail\.id, detail\.substituteReceiptEvidence\?\.id, detail\.substituteReceiptEvidence\?\.updatedAt\]\);/);
-  });
-
-  it('guards prepared/certified success gates and revokes an unpublished stale Blob URL', () => {
-    const prepared = sourceSection(legacyReviewSource, 'const previewPreparedSubstitute = async', 'const certifySubstitute = async');
-    assert.match(prepared, /if \(!isPreviewRequestCurrent\(requestId, requestScope\)\) return false/);
-    assert.match(prepared, /onViewed: \(\) => \{\s*if \(!isPreviewRequestCurrent\(requestId, requestScope\)\) return;/);
-
-    const artifact = sourceSection(legacyReviewSource, 'const openSubstituteArtifact = async', 'const requiresPaymentEvidence =');
-    assert.match(artifact, /if \(!isPreviewRequestCurrent\(requestId, requestScope\)\) return false;\s*const url = URL\.createObjectURL\(blob\)/);
-    assert.match(artifact, /URL\.revokeObjectURL\(url\);\s*return false/);
-    assert.match(artifact, /onViewed: \(\) => \{\s*if \(!isPreviewRequestCurrent\(requestId, requestScope\)\) return;/);
   });
 });

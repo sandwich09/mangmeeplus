@@ -267,7 +267,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
           the overflow was clipped rather than scrollable — the right third of the form could not be
           reached at all. Letting the column shrink to zero puts it back inside the viewport. */}
       <div className="grid gap-5 grid-cols-[minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
-        <MangmeeCard className="p-4">
+        <MangmeeCard className="min-w-0 p-4">
           <div className="flex flex-wrap items-center justify-between px-2">
             <h2 className="text-sm font-bold text-gray-500">บทบาททั้งหมด</h2>
             {canManageRoles && <button
@@ -280,7 +280,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
               เพิ่ม
             </button>}
           </div>
-          <div className="mt-4 grid gap-2">
+          <div className="mt-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
             {roles.map((role) => {
               const active = role.id === selectedRole?.id && mode !== 'create';
               const disabled = role.status !== 'ACTIVE';
@@ -290,7 +290,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                   type="button"
                   onClick={() => { setSelectedRoleId(role.id); setMode('view'); }}
                   className={cx(
-                    'flex min-h-[74px] w-full items-center gap-3 rounded-lg border px-3 text-left transition',
+                    'flex min-h-[74px] min-w-0 w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition',
                     active
                       ? 'border-brand-200 bg-brand-25 shadow-[inset_3px_0_0_var(--color-brand-500)]'
                       : 'border-gray-200 bg-white hover:border-brand-100 hover:bg-gray-50',
@@ -298,7 +298,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                 >
                   <PositionGlyph isSystem={role.isSystem} tone={role.isSystem ? 'brand' : 'slate'} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-base font-extrabold text-gray-900">{roleDisplayName(role, locale)}</span>
+                    <span className="block break-words text-base font-extrabold text-gray-900">{roleDisplayName(role, locale)}</span>
                     <span className="mt-1 block text-sm font-medium text-gray-500">
                       {disabled ? 'ปิดใช้งาน' : staffCountsAvailable ? `${staffCounts[role.id] ?? 0} คน` : role.isSystem ? 'บทบาทมาตรฐาน' : 'บทบาทที่กำหนดเอง'}
                     </span>
@@ -311,7 +311,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
         </MangmeeCard>
 
         {mode === 'create' ? (
-          <div ref={builderRef} className="scroll-mt-24">
+          <div ref={builderRef} className="min-w-0 scroll-mt-24">
           <RoleBuilder
             companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
             onCancel={() => setMode('view')}
@@ -325,7 +325,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
           />
           </div>
         ) : mode === 'edit' && selectedRole && roleEditable ? (
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             {selectedRole.isSystem && roleEditable && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
                 บทบาทมาตรฐาน — เมื่อบันทึก ระบบจะสร้างสำเนาสำหรับบริษัทของคุณ {staffCountsAvailable ? `พนักงาน ${staffCounts[selectedRole.id] ?? 0} คน` : 'พนักงานที่ใช้บทบาทนี้'}จะย้ายมาอัตโนมัติ · บริษัทอื่นไม่ได้รับผลกระทบ
@@ -345,16 +345,16 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
             />
           </div>
         ) : selectedRole ? (
-          <MangmeeCard className="overflow-hidden p-0">
-            <div className="flex flex-col gap-3 border-b border-gray-100 p-6 lg:flex-row lg:items-start lg:justify-between">
+          <MangmeeCard className="min-w-0 overflow-hidden p-0">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-100 p-6">
               <div className="min-w-0 lg:max-w-[620px]">
-                <h2 className="text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {roleDisplayName(selectedRole, locale)}</h2>
-                <p className="mt-2 text-sm font-medium text-gray-500">
+                <h2 className="break-words text-xl font-extrabold text-gray-900">สิทธิ์เข้าถึงเมนู — {roleDisplayName(selectedRole, locale)}</h2>
+                <p className="mt-2 break-words text-sm font-medium text-gray-500">
                   {selectedRole.description || 'ดู / สร้าง / แก้ไข / ลบ / อนุมัติ ในแต่ละเมนู — ปิด “ดู” = ซ่อนเมนูทั้งหมด'}
                 </p>
               </div>
               {roleEditable && selectedRole.status === 'ACTIVE' ? (
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <button type="button" className={`${ghostClass} h-9 px-3`} onClick={() => setMode('edit')}>
                     <PencilIcon className="h-4 w-4" />
                     แก้ไข
@@ -372,8 +372,8 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
               ) : selectedRole.status !== 'ACTIVE' ? (
                 <span className="inline-flex h-9 shrink-0 items-center rounded-full bg-gray-100 px-4 text-sm font-extrabold text-gray-600">ปิดใช้งาน</span>
               ) : (
-                <div className="inline-flex shrink-0 items-center gap-2 text-sm font-medium text-gray-400">
-                  <LockIcon className="h-4 w-4" />
+                <div className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-gray-400">
+                  <LockIcon className="h-4 w-4 shrink-0" />
                   {isRoleEditableByCompany(selectedRole) ? 'คุณมีสิทธิ์ดู แต่ยังไม่มีสิทธิ์จัดการบทบาท' : 'บทบาทนี้ระบบดูแลให้ แก้ไขไม่ได้'}
                 </div>
               )}

@@ -28,7 +28,7 @@ import {
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
   deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker,
-  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseValueLabel,
+  expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseSubstituteReceiptAction, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
   postingErrorText, vatModeRequiresRate, expensePaymentAttempt, classifyExpensePaymentFailure,
@@ -75,7 +75,7 @@ const isRemovableFilePurpose = (purpose: string): purpose is NonNullable<RemoveE
   purpose === 'expense.receipt.primary' || purpose === 'expense.receipt.supporting'
   || purpose === 'expense.payment.evidence' || purpose === 'expense.review.evidence';
 
-export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, canSelfApprove }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
+export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }: { companyId: string; expenseId: string; userId: string; permissions: string[]; canSelfApprove: boolean }) {
   const router = useRouter();
   const caps = expenseCapabilities(permissions);
   const { canReview, canConfirm } = caps;
@@ -198,12 +198,6 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
     });
     return true;
   }, [releasePreviewUrl]);
-
-  const showPreview = useCallback((source: ExpensePreviewSource) => {
-    const requestId = ++previewRequestRef.current;
-    setPreviewLoading(false);
-    commitPreview(requestId, source);
-  }, [commitPreview]);
 
   const closePreview = useCallback(() => {
     previewRequestRef.current += 1;
@@ -616,6 +610,16 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
   const aiReading = extractionLoading || receiptUploading;
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
+  const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, detail.substituteReceiptEvidence);
+  const openSubstituteReceipt = async () => {
+    if (aiReading || stepSaving || evidenceDirty) return;
+    if (step === 'data' && reviewSaveRef.current && !substituteLocked) {
+      setStepSaving(true);
+      const saved = await reviewSaveRef.current().finally(() => setStepSaving(false));
+      if (!saved) return;
+    }
+    router.push(substituteAction.href);
+  };
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
   // Audit H-11: isZeroAmount only ever rendered a warning below and was missing from this gate, so
   // the button stayed live on a ฿0 expense. The API refuses it now; including it here means the
@@ -980,11 +984,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
       detail={detail}
       isMutable={isMutable}
       canReview={canReview}
-      canConfirm={canConfirm}
-      userId={userId}
-      canSelfApprove={canSelfApprove}
       onSaved={async () => { setNotice(null); await load(); await onRefresh(); }}
-      onOpenFile={showPreview}
       onAttachPrimaryReceipt={canMutateDraft ? (file) => attachPrimaryReceipt(file, detail.branchId) : undefined}
       receiptUploading={receiptUploading}
       onDirtyChange={setEvidenceDirty}
@@ -1310,7 +1310,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions, c
                   <p className="text-sm text-gray-500">{t('expenses.viewer_empty', locale)}</p>
                   {attachReceiptControl}
                   {isMutable && canReview && needsReceiptOrSubstitute && (
-                    <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(detail.id)}`}>{t('expenses.no_receipt_start_substitute', locale)}</Link>
+                    <>
+                      <Link className={ghostClass} href={substituteAction.href} aria-disabled={aiReading || stepSaving || evidenceDirty} onClick={(event) => { event.preventDefault(); void openSubstituteReceipt(); }}>{t(substituteAction.labelKey, locale)}</Link>
+                      {evidenceDirty && <p className="text-xs text-warning-700">บันทึกการตรวจเอกสารก่อนดำเนินการใบรับรองแทนใบเสร็จ</p>}
+                    </>
                   )}
                 </div>
               ) : (
