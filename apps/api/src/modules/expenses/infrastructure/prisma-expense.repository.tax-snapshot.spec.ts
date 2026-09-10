@@ -22,7 +22,9 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       $executeRaw: async () => undefined,
       attachmentLink: { findMany: async () => [] },
       expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      reimbursementLine: { findFirst: async () => null },
       expenseRecord: {
+        findFirst: async () => stored,
         create: async ({ data }: any) => { stored = { id: 'expense-1', ...data }; return stored; },
         updateMany: async ({ where, data }: any) => { updateWhere = where; stored = { ...stored, ...data }; return { count: 1 }; },
         findFirstOrThrow: async () => stored,

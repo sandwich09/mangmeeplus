@@ -82,6 +82,7 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
       writes.line++; Object.assign(line, data); return { count: 1 };
     } },
     expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+    reimbursementLine: { findFirst: async () => null },
     attachmentLink: {
       findMany: async () => options.withAttachment ? [{
         attachmentId: 'attachment-1', purpose: 'RECEIPT',
