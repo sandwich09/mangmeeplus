@@ -91,7 +91,6 @@ function ReceiptActions({ item, canReview, canContinue, busy, onEdit, onOpen, on
   const select = (action: () => void) => { close(); action(); };
   const choices = [
     { label: 'แก้ไข', icon: ICON.edit, action: onEdit, disabled: !canContinue || item.status === 'SUPERSEDED', reason: !canContinue ? 'ต้องเป็นผู้รับผิดชอบขั้นตอนนี้หรือมีสิทธิ์ตรวจสอบค่าใช้จ่าย' : 'เอกสารถูกยกเลิกหรือแทนที่แล้ว' },
-    { label: 'พิมพ์', icon: PRINT_ICON, action: onOpen },
     { label: 'ดู', icon: ICON.eye, action: onOpen },
     { label: 'ยกเลิกเอกสาร', icon: ICON.trash, action: onCancel, disabled: !canReview || !item.canCancel, reason: !canReview ? 'ต้องมีสิทธิ์ตรวจสอบค่าใช้จ่าย' : item.status === 'SUPERSEDED' ? 'เอกสารถูกยกเลิกหรือแทนที่แล้ว' : 'สถานะนี้ต้องดำเนินการผ่านขั้นตอนแก้ไขเอกสาร', danger: true },
   ];
