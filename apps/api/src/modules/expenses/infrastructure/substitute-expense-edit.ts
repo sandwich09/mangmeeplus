@@ -98,7 +98,8 @@ async function revisedDocumentNumber(tx: any, current: any, data: any, actorUser
   const scope = templateNumbersAreBranchDistinct(config?.prefixTemplate ?? currentNumber.sequence.prefixTemplate) ? branchId ?? 'GLOBAL' : 'GLOBAL';
   const matchesScope = (number: any) => templateNumbersAreBranchDistinct(number.sequence.prefixTemplate)
     ? number.sequence.branchScopeKey === scope : scope === 'GLOBAL';
-  if (currentNumber.sequence.periodKey === periodKey && matchesScope(currentNumber)) return current.documentNumber;
+  // A later template change must not renumber an existing document on an ordinary edit.
+  if (currentNumber.sequence.periodKey === periodKey && (branchId === current.branchId || matchesScope(currentNumber))) return current.documentNumber;
   const prior = await tx.documentNumber.findMany({ where: {
     companyId: current.companyId, documentType, ownerType: 'expense_substitute_receipt', ownerId: { in: ownerIds },
     status: 'COMMITTED', sequence: { periodKey },

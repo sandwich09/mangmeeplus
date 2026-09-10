@@ -351,7 +351,10 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
   });
 
   it('reuses branch-specific reservations only in their original branch', async () => {
+    const beforeConfigChange = await source();
     await numbers.upsertConfig({ companyId, periodKey: '2026-10', documentType: 'expense.substitute_receipt', prefixTemplate: 'SRC-{BRANCH}-{YYYY}{MM}-{SEQ}', resetPolicy: 'MONTHLY', updatedByUserId: userId });
+    await edit(beforeConfigChange.expense);
+    assert.equal((await repo.findSubstituteEvidence(companyId, beforeConfigChange.expense.id))!.documentNumber, beforeConfigChange.evidence.documentNumber);
     const { expense, evidence } = await source();
     assert.match(evidence.documentNumber, /^SRC-HO-202609-/);
     const second = await client.branch.create({ data: { companyId, code: 'B3', name: 'สาขา 3' } });
