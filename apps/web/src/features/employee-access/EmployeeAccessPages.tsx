@@ -981,7 +981,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
   }, [templates, availablePackKeys]);
 
   return (
-    <form onSubmit={submit} className={`${panelClass} overflow-hidden lg:col-span-2`}>
+    <form onSubmit={submit} className={`${panelClass} min-w-0 overflow-hidden lg:col-span-2`}>
       <div className="border-b border-gray-100 bg-linear-to-r from-brand-25 to-white px-5 py-4">
         <SectionTitle eyebrow={initial ? 'แก้ไขบทบาท' : 'บทบาทใหม่'} title={initial ? 'แก้ไขบทบาท' : 'เพิ่มบทบาท'}>
           เลือกหน้าที่และงานที่ทำได้ ระบบจะจัดสิทธิ์ที่จำเป็นให้เอง
@@ -989,7 +989,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
       </div>
       <div className="space-y-5 p-5">
       {error && <ErrorBanner message={error} />}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <FieldLabel>ชื่อบทบาท</FieldLabel>
           <input className={inputClass} required value={name} onChange={(e) => setName(e.target.value)} />
@@ -1000,9 +1000,9 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Left: guided selection */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {/* Step 1 — Job preset */}
           {roleOptionsAvailable && byIndustry.length > 0 && (
             <div>
@@ -1043,7 +1043,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                             <label key={p.key} className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${checked ? 'border-brand-200 bg-brand-50' : 'border-gray-200 bg-white hover:border-brand-300'}`}>
                               <input type="checkbox" className="mt-0.5" checked={checked} onChange={() => togglePack(p.key)} />
                               <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex flex-wrap items-center gap-1.5">
                                   <span className="font-medium text-gray-800">{p.nameTh}</span>
                                   <RiskBadge risk={p.riskLevel} />
                                 </span>
@@ -1074,7 +1074,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
         </div>
 
         {/* Right: live preview */}
-        <div className="space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
+        <div className="min-w-0 space-y-3 rounded-lg border border-brand-100 bg-brand-50/70 p-4">
           <div className="flex flex-wrap items-center justify-between">
             <div className="text-sm font-bold text-gray-800">สรุปว่างานนี้ทำอะไรได้บ้าง</div>
             {previewing && <span className="text-[11px] text-gray-400">กำลังคำนวณ...</span>}

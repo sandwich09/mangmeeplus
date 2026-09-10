@@ -391,6 +391,8 @@ export class ListCompanySubstituteReceiptsUseCase {
     return {
       items: rows.map((row) => ({
         evidenceId: row.id,
+        canCancel: ctx.permissions.includes('expense.review') && row.status !== 'SUPERSEDED'
+          && (row.correctionOfEvidenceId ? row.status !== 'ISSUED' : ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(row.expense.status)),
         fundingSource: row.fundingSource ?? null,
         signatureMode: row.signatureMode,
         paperSubmission: row.paperSubmissionJson as import('@watchdog-bms/contracts').SubstituteReceiptPaperSubmission | null,
@@ -739,7 +741,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     await this.getExpense.execute(ctx, expenseId);
     const evidence = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
     if (!evidence) throw new NotFoundException('Substitute evidence not found.');
-    const composed = await composeIssuedSubstituteReceiptPdf(this.repo, this.storage, ctx.companyId, expenseId, evidence);
+    const composed = await this.composeForState(ctx.companyId, expenseId, evidence);
     void this.audit.log({
       companyId: ctx.companyId,
       actorUserId: ctx.userId,
@@ -760,6 +762,45 @@ export class DownloadSubstituteReceiptPdfUseCase {
       },
     });
     return { data: composed.data, fileName: composed.fileName };
+  }
+
+  private async composeForState(companyId: string, expenseId: string, evidence: SubstituteReceiptEvidenceRecord) {
+    if (evidence.artifactAttachmentId && ['ISSUED', 'SUPERSEDED'].includes(evidence.status)) {
+      return composeIssuedSubstituteReceiptPdf(this.repo, this.storage, companyId, expenseId, evidence);
+    }
+    if (evidence.status === 'ISSUED') throw new ConflictException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับสมบูรณ์ กรุณาลองโหลดเอกสารอีกครั้ง' });
+    const historical = evidence.status === 'SUPERSEDED';
+    const stateStamp = historical
+      ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
+      : evidence.status === 'PAYER_CERTIFIED' ? 'AWAITING APPROVAL' : 'AWAITING REVIEW';
+    const fileName = `${evidence.documentNumber.replace(/["\r\n]/g, '_')}-${stateStamp.replaceAll(' ', '-')}.pdf`;
+    if (evidence.wetSignedScanAttachmentId) {
+      const scan = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf']);
+      if (!scan) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับลงนามที่เก็บไว้' });
+      const object = await this.storage.getObject({ bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}) });
+      if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException({ code: 'substitute_wet_signed_scan_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่ยื่น' });
+      return { data: await renderSubstituteReceiptPaperArtifactPdf({ bytes: object.bytes, mimeType: scan.mimeType }, null, evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: true };
+    }
+    if (evidence.certifiedArtifactAttachmentId) {
+      const artifact = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.certifiedArtifactAttachmentId);
+      if (!artifact) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบฉบับที่ผู้รับรองลงนามไว้' });
+      const object = await this.storage.getObject({ bucket: artifact.bucket, objectKey: artifact.objectKey, ...(artifact.objectVersionId ? { objectVersionId: artifact.objectVersionId } : {}) });
+      if (sha256(object.bytes) !== evidence.certifiedArtifactChecksumSha256) throw new ConflictException({ code: 'substitute_certified_artifact_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่รับรองไว้' });
+      return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(object.bytes), evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: false };
+    }
+    if (evidence.status === 'PREPARED' && !evidence.paperSubmissionJson) {
+      const expense = await this.repo.findByIdWithRelations(companyId, expenseId);
+      if (!expense) throw new NotFoundException('ไม่พบรายการค่าใช้จ่าย');
+      const form = await composeUnsignedSubstituteReceiptFormPdf(this.repo, companyId, expense, evidence);
+      return { ...form, stateStamp: evidence.signatureMode === 'PAPER' && !evidence.payerUserId ? undefined : 'UNSIGNED' as const, scanLinked: false };
+    }
+    // Historical content must come from retained facts, never today's source expense.
+    const snapshot = evidence.paperFormSnapshotJson ?? evidence.snapshotJson;
+    if (historical && snapshot) {
+      const svg = renderSubstituteReceiptSvg(snapshot as unknown as SubstituteReceiptSnapshot, undefined, undefined, undefined, { paperForm: evidence.signatureMode === 'PAPER', unsignedForm: evidence.signatureMode !== 'PAPER' });
+      return { data: await renderSubstituteReceiptPdf(svg, evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: false };
+    }
+    throw new ConflictException({ code: 'substitute_print_history_unavailable', message: 'ไม่มีไฟล์หรือข้อมูลฉบับเดิมเพียงพอสำหรับพิมพ์เอกสาร กรุณาดูประวัติรายการ' });
   }
 }
 
@@ -1162,6 +1203,7 @@ export class SupersedeSubstituteReceiptUseCase {
       });
       return evidence;
     } catch (error) {
+      if (error instanceof HttpException) throw error;
       throw new ConflictException((error as Error).message);
     }
   }

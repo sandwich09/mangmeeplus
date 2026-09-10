@@ -287,12 +287,20 @@ export function isBlockedCheckBillClassification(
     && (classification as Record<string, unknown>)['documentKind'] === 'ORDER_OR_CHECK_BILL');
 }
 
-/** New preparation uses the canonical wizard; preserve the existing PREPARED edit lifecycle. */
-export function canShowInlineSubstitutePreparation(
-  classificationBlocked: boolean,
-  evidenceStatus: SubstituteReceiptEvidenceSummary['status'] | null | undefined,
-): boolean {
-  return !classificationBlocked && evidenceStatus === 'PREPARED';
+/** Keep every expense entry on the same document; navigation never prepares a second one. */
+export function expenseSubstituteReceiptAction(
+  companyId: string,
+  expenseId: string,
+  summary: Record<string, unknown> | null,
+  evidence: Pick<SubstituteReceiptEvidenceSummary, 'id' | 'status'> | null | undefined,
+) {
+  if (evidence && evidence.status !== 'SUPERSEDED') {
+    return {
+      href: `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/${encodeURIComponent(evidence.id)}`,
+      labelKey: evidence.status === 'ISSUED' ? 'expenses.substitute_hub.open_document' as const : 'expenses.substitute_hub.continue' as const,
+    };
+  }
+  return { href: substituteReceiptPreparationHref(companyId, expenseId, summary), labelKey: 'expenses.no_receipt_start_substitute' as const };
 }
 
 export function substituteReceiptPreparationHref(companyId: string, expenseId: string, summary: Record<string, unknown> | null): string {

@@ -61,6 +61,7 @@ export const SUBSTITUTE_RECEIPT_PDF_LIMITS = Object.freeze({
 });
 
 export type RasterSlice = { top: number; height: number };
+export type SubstituteReceiptPrintStamp = 'VOID' | 'SUPERSEDED' | 'UNSIGNED' | 'AWAITING APPROVAL' | 'AWAITING REVIEW';
 
 /**
  * Highest density whose raster still fits the pixel budget, never above DENSITY nor below
@@ -212,19 +213,21 @@ function printableDocumentNumber(value: string | undefined): string | null {
  */
 export async function renderSubstituteReceiptPaperArtifactPdf(
   scan: { bytes: Buffer; mimeType: string },
-  attestationSvg: Buffer,
+  attestationSvg: Buffer | null,
   documentNumber?: string,
-  options: { stateStamp?: 'VOID' | 'SUPERSEDED'; omitPageFooter?: boolean } = {},
+  options: { stateStamp?: SubstituteReceiptPrintStamp; omitPageFooter?: boolean } = {},
 ): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   await addWetSignedScanPages(pdf, scan);
   // The attestation is rendered UNSTAMPED here and the whole document is stamped below, so the scan
   // pages and the attestation carry one identical mark instead of two sizes of the same word.
-  const attestation = await PDFDocument.load(
-    await renderSubstituteReceiptPdf(options.omitPageFooter ? withoutSubstituteReceiptFooter(attestationSvg) : attestationSvg, documentNumber, { omitPageFooter: true }),
-  );
-  const attestationPages = await pdf.copyPages(attestation, attestation.getPageIndices());
-  for (const page of attestationPages) pdf.addPage(page);
+  if (attestationSvg) {
+    const attestation = await PDFDocument.load(
+      await renderSubstituteReceiptPdf(options.omitPageFooter ? withoutSubstituteReceiptFooter(attestationSvg) : attestationSvg, documentNumber, { omitPageFooter: true }),
+    );
+    const attestationPages = await pdf.copyPages(attestation, attestation.getPageIndices());
+    for (const page of attestationPages) pdf.addPage(page);
+  }
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const pages = pdf.getPages();
   const safeDocumentNumber = printableDocumentNumber(documentNumber);
@@ -258,7 +261,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
     });
   });
   pdf.setTitle(safeDocumentNumber ?? 'substitute-receipt');
-  pdf.setSubject(`Wet-signed scan + system attestation${stamp ? ` | State: ${stamp}` : ''}`);
+  pdf.setSubject(`Wet-signed scan${attestationSvg ? ' + system attestation' : ''}${stamp ? ` | State: ${stamp}` : ''}`);
   return Buffer.from(await pdf.save());
 }
 
@@ -314,7 +317,7 @@ export async function substituteWetSignedScanRejection(scan: { bytes: Buffer; mi
 export async function renderSubstituteReceiptPdf(
   svg: Buffer,
   documentNumber?: string,
-  options: { stateStamp?: 'VOID' | 'SUPERSEDED' | 'UNSIGNED'; omitPageFooter?: boolean } = {},
+  options: { stateStamp?: SubstituteReceiptPrintStamp; omitPageFooter?: boolean } = {},
 ): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
@@ -377,7 +380,7 @@ export async function renderSubstituteReceiptPdf(
       height,
     });
     if (options.stateStamp) {
-      const stateSize = options.stateStamp === 'VOID' ? 96 : 54;
+      const stateSize = Math.min(options.stateStamp === 'VOID' ? 96 : 54, CONTENT_WIDTH / stampFont.widthOfTextAtSize(options.stateStamp, 1));
       const stateWidth = stampFont.widthOfTextAtSize(options.stateStamp, stateSize);
       page.drawText(options.stateStamp, {
         x: (A4_WIDTH - stateWidth) / 2,
