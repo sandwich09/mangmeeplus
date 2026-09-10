@@ -1177,6 +1177,7 @@ export type PreviewSubstituteReceiptInput = {
 };
 
 export type SubstituteReceiptPreview = {
+  expectedEvidenceUpdatedAt?: string;
   svgDataUrl: string;
   previewChecksumSha256: string;
 };
@@ -1488,3 +1489,5 @@ export type AccountantPackageResult = {
   /** Empty on a complete package; anything here means the accountant is missing those files. */
   skippedEvidence: SkippedEvidenceEntry[];
 };
+
+export type RemoveExpenseReceiptInput = { expectedUpdatedAt: string; purpose?: Exclude<ExpenseAttachmentPurpose, 'expense.signature.asset'> };

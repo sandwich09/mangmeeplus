@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { civilDate, civilPeriodKey } from '@watchdog-bms/contracts';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
 
 const UPDATED_AT = new Date('2026-08-10T01:00:00.000Z');
@@ -31,7 +30,7 @@ function preparedInput() {
     businessPurpose: 'ค่าเดินทาง',
     paymentEvidenceAttachmentIds: [],
     supportingAttachmentIds: [],
-    paymentDate: null,
+    paymentDate: new Date('2026-08-22T00:00:00.000Z'),
     paymentMethod: 'CASH',
     note: null,
     payerUserId: 'payer-1',
@@ -85,7 +84,8 @@ function makeRepo(existing: Record<string, any> | null = null, sourceChannelMeta
 }
 
 describe('PrismaExpenseRepository substitute-receipt numbers', () => {
-  it('reserves and commits a company running number in the evidence transaction', async () => {
+  it('reserves and commits a company running number in the payment month, even when prepared later', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-10T00:00:00.000Z') });
     const { repo, tx, reserveNumberInTransaction, commitNumberInTransaction } = makeRepo();
 
     const result = await repo.createPreparedSubstituteEvidence(preparedInput());
@@ -96,7 +96,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
       companyId: 'company-1',
       branchId: undefined,
       documentType: 'expense.substitute_receipt',
-      periodKey: civilPeriodKey(civilDate(new Date())),
+      periodKey: '2026-08',
       idempotencyKey: 'expense-secret-cuid:prepare-1',
       reservedByUserId: 'preparer-1',
     }]);
@@ -106,12 +106,49 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
       ownerType: 'expense_substitute_receipt',
       ownerId: 'evidence-1',
     }]);
+    assert.equal(tx.expenseSubstituteReceiptEvidence.create.mock.calls[0]?.arguments[0].data.preparedAt.toISOString(), '2026-09-10T00:00:00.000Z');
   });
 
-  it('returns an idempotent retry without consuming another number', async () => {
+  it('uses the Bangkok payment month across year boundaries in every signing and funding mode', async () => {
+    for (const fundingSource of ['COMPANY', 'PERSONAL_ADVANCE'] as const) {
+      for (const signatureMode of ['DIGITAL', 'PAPER'] as const) {
+        for (const [paymentDate, periodKey] of [
+          ['2025-12-31T16:59:59.000Z', '2025-12'],
+          ['2025-12-31T17:00:00.000Z', '2026-01'],
+          ['2026-08-31T17:00:00.000Z', '2026-09'],
+        ]) {
+          const { repo, reserveNumberInTransaction } = makeRepo();
+          await repo.createPreparedSubstituteEvidence({ ...preparedInput(), fundingSource, signatureMode,
+            ...(signatureMode === 'PAPER' ? { payerUserId: null, payerName: '' } : {}), paymentDate: new Date(paymentDate!) });
+          assert.equal((reserveNumberInTransaction.mock.calls[0]?.arguments as any[])[1].periodKey, periodKey);
+        }
+      }
+    }
+  });
+
+  it('rejects a new reservation without a valid payment date before changing the expense', async () => {
+    for (const paymentDate of [null, new Date('invalid')]) {
+      const { repo, tx, reserveNumberInTransaction } = makeRepo();
+      await assert.rejects(repo.createPreparedSubstituteEvidence({ ...preparedInput(), paymentDate }), /วันที่จ่ายเงิน/);
+      assert.equal(reserveNumberInTransaction.mock.callCount(), 0);
+      assert.equal(tx.expenseRecord.updateMany.mock.callCount(), 0);
+    }
+  });
+
+  it('reserves a document correction in the original payment month without rewriting the expense', async () => {
+    const { repo, tx, reserveNumberInTransaction } = makeRepo();
+    const original = { ...preparedInput(), id: 'original-1', status: 'ISSUED', snapshotJson: { company: { taxId: '123' } } };
+    tx.expenseSubstituteReceiptEvidence.findFirst = mock.fn(async (query: any) => query.where.id === original.id ? original : null);
+    tx.company = { findFirst: async () => ({ taxId: '123' }) };
+    await repo.createPreparedSubstituteEvidence({ ...preparedInput(), correctionOfEvidenceId: original.id, correctionReason: 'แก้ชื่อบริษัท' });
+    assert.equal((reserveNumberInTransaction.mock.calls[0]?.arguments as any[])[1].periodKey, '2026-08');
+    assert.equal(tx.expenseRecord.updateMany.mock.callCount(), 0);
+  });
+
+  it('returns a historical idempotent number unchanged without consuming another number', async () => {
     const input = preparedInput();
     const existing = {
-      fundingSource: input.fundingSource, id: 'evidence-1', status: 'PREPARED', version: 1, documentNumber: 'SRC-202608-00001',
+      fundingSource: input.fundingSource, id: 'evidence-1', status: 'PREPARED', version: 1, documentNumber: 'SRC-202609-00001',
       companyId: input.companyId, expenseId: input.expenseId, branchId: input.branchId,
       reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason,
       businessPurpose: input.businessPurpose, payerUserId: input.payerUserId,
@@ -124,7 +161,7 @@ describe('PrismaExpenseRepository substitute-receipt numbers', () => {
 
     const result = await repo.createPreparedSubstituteEvidence(input);
 
-    assert.equal(result.documentNumber, 'SRC-202608-00001');
+    assert.equal(result.documentNumber, 'SRC-202609-00001');
     assert.equal(reserveNumberInTransaction.mock.callCount(), 0);
     assert.equal(commitNumberInTransaction.mock.callCount(), 0);
   });

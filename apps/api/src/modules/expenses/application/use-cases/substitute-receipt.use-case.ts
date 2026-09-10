@@ -235,6 +235,7 @@ async function buildSnapshot(
   payerPosition: string,
   certifiedAt: string,
 ): Promise<SubstituteReceiptSnapshot> {
+  assertSubstituteReceiptLinesRenderable(expense.lines);
   const linkedIds = [...new Set([...evidence.paymentEvidenceAttachmentIds, ...evidence.supportingAttachmentIds])];
   const refs = await repo.findSubstituteEvidenceAttachments(companyId, expense.id, linkedIds);
   if (refs.length !== linkedIds.length) throw new ConflictException('Linked source/payment evidence changed. Finance must prepare a new version.');
@@ -632,7 +633,7 @@ export class PreviewSubstituteReceiptUseCase {
     const snapshot = await buildSnapshot(this.repo, ctx.companyId, expense, evidence, payerPosition, PREVIEW_CERTIFIED_AT);
     const previewChecksumSha256 = canonicalSnapshotHash(snapshot);
     const svg = renderSubstituteReceiptSvg(snapshot);
-    return { svgDataUrl: `data:image/svg+xml;base64,${svg.toString('base64')}`, previewChecksumSha256 };
+    return { svgDataUrl: `data:image/svg+xml;base64,${svg.toString('base64')}`, previewChecksumSha256, expectedEvidenceUpdatedAt: evidence.updatedAt.toISOString() };
   }
 }
 
@@ -1389,7 +1390,7 @@ export class PaperSubstituteReceiptUseCase {
     if (!evidence.paperFormSnapshotJson || evidence.paperSubmissionJson) throw new ConflictException('ดาวน์โหลดแบบฟอร์มก่อนอัปโหลด หรือจัดทำเวอร์ชันใหม่หากยื่นแล้ว');
     if (!['application/pdf', 'image/png', 'image/jpeg'].includes(input.mimeType) || !Number.isInteger(input.byteSize) || input.byteSize <= 0 || input.byteSize > 10_000_000) throw new BadRequestException('ใช้ PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 MB');
     return this.createUpload.execute(withAttachmentCreate(ctx), { ...input, originalFileName: requiredText(input.originalFileName, 'originalFileName', 255), visibility: 'INTERNAL',
-      ...(evidence.branchId ? { branchId: evidence.branchId } : {}), metadataJson: { generatedFor: 'substitute_receipt_paper', evidenceId } });
+      ...(evidence.branchId ? { branchId: evidence.branchId } : {}), metadataJson: { generatedFor: 'substitute_receipt_paper', evidenceId, formChecksumSha256: canonicalSnapshotHash(evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot) } });
   }
 
   async submit(ctx: RequestContext, expenseId: string, evidenceId: string, input: SubmitSubstituteReceiptPaperInput) {
@@ -1412,6 +1413,7 @@ export class PaperSubstituteReceiptUseCase {
     if (evidence.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) throw new ConflictException('ข้อมูลเปลี่ยนแล้ว กรุณาโหลดใหม่');
     let attachment = await this.repo.findSubstitutePaperUpload(ctx.companyId, evidenceId, input.attachmentId, ctx.userId);
     if (!attachment || attachment.branchId !== evidence.branchId) throw new BadRequestException('ไม่พบไฟล์ที่อัปโหลดสำหรับเอกสารนี้');
+    if (!evidence.paperFormSnapshotJson || (attachment.metadataJson as Record<string, unknown> | null)?.formChecksumSha256 !== canonicalSnapshotHash(evidence.paperFormSnapshotJson as unknown as SubstituteReceiptSnapshot)) throw new ConflictException('ข้อมูลค่าใช้จ่ายเปลี่ยนแล้ว กรุณาดาวน์โหลดแบบฟอร์มล่าสุดไปลงนามและอัปโหลดใหม่');
     if (attachment.status === 'PENDING_UPLOAD') {
       await this.completeUpload.execute(withAttachmentCreate(ctx), { attachmentId: attachment.id, checksumSha256: input.checksumSha256, byteSize: input.byteSize });
       attachment = await this.repo.findSubstitutePaperUpload(ctx.companyId, evidenceId, input.attachmentId, ctx.userId);
