@@ -525,6 +525,8 @@ jobs:
             src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.spec.ts \
             src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts \
             src/modules/expenses/infrastructure/prisma-expense.repository.payment.spec.ts
+          pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/infrastructure/substitute-expense-edit.pg.spec.ts
       - name: Harness manifests (protected corpus + golden stores)
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: pnpm test:harness
