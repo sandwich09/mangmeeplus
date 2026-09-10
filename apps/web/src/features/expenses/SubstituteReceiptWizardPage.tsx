@@ -2810,18 +2810,18 @@ export function SubstituteReceiptWizardPage({
                 }}>{t('expenses.substitute_wizard.change_payer', locale)}</button>}
               </MangmeeCard>
             )}
-            {receiptEvidence && activeJourneyStage === 'sign' && (
-              <div className="flex flex-wrap gap-2"><button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('evidence')}>ย้อนกลับ: ข้อมูลและหลักฐาน</button>
-                {canEditPrepared && <><button type="button" className={btnClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>
-                  <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail!.id)}`}>แก้รายการและวันที่ค่าใช้จ่าย</Link></>}
-              </div>
-            )}
             {editingPrepared && receiptEvidence && <MangmeeCard className="space-y-2 border-warning-200 bg-warning-50 p-4">
               <p className="font-bold">แก้ไขข้อมูลใบแทน · {receiptEvidence.documentNumber}</p>
               <p className="text-sm">แก้ข้อมูลแล้วเลขเอกสารคงเดิม ดาวน์โหลดฟอร์มล่าสุดเพื่อลงนาม ฉบับเก่าเก็บไว้ในประวัติ</p>
               <button type="button" className={ghostClass} disabled={busy} onClick={cancelPreparedEdit}>ยกเลิกการแก้ไข</button>
             </MangmeeCard>}
             {content}
+            {receiptEvidence && activeJourneyStage === 'sign' && (
+              <nav aria-label="การนำทางขั้นตอนลงนาม" className="flex flex-wrap gap-2"><button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('evidence')}>ย้อนกลับ: ข้อมูลและหลักฐาน</button>
+                {canEditPrepared && <><button type="button" className={btnClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>
+                  <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail!.id)}`}>แก้รายการและวันที่ค่าใช้จ่าย</Link></>}
+              </nav>
+            )}
             {reviewingPreparedStep && (
               <MangmeeCard className="space-y-3 p-4">
                 <p className="text-sm text-gray-600">{isCancelled ? 'เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น' : 'ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่'}</p>
