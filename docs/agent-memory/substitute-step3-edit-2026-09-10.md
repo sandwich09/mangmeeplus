@@ -1,7 +1,7 @@
 # Agent Memory: Substitute receipt step 3 editing
 
-Status: revised immutable-number spec drafted; awaiting expense-date versus payment-date month-rule clarification before code. Merge remains paused.
-Current follow-up: receipt→certificate→receipt browser verification and shared-value prefill completed locally; see final round-trip evidence below. No merge/deploy.
+Status: final immutable-number implementation verified and pushed; integration authorized on the existing branch/PR514 and PR515. Awaiting current candidate CI before merging develop and main.
+Current follow-up: payment-date confirmation, shared editor, cancellation-first financial safeguards, CI fixture repair and browser verification complete. Latest evidence is at the end of this chronological log. No deployment in scope.
 Owner: /root
 Scope: allow editing incomplete certificate details/evidence from step 3 without manual cancellation or consuming another number.
 Decisions: reuse current preparation validation and expense-edit revision storage. Preserve number across date corrections, including month changes. Unsigned edits reuse ID; signed/submitted edits preserve history and reset signatures. Keep issued/cancelled/correction and financial boundaries. Source expense editing stays on its existing screen.
