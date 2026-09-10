@@ -98,6 +98,8 @@ function fakeRepo(options: RepoOptions = {}) {
     approvalSteps: [] as any[], voided: [] as string[], projections: [] as any[],
   };
   const repo = {
+    assertReimbursementRequester: async (_company: string, _branch: string, userId: string) => ({ userId, displayName: 'Somchai' }),
+    resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines.map(line => ({ ...line, ...(line.linkedExpenseId ? { sourceExpenseSnapshot: { schemaVersion: 1, expenseId: line.linkedExpenseId } } : {}) })),
     resolveCreateBranchId: async () => 'branch-1',
     findPolicy: async () => options.policy ?? null,
     getUserDisplayName: async () => 'Somchai',

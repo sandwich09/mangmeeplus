@@ -142,6 +142,7 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
       expenseSubstituteReceiptEvidence: { findFirst: mock.fn(async () => null) },
       attachmentLink: { findMany: mock.fn(async () => []) },
       expenseRecord: { findFirst: mock.fn(async () => null) },
+      reimbursementLine: { findFirst: mock.fn(async () => null) },
       attachmentObject: {
         updateMany: mock.fn(async () => ({ count: 1 })),
         findFirstOrThrow: mock.fn(async () => ({
@@ -164,10 +165,10 @@ describe('PrismaAttachmentRepository.markDeleted', () => {
     const result = await repo.markDeleted({ companyId: 'co-1', id: 'att-1' }, tx as any);
 
     assert.equal(client.$transaction.mock.callCount(), 0);
-    assert.equal(tx.$executeRaw.mock.callCount(), 1);
+    assert.equal(tx.$executeRaw.mock.callCount(), 2);
     // wet-signed scan, then the artifact/signature hold, then the snapshot hold — all on the tx.
     assert.equal(tx.expenseSubstituteReceiptEvidence.findFirst.mock.callCount(), 3);
-    assert.equal(tx.attachmentLink.findMany.mock.callCount(), 1);
+    assert.equal(tx.attachmentLink.findMany.mock.callCount(), 2);
     assert.deepEqual((tx.attachmentObject.updateMany.mock.calls as any[])[0]?.arguments[0].where, {
       id: 'att-1',
       companyId: 'co-1',
@@ -183,10 +184,12 @@ describe('PrismaAttachmentRepository.linkToTarget', () => {
     const expenseRecord = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'expense-1', branchId: 'branch-1' } : input.target) };
     const accountingDocument = { findFirst: mock.fn(async () => input.target === undefined ? { id: 'invoice-1', branchId: 'branch-1' } : input.target) };
     const attachmentLink = {
+      findMany: mock.fn(async () => []),
       findFirst: mock.fn(async () => input.conflictingLink ?? null),
       create: mock.fn(async ({ data }: any) => ({ id: 'link-1', ...data, createdAt: new Date('2026-07-28T00:00:00Z') })),
     };
-    const tx = { attachmentObject, expenseRecord, accountingDocument, attachmentLink };
+    const tx = { attachmentObject, expenseRecord, accountingDocument, attachmentLink, $executeRaw: async () => 1,
+      reimbursementLine: { findFirst: async () => null }, expenseSubstituteReceiptEvidence: { findFirst: async () => null } };
     const client = { $transaction: (fn: (value: typeof tx) => unknown) => fn(tx) };
     return { repo: new PrismaAttachmentRepository({ client } as any), attachmentObject, expenseRecord, accountingDocument, attachmentLink };
   }

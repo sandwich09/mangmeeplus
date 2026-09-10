@@ -7,6 +7,20 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  reimbursement_source_unavailable: 'ไม่พบค่าใช้จ่ายต้นทางที่เปิดได้ กรุณาเลือกใหม่',
+  reimbursement_source_currency_mismatch: 'สกุลเงินของค่าใช้จ่ายต้องตรงกับใบเบิก',
+  reimbursement_source_already_settled: 'รายการนี้บันทึกบัญชี จ่ายเงิน หรือปิดรายการแล้ว จึงนำมาเบิกซ้ำไม่ได้',
+  reimbursement_source_not_personal: 'ใบรับรองนี้ระบุว่าบริษัทจ่าย จึงนำมาเบิกคืนพนักงานไม่ได้',
+  reimbursement_source_not_issued: 'กรุณาลงนามและออกใบรับรองให้เรียบร้อยก่อนนำมาเบิก',
+  reimbursement_source_payer_unlinked: 'ผู้จ่ายบนกระดาษยังไม่ได้เชื่อมกับผู้รับเงินคืนในระบบ กรุณาตรวจสอบตัวผู้จ่ายก่อน',
+  reimbursement_source_wrong_payer: 'ผู้รับเงินคืนต้องตรงกับพนักงานผู้สำรองจ่ายในหลักฐาน',
+  reimbursement_source_tax_review_required: 'รายการนี้มีภาษีหัก ณ ที่จ่าย หรือภาษีซื้อที่ต้องตรวจสอบ กรุณาให้บัญชีจัดการภาษีผ่านรายการค่าใช้จ่ายก่อน',
+  reimbursement_source_ambiguous: 'ไฟล์นี้เชื่อมกับค่าใช้จ่ายมากกว่าหนึ่งรายการ กรุณาตรวจสอบหลักฐานต้นทางก่อน',
+  reimbursement_source_changed: 'ข้อมูลค่าใช้จ่ายต้นทางเปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุดในหน้าร่างใบเบิก และตรวจสอบก่อนส่งใหม่',
+  reimbursement_source_fields_mismatch: 'ยอดเงินและวันที่ในใบเบิกต้องตรงกับค่าใช้จ่ายต้นทาง กรุณาดึงข้อมูลล่าสุด',
+  reimbursement_source_attachment_mismatch: 'ไฟล์ที่เลือกไม่ใช่หลักฐานของค่าใช้จ่ายนี้ กรุณาเลือกใหม่',
+  reimbursement_source_review_required: 'ใบเบิกเดิมยังไม่ได้เก็บข้อมูลต้นทาง กรุณาแก้ไขร่างและดึงข้อมูลล่าสุดก่อนส่ง',
+  reimbursement_requester_unavailable: 'ผู้รับเงินคืนต้องเป็นสมาชิกที่ใช้งานได้ในบริษัทและสาขานี้',
   substitute_paid_expense_amount_locked: 'รายการนี้จ่ายเงินแล้ว หากต้องแก้ยอดให้ดำเนินการแก้ไขรายการจ่ายก่อน ข้อมูลเอกสารอื่นยังแก้และลงนามใหม่ได้',
   expense_receipt_removal_locked: 'นำใบเสร็จออกได้เฉพาะรายการฉบับร่างหรือรอตรวจสอบที่ยังไม่จ่ายเงินและยังไม่บันทึกบัญชี',
   invalid_response: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',

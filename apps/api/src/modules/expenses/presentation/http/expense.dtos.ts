@@ -36,7 +36,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { CIVIL_DATE_PATTERN, EXPENSE_PAYMENT_METHODS, type RecordExpensePaymentInput, type ExpensePaymentMethod,
-  type SubmitSubstituteReceiptPaperInput, type AcceptSubstituteReceiptPaperInput, type SubstituteReceiptPaperSignerInput } from '@watchdog-bms/contracts';
+  type AmendSubstituteReceiptInput, type SubmitSubstituteReceiptPaperInput, type AcceptSubstituteReceiptPaperInput, type SubstituteReceiptPaperSignerInput } from '@watchdog-bms/contracts';
 import { PAYMENT_IDEMPOTENCY_KEY_PATTERN, POSITIVE_ACCOUNTING_MONEY_PATTERN } from '../../../accounting-documents/domain/logic/accounting-money-validation.logic';
 import { BUYER_ENTITY_KINDS, EXPENSE_LINE_CHARGE_KINDS, TRANSACTION_TAX_CONTEXTS,
   type BuyerEntityKind, type CreateExpenseDraftInput, type ExpenseVatMode, type ExpenseVatSourceInput, type ExpenseWhtInput, type InputVatClaimStatus } from '@watchdog-bms/contracts';
@@ -108,6 +108,22 @@ export class ReceiptUploadCompletionDto extends UploadCompletionDto {
 /** Reject / void / signature-reject: the handlers trim this, so it has to be a string. */
 export class ReasonRequiredDto {
   @IsString() @IsNotEmpty() @MaxLength(500) reason!: string;
+}
+
+/** Mutable certificate facts only; identities, numbering and signing state stay server-owned. */
+export class AmendSubstituteReceiptDto implements AmendSubstituteReceiptInput {
+  @IsIn(['PAYEE_CANNOT_ISSUE', 'RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE', 'OTHER']) reasonCode!: AmendSubstituteReceiptInput['reasonCode'];
+  @IsString() @IsNotEmpty() @MaxLength(500) missingReceiptReason!: string;
+  @IsString() @IsNotEmpty() @MaxLength(500) businessPurpose!: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() @MaxLength(200) payeeName?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() @MaxLength(300) payeeAddress?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsString() payeeTaxId?: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @IsString({ each: true }) paymentEvidenceAttachmentIds?: string[];
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @IsString({ each: true }) supportingAttachmentIds?: string[];
+  @Matches(CIVIL_DATE_PATTERN) @IsISO8601({ strict: true }) paymentDate!: string;
+  @IsIn(EXPENSE_PAYMENT_METHODS) paymentMethod!: ExpensePaymentMethod;
+  @IsString() @IsISO8601({ strict: true }) expectedExpenseUpdatedAt!: string;
+  @IsString() @IsISO8601({ strict: true }) expectedEvidenceUpdatedAt!: string;
 }
 
 export class CorrectSubstituteDocumentDto extends ReasonRequiredDto {

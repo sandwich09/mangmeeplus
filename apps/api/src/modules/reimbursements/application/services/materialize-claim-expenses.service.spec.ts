@@ -166,4 +166,19 @@ describe('MaterializeClaimExpensesService', () => {
     req.lines[0].linkedExpenseId = 'exp-created';
     assert.deepEqual(svc.buildItems(req), first);
   });
+  it('retains source charges and negative rounding without counting them twice in the goods subtotal', () => {
+    const source = { classification: { expenseCategoryId: null, accountHintKey: null, taxCategory: null }, lines: [
+      { description: 'goods including nonclaimable VAT', lineTotalAmount: '107.0000', chargeKind: null, accountHintKey: 'goods' },
+      { description: 'service charge', lineTotalAmount: '10.0000', chargeKind: 'SERVICE_CHARGE', accountHintKey: 'service' },
+      { description: 'rounding', lineTotalAmount: '-0.5000', chargeKind: 'ROUNDING', accountHintKey: 'rounding' },
+    ] };
+    const [item] = new MaterializeClaimExpensesService().buildItems(request({ missingReceiptReason: 'reason for a different manual line', lines: [lineRecord({ amount: '116.50', sourceExpenseSnapshot: source })] }));
+    assert.equal(item.missingReceiptReason, null);
+    assert.equal(item.subtotalAmount, '107.0000');
+    assert.equal(item.taxableAmount, '116.5000');
+    assert.equal(item.netPayableAmount, '116.5000');
+    assert.equal(item.vatAmount, '0.0000');
+    assert.deepEqual(item.sourceCostLines?.map(row => [row.chargeKind, row.amount, row.accountHintKey]), [[null, '107.0000', 'goods'], ['SERVICE_CHARGE', '10.0000', 'service'], ['ROUNDING', '-0.5000', 'rounding']]);
+  });
+
 });

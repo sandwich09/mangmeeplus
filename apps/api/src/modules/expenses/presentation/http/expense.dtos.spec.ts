@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { GLOBAL_VALIDATION_PIPE_OPTIONS } from '../../../../common/pipes/validation-pipe.options';
 import {
+  AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
   AcceptSubstituteReceiptPaperDto,
@@ -25,6 +26,19 @@ const run = (metatype: unknown, value: unknown) =>
   pipe.transform(value, { type: 'body', metatype: metatype as never });
 
 describe('expense body DTOs (audit H-23)', () => {
+  it('validates editable certificate facts and rejects server-owned identities and state', async () => {
+    const body = { reasonCode: 'OTHER', missingReceiptReason: 'ไม่มีใบเสร็จ', businessPurpose: 'ใช้งานบริษัท',
+      payeeName: 'ผู้รับเงิน', payeeAddress: '', payeeTaxId: '', paymentEvidenceAttachmentIds: [], supportingAttachmentIds: ['attachment-1'],
+      paymentDate: '2026-08-14', paymentMethod: 'CASH', expectedExpenseUpdatedAt: '2026-09-10T00:00:00.000Z', expectedEvidenceUpdatedAt: '2026-09-10T00:00:00.000Z' };
+    assert.deepEqual(JSON.parse(JSON.stringify(await run(AmendSubstituteReceiptDto, body))), body);
+    for (const patch of [{ companyId: 'other' }, { payerUserId: 'forged' }, { fundingSource: 'COMPANY' },
+      { documentNumber: 'SRC-202609-00001' }, { status: 'ISSUED' }, { signatureMode: 'PAPER' },
+      { expectedEvidenceUpdatedAt: null }, { expectedExpenseUpdatedAt: '' }, { paymentDate: '2026-02-30' },
+      { paymentMethod: 'CRYPTO' }, { businessPurpose: {} }, { payeeName: null }, { supportingAttachmentIds: [123] }]) {
+      await assert.rejects(() => run(AmendSubstituteReceiptDto, { ...body, ...patch }), BadRequestException);
+    }
+  });
+
   it('validates paper signer identities while allowing an omitted or blank position', async () => {
     const body = { payer: { name: 'ผู้จ่ายจริง', signedOn: '2026-09-09' },
       approver: { name: 'ผู้อนุมัติ', position: '', signedOn: '2026-09-09' }, samePerson: false,

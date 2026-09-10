@@ -12,6 +12,7 @@ import type {
   FindAttachmentInput,
 } from '../../domain/models/attachment.model';
 import { findAttachmentLinkConflict, isAllowedAttachmentTarget } from '../../domain/logic/attachment.logic';
+import { lockFundingEvidence, assertFundingMutation } from '../../../expenses/infrastructure/substitute-funding.guard';
 
 @Injectable()
 export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
@@ -196,6 +197,11 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
   async markDeleted(input: MarkAttachmentDeletedInput, tx?: Prisma.TransactionClient): Promise<AttachmentRecord> {
     const client = this.prisma.client as any;
     const mark = async (db: Prisma.TransactionClient) => {
+      const evidence = { attachmentIds: [input.id], expenseIds: [] as string[] };
+      await lockFundingEvidence(db, input.companyId, evidence);
+      const claim = await db.reimbursementLine.findFirst({ where: { companyId: input.companyId, request: { status: { notIn: ['DRAFT', 'REJECTED', 'CANCELLED', 'VOIDED'] } },
+        OR: [{ attachmentId: { in: evidence.attachmentIds } }, { linkedExpenseId: { in: evidence.expenseIds } }] }, select: { id: true } });
+      if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'Receipt is retained by a submitted reimbursement.' });
       await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:attachment-retention`}))`;
       const hold = await this.findSubstituteEvidenceRetentionHold(input, db);
       if (hold) {
@@ -219,6 +225,9 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
 
   async linkToTarget(input: LinkAttachmentInput): Promise<AttachmentLinkRecord> {
     const row = await this.prisma.client.$transaction(async (tx) => {
+      if (input.targetType === 'expense.record') {
+        await lockFundingEvidence(tx, input.companyId, { attachmentIds: [input.attachmentId], expenseIds: [input.targetId] });
+      }
       const attachment = await tx.attachmentObject.findFirst({
         where: { id: input.attachmentId, companyId: input.companyId, status: 'ACTIVE' },
         select: { id: true, branchId: true },
@@ -242,6 +251,10 @@ export class PrismaAttachmentRepository implements AttachmentRepositoryPort {
       if (!target) throw new NotFoundException('Attachment target not found.');
       if (input.targetType === 'accounting.document' && attachment.branchId !== target.branchId) {
         throw new BadRequestException('Attachment and accounting document must belong to the same branch.');
+      }
+      if (input.targetType === 'expense.record') {
+        if (attachment.branchId !== target.branchId) throw new BadRequestException('Attachment and expense must belong to the same branch.');
+        await assertFundingMutation(tx, input.companyId, input.targetId, 'supersede');
       }
 
       return tx.attachmentLink.create({

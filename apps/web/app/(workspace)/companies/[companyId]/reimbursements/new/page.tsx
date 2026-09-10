@@ -13,6 +13,8 @@ export default async function NewReimbursementPage({
   return (
     <ReimbursementCreatePage
       companyId={companyId}
+      canPrepareForOthers={(session?.permissions ?? []).includes('reimbursement.finance_review')}
+      userId={session?.userId ?? ''}
       canCreate={(session?.permissions ?? []).includes('reimbursement.create')}
     />
   );

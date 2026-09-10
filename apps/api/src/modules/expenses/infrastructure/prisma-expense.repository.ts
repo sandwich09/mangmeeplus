@@ -1,4 +1,5 @@
 import { reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
+import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
 import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
@@ -906,6 +907,7 @@ export class PrismaExpenseRepository {
         'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode',
       ]);
       if (Object.keys(data).some((field) => materialFields.has(field))) {
+        await assertFundingMutation(tx, companyId, id, 'supersede');
         const signedEvidence = await tx.expenseSubstituteReceiptEvidence.findFirst({
           where: { companyId, expenseId: id, status: { in: ['PAYER_CERTIFIED', 'ISSUED'] } },
           select: { id: true },
@@ -2258,6 +2260,7 @@ export class PrismaExpenseRepository {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.id}:substitute-receipt`}))`;
       const current = await tx.expenseRecord.findFirst({ where: { id: input.id, companyId: input.companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      await assertProjectionSource(tx, input.companyId, current);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
         { ...mapExpense(current), lines: (current.lines ?? []).map(mapLine) });
       const changed = await tx.expenseRecord.updateMany({
@@ -2310,6 +2313,7 @@ export class PrismaExpenseRepository {
         include: { lines: { orderBy: { lineNumber: 'asc' } }, duplicateCandidates: { where: { status: { not: 'DISMISSED' } } } },
       });
       if (!current || current.status !== 'READY_FOR_CONFIRMATION') throw new ConflictException('expense_confirmation_source_status_changed');
+      await assertProjectionSource(tx, input.companyId, current);
       requireExpenseBranchId(current.branchId);
       assertExpenseSourceDraftComplete(current.sourceChannelMetadataJson as Record<string, unknown> | null,
         { ...mapExpense(current), lines: current.lines.map(mapLine) });

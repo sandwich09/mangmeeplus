@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
   AcceptSubstituteReceiptPaperDto,
@@ -86,7 +87,7 @@ import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
-  SignatureFillInput, GenerateSubstituteReceiptInput, AmendSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
+  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
   PreviewSubstituteReceiptInput,
@@ -277,7 +278,7 @@ export class ExpenseController {
 
   @Patch(':expenseId/substitute-receipt/:evidenceId')
   @RequirePermissions('expense.review')
-  amendSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AmendSubstituteReceiptInput) {
+  amendSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AmendSubstituteReceiptDto) {
     return this.prepareSubstituteReceipt.executeAmendment(ctx, expenseId, evidenceId, body);
   }
 

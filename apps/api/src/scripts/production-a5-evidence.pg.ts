@@ -20,6 +20,7 @@ import {
   computeSnapshotHash,
   isExactLegacyV1FallbackSnapshot,
   type LegacyV1FallbackSnapshotFields,
+  type ReimbursementLineFields,
 } from '../modules/reimbursements/domain/logic/reimbursement.logic';
 import {
   type ProductionA5DatabaseSnapshot,
@@ -65,6 +66,7 @@ type PendingReimbursementHeader = {
   primaryAttachmentId: string | null;
   linkedExpenseId: string | null;
   approvalSnapshotHash: string | null;
+  approvalPolicySnapshotJson?: LegacyV1FallbackSnapshotFields['approvalPolicySnapshotJson'] | null;
   currentApprovalStepId: string | null;
   currentStepStatus: string | null;
   currentStepDecidedAt: Date | string | null;
@@ -86,6 +88,8 @@ type PendingReimbursementLine = {
   amount: unknown;
   attachmentId: string | null;
   linkedExpenseId: string | null;
+  sourceExpenseSnapshotJson?: ReimbursementLineFields['sourceExpenseSnapshot'] | null;
+  attachmentSnapshotJson?: ReimbursementLineFields['attachmentSnapshot'] | null;
 };
 
 function iso(value: Date | string): string {
@@ -117,6 +121,7 @@ function snapshotFields(
     incurredDate: iso(header.incurredDate),
     primaryAttachmentId: header.primaryAttachmentId,
     linkedExpenseId: header.linkedExpenseId,
+    approvalPolicySnapshotJson: header.approvalPolicySnapshotJson ?? undefined,
     lines: lines.map((line) => ({
       id: line.id,
       companyId: line.companyId,
@@ -130,6 +135,8 @@ function snapshotFields(
       amount: decimal(line.amount),
       attachmentId: line.attachmentId,
       linkedExpenseId: line.linkedExpenseId,
+      sourceExpenseSnapshot: line.sourceExpenseSnapshotJson ?? undefined,
+      attachmentSnapshot: line.attachmentSnapshotJson ?? undefined,
     })),
   };
 }
@@ -215,6 +222,7 @@ export async function readProductionA5ReimbursementApprovalSnapshots(
            request."categoryKey", request."categoryLabelSnapshot", request.amount, request.currency,
            request."incurredDate", request."primaryAttachmentId", request."linkedExpenseId",
            request."approvalSnapshotHash", request."currentApprovalStepId",
+           to_jsonb(request)->'approvalPolicySnapshotJson' AS "approvalPolicySnapshotJson",
            step.status::text AS "currentStepStatus", step."decidedAt" AS "currentStepDecidedAt",
            step."decisionByUserId" AS "currentStepDecisionByUserId",
            step.comment AS "currentStepComment", step."rejectionReason" AS "currentStepRejectionReason"
@@ -230,7 +238,9 @@ export async function readProductionA5ReimbursementApprovalSnapshots(
     /* production-a5:pending-reimbursement-lines */
     SELECT line.id, line."companyId", line."reimbursementRequestId", line."lineNo",
            line."incurredDate", line.description, line.purpose, line."categoryKey",
-           line."categoryLabelSnapshot", line.amount, line."attachmentId", line."linkedExpenseId"
+           line."categoryLabelSnapshot", line.amount, line."attachmentId", line."linkedExpenseId",
+           to_jsonb(line)->'sourceExpenseSnapshotJson' AS "sourceExpenseSnapshotJson",
+           to_jsonb(line)->'attachmentSnapshotJson' AS "attachmentSnapshotJson"
       FROM "ReimbursementLine" line
       JOIN "ReimbursementRequest" request ON request.id = line."reimbursementRequestId"
      WHERE request.status = 'PENDING_APPROVAL'

@@ -51,6 +51,7 @@ export type ReimbursementClaimFormSnapshot = {
     description: string;
     purpose: string | null;
     amount: string;
+    sourceReference?: string;
   }>;
   /** ANY line carrying a receipt attachment or a linked expense ticks ใบเสร็จรับเงิน. */
   hasReceiptEvidence: boolean;
@@ -114,7 +115,7 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
   const headerHeight = 36;
   let rowY = tableTop + headerHeight;
   const rows = sourceLines.map((line) => {
-    const descriptions = wrapText(line.description, DESCRIPTION_WIDTH);
+    const descriptions = wrapText([line.description, line.sourceReference].filter(Boolean).join(' · '), DESCRIPTION_WIDTH);
     const purposes = wrapText(line.purpose, PURPOSE_WIDTH);
     const rowHeight = Math.max(34, descriptions.length * 20 + 12, purposes.length * 20 + 12);
     const contentY = rowY + 23;

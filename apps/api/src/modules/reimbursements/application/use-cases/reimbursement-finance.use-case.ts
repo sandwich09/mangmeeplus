@@ -588,6 +588,7 @@ export class ExportReimbursementEvidenceUseCase {
         incurredDate: l.incurredDate.toISOString(),
         attachmentId: l.attachmentId,
         linkedExpenseId: l.linkedExpenseId,
+        ...(l.sourceExpenseSnapshot && { sourceExpenseSnapshot: l.sourceExpenseSnapshot }),
       })),
       // Scans of the wet-ink signed form: ids only, same redaction discipline as the lines.
       signedCopyAttachmentIds: signedCopies.map((copy) => copy.attachmentId),

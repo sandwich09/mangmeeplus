@@ -18,6 +18,8 @@ import type {
   ReimbursementDuplicatePolicy,
   ReimbursementPolicyStatus,
   ReimbursementPolicySnapshotV1,
+  ReimbursementSourceSnapshot,
+  ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
 
 export type ReimbursementPolicyRecord = {
@@ -117,6 +119,8 @@ export type ReimbursementLineRecord = {
   amount: string;
   attachmentId?: string;
   linkedExpenseId?: string;
+  sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
+  attachmentSnapshot?: ReimbursementAttachmentSnapshot;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -190,6 +194,8 @@ export type ReimbursementRequestRecord = {
 
 // ---- Input shapes for repository writes ----
 
+export type ReimbursementAttachmentSnapshot = { id: string; uploadedByUserId: string; checksumSha256: string | null; fileName: string };
+
 export type ReimbursementLineWriteData = {
   lineNo: number;
   incurredDate: Date;
@@ -200,6 +206,8 @@ export type ReimbursementLineWriteData = {
   amount: string;
   attachmentId?: string | null;
   linkedExpenseId?: string | null;
+  sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
+  attachmentSnapshot?: ReimbursementAttachmentSnapshot;
 };
 
 export type ReimbursementDuplicateCandidateWriteData = {
@@ -242,7 +250,7 @@ export type MaterializeClaimExpenseItem = {
   /** Claim-form number (line-suffixed on multi-line claims) — the projection's document reference. */
   vendorDocumentNumber: string | null;
   /** Canonical CC2 VAT state retained until the shared CC4 resolution exists. */
-  sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED' };
+  sourceChannelMetadataJson: { cc2VatClaimClassification: 'EXTERNAL_OR_UNRESOLVED'; reimbursementSource?: ReimbursementSourceSnapshot };
   /** Header totals for the neutral single-line ExpenseRecord projection. */
   subtotalAmount: string;
   discountAmount: string;
@@ -263,6 +271,8 @@ export type MaterializeClaimExpenseItem = {
     lineSubtotalAmount: string;
     lineTotalAmount: string;
   };
+  /** Supported source VAT is non-claimable: retain each category's gross cost. */
+  sourceCostLines?: Array<{ description: string; chargeKind: ExpenseLineChargeKind | null; amount: string; expenseCategoryId: string | null; accountHintKey: string | null; taxCategory: string | null }>;
 };
 
 export type CreateReimbursementRequestData = {
