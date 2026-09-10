@@ -767,7 +767,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0 }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -779,6 +779,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   canConfirm: boolean;
   /** Explicit save is available only on the first review step; later steps use navigation saves. */
   showSaveDraft?: boolean;
+  /** Back/Next in an existing certificate must preserve signed no-op revisions. */
+  skipUnchangedSave?: boolean;
   onSaved: () => Promise<void>;
   /** The ถัดไป/chip navigation and the first-step draft button use the same save. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
@@ -1006,7 +1008,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   };
 
   const save = async (explicitDraftSave = false): Promise<boolean> => {
-    if (busy) return false;
+    if (busy || !isMutable) return false;
+    if (skipUnchangedSave && JSON.stringify(values) === JSON.stringify(reviewValues(detail))) return true;
     setError(null); setInfo(null);
     const partialSourceSave = explicitDraftSave && Boolean(detail.sourceDraft);
     const partialHasFinancialLines = values.lines.some((line) => line.id
