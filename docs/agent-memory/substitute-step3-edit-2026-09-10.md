@@ -93,3 +93,10 @@ Verification: previous 220 focused checks passed before this follow-up; rerun af
 Next: commit scoped files (exclude dependency symlinks/generated outputs), push, CI, merge develop + main. Cloud and production data were not accessed.
 
 PRs: develop #514, main #515. Initial candidate30f3d789 CI runs34469803357/34469819175. Final review adds a regression guard: changing numbering configuration alone cannot renumber an existing same-month/same-branch document during an ordinary edit. main requires one GitHub review; asked owner for explicit admin-merge authorization after all CI succeeds.
+
+## Integration in progress and print-status question
+- User explicitly approved admin merge of main PR515 after all CI succeeds; develop uses normal merge.
+- Final candidate cde958ae34b78bc0cc2598d12d45b54fa54239d4; CI34470115261 and34470115685. Initial30f3d789 runs were automatically cancelled on the final guard fix push. The 27-case focused PG suite passed again after the template guard change.
+- User asked whether printing at every substitute status was already implemented. Verified existing main code from0195d439 / PR513: hub print actions and DownloadSubstituteReceiptPdfUseCase.composeForState cover PREPARED, PAYER_CERTIFIED, ISSUED and SUPERSEDED with appropriate stamps/history. Remaining gaps: incomplete prepared facts cannot compose the unsigned form; historical versions without retained artifact/scan/snapshot cannot be reconstructed safely; version history in wizard has no direct print button. Reported these accurately; did not expand current number/edit PRs into a new all-cases printing implementation. Current API retains existing print guards, including historical data ownership and checksum validation.
+
+CI34470115261/34470115685 failed only the existing web Thai API-error coverage test: new substitute_facts_incomplete lacked a central message mapping. Added its actionable Thai repair message; preserve the existing coverage gate and rerun on the new source SHA (no blind retry).
