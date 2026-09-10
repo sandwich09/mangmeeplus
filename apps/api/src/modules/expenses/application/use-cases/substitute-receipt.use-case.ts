@@ -492,7 +492,7 @@ export class PrepareSubstituteReceiptUseCase {
       signatureMode: current.signatureMode, ...(current.payerUserId ? { payerUserId: current.payerUserId } : {}),
       ...(current.note ? { note: current.note } : {}),
       idempotencyKey: `certificate-edit:${current.id}:${current.updatedAt.toISOString()}`,
-    }, { evidenceId, expectedUpdatedAt: current.updatedAt });
+    }, { evidenceId, expectedUpdatedAt: current.updatedAt, keepDocumentNumberConfirmed: input.keepDocumentNumberConfirmed, previousPaymentDate: current.paymentDate?.toISOString() });
   }
 
   async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
@@ -500,7 +500,7 @@ export class PrepareSubstituteReceiptUseCase {
   }
 
   private async prepare(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput,
-    amendment?: { evidenceId: string; expectedUpdatedAt: Date }): Promise<SubstituteReceiptEvidenceSummary> {
+    amendment?: { evidenceId: string; expectedUpdatedAt: Date; keepDocumentNumberConfirmed?: boolean; previousPaymentDate?: string }): Promise<SubstituteReceiptEvidenceSummary> {
     // R7: preparing is the one substitute-receipt step LINE may take. It writes staged facts and
     // reserves a document number; it embeds no signature and grants no approval. The three gates
     // the spec names — `expense.review` below, `assertBranch`, and the payer resolving to an active
@@ -626,7 +626,7 @@ export class PrepareSubstituteReceiptUseCase {
         // R5: evidenceCount makes every self-certified no-evidence document listable in one query.
         result: 'SUCCESS', riskLevel: 'HIGH',
         metadataJson: {
-          ...(amendment ? { previousEvidenceId: amendment.evidenceId, documentNumber: evidence.documentNumber } : {}),
+          ...(amendment ? { previousEvidenceId: amendment.evidenceId, documentNumber: evidence.documentNumber, previousPaymentDate: amendment.previousPaymentDate, paymentDate: evidence.paymentDate?.toISOString(), keepDocumentNumberConfirmed: amendment.keepDocumentNumberConfirmed === true } : {}),
           expenseId, version: evidence.version, payerUserId, fundingSource: input.fundingSource, paidInFullAcknowledged: true, evidenceCount: allIds.length, preparedFromChannel,
           // Spec §14 names `source: LINE` on the LINE-sourced row; on the web there is no source to state.
           ...(preparedFromChannel === 'LINE' ? { source: 'LINE' } : {}),

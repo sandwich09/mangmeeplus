@@ -570,3 +570,15 @@ export function currentSubstituteRevision<T extends { id: string; documentNumber
   }
   return latest.status === 'SUPERSEDED' ? requested : latest;
 }
+
+/** The source page and wizard expose the same amendment boundary; API rechecks under lock. */
+export function canEditSubstituteReceipt(expense: { status: string; paidAmount: string; postingStatus: string; journalEntryId: string | null },
+  evidence: { status: string; correctionOfEvidenceId?: string | null }) {
+  return ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)
+    && ['PREPARED', 'PAYER_CERTIFIED'].includes(evidence.status) && !evidence.correctionOfEvidenceId
+    && Number(expense.paidAmount) === 0 && !expense.journalEntryId && expense.postingStatus !== 'posted';
+}
+
+export function paymentMonthChanged(before: string, after: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(before) && /^\d{4}-\d{2}-\d{2}$/.test(after) && before.slice(0, 7) !== after.slice(0, 7);
+}

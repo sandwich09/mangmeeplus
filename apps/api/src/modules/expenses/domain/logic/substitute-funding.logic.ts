@@ -23,7 +23,7 @@ export function assertSubstitutePaymentDetails(source: string | null | undefined
   if ((expense.paymentMethod && expense.paymentMethod !== certificate.paymentMethod)
     || (expense.paidAt && (!certificate.paymentDate || civilDate(expense.paidAt) !== civilDate(certificate.paymentDate)))) {
     throw new ConflictException({ code: 'substitute_existing_payment_details_mismatch',
-      message: 'วันที่หรือวิธีจ่ายในใบแทนไม่ตรงกับการจ่ายที่บันทึกแล้ว กลับไปแก้ข้อมูลใบแทนและเลือกใช้ข้อมูลการจ่ายที่บันทึกไว้ หากรายการจ่ายเดิมผิด ให้ผู้มีสิทธิ์ตรวจแก้รายการจ่ายก่อนลงนาม' });
+      message: 'วันที่หรือวิธีจ่ายในใบแทนไม่ตรงกับการจ่ายที่บันทึกแล้ว กรุณาตรวจประวัติการจ่าย ยกเลิกใบแทนก่อนสร้างใหม่ หากรายการจ่ายเดิมผิด ให้ผู้มีสิทธิ์ยกเลิกรายจ่ายและกลับรายการที่เกี่ยวข้องก่อน' });
   }
 }
 

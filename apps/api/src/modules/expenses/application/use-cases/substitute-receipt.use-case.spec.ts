@@ -81,13 +81,13 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     } as any;
     const useCase = new PrepareSubstituteReceiptUseCase(repo, audit, notification);
     const input = { reasonCode: 'OTHER', missingReceiptReason: 'เหตุผลแก้ไข', businessPurpose: 'เพื่อกิจการ', paymentMethod: 'CASH',
-      paymentDate: '2026-08-14', payeeName: 'ร้านใหม่', expectedExpenseUpdatedAt: now.toISOString(), expectedEvidenceUpdatedAt: now.toISOString(),
+      paymentDate: '2026-08-14', keepDocumentNumberConfirmed: true, payeeName: 'ร้านใหม่', expectedExpenseUpdatedAt: now.toISOString(), expectedEvidenceUpdatedAt: now.toISOString(),
       fundingSource: 'PERSONAL_ADVANCE', payerUserId: 'attacker', signatureMode: 'PAPER', continuationId: 'not-allowed',
     } as any;
     await useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', input);
     assert.equal(captured.fundingSource, 'COMPANY'); assert.equal(captured.signatureMode, 'DIGITAL'); assert.equal(captured.payerUserId, 'payer-1');
     assert.equal(captured.paymentDate.toISOString(), '2026-08-14T00:00:00.000Z'); assert.equal(captured.lineContinuation, undefined);
-    assert.deepEqual(captured.amendment, { evidenceId: 'sub-1', expectedUpdatedAt: now });
+    assert.deepEqual(captured.amendment, { evidenceId: 'sub-1', expectedUpdatedAt: now, keepDocumentNumberConfirmed: true, previousPaymentDate: now.toISOString() });
     await assert.rejects(useCase.executeAmendment(ctx('reader', []), 'exp-1', 'sub-1', input), /expense.review/);
     await assert.rejects(useCase.executeAmendment({ ...ctx(), authProvider: 'line' }, 'exp-1', 'sub-1', input), /authenticated web/);
     await assert.rejects(useCase.executeAmendment({ ...ctx(), companyId: 'other' }, 'exp-1', 'sub-1', input), /not found/);

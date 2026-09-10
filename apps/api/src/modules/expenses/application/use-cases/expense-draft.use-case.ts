@@ -48,7 +48,7 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
@@ -1431,7 +1431,7 @@ export class VoidExpenseUseCase {
     } else {
       assertBranchInScope(ctx, r.branchId);
     }
-    if (r.status !== 'CONFIRMED') throw new BadRequestException(`Can only void CONFIRMED expenses (current: ${r.status})`);
+    if (!canVoidExpenseFinancialState(r)) throw new BadRequestException(`Can only void confirmed expenses or unconfirmed expenses with recorded financial activity (current: ${r.status})`);
 
     // H-04 / GAP-07: reserve a reversal entry number for each posted leg outside
     // the void transaction (sequence rows commit independently) — the accrual

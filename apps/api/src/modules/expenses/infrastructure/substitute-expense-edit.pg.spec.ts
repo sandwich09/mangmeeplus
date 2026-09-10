@@ -51,7 +51,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     refreshSubstituteEvidence: { requestId: `edit-${++seq}` }, expenseDate: new Date('2026-08-22T00:00:00Z'), vendorNameSnapshot: 'ร้านใหม่', ...extra });
   const amend = (expense: any, evidence: any, extra: any = {}) => repo.createPreparedSubstituteEvidence({
     companyId, expenseId: expense.id, branchId, expectedExpenseUpdatedAt: expense.updatedAt,
-    amendment: { evidenceId: evidence.id, expectedUpdatedAt: evidence.updatedAt },
+    amendment: { evidenceId: evidence.id, expectedUpdatedAt: evidence.updatedAt, keepDocumentNumberConfirmed: true },
     fundingSource: evidence.fundingSource, originalSourceDocumentType: evidence.originalSourceDocumentType,
     reasonCode: evidence.reasonCode, missingReceiptReason: evidence.missingReceiptReason, businessPurpose: evidence.businessPurpose,
     payeeName: evidence.payeeName, payeeAddress: evidence.payeeAddress, payeeTaxId: evidence.payeeTaxId,
@@ -61,13 +61,13 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     preparedByUserId: userId, preparedFromChannel: 'WEB', idempotencyKey: `amend:${evidence.id}:${evidence.updatedAt.toISOString()}`,
     ...extra,
   });
-  for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: changes a step-3 payment month and retains the previous revision`, async () => {
+  for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: changes a step-3 payment month with the same ID/number and invalidates the previous form`, async () => {
     const { expense, evidence } = await source(mode);
     const old = mode === 'PAPER'
       ? (await composeUnsignedSubstituteReceiptFormPdf(repo, companyId, (await repo.findByIdWithRelations(companyId, expense.id))!, (await repo.findSubstituteEvidence(companyId, expense.id))!), await repo.findSubstituteEvidence(companyId, expense.id))!
       : evidence;
     const updated = await amend(expense, old, { payeeName: 'ร้านแก้ไข' });
-    assert.notEqual(updated.id, old.id); assert.equal(updated.version, old.version + 1); assert.match(updated.documentNumber, /^SRC-202608-/); assert.equal(updated.revisionOfEvidenceId, old.id);
+    assert.equal(updated.id, old.id); assert.equal(updated.version, old.version); assert.equal(updated.documentNumber, old.documentNumber); assert.equal(updated.revisionOfEvidenceId, null);
     assert.equal(updated.paymentDate?.toISOString(), '2026-08-14T00:00:00.000Z'); assert.equal(updated.paperFormSnapshotJson, null);
     const synced = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
     assert.equal(synced.note, 'วัตถุประสงค์: ใช้ในกิจการ'); assert.equal(synced.missingReceiptReason, updated.missingReceiptReason);
@@ -83,14 +83,14 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
       assert.equal((frozen.paperFormSnapshotJson as any).expense.paymentDate, '2026-08-14T00:00:00.000Z');
       assert.equal((frozen.paperFormSnapshotJson as any).documentNumber, updated.documentNumber);
     }
-    assert.equal(await client.expenseSubstituteReceiptEvidence.count({ where: { expenseId: expense.id } }), 2);
+    assert.equal(await client.expenseSubstituteReceiptEvidence.count({ where: { expenseId: expense.id } }), 1);
   });
-  it('keeps a signed no-op intact; a month edit retains the signed revision and resets signing with the new month number', async () => {
+  it('keeps a signed no-op intact; a month edit retains the signed revision and resets signing with the same immutable number', async () => {
     const { expense, evidence } = await source('DIGITAL', 'PAYER_CERTIFIED');
     const unchanged = await amend(expense, evidence, { paymentDate: evidence.paymentDate });
     assert.equal(unchanged.updatedAt.getTime(), evidence.updatedAt.getTime()); assert.equal(unchanged.status, 'PAYER_CERTIFIED');
     const current = await amend(expense, evidence);
-    assert.match(current.documentNumber, /^SRC-202608-/); assert.equal(current.version, 2); assert.equal(current.status, 'PREPARED');
+    assert.equal(current.documentNumber, evidence.documentNumber); assert.equal(current.version, 2); assert.equal(current.status, 'PREPARED');
     assert.equal(current.certifiedArtifactAttachmentId, null); assert.equal(current.payerSignatureAttachmentId, null);
     const old = await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } });
     assert.equal(old.status, 'SUPERSEDED'); assert.equal(old.certifiedArtifactAttachmentId, evidence.certifiedArtifactAttachmentId);
@@ -105,7 +105,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     await assert.rejects(amend(expense, old, { signatureMode: 'DIGITAL', payerUserId: userId }), /แหล่งเงินเดิม/);
     await assert.rejects(amend(expense, old, { supportingAttachmentIds: ['not-linked'] }), /หลักฐานเปลี่ยนแปลง/);
     const current = await amend(expense, old);
-    assert.match(current.documentNumber, /^SRC-202608-/); assert.equal(current.paperSubmissionJson, null); assert.equal(current.wetSignedScanAttachmentId, null);
+    assert.equal(current.documentNumber, evidence.documentNumber); assert.equal(current.paperSubmissionJson, null); assert.equal(current.wetSignedScanAttachmentId, null);
     assert.equal((await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: old.id } })).wetSignedScanAttachmentId, 'old-scan');
   });
   for (const status of ['ISSUED', 'SUPERSEDED']) it(`does not amend ${status} certificates`, async () => {
@@ -115,6 +115,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
       : { status: 'ISSUED', approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', approverSignatureAttachmentId: prepared.payerSignatureAttachmentId,
           approvedAt: at, issuedByUserId: userId, artifactAttachmentId: prepared.certifiedArtifactAttachmentId, checksumSha256: 'a'.repeat(64), issuedAt: at } });
     await assert.rejects(amend(expense, evidence), /โหลดข้อมูลล่าสุด/);
+    if (status === 'ISSUED') await assert.rejects(edit(expense), /กรุณายกเลิกใบแทน/);
   });
   for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: refreshes unsigned data under the same ID/number and invalidates an old form`, async () => {
     const { expense, evidence } = await source(mode);
@@ -156,23 +157,48 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     assert.equal(current.version, 2); assert.equal(current.wetSignedScanAttachmentId, null); assert.equal(current.paperSubmissionJson, null);
     assert.equal((await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } })).wetSignedScanChecksumSha256, 'scan-hash');
   });
-  it('paid re-signing does not pay twice; changing paid amounts rolls the edit back', async () => {
+  it('issued source edits require cancellation; metadata remains writable and all payment/history facts stay intact', async () => {
     const { expense, evidence } = await source('DIGITAL', 'PAYER_CERTIFIED');
-    const issue = (src: any, ev: any) => repo.issueSubstituteEvidence({ companyId, expenseId: src.id, evidenceId: ev.id, approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', allowSelfApproval: true, approvedAt: at, approverSignatureAttachmentId: ev.payerSignatureAttachmentId,
-      expectedExpenseUpdatedAt: src.updatedAt, referencedAttachmentIds: [], expectedVersion: ev.version, expectedEvidenceUpdatedAt: ev.updatedAt,
+    await repo.issueSubstituteEvidence({ companyId, expenseId: expense.id, evidenceId: evidence.id, approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', allowSelfApproval: true, approvedAt: at, approverSignatureAttachmentId: evidence.payerSignatureAttachmentId ?? undefined,
+      expectedExpenseUpdatedAt: expense.updatedAt, referencedAttachmentIds: [], expectedVersion: evidence.version, expectedEvidenceUpdatedAt: evidence.updatedAt,
       artifact: { storageProvider: 'LOCAL', bucket: 'local', objectKey: `tests/${companyId}/${++seq}`, objectVersionId: '1', byteSize: 1, checksumSha256: 'a'.repeat(64), originalFileName: 'issued.svg' } });
-    await issue(expense, evidence);
     const paid = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+    const issued = (await repo.findSubstituteEvidence(companyId, expense.id))!;
     const payments = await client.expensePayment.findMany({ where: { expenseId: expense.id } });
-    await assert.rejects(edit(paid, { netPayableAmount: '200', grandTotalAmount: '200' }), /Paid expense amounts/);
-    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).netPayableAmount.toString(), '100');
-    await edit(paid);
-    const revision = (await repo.findSubstituteEvidence(companyId, expense.id))!;
-    assert.equal(revision.correctionReason, EXPENSE_EDIT_RESIGN_REASON);
-    const cert = await artifact();
-    const certified = await client.expenseSubstituteReceiptEvidence.update({ where: { id: revision.id }, data: { status: 'PAYER_CERTIFIED', payerPosition: '', certifiedAt: at, payerSignatureAttachmentId: cert.id, payerSignatureChecksumSha256: cert.checksumSha256, certifiedArtifactAttachmentId: cert.id, certifiedArtifactChecksumSha256: cert.checksumSha256, snapshotChecksumSha256: 'new-snapshot', snapshotJson: evidence.snapshotJson! as any } });
-    await issue(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), certified);
+    await assert.rejects(edit(paid), /กรุณายกเลิกใบแทน/);
+    await assert.rejects(edit(paid, { netPayableAmount: '200', grandTotalAmount: '200' }), /กรุณายกเลิกใบแทน/);
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), paid);
+    const reviewed = await repo.updateExpense({ companyId, id: expense.id, updatedByUserId: userId, expectedUpdatedAt: paid.updatedAt,
+      vendorEntityKindSnapshot: 'JURISTIC', refreshSubstituteEvidence: { requestId: 'metadata-review' } });
+    assert.equal(reviewed.vendorEntityKindSnapshot, 'JURISTIC');
+    const after = (await repo.findSubstituteEvidence(companyId, expense.id))!;
+    assert.equal(after.id, issued.id); assert.equal(after.status, 'ISSUED');
+    assert.equal(after.documentNumber, issued.documentNumber);
     assert.deepEqual(await client.expensePayment.findMany({ where: { expenseId: expense.id } }), payments);
+  });
+
+  it('cancels a paid unconfirmed draft atomically, retiring its active revision and root-owned number', async () => {
+    const { expense, evidence } = await source('DIGITAL', 'PAYER_CERTIFIED');
+    const revision = await amend(expense, evidence, { businessPurpose: 'ฉบับที่แก้ไขแล้ว' });
+    const paid = await client.expenseRecord.update({ where: { id: expense.id }, data: {
+      paidAmount: '100', outstandingAmount: '0', paymentStatus: 'PAID', paymentMethod: 'CASH', paidAt: at } });
+    await client.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: '100', paymentMethod: 'CASH', paidAt: at, createdByUserId: userId } });
+    const result = await repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยกเลิกรายจ่ายที่ลงวันที่จ่ายผิด');
+    assert.equal(result.expense.status, 'VOIDED'); assert.equal(Number(result.expense.paidAmount), 0);
+    assert.equal((await client.expensePayment.findFirstOrThrow({ where: { expenseId: expense.id } })).status, 'VOIDED');
+    assert.equal((await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: revision.id } })).status, 'SUPERSEDED');
+    const number = await client.documentNumber.findFirstOrThrow({ where: { companyId, documentNumber: evidence.documentNumber } });
+    assert.equal(number.ownerId, evidence.id); assert.equal(number.status, 'VOIDED');
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'กดซ้ำ'), /no longer eligible/);
+    assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 1);
+    assert.notEqual(paid.status, 'CONFIRMED');
+  });
+
+  it('cannot use the financial cancellation path for an ordinary unpaid unconfirmed expense', async () => {
+    const { expense, evidence } = await source();
+    await assert.rejects(repo.voidExpenseTrueReversal(companyId, expense.id, userId, 'ยังไม่ได้จ่าย'), /no longer eligible/);
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
+    assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.id, evidence.id);
   });
 
   it('treats a time-only payment-date normalization as a signed no-op', async () => {
@@ -250,93 +276,94 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
       assert.equal(current.paymentMethod, fundingSource === 'COMPANY' ? null : 'CASH');
     }
   });
-  it('blocks paid-date/method conflicts before signature mutation and lets the corrected certificate issue without a second payment', async () => {
+  for (const financial of ['paid', 'posted']) it(`${financial} drafts require cancellation before material edits from either side`, async () => {
     const { expense, evidence } = await source('DIGITAL', 'PAYER_CERTIFIED');
-    const paidAt = new Date('2026-09-09T09:45:00Z');
-    const paid = await client.expenseRecord.update({ where: { id: expense.id }, data: { paidAmount: '100', outstandingAmount: '0', paymentStatus: 'PAID', paidAt, paymentMethod: 'CASH' } });
-    await client.expensePayment.create({ data: { companyId, expenseId: expense.id, amount: '100', currency: 'THB', paymentMethod: 'CASH', paidAt, createdByUserId: userId, status: 'RECORDED' } });
-    const beforePayments = await client.expensePayment.findMany({ where: { expenseId: expense.id } });
-    await assert.rejects(amend(paid, evidence), /วันที่หรือวิธีจ่าย/);
-    await assert.rejects(amend(paid, evidence, { paymentDate: at, paymentMethod: 'BANK_TRANSFER' }), /วันที่หรือวิธีจ่าย/);
+    const locked = await client.expenseRecord.update({ where: { id: expense.id }, data: financial === 'paid'
+      ? { paidAmount: '100', outstandingAmount: '0', paymentStatus: 'PAID', paidAt: at, paymentMethod: 'CASH' }
+      : { journalEntryId: 'existing-journal', postingStatus: 'posted' } });
+    await assert.rejects(amend(locked, evidence, { paymentDate: at, businessPurpose: 'แก้คำอธิบาย' }), /กรุณายกเลิกใบแทน/);
+    await assert.rejects(edit(locked), /กรุณายกเลิกใบแทน/);
     assert.deepEqual(await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }), evidence);
-    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), paid);
-    const repaired = await amend(paid, evidence, { paymentDate: at, businessPurpose: 'แก้คำอธิบาย' });
-    const currentExpense = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
-    const cert = await artifact();
-    const certified = await client.expenseSubstituteReceiptEvidence.update({ where: { id: repaired.id }, data: { status: 'PAYER_CERTIFIED', payerPosition: '', certifiedAt: at, payerSignatureAttachmentId: cert.id, payerSignatureChecksumSha256: cert.checksumSha256, certifiedArtifactAttachmentId: cert.id, certifiedArtifactChecksumSha256: cert.checksumSha256, snapshotChecksumSha256: 'new-snapshot', snapshotJson: evidence.snapshotJson! as any } });
-    await repo.issueSubstituteEvidence({ companyId, expenseId: expense.id, evidenceId: certified.id, approverUserId: userId, approverName: 'ผู้อนุมัติ', approverPosition: '', allowSelfApproval: true, approvedAt: at, approverSignatureAttachmentId: cert.id,
-      expectedExpenseUpdatedAt: currentExpense.updatedAt, referencedAttachmentIds: [], expectedVersion: certified.version, expectedEvidenceUpdatedAt: certified.updatedAt,
-      artifact: { storageProvider: 'LOCAL', bucket: 'local', objectKey: `tests/${companyId}/${++seq}`, objectVersionId: '1', byteSize: 1, checksumSha256: 'a'.repeat(64), originalFileName: 'issued.svg' } });
-    assert.deepEqual(await client.expensePayment.findMany({ where: { expenseId: expense.id } }), beforePayments);
-    assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).paidAt!.getTime(), paidAt.getTime());
-    assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.documentNumber, evidence.documentNumber);
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), locked);
+    assert.equal(await client.expensePayment.count({ where: { expenseId: expense.id } }), 0);
   });
 
-  for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: September → August → September reuses only this document's reservations`, async () => {
+  it('rejects an unacknowledged payment-month change atomically but allows a same-month day change', async () => {
+    const { expense, evidence } = await source();
+    const amendment = { evidenceId: evidence.id, expectedUpdatedAt: evidence.updatedAt };
+    const count = await client.documentNumber.count({ where: { companyId } });
+    await assert.rejects(amend(expense, evidence, { amendment }), /กรุณายืนยันเปลี่ยนเดือน/);
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
+    assert.deepEqual(await client.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: evidence.id } }), evidence);
+    const same = await amend(expense, evidence, { amendment, paymentDate: new Date('2026-09-14T00:00:00Z') });
+    assert.equal(same.id, evidence.id); assert.equal(same.documentNumber, evidence.documentNumber);
+    assert.equal(await client.documentNumber.count({ where: { companyId } }), count);
+  });
+
+  for (const mode of ['DIGITAL', 'PAPER']) it(`${mode}: September → August → September never changes the number or consumes a sequence`, async () => {
     const { expense, evidence } = await source(mode);
     const sourceNow = () => client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
     const initialCount = await client.documentNumber.count({ where: { companyId } });
     const august = await amend(expense, evidence);
     const september = await amend(await sourceNow(), august, { paymentDate: at });
     assert.equal(september.documentNumber, evidence.documentNumber);
-    assert.equal(september.revisionOfEvidenceId, august.id);
+    assert.equal(september.id, august.id);
     const again = await amend(await sourceNow(), september);
     assert.equal(again.documentNumber, august.documentNumber);
     const sameMonth = await amend(await sourceNow(), again, { paymentDate: new Date('2026-08-22T00:00:00Z') });
     assert.equal(sameMonth.id, again.id); assert.equal(sameMonth.documentNumber, again.documentNumber);
     const noOp = await amend(await sourceNow(), sameMonth, { paymentDate: sameMonth.paymentDate });
     assert.equal(noOp.updatedAt.getTime(), sameMonth.updatedAt.getTime());
-    assert.equal(await client.documentNumber.count({ where: { companyId } }), initialCount + 1);
+    assert.equal(await client.documentNumber.count({ where: { companyId } }), initialCount);
     const other = await source(mode);
     const otherAugust = await amend(other.expense, other.evidence);
     assert.notEqual(other.evidence.documentNumber, september.documentNumber);
     assert.notEqual(otherAugust.documentNumber, august.documentNumber);
-    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: evidence.id, status: 'COMMITTED' } }), 2);
+    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: evidence.id, status: 'COMMITTED' } }), 1);
     const history = await repo.listSubstituteEvidenceHistory(companyId, expense.id);
-    assert.ok(history.some(item => item.id === september.id && item.revisionOfEvidenceId === august.id));
+    assert.equal(history.length, 1); assert.equal(history[0].id, september.id);
   });
-  it('serializes concurrent month changes, rejects stale retry and rolls allocations back with source edits', async () => {
+  it('serializes concurrent month changes, rejects stale retry and rolls date changes back with source edits', async () => {
     const { expense, evidence } = await source();
     const count = await client.documentNumber.count({ where: { companyId } });
     const results = await Promise.allSettled([amend(expense, evidence), amend(expense, evidence)]);
     assert.equal(results.filter(item => item.status === 'fulfilled').length, 1);
     assert.equal(results.filter(item => item.status === 'rejected').length, 1);
-    assert.equal(await client.documentNumber.count({ where: { companyId } }), count + 1);
+    assert.equal(await client.documentNumber.count({ where: { companyId } }), count);
     const current = (await repo.findSubstituteEvidence(companyId, expense.id))!;
     const src = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
     await assert.rejects(client.$transaction(async tx => {
       const { reviseSubstituteEvidence } = await import('./substitute-expense-edit');
-      await reviseSubstituteEvidence(tx, current, { paymentDate: new Date('2026-07-14T00:00:00Z') }, userId, 'rollback-number', 'test', numbers);
-      throw new Error('abort after allocation');
-    }), /abort after allocation/);
-    assert.equal(await client.documentNumber.count({ where: { companyId } }), count + 1);
+      await reviseSubstituteEvidence(tx, current, { paymentDate: new Date('2026-07-14T00:00:00Z') }, userId, 'rollback-number', 'test');
+      throw new Error('abort after date update');
+    }), /abort after date update/);
+    assert.equal(await client.documentNumber.count({ where: { companyId } }), count);
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.id, current.id);
     assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), src);
   });
-  it('uses the Bangkok payment period over a year boundary and ignores expense-date-only edits', async () => {
+  it('keeps its number over a Bangkok year boundary and ignores expense-date-only edits', async () => {
     const { expense, evidence } = await source();
     const january = await amend(expense, evidence, { paymentDate: new Date('2025-12-31T17:00:00Z') });
-    assert.match(january.documentNumber, /^SRC-202601-/);
+    assert.equal(january.documentNumber, evidence.documentNumber);
     await edit(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), { expenseDate: new Date('2026-07-14T00:00:00Z') });
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.documentNumber, january.documentNumber);
   });
-  it('source payment-month edits share the allocator; company-wide branch edits do not consume another number', async () => {
+  it('source date/branch edits keep the assigned number', async () => {
     const { expense, evidence } = await source();
     await edit(expense, { paidAt: new Date('2026-08-14T00:00:00Z'), paymentMethod: 'CASH' });
     const august = (await repo.findSubstituteEvidence(companyId, expense.id))!;
-    assert.match(august.documentNumber, /^SRC-202608-/);
+    assert.equal(august.documentNumber, evidence.documentNumber);
     const second = await client.branch.create({ data: { companyId, code: 'B2', name: 'สาขา 2' } });
     await edit(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), { paidAt: at, branchId: second.id });
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.documentNumber, evidence.documentNumber);
   });
-  it('never reuses a reservation owned by another expense', async () => {
+  it('can edit a legacy document without a number registry; never creates or transfers a reservation', async () => {
     const { expense, evidence } = await source();
-    const other = await source();
-    await client.documentNumber.updateMany({ where: { companyId, documentNumber: evidence.documentNumber }, data: { ownerId: other.evidence.id } });
+    await client.documentNumber.deleteMany({ where: { companyId, documentNumber: evidence.documentNumber } });
     const count = await client.documentNumber.count({ where: { companyId } });
-    await assert.rejects(amend(expense, evidence), /ไม่ตรงกับเอกสารนี้/);
+    const current = await amend(expense, evidence);
+    assert.equal(current.documentNumber, evidence.documentNumber);
     assert.equal(await client.documentNumber.count({ where: { companyId } }), count);
-    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), expense);
   });
 
   it('matches recorded payments and no-op amendments using the Bangkok day at midnight boundaries', async () => {
@@ -350,7 +377,7 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     await assert.rejects(amend(paid, current, { paymentDate: new Date('2026-08-31T00:00:00Z') }), /วันที่หรือวิธีจ่าย/);
   });
 
-  it('reuses branch-specific reservations only in their original branch', async () => {
+  it('keeps branch-specific numbers after template and branch changes', async () => {
     const beforeConfigChange = await source();
     await numbers.upsertConfig({ companyId, periodKey: '2026-10', documentType: 'expense.substitute_receipt', prefixTemplate: 'SRC-{BRANCH}-{YYYY}{MM}-{SEQ}', resetPolicy: 'MONTHLY', updatedByUserId: userId });
     await edit(beforeConfigChange.expense);
@@ -360,10 +387,10 @@ describe('expense edit to signing and receipt removal (PostgreSQL)', () => {
     const second = await client.branch.create({ data: { companyId, code: 'B3', name: 'สาขา 3' } });
     await edit(expense, { branchId: second.id });
     const inOtherBranch = (await repo.findSubstituteEvidence(companyId, expense.id))!;
-    assert.match(inOtherBranch.documentNumber, /^SRC-B3-202609-/);
+    assert.equal(inOtherBranch.documentNumber, evidence.documentNumber);
     await edit(await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } }), { branchId });
     assert.equal((await repo.findSubstituteEvidence(companyId, expense.id))!.documentNumber, evidence.documentNumber);
-    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: evidence.id } }), 2);
+    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: evidence.id } }), 1);
   });
 
   it('removes a receipt without replacement and rejects a late OCR summary', async () => {

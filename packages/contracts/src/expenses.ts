@@ -1155,7 +1155,7 @@ export type GenerateSubstituteReceiptInput = {
 export type AmendSubstituteReceiptInput = Pick<GenerateSubstituteReceiptInput,
   'reasonCode' | 'missingReceiptReason' | 'businessPurpose' | 'payeeName' | 'payeeAddress' | 'payeeTaxId'
   | 'paymentEvidenceAttachmentIds' | 'supportingAttachmentIds' | 'paymentDate' | 'paymentMethod'
-  | 'expectedExpenseUpdatedAt'> & { expectedEvidenceUpdatedAt: string; paymentDate: string; paymentMethod: ExpensePaymentMethod };
+  | 'expectedExpenseUpdatedAt'> & { expectedEvidenceUpdatedAt: string; paymentDate: string; paymentMethod: ExpensePaymentMethod; keepDocumentNumberConfirmed?: boolean };
 
 export type LineSubstituteReceiptPrefill = {
   workflowId: string;
@@ -1500,3 +1500,13 @@ export type AccountantPackageResult = {
 };
 
 export type RemoveExpenseReceiptInput = { expectedUpdatedAt: string; purpose?: Exclude<ExpenseAttachmentPurpose, 'expense.signature.asset'> };
+
+/** A recorded payment can precede expense confirmation (e.g. issuing a substitute receipt). */
+export function canVoidExpenseFinancialState(expense: {
+  status: string; paidAmount?: { toString(): string }; journalEntryId?: string | null;
+  postingStatus?: string; sourceReimbursementRequestId?: string | null;
+}): boolean {
+  return expense.status === 'CONFIRMED' || (!expense.sourceReimbursementRequestId
+    && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)
+    && (Number(expense.paidAmount ?? 0) > 0 || Boolean(expense.journalEntryId) || expense.postingStatus === 'posted'));
+}

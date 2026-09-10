@@ -1,4 +1,4 @@
-import { reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
+import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
 import { assertProjectionSource } from '../../reimbursements/infrastructure/reimbursement-source';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
@@ -27,7 +27,7 @@ import type {
   ExpenseVatSourceOverrideInput,
   ExpenseLineChargeKind,
 } from '@watchdog-bms/contracts';
-import { civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilDate, civilDateToUtcDate, civilDayRangeToUtc, civilPeriodKey, coerceCivilDate, exclusiveEndOfDay, expenseDocumentDateStatus, expenseLineCharges, isCivilDate, EXPENSE_PAYMENT_METHODS } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { nextExpensePostingSource } from '../domain/logic/expense-auto-post.logic';
 import { calcPaymentAmounts, derivePaymentStatus, SETTLE_EPSILON } from '../domain/logic/expense-totals.logic';
@@ -959,7 +959,7 @@ export class PrismaExpenseRepository {
       finally { if (refreshSubstituteEvidence) this.reviewRefreshTransactions.delete(tx); }
       if (refreshSubstituteEvidence && beforeReview) {
         const afterReview = await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
-        const refreshed = await syncSubstituteAfterExpenseEdit(tx, beforeReview, afterReview, rest.updatedByUserId, this.documentNumbers);
+        const refreshed = await syncSubstituteAfterExpenseEdit(tx, beforeReview, afterReview, rest.updatedByUserId);
         if (refreshed) await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId: rest.updatedByUserId,
           action: 'expense.substitute_receipt.source_refreshed', targetType: 'expense_substitute_receipt', targetId: refreshed.evidenceId,
           requestId: refreshSubstituteEvidence.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId: id, ...refreshed } }, tx);
@@ -1454,7 +1454,7 @@ export class PrismaExpenseRepository {
     expenseId: string;
     branchId: string | null;
     expectedExpenseUpdatedAt: Date;
-    amendment?: { evidenceId: string; expectedUpdatedAt: Date };
+    amendment?: { evidenceId: string; expectedUpdatedAt: Date; keepDocumentNumberConfirmed?: boolean };
     fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
     correctionOfEvidenceId?: string;
     correctionReason?: string;
@@ -1513,6 +1513,11 @@ export class PrismaExpenseRepository {
         if (Object.entries(facts).every(([key, value]) => key === 'paymentDate'
           ? current.paymentDate && input.paymentDate && civilDate(current.paymentDate) === civilDate(input.paymentDate)
           : JSON.stringify(current[key]) === JSON.stringify(value))) return mapSubstituteEvidence(current);
+        assertSubstituteEditAllowed(current, expense);
+        if (current.paymentDate && input.paymentDate && civilDate(current.paymentDate).slice(0, 7) !== civilDate(input.paymentDate).slice(0, 7)
+          && input.amendment.keepDocumentNumberConfirmed !== true) {
+          throw new ConflictException({ code: 'substitute_payment_month_confirmation_required', message: 'กรุณายืนยันเปลี่ยนเดือนที่จ่ายเงินโดยคงเลขเอกสารเดิม' });
+        }
         const sourceNote = substitutePurposeSourceNote(expense.note, input.businessPurpose, current.businessPurpose);
         const sourceChanged = expense.missingReceiptReason !== input.missingReceiptReason || sourceNote !== expense.note;
         const sourceUpdatedAt = sourceChanged ? new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1)) : expense.updatedAt;
@@ -1529,7 +1534,7 @@ export class PrismaExpenseRepository {
           missingReceiptReason: input.missingReceiptReason, note: sourceNote,
           updatedAt: sourceUpdatedAt, updatedByUserId: input.preparedByUserId,
         } });
-        const revised = await reviseSubstituteEvidence(tx, current, data, input.preparedByUserId, input.idempotencyKey, 'แก้ไขข้อมูลใบแทน กรุณาตรวจและลงนามใหม่', this.documentNumbers);
+        const revised = await reviseSubstituteEvidence(tx, current, data, input.preparedByUserId, input.idempotencyKey, 'แก้ไขข้อมูลใบแทน กรุณาตรวจและลงนามใหม่');
         return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: revised.evidenceId } }));
       }
       // A cancelled correction may be restarted; network retries of a pending correction reuse it.
@@ -2142,9 +2147,11 @@ export class PrismaExpenseRepository {
       await lockExpenseFunding(tx, companyId, expenseId);
       await assertFundingMutation(tx, companyId, expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:expense-record-lifecycle`}))`;
+      const current = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
+      if (!current || !canVoidExpenseFinancialState(current)) throw new ConflictException({ code: 'expense_changed', message: 'Expense is no longer eligible for cancellation. Reload before continuing.' });
       const voidedAt = new Date();
       const claimed = await tx.expenseRecord.updateMany({
-        where: { id: expenseId, companyId, status: 'CONFIRMED' },
+        where: { id: expenseId, companyId, status: current.status, updatedAt: current.updatedAt },
         data: {
           status: 'VOIDED', voidedByUserId: actorUserId, voidedAt, voidReason: reason,
           updatedByUserId: actorUserId, paidAmount: '0.00', outstandingAmount: '0.00', paymentStatus: 'VOIDED',
@@ -2157,13 +2164,13 @@ export class PrismaExpenseRepository {
       // running number in the same transaction as the expense reversal. Downloads derive a
       // visibly VOID-stamped PDF from the original SVG; the checksummed source is never rewritten.
       const issuedEvidence = await tx.expenseSubstituteReceiptEvidence.findMany({
-        where: { companyId, expenseId, status: 'ISSUED' },
-        select: { id: true },
+        where: { companyId, expenseId, status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] } },
+        select: { id: true, documentNumber: true },
       });
       if (issuedEvidence.length > 0) {
         const evidenceIds = issuedEvidence.map((item: { id: string }) => item.id);
         await tx.expenseSubstituteReceiptEvidence.updateMany({
-          where: { companyId, expenseId, id: { in: evidenceIds }, status: 'ISSUED' },
+          where: { companyId, expenseId, id: { in: evidenceIds }, status: { in: ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] } },
           data: {
             status: 'SUPERSEDED',
             supersededAt: voidedAt,
@@ -2174,7 +2181,7 @@ export class PrismaExpenseRepository {
           where: {
             companyId,
             ownerType: SUBSTITUTE_RECEIPT_OWNER_TYPE,
-            ownerId: { in: evidenceIds },
+            documentNumber: { in: issuedEvidence.map((item: { documentNumber: string }) => item.documentNumber) },
             status: 'COMMITTED',
           },
           data: { status: 'VOIDED', voidedAt },

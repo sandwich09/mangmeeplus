@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, it } from 'node:test';
 import {
   defaultSubstituteReceiptReason,
   evaluateDetailsReadiness,
@@ -511,4 +511,31 @@ test('old links follow automatic month revisions including a return to the origi
   const other = { id: 'other', documentNumber: 'SRC-202609-00002', version: 4, status: 'PREPARED' };
   for (const old of [september, august]) assert.equal(currentSubstituteRevision([other, returned, august, september], old), returned);
   assert.equal(currentSubstituteRevision([other, { ...returned, status: 'SUPERSEDED' }, august, september], september), september);
+});
+
+import { canEditSubstituteReceipt, paymentMonthChanged } from './substitute-receipt-wizard.model';
+it('payment-date month confirmation treats a year change as a new month and ignores same-month days', () => {
+  assert.equal(paymentMonthChanged('2026-09-10', '2026-09-14'), false);
+  assert.equal(paymentMonthChanged('2026-09-10', '2026-08-14'), true);
+  assert.equal(paymentMonthChanged('2026-09-10', '2027-09-10'), true);
+  assert.equal(paymentMonthChanged('', '2026-09-10'), false);
+});
+it('source and certificate expose edits only before issuance and financial linkage', () => {
+  const source = { status: 'NEEDS_REVIEW', paidAmount: '0', journalEntryId: null, postingStatus: 'not_required' };
+  for (const status of ['PREPARED', 'PAYER_CERTIFIED']) assert.equal(canEditSubstituteReceipt(source, { status }), true);
+  for (const status of ['ISSUED', 'SUPERSEDED']) assert.equal(canEditSubstituteReceipt(source, { status }), false);
+  for (const patch of [{ paidAmount: '1' }, { journalEntryId: 'journal' }, { postingStatus: 'posted' }, { status: 'CONFIRMED' }]) {
+    assert.equal(canEditSubstituteReceipt({ ...source, ...patch }, { status: 'PREPARED' }), false);
+  }
+  assert.equal(canEditSubstituteReceipt(source, { status: 'PREPARED', correctionOfEvidenceId: 'issued' }), false);
+});
+
+import { canVoidExpenseFinancialState } from '@watchdog-bms/contracts';
+it('offers the existing cancellation route for paid incomplete expenses without opening unpaid drafts or claim projections', () => {
+  const draft = { status: 'NEEDS_REVIEW', paidAmount: '100' };
+  assert.equal(canVoidExpenseFinancialState(draft), true);
+  assert.equal(canVoidExpenseFinancialState({ ...draft, paidAmount: '0' }), false);
+  assert.equal(canVoidExpenseFinancialState({ ...draft, status: 'VOIDED' }), false);
+  assert.equal(canVoidExpenseFinancialState({ ...draft, sourceReimbursementRequestId: 'claim' }), false);
+  assert.equal(canVoidExpenseFinancialState({ ...draft, paidAmount: '0', journalEntryId: 'posted' }), true);
 });

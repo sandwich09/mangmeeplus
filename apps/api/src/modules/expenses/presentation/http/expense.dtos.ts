@@ -112,6 +112,7 @@ export class ReasonRequiredDto {
 
 /** Mutable certificate facts only; identities, numbering and signing state stay server-owned. */
 export class AmendSubstituteReceiptDto implements AmendSubstituteReceiptInput {
+  @ValidateIf((_o, v) => v !== undefined) @IsBoolean() keepDocumentNumberConfirmed?: boolean;
   @IsIn(['PAYEE_CANNOT_ISSUE', 'RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE', 'OTHER']) reasonCode!: AmendSubstituteReceiptInput['reasonCode'];
   @IsString() @IsNotEmpty() @MaxLength(500) missingReceiptReason!: string;
   @IsString() @IsNotEmpty() @MaxLength(500) businessPurpose!: string;

@@ -33,7 +33,7 @@ describe('expense body DTOs (audit H-23)', () => {
     assert.deepEqual(JSON.parse(JSON.stringify(await run(AmendSubstituteReceiptDto, body))), body);
     for (const patch of [{ companyId: 'other' }, { payerUserId: 'forged' }, { fundingSource: 'COMPANY' },
       { documentNumber: 'SRC-202609-00001' }, { status: 'ISSUED' }, { signatureMode: 'PAPER' },
-      { expectedEvidenceUpdatedAt: null }, { expectedExpenseUpdatedAt: '' }, { paymentDate: '2026-02-30' },
+      { keepDocumentNumberConfirmed: 'true' }, { keepDocumentNumberConfirmed: null }, { expectedEvidenceUpdatedAt: null }, { expectedExpenseUpdatedAt: '' }, { paymentDate: '2026-02-30' },
       { paymentMethod: 'CRYPTO' }, { businessPurpose: {} }, { payeeName: null }, { supportingAttachmentIds: [123] }]) {
       await assert.rejects(() => run(AmendSubstituteReceiptDto, { ...body, ...patch }), BadRequestException);
     }

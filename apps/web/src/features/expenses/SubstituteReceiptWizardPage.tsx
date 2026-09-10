@@ -17,6 +17,7 @@ import {
   type SubstituteReceiptReasonCode,
   type SubstituteReceiptRuntimePolicy,
 } from '@watchdog-bms/contracts';
+import { useConfirm } from '@/common/components/modal/use-confirm';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -82,6 +83,8 @@ import {
 import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile } from '@/common/files/upload-file.logic';
 import { findForbiddenChars, normalizeDecimalInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
+  canEditSubstituteReceipt,
+  paymentMonthChanged,
   clearSubstituteWizardDraft,
   defaultSubstituteReceiptReason,
   evaluateDetailsReadiness,
@@ -505,6 +508,7 @@ export function SubstituteReceiptWizardPage({
   initialEntryMode,
   workflowId,
   evidenceId,
+  initialEditPayment = false,
 }: {
   companyId: string;
   userId: string;
@@ -515,9 +519,12 @@ export function SubstituteReceiptWizardPage({
   routeCheckBill?: boolean;
   workflowId?: string;
   evidenceId?: string;
+  initialEditPayment?: boolean;
 }) {
   const locale = useWorkspaceLocale();
   const router = useRouter();
+  const { confirm, confirmDialog } = useConfirm();
+  const [confirmedPaymentMonth, setConfirmedPaymentMonth] = useState<string | null>(null);
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const createBranchId = useTransactionCreateBranchId();
@@ -753,7 +760,7 @@ export function SubstituteReceiptWizardPage({
     if (issue) throw new Error(t(PREREQUISITE_KEYS[issue], locale));
   };
 
-  const initializeDraft = useCallback((nextDetail: ExpenseDetail) => {
+  const initializeDraft = useCallback((nextDetail: ExpenseDetail, cancelledEvidence?: SubstituteReceiptEvidenceSummary) => {
     setDetail(nextDetail);
     setReasonCode(defaultSubstituteReceiptReason(nextDetail.sourceDocumentType));
     setMissingReason(payerWrittenMissingReason(nextDetail.missingReceiptReason));
@@ -762,7 +769,13 @@ export function SubstituteReceiptWizardPage({
     setPayeeAddress('');
     setPayeeTaxId(payeeTaxIdDigits(nextDetail.vendorTaxIdSnapshot ?? ''));
     setPaymentMethod(nextDetail.paymentMethod ?? 'CASH');
-    setPaymentDate((nextDetail.paidAt ? coerceCivilDate(nextDetail.paidAt) : todayIso()));
+    const previous = cancelledEvidence?.status === 'SUPERSEDED' ? cancelledEvidence : nextDetail.substituteReceiptEvidence?.status === 'SUPERSEDED' ? nextDetail.substituteReceiptEvidence : null;
+    if (previous) {
+      setPayeeName(previous.payeeName ?? nextDetail.vendorNameSnapshot ?? '');
+      setPayeeTaxId(previous.payeeTaxId ?? ''); setPayeeAddress(previous.payeeAddress ?? '');
+      setPaymentMethod(nextDetail.paymentMethod ?? previous.paymentMethod ?? 'CASH');
+    }
+    setPaymentDate(coerceCivilDate(nextDetail.paidAt ?? previous?.paymentDate ?? todayIso()));
     setSupportingIds(nextDetail.attachments.filter((attachment) => attachment.status === 'ACTIVE'
       && attachment.purpose !== 'expense.review.evidence'
       && attachment.purpose !== 'expense.payment.evidence').map((attachment) => attachment.id));
@@ -792,11 +805,13 @@ export function SubstituteReceiptWizardPage({
           const target = requested ? currentSubstituteRevision(nextHistory, requested) : undefined;
           if (!target) throw new Error(t('expenses.substitute_wizard.evidence_not_found', locale));
           if (cancelled) return;
-          if (target.id !== evidenceId) router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(target.id)}`);
+          if (target.id !== evidenceId) router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(target.id)}${initialEditPayment ? '?edit=payment' : ''}`);
           setDetail(nextDetail);
           setReceiptEvidence(target);
           setHistory(nextHistory);
-          setActiveStep(resolveWizardStep(target));
+          const editPayment = initialEditPayment && canReview && canEditSubstituteReceipt(nextDetail, target);
+          setEditingPrepared(editPayment); setConfirmedPaymentMonth(null);
+          setActiveStep(editPayment ? 'details' : resolveWizardStep(target));
           setMissingReason(target.missingReceiptReason);
           setBusinessPurpose(target.businessPurpose);
           setPayeeName(target.payeeName ?? nextDetail.vendorNameSnapshot ?? '');
@@ -812,16 +827,17 @@ export function SubstituteReceiptWizardPage({
           setSupportingIds(target.supportingAttachmentIds);
           setPaymentIds(target.paymentEvidenceAttachmentIds);
         } else if (initialExpenseId) {
-          const [nextDetail, nextLinePrefill] = await Promise.all([
+          const [nextDetail, nextLinePrefill, previousHistory] = await Promise.all([
             getExpense(companyId, initialExpenseId),
             workflowId ? loadLineSubstituteReceiptPrefill(companyId, initialExpenseId, workflowId) : Promise.resolve(null),
+            listSubstituteReceiptHistory(companyId, initialExpenseId),
           ]);
           if (cancelled) return;
           if (nextDetail.substituteReceiptEvidence && nextDetail.substituteReceiptEvidence.status !== 'SUPERSEDED') {
             router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(nextDetail.substituteReceiptEvidence.id)}`);
             return;
           }
-          initializeDraft(nextDetail);
+          initializeDraft(nextDetail, previousHistory[0]);
           if (nextLinePrefill) {
             const values = nextLinePrefill.acceptedValues;
             if (values.reasonCode) setReasonCode(values.reasonCode);
@@ -847,7 +863,7 @@ export function SubstituteReceiptWizardPage({
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId, evidenceId, initialExpenseId, initializeDraft, locale, router, workflowId]);
+  }, [companyId, evidenceId, initialExpenseId, initializeDraft, locale, router, workflowId, initialEditPayment, canReview]);
 
   useEffect(() => {
     if (evidenceId) return;
@@ -986,8 +1002,9 @@ export function SubstituteReceiptWizardPage({
     try { await action(); } catch (cause) { setError(err(cause, locale)); } finally { busyRef.current = false; setBusy(false); }
   };
 
-  const selectExpense = (nextDetail: ExpenseDetail, mode: WizardEntryMode = 'existing') => {
-    initializeDraft(nextDetail);
+  const selectExpense = async (nextDetail: ExpenseDetail, mode: WizardEntryMode = 'existing') => {
+    const previousHistory = mode === 'existing' ? await listSubstituteReceiptHistory(companyId, nextDetail.id) : [];
+    initializeDraft(nextDetail, previousHistory[0]);
     setEntryMode(mode);
     setReceiptEvidence(null);
     setHistory([]);
@@ -1078,7 +1095,7 @@ export function SubstituteReceiptWizardPage({
       })),
     });
     const nextDetail = await getExpense(companyId, created.id);
-    selectExpense(nextDetail, 'new');
+    await selectExpense(nextDetail, 'new');
     manualLineSequenceRef.current += 1;
     setManualLines([blankManualLine(`manual-line-${manualLineSequenceRef.current}`)]);
     setManualValidationAttempted(false);
@@ -1191,6 +1208,7 @@ export function SubstituteReceiptWizardPage({
         supportingAttachmentIds: supportingIds, paymentEvidenceAttachmentIds: paymentIds,
         paymentDate, paymentMethod, expectedExpenseUpdatedAt: detail.updatedAt,
         expectedEvidenceUpdatedAt: receiptEvidence.updatedAt,
+        keepDocumentNumberConfirmed: confirmedPaymentMonth === paymentDate.slice(0, 7),
       });
       setReceiptEvidence(result);
       setDetail(await getExpense(companyId, detail.id));
@@ -1732,7 +1750,7 @@ export function SubstituteReceiptWizardPage({
                       const candidateEligible = isSubstituteReceiptCandidateEligible(item);
                       const renderabilityIssue = substituteReceiptRenderabilityIssue(item);
                       return (
-                      <button key={item.id} type="button" disabled={!canReview} onClick={() => selectExpense(item)}
+                      <button key={item.id} type="button" disabled={!canReview || busy} onClick={() => void run(() => selectExpense(item))}
                         aria-label={`${t('expenses.substitute_wizard.select_action', locale)}: ${item.vendorNameSnapshot || item.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}, ${t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(item.lines.length))}, ${item.expenseNumber}, ${baht(item.grandTotalAmount)}`}
                         className={cx(
                           'group rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
@@ -2135,7 +2153,7 @@ export function SubstituteReceiptWizardPage({
                 </label>
                 <label className="block text-sm font-semibold text-gray-700">
                   <span className="mb-1 block">{t('expenses.substitute_wizard.payment_date', locale)}<RequiredMark /></span>
-                  <ThemedDate className={inputClass} required disabled={companyPaymentRecorded && Boolean(detail.paidAt)} value={paymentDate} aria-label={t('expenses.substitute_wizard.payment_date', locale)} onChange={(event) => setPaymentDate(event.target.value)} />
+                  <ThemedDate className={inputClass} required disabled={companyPaymentRecorded && Boolean(detail.paidAt)} value={paymentDate} aria-label={t('expenses.substitute_wizard.payment_date', locale)} onChange={(event) => void changePaymentDate(event.target.value)} />
                 </label>
               </div>
             </section>
@@ -2344,7 +2362,7 @@ export function SubstituteReceiptWizardPage({
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={evidenceStepBlockers} />
             </div>
           </div>
-          <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{editingPrepared ? 'เลขเอกสารใช้เดือนที่จ่ายเงิน หากแก้ข้อมูลให้ใช้ฟอร์มล่าสุดลงนาม' : 'เลือกลงนามออนไลน์ หรือพิมพ์ให้กรอกและเซ็นบนกระดาษ'}</p>
+          <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{editingPrepared ? 'เลขเอกสารคงเดิม หากแก้ข้อมูลให้ใช้ฟอร์มล่าสุดลงนาม' : 'เลือกลงนามออนไลน์ หรือพิมพ์ให้กรอกและเซ็นบนกระดาษ'}</p>
         </div>
         <ReadinessCard
           title={t('expenses.substitute_wizard.readiness_title', locale)}
@@ -2666,6 +2684,7 @@ export function SubstituteReceiptWizardPage({
           {canReview && receiptEvidence.status === 'SUPERSEDED' && (
             <button type="button" className={btnClass} onClick={() => {
               setPayerId('');
+              resetSignature(); setApprovalAcknowledged(false);
               setPaidInFullAcknowledged(false);
               setReceiptEvidence(null);
               setConsent(true);
@@ -2677,9 +2696,7 @@ export function SubstituteReceiptWizardPage({
       </details>
   );
 
-  const canEditPrepared = Boolean(canReview && detail && receiptEvidence && !receiptEvidence.correctionOfEvidenceId
-    && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)
-    && ['PREPARED', 'PAYER_CERTIFIED'].includes(receiptEvidence.status));
+  const canEditPrepared = Boolean(canReview && detail && receiptEvidence && canEditSubstituteReceipt(detail, receiptEvidence));
   const preparedFactsNeedReview = Boolean(detail && receiptEvidence && !receiptEvidence.correctionOfEvidenceId
     && ['PREPARED', 'PAYER_CERTIFIED'].includes(receiptEvidence.status)
     && (!receiptEvidence.payeeName?.trim() || !receiptEvidence.businessPurpose.trim() || !receiptEvidence.missingReceiptReason.trim()
@@ -2694,8 +2711,21 @@ export function SubstituteReceiptWizardPage({
     setPayeeAddress(receiptEvidence.payeeAddress ?? ''); setPayeeTaxId(receiptEvidence.payeeTaxId ?? '');
     setPaymentDate((receiptEvidence.paymentDate ? coerceCivilDate(receiptEvidence.paymentDate) : '')); setPaymentMethod(receiptEvidence.paymentMethod ?? 'CASH');
     setSupportingIds(receiptEvidence.supportingAttachmentIds); setPaymentIds(receiptEvidence.paymentEvidenceAttachmentIds);
+    setConfirmedPaymentMonth(null);
     setEditingPrepared(true); setActiveStep('details'); setError(null); setInfo(null);
     requestWorkflowFocus('details');
+  };
+  const changePaymentDate = async (nextDate: string) => {
+    if (editingPrepared && receiptEvidence && paymentMonthChanged(paymentDate || coerceCivilDate(receiptEvidence.paymentDate ?? ''), nextDate)) {
+      const accepted = await confirm({
+        title: 'ยืนยันเปลี่ยนวันที่จ่ายเงิน',
+        message: <><span className="block">วันที่จ่ายเงิน: <strong>{dateShort(paymentDate || receiptEvidence.paymentDate)} → {dateShort(nextDate)}</strong></span><span className="mt-2 block">เลขเอกสารคงเดิม: <strong>{receiptEvidence.documentNumber}</strong></span></>,
+        confirmLabel: 'ตกลง', cancelLabel: 'ยกเลิก', variant: 'primary',
+      });
+      if (!accepted) return;
+      setConfirmedPaymentMonth(nextDate.slice(0, 7));
+    }
+    setPaymentDate(nextDate);
   };
   const cancelPreparedEdit = () => {
     setEditingPrepared(false);
@@ -2737,10 +2767,17 @@ export function SubstituteReceiptWizardPage({
           <LoadingState label={t('expenses.loading', locale)} />
         ) : (
           <div className="space-y-4">
-            {error && <div role="alert" aria-live="assertive" aria-atomic="true"><ErrorBanner message={error} /></div>}
+            {error && <div role="alert" aria-live="assertive" aria-atomic="true"><ErrorBanner message={error} />
+              {error.includes('คำขอเบิก') && <Link className="mt-2 block text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/reimbursements`}>เปิดรายการเบิกคืนเพื่อตรวจรายการที่เกี่ยวข้อง</Link>}
+            </div>}
             {info && <InfoBanner message={info} />}
+            {detail && receiptEvidence && !canEditPrepared && receiptEvidence.status !== 'SUPERSEDED' && canReview && <div className="space-y-2 rounded-xl border border-warning-200 bg-warning-50 p-4 text-sm text-warning-800">
+              <p>หากต้องการแก้วันที่จ่ายหรือข้อมูลในใบแทน ต้องยกเลิกใบแทนฉบับเดิมก่อน หากมีรายการจ่าย บัญชี หรือคำขอเบิกแล้ว ให้จัดการรายการที่เกี่ยวข้องก่อน</p>
+              <button type="button" className={ghostClass} onClick={showRevisionAction}>ดูการยกเลิกใบแทน</button>{' '}
+              <Link className="font-semibold underline" href={`/companies/${companyId}/expenses/${detail.id}`}>เปิดรายจ่ายและประวัติการจ่าย</Link>
+            </div>}
             {preparedFactsNeedReview && !editingPrepared && <div role="alert" className="space-y-2 rounded-xl border border-warning-200 bg-warning-50 p-4 text-warning-800">
-              <p>ข้อมูลใบแทนยังไม่ครบหรือไม่ตรงกับการจ่ายที่บันทึกไว้ แก้ข้อมูลก่อนลงนามได้โดยไม่ต้องยกเลิกเอกสาร</p>
+              <p>{canEditPrepared ? 'ข้อมูลใบแทนยังไม่ครบ แก้ข้อมูลก่อนลงนามได้โดยไม่ต้องยกเลิกเอกสาร' : 'ข้อมูลใบแทนไม่ครบหรือไม่ตรงกับการจ่ายที่บันทึกไว้ กรุณาตรวจขั้นตอนยกเลิกและรายการจ่ายที่เกี่ยวข้องก่อนแก้ไข'}</p>
               {canEditPrepared ? <button type="button" className={ghostClass} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>
                 : <p>ให้ผู้มีสิทธิ์ตรวจค่าใช้จ่ายเปิดแก้ไขข้อมูลใบแทนนี้</p>}
             </div>}
@@ -2796,13 +2833,13 @@ export function SubstituteReceiptWizardPage({
             )}
             {editingPrepared && receiptEvidence && <MangmeeCard className="space-y-2 border-warning-200 bg-warning-50 p-4">
               <p className="font-bold">แก้ไขข้อมูลใบแทน · {receiptEvidence.documentNumber}</p>
-              <p className="text-sm">แก้วันในเดือนเดิมใช้เลขเดิม เปลี่ยนเดือนที่จ่ายเงินจะใช้เลขของเดือนนั้น หากเปลี่ยนกลับจะใช้เลขที่เคยจองไว้ให้เอกสารนี้ ดาวน์โหลดฟอร์มล่าสุดเพื่อลงนาม ฉบับเก่าเก็บไว้ในประวัติ</p>
+              <p className="text-sm">แก้ข้อมูลแล้วเลขเอกสารคงเดิม ดาวน์โหลดฟอร์มล่าสุดเพื่อลงนาม ฉบับเก่าเก็บไว้ในประวัติ</p>
               <button type="button" className={ghostClass} disabled={busy} onClick={cancelPreparedEdit}>ยกเลิกการแก้ไข</button>
             </MangmeeCard>}
             {content}
             {reviewingPreparedStep && (
               <MangmeeCard className="space-y-3 p-4">
-                <p className="text-sm text-gray-600">ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุด เลขเอกสารอ้างอิงเดือนที่จ่ายเงิน และต้องตรวจและลงนามใหม่</p>
+                <p className="text-sm text-gray-600">ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุด เลขเอกสารคงเดิม และต้องตรวจและลงนามใหม่</p>
                 <div className="flex flex-wrap gap-2">
                   {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'evidence' ? 'details' : 'expense')}>ย้อนกลับ</button>}
                   {activeStep !== 'evidence' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'expense' ? 'details' : 'evidence')}>ถัดไป: {activeStep === 'expense' ? 'ข้อมูล' : 'หลักฐาน'}</button>}
@@ -2820,6 +2857,7 @@ export function SubstituteReceiptWizardPage({
       {paperArtifactPreview && receiptEvidence && <SubstitutePaperDocumentPreview
         key={paperArtifactPreview.previewChecksumSha256} documentNumber={receiptEvidence.documentNumber}
         preview={paperArtifactPreview} onClose={closePreview} />}
+      {confirmDialog}
       {preview && <DocumentPreviewModal
         source={preview}
         closeLabel={t('expenses.close', locale)}

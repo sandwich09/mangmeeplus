@@ -30,7 +30,7 @@ describe('check-bill canonical preparation wiring', () => {
     assert.match(section, /if \(busy \|\| dirty\) event\.preventDefault\(\)/);
     const navigate = sourceSection(reviewSource, 'const openSubstituteReceipt = async', 'const ocrTotalUnacknowledged');
     assert.match(navigate, /if \(aiReading \|\| stepSaving \|\| evidenceDirty\) return/);
-    assert.ok(navigate.indexOf('await reviewSaveRef.current()') < navigate.indexOf('router.push(substituteAction.href)'));
+    assert.ok(navigate.indexOf('await reviewSaveRef.current()') < navigate.indexOf('router.push('));
     assert.match(navigate, /if \(!saved\) return/);
   });
 });

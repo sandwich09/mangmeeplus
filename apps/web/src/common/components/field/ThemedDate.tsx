@@ -172,7 +172,12 @@ export function ThemedDate({ value, defaultValue, onChange, mode = 'date', disab
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => {
+          // A parent can reject a proposed date (e.g. cancel its month-change confirmation).
+          // Reopen at the controlled selection, not the rejected calendar month.
+          if (!open) setView(parts ?? todayParts(businessToday));
+          setOpen((o) => !o);
+        }}
         className={cx(
           'mangmee-input flex items-center justify-between gap-2 text-left',
           disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',

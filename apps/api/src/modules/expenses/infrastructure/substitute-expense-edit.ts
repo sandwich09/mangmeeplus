@@ -1,9 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { assertFundingMutation } from './substitute-funding.guard';
 import { withPurposeNote } from '../domain/logic/line-correction.logic';
-import { civilDate, civilPeriodKey } from '@watchdog-bms/contracts';
-import type { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
-import { templateNumbersAreBranchDistinct } from '../../data-model-core/domain/logic/document-sequence.logic';
 import { Prisma } from '../../../generated/prisma/client';
 
 export const EXPENSE_EDIT_RESIGN_REASON = 'แก้ไขข้อมูลค่าใช้จ่าย กรุณาตรวจและลงนามใหม่';
@@ -15,14 +12,14 @@ const changed = (before: any, after: any, field: string) => comparable(before[fi
 const printedLines = (row: any) => JSON.stringify((row.lines ?? []).map((line: any) => [line.description, comparable(line.quantity), comparable(line.lineTotalAmount)]));
 
 /** Runs inside the review-save transaction under its existing funding/substitute locks. */
-export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after: any, actorUserId: string, documentNumbers: PrismaDocumentSequenceRepository) {
+export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after: any, actorUserId: string) {
   const current = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId: after.companyId, expenseId: after.id, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' } });
   if (!current) return null;
-  if (Number(before.paidAmount) > 0 && amounts.some((field) => changed(before, after, field))) {
-    throw new ConflictException({ code: 'substitute_paid_expense_amount_locked', message: 'Paid expense amounts require the payment correction flow.' });
-  }
   const materialChange = printedFields.some((field) => changed(before, after, field)) || printedLines(before) !== printedLines(after);
-  if (materialChange) await assertFundingMutation(tx, after.companyId, after.id, 'supersede');
+  if (materialChange) {
+    assertSubstituteEditAllowed(current, before);
+    await assertFundingMutation(tx, after.companyId, after.id, 'supersede');
+  }
   const signed = current.status !== 'PREPARED' || Boolean(current.wetSignedScanAttachmentId || current.paperSubmissionJson);
   const data: any = { expenseUpdatedAtAtPreparation: after.updatedAt };
   if (!materialChange && signed) {
@@ -54,7 +51,7 @@ export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after
       .filter((part: string) => !part.trim().startsWith('วัตถุประสงค์:')).join(' · ').trim() || null;
   }
   const result = await reviseSubstituteEvidence(tx, current, data, actorUserId,
-    `expense-edit:${current.id}:${after.updatedAt.toISOString()}`, EXPENSE_EDIT_RESIGN_REASON, documentNumbers);
+    `expense-edit:${current.id}:${after.updatedAt.toISOString()}`, EXPENSE_EDIT_RESIGN_REASON);
   if (result.signaturesReset && after.substituteReceiptGeneratedAt) {
     // Keep the source timestamp used by the new prepared revision; these are derived flags only.
     await tx.expenseRecord.update({ where: { id: after.id }, data: { substituteReceiptGeneratedAt: null, substituteReceiptGeneratedByUserId: null, updatedAt: after.updatedAt } });
@@ -62,67 +59,18 @@ export async function syncSubstituteAfterExpenseEdit(tx: any, before: any, after
   return result;
 }
 
-/** Resolve a committed number owned by this logical document, never return one to the free pool. */
-async function revisedDocumentNumber(tx: any, current: any, data: any, actorUserId: string, allocator: PrismaDocumentSequenceRepository) {
-  const paymentDate = 'paymentDate' in data ? data.paymentDate : current.paymentDate;
-  // Issued corrections keep their financial identity. Incomplete drafts can still be edited.
-  if (!paymentDate || current.status === 'ISSUED' || current.correctionOfEvidenceId) return current.documentNumber;
-  const periodKey = civilPeriodKey(civilDate(paymentDate));
-  const branchId = 'branchId' in data ? data.branchId : current.branchId;
-  const documentType = 'expense.substitute_receipt';
-  const history = await tx.expenseSubstituteReceiptEvidence.findMany({
-    where: { companyId: current.companyId, expenseId: current.expenseId, version: { lte: current.version } }, orderBy: { version: 'desc' },
-    select: { id: true, version: true, documentNumber: true, revisionOfEvidenceId: true },
-  });
-  const ancestors: any[] = [];
-  let row = current;
-  while (row) {
-    ancestors.push(row);
-    const parent = row.revisionOfEvidenceId
-      ? history.find((item: any) => item.id === row.revisionOfEvidenceId && item.version < row.version)
-      : history.find((item: any) => item.documentNumber === row.documentNumber && item.version < row.version);
-    if (row.revisionOfEvidenceId && !parent) throw new ConflictException('ประวัติใบแทนไม่ครบ กรุณาโหลดข้อมูลล่าสุด');
-    row = parent;
+/** Both source-review and certificate edits use this boundary under the funding lock. */
+export function assertSubstituteEditAllowed(current: any, expense: any) {
+  if (current.status === 'ISSUED' || Number(expense.paidAmount) > 0 || expense.journalEntryId || expense.postingStatus === 'posted') {
+    throw new ConflictException({ code: 'substitute_edit_requires_cancellation',
+      message: 'เอกสารออกสมบูรณ์หรือบันทึกการจ่าย/บัญชีแล้ว กรุณายกเลิกใบแทนและจัดการรายการจ่าย บัญชี หรือคำขอเบิกที่เกี่ยวข้องก่อนแก้ไข' });
   }
-  const ownerIds = ancestors.map(item => item.id);
-  const currentNumber = await tx.documentNumber.findFirst({ where: { companyId: current.companyId, documentType, documentNumber: current.documentNumber }, include: { sequence: true } });
-  if (!currentNumber) {
-    // Legacy imported documents may have no registry. Do not guess ownership or manufacture a number.
-    if (current.paymentDate && civilPeriodKey(civilDate(current.paymentDate)) === periodKey && branchId === current.branchId) return current.documentNumber;
-    throw new ConflictException('ไม่พบทะเบียนเลขใบแทนเดิม กรุณาให้ผู้ดูแลตรวจทะเบียนเลขก่อนเปลี่ยนเดือนหรือสาขา');
-  }
-  if (currentNumber.status !== 'COMMITTED' || currentNumber.ownerType !== 'expense_substitute_receipt' || !ownerIds.includes(currentNumber.ownerId)) {
-    throw new ConflictException('ทะเบียนเลขใบแทนไม่ตรงกับเอกสารนี้ กรุณาให้ผู้ดูแลตรวจสอบ');
-  }
-  const config = await tx.documentSequence.findFirst({ where: { companyId: current.companyId, documentType }, orderBy: [{ periodKey: 'desc' }, { createdAt: 'desc' }] });
-  const scope = templateNumbersAreBranchDistinct(config?.prefixTemplate ?? currentNumber.sequence.prefixTemplate) ? branchId ?? 'GLOBAL' : 'GLOBAL';
-  const matchesScope = (number: any) => templateNumbersAreBranchDistinct(number.sequence.prefixTemplate)
-    ? number.sequence.branchScopeKey === scope : scope === 'GLOBAL';
-  // A later template change must not renumber an existing document on an ordinary edit.
-  if (currentNumber.sequence.periodKey === periodKey && (branchId === current.branchId || matchesScope(currentNumber))) return current.documentNumber;
-  const prior = await tx.documentNumber.findMany({ where: {
-    companyId: current.companyId, documentType, ownerType: 'expense_substitute_receipt', ownerId: { in: ownerIds },
-    status: 'COMMITTED', sequence: { periodKey },
-  }, include: { sequence: true }, orderBy: { reservedAt: 'asc' } });
-  const reusable = prior.find(matchesScope);
-  if (reusable) return reusable.documentNumber;
-  const rootId = ancestors[ancestors.length - 1].id;
-  const number = await allocator.reserveNumberInTransaction(tx, {
-    companyId: current.companyId, branchId: branchId ?? undefined, documentType, periodKey,
-    idempotencyKey: `substitute-revision:${rootId}:${periodKey}:${scope}`, reservedByUserId: actorUserId,
-  });
-  if (number.status === 'RESERVED') {
-    await allocator.commitNumberInTransaction(tx, { id: number.id, companyId: current.companyId, ownerType: 'expense_substitute_receipt', ownerId: rootId });
-  } else if (number.status !== 'COMMITTED' || number.ownerType !== 'expense_substitute_receipt' || number.ownerId !== rootId) {
-    throw new ConflictException('เลขใบแทนนี้ไม่พร้อมใช้งาน กรุณาตรวจทะเบียนเลข');
-  }
-  return number.documentNumber;
 }
 
 /** Call only inside the locked, permission-checked edit transaction. */
-export async function reviseSubstituteEvidence(tx: any, current: any, data: any, actorUserId: string, idempotencyKey: string, reason: string, documentNumbers: PrismaDocumentSequenceRepository) {
+export async function reviseSubstituteEvidence(tx: any, current: any, data: any, actorUserId: string, idempotencyKey: string, reason: string) {
   const signed = current.status !== 'PREPARED' || Boolean(current.wetSignedScanAttachmentId || current.paperSubmissionJson);
-  const documentNumber = await revisedDocumentNumber(tx, current, data, actorUserId, documentNumbers);
+  const documentNumber = current.documentNumber;
   if (!signed && documentNumber === current.documentNumber) {
     await tx.expenseSubstituteReceiptEvidence.update({ where: { id: current.id }, data: { ...data, updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1)), paperFormSnapshotJson: Prisma.DbNull } });
     return { evidenceId: current.id, documentNumber: current.documentNumber, signaturesReset: false };

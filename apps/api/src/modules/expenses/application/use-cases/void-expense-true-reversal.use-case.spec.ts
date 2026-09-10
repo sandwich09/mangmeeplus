@@ -44,6 +44,15 @@ describe('VoidExpenseUseCase (H-04)', () => {
 
   const make = () => new VoidExpenseUseCase(repo, s.audit as any, s.outbox as any, s.reserveNumber as any, s.commitNumber as any, s.cancelNumber as any);
 
+  it('uses the existing reversal pipeline for a paid source before expense confirmation, with void permission still required', async () => {
+    repo.findById = mock.fn(async () => ({ id: 'exp_1', status: 'NEEDS_REVIEW', paidAmount: '100', branchId: null, grandTotalAmount: '100' }));
+    const result = await make().execute(ctx, 'exp_1', 'วันที่จ่ายไม่ถูกต้อง');
+    assert.equal(result.status, 'VOIDED');
+    assert.equal(repo.voidExpenseTrueReversal.mock.callCount(), 1);
+    await assert.rejects(make().execute({ ...ctx, permissions: [] }, 'exp_1', 'ไม่มีสิทธิ์'), /expense.void/);
+    assert.equal(repo.voidExpenseTrueReversal.mock.callCount(), 1);
+  });
+
   it('reserves and commits the reversal number when the expense was posted', async () => {
     const result = await make().execute(ctx, 'exp_1', 'บันทึกผิด');
     assert.equal(result.status, 'VOIDED');
