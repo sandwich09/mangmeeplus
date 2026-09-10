@@ -5,6 +5,7 @@ import { PDFDocument } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { DownloadSubstituteReceiptFormPdfUseCase, DownloadSubstituteReceiptPdfUseCase } from './substitute-receipt.use-case';
 import { SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON } from '../../infrastructure/prisma-expense.repository';
+import { renderSubstituteReceiptPdf, renderSubstitutePaperPreviewPages } from '../../domain/logic/substitute-receipt-pdf.logic';
 import {
   buildSubstituteCertificationText,
   renderSubstituteReceiptSvg,
@@ -22,6 +23,10 @@ const oldSystemFooter = '<text x="425" y="150" text-anchor="middle" font-size="1
 const issuedSvg = Buffer.from(cleanIssuedSvg.toString().replace('</svg>', `${oldSystemFooter}</svg>`));
 
 async function assertNoPageFooter(bytes: Buffer, stateStamp?: string) {
+  if (stateStamp === 'VOID' || stateStamp === 'SUPERSEDED') {
+    assert.match((await PDFDocument.load(bytes)).getSubject() ?? '', new RegExp(`State: ${stateStamp}`));
+    stateStamp = undefined; // Cancelled states use a Thai image watermark; its ink is checked by the renderer suite.
+  }
   const task = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true });
   const pdf = await task.promise;
   try {
@@ -58,6 +63,19 @@ function useCase(status: 'ISSUED' | 'SUPERSEDED', supersedeReason: string | null
 }
 
 describe('DownloadSubstituteReceiptPdfUseCase cancelled artifacts', () => {
+  it('prints the persisted reason and translates the internal replacement code', async () => {
+    for (const [reason, displayed] of [
+      ['ข้อมูลไม่ถูกต้อง ต้องจัดทำรายการใหม่', 'ข้อมูลไม่ถูกต้อง ต้องจัดทำรายการใหม่'],
+      ['NEW_VERSION_ISSUED', 'ออกเอกสารฉบับใหม่แทนฉบับนี้แล้ว'],
+      ['EXPENSE_VOIDED', 'ยกเลิกรายการค่าใช้จ่ายต้นทาง'],
+    ]) {
+      const { instance } = useCase('SUPERSEDED', reason!);
+      const result = await instance.execute({ companyId: 'company-1', userId: 'user-1', authProvider: 'watchdog' } as any, 'expense-1', 'evidence-1');
+      const expected = await renderSubstituteReceiptPdf(cleanIssuedSvg, 'SRC-202608-00001', { stateStamp: reason === 'EXPENSE_VOIDED' ? 'VOID' : 'SUPERSEDED', cancellationReason: displayed, omitPageFooter: true });
+      assert.deepEqual(await renderSubstitutePaperPreviewPages(result.data), await renderSubstitutePaperPreviewPages(expected));
+    }
+  });
+
   it('downloads an expense-voided certificate only as a visibly VOID-derived PDF', async () => {
     const { instance, audit } = useCase('SUPERSEDED', SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON);
 

@@ -345,7 +345,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const [payFor, setPayFor] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // ใบเบิกค่าใช้จ่าย: rendered server-side as SVG, shown in the viewer, saved as PDF from there.
-  const [claimForm, setClaimForm] = useState<{ name: string; url: string } | null>(null);
+  const [claimForm, setClaimForm] = useState<{ name: string; url: string; pages: string[] } | null>(null);
   const [claimFormSaving, setClaimFormSaving] = useState(false);
   const [claimFormError, setClaimFormError] = useState<string | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<DocumentPreviewSource | null>(null);
@@ -437,7 +437,8 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         setAttachmentPreview(null);
         setClaimFormError(null);
         setClaimFormSaving(false);
-        setClaimForm({ name: target.name, url: nextPreview.svgDataUrl });
+        const pages = nextPreview.pageSvgDataUrls?.length ? nextPreview.pageSvgDataUrls : [nextPreview.svgDataUrl];
+        setClaimForm({ name: target.name, url: pages[0]!, pages });
       } else {
         const blob = await fetchAttachmentPreviewBlob(companyId, target.attachmentId, target.mimeType);
         if (requestId !== previewRequestRef.current) return;
@@ -496,7 +497,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     setClaimFormSaving(true);
     setClaimFormError(null);
     try {
-      await downloadDocumentAsPdf(target.url, target.name, { vector: true });
+      await downloadDocumentAsPdf(target.pages, target.name, { vector: true });
     } catch (e) {
       if (requestId === claimFormSaveRequestRef.current) setClaimFormError(err(e));
     } finally {
@@ -648,6 +649,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       {/* Sibling of the drawer so closing the preview does not close the claim behind it. */}
       {claimForm && <DocumentPreviewModal
         source={{ name: claimForm.name, mimeType: 'image/svg+xml', url: claimForm.url }}
+        imagePageUrls={claimForm.pages}
         printSurface
         hideOpenNewTab
         closeLabel="ปิด"

@@ -142,3 +142,11 @@ Verification:
 Next: commit scoped tracked changes, push existing branch, update both PR descriptions to these final rules, require the new exact-head CI to pass, merge develop normally and main with the already approved admin option if review protection requires it. No deployment requested.
 
 Final full API rerun after the cancellation follow-up completed with exit0 (API_SUITE_EXIT=0). Exact test-owned local fixture cleanup completed. Ready to push this verified candidate.
+
+## Concurrent main/develop integration
+Candidate6ed1aa465f169fc06456f99158246da300164762 passed both CI34479429598 and34479431021, including LINE whole-chain. Merge attempt was blocked by actual source conflicts after concurrent PR520/521 (cancelled view-only) and522/523 (cancelled print/pagination) landed. Integrated origin/main4743b33e rather than overwriting those changes; develop0082995f contains the same feature commits.
+
+Resolved the wizard's five overlapping regions by retaining immutable active-document editing and the new cancelled view-only state/navigation. Removed the old inline cancelled-document recreation button per the newly merged requirement; fresh creation from the ordinary new route still retrieves prior facts. Kept print cancellation stamps/reasons and reimbursement pagination unchanged. Source/date/signature contracts and number allocation rules remain as in the current spec.
+
+Merged-source verification: full web1688 passed; API amendment/download/PDF and actual PostgreSQL114 passed, no skips; existing cancelled DIGITAL/PAPER browser E2E2 passed at desktop/mobile, including cancellation on focus and zero writes. Web typecheck passed. Logs /tmp/step3-integration-{web-suite,api,viewonly}.log and /tmp/step3-merge-web-types.log. Recheck API types/build and active-date browser, then push this merge on the same branch and require its fresh CI before integration. Prior successful CI is evidence for the previous candidate only.
+API typecheck/build passed on the merged source. Actual active-date browser rerun also passed with the rebuilt API (/tmp/step3-integration-active-browser.log): popup/cancel/Escape, source roundtrip, immutable number and latest PDF/mobile. This verifies both active editing and the upstream cancelled view-only journey together. Final integration candidate is ready for CI.

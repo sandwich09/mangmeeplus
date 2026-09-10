@@ -13,6 +13,7 @@ export type DocumentPreviewKind = 'image' | 'pdf' | 'unsupported';
 
 export type DocumentPreviewModalProps = {
   source: DocumentPreviewSource;
+  imagePageUrls?: string[];
   closeLabel: string;
   loadingLabel: string;
   errorLabel: string;
@@ -43,13 +44,14 @@ export function documentPreviewKind(mimeType: string): DocumentPreviewKind {
 }
 
 export function DocumentPreviewModal(props: DocumentPreviewModalProps) {
-  const sourceKey = `${props.source.name}\u0000${props.source.mimeType}\u0000${props.source.url}`;
+  const sourceKey = `${props.source.name}\u0000${props.source.mimeType}\u0000${props.source.url}\u0000${props.imagePageUrls?.join('\u0000') ?? ''}`;
   // A keyed child resets loading/error/zoom/viewed state synchronously when the source changes.
   return <DocumentPreviewModalContent key={sourceKey} {...props} />;
 }
 
 function DocumentPreviewModalContent({
   source,
+  imagePageUrls,
   closeLabel,
   loadingLabel,
   errorLabel,
@@ -73,28 +75,37 @@ function DocumentPreviewModalContent({
   const [retrying, setRetrying] = useState(false);
   const [zoom, setZoom] = useState(100);
   const viewedRef = useRef(false);
+  const loadedPagesRef = useRef(new Set<number>());
+  const failedRef = useRef(false);
   const onViewedRef = useRef(onViewed);
   onViewedRef.current = onViewed;
 
   useEffect(() => {
     if (status !== 'loading' || kind === 'unsupported' || !source.url) return undefined;
-    const timeout = window.setTimeout(() => setStatus('error'), PREVIEW_LOAD_TIMEOUT_MS);
+    const timeout = window.setTimeout(() => { failedRef.current = true; setStatus('error'); }, PREVIEW_LOAD_TIMEOUT_MS);
     return () => window.clearTimeout(timeout);
   }, [kind, mediaKey, source.url, status]);
 
   const handleMediaLoad = () => {
+    if (failedRef.current) return;
     setStatus('ready');
     if (viewedRef.current) return;
     viewedRef.current = true;
     onViewedRef.current?.();
   };
 
-  const handleMediaError = () => setStatus('error');
+  const handleMediaError = () => { failedRef.current = true; setStatus('error'); };
+  const handlePageLoad = (index: number) => {
+    loadedPagesRef.current.add(index);
+    if (loadedPagesRef.current.size === imagePageUrls?.length) handleMediaLoad();
+  };
 
   const retry = async () => {
     setRetrying(true);
     try {
       await onRetry?.();
+      loadedPagesRef.current.clear();
+      failedRef.current = false;
       setMediaKey((current) => current + 1);
       setStatus('loading');
     } catch {
@@ -107,9 +118,12 @@ function DocumentPreviewModalContent({
   // Never navigate directly to an SVG blob/data URL. Rendering SVG through <img> keeps it in
   // image mode, while opening it as a document can execute active content in the blob's origin.
   const mayOpenNewTab = !hideOpenNewTab && kind !== 'unsupported' && source.mimeType.split(';', 1)[0]?.trim().toLowerCase() !== 'image/svg+xml';
-  const modalFooter = footer || mayOpenNewTab ? (
+  const mayPrintPages = printSurface && kind === 'image' && !!imagePageUrls?.length;
+  const modalFooter = footer || mayOpenNewTab || mayPrintPages ? (
     <>
       {footer}
+      {mayPrintPages && <button type="button" disabled={status !== 'ready'} onClick={() => window.print()}
+        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">พิมพ์</button>}
       {mayOpenNewTab && source.url && (
         <a
           href={source.url}
@@ -135,7 +149,7 @@ function DocumentPreviewModalContent({
       bodyScroll={false}
       bodyClassName="flex min-h-0 flex-col bg-gray-50 p-0"
     >
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className={`flex min-h-0 flex-1 flex-col${imagePageUrls?.length ? ' document-preview-layout' : ''}`}>
         {kind === 'image' && (
           <div className="modal-print-hide flex flex-shrink-0 items-center justify-end gap-1.5 border-b border-gray-200 bg-white px-3 py-2">
             <button
@@ -170,7 +184,7 @@ function DocumentPreviewModalContent({
           </div>
         )}
 
-        <div className="relative min-h-0 flex-1 overflow-auto p-3 sm:p-5" data-preview-status={status}>
+        <div className="document-preview-viewport relative min-h-0 flex-1 overflow-auto p-3 sm:p-5" data-preview-status={status}>
           {status === 'loading' && (
             <div className="absolute inset-0 z-10 flex min-h-64 items-center justify-center bg-gray-50/95" role="status" aria-live="polite">
               <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-600 shadow-sm">
@@ -193,6 +207,15 @@ function DocumentPreviewModalContent({
                   {retrying ? loadingLabel : retryLabel}
                 </button>
               </div>
+            </div>
+          ) : kind === 'image' && imagePageUrls?.length ? (
+            <div className="document-preview-pages mx-auto w-full" style={{ width: `${zoom}%` }}>
+              {imagePageUrls.map((url, index) => <div key={`${mediaKey}-${index}`} className="document-preview-page mb-4 last:mb-0">
+                <p className="modal-print-hide mb-2 text-center text-xs text-gray-500">หน้า {index + 1} / {imagePageUrls.length}</p>
+                {/* SVG stays in image mode; no active content is inserted into the document. */}
+                <img src={url} alt={`${source.name} หน้า ${index + 1}`} onLoad={() => handlePageLoad(index)} onError={handleMediaError}
+                  className={`mx-auto block h-auto w-full rounded-lg bg-white shadow-sm ${status === 'ready' ? 'opacity-100' : 'opacity-0'}`} />
+              </div>)}
             </div>
           ) : kind === 'image' ? (
             <div className="mx-auto flex min-h-full w-full items-start justify-center">

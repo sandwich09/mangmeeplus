@@ -1,11 +1,24 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildImagePdf } from './image-pdf.logic';
+import { buildImagePdf, buildImagePagesPdf } from './image-pdf.logic';
 
 const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9]);
 const decode = (pdf: Uint8Array): string => Buffer.from(pdf).toString('latin1');
 
 describe('buildImagePdf', () => {
+  it('writes every image page once with a complete xref and ordered page references', () => {
+    const inputs = [1, 2, 3].map((i) => ({ jpeg, pixelWidth: 850, pixelHeight: 1202 + i }));
+    const text = decode(buildImagePagesPdf(inputs));
+    assert.match(text, /\/Kids \[3 0 R 6 0 R 9 0 R\] \/Count 3/);
+    assert.equal((text.match(/\/Type \/Page \/Parent/g) ?? []).length, 3);
+    const xref = Number(/startxref\n(\d+)/.exec(text)![1]);
+    const rows = text.slice(xref).split('\n');
+    assert.equal(rows[1], '0 12');
+    rows.slice(3, 14).forEach((entry, i) => assert.ok(text.startsWith(`${i + 1} 0 obj`, Number(entry.slice(0, 10)))));
+    assert.throws(() => buildImagePagesPdf([]), /no pages/);
+    assert.deepEqual(buildImagePagesPdf([inputs[0]!]), buildImagePdf(inputs[0]!));
+  });
+
   it('writes a structurally valid one-page PDF', () => {
     const text = decode(buildImagePdf({ jpeg, pixelWidth: 850, pixelHeight: 1202 }));
     assert.ok(text.startsWith('%PDF-1.4\n'), 'has the PDF header');

@@ -921,6 +921,7 @@ select {
    with a preview modal open produced the same form N times with the app page showing
    through behind it. When a print surface is open: print only its body, once. */
 @media print {
+  body.modal-print-active { background: white !important; }
   body.modal-print-active > *:not(.modal-print-surface) {
     display: none !important;
   }
@@ -950,5 +951,33 @@ select {
     max-height: none !important;
     max-width: 100% !important;
     border: 0 !important;
+  }
+  @page document-preview { size: A4; margin: 12mm; }
+  .modal-print-surface:has(.document-preview-pages) { page: document-preview; }
+  .modal-print-surface:has(.document-preview-pages) [data-modal-panel],
+  .modal-print-surface:has(.document-preview-pages) [data-modal-body] {
+    display: block !important;
+    background: white !important;
+  }
+  .modal-print-surface .document-preview-layout,
+  .modal-print-surface .document-preview-layout .document-preview-viewport,
+  .modal-print-surface .document-preview-pages {
+    display: block !important;
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+  .modal-print-surface .document-preview-page {
+    break-after: page;
+    break-inside: avoid;
+    margin: 0 !important;
+  }
+  .modal-print-surface .document-preview-page:last-child { break-after: auto; }
+  .modal-print-surface .document-preview-page img {
+    display: block !important;
+    width: 100% !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
 }

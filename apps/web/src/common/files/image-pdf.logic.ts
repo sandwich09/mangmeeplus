@@ -1,8 +1,8 @@
 /**
- * Minimal single-image PDF writer — hand-rolled for the same reason `xlsx.logic.ts` is:
+ * Minimal image-page PDF writer — hand-rolled for the same reason `xlsx.logic.ts` is:
  * one button does not justify a PDF library in the bundle.
  *
- * ponytail: the page carries the document as ONE fitted image, so text inside the PDF is not
+ * ponytail: each page carries one fitted image, so text inside the PDF is not
  * selectable. That is the right trade here — the documents we export (ใบเบิกค่าใช้จ่าย,
  * ใบรับรองแทนใบเสร็จ) are rendered server-side as SVG and get printed and signed, never parsed.
  * If a caller ever needs selectable text, that is the point to reach for a real PDF library and
@@ -34,21 +34,18 @@ export type ImagePdfInput = {
   maxDrawWidthPt?: number;
 };
 
-/** One A4 portrait page holding `jpeg`, centred and scaled to fit inside the margins. */
-export function buildImagePdf({ jpeg, pixelWidth, pixelHeight, maxDrawWidthPt }: ImagePdfInput): Uint8Array {
-  if (jpeg.length === 0) throw new Error('buildImagePdf: empty image');
-  if (!(pixelWidth > 0) || !(pixelHeight > 0)) throw new Error('buildImagePdf: image has no size');
+/** Backwards-compatible single-page entry point. */
+export function buildImagePdf(input: ImagePdfInput): Uint8Array {
+  return buildImagePagesPdf([input]);
+}
 
-  const scale = Math.min(
-    A4_USABLE_WIDTH_PT / pixelWidth,
-    A4_USABLE_HEIGHT_PT / pixelHeight,
-    ...(maxDrawWidthPt && maxDrawWidthPt > 0 ? [maxDrawWidthPt / pixelWidth] : []),
-  );
-  const drawWidth = pixelWidth * scale;
-  const drawHeight = pixelHeight * scale;
-  const left = (A4_WIDTH_PT - drawWidth) / 2;
-  const bottom = (A4_HEIGHT_PT - drawHeight) / 2;
-
+/** Ordered A4 pages. Each page retains its own image dimensions and scale. */
+export function buildImagePagesPdf(pages: ImagePdfInput[]): Uint8Array {
+  if (!pages.length) throw new Error('buildImagePdf: no pages');
+  for (const { jpeg, pixelWidth, pixelHeight } of pages) {
+    if (jpeg.length === 0) throw new Error('buildImagePdf: empty image');
+    if (!(pixelWidth > 0) || !(pixelHeight > 0) || !Number.isFinite(pixelWidth + pixelHeight)) throw new Error('buildImagePdf: image has no size');
+  }
   const encoder = new TextEncoder();
   const chunks: Uint8Array[] = [];
   let offset = 0;
@@ -74,28 +71,37 @@ export function buildImagePdf({ jpeg, pixelWidth, pixelHeight, maxDrawWidthPt }:
   closeObject();
 
   openObject(2);
-  push('<< /Type /Pages /Kids [3 0 R] /Count 1 >>\n');
+  push(`<< /Type /Pages /Kids [${pages.map((_page, index) => `${3 + index * 3} 0 R`).join(' ')}] /Count ${pages.length} >>\n`);
   closeObject();
 
-  openObject(3);
-  push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pt(A4_WIDTH_PT)} ${pt(A4_HEIGHT_PT)}] `
-    + '/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\n');
-  closeObject();
+  for (const [index, { jpeg, pixelWidth, pixelHeight, maxDrawWidthPt }] of pages.entries()) {
+    const pageId = 3 + index * 3;
+    const scale = Math.min(A4_USABLE_WIDTH_PT / pixelWidth, A4_USABLE_HEIGHT_PT / pixelHeight,
+      ...(maxDrawWidthPt && maxDrawWidthPt > 0 ? [maxDrawWidthPt / pixelWidth] : []));
+    const drawWidth = pixelWidth * scale;
+    const drawHeight = pixelHeight * scale;
+    const left = (A4_WIDTH_PT - drawWidth) / 2;
+    const bottom = (A4_HEIGHT_PT - drawHeight) / 2;
+    openObject(pageId);
+    push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pt(A4_WIDTH_PT)} ${pt(A4_HEIGHT_PT)}] `
+      + `/Resources << /XObject << /Im0 ${pageId + 1} 0 R >> >> /Contents ${pageId + 2} 0 R >>\n`);
+    closeObject();
 
-  openObject(4);
-  push(`<< /Type /XObject /Subtype /Image /Width ${pixelWidth} /Height ${pixelHeight} `
-    + `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
-  push(jpeg);
-  push('\nendstream\n');
-  closeObject();
+    openObject(pageId + 1);
+    push(`<< /Type /XObject /Subtype /Image /Width ${pixelWidth} /Height ${pixelHeight} `
+      + `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+    push(jpeg);
+    push('\nendstream\n');
+    closeObject();
 
-  // `cm` maps the image's unit square onto the page rectangle computed above.
-  const content = encoder.encode(`q ${pt(drawWidth)} 0 0 ${pt(drawHeight)} ${pt(left)} ${pt(bottom)} cm /Im0 Do Q\n`);
-  openObject(5);
-  push(`<< /Length ${content.length} >>\nstream\n`);
-  push(content);
-  push('endstream\n');
-  closeObject();
+    // `cm` maps the image's unit square onto the page rectangle computed above.
+    const content = encoder.encode(`q ${pt(drawWidth)} 0 0 ${pt(drawHeight)} ${pt(left)} ${pt(bottom)} cm /Im0 Do Q\n`);
+    openObject(pageId + 2);
+    push(`<< /Length ${content.length} >>\nstream\n`);
+    push(content);
+    push('endstream\n');
+    closeObject();
+  }
 
   const xrefOffset = offset;
   // Every entry is exactly 20 bytes, including the trailing space before the newline.

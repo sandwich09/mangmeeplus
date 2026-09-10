@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { cancelledDocumentReasonBox } from '../../../../common/documents/cancelled-document';
 import {
   renderReimbursementClaimFormSvg,
+  renderReimbursementClaimFormPages,
   thaiBahtText,
   type ReimbursementClaimFormSnapshot,
 } from './claim-form.logic';
@@ -37,6 +39,107 @@ function snapshot(overrides: Partial<ReimbursementClaimFormSnapshot> = {}): Reim
 }
 
 describe('reimbursement claim form', () => {
+  it('paginates long claims with exact row/amount coverage and one final cancellation box', () => {
+    const input = snapshot({
+      lines: Array.from({ length: 65 }, (_, i) => ({ lineNo: i + 1, incurredDate: '2026-09-10', description: `ROW-${i + 1}-END รายการค่าใช้จ่าย`, purpose: 'กิจการ', amount: '10.00' })),
+      totalAmount: '650.00', cancellation: { reason: 'ยกเลิกเพราะรายการซ้ำ' },
+    });
+    const pages = renderReimbursementClaimFormPages(input).map((p) => p.toString());
+    assert.ok(pages.length >= 3);
+    const all = pages.join('');
+    for (const [i, page] of pages.entries()) {
+      assert.match(page, /width="850" height="1202"/);
+      assert.match(page, /RB-202607-000012/);
+      assert.match(page, new RegExp(`หน้า ${i + 1} / ${pages.length}`));
+      assert.equal((page.match(/data-cancelled-watermark/g) ?? []).length, 1);
+      if (page.includes('data-claim-row')) assert.match(page, /วัตถุประสงค์<\/text>/);
+    }
+    for (const row of input.lines) {
+      assert.equal((all.match(new RegExp(`ROW-${row.lineNo}-END`, 'g')) ?? []).length, 1);
+      assert.equal((all.match(new RegExp(`data-claim-amount="${row.lineNo}"`, 'g')) ?? []).length, 1);
+    }
+    assert.equal((all.match(/data-claim-total/g) ?? []).length, 1);
+    assert.equal((all.match(/data-claim-signatures/g) ?? []).length, 1);
+    assert.equal((all.match(/data-cancellation-reason/g) ?? []).length, 1);
+    assert.match(pages.at(-1)!, /data-cancellation-reason/);
+    assert.ok(pages.slice(0, -1).every((p) => !p.includes('data-cancellation-reason')));
+    assert.ok(renderReimbursementClaimFormPages({ ...input, cancellation: undefined }).every((p) => !p.includes('CANCELLED')));
+  });
+
+  it('moves the whole cancellation box to a new final page when content leaves insufficient space', () => {
+    let found = false;
+    for (let count = 10; count < 30; count++) {
+      const pages = renderReimbursementClaimFormPages(snapshot({
+        lines: Array.from({ length: count }, (_, i) => ({ ...snapshot().lines[0]!, lineNo: i + 1 })),
+        cancellation: { reason: 'บันทึกซ้ำ' },
+      })).map((p) => p.toString());
+      if (pages.at(-1)!.includes('data-cancellation-reason') && !pages.at(-1)!.includes('data-claim-signatures')) {
+        found = true;
+        assert.match(pages.at(-2)!, /data-claim-signatures/);
+        assert.match(pages.at(-1)!, /CANCELLED/);
+        break;
+      }
+    }
+    assert.ok(found, 'boundary fixture must exercise the reason-only final page');
+  });
+
+  it('continues an oversized row without losing text or duplicating its amount', () => {
+    const purpose = 'W'.repeat(500);
+    const input = snapshot({ lines: [{ ...snapshot().lines[0]!, description: 'LONG-ROW', purpose }] });
+    const pages = renderReimbursementClaimFormPages(input).map((p) => p.toString());
+    const all = pages.join('');
+    assert.match(all, /data-row-continuation="true"/);
+    assert.equal((all.match(/data-claim-amount="1"/g) ?? []).length, 1);
+    assert.equal([...all.matchAll(/<tspan x="488"[^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]).join(''), purpose);
+    for (const page of pages) assert.doesNotMatch(page, /NaN|Infinity/);
+  });
+
+  it('continues an exceptionally tall cancellation reason without losing recorded text', () => {
+    const reason = Array.from({ length: 80 }, (_, i) => `เหตุผลบรรทัดที่ ${i + 1}`).join('\n');
+    const pages = renderReimbursementClaimFormPages(snapshot({ cancellation: { reason } })).map((p) => p.toString());
+    const reasonPages = pages.filter((p) => p.includes('data-cancellation-reason'));
+    assert.equal(reasonPages.length, 3);
+    assert.match(reasonPages.at(-1)!, /เหตุผลการยกเลิกเอกสาร \(ต่อ\)/);
+    const printedLines = [...reasonPages.join('').matchAll(/<text x="24" y="\d+">([^<]*)<\/text>/g)].map((m) => m[1]);
+    assert.equal(printedLines.join('\n'), reason);
+    assert.ok(pages.every((p) => p.includes('data-cancelled-watermark')));
+  });
+
+  it('wraps the shared cancellation reason at Thai word boundaries without losing a leading vowel', () => {
+    const reason = 'บันทึกรายการซ้ำกับเอกสารที่จัดทำไว้ก่อนหน้า จึงยกเลิกฉบับนี้เพื่อป้องกันการเบิกจ่ายซ้ำ';
+    for (const number of [undefined, 'SRC-202609-00001']) {
+      const { svg } = cancelledDocumentReasonBox(reason, number);
+      const lines = [...svg.matchAll(/<text x="24" y="\d+">([^<]*)<\/text>/g)].map((m) => m[1]!);
+      assert.equal(lines.join(''), reason, 'the full persisted reason survives wrapping');
+      assert.equal(lines.length, 1, 'this reason fits the available box width without an early line break');
+      assert.ok(lines.some((line) => line.includes('เบิก')), 'เบิก remains a whole word');
+      assert.ok(lines.every((line) => !/[เแโใไ]$/.test(line)), 'a leading vowel cannot be stranded on the preceding line');
+    }
+    const long = cancelledDocumentReasonBox(reason.repeat(4)).svg;
+    const wrapped = [...long.matchAll(/<text x="24" y="\d+">([^<]*)<\/text>/g)].map((m) => m[1]!);
+    assert.ok(wrapped.length > 1);
+    assert.equal(wrapped.join(''), reason.repeat(4));
+    assert.ok(wrapped.every((line) => !/[เแโใไ]$/.test(line)));
+  });
+
+  it('marks a cancelled claim and reserves a wrapped reason box below all signature blocks', () => {
+    const reason = `${'แก้ไขข้อมูลรายการและจัดทำใบเบิกใหม่ '.repeat(30)}<script>END-REASON</script>`;
+    const artifact = renderReimbursementClaimFormSvg(snapshot({ cancellation: { reason } })).toString();
+    assert.match(artifact, /data-cancelled-watermark="true"/);
+    assert.match(artifact, /rotate\(-30\).*opacity="0.18".*#991B1B/);
+    assert.match(artifact, /ยกเลิก<\/text>/);
+    assert.match(artifact, /CANCELLED/);
+    assert.match(artifact, /เหตุผลการยกเลิกเอกสาร/);
+    assert.match(artifact.replace(/<[^>]+>/g, ''), /&lt;script&gt;END-REASON&lt;\/script&gt;/);
+    assert.doesNotMatch(artifact, /<script>/);
+    const boxTop = Number(/<svg x="45" y="(\d+)"/.exec(artifact)![1]);
+    const signatureYs = [...artifact.matchAll(/<line x1="\d+" y1="(\d+)" x2="\d+" y2="\d+" stroke="#222"/g)].map((m) => Number(m[1]));
+    assert.equal(signatureYs.length, 4);
+    assert.ok(signatureYs.every((y) => y + 48 < boxTop), 'name/date lines remain above the cancellation box');
+    assert.doesNotMatch(renderReimbursementClaimFormSvg(snapshot()).toString(), /CANCELLED|เหตุผลการยกเลิกเอกสาร/);
+    assert.match(renderReimbursementClaimFormSvg(snapshot({ cancellation: { reason: null } })).toString(), /ไม่ได้ระบุเหตุผลการยกเลิก/);
+  });
+
   it('states when policy skipped human approval instead of implying a missing signer', () => {
     const base = snapshot();
     const artifact = renderReimbursementClaimFormSvg(snapshot({
