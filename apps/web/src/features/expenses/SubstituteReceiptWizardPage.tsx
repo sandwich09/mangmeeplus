@@ -2376,7 +2376,7 @@ export function SubstituteReceiptWizardPage({
           <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
             <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
-              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => editingPrepared ? void run(prepare) : setActiveStep('method')}>{editingPrepared ? 'บันทึกและกลับไปลงนาม' : 'ถัดไป: เลือกวิธีลงนาม'}</button>
+              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => editingPrepared ? void run(prepare) : setActiveStep('method')}>{editingPrepared ? 'บันทึกและกลับไปลงนาม' : t('expenses.substitute_wizard.continue', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={evidenceStepBlockers} />
             </div>
           </div>
@@ -2418,8 +2418,8 @@ export function SubstituteReceiptWizardPage({
                   {!payersLoading && payers.length === 0 && <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-normal leading-5 text-warning-700">{t('expenses.substitute_wizard.payer_empty', locale)}</p>}
                 </label></div>}
     {signingMethod === 'PAPER' && <p className="rounded-xl bg-sky-50 p-4 text-sm leading-6">กรอกชื่อและเซ็นทั้งผู้รับรองการจ่ายและผู้อนุมัติบนกระดาษให้ครบ ผู้จัดทำอัปโหลดแทนได้ ผู้มีสิทธิ์ของบริษัทจะตรวจรับอีกครั้งก่อนเป็นเอกสารฉบับสมบูรณ์</p>}
-    <div className="flex flex-wrap gap-3"><button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('evidence')}>ย้อนกลับ: หลักฐาน</button>
-      <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} onClick={() => void run(prepare)}>{!signingMethod ? 'เลือกวิธีลงนามก่อน' : signingMethod === 'PAPER' ? 'เตรียมแบบฟอร์มสำหรับเซ็นบนกระดาษ' : 'เริ่มลงนามออนไลน์'}</button></div>
+    <div className="flex flex-wrap gap-3"><button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('evidence')}>{t('expenses.substitute_wizard.back', locale)}</button>
+      <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.continue', locale)}</button></div>
     <p className="text-xs text-gray-500">เมื่อเริ่มแล้ว ข้อมูลและวิธีลงนามจะถูกผูกกับเวอร์ชันนี้ หากต้องเปลี่ยนให้ยกเลิกและจัดทำเวอร์ชันใหม่</p>
   </MangmeeCard>;
 
@@ -2735,6 +2735,8 @@ export function SubstituteReceiptWizardPage({
   };
 
   const reviewingPreparedStep = Boolean(receiptEvidence && !editingPrepared && ['expense', 'details', 'evidence'].includes(activeStep));
+  const canOpenSourceEditor = Boolean((activeJourneyStage === 'sign' && canEditPrepared)
+    || (reviewingPreparedStep && !isCancelled && canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)));
   const navigatePreparedStep = (step: WizardStep) => {
     if (busy) return;
     setActiveStep(step);
@@ -2831,6 +2833,18 @@ export function SubstituteReceiptWizardPage({
                 }}>{t('expenses.substitute_wizard.change_payer', locale)}</button>}
               </MangmeeCard>
             )}
+            {!editingPrepared && (activeJourneyStage === 'sign' || reviewingPreparedStep) && (canEditPrepared || canOpenSourceEditor || (reviewingPreparedStep && canChangePayer)) && (
+              <section aria-label="จัดการข้อมูล">
+                <MangmeeCard className="space-y-3 p-4">
+                  <h2 className="text-sm font-bold text-gray-700">จัดการข้อมูล</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {canEditPrepared && <button type="button" className={ghostClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>}
+                    {canOpenSourceEditor && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail!.id)}`}>แก้ไขรายการค่าใช้จ่าย</Link>}
+                    {reviewingPreparedStep && canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={showRevisionAction}>เปลี่ยนวิธีลงนาม</button>}
+                  </div>
+                </MangmeeCard>
+              </section>
+            )}
             {editingPrepared && receiptEvidence && <MangmeeCard className="space-y-2 border-warning-200 bg-warning-50 p-4">
               <p className="font-bold">แก้ไขข้อมูลใบแทน · {receiptEvidence.documentNumber}</p>
               <p className="text-sm">แก้ข้อมูลแล้วเลขเอกสารคงเดิม ดาวน์โหลดฟอร์มล่าสุดเพื่อลงนาม ฉบับเก่าเก็บไว้ในประวัติ</p>
@@ -2838,22 +2852,17 @@ export function SubstituteReceiptWizardPage({
             </MangmeeCard>}
             {content}
             {receiptEvidence && activeJourneyStage === 'sign' && (
-              <nav aria-label="การนำทางขั้นตอนลงนาม" className="flex flex-wrap gap-2"><button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('evidence')}>ย้อนกลับ: ข้อมูลและหลักฐาน</button>
-                {canEditPrepared && <><button type="button" className={btnClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>
-                  <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail!.id)}`}>แก้รายการและวันที่ค่าใช้จ่าย</Link></>}
+              <nav aria-label="การนำทางขั้นตอนลงนาม" className="flex justify-between gap-3">
+                <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('evidence')}>{t('expenses.substitute_wizard.back', locale)}</button>
               </nav>
             )}
             {reviewingPreparedStep && (
               <MangmeeCard className="space-y-3 p-4">
                 <p className="text-sm text-gray-600">{isCancelled ? 'เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น' : 'ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่'}</p>
-                <div className="flex flex-wrap gap-2">
-                  {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('expense')}>ย้อนกลับ</button>}
-                  {activeStep === 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('details')}>ถัดไป: ข้อมูลและหลักฐาน</button>}
-                  <button type="button" className={btnClass} disabled={busy} onClick={returnToSigning}>{isCancelled ? 'กลับไปดูสถานะเอกสาร' : 'กลับไปลงนามและอนุมัติ'}</button>
-                  {!isCancelled && canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>แก้ไขข้อมูลค่าใช้จ่าย</Link>}
-                  {canEditPrepared && <button type="button" className={ghostClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>}
-                  {canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={showRevisionAction}>เปลี่ยนวิธีลงนาม</button>}
-                </div>
+                <nav aria-label="การนำทางข้อมูลใบแทน" className="flex justify-between gap-3">
+                  {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('expense')}>{t('expenses.substitute_wizard.back', locale)}</button>}
+                  <button type="button" className={cx(btnClass, 'ml-auto')} disabled={busy} onClick={() => activeStep === 'expense' ? navigatePreparedStep('details') : returnToSigning()}>{t('expenses.substitute_wizard.continue', locale)}</button>
+                </nav>
               </MangmeeCard>
             )}
             {!editingPrepared && renderVersionHistory()}

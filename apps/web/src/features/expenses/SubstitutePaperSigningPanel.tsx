@@ -97,7 +97,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         })}>ตรวจรับและจัดเก็บฉบับสมบูรณ์</button>
         <p className="text-sm text-gray-600">ระบบบันทึกคุณเป็นผู้ตรวจรับ ไม่ใช่ผู้เซ็นแทนบนกระดาษ{evidence.fundingSource === 'COMPANY' ? ' และบันทึกการจ่ายของบริษัทหากยังไม่ได้บันทึก' : ' การรับเอกสารนี้ไม่ใช่การคืนเงินให้พนักงาน'}</p>
       </> : <p className="text-sm">รอผู้มีสิทธิ์ตามนโยบายบริษัทตรวจรับ เอกสารยังไม่สมบูรณ์</p>}
-      <p className="text-sm text-gray-500">หากข้อมูลใบแทนไม่ถูกต้อง ใช้ปุ่ม “แก้ไขข้อมูลใบแทน” ท้ายขั้นตอน แล้วลงนามฟอร์มล่าสุดโดยใช้เลขเดิม</p>
+      <p className="text-sm text-gray-500">หากข้อมูลใบแทนไม่ถูกต้อง ใช้ปุ่ม “แก้ไขข้อมูลใบแทน” ในส่วน “จัดการข้อมูล” แล้วลงนามฟอร์มล่าสุดโดยใช้เลขเดิม</p>
     </>}
     {preview && <SubstitutePaperDocumentPreview documentNumber={evidence.documentNumber} preview={preview}
       onClose={() => setPreview(null)} onReviewed={() => {

@@ -53,7 +53,7 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
     const journey = page.getByRole('navigation', { name: 'เส้นทางการจัดทำเอกสาร' });
     for (const width of [1440, 390]) {
       await page.setViewportSize({ width, height: 900 });
-      await page.getByRole('button', { name: 'ย้อนกลับ: ข้อมูลและหลักฐาน', exact: true }).click();
+      await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'ผู้รับเงินและเหตุผล', exact: true })).toBeVisible();
       await expect(page.getByText(evidence.businessPurpose, { exact: true })).toBeVisible();
       await expect(page.getByText('supporting.png', { exact: true })).toBeVisible();
@@ -73,12 +73,12 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
       await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
       await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
       await page.screenshot({ path: test.info().outputPath(`step2-${signatureMode}-${width}.png`), fullPage: true });
-      await page.getByRole('button', { name: 'กลับไปลงนามและอนุมัติ', exact: true }).click();
+      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     }
-    await page.getByRole('button', { name: 'ย้อนกลับ: ข้อมูลและหลักฐาน', exact: true }).click();
+    await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
     // The same reviewer can edit an active source; cancellation must revoke that path.
-    await expect(page.getByRole('link', { name: 'แก้ไขข้อมูลค่าใช้จ่าย', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'กลับไปลงนามและอนุมัติ', exact: true }).click();
+    await expect(page.getByRole('link', { name: 'แก้ไขรายการค่าใช้จ่าย', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
     await expect(page.locator('input:visible, textarea:visible').first()).toBeVisible();
     evidence = { ...evidence, status: 'SUPERSEDED', supersedeReason: 'เอกสารซ้ำ', updatedAt: '2026-09-10T01:00:00.000Z' };
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
@@ -95,14 +95,15 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
       for (const stage of ['รายการค่าใช้จ่าย', 'ข้อมูลและหลักฐาน']) {
         await journey.getByRole('button', { name: new RegExp(stage) }).click();
         await expect(page.getByText('เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น', { exact: true })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'แก้ไขข้อมูลค่าใช้จ่าย', exact: true })).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'แก้ไขรายการค่าใช้จ่าย', exact: true })).toHaveCount(0);
         await expect(page.getByRole('button', { name: /กลับไปลงนาม|เปลี่ยนวิธีลงนาม|จัดทำ.*ฉบับแก้ไข/ })).toHaveCount(0);
+        await expect(page.getByRole('region', { name: 'จัดการข้อมูล', exact: true })).toHaveCount(0);
         await expect(page.locator('input, textarea, select')).toHaveCount(0);
       }
       await expect(page.getByText(evidence.businessPurpose, { exact: true })).toBeVisible();
       await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
       await expect(page.locator('input, textarea, select')).toHaveCount(0);
-      await page.getByRole('button', { name: 'กลับไปดูสถานะเอกสาร', exact: true }).click();
+      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
       await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
       await expect(page.locator('input, textarea, select')).toHaveCount(0);
       await page.screenshot({ path: test.info().outputPath(`cancelled-${signatureMode}-${width}.png`), fullPage: true });
