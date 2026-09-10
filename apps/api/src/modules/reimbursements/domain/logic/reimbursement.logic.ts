@@ -61,6 +61,8 @@ export type ReimbursementLineFields = {
   amount: string;
   attachmentId?: string | null;
   linkedExpenseId?: string | null;
+  sourceExpenseSnapshot?: import('@watchdog-bms/contracts').ReimbursementSourceSnapshot;
+  attachmentSnapshot?: import('../models/reimbursement.model').ReimbursementAttachmentSnapshot;
 };
 
 const isoOf = (v: string | Date): string => (v instanceof Date ? v.toISOString() : v);
@@ -247,6 +249,8 @@ export function computeSnapshotHash(fields: ApprovalSnapshotFields): string {
       (line.purpose ?? '').trim(),
       line.attachmentId ?? '',
       line.linkedExpenseId ?? '',
+      ...(line.sourceExpenseSnapshot ? [`source:${stableJson(line.sourceExpenseSnapshot)}`] : []),
+      ...(line.attachmentSnapshot ? [`attachment:${stableJson(line.attachmentSnapshot)}`] : []),
     ].join('~')),
   ];
   return snapshotDigest(canonical);
@@ -273,9 +277,11 @@ export function isExactLegacyV1FallbackSnapshot(
   storedHash: string,
 ): boolean {
   if (storedHash !== computeLegacySnapshotHashV1(fields)) return false;
+  if (fields.approvalPolicySnapshotJson) return false;
   if (!fields.lines || fields.lines.length !== 1) return false;
 
   const line = fields.lines[0]!;
+  if (line.sourceExpenseSnapshot || line.attachmentSnapshot) return false;
   // PostgreSQL btrim(text) in the reviewed migration removes ASCII spaces only.
   // Keep runtime classification byte-equivalent so untouched tabs/NBSP cannot
   // pass PRE and become invalid after the backfill.

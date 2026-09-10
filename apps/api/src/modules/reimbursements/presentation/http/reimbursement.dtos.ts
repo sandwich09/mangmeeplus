@@ -37,9 +37,11 @@ export class ReimbursementLineDto implements ReimbursementLineInput {
   @Matches(MONEY) amount!: string;
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(64) attachmentId?: string | null;
   @IsString() @unlessNullish @IsNotEmpty() @MaxLength(64) linkedExpenseId?: string | null;
+  @IsDateString({ strict: true }) @IsOptional() sourceExpenseUpdatedAt?: string;
 }
 
 export class CreateReimbursementRequestDto implements CreateReimbursementRequestInput {
+  @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) requesterUserId?: string;
   @IsString() @IsOptional() @IsNotEmpty() @MaxLength(64) branchId?: string;
   @IsString() @IsOptional() @MaxLength(200) title?: string;
   @IsString() @IsNotEmpty() @MaxLength(1000) reason!: string;

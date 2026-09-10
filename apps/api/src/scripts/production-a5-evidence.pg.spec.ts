@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import type { ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import {
   assertNoProductionA5AwsCredentials,
   classifyProductionA5ReimbursementApprovalSnapshots,
   collectProductionA5DatabaseSnapshot,
   readProductionA5AppliedMigrations,
   readProductionA5SchemaObjects,
+  readProductionA5ReimbursementApprovalSnapshots,
   type ProductionA5ReadClient,
 } from './production-a5-evidence.pg';
 import {
@@ -141,10 +143,30 @@ describe('production A5 PostgreSQL collector', () => {
       incurredDate: base.incurredDate.toISOString(), reason: base.reason,
       primaryAttachmentId: base.primaryAttachmentId,
     };
-    const v2Line = lineFor('v2', { description: 'line-bound text' });
-    const v2Fields = { ...v1Fields, lines: [v2Line] };
+    const sourceExpenseSnapshot: ReimbursementSourceSnapshot = {
+      schemaVersion: 1, expenseId: 'expense-secret', expenseUpdatedAt: '2026-08-01T00:00:00.000Z',
+      requesterUserId: 'employee-secret', expenseDate: '2026-08-01', paymentDate: null,
+      paymentMethod: null, currency: 'THB',
+      seller: { name: 'vendor-secret', taxId: null, branchCode: null, documentNumber: null },
+      sourceDocumentType: 'RECEIPT', vatMode: 'NO_VAT', inputVatClaimStatus: 'NON_CLAIMABLE',
+      taxEvidenceStatus: 'SUPPORTING_ONLY',
+      classification: { expenseCategoryId: null, accountHintKey: null, taxCategory: null },
+      totals: { netPayableAmount: '100.0000' }, lines: [], attachments: [], certificate: null,
+    };
+    const attachmentSnapshot = {
+      id: 'attachment-secret', uploadedByUserId: 'finance-secret', checksumSha256: 'checksum-secret', fileName: 'receipt.png',
+    };
+    const approvalPolicySnapshotJson = {
+      schemaVersion: 1, policyId: 'policy-secret', policyVersion: '2026-08-01T00:00:00.000Z',
+      approvalRequiredFromAmount: '1.0000', requiresApproval: true,
+      route: { mode: 'MANAGER_ROLE', roleKey: 'MANAGER', effectiveTaskRole: 'MANAGER', ownerFallbackUsedAtSubmission: false },
+      allowSelfApproval: false, requireReceipt: true, allowMissingReceiptWithReason: false,
+      duplicatePolicy: 'BLOCK_PAYMENT', financeReviewRequired: true,
+    } as const;
+    const v2Line = { ...lineFor('v2'), sourceExpenseSnapshotJson: sourceExpenseSnapshot, attachmentSnapshotJson: attachmentSnapshot };
+    const v2Fields = { ...v1Fields, approvalPolicySnapshotJson, lines: [{ ...v2Line, sourceExpenseSnapshot, attachmentSnapshot }] };
     const headers = [
-      { requestId: 'v2', ...base, approvalSnapshotHash: computeSnapshotHash(v2Fields) },
+      { requestId: 'v2', ...base, approvalPolicySnapshotJson, approvalSnapshotHash: computeSnapshotHash(v2Fields) },
       { requestId: 'v1', ...base, approvalSnapshotHash: computeLegacySnapshotHashV1(v1Fields) },
       { requestId: 'missing', ...base, approvalSnapshotHash: null },
       { requestId: 'invalid', ...base, approvalSnapshotHash: 'f'.repeat(32) },
@@ -171,6 +193,12 @@ describe('production A5 PostgreSQL collector', () => {
     assert.equal(exactLine.attachmentId, exactV1Fields.primaryAttachmentId);
     assert.equal(exactLine.linkedExpenseId, exactV1Fields.linkedExpenseId);
     assert.equal(isExactLegacyV1FallbackSnapshot(exactV1Fields, headers[1]!.approvalSnapshotHash!), true);
+    for (const addedFacts of [{ sourceExpenseSnapshot }, { attachmentSnapshot }]) {
+      assert.equal(isExactLegacyV1FallbackSnapshot({
+        ...exactV1Fields, lines: [{ ...exactLine, ...addedFacts }],
+      }, headers[1]!.approvalSnapshotHash!), false);
+    }
+    assert.equal(isExactLegacyV1FallbackSnapshot({ ...exactV1Fields, approvalPolicySnapshotJson }, headers[1]!.approvalSnapshotHash!), false);
     const result = classifyProductionA5ReimbursementApprovalSnapshots(
       'POST_MIGRATION', headers, [v2Line, lineFor('v1'), lineFor('missing'), lineFor('invalid')],
     );
@@ -178,9 +206,29 @@ describe('production A5 PostgreSQL collector', () => {
       total: 4, v2Valid: 1, exactV1Compatible: 1, missingHash: 1, invalid: 1,
       currentStepPending: 4, legacyPartialApproved: 0, legacyPartialRejected: 0, invalidCurrentStep: 0,
     });
+    for (const changed of [
+      { ...v2Line, sourceExpenseSnapshotJson: { ...sourceExpenseSnapshot, expenseDate: '2026-08-02' } },
+      { ...v2Line, attachmentSnapshotJson: { ...attachmentSnapshot, checksumSha256: 'changed' } },
+      { ...v2Line, sourceExpenseSnapshotJson: null },
+    ]) {
+      assert.equal(classifyProductionA5ReimbursementApprovalSnapshots('POST_MIGRATION', [headers[0]!], [changed]).invalid, 1);
+    }
     const bytes = JSON.stringify(result);
-    for (const secret of ['tenant-secret', 'private title', 'private reason', '100.0000', 'attachment-secret']) {
+    for (const secret of ['tenant-secret', 'private title', 'private reason', '100.0000', 'attachment-secret', 'vendor-secret', 'finance-secret', 'policy-secret']) {
       assert.equal(bytes.includes(secret), false);
+    }
+  });
+
+  it('reads optional snapshot columns without referencing columns absent from older databases', async () => {
+    const queries: string[] = [];
+    await readProductionA5ReimbursementApprovalSnapshots(fakeClient((sql) => {
+      queries.push(sql);
+      return [];
+    }), 'POST_MIGRATION');
+    assert.ok(queries.some((sql) => sql.includes("to_jsonb(request)->'approvalPolicySnapshotJson'")));
+    for (const field of ['sourceExpenseSnapshotJson', 'attachmentSnapshotJson']) {
+      assert.ok(queries.some((sql) => sql.includes(`to_jsonb(line)->'${field}'`)));
+      assert.ok(queries.every((sql) => !sql.includes(`line."${field}"`)));
     }
   });
 

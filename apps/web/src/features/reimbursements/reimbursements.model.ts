@@ -159,15 +159,16 @@ export function canVoidRecordedPayment(payment: any, permissions: readonly strin
 /** Related visibility never implies a write. Every requester action repeats actor, permission and state. */
 export function reimbursementOwnActions(detail: any, userId: string, permissions: readonly string[]) {
   const isRequester = detail?.requesterUserId === userId;
+  const canPrepare = isRequester || permissions.includes('reimbursement.finance_review');
   const status = String(detail?.status ?? '');
   return {
-    canEditDraft: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.update_own_draft'),
-    canSubmit: isRequester && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
+    canEditDraft: canPrepare && status === 'DRAFT' && (permissions.includes('reimbursement.update_own_draft') || permissions.includes('reimbursement.finance_review')),
+    canSubmit: canPrepare && status === 'DRAFT' && permissions.includes('reimbursement.submit'),
     canCancel: ((isRequester && permissions.includes('reimbursement.cancel_own'))
       || permissions.includes('reimbursement.finance_review'))
       && ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'FINANCE_REVIEW', 'READY_FOR_PAYMENT'].includes(status),
     // REJECTED -> DRAFT: fix and resubmit under the same request number (server: /reopen).
-    canReopen: isRequester && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
+    canReopen: canPrepare && status === 'REJECTED' && permissions.includes('reimbursement.update_own_draft'),
   };
 }
 

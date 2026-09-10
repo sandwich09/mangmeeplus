@@ -5,6 +5,7 @@ export type FundingEvidenceIds = { attachmentIds: string[]; expenseIds: string[]
 
 /** Use the existing reimbursement exclusion keys on both sides of the source/claim boundary. */
 export async function lockFundingEvidence(tx: any, companyId: string, ids: FundingEvidenceIds): Promise<void> {
+  if (!ids.expenseIds.length && !ids.attachmentIds.length) return;
   // Expand to the whole known relation before locking. Starting from a secondary file must not
   // lock it first and discover an earlier-sorted sibling only after another transaction owns it.
   for (;;) {
@@ -27,14 +28,18 @@ export async function lockExpenseFunding(tx: any, companyId: string, expenseId: 
 }
 
 export async function assertFundingMutation(tx: any, companyId: string, expenseId: string, kind: 'payment' | 'confirm' | 'prepare' | 'supersede'): Promise<void> {
+  const expense = await tx.expenseRecord.findFirst({ where: { companyId, id: expenseId }, select: { sourceReimbursementRequestId: true, sourceReimbursementLineId: true } });
   const source = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { companyId, expenseId }, orderBy: { version: 'desc' } });
-  if (!source) return;
   const links = await tx.attachmentLink.findMany({ where: { companyId, targetType: 'expense.record', targetId: expenseId }, select: { attachmentId: true } });
-  const claim = await tx.reimbursementLine.findFirst({ where: { companyId, request: { status: { notIn: terminalClaims } }, OR: [
+  const claim = await tx.reimbursementLine.findFirst({ where: { companyId,
+    // A claim's own payable is expected to share its manual receipt. Exclude only that
+    // exact originating line; another claim or the original source remains protected.
+    ...(expense?.sourceReimbursementRequestId && expense.sourceReimbursementLineId ? { NOT: { id: expense.sourceReimbursementLineId, reimbursementRequestId: expense.sourceReimbursementRequestId } } : {}),
+    request: { status: { notIn: terminalClaims } }, OR: [
     { linkedExpenseId: expenseId }, { attachmentId: { in: links.map((r: any) => r.attachmentId) } },
   ] } });
   if (claim) throw new ConflictException({ code: 'substitute_source_has_live_claim', message: 'หลักฐานนี้อยู่ในคำขอเบิกแล้ว กรุณาดำเนินการผ่านคำขอเบิกเดิม' });
-  if ((kind === 'payment' || kind === 'confirm') && source.fundingSource === 'PERSONAL_ADVANCE') {
+  if ((kind === 'payment' || kind === 'confirm') && source?.fundingSource === 'PERSONAL_ADVANCE') {
     throw new ConflictException({ code: 'substitute_personal_settles_via_reimbursement', message: 'ใบรับรองนี้ระบุว่าพนักงานจ่ายร้านแล้ว การคืนเงินให้พนักงานต้องดำเนินการแยกตามขั้นตอนการเงิน' });
   }
 }

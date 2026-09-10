@@ -1113,6 +1113,7 @@ export class ConfirmExpenseUseCase {
       vatMode: r.vatMode,
       inputVatClaimStatus: r.inputVatClaimStatus,
       hasMissingReceiptPermission: authority?.allowMissingReceiptWithReason ?? hasPerm(ctx, 'expense.review'),
+      hasLinkedClaimEvidence: Boolean(authority && r.sourceChannelMetadataJson?.reimbursementSource),
       aiVerifiedFieldsJson: r.aiVerifiedFieldsJson,
       aiVerificationSummaryJson: r.aiVerificationSummaryJson,
     });

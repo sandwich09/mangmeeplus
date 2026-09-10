@@ -1,20 +1,21 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { reimbursementIncurredDateError, todayCivilDate } from '@watchdog-bms/contracts';
+import { reimbursementIncurredDateError, todayCivilDate, type ReimbursementSourceOptions, type ReimbursementSourceSnapshot } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { EmptyState } from '@/common/components/state/EmptyState';
 import { LoadingState } from '@/common/components/state/LoadingState';
-import { createReimbursement, getReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
+import { createReimbursement, getReimbursementSourceOptions, getReimbursement, updateReimbursementDraft, uploadReceiptFile } from './reimbursements.api';
 import { ICON, ErrorBanner, inputClass, btnClass, ghostClass } from '../expenses/ExpensesUi';
 import { RECEIPT_UPLOAD_ACCEPT } from '../expenses/expense-upload.logic';
-import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
+import { collectReceiptUploadResults, mergeDraftLineEvidence, validateRequestForm, errorMessage, sumLineAmounts, formatMoney, errorText } from './reimbursements.logic';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
+import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { REIMBURSEMENT_CREATE_UNAVAILABLE } from './reimbursements.model';
 
 const CATEGORY_OPTIONS: { value: string; label: string }[] = [
@@ -36,8 +37,12 @@ type FormLine = {
   attachmentId?: string | null;
   attachmentFileName?: string;
   linkedExpenseId?: string | null;
+  sourceExpenseUpdatedAt?: string;
+  sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
+  categoryLabel?: string;
 };
-const emptyLine = (): FormLine => ({ incurredDate: '', description: '', purpose: '', categoryKey: 'travel', amount: '', file: null });
+const emptyLine = (): FormLine => ({ incurredDate: '', description: '', purpose: '', categoryKey: 'travel', amount: '', file: null,
+  attachmentId: null, attachmentFileName: undefined, linkedExpenseId: null, sourceExpenseUpdatedAt: undefined, sourceExpenseSnapshot: undefined, categoryLabel: undefined });
 const emptyForm = () => ({ reason: '', currency: 'THB', missingReceiptReason: '', lines: [emptyLine()] });
 
 /** One-line preview of a collapsed row: date · description · amount. */
@@ -46,18 +51,27 @@ function lineSummary(line: FormLine): string {
   return parts.length > 0 ? parts.join(' · ') : 'ยังไม่ได้กรอกข้อมูล';
 }
 
-export function ReimbursementCreatePage({ companyId, userId = '', canCreate, requestId, canUpdate = false }: {
+export function ReimbursementCreatePage({ companyId, userId = '', canCreate, requestId, canUpdate = false, canPrepareForOthers = false }: {
   companyId: string;
   userId?: string;
   canCreate: boolean;
   requestId?: string;
   canUpdate?: boolean;
+  canPrepareForOthers?: boolean;
 }) {
   const router = useRouter();
   const branchId = useTransactionCreateBranchId();
   const hubHref = `/companies/${companyId}/reimbursements`;
   const editing = Boolean(requestId);
   const [form, setForm] = useState(emptyForm);
+  const [requesterUserId, setRequesterUserId] = useState(userId);
+  const [sourceOptions, setSourceOptions] = useState<ReimbursementSourceOptions>({ requesters: [], items: [] });
+  const [sourceSearch, setSourceSearch] = useState('');
+  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [refreshingSource, setRefreshingSource] = useState<number | null>(null);
+  const [sourceReload, setSourceReload] = useState(0);
+  const [sourcesError, setSourcesError] = useState<string | null>(null);
+  const previousBranchRef = useRef(branchId);
   // Collapsed line indices. Lines stay mounted when collapsed; this only hides them.
   const [collapsedLines, setCollapsedLines] = useState<Record<number, boolean>>({});
   const [busy, setBusy] = useState(false);
@@ -77,7 +91,8 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     void getReimbursement(companyId, requestId).then(detail => {
       if (!active) return;
       if (detail.status !== 'DRAFT') throw new Error('แก้ไขได้เฉพาะคำขอฉบับร่าง');
-      if (detail.requesterUserId !== userId) throw new Error('เฉพาะผู้ขอเท่านั้นที่แก้ไขคำขอนี้ได้');
+      if (detail.requesterUserId !== userId && !canPrepareForOthers) throw new Error('เฉพาะผู้ขอหรือฝ่ายการเงินเท่านั้นที่แก้ไขคำขอนี้ได้');
+      setRequesterUserId(detail.requesterUserId);
       setSourceBranchId(detail.branchId ?? null);
       setForm({
         reason: detail.reason ?? '',
@@ -93,6 +108,9 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           attachmentId: line.attachmentId ?? null,
           attachmentFileName: line.attachmentFileName,
           linkedExpenseId: line.linkedExpenseId ?? null,
+          sourceExpenseUpdatedAt: line.sourceExpenseSnapshot?.expenseUpdatedAt,
+          sourceExpenseSnapshot: line.sourceExpenseSnapshot,
+          categoryLabel: line.categoryLabelSnapshot,
         })),
       });
       setCorrectionNote(detail.financeReviewStatus === 'NEEDS_INFO' ? detail.financeReviewNote ?? null : null);
@@ -100,7 +118,63 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
     }).catch(e => { if (active) setError(errorText(e)); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [canUpdate, companyId, requestId, userId]);
+  }, [canUpdate, canPrepareForOthers, companyId, requestId, userId]);
+
+  useEffect(() => {
+    if (!editing && previousBranchRef.current !== branchId) {
+      setForm(current => ({ ...current, lines: current.lines.map(line => line.linkedExpenseId ? emptyLine() : line) }));
+      setRequesterUserId(userId);
+      previousBranchRef.current = branchId;
+    }
+  }, [branchId, editing, userId]);
+
+  useEffect(() => {
+    const selectedBranch = editing ? sourceBranchId : branchId;
+    if (!selectedBranch || !requesterUserId || (editing && !editLoaded)) return;
+    let active = true;
+    setSourcesLoading(true); setSourcesError(null); setSourceOptions(current => ({ requesters: current.requesters, items: [] }));
+    const timer = setTimeout(() => {
+      void getReimbursementSourceOptions(companyId, { branchId: selectedBranch, requesterUserId, search: sourceSearch })
+        .then(options => { if (active) setSourceOptions(options); })
+        .catch(error => { if (active) setSourcesError(errorText(error)); })
+        .finally(() => { if (active) setSourcesLoading(false); });
+    }, 200);
+    return () => { active = false; clearTimeout(timer); };
+  }, [branchId, sourceBranchId, companyId, requesterUserId, sourceSearch, editing, editLoaded, sourceReload]);
+
+  const selectSource = (index: number, expenseId: string) => {
+    if (!expenseId) { setLine(index, emptyLine()); return; }
+    const source = sourceOptions.items.find(item => item.expenseId === expenseId && item.eligible);
+    if (!source) return;
+    if (source.currency !== form.currency) { setError('สกุลเงินของรายการต้องตรงกับใบเบิก'); return; }
+    setLine(index, { incurredDate: source.incurredDate, description: source.description, purpose: source.purpose, categoryKey: source.categoryKey,
+      categoryLabel: source.categoryLabel, amount: source.amount, file: null, attachmentId: null, attachmentFileName: undefined,
+      linkedExpenseId: expenseId, sourceExpenseUpdatedAt: source.updatedAt, sourceExpenseSnapshot: source.snapshot });
+  };
+
+  const refreshSource = async (index: number, expenseId: string) => {
+    const selectedBranch = editing ? sourceBranchId : branchId;
+    if (!selectedBranch) return;
+    setRefreshingSource(index); setSourcesError(null); setError(null);
+    try {
+      const options = await getReimbursementSourceOptions(companyId, { branchId: selectedBranch, requesterUserId, expenseId });
+      const source = options.items.find(item => item.expenseId === expenseId);
+      if (!source?.eligible) throw new Error(errorMessage(source?.reason ?? 'reimbursement_source_unavailable'));
+      setForm(current => ({ ...current, lines: current.lines.map((line, i) => {
+        if (i !== index || line.linkedExpenseId !== expenseId || current.currency !== source.currency) return line;
+        const previous = line.sourceExpenseSnapshot;
+        const importedDescription = previous?.lines.map(row => row.description).join('; ').slice(0, 500);
+        const importedCategory = previous?.classification.expenseCategoryId ?? 'other';
+        return { ...line, incurredDate: source.incurredDate, amount: source.amount, sourceExpenseUpdatedAt: source.updatedAt, sourceExpenseSnapshot: source.snapshot,
+          description: line.description === importedDescription ? source.description : line.description,
+          purpose: line.purpose === (previous?.certificate?.businessPurpose ?? '') ? source.purpose : line.purpose,
+          ...(line.categoryKey === importedCategory ? { categoryKey: source.categoryKey, categoryLabel: source.categoryLabel } : {}),
+        };
+      }) }));
+      setSourceReload(value => value + 1);
+    } catch (error) { setSourcesError(errorText(error)); }
+    finally { setRefreshingSource(null); }
+  };
 
   const setLine = (index: number, patch: Partial<FormLine>) =>
     setForm(f => ({ ...f, lines: f.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
@@ -130,8 +204,10 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
         description: l.description.trim(),
         purpose: l.purpose.trim() || undefined,
         categoryKey: l.categoryKey,
-        categoryLabel: categoryLabel(l.categoryKey),
+        categoryLabel: l.categoryLabel ?? categoryLabel(l.categoryKey),
         amount: l.amount,
+        linkedExpenseId: l.linkedExpenseId ?? null,
+        sourceExpenseUpdatedAt: l.sourceExpenseUpdatedAt,
       }));
       if (requestId) {
         if (!sourceBranchId) throw new Error('คำขอเดิมยังไม่ระบุสาขา กรุณาตรวจสอบสาขาของเอกสารก่อนบันทึก');
@@ -154,6 +230,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
       }
       const created = await createReimbursement(companyId, {
         branchId,
+        requesterUserId,
         reason: form.reason,
         currency: form.currency || undefined,
         missingReceiptReason: form.missingReceiptReason.trim() || undefined,
@@ -225,10 +302,18 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           {correctionNote && <ErrorBanner message={`ฝ่ายการเงินขอให้แก้ไข: ${correctionNote}`} />}
           <MangmeeCard className="p-4">
             <h3 className="text-sm font-bold text-gray-900">ข้อมูลคำขอ</h3>
+            <label className="mt-3 block text-xs font-semibold text-gray-600">ผู้สำรองจ่ายและรับเงินคืน
+              <ThemedSelect aria-label="ผู้รับเงินคืน" className={cx(inputClass, 'mt-1.5')} value={requesterUserId} disabled={editing || !canPrepareForOthers || sourcesLoading}
+                onChange={event => { setRequesterUserId(event.target.value); setForm(current => ({ ...current, lines: [emptyLine()] })); }}>
+                {!sourceOptions.requesters.some(member => member.userId === requesterUserId) && <option value={requesterUserId}>{requesterUserId === userId ? 'ฉัน' : 'ผู้รับเงินคืนตามใบเบิก'}</option>}
+                {sourceOptions.requesters.map(member => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}
+              </ThemedSelect>
+            </label>
+            <p className="mt-1 text-xs text-gray-500">ผู้จัดทำอาจเป็นคนละคนกับผู้สำรองจ่าย บริษัทจะคืนเงินให้ผู้ที่ระบุข้างต้น</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label className="mb-1.5 block text-xs font-semibold text-gray-600">เหตุผล *</label>
-                <input className={inputClass} required value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
+                <input aria-label="เหตุผล" className={inputClass} required value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} />
               </div>
               {/* One currency per claim, and only THB is supported — a dropdown of one beats a free-text box that can be typed wrong. */}
               <div>
@@ -257,6 +342,11 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                 </button>
               )}
             </div>
+            <label className="mt-3 block text-xs font-semibold text-gray-600">ค้นหาค่าใช้จ่ายเดิม
+              <input className={cx(inputClass, 'mt-1.5')} aria-label="ค้นหาค่าใช้จ่ายเดิม" value={sourceSearch} onChange={event => setSourceSearch(event.target.value)} placeholder="ชื่อผู้ขายหรือเลขที่เอกสาร" />
+            </label>
+            {sourcesLoading && <p role="status" className="mt-2 text-xs text-gray-500">กำลังโหลดรายการต้นทาง...</p>}
+            {sourcesError && <ErrorBanner message={sourcesError} />}
             <div className="mt-3 space-y-3">
               {form.lines.map((l, i) => (
                 <div key={i} className="rounded-xl border border-gray-200 p-3">
@@ -273,19 +363,34 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                     )}
                   </div>
                   <div className={cx('mt-3 grid gap-3 sm:grid-cols-2', collapsedLines[i] && 'hidden')}>
+                    <div className="sm:col-span-2">
+                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">หลักฐานต้นทาง</label>
+                      <ThemedSelect aria-label={`หลักฐานต้นทางรายการ ${i + 1}`} className={inputClass} value={l.linkedExpenseId ?? ''} disabled={sourcesLoading}
+                        onChange={event => selectSource(i, event.target.value)}>
+                        <option value="">กรอกและแนบใบเสร็จเอง</option>
+                        {l.linkedExpenseId && !sourceOptions.items.some(source => source.expenseId === l.linkedExpenseId) && <option value={l.linkedExpenseId}>รายการต้นทางที่บันทึกไว้</option>}
+                        {sourceOptions.items.map(source => <option key={source.expenseId} value={source.expenseId} disabled={!source.eligible || source.currency !== form.currency || form.lines.some((other, j) => j !== i && other.linkedExpenseId === source.expenseId)}>
+                          {source.label} · {formatMoney(source.amount)} {source.currency} {source.reason ? `— ${errorMessage(source.reason)}` : source.currency !== form.currency ? '— สกุลเงินไม่ตรงกับใบเบิก' : ''}
+                        </option>)}
+                      </ThemedSelect>
+                      {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
+                      {l.linkedExpenseId && <button type="button" className="mt-2 text-xs font-semibold text-brand-700" disabled={refreshingSource !== null} onClick={() => void refreshSource(i, l.linkedExpenseId!)}>{refreshingSource === i ? 'กำลังโหลดข้อมูลล่าสุด...' : 'โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่'}</button>}
+                    </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่ *</label>
-                      <ThemedDate aria-label="วันที่" className={inputClass} required value={l.incurredDate} max={maxIncurredDate} today={maxIncurredDate}
+                      <ThemedDate aria-label="วันที่" className={inputClass} disabled={!!l.linkedExpenseId} required value={l.incurredDate} max={maxIncurredDate} today={maxIncurredDate}
                         aria-invalid={!!l.incurredDate && !!reimbursementIncurredDateError(l.incurredDate, maxIncurredDate)}
                         aria-describedby={`incurred-date-help-${i}`}
                         onChange={e => setLine(i, { incurredDate: e.target.value })} />
                       <p id={`incurred-date-help-${i}`} className="mt-1 text-xs text-gray-500">วันที่รายการเบิกต้องไม่เกินวันนี้ (เวลาไทย)</p>
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">หมวด *</label>
-                      <ThemedSelect aria-label="หมวด" className={inputClass} value={l.categoryKey} onChange={e => setLine(i, { categoryKey: e.target.value })}>
+                      <label className="mb-1.5 block text-xs font-semibold text-gray-600">หมวดใบเบิก *</label>
+                      <ThemedSelect aria-label="หมวด" className={inputClass} value={l.categoryKey} onChange={e => setLine(i, { categoryKey: e.target.value, categoryLabel: undefined })}>
+                        {!CATEGORY_OPTIONS.some(category => category.value === l.categoryKey) && <option value={l.categoryKey}>{l.categoryLabel ?? l.categoryKey}</option>}
                         {CATEGORY_OPTIONS.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                       </ThemedSelect>
+                      {l.linkedExpenseId && <p className="mt-1 text-xs text-gray-500">หมวดบัญชีใช้ตามค่าใช้จ่ายต้นทาง</p>}
                     </div>
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">รายการ *</label>
@@ -297,11 +402,11 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">จำนวนเงิน *</label>
-                      <input aria-label="จำนวนเงิน" className={inputClass} type="number" step="0.01" required value={l.amount} onChange={e => setLine(i, { amount: e.target.value })} />
+                      <input aria-label="จำนวนเงิน" className={inputClass} readOnly={!!l.linkedExpenseId} type="number" step="0.01" required value={l.amount} onChange={e => setLine(i, { amount: e.target.value })} />
                     </div>
                     <div className="sm:col-span-2">
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">ใบเสร็จ</label>
-                      <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={RECEIPT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />
+                      {!l.linkedExpenseId && <ThemedFile aria-label="ใบเสร็จ" file={l.file} accept={RECEIPT_UPLOAD_ACCEPT} onChange={file => setLine(i, { file })} />}
                       {l.attachmentId && !l.file && (
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500">
                           <span>ไฟล์เดิม: {l.attachmentFileName ?? 'ใบเสร็จที่แนบไว้'}</span>
@@ -336,7 +441,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           <div className="mt-4 space-y-2">
             {strandedDraftId
               ? <Link href={`${hubHref}?focus=${encodeURIComponent(strandedDraftId)}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
-              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
+              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || refreshingSource !== null}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
             <Link href={hubHref} className={cx(ghostClass, 'w-full')}>ยกเลิก</Link>
           </div>
           <p className="mt-3 text-xs leading-5 text-gray-500">ระบบจะบันทึกเป็นฉบับร่าง คุณตรวจสอบและกดส่งอนุมัติได้ภายหลัง</p>

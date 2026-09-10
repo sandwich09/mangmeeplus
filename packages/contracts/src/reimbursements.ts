@@ -210,6 +210,37 @@ export type ReimbursementDuplicateCandidateSummary = {
 // currency applies to the whole claim, and the header `amount` is the
 // server-computed rollup of the line amounts (clients never send a total).
 
+/** Server-owned facts retained from the selected source, independent of the claim payable. */
+export type ReimbursementSourceSnapshot = {
+  schemaVersion: 1;
+  expenseId: string;
+  expenseUpdatedAt: string;
+  requesterUserId: string;
+  expenseDate: string;
+  paymentDate: string | null;
+  paymentMethod: string | null;
+  currency: string;
+  seller: { name: string; taxId: string | null; branchCode: string | null; documentNumber: string | null };
+  sourceDocumentType: string;
+  vatMode: string;
+  inputVatClaimStatus: string;
+  taxEvidenceStatus: string;
+  classification: { expenseCategoryId: string | null; accountHintKey: string | null; taxCategory: string | null };
+  totals: Record<string, string>;
+  lines: Array<Record<string, unknown>>;
+  attachments: Array<{ id: string; fileName: string; checksumSha256: string | null }>;
+  certificate: null | { id: string; documentNumber: string; version: number; fundingSource: string; payerUserId: string | null; payerName: string; businessPurpose: string; missingReceiptReason: string; artifactChecksumSha256: string | null; wetSignedScanChecksumSha256: string | null };
+};
+export type ReimbursementSourceOption = {
+  expenseId: string; label: string; eligible: boolean; reason?: string; updatedAt: string;
+  incurredDate: string; description: string; purpose: string; categoryKey: string; categoryLabel?: string;
+  amount: string; currency: string; snapshot?: ReimbursementSourceSnapshot;
+};
+export type ReimbursementSourceOptions = {
+  requesters: Array<{ userId: string; displayName: string }>;
+  items: ReimbursementSourceOption[];
+};
+
 export type ReimbursementLineInput = {
   lineNo: number;
   incurredDate: string;
@@ -220,6 +251,7 @@ export type ReimbursementLineInput = {
   amount: string;
   attachmentId?: string | null;
   linkedExpenseId?: string | null;
+  sourceExpenseUpdatedAt?: string;
 };
 
 export type ReimbursementLineSummary = {
@@ -234,6 +266,7 @@ export type ReimbursementLineSummary = {
   attachmentId?: string;
   attachmentFileName?: string;
   linkedExpenseId?: string;
+  sourceExpenseSnapshot?: ReimbursementSourceSnapshot;
 };
 
 // ---- Current desk (อยู่ที่ใคร) ----
@@ -320,6 +353,7 @@ export type LinkReimbursementSignedCopyInput = {
 };
 
 export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
+  createdByName?: string;
   currentApproverUserId?: string;
   currentApprovalStepId?: string;
   rejectionReason?: string;
@@ -361,6 +395,7 @@ export type ReimbursementRequestDetail = ReimbursementRequestSummary & {
 // they are not accepted from clients (the DTO layer rejects them outright).
 
 export type CreateReimbursementRequestInput = {
+  requesterUserId?: string;
   branchId?: string;
   title?: string;
   reason: string;
