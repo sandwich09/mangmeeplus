@@ -177,6 +177,8 @@ describe('reimbursement branch ABAC (audit H-2)', () => {
       let written: any;
       const repo = {
         resolveCreateBranchId: async (_companyId: string, scopes: { branchIds?: string[] }, selected?: string) => requireTransactionBranchId(selected ?? scopes.branchIds?.[0]),
+        assertReimbursementRequester: async (_company: string, _branch: string, userId: string) => ({ userId, displayName: 'สมชาย' }),
+        resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines,
         findPolicy: async () => null,
         getUserDisplayName: async () => 'สมชาย',
         createRequest: async (data: any) => { written = data; return { ...data, id: 'rb-new', status: 'DRAFT', createdAt: new Date(), updatedAt: new Date() }; },

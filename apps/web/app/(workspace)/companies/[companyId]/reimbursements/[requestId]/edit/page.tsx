@@ -11,10 +11,11 @@ export default async function EditReimbursementPage({
   return (
     <ReimbursementCreatePage
       companyId={companyId}
+      canPrepareForOthers={(session?.permissions ?? []).includes('reimbursement.finance_review')}
       userId={session?.userId ?? ''}
       requestId={requestId}
       canCreate={false}
-      canUpdate={(session?.permissions ?? []).includes('reimbursement.update_own_draft')}
+      canUpdate={(session?.permissions ?? []).some(permission => ['reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))}
     />
   );
 }

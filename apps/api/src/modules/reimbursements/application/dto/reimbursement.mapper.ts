@@ -158,12 +158,14 @@ export function toLineSummary(l: ReimbursementLineRecord, attachmentFileName?: s
     attachmentId: l.attachmentId,
     attachmentFileName,
     linkedExpenseId: l.linkedExpenseId,
+    sourceExpenseSnapshot: l.sourceExpenseSnapshot,
   };
 }
 
 /** Every user id whose display name the drawer and the claim form need — one batch lookup, no N+1. */
 export function detailUserIds(r: ReimbursementRequestRecord): string[] {
   return [
+    r.createdByUserId,
     r.financeReviewedByUserId,
     // The frozen assignees too: they are the people the timeline's "กำลังรอ" row names.
     ...(r.approvalSteps ?? []).flatMap((s) => [s.approverUserId, s.decisionByUserId, ...(s.assignedApproverUserIds ?? [])]),
@@ -209,6 +211,7 @@ export function toRequestDetail(
       approverNames: displayNames,
     }),
     lines: (r.lines ?? []).map((l) => toLineSummary(l, l.attachmentId ? lineAttachmentFileNames[l.attachmentId] : undefined)),
+    createdByName: displayNames[r.createdByUserId],
     currentApproverUserId: r.currentApproverUserId,
     currentApprovalStepId: r.currentApprovalStepId,
     rejectionReason: r.rejectionReason,

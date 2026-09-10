@@ -306,7 +306,7 @@ function expense(overrides: Partial<any> = {}) {
 function evidenceService(attachmentResult: any = null, expenseResult: any = null) {
   return new ReimbursementEvidenceService(
     { findById: async () => attachmentResult, findManyByIds: async () => (attachmentResult ? [attachmentResult] : []) } as any,
-    { findById: async () => expenseResult } as any,
+    { findById: async () => expenseResult, findSubstituteEvidence: async () => null } as any,
   );
 }
 
@@ -337,6 +337,8 @@ function requestRepo(initial?: any, claimedElsewhere: any[] = []) {
   const events: any[] = [];
   const repo = {
     resolveCreateBranchId: async () => 'branch-1',
+    assertReimbursementRequester: async (_company: string, _branch: string, userId: string) => ({ userId, displayName: 'Somchai' }),
+    resolveSourceLines: async (_company: string, _user: string, _branch: string, _currency: string, lines: any[]) => lines,
     findPolicy: async () => null,
     getUserDisplayName: async () => 'Somchai',
     // Lane D: the detail path resolves approver/reviewer/payer names in one batch.
@@ -475,14 +477,16 @@ describe('Reimbursement request evidence validation', () => {
     assert.equal(detail.status, 'PENDING_APPROVAL');
   });
 
-  it('rejects a PATCH attaching evidence the requester does not own, even by finance', async () => {
+  it('accepts finance’s own upload on behalf of the requester but rejects a third person’s file', async () => {
     const state = requestRepo();
     const create = new CreateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment()));
     const created = await create.execute(requesterCtx(), { ...requestInput, lines: [inputLine({ attachmentId: 'att-1' })] });
     const financeCtx = ctx({ userId: 'finance-1', roles: ['FINANCE'], permissions: ['reimbursement.finance_review'] });
     const update = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'finance-1' })));
+    await update.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-2' })] });
+    const thirdParty = new UpdateReimbursementDraftUseCase(state.repo, noopAudit, evidenceService(attachment({ uploadedByUserId: 'other-person' })));
     await assert.rejects(
-      () => update.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-2' })] }),
+      () => thirdParty.execute(financeCtx, created.id, { lines: [inputLine({ attachmentId: 'att-3' })] }),
       /invalid_primary_attachment/,
     );
   });

@@ -5883,6 +5883,8 @@ model ReimbursementLine {
   amount                 Decimal              @db.Decimal(18, 4)
   attachmentId           String?
   linkedExpenseId        String?
+  sourceExpenseSnapshotJson Json?
+  attachmentSnapshotJson Json?
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
   company                Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)

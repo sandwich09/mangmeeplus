@@ -8,6 +8,7 @@ import type {
   ReimbursementRequestSummary,
   ReimbursementRequestDetail,
   ReimbursementPolicySnapshotV1,
+  ReimbursementSourceSnapshot,
 } from '@watchdog-bms/contracts';
 import { REIMBURSEMENT_SEQUENCE_KEYS } from '@watchdog-bms/contracts';
 import { PrismaReimbursementRepository } from '../../infrastructure/prisma-reimbursement.repository';
@@ -79,7 +80,7 @@ async function appendSubmitOutbox(tx: any, input: {
   });
 }
 
-function toLineWrites(lines: ReimbursementLineInput[]): ReimbursementLineWriteData[] {
+function toLineWrites(lines: Array<ReimbursementLineInput & { sourceExpenseSnapshot?: ReimbursementSourceSnapshot; attachmentSnapshot?: import('../../domain/models/reimbursement.model').ReimbursementAttachmentSnapshot }>): ReimbursementLineWriteData[] {
   return byLineNo(lines).map((line) => ({
     lineNo: line.lineNo,
     incurredDate: new Date(line.incurredDate),
@@ -90,6 +91,8 @@ function toLineWrites(lines: ReimbursementLineInput[]): ReimbursementLineWriteDa
     amount: normalizeReimbursementAmount(line.amount),
     attachmentId: line.attachmentId ?? null,
     linkedExpenseId: line.linkedExpenseId ?? null,
+    sourceExpenseSnapshot: line.sourceExpenseSnapshot,
+    attachmentSnapshot: line.attachmentSnapshot,
   }));
 }
 
@@ -118,23 +121,26 @@ export class CreateReimbursementDraftUseCase {
 
     const errors = validateRequestFields(input);
     if (errors.length > 0) throw new BadRequestException(errors.join(','));
-    await this.evidence.validate(ctx, ctx.userId, input.lines, branchId);
-
+    const requesterUserId = input.requesterUserId ?? ctx.userId;
+    if (requesterUserId !== ctx.userId && !ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Cannot prepare a reimbursement for another member');
+    const member = await this.repo.assertReimbursementRequester(ctx.companyId, branchId, requesterUserId);
     const policy = await loadPolicy(this.repo, ctx.companyId);
-    const displayName = await this.repo.getUserDisplayName(ctx.userId);
+    const resolvedLines = await this.repo.resolveSourceLines(ctx.companyId, requesterUserId, branchId, input.currency ?? policy.currency, input.lines);
+    await this.evidence.validate(ctx, requesterUserId, resolvedLines, branchId);
+    const displayName = member.displayName;
     const receipt = computeReceiptRequirement({
       requireReceipt: policy.requireReceipt,
       allowMissingReceiptWithReason: policy.allowMissingReceiptWithReason,
-      lines: input.lines,
+      lines: resolvedLines,
       missingReceiptReason: input.missingReceiptReason,
     });
     // Header amount/category/date are the rollup of the lines — never client input.
-    const header = deriveHeaderFromLines(input.lines);
+    const header = deriveHeaderFromLines(resolvedLines);
 
     const created = await this.repo.createRequest({
       companyId: ctx.companyId,
       branchId: branchId ?? undefined,
-      requesterUserId: ctx.userId,
+      requesterUserId,
       requesterDisplayNameSnapshot: displayName,
       title: input.title,
       reason: input.reason,
@@ -147,7 +153,7 @@ export class CreateReimbursementDraftUseCase {
       // Draft records the requirement status but does not block until submit.
       receiptRequirementStatus: receipt.status === 'REQUIRED' ? 'REQUIRED' : receipt.status,
       createdByUserId: ctx.userId,
-      lines: toLineWrites(input.lines),
+      lines: toLineWrites(resolvedLines),
     });
 
     void this.audit.log({
@@ -193,14 +199,15 @@ export class UpdateReimbursementDraftUseCase {
     if (input.lines !== undefined) {
       const errors = validateLines(input.lines);
       if (errors.length > 0) throw new BadRequestException(errors.join(','));
-      await this.evidence.validate(ctx, req.requesterUserId, input.lines, req.branchId);
-      const header = deriveHeaderFromLines(input.lines);
+      const resolvedLines = await this.repo.resolveSourceLines(ctx.companyId, req.requesterUserId, req.branchId!, input.currency ?? req.currency, input.lines);
+      await this.evidence.validate(ctx, req.requesterUserId, resolvedLines, req.branchId, new Map((req.lines ?? []).flatMap(line => line.attachmentSnapshot ? [[line.attachmentSnapshot.id, line.attachmentSnapshot.uploadedByUserId] as const] : [])));
+      const header = deriveHeaderFromLines(resolvedLines);
       data.amount = header.amount;
       data.categoryKey = header.categoryKey;
       data.categoryLabelSnapshot = header.categoryLabelSnapshot ?? null;
       data.incurredDate = header.incurredDate;
       data.outstandingAmount = header.amount;
-      lines = toLineWrites(input.lines);
+      lines = toLineWrites(resolvedLines);
     }
     const receipt = computeReceiptRequirement({
       requireReceipt: policy.requireReceipt,
@@ -367,7 +374,8 @@ export class SubmitReimbursementUseCase {
     const lines = req.lines ?? [];
     const lineErrors = validateLines(lines);
     if (lineErrors.length > 0) throw new UnprocessableEntityException(lineErrors.join(','));
-    await this.evidence.validate(ctx, req.requesterUserId, lines, req.branchId);
+    await this.evidence.validate(ctx, req.requesterUserId, lines, req.branchId, new Map(lines.flatMap(line => line.attachmentSnapshot ? [[line.attachmentSnapshot.id, line.attachmentSnapshot.uploadedByUserId] as const] : [])));
+    if (lines.some(line => line.linkedExpenseId && !line.sourceExpenseSnapshot)) throw new UnprocessableEntityException({ code: 'reimbursement_source_review_required' });
 
     const policyRecord = await this.repo.findPolicy(ctx.companyId, null);
     const policy = effectivePolicy(policyRecord);
@@ -822,3 +830,19 @@ export async function assertCanReadRequest(
 }
 
 // claimSignatureAckHash moved to ../../domain/logic/reimbursement.logic (pure record hash).
+
+@Injectable()
+export class ListReimbursementSourcesUseCase {
+  constructor(private readonly repo: PrismaReimbursementRepository) {}
+  async execute(ctx: RequestContext, branchId?: string, requesterUserId = ctx.userId, search = '', expenseId?: string) {
+    if (!ctx.permissions.some(permission => ['reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review'].includes(permission))) throw new ForbiddenException('Cannot select reimbursement sources');
+    if (requesterUserId !== ctx.userId && !ctx.permissions.includes('reimbursement.finance_review')) throw new ForbiddenException('Cannot select sources for another member');
+    assertReimbursementBranchInScope(ctx, branchId);
+    const resolvedBranch = await this.repo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, branchId);
+    await this.repo.assertReimbursementRequester(ctx.companyId, resolvedBranch, requesterUserId);
+    return {
+      requesters: await this.repo.listReimbursementRequesters(ctx.companyId, resolvedBranch, ctx.permissions.includes('reimbursement.finance_review') ? undefined : ctx.userId),
+      items: await this.repo.listReimbursementSources(ctx.companyId, resolvedBranch, requesterUserId, search.trim().slice(0, 100), expenseId),
+    };
+  }
+}

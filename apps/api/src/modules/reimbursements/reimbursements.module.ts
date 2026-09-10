@@ -10,6 +10,7 @@ import { ReimbursementProjectionReconcilerService } from './application/services
 import { GetReimbursementPolicyUseCase, ListReimbursementApproverOptionsUseCase, UpdateReimbursementPolicyUseCase } from './application/use-cases/reimbursement-policy.use-case';
 import {
   CreateReimbursementDraftUseCase,
+  ListReimbursementSourcesUseCase,
   UpdateReimbursementDraftUseCase,
   ReopenRejectedReimbursementUseCase,
   GetReimbursementDetailUseCase,
@@ -52,6 +53,7 @@ import { ReimbursementWriteQuiesceGuard } from './presentation/http/reimbursemen
     ListReimbursementApproverOptionsUseCase,
     UpdateReimbursementPolicyUseCase,
     CreateReimbursementDraftUseCase,
+  ListReimbursementSourcesUseCase,
     UpdateReimbursementDraftUseCase,
     ReopenRejectedReimbursementUseCase,
     GetReimbursementDetailUseCase,

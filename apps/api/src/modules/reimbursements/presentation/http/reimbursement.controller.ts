@@ -23,6 +23,7 @@ import {
 } from './reimbursement.dtos';
 import {
   CreateReimbursementDraftUseCase,
+  ListReimbursementSourcesUseCase,
   UpdateReimbursementDraftUseCase,
   GetReimbursementDetailUseCase,
   ListReimbursementsUseCase,
@@ -56,6 +57,7 @@ import { ReimbursementWriteQuiesceGuard } from './reimbursement-write-quiesce.gu
 export class ReimbursementController {
   constructor(
     private readonly createDraft: CreateReimbursementDraftUseCase,
+    private readonly sources: ListReimbursementSourcesUseCase,
     private readonly updateDraft: UpdateReimbursementDraftUseCase,
     private readonly getDetail: GetReimbursementDetailUseCase,
     private readonly listRequests: ListReimbursementsUseCase,
@@ -126,6 +128,12 @@ export class ReimbursementController {
     return this.aiSummary.execute(ctx);
   }
 
+  @Get('source-options')
+  @RequireAnyPermission('reimbursement.create', 'reimbursement.update_own_draft', 'reimbursement.finance_review')
+  sourceOptions(@ReqCtx() ctx: RequestContext, @Query('branchId') branchId?: string, @Query('requesterUserId') requesterUserId?: string, @Query('search') search?: string, @Query('expenseId') expenseId?: string) {
+    return this.sources.execute(ctx, branchId, requesterUserId, search, expenseId);
+  }
+
   // ---- Request CRUD ----
 
   @Get()
@@ -163,7 +171,7 @@ export class ReimbursementController {
   }
 
   @Patch(':requestId')
-  @RequirePermissions('reimbursement.update_own_draft')
+  @RequireAnyPermission('reimbursement.update_own_draft', 'reimbursement.finance_review')
   @ApiOperation({ summary: 'Update reimbursement draft' })
   update(@ReqCtx() ctx: RequestContext, @Param('requestId') requestId: string, @Body() body: UpdateReimbursementDraftDto) {
     return this.updateDraft.execute(ctx, requestId, body);

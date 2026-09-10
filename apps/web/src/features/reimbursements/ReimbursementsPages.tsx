@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
+import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeBadge, MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
 import { Modal } from '@/common/components/modal';
@@ -1103,8 +1104,9 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
           <MangmeeCard className="p-4">
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
               <div className="min-w-0">
-                <div className="text-xs font-semibold text-gray-500">ผู้ขอ</div>
+                <div className="text-xs font-semibold text-gray-500">ผู้เบิก / ผู้รับเงินคืน</div>
                 <div className="mt-1 font-semibold text-gray-900">{detail.requesterDisplayNameSnapshot ?? '—'}</div>
+                {detail.createdByName && <div className="mt-2 text-xs text-gray-500">ผู้จัดทำ: {detail.createdByName}</div>}
                 <div className="mt-3 text-xs font-semibold text-gray-500">เหตุผล</div>
                 <div className="mt-1 text-sm text-gray-700">{detail.reason ?? '—'}</div>
               </div>
@@ -1163,17 +1165,19 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                   <tr key={l.id ?? l.lineNo}>
                     <td className="text-gray-500">{l.lineNo}</td>
                     <td>{shortDate(l.incurredDate)}</td>
-                    <td>{l.description}</td>
+                    <td>{l.description}{l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}</td>
                     <td className="text-gray-500">{l.purpose ?? '—'}</td>
                     <td className="text-gray-500">{l.categoryLabelSnapshot ?? l.categoryKey}</td>
                     <td className="text-right tabular-nums">{formatMoney(l.amount)}</td>
                     <td className="text-xs">
-                      {l.attachmentId ? (
+                      {l.sourceExpenseSnapshot ? l.sourceExpenseSnapshot.attachments.map((file: { id: string; fileName: string }) => (
+                        <button key={file.id} className="block max-w-48 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(file.id, file.fileName)}>📎 {file.fileName}</button>
+                      )) : l.attachmentId ? (
                         <button className="max-w-40 truncate text-brand-700 hover:underline" onClick={() => onOpenAttachment(l.attachmentId, l.attachmentFileName ?? 'receipt.jpg')}>
                           📎 {l.attachmentFileName ?? 'เปิดไฟล์แนบ'}
                         </button>
                       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
-                      {canEditDraft && (
+                      {canEditDraft && !l.sourceExpenseSnapshot && (
                         <div className="mt-1 space-y-1">
                           <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
                           <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
