@@ -242,6 +242,17 @@ describe('expenses.api URL helpers', () => {
     assert.equal(blob.type, 'application/pdf');
   });
 
+  it('cleans old substitute receipt display metadata from a retained SVG preview, preserving its source and reference', async () => {
+    const reference = '<text x="50" y="176">เลขอ้างอิงรายการ: SRC-202609-00040</text>';
+    const header = '<text text-anchor="middle" x="425" y="76">เลขที่ SRC-202609-00040 · version 1</text>';
+    const source = `<svg xmlns="http://www.w3.org/2000/svg">${header}${reference}</svg>`;
+    mockAttachmentPreviewResponse(new Response(source, { headers: { 'content-type': 'image/svg+xml' } }));
+    const blob = await fetchAttachmentPreviewBlob('co-1', 'retained-certificate', 'image/svg+xml');
+    assert.equal(blob.type, 'image/svg+xml');
+    assert.equal(await blob.text(), `<svg xmlns="http://www.w3.org/2000/svg">${reference}</svg>`);
+    assert.ok(source.includes(header));
+  });
+
   it('rejects empty, unsupported, mismatched, and failed attachment preview responses', async () => {
     mockAttachmentPreviewResponse(new Response(null, { status: 404 }));
     await assert.rejects(fetchAttachmentPreviewBlob('co-1', 'att-1', 'image/png'), /HTTP 404/);
