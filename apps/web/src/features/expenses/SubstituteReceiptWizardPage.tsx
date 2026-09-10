@@ -526,6 +526,7 @@ export function SubstituteReceiptWizardPage({
   const shouldLoadCategories = canCreate || canReview;
   const [detail, setDetail] = useState<ExpenseDetail | null>(null);
   const [receiptEvidence, setReceiptEvidence] = useState<SubstituteReceiptEvidenceSummary | null>(null);
+  const isCancelled = receiptEvidence?.status === 'SUPERSEDED';
   const [history, setHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
   const [policy, setPolicy] = useState<SubstituteReceiptRuntimePolicy | null>(null);
   const [activeStep, setActiveStep] = useState<WizardStep>('expense');
@@ -914,13 +915,14 @@ export function SubstituteReceiptWizardPage({
         if (cancelled) return;
         setHistory(rows); setReceiptEvidence(current); setDetail(fresh);
         setPreviewChecksum(null); setCertifiedPreviewed(false); setCertificationAcknowledged(false); setApprovalAcknowledged(false);
-        setInfo('เอกสารอัปเดตตามข้อมูลล่าสุดแล้ว กรุณาตรวจเอกสารก่อนลงนาม');
+        setInfo(current.status === 'SUPERSEDED' ? t('expenses.substitute_wizard.superseded', locale) : 'เอกสารอัปเดตตามข้อมูลล่าสุดแล้ว กรุณาตรวจเอกสารก่อนลงนาม');
+        if (current.status === 'SUPERSEDED') setActiveStep('done');
         if (current.id !== receiptEvidence.id) { setActiveStep(resolveWizardStep(current)); router.replace(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(current.id)}`); }
       } catch (cause) { if (!cancelled) setError(err(cause)); }
     };
     window.addEventListener('focus', refresh);
     return () => { cancelled = true; window.removeEventListener('focus', refresh); };
-  }, [companyId, detail?.id, receiptEvidence?.id, receiptEvidence?.updatedAt, busy, router]);
+  }, [companyId, detail?.id, receiptEvidence?.id, receiptEvidence?.updatedAt, busy, router, locale]);
 
   // W1: only the pre-prepare steps need saving — once evidence exists the server status resumes the
   // wizard on its own, and a prepared certificate must never be re-seeded from stale typing.
@@ -2619,16 +2621,6 @@ export function SubstituteReceiptWizardPage({
               <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(supersede)}>{t('expenses.substitute_wizard.supersede_action', locale)}</button>
             </div>
           )}
-          {canReview && receiptEvidence.status === 'SUPERSEDED' && (
-            <button type="button" className={btnClass} onClick={() => {
-              setPayerId('');
-              setPaidInFullAcknowledged(false);
-              setReceiptEvidence(null);
-              setConsent(true);
-              setActiveStep('details');
-              requestWorkflowFocus('details');
-            }}>{t('expenses.substitute_wizard.create_revision', locale)}</button>
-          )}
         </div>
       </details>
   );
@@ -2648,6 +2640,7 @@ export function SubstituteReceiptWizardPage({
 
   let content: ReactNode = null;
   if (receiptEvidence && (activeStep === 'expense' || activeStep === 'details' || activeStep === 'evidence')) content = renderReadOnlySummary(activeStep);
+  else if (isCancelled) content = renderDoneStep();
   else if (activeStep === 'expense') content = renderExpenseStep();
   else if (activeStep === 'details') content = renderDetailsStep();
   else if (activeStep === 'evidence') content = renderEvidenceStep();
@@ -2719,12 +2712,12 @@ export function SubstituteReceiptWizardPage({
             {content}
             {reviewingPreparedStep && (
               <MangmeeCard className="space-y-3 p-4">
-                <p className="text-sm text-gray-600">ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่</p>
+                <p className="text-sm text-gray-600">{isCancelled ? 'เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น' : 'ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่'}</p>
                 <div className="flex flex-wrap gap-2">
                   {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'evidence' ? 'details' : 'expense')}>ย้อนกลับ</button>}
                   {activeStep !== 'evidence' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'expense' ? 'details' : 'evidence')}>ถัดไป: {activeStep === 'expense' ? 'ข้อมูล' : 'หลักฐาน'}</button>}
-                  <button type="button" className={btnClass} disabled={busy} onClick={returnToSigning}>กลับไปลงนามและอนุมัติ</button>
-                  {canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>แก้ไขข้อมูลค่าใช้จ่าย</Link>}
+                  <button type="button" className={btnClass} disabled={busy} onClick={returnToSigning}>{isCancelled ? 'กลับไปดูสถานะเอกสาร' : 'กลับไปลงนามและอนุมัติ'}</button>
+                  {!isCancelled && canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>แก้ไขข้อมูลค่าใช้จ่าย</Link>}
                   {canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={showRevisionAction}>เปลี่ยนวิธีลงนาม</button>}
                 </div>
               </MangmeeCard>
