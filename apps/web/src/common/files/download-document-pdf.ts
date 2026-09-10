@@ -1,5 +1,5 @@
 import { planDocumentRaster } from './document-raster.logic';
-import { buildImagePdf } from './image-pdf.logic';
+import { buildImagePagesPdf, type ImagePdfInput } from './image-pdf.logic';
 
 /**
  * Saves an on-screen document image (ใบเบิกค่าใช้จ่าย, ใบรับรองแทนใบเสร็จ, a receipt photo) as a PDF.
@@ -10,43 +10,45 @@ import { buildImagePdf } from './image-pdf.logic';
  * already rendered the page correctly, so we capture exactly what the user is looking at.
  */
 export async function downloadDocumentAsPdf(
-  src: string,
+  src: string | string[],
   fileName: string,
   /** SVG documents carry no fixed resolution, so they may be rendered as large as the page needs. */
   options: { vector?: boolean } = {},
 ): Promise<void> {
-  const image = await loadImage(src);
-  const plan = planDocumentRaster({
-    naturalWidth: image.naturalWidth || 850,
-    naturalHeight: image.naturalHeight || 1202,
-    vector: options.vector ?? false,
-  });
-  const { canvasWidth: width, canvasHeight: height } = plan;
+  const pages: ImagePdfInput[] = [];
+  const sources = Array.isArray(src) ? src : [src];
+  for (const pageSrc of sources) {
+    const image = await loadImage(pageSrc);
+    const plan = planDocumentRaster({
+      naturalWidth: image.naturalWidth || 850,
+      naturalHeight: image.naturalHeight || 1202,
+      vector: options.vector ?? false,
+    });
+    const { canvasWidth: width, canvasHeight: height } = plan;
 
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext('2d');
-  if (!context) throw new Error('เบราว์เซอร์นี้สร้างไฟล์ PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
-  // JPEG carries no alpha: paint the sheet white first or transparent areas turn black.
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, width, height);
-  context.drawImage(image, 0, 0, width, height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('เบราว์เซอร์นี้สร้างไฟล์ PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
+    // JPEG carries no alpha: paint the sheet white first or transparent areas turn black.
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
 
-  let jpegDataUrl: string;
-  try {
-    jpegDataUrl = canvas.toDataURL('image/jpeg', 0.95);
-  } catch {
-    // Tainted canvas: the source is cross-origin without CORS headers.
-    throw new Error('ดาวน์โหลดไฟล์นี้เป็น PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
+    let jpegDataUrl: string;
+    try {
+      jpegDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+    } catch {
+      // Tainted canvas: the source is cross-origin without CORS headers.
+      throw new Error('ดาวน์โหลดไฟล์นี้เป็น PDF ไม่ได้ กรุณาใช้ปุ่มเปิดแท็บใหม่แทน');
+    }
+
+    pages.push({ jpeg: base64ToBytes(jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1)), pixelWidth: width, pixelHeight: height, maxDrawWidthPt: plan.maxDrawWidthPt });
+    canvas.width = 0;
+    canvas.height = 0;
   }
-
-  const pdf = buildImagePdf({
-    jpeg: base64ToBytes(jpegDataUrl.slice(jpegDataUrl.indexOf(',') + 1)),
-    pixelWidth: width,
-    pixelHeight: height,
-    maxDrawWidthPt: plan.maxDrawWidthPt,
-  });
+  const pdf = buildImagePagesPdf(pages);
   saveBlob(new Blob([pdf as BlobPart], { type: 'application/pdf' }), fileName.toLowerCase().endsWith('.pdf') ? fileName : `${fileName}.pdf`);
 }
 

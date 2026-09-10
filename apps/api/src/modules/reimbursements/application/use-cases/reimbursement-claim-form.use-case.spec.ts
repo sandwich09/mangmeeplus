@@ -74,11 +74,25 @@ function svgOf(result: { svgDataUrl: string }): string {
 }
 
 describe('PreviewReimbursementClaimFormUseCase', () => {
+  it('uses the recorded cancellation reason only after cancellation completes', async () => {
+    const cancellation = { rejectionReason: 'เบิกซ้ำกับรายการเดือนก่อน', cancelledAt: new Date('2026-09-10T01:00:00Z') };
+    const { repo } = fakeRepo(request({ status: 'CANCELLED', ...cancellation }));
+    const cancelled = svgOf(await previewUseCase(repo).execute(ctx(), 'rb-1'));
+    assert.match(cancelled, /CANCELLED/);
+    assert.match(cancelled, /เบิกซ้ำกับรายการเดือนก่อน/);
+    for (const status of ['REJECTED', 'SUBMITTED', 'APPROVED']) {
+      const active = fakeRepo(request({ status, rejectionReason: cancellation.rejectionReason, cancellationPendingAt: cancellation.cancelledAt }));
+      assert.doesNotMatch(svgOf(await previewUseCase(active.repo).execute(ctx(), 'rb-1')), /CANCELLED|เหตุผลการยกเลิกเอกสาร/);
+    }
+  });
+
   it('renders a signed form with resolved names in one batched lookup', async () => {
     const { repo, calls } = fakeRepo(request());
     const result = await previewUseCase(repo).execute(ctx(), 'rb-1');
 
     assert.ok(result.svgDataUrl.startsWith('data:image/svg+xml;base64,'));
+    assert.ok(result.pageSvgDataUrls?.length);
+    assert.ok(result.pageSvgDataUrls.every((url) => url.startsWith('data:image/svg+xml;base64,')));
     assert.match(result.checksumSha256, /^[0-9a-f]{64}$/);
 
     const svg = svgOf(result);

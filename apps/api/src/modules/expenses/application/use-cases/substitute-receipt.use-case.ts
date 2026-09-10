@@ -645,6 +645,17 @@ export class PreviewSubstituteReceiptUseCase {
  * the R11 paper-route composition or borrowing a web `RequestContext` it does not have — the
  * `assertWeb` boundary (§16) stays on the endpoints, where it belongs.
  */
+function cancellationPrintReason(evidence: SubstituteReceiptEvidenceRecord): string | null {
+  const reason = evidence.supersedeReason?.trim();
+  if (!reason) return null;
+  const systemReasons: Record<string, string> = {
+    EXPENSE_VOIDED: 'ยกเลิกรายการค่าใช้จ่ายต้นทาง',
+    CORRECTED_VERSION_PREPARED: 'จัดทำเอกสารฉบับแก้ไขแทนฉบับนี้',
+    NEW_VERSION_ISSUED: 'ออกเอกสารฉบับใหม่แทนฉบับนี้แล้ว',
+  };
+  return systemReasons[reason] ?? reason;
+}
+
 export async function composeIssuedSubstituteReceiptPdf(
   repo: PrismaExpenseRepository,
   storage: AttachmentStoragePort,
@@ -699,7 +710,7 @@ export async function composeIssuedSubstituteReceiptPdf(
         { bytes: scanObject.bytes, mimeType: scan.mimeType },
         svg.bytes,
         evidence.documentNumber,
-        { ...(stateStamp ? { stateStamp } : {}), omitPageFooter: evidence.payerUserId === null },
+        { ...(stateStamp ? { stateStamp, cancellationReason: cancellationPrintReason(evidence) } : {}), omitPageFooter: evidence.payerUserId === null },
       );
     } catch (error) {
       // Linking validates composability, so reaching here means the stored object changed under
@@ -710,7 +721,7 @@ export async function composeIssuedSubstituteReceiptPdf(
       });
     }
   } else {
-    data = await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(svg.bytes), evidence.documentNumber, { stateStamp, omitPageFooter: true });
+    data = await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(svg.bytes), evidence.documentNumber, { stateStamp, cancellationReason: cancellationPrintReason(evidence), omitPageFooter: true });
   }
   const stateSuffix = stateStamp ? `-${stateStamp}` : '';
   return {
@@ -774,19 +785,20 @@ export class DownloadSubstituteReceiptPdfUseCase {
       ? evidence.supersedeReason === SUBSTITUTE_RECEIPT_EXPENSE_VOIDED_REASON ? 'VOID' : 'SUPERSEDED'
       : evidence.status === 'PAYER_CERTIFIED' ? 'AWAITING APPROVAL' : 'AWAITING REVIEW';
     const fileName = `${evidence.documentNumber.replace(/["\r\n]/g, '_')}-${stateStamp.replaceAll(' ', '-')}.pdf`;
+    const printOptions = { stateStamp, cancellationReason: historical ? cancellationPrintReason(evidence) : null, omitPageFooter: true } as const;
     if (evidence.wetSignedScanAttachmentId) {
       const scan = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.wetSignedScanAttachmentId, ['image/jpeg', 'image/png', 'application/pdf']);
       if (!scan) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบไฟล์ฉบับลงนามที่เก็บไว้' });
       const object = await this.storage.getObject({ bucket: scan.bucket, objectKey: scan.objectKey, ...(scan.objectVersionId ? { objectVersionId: scan.objectVersionId } : {}) });
       if (sha256(object.bytes) !== evidence.wetSignedScanChecksumSha256) throw new ConflictException({ code: 'substitute_wet_signed_scan_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่ยื่น' });
-      return { data: await renderSubstituteReceiptPaperArtifactPdf({ bytes: object.bytes, mimeType: scan.mimeType }, null, evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: true };
+      return { data: await renderSubstituteReceiptPaperArtifactPdf({ bytes: object.bytes, mimeType: scan.mimeType }, null, evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: true };
     }
     if (evidence.certifiedArtifactAttachmentId) {
       const artifact = await this.repo.findSubstituteArtifactAttachment(companyId, expenseId, evidence.certifiedArtifactAttachmentId);
       if (!artifact) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบฉบับที่ผู้รับรองลงนามไว้' });
       const object = await this.storage.getObject({ bucket: artifact.bucket, objectKey: artifact.objectKey, ...(artifact.objectVersionId ? { objectVersionId: artifact.objectVersionId } : {}) });
       if (sha256(object.bytes) !== evidence.certifiedArtifactChecksumSha256) throw new ConflictException({ code: 'substitute_certified_artifact_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่รับรองไว้' });
-      return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(object.bytes), evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: false };
+      return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(object.bytes), evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
     }
     if (evidence.status === 'PREPARED' && !evidence.paperSubmissionJson) {
       const expense = await this.repo.findByIdWithRelations(companyId, expenseId);
@@ -798,7 +810,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
     const snapshot = evidence.paperFormSnapshotJson ?? evidence.snapshotJson;
     if (historical && snapshot) {
       const svg = renderSubstituteReceiptSvg(snapshot as unknown as SubstituteReceiptSnapshot, undefined, undefined, undefined, { paperForm: evidence.signatureMode === 'PAPER', unsignedForm: evidence.signatureMode !== 'PAPER' });
-      return { data: await renderSubstituteReceiptPdf(svg, evidence.documentNumber, { stateStamp, omitPageFooter: true }), fileName, stateStamp, scanLinked: false };
+      return { data: await renderSubstituteReceiptPdf(svg, evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
     }
     throw new ConflictException({ code: 'substitute_print_history_unavailable', message: 'ไม่มีไฟล์หรือข้อมูลฉบับเดิมเพียงพอสำหรับพิมพ์เอกสาร กรุณาดูประวัติรายการ' });
   }
