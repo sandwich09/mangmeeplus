@@ -65,6 +65,31 @@ import {
 } from './expenses.model';
 
 describe('expenses.model', () => {
+  it('prefills shared purpose on linked manual receipts and preserves legacy notes on unchanged saves', () => {
+    const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-08-14', vendorNameSnapshot: 'ร้าน ก',
+      note: 'ใช้ในสำนักงาน', lines: [], substituteReceiptEvidence: { businessPurpose: 'ใช้ในสำนักงาน' } } as unknown as ExpenseDetail;
+    const values = reviewValues(detail);
+    assert.equal(values.businessPurpose, 'ใช้ในสำนักงาน');
+    assert.equal(buildExpenseDraftReviewPayload(values).note, undefined);
+    assert.equal(buildExpenseDraftReviewPayload({ ...values, businessPurpose: 'ใช้จัดประชุม' }).note, 'วัตถุประสงค์: ใช้จัดประชุม');
+    assert.equal(buildExpenseDraftReviewPayload({ ...values, businessPurpose: '' }).note, '');
+    const reviewed = reviewValues({ ...detail, note: `อัปโหลด · วัตถุประสงค์: ${'ก'.repeat(500)}` });
+    assert.equal(reviewed.businessPurpose, 'ก'.repeat(500));
+    assert.equal(buildExpenseDraftReviewPayload(reviewed).note, undefined);
+    assert.equal(buildExpenseDraftReviewPayload({ ...reviewed, businessPurpose: 'ใหม่' }).note, 'อัปโหลด · วัตถุประสงค์: ใหม่');
+  });
+
+  it('does not restore a stale certificate purpose when the source explicitly cleared it', () => {
+    const detail = { status: 'NEEDS_REVIEW', expenseDate: '2026-08-14', lines: [],
+      note: 'วัตถุประสงค์: เก่า', substituteReceiptEvidence: { businessPurpose: 'เก่า' },
+      sourceDraft: { header: { businessPurpose: null, expenseDate: '2026-08-14' }, items: [] } } as unknown as ExpenseDetail;
+    const values = reviewValues(detail);
+    assert.equal(values.businessPurpose, '');
+    const payload = buildExpenseDraftReviewPayload(values, { sourceDraft: detail.sourceDraft, partial: true });
+    assert.equal(payload.note, undefined);
+    assert.equal(payload.sourceDraft?.businessPurpose, undefined);
+  });
+
   it('treats a first definitive client refusal as rejected, not an uncertain payment', () => {
     for (const status of [400, 401, 403, 404, 409, 422, 429]) {
       assert.equal(classifyExpensePaymentFailure({ status }, false), 'definitive');

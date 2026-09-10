@@ -1,6 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Post, Patch, Param, Body, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  AmendSubstituteReceiptDto,
   CorrectSubstituteDocumentDto,
   SubmitSubstituteReceiptPaperDto,
   AcceptSubstituteReceiptPaperDto,
@@ -273,6 +274,12 @@ export class ExpenseController {
   @RequirePermissions('expense.review')
   prepareSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: GenerateSubstituteReceiptInput) {
     return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
+  }
+
+  @Patch(':expenseId/substitute-receipt/:evidenceId')
+  @RequirePermissions('expense.review')
+  amendSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AmendSubstituteReceiptDto) {
+    return this.prepareSubstituteReceipt.executeAmendment(ctx, expenseId, evidenceId, body);
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/correct-document')

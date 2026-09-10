@@ -458,8 +458,9 @@ export type ExpenseDetail = ExpenseSummary & {
 export type ExpenseDraftReviewValues = {
   vendorNameSnapshot: string;
   vendorTaxIdSnapshot: string;
-  /** Only LINE source drafts need the ordinary purpose field; preserve capture provenance. */
+  /** Shared by source drafts and linked certificates; preserve capture provenance. */
   businessPurpose?: string;
+  originalBusinessPurpose?: string;
   removedSourceItemRefs?: string[];
   originalNote?: string | null;
   /** '' = ยังไม่ระบุ. Only asked for when the document withholds tax (ภ.ง.ด.3 vs ภ.ง.ด.53). */
@@ -496,6 +497,9 @@ export type ExpenseDraftReviewValues = {
 
 export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
   const source = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) ? detail.sourceDraft : null;
+  const storedPurpose = detail.note?.split(' · ').find((part) => part.trim().startsWith('วัตถุประสงค์:'))?.trim().slice('วัตถุประสงค์:'.length).trim();
+  const businessPurpose = source ? source.header.businessPurpose ?? ''
+    : storedPurpose ?? detail.substituteReceiptEvidence?.businessPurpose;
   let vatSource = expenseVatSourceFromSnapshot(detail.vatCaptureSnapshotJson);
   const lines: ExpenseDraftReviewValues['lines'] = detail.lines.map((line) => ({
       id: line.id, description: line.description, chargeKind: line.chargeKind ?? null, sourceLineText: line.sourceLineText,
@@ -553,7 +557,7 @@ export function reviewValues(detail: ExpenseDetail): ExpenseDraftReviewValues {
     vatSource,
     ...(detail.whtInputJson && { whtInput: { inputType: detail.whtInputJson.inputType, value: detail.whtInputJson.value,
       ...(detail.whtInputJson.baseAmount !== undefined && { baseAmount: detail.whtInputJson.baseAmount }) } }),
-    ...(source && { businessPurpose: source.header.businessPurpose ?? '', originalNote: detail.note }),
+    ...(businessPurpose !== undefined && { businessPurpose, originalBusinessPurpose: businessPurpose, originalNote: detail.note }),
     lines,
   };
 }
@@ -729,7 +733,7 @@ function sourceReviewInput(
     expenseDate: sourceDraft.header.expenseDate === null && values.expenseDate === ''
       ? null : sourceValue(values.expenseDate),
     vendorName: sourceValue(values.vendorNameSnapshot),
-    businessPurpose: sourceValue(values.businessPurpose),
+    ...(values.businessPurpose !== values.originalBusinessPurpose && { businessPurpose: sourceValue(values.businessPurpose) }),
     items: values.lines.flatMap((line) => {
       if (!line.sourceItemRef) return [];
       return [{
@@ -752,8 +756,8 @@ export function buildExpenseDraftReviewPayload(
   const includeTaxFacts = !options.partial || payloadValues.lines.length > 0;
   return {
     ...(values.removedSourceItemRefs?.length && { removedSourceItemRefs: values.removedSourceItemRefs }),
-    ...(values.businessPurpose !== undefined && { note: [
-      ...(values.originalNote ?? '').split(' · ').filter((part) => part && !part.startsWith('วัตถุประสงค์:')),
+    ...(values.businessPurpose !== undefined && values.businessPurpose !== values.originalBusinessPurpose && { note: [
+      ...(values.originalNote?.trim() === values.originalBusinessPurpose?.trim() ? '' : values.originalNote ?? '').split(' · ').filter((part) => part && !part.trim().startsWith('วัตถุประสงค์:')),
       ...(values.businessPurpose.trim() ? [`วัตถุประสงค์: ${values.businessPurpose.trim()}`] : []),
     ].join(' · ') }),
     ...((!options.sourceDraft || values.vendorNameSnapshot.trim()) && { vendorNameSnapshot: values.vendorNameSnapshot.trim() }),

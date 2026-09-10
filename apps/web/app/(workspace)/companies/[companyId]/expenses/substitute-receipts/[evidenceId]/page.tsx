@@ -4,8 +4,10 @@ import { hasSelfApprovalExemptRole } from '@/features/expenses/substitute-receip
 
 export default async function ExistingSubstituteReceiptPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ companyId: string; evidenceId: string }>;
+  searchParams: Promise<{ edit?: string }>;
 }) {
   const { companyId, evidenceId } = await params;
   const session = await fetchServerSession(companyId);
@@ -13,6 +15,7 @@ export default async function ExistingSubstituteReceiptPage({
     <SubstituteReceiptWizardPage
       companyId={companyId}
       evidenceId={evidenceId}
+      initialEditPayment={(await searchParams).edit === 'payment'}
       userId={session?.userId ?? ''}
       permissions={session?.permissions ?? []}
       canSelfApprove={hasSelfApprovalExemptRole(session?.roles)}

@@ -311,8 +311,8 @@ describe('voidExpenseTrueReversal (H-04)', () => {
     );
   });
 
-  it('rejects voiding an expense that is not CONFIRMED', async () => {
-    client.state.expenses[0].status = 'READY_FOR_CONFIRMATION';
+  it('rejects voiding an unpaid unconfirmed expense without financial activity', async () => {
+    Object.assign(client.state.expenses[0], { status: 'READY_FOR_CONFIRMATION', paidAmount: '0', journalEntryId: null, postingStatus: 'not_required' });
     await assert.rejects(
       () => repo.voidExpenseTrueReversal(CO, 'exp_1', 'u2', 'เหตุผล', 'JV-REV-1'),
       ConflictException,

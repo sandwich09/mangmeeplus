@@ -136,6 +136,7 @@ export type ExpenseRecordWithRelations = ExpenseRecord & {
 
 export type SubstituteReceiptEvidenceRecord = {
   correctionOfEvidenceId?: string | null;
+  revisionOfEvidenceId?: string | null;
   correctionReason?: string | null;
   fundingSource?: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
   id: string;

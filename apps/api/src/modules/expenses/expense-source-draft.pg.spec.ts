@@ -23,7 +23,7 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
   before(async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname));
-    assert.equal(url.pathname, '/watchdog_bms');
+    assert.ok(['/watchdog_bms', '/substitute_receipt_only_review'].includes(url.pathname));
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     await client.user.create({ data: { id: userId, displayName: 'Source draft test', status: 'ACTIVE' } });
     await client.company.create({ data: { id: companyId, name: tag, businessCategory: 'SERVICE' } });
@@ -88,6 +88,15 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
   }
   const stored = (expenseId: string) => client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
   const durableLines = (row: Awaited<ReturnType<typeof stored>>) => row.lines.map(({ updatedAt: _updated, ...line }) => JSON.parse(JSON.stringify(line)));
+
+  it('keeps the full reviewed purpose and provenance through a source-only web save and reload', async () => {
+    const id = await draft(), before = await stored(id);
+    const purpose = 'ก'.repeat(500);
+    await update.execute(ctx(['expense.review']), id, { expectedUpdatedAt: before.updatedAt.toISOString(), sourceDraft: { businessPurpose: purpose } });
+    const saved = await stored(id);
+    assert.equal(saved.note, `LINE receipt upload · วัตถุประสงค์: ${purpose}`);
+    assert.equal(sourceDraftState(saved as any, await repo.listCategories(companyId))?.header.businessPurpose, purpose);
+  });
 
   it('resolves explicit dates through source, reviewer, combined and voluntary LINE saves without trusting omitted dates', async () => {
     for (const mode of ['source', 'reviewer', 'combined', 'line'] as const) {

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 const source = readFileSync(new URL('./SubstituteReceiptWizardPage.tsx', import.meta.url), 'utf8');
 
 test('pending certificates expose the existing guarded cancellation and revision history', () => {
-  assert.ok(source.includes('{renderVersionHistory()}'));
+  assert.ok(source.includes('{!editingPrepared && renderVersionHistory()}'));
   assert.ok(source.includes("canReview && receiptEvidence.status !== 'SUPERSEDED'"));
   assert.ok(source.includes("['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status)"));
   const supersede = source.slice(source.indexOf('const supersede = async'), source.indexOf('const copyWizardLink'));
