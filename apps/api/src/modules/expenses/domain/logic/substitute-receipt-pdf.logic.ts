@@ -3,6 +3,7 @@ import { dirname } from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import sharp from 'sharp';
 import { withoutSubstituteReceiptFooter } from './substitute-receipt.logic';
+import { cancelledDocumentReasonBox, cancelledDocumentWatermark } from '../../../../common/documents/cancelled-document';
 
 // Keep the native ESM import intact in the API's CommonJS build, as in the bank PDF reader.
 const loadPdfjs = (): Promise<any> => Function('return import("pdfjs-dist/legacy/build/pdf.mjs")')();
@@ -15,8 +16,8 @@ export async function renderSubstitutePaperPreviewPages(bytes: Buffer): Promise<
     standardFontDataUrl: `${resources}/standard_fonts/`, cMapUrl: `${resources}/cmaps/`, cMapPacked: true });
   try {
     const document = await task.promise;
-    // At most five scan pages plus the existing six-page attestation ceiling.
-    if (document.numPages < 1 || document.numPages > 11) throw new Error('เอกสารมีจำนวนหน้าเกินขอบเขตที่รองรับ');
+    // Five scan pages, six attestation pages and up to six cancellation-detail pages.
+    if (document.numPages < 1 || document.numPages > 17) throw new Error('เอกสารมีจำนวนหน้าเกินขอบเขตที่รองรับ');
     const pages: string[] = [];
     for (let number = 1; number <= document.numPages; number += 1) {
       const page = await document.getPage(number);
@@ -62,6 +63,28 @@ export const SUBSTITUTE_RECEIPT_PDF_LIMITS = Object.freeze({
 
 export type RasterSlice = { top: number; height: number };
 export type SubstituteReceiptPrintStamp = 'VOID' | 'SUPERSEDED' | 'UNSIGNED' | 'AWAITING APPROVAL' | 'AWAITING REVIEW';
+type PrintOptions = { stateStamp?: SubstituteReceiptPrintStamp; omitPageFooter?: boolean; cancellationReason?: string | null };
+const isCancelled = (stamp: SubstituteReceiptPrintStamp | undefined) => stamp === 'VOID' || stamp === 'SUPERSEDED';
+
+/** Decorate derived copies only. A scan has no trustworthy whitespace, so its reason gets a
+ * separate final sheet. Generated pages may use proven whitespace below their last ink row. */
+async function addCancellationPresentation(pdf: PDFDocument, reason: string | null | undefined, documentNumber?: string, freeBottom = 0) {
+  const box = cancelledDocumentReasonBox(reason, documentNumber);
+  const boxHeight = box.height * CONTENT_WIDTH / 760;
+  if (freeBottom >= MARGIN + boxHeight + 18) {
+    const image = await pdf.embedPng(await sharp(Buffer.from(box.svg), { density: 144 }).png().toBuffer());
+    pdf.getPages().at(-1)!.drawImage(image, { x: MARGIN, y: MARGIN, width: CONTENT_WIDTH, height: boxHeight });
+  } else {
+    const details = await PDFDocument.load(await renderSubstituteReceiptPdf(Buffer.from(box.svg), documentNumber, { omitPageFooter: true }));
+    for (const page of await pdf.copyPages(details, details.getPageIndices())) pdf.addPage(page);
+  }
+  for (const page of pdf.getPages()) {
+    const { width, height } = page.getSize();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${cancelledDocumentWatermark(width, height)}</svg>`;
+    const image = await pdf.embedPng(await sharp(Buffer.from(svg), { density: 144 }).png().toBuffer());
+    page.drawImage(image, { x: 0, y: 0, width, height });
+  }
+}
 
 /**
  * Highest density whose raster still fits the pixel budget, never above DENSITY nor below
@@ -215,7 +238,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
   scan: { bytes: Buffer; mimeType: string },
   attestationSvg: Buffer | null,
   documentNumber?: string,
-  options: { stateStamp?: SubstituteReceiptPrintStamp; omitPageFooter?: boolean } = {},
+  options: PrintOptions = {},
 ): Promise<Buffer> {
   const pdf = await PDFDocument.create();
   await addWetSignedScanPages(pdf, scan);
@@ -229,6 +252,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
     for (const page of attestationPages) pdf.addPage(page);
   }
   const font = await pdf.embedFont(StandardFonts.Helvetica);
+  if (isCancelled(options.stateStamp)) await addCancellationPresentation(pdf, options.cancellationReason, documentNumber);
   const pages = pdf.getPages();
   const safeDocumentNumber = printableDocumentNumber(documentNumber);
   const stamp = options.stateStamp;
@@ -239,7 +263,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
     : 0;
   pages.forEach((page, index) => {
     const { width, height } = page.getSize();
-    if (stamp) {
+    if (stamp && !isCancelled(stamp)) {
       page.drawText(stamp, {
         x: (width - font.widthOfTextAtSize(stamp, stampSize)) / 2,
         y: height / 2,
@@ -317,7 +341,7 @@ export async function substituteWetSignedScanRejection(scan: { bytes: Buffer; mi
 export async function renderSubstituteReceiptPdf(
   svg: Buffer,
   documentNumber?: string,
-  options: { stateStamp?: SubstituteReceiptPrintStamp; omitPageFooter?: boolean } = {},
+  options: PrintOptions = {},
 ): Promise<Buffer> {
   if (svg.byteLength > SUBSTITUTE_RECEIPT_PDF_LIMITS.maxSvgBytes) {
     throw new Error('Substitute-receipt PDF exceeds the safe raster size limit.');
@@ -361,6 +385,7 @@ export async function renderSubstituteReceiptPdf(
     ? `ID: ${safeDocumentNumber} | SHA256: ${sourceDigest.slice(0, 16)}`
     : `SHA256: ${sourceDigest.slice(0, 32)}`;
   const stampSize = 7.5;
+  let freeBottom = 0;
 
   for (const [index, slice] of slices.entries()) {
     const rowBytes = info.width * info.channels;
@@ -379,8 +404,17 @@ export async function renderSubstituteReceiptPdf(
       width,
       height,
     });
-    if (options.stateStamp) {
-      const stateSize = Math.min(options.stateStamp === 'VOID' ? 96 : 54, CONTENT_WIDTH / stampFont.widthOfTextAtSize(options.stateStamp, 1));
+    if (isCancelled(options.stateStamp) && index === slices.length - 1) {
+      let lastInkRow = slice.height - 1;
+      scan: for (; lastInkRow >= 0; lastInkRow -= 1) {
+        for (let x = 0; x < info.width; x += 1) {
+          if (pixelLuminance(slicePixels, (lastInkRow * info.width + x) * info.channels, info.channels) < 245) break scan;
+        }
+      }
+      freeBottom = A4_HEIGHT - MARGIN - (lastInkRow + 1) * scale;
+    }
+    if (options.stateStamp && !isCancelled(options.stateStamp)) {
+      const stateSize = Math.min(54, CONTENT_WIDTH / stampFont.widthOfTextAtSize(options.stateStamp, 1));
       const stateWidth = stampFont.widthOfTextAtSize(options.stateStamp, stateSize);
       page.drawText(options.stateStamp, {
         x: (A4_WIDTH - stateWidth) / 2,
@@ -391,10 +425,12 @@ export async function renderSubstituteReceiptPdf(
         opacity: 0.32,
       });
     }
-    // Composed into a larger artifact this page is not page 1 of 1, and stamping a wrong position
-    // is worse than stamping none: the caller re-foots every page once it knows the real order.
-    if (options.omitPageFooter) continue;
-    const pageLabel = `Page ${index + 1}/${slices.length}`;
+  }
+  if (isCancelled(options.stateStamp)) await addCancellationPresentation(pdf, options.cancellationReason, documentNumber, freeBottom);
+  // Count any appended cancellation detail pages before writing optional legacy footers.
+  for (const [index, page] of pdf.getPages().entries()) {
+    if (options.omitPageFooter) break;
+    const pageLabel = `Page ${index + 1}/${pdf.getPageCount()}`;
     page.drawText(identity, { x: MARGIN, y: 17, size: stampSize, font: stampFont, color: rgb(0.35, 0.35, 0.35) });
     page.drawText(pageLabel, {
       x: A4_WIDTH - MARGIN - stampFont.widthOfTextAtSize(pageLabel, stampSize),

@@ -8,6 +8,7 @@ import { isLineEvidenced, byLineNo } from '../../domain/logic/reimbursement.logi
 import { parseReimbursementPolicySnapshot } from '../../domain/reimbursement.constants';
 import {
   renderReimbursementClaimFormSvg,
+  renderReimbursementClaimFormPages,
   type ClaimFormSigner,
   type ReimbursementClaimFormSnapshot,
 } from '../../domain/logic/claim-form.logic';
@@ -36,9 +37,12 @@ export class PreviewReimbursementClaimFormUseCase {
     // would produce a form with a blank เลขที่เอกสาร.
     if (req.status === 'DRAFT' || !req.requestNo) throw new UnprocessableEntityException('claim_form_requires_submitted');
 
-    const svg = renderReimbursementClaimFormSvg(await this.buildSnapshot(ctx.companyId, req));
+    const snapshot = await this.buildSnapshot(ctx.companyId, req);
+    const svg = renderReimbursementClaimFormSvg(snapshot);
+    const pages = renderReimbursementClaimFormPages(snapshot);
     return {
       svgDataUrl: `data:image/svg+xml;base64,${svg.toString('base64')}`,
+      pageSvgDataUrls: pages.map((page) => `data:image/svg+xml;base64,${page.toString('base64')}`),
       checksumSha256: createHash('sha256').update(svg).digest('hex'),
     };
   }
@@ -101,6 +105,7 @@ export class PreviewReimbursementClaimFormUseCase {
       hasReceiptEvidence: lines.some(isLineEvidenced),
       missingReceiptReason: req.missingReceiptReason ?? null,
       approvalDecisionNote: policySnapshot?.requiresApproval === false ? 'ไม่ต้องอนุมัติตามนโยบาย' : null,
+      ...(req.status === 'CANCELLED' ? { cancellation: { reason: req.rejectionReason ?? null } } : {}),
       signers: {
         requester: req.submittedAt
           ? {

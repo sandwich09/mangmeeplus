@@ -497,7 +497,10 @@ export type ReimbursementPaymentSourceRef = {
 // Printing is the browser's own print dialog on the rendered image.
 
 export type ReimbursementClaimFormPreview = {
+  /** Legacy continuous image for clients predating paginated previews. */
   svgDataUrl: string;
+  /** Ordered, self-contained A4 pages; preview, print and PDF must use the complete array. */
+  pageSvgDataUrls?: string[];
   checksumSha256: string;
 };
 
