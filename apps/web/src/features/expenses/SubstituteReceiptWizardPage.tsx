@@ -35,7 +35,6 @@ import {
   completePersonalSignatureUpload,
   createExpenseDraft,
   downloadPaymentVoucherPdf,
-  downloadSubstituteReceiptFormPdf,
   downloadSubstituteReceiptPdf,
   fetchAttachmentPreviewBlob,
   fetchSubstituteReceiptPdfBlob,
@@ -2425,13 +2424,7 @@ export function SubstituteReceiptWizardPage({
                   <button type="button" className={previewChecksum ? ghostClass : btnClass} disabled={busy} onClick={() => void run(previewPrepared)}>
                     <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
                   </button>
-                  {/* R8: the printable route out of this step — same document, both signature boxes
-                      blank, UNSIGNED watermark. Not a preview and not the issued certificate. */}
-                  <button type="button" className={ghostClass} disabled={busy} onClick={() => void run(() => downloadSubstituteReceiptFormPdf(companyId, receiptEvidence.expenseId, receiptEvidence.id, receiptEvidence.documentNumber))}>
-                    <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute_wizard.download_form', locale)}</span>
-                  </button>
                 </div>
-                <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.download_form_help', locale)}</p>
               </div>
               <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-warning-100 bg-warning-50 p-4 text-sm font-semibold leading-6 text-gray-800">
                 <input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" required aria-required="true" checked={certificationAcknowledged} onChange={(event) => setCertificationAcknowledged(event.target.checked)} />
