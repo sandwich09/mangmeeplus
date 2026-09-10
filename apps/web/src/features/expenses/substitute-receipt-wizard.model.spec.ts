@@ -490,3 +490,14 @@ test('allows shared expense facts before choosing an account or signing method',
   assert.equal(result.ready, true);
   assert.equal(wizardJourneyStage('method'), 'sign');
 });
+
+
+test('source edits select the current internal revision of the same document only', async () => {
+  const { currentSubstituteRevision } = await import('./substitute-receipt-wizard.model');
+  const old = { id: 'old', documentNumber: 'SRC-1', version: 1, status: 'SUPERSEDED' };
+  const current = { ...old, id: 'current', version: 2, status: 'PREPARED' };
+  const unrelated = { ...current, id: 'different', documentNumber: 'SRC-2', version: 3 };
+  assert.equal(currentSubstituteRevision([unrelated, current, old], old), current);
+  assert.equal(currentSubstituteRevision([old, unrelated], old), old);
+  assert.equal(currentSubstituteRevision([current, old], current), current);
+});

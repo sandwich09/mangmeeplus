@@ -1117,7 +1117,7 @@ export class ReceiptOcrApplyService {
         }
       }
       if (effectiveCategory) data['expenseCategoryId'] = effectiveCategory.id;
-      await tx.expenseRecord.update({ where: { id: expenseId }, data });
+      await tx.expenseRecord.update({ where: { id: expenseId, companyId: ctx.companyId, ...(options.expectedUpdatedAt && { updatedAt: options.expectedUpdatedAt }) }, data });
       const acceptedAmounts = Object.fromEntries(['grandTotalAmount', 'vatAmount', 'whtAmount', 'netPayableAmount', 'vatMode', 'discountAmount']
         .map((key) => [key, String(data[key] ?? currentExpense[key as keyof typeof currentExpense] ?? (key === 'vatMode' ? 'NO_VAT' : '0'))])) as NonNullable<AppliedReceiptResult['acceptedAmounts']>;
       if (!lineTotal || preserveReviewedLines) {

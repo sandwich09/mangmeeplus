@@ -163,6 +163,7 @@ export class RequestReceiptExtractionUseCase {
           id: expenseId,
           companyId: ctx.companyId,
           updatedByUserId: ctx.userId,
+          expectedUpdatedAt: expense.updatedAt,
           aiVerificationStatus: 'NEEDS_REVIEW',
           aiVerificationSummaryJson: {
             status: nonReceipt ? 'NOT_EXPENSE_DOCUMENT' : 'OCR_FAILED',

@@ -1562,9 +1562,9 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
       {aiSuggestion && isMutable && (
-        <div className="space-y-2 rounded-xl border border-brand-100 bg-brand-25 p-3">
-          <p className="text-xs font-semibold text-gray-700">{t('expenses.ai_suggestion_title', locale)}</p>
-          <p className="text-xs text-gray-500">{t('expenses.ai_suggestion_hint', locale)}</p>
+        <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
+          <p className="text-xs font-semibold text-warning-700">{t('expenses.ai_suggestion_title', locale)}</p>
+          <p className="text-xs text-warning-700">{t('expenses.ai_suggestion_hint', locale)}</p>
           <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
             {(Object.keys(aiSuggestion) as Array<keyof ExpenseAiSuggestion>).map((key) => (
               <div key={key} className="flex justify-between gap-2">

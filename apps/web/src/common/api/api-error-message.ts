@@ -7,6 +7,8 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  substitute_paid_expense_amount_locked: 'รายการนี้จ่ายเงินแล้ว หากต้องแก้ยอดให้ดำเนินการแก้ไขรายการจ่ายก่อน ข้อมูลเอกสารอื่นยังแก้และลงนามใหม่ได้',
+  expense_receipt_removal_locked: 'นำใบเสร็จออกได้เฉพาะรายการฉบับร่างหรือรอตรวจสอบที่ยังไม่จ่ายเงินและยังไม่บันทึกบัญชี',
   invalid_response: 'ระบบขัดข้องชั่วคราว กรุณาลองใหม่อีกครั้ง',
   duplicate_supplier_document_number: 'เลขที่เอกสารผู้ขายนี้ถูกบันทึกสำหรับผู้ขายรายนี้แล้ว กรุณาตรวจสอบบิลเดิมก่อนสร้างซ้ำ',
   // Permissions / scope

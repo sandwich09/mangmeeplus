@@ -10,6 +10,7 @@ import {
   ReasonOptionalDto,
   ReasonRequiredDto,
   ReceiptUploadCompletionDto,
+  RemoveExpenseReceiptDto,
   ReceiptUploadIntentDto,
   RecordExpensePaymentDto,
   SetSignatureDerivedAssetDto,
@@ -79,6 +80,7 @@ import {
 } from '../../application/use-cases/expense-evidence.use-case';
 import { GetExpenseCapturePolicyUseCase } from '../../application/use-cases/expense-capture-policy.use-case';
 import { RequestReceiptExtractionUseCase } from '../../application/use-cases/expense-extraction.use-case';
+import { RemoveExpenseReceiptUseCase } from '../../application/use-cases/remove-expense-receipt.use-case';
 import { DeleteExpenseUseCase } from '../../application/use-cases/delete-expense.use-case';
 import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-cases/line-substitute-receipt-continuation.use-case';
 import type {
@@ -131,6 +133,7 @@ export class ExpenseController {
     private readonly accountantPackage: CreateAccountantPackageUseCase,
     private readonly requestExtraction: RequestReceiptExtractionUseCase,
     private readonly deleteExpense: DeleteExpenseUseCase,
+    private readonly removeReceipt: RemoveExpenseReceiptUseCase,
     private readonly capturePolicy: GetExpenseCapturePolicyUseCase,
   ) {}
 
@@ -492,6 +495,16 @@ export class ExpenseController {
       expectedUpdatedAt,
       ocrTotalAcknowledgement: acknowledgement,
     }, { requireExpectedUpdatedAt: true });
+  }
+
+  @Delete(':expenseId/receipts/:attachmentId')
+  @HttpCode(204)
+  @RequireAnyPermission('expense.update', 'expense.review')
+  removeExpenseReceipt(
+    @ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string,
+    @Param('attachmentId') attachmentId: string, @Body() body: RemoveExpenseReceiptDto,
+  ) {
+    return this.removeReceipt.execute(ctx, expenseId, attachmentId, body.expectedUpdatedAt, body.purpose);
   }
 
   @Post(':expenseId/receipt-uploads/:attachmentId/complete')

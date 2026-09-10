@@ -69,6 +69,7 @@ import { ReceiptOcrClient } from './infrastructure/receipt-ocr.client';
 import { TaxModule } from '../tax/tax.module';
 import { FeatureLaunchModule } from '../feature-launch/feature-launch.module';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
+import { RemoveExpenseReceiptUseCase } from './application/use-cases/remove-expense-receipt.use-case';
 import { DeleteExpenseUseCase } from './application/use-cases/delete-expense.use-case';
 import { CorrectLineCapturedExpenseUseCase } from './application/use-cases/line-correction.use-case';
 import { LineSubstituteReceiptContinuationUseCase } from './application/use-cases/line-substitute-receipt-continuation.use-case';
@@ -98,6 +99,7 @@ import { LineDraftPreviewStore } from './application/services/line-draft-preview
     MarkExpenseReadyUseCase,
     RecordExpensePaymentUseCase,
     DeleteExpenseUseCase,
+    RemoveExpenseReceiptUseCase,
     InitReceiptUploadUseCase,
     CompleteReceiptUploadUseCase,
     GetExpenseSourcePostingInputUseCase,
