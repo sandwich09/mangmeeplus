@@ -10,6 +10,16 @@ const reviewSource = readFileSync(join(featureDir, 'ExpenseReviewPage.tsx'), 'ut
 const wizardSource = readFileSync(join(featureDir, 'SubstituteReceiptWizardPage.tsx'), 'utf8');
 const legacyReviewSource = readFileSync(join(featureDir, 'ExpensesPages.tsx'), 'utf8');
 
+describe('substitute signing method actions', () => {
+  it('keeps paper download/upload on the paper panel while online signing retains document review', () => {
+    const paperSource = readFileSync(join(featureDir, 'SubstitutePaperSigningPanel.tsx'), 'utf8');
+    assert.doesNotMatch(wizardSource, /downloadSubstituteReceiptFormPdf|substitute_wizard\.download_form/);
+    assert.match(wizardSource, /onClick=\{\(\) => void run\(previewPrepared\)\}/);
+    assert.match(paperSource, /downloadSubstituteReceiptFormPdf/);
+    assert.match(paperSource, /submitSubstitutePaperFile/);
+  });
+});
+
 describe('check-bill canonical preparation wiring', () => {
   it('derives the route from the selected server expense on deep link and reload, not URL or LINE flags', () => {
     assert.match(wizardSource, /const checkBillRoute = isCheckBillClassification\(detail\?\.aiVerificationSummaryJson\)/);
