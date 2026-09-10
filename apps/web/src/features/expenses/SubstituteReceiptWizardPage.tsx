@@ -1548,8 +1548,25 @@ export function SubstituteReceiptWizardPage({
     return (
       <MangmeeCard className="space-y-2 p-4 text-sm text-gray-600">
         <h2 className="font-bold text-gray-900">{t('expenses.substitute_wizard.step_evidence', locale)}</h2>
-        <p>{t('expenses.substitute_wizard.supporting_files', locale).replace('{count}', String(receiptEvidence.supportingAttachmentIds.length))}</p>
-        <p>{t('expenses.substitute_wizard.payment_files', locale).replace('{count}', String(receiptEvidence.paymentEvidenceAttachmentIds.length))}</p>
+        {([
+          ['expenses.substitute_wizard.supporting_files', receiptEvidence.supportingAttachmentIds],
+          ['expenses.substitute_wizard.payment_files', receiptEvidence.paymentEvidenceAttachmentIds],
+        ] as const).map(([label, ids]) => <div key={label} className="space-y-2">
+          <p>{t(label, locale).replace('{count}', String(ids.length))}</p>
+          {ids.length > 0 && <ul className="space-y-2">{ids.map((id) => {
+            const attachment = detail.attachments.find((item) => item.id === id);
+            return <li key={id} className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 p-3">
+              {attachment ? <>
+                <span className="min-w-0 flex-1 break-words">{attachment.originalFileName}</span>
+                <button type="button" className={cx(ghostClass, 'shrink-0 gap-2')} disabled={busy}
+                  aria-label={`${t('expenses.substitute_wizard.open_document', locale)} ${attachment.originalFileName}`}
+                  onClick={() => void run(() => openEvidenceAttachment(attachment))}>
+                  {ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}
+                </button>
+              </> : <span className="text-warning-700">{locale === 'th' ? 'ไม่พบข้อมูลไฟล์แนบ กรุณาโหลดหน้าใหม่' : 'Attachment details unavailable. Reload this page.'}</span>}
+            </li>;
+          })}</ul>}
+        </div>)}
       </MangmeeCard>
     );
   };
@@ -2731,7 +2748,11 @@ export function SubstituteReceiptWizardPage({
   };
 
   let content: ReactNode = null;
-  if (receiptEvidence && !editingPrepared && (activeStep === 'expense' || activeStep === 'details' || activeStep === 'evidence')) content = renderReadOnlySummary(activeStep);
+  if (receiptEvidence && !editingPrepared && activeStep === 'expense') content = renderReadOnlySummary('expense');
+  else if (receiptEvidence && !editingPrepared && (activeStep === 'details' || activeStep === 'evidence')) content = <div className="space-y-4">
+    {renderReadOnlySummary('details')}
+    {renderReadOnlySummary('evidence')}
+  </div>;
   else if (isCancelled) content = renderDoneStep();
   else if (activeStep === 'expense') content = renderExpenseStep();
   else if (activeStep === 'details') content = renderDetailsStep();
@@ -2826,8 +2847,8 @@ export function SubstituteReceiptWizardPage({
               <MangmeeCard className="space-y-3 p-4">
                 <p className="text-sm text-gray-600">{isCancelled ? 'เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น' : 'ย้อนดูข้อมูลได้โดยไม่กระทบการลงนาม หากบันทึกแก้ไขที่หน้ารายการค่าใช้จ่าย เอกสารจะอัปเดตตามข้อมูลล่าสุดโดยใช้เลขเดิม และต้องตรวจและลงนามใหม่'}</p>
                 <div className="flex flex-wrap gap-2">
-                  {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'evidence' ? 'details' : 'expense')}>ย้อนกลับ</button>}
-                  {activeStep !== 'evidence' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep(activeStep === 'expense' ? 'details' : 'evidence')}>ถัดไป: {activeStep === 'expense' ? 'ข้อมูล' : 'หลักฐาน'}</button>}
+                  {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('expense')}>ย้อนกลับ</button>}
+                  {activeStep === 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('details')}>ถัดไป: ข้อมูลและหลักฐาน</button>}
                   <button type="button" className={btnClass} disabled={busy} onClick={returnToSigning}>{isCancelled ? 'กลับไปดูสถานะเอกสาร' : 'กลับไปลงนามและอนุมัติ'}</button>
                   {!isCancelled && canReview && detail && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status) && <Link className={ghostClass} href={`/companies/${companyId}/expenses/${encodeURIComponent(detail.id)}`}>แก้ไขข้อมูลค่าใช้จ่าย</Link>}
                   {canEditPrepared && <button type="button" className={ghostClass} disabled={busy} onClick={startPreparedEdit}>แก้ไขข้อมูลใบแทน</button>}
