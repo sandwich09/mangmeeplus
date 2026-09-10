@@ -1,6 +1,6 @@
 # Agent Memory: Substitute receipt step 3 editing
 
-Status: final immutable-number implementation verified and pushed; integration authorized on the existing branch/PR514 and PR515. Awaiting current candidate CI before merging develop and main.
+Status: main merged through PR515; remaining develop PR514 integration incorporates the latest upstream preview changes and awaits its final CI.
 Current follow-up: payment-date confirmation, shared editor, cancellation-first financial safeguards, CI fixture repair and browser verification complete. Latest evidence is at the end of this chronological log. No deployment in scope.
 Owner: /root
 Scope: allow editing incomplete certificate details/evidence from step 3 without manual cancellation or consuming another number.
@@ -150,3 +150,11 @@ Resolved the wizard's five overlapping regions by retaining immutable active-doc
 
 Merged-source verification: full web1688 passed; API amendment/download/PDF and actual PostgreSQL114 passed, no skips; existing cancelled DIGITAL/PAPER browser E2E2 passed at desktop/mobile, including cancellation on focus and zero writes. Web typecheck passed. Logs /tmp/step3-integration-{web-suite,api,viewonly}.log and /tmp/step3-merge-web-types.log. Recheck API types/build and active-date browser, then push this merge on the same branch and require its fresh CI before integration. Prior successful CI is evidence for the previous candidate only.
 API typecheck/build passed on the merged source. Actual active-date browser rerun also passed with the rebuilt API (/tmp/step3-integration-active-browser.log): popup/cancel/Escape, source roundtrip, immutable number and latest PDF/mobile. This verifies both active editing and the upstream cancelled view-only journey together. Final integration candidate is ready for CI.
+
+## Main merged; final develop integration
+Candidate9ac6eb88916d2023aa25dead864b2c832ec81f96 passed both CI34481772687 and34481775762. Main PR515 merged with the already approved admin option after all checks passed: merge commit0b5cb2da8120c7f03f8bf6c1920d60f92f06d57f, 2026-09-10T13:38:18Z. No deployment.
+
+Develop received PR524 (7b689880, featurea5ede2f2) during CI; GitHub rejected PR514 merge with a conflict. Merging the actual develop head locally succeeded without manual source resolution. Retained its preview/print metadata cleanup and removed digital-route download action, alongside the existing payment-date editor and immutable-number rules. This upstream preview work belongs to its own main PR; our payment-date implementation is already merged to main.
+
+Final develop combined source: full web1690 passed; API/PDF/download/immutable-number and actual PostgreSQL121 passed, no skips; web typecheck passed. Logs /tmp/step3-develop-{web-suite,api,web-types}.log. Final API typecheck /tmp/step3-develop-api-types.log. Push this merge on the same branch and finish PR514 after its new CI passes. Keep main's already merged evidence distinct from this develop-only integration candidate.
+Final develop API typecheck passed (exit0). All scoped local integration checks are green.

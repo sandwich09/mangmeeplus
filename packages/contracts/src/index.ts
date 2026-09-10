@@ -275,3 +275,4 @@ export * from './company-profile.js';
 export * from './civil-date.js';
 export * from './buyer-snapshot-v1.js';
 export * from './company-tax-identity.js';
+export * from './substitute-receipt-presentation.js';

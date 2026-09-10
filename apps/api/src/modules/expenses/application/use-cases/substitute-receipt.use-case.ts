@@ -27,7 +27,7 @@ import {
   canonicalSnapshotHash,
   renderSubstituteReceiptAttestationSvg,
   renderSubstituteReceiptSvg,
-  withoutSubstituteReceiptFooter,
+  withoutSubstituteReceiptPrintMetadata,
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
 import { assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../../domain/logic/substitute-funding.logic';
@@ -760,7 +760,7 @@ export async function composeIssuedSubstituteReceiptPdf(
       });
     }
   } else {
-    data = await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(svg.bytes), evidence.documentNumber, { stateStamp, cancellationReason: cancellationPrintReason(evidence), omitPageFooter: true });
+    data = await renderSubstituteReceiptPdf(withoutSubstituteReceiptPrintMetadata(svg.bytes), evidence.documentNumber, { stateStamp, cancellationReason: cancellationPrintReason(evidence), omitPageFooter: true });
   }
   const stateSuffix = stateStamp ? `-${stateStamp}` : '';
   return {
@@ -837,7 +837,7 @@ export class DownloadSubstituteReceiptPdfUseCase {
       if (!artifact) throw new NotFoundException({ code: 'substitute_print_artifact_unavailable', message: 'ไม่พบฉบับที่ผู้รับรองลงนามไว้' });
       const object = await this.storage.getObject({ bucket: artifact.bucket, objectKey: artifact.objectKey, ...(artifact.objectVersionId ? { objectVersionId: artifact.objectVersionId } : {}) });
       if (sha256(object.bytes) !== evidence.certifiedArtifactChecksumSha256) throw new ConflictException({ code: 'substitute_certified_artifact_checksum_mismatch', message: 'ไฟล์ฉบับลงนามไม่ตรงกับข้อมูลที่รับรองไว้' });
-      return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptFooter(object.bytes), evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
+      return { data: await renderSubstituteReceiptPdf(withoutSubstituteReceiptPrintMetadata(object.bytes), evidence.documentNumber, printOptions), fileName, stateStamp, scanLinked: false };
     }
     if (evidence.status === 'PREPARED' && !evidence.paperSubmissionJson) {
       const expense = await this.repo.findByIdWithRelations(companyId, expenseId);
@@ -857,8 +857,8 @@ export class DownloadSubstituteReceiptPdfUseCase {
 
 /**
  * R8 — `แบบฟอร์มรอลงนาม`. The same snapshot the payer is about to certify, rendered with both
- * signature boxes blank, an `UNSIGNED` watermark, the document number printed large, and the line
- * that says the sheet is not yet a document. It is DERIVED on demand and never stored: no
+ * signature boxes blank and an `UNSIGNED` watermark. Visible document-number/version headings
+ * and the old footer are omitted across signing modes. It is DERIVED on demand and never stored: no
  * attachment, no artifact id, nothing that could later be mistaken for the issued certificate.
  *
  * Extracted alongside `composeIssuedSubstituteReceiptPdf` so the §12 delivery link renders exactly

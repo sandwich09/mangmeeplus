@@ -9,7 +9,6 @@ import { renderSubstituteReceiptPdf, renderSubstitutePaperPreviewPages } from '.
 import {
   buildSubstituteCertificationText,
   renderSubstituteReceiptSvg,
-  SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE,
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
 
@@ -183,19 +182,13 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
     });
   });
 
-  it('keeps the unsigned status notice and omits the signed certificate footer', async () => {
-    const form = renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, { unsignedForm: true }).toString('utf8');
-    const signed = renderSubstituteReceiptSvg(snapshot()).toString('utf8');
-
-    assert.ok(form.includes(SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE));
-    assert.equal(SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE, 'เอกสารนี้ยังไม่สมบูรณ์จนกว่าจะมีลายเซ็นผู้จ่ายและผู้อนุมัติ');
-    assert.match(form, /font-size="24" font-weight="700"[^>]*>เลขที่ SUB-202608-00007/u,
-      'D9 reads this number off a photographed sheet, so it prints at title size');
-    assert.ok(form.includes('รอลงนาม') && form.includes('รอผู้อนุมัติลงนาม'), 'both signature boxes stay blank');
-
-    assert.equal(signed.includes(SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE), false);
-    assert.ok(signed.includes('<text x="425" y="76" text-anchor="middle" fill="#555">เลขที่ SUB-202608-00007 · version 1</text>'));
-    assert.doesNotMatch(signed, /มิใช่ใบกำกับภาษี/);
+  it('omits duplicate heading/version and notices in every form while retaining the reference and unsigned roles', async () => {
+    for (const options of [{}, { unsignedForm: true }, { paperForm: true }]) {
+      const form = renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, options).toString('utf8');
+      assert.doesNotMatch(form, /เลขที่ SUB-|version 1|มิใช่ใบกำกับภาษี|เอกสารนี้ยังไม่สมบูรณ์/);
+      assert.match(form, /เลขอ้างอิงรายการ: EXP-001/);
+      if (!('paperForm' in options)) assert.ok(form.includes('รอลงนาม') && form.includes('รอผู้อนุมัติลงนาม'));
+    }
     assert.deepEqual(
       renderSubstituteReceiptSvg(snapshot()),
       renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, {}),
