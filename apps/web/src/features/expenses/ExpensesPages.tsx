@@ -2,7 +2,6 @@
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
-import { SubstituteSignerPositionField } from './SubstituteSignerPositionField';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -12,19 +11,16 @@ import { CoverLoader, LoadingState } from '@/common/components/state';
 import {
   listExpenses, getExpense, initReceiptUpload, completeReceiptUpload,
   confirmExpense, rejectExpense, voidExpense, markExpenseReady, markExpenseReadyAsReviewer, recordExpensePayment, runDuplicateCheck, dismissDuplicate,
-  uploadReceiptFile, updateExpenseDraft, generateSubstituteReceipt, listExpenseCategories,
-  updateExpenseReviewFields, uploadExpenseEvidenceFile, previewSubstituteReceipt,
-  approveSubstituteReceipt, certifySubstituteReceipt, completePersonalSignatureUpload, initPersonalSignatureUpload, listSubstituteReceiptPayers,
-  createAccountantPackage, downloadIndexXlsx, downloadSubstituteReceiptPdf, fetchAttachmentPreviewBlob, fetchSubstituteReceiptPdfBlob, requestExpenseExtraction, overrideNonExpenseClassification,
-  listSubstituteReceiptHistory, supersedeSubstituteReceipt,
-  getSubstituteReceiptRuntimePolicy,
+  uploadReceiptFile, updateExpenseDraft, listExpenseCategories,
+  updateExpenseReviewFields, uploadExpenseEvidenceFile,
+  createAccountantPackage, downloadIndexXlsx, requestExpenseExtraction, overrideNonExpenseClassification,
   createExpenseDraft, deleteExpense,
 } from './expenses.api';
 import {
-  EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS, PAYMENT_METHOD_LABELS,
+  EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
-  canShowInlineSubstitutePreparation, substituteReceiptPreparationHref, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
-  findOpaqueBounds, removeLightBackground, allowsDomesticInputTaxCode, clearExpenseTaxSelections,
+  expenseSubstituteReceiptAction, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
+  allowsDomesticInputTaxCode, clearExpenseTaxSelections,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
@@ -41,10 +37,10 @@ import {
   expenseReviewWithholdsTax, expenseVatSourceValidationMessage, expenseVatBlockedWayOut } from './expenses.model';
 export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
-import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput, SubstituteReceiptEvidenceSummary, SubstituteReceiptRuntimePolicy } from '@watchdog-bms/contracts';
+import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
-import { isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification, substituteReceiptRequiresPaymentEvidence } from '@watchdog-bms/contracts';
-import { CategoryManagePanel, SignaturePanel, SignatureThumb, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
+import { isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
+import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
 import { isBranchScope403 } from '../web-core-workspace/branch-scope-label.logic';
@@ -56,8 +52,6 @@ import { Modal } from '@/common/components/modal';
 import { findForbiddenChars, normalizeDecimalInput, REASON_MAX_LENGTH, sanitizeReasonInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   ATTACHMENT_UPLOAD_ACCEPT,
-  IMAGE_UPLOAD_ACCEPT,
-  assertAllowedUploadFile,
   uploadErrorMessage,
 } from '@/common/files/upload-file.logic';
 import { TransactionTaxLineSelector } from '@/features/tax/TransactionTaxLineSelector';
@@ -81,7 +75,7 @@ import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-
 import { isExpenseSourceDraftMissing } from './expense-source-draft.model';
 import { useMenuFilterState } from '../web-core-workspace/MenuFilterScope';
 import { hasRecordedTax, showsTaxCapture, useExpenseCapturePolicy } from './expense-capture-policy';
-import { evaluateExpensePrerequisites, mayApproveSubstituteReceipt, payerWrittenMissingReason, resolveWizardSignatureSource } from './substitute-receipt-wizard.model';
+
 import { civilPeriodKey, todayCivilDate, isCivilDate } from '@watchdog-bms/contracts';
 import { useToast } from '@/common/components/toast';
 import { apiErrorCode } from '@/common/api/api-error-message';
@@ -564,50 +558,14 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploadi
   );
 }
 
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, canConfirm, userId, canSelfApprove, onSaved, onOpenFile, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; canConfirm: boolean; userId: string; canSelfApprove: boolean; onSaved: () => Promise<void>; onOpenFile: (file: { name: string; mimeType: string; url: string; hideOpenNewTab?: boolean; onViewed?: () => void }) => void; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, onSaved, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; onSaved: () => Promise<void>; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
   const [taxStatus, setTaxStatus] = useState(detail.taxEvidenceStatus);
   const [categoryId, setCategoryId] = useState<string>(detail.expenseCategoryId ?? '');
   const [categories, setCategories] = useState<ExpenseCategorySummary[]>([]);
-  const [subReason, setSubReason] = useState(payerWrittenMissingReason(detail.missingReceiptReason));
-  const [subPurpose, setSubPurpose] = useState(detail.note ?? '');
-  const [subReasonCode, setSubReasonCode] = useState<'PAYEE_CANNOT_ISSUE' | 'RECEIPT_UNAVAILABLE' | 'RECEIPT_MATERIALLY_INCOMPLETE' | 'OTHER'>('PAYEE_CANNOT_ISSUE');
-  const [payerId, setPayerId] = useState(userId);
-  const [payerCandidates, setPayerCandidates] = useState<Array<{ userId: string; displayName: string }>>([]);
-  const [selectedSupportingIds, setSelectedSupportingIds] = useState<string[]>([]);
-  const [selectedPaymentIds, setSelectedPaymentIds] = useState<string[]>([]);
-  const [subPaymentMethod, setSubPaymentMethod] = useState(detail.paymentMethod ?? 'CASH');
-  const [subPaymentDate, setSubPaymentDate] = useState(detail.paidAt?.slice(0, 10) ?? todayCivilDate());
-  const [supportingUploadFile, setSupportingUploadFile] = useState<File | null>(null);
-  const [paymentUploadFile, setPaymentUploadFile] = useState<File | null>(null);
-  const [fundingSource, setFundingSource] = useState<'' | 'COMPANY' | 'PERSONAL_ADVANCE'>('');
-  const [paidInFullAcknowledged, setPaidInFullAcknowledged] = useState(false);
-  const [signerPosition, setSignerPosition] = useState('');
-  const [signatureFile, setSignatureFile] = useState<File | null>(null);
-  const [cleanedSignatureFile, setCleanedSignatureFile] = useState<File | null>(null);
-  const [signaturePreview, setSignaturePreview] = useState<{ original: string; cleaned: string } | null>(null);
-  const [previewChecksum, setPreviewChecksum] = useState<string | null>(null);
-  const [certifiedPreviewed, setCertifiedPreviewed] = useState(false);
-  const previewRequestRef = useRef(0);
-  const previewScope = [
-    companyId,
-    detail.id,
-    detail.substituteReceiptEvidence?.id ?? '',
-    detail.substituteReceiptEvidence?.updatedAt ?? '',
-    signerPosition, fundingSource, payerId,
-  ].join('\u0000');
-  const previewScopeRef = useRef(previewScope);
-  previewScopeRef.current = previewScope;
-  const [evidenceHistory, setEvidenceHistory] = useState<SubstituteReceiptEvidenceSummary[]>([]);
-  const [evidenceHistoryLoading, setEvidenceHistoryLoading] = useState(canReview);
-  const [supersedeReason, setSupersedeReason] = useState('');
-  const [payerState, setPayerState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
-  const [substitutePolicy, setSubstitutePolicy] = useState<SubstituteReceiptRuntimePolicy | null>(null);
-  const [substitutePolicyState, setSubstitutePolicyState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [classificationOverrideReason, setClassificationOverrideReason] = useState('');
-  const [showSub, setShowSub] = useState(Boolean(detail.missingReceiptReason));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -619,49 +577,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
   useEffect(() => {
     setDocType(detail.sourceDocumentType); setTaxStatus(detail.taxEvidenceStatus); setCategoryId(detail.expenseCategoryId ?? '');
   }, [detail.sourceDocumentType, detail.taxEvidenceStatus, detail.expenseCategoryId]);
-  // Same server-truth sync: the substitute draft below is saved on blur, and this card is rendered
-  // twice (evidence step + review step), so both instances must follow the stored values.
-  useEffect(() => { setSubReason(payerWrittenMissingReason(detail.missingReceiptReason)); }, [detail.missingReceiptReason]);
-  useEffect(() => { setSubPurpose(detail.note ?? ''); }, [detail.note]);
   useEffect(() => {
     void listExpenseCategories(companyId).then(setCategories).catch(() => setCategories([]));
-    if (canReview) {
-      setPayerState('loading');
-      void listSubstituteReceiptPayers(companyId, detail.id).then((rows) => {
-        setPayerCandidates(rows);
-        setPayerId((current) => rows.some((row) => row.userId === current) ? current : (rows[0]?.userId ?? ''));
-        setPayerState('loaded');
-      }).catch(() => { setPayerCandidates([]); setPayerId(''); setPayerState('error'); });
-    }
-    if (canReview || canConfirm) {
-      setSubstitutePolicyState('loading');
-      void getSubstituteReceiptRuntimePolicy(companyId)
-        .then((policy) => { setSubstitutePolicy(policy); setSubstitutePolicyState('loaded'); })
-        .catch(() => { setSubstitutePolicy(null); setSubstitutePolicyState('error'); });
-    }
-  }, [canConfirm, canReview, companyId, detail.id]);
-  useEffect(() => {
-    if (!detail.substituteReceiptEvidence) {
-      setSelectedSupportingIds(detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose !== 'expense.review.evidence' && attachment.purpose !== 'expense.payment.evidence').map((attachment) => attachment.id));
-      setSelectedPaymentIds(detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence').map((attachment) => attachment.id));
-    }
-  }, [detail.attachments, detail.substituteReceiptEvidence]);
-  useEffect(() => {
-    previewRequestRef.current += 1;
-    setPreviewChecksum(null);
-    setCertifiedPreviewed(false);
-    return () => { previewRequestRef.current += 1; };
-  }, [companyId, detail.id, detail.substituteReceiptEvidence?.id, detail.substituteReceiptEvidence?.updatedAt]);
-  useEffect(() => {
-    if (!canReview) { setEvidenceHistoryLoading(false); return; }
-    let cancelled = false;
-    setEvidenceHistoryLoading(true);
-    void listSubstituteReceiptHistory(companyId, detail.id)
-      .then((items) => { if (!cancelled) setEvidenceHistory(items); })
-      .catch(() => { if (!cancelled) setEvidenceHistory([]); })
-      .finally(() => { if (!cancelled) setEvidenceHistoryLoading(false); });
-    return () => { cancelled = true; };
-  }, [canReview, companyId, detail.id, detail.substituteReceiptEvidence?.updatedAt]);
+  }, [companyId]);
 
   const run = async (fn: () => Promise<unknown>, doneText: string, refresh = true, inline = false) => {
     setBusy(true); setError(null); setInfo(null);
@@ -672,9 +590,6 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       if (inline) setInfo(doneText); else toast.success(doneText);
     } catch (e) { setError(err(e, locale)); } finally { setBusy(false); }
   };
-  const isPreviewRequestCurrent = (requestId: number, requestScope: string) => (
-    requestId === previewRequestRef.current && requestScope === previewScopeRef.current
-  );
   const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
   const aiCategorySuggestion = expenseAiCategorySuggestion(detail.aiVerificationSummaryJson);
   // Live dirtiness for the parent's ถัดไป gate — only while the บันทึกการตรวจ button exists
@@ -709,20 +624,6 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       ...(categoryId ? { expenseCategoryId: categoryId } : {}),
     });
   };
-  // The certificate is filled across visits (the payer signs later, often on another day), so the two
-  // free-text fields save to the expense columns they already map to instead of dying with the page.
-  // `run` reloads `detail`, which also keeps `expectedExpenseUpdatedAt` fresh for `prepareSubstitute`.
-  // `stored` is the value the FIELD was seeded with, not the raw column: the LINE capture marker
-  // seeds an empty box, and blurring an untouched empty box must not erase the marker off the row —
-  // the evidence-gap rules still read it.
-  const saveSubstituteDraft = (field: 'missingReceiptReason' | 'note', value: string, stored: string | null) => {
-    const next = value.trim();
-    if (next === (stored ?? '')) return;
-    void run(() => updateExpenseReviewFields(companyId, detail.id, {
-      expectedUpdatedAt: detail.updatedAt,
-      ...(field === 'note' ? { note: next } : { missingReceiptReason: next }),
-    }), 'บันทึกร่างใบรับรองแล้ว', true, true);
-  };
   const overrideClassification = () => {
     assertAllowed(classificationOverrideReason);
     return overrideNonExpenseClassification(companyId, detail.id, {
@@ -733,224 +634,10 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     });
   };
   const evidence = detail.substituteReceiptEvidence;
-  const canShowInlineSubstitute = canShowInlineSubstitutePreparation(classificationBlocked, evidence?.status);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
-  const selectSignatureFile = (file: File | null) => {
-    setSignatureFile(file); setCleanedSignatureFile(null); setSignaturePreview(null);
-  };
-  const buildTransparentSignature = async () => {
-    if (!signatureFile) throw new Error('กรุณาเลือกไฟล์ลายเซ็น PNG หรือ JPEG');
-    assertAllowedUploadFile(signatureFile, 'image');
-    const sourceUrl = URL.createObjectURL(signatureFile);
-    try {
-      const image = new Image();
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve(); image.onerror = () => reject(new Error('อ่านรูปลายเซ็นไม่สำเร็จ')); image.src = sourceUrl;
-      });
-      const sourceCanvas = document.createElement('canvas');
-      sourceCanvas.width = image.naturalWidth; sourceCanvas.height = image.naturalHeight;
-      const sourceContext = sourceCanvas.getContext('2d');
-      if (!sourceContext) throw new Error('เบราว์เซอร์ไม่รองรับการลบพื้นหลัง');
-      sourceContext.drawImage(image, 0, 0);
-      const original = sourceCanvas.toDataURL('image/png');
-      const cleaned = removeLightBackground(sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height));
-      const bounds = findOpaqueBounds(cleaned);
-      if (!bounds) throw new Error('ไม่พบเส้นลายเซ็นหลังลบพื้นหลัง กรุณาเลือกรูปที่คมชัดขึ้น');
-      sourceContext.putImageData(cleaned, 0, 0);
-      const padding = 8;
-      const cropX = Math.max(0, bounds.x - padding); const cropY = Math.max(0, bounds.y - padding);
-      const cropWidth = Math.min(sourceCanvas.width - cropX, bounds.width + padding * 2);
-      const cropHeight = Math.min(sourceCanvas.height - cropY, bounds.height + padding * 2);
-      const outputCanvas = document.createElement('canvas');
-      outputCanvas.width = cropWidth; outputCanvas.height = cropHeight;
-      const outputContext = outputCanvas.getContext('2d');
-      if (!outputContext) throw new Error('เบราว์เซอร์ไม่รองรับการตัดขอบลายเซ็น');
-      outputContext.drawImage(sourceCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
-      const blob = await new Promise<Blob | null>((resolve) => outputCanvas.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('สร้างไฟล์ลายเซ็นโปร่งใสไม่สำเร็จ');
-      setCleanedSignatureFile(new File([blob], 'signature-transparent.png', { type: 'image/png' }));
-      setSignaturePreview({ original, cleaned: outputCanvas.toDataURL('image/png') });
-    } finally {
-      URL.revokeObjectURL(sourceUrl);
-    }
-  };
-  const uploadPersonalSignature = async (): Promise<string> => {
-    if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
-    if (!cleanedSignatureFile) throw new Error('กรุณาลบพื้นหลังและตรวจตัวอย่างลายเซ็นก่อน');
-    const intent = await initPersonalSignatureUpload(companyId, detail.id, evidence.id, cleanedSignatureFile);
-    await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, cleanedSignatureFile, intent.uploadHeaders);
-    await completePersonalSignatureUpload(companyId, detail.id, evidence.id, intent.attachmentId, cleanedSignatureFile.size);
-    return intent.attachmentId;
-  };
-  const prepareSubstitute = async () => {
-    if (!fundingSource || !paidInFullAcknowledged) throw new Error('เลือกแหล่งเงินและยืนยันว่าจ่ายเต็มจำนวนแล้ว');
-
-    assertAllowed(subReason, subPurpose);
-    if (!payerCandidates.some((payer) => payer.userId === payerId)) throw new Error('กรุณาเลือกผู้จ่ายเงินจริงจากรายชื่อสมาชิกที่โหลดสำเร็จ');
-    await generateSubstituteReceipt(companyId, detail.id, {
-      reasonCode: subReasonCode,
-      missingReceiptReason: subReason,
-      businessPurpose: subPurpose,
-      payerUserId: payerId,
-      fundingSource, paidInFullAcknowledged: true,
-      supportingAttachmentIds: selectedSupportingIds,
-      paymentEvidenceAttachmentIds: selectedPaymentIds,
-      paymentDate: subPaymentDate,
-      paymentMethod: subPaymentMethod as NonNullable<ExpenseDetail['paymentMethod']>,
-      idempotencyKey: `sub-${detail.id}-${detail.updatedAt}-v${detail.substituteReceiptEvidence?.version ?? 0}`.slice(0, 128),
-      expectedExpenseUpdatedAt: detail.updatedAt,
-      ...(isCheckBillClassification(detail.aiVerificationSummaryJson) ? { routeCheckBill: true as const } : {}),
-    }, locale);
-    setShowSub(false);
-  };
-  const uploadEvidence = async (purpose: 'expense.receipt.supporting' | 'expense.payment.evidence') => {
-    const file = purpose === 'expense.payment.evidence' ? paymentUploadFile : supportingUploadFile;
-    if (!file) throw new Error('กรุณาเลือกไฟล์รูปภาพหรือ PDF');
-    assertAllowedUploadFile(file);
-    await uploadExpenseEvidenceFile(companyId, detail.id, detail.branchId, file, purpose);
-    if (purpose === 'expense.payment.evidence') setPaymentUploadFile(null); else setSupportingUploadFile(null);
-  };
-  const previewPreparedSubstitute = async () => {
-    assertAllowed(signerPosition);
-    if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
-    const requestId = ++previewRequestRef.current;
-    const requestScope = previewScopeRef.current;
-    setPreviewChecksum(null);
-    let result;
-    try {
-      result = await previewSubstituteReceipt(companyId, detail.id, evidence.id, { payerPosition: signerPosition });
-    } catch (cause) {
-      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
-      throw cause;
-    }
-    if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
-    onOpenFile({
-      name: `${evidence.documentNumber}-preview.svg`,
-      mimeType: 'image/svg+xml',
-      url: result.svgDataUrl,
-      hideOpenNewTab: true,
-      onViewed: () => {
-        if (!isPreviewRequestCurrent(requestId, requestScope)) return;
-        setPreviewChecksum(result.previewChecksumSha256);
-      },
-    });
-    return true;
-  };
-  const certifySubstitute = async () => {
-    assertAllowed(signerPosition);
-    if (!evidence) throw new Error('ไม่พบเอกสารที่เตรียมไว้');
-    if (!previewChecksum) throw new Error('กรุณาสร้างและตรวจตัวอย่างก่อนลงนาม');
-    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
-    await certifySubstituteReceipt(companyId, detail.id, evidence.id, {
-      payerPosition: signerPosition,
-      certificationAcknowledged: true,
-      previewChecksumSha256: previewChecksum,
-      ...signature,
-      expectedVersion: evidence.version,
-      expectedEvidenceUpdatedAt: evidence.updatedAt,
-    });
-    setSignatureFile(null); setCleanedSignatureFile(null); setSignaturePreview(null); setSignerPosition(''); setPreviewChecksum(null);
-  };
-  const approveSubstitute = async () => {
-    assertAllowed(signerPosition);
-    if (!evidence) throw new Error('ไม่พบเอกสารที่รออนุมัติ');
-    const signature = signatureSource === 'evidence_upload' ? { signatureAttachmentId: await uploadPersonalSignature() } : {};
-    await approveSubstituteReceipt(companyId, detail.id, evidence.id, {
-      approverPosition: signerPosition,
-      approvalAcknowledged: true,
-      certifiedArtifactChecksumSha256: evidence.certifiedArtifactChecksumSha256 ?? '',
-      ...signature,
-      expectedVersion: evidence.version,
-      expectedEvidenceUpdatedAt: evidence.updatedAt,
-    });
-    setSignatureFile(null); setCleanedSignatureFile(null); setSignaturePreview(null); setSignerPosition(''); setCertifiedPreviewed(false);
-  };
-  const supersedeCurrentEvidence = async () => {
-    assertAllowed(supersedeReason);
-    if (!evidence) throw new Error('ไม่พบเอกสารปัจจุบัน');
-    await supersedeSubstituteReceipt(companyId, detail.id, evidence.id, {
-      reason: supersedeReason.trim(), expectedEvidenceUpdatedAt: evidence.updatedAt,
-    });
-    setSupersedeReason(''); setShowSub(true);
-  };
-  const openSubstituteArtifact = async (attachmentId: string | null, markCertifiedPreview = false) => {
-    if (!attachmentId || !evidence) return;
-    const requestId = ++previewRequestRef.current;
-    const requestScope = previewScopeRef.current;
-    if (markCertifiedPreview) setCertifiedPreviewed(false);
-    try {
-      const blob = markCertifiedPreview
-        ? await fetchAttachmentPreviewBlob(companyId, attachmentId, 'image/svg+xml')
-        : await fetchSubstituteReceiptPdfBlob(companyId, detail.id, evidence.id);
-      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
-      const url = URL.createObjectURL(blob);
-      if (!isPreviewRequestCurrent(requestId, requestScope)) {
-        URL.revokeObjectURL(url);
-        return false;
-      }
-      onOpenFile({
-        name: markCertifiedPreview ? `${evidence.documentNumber}-certified.svg` : `${evidence.documentNumber}.pdf`,
-        mimeType: markCertifiedPreview ? 'image/svg+xml' : 'application/pdf',
-        url,
-        ...(markCertifiedPreview ? {
-          hideOpenNewTab: true,
-          onViewed: () => {
-            if (!isPreviewRequestCurrent(requestId, requestScope)) return;
-            setCertifiedPreviewed(true);
-          },
-        } : {}),
-      });
-      return true;
-    } catch (cause) {
-      if (!isPreviewRequestCurrent(requestId, requestScope)) return false;
-      throw cause;
-    }
-  };
-  const requiresPaymentEvidence = substituteReceiptRequiresPaymentEvidence(
-    detail.aiVerificationSummaryJson, subPaymentMethod || null, substitutePolicy?.cashEvidencePolicy,
-  );
-  // R9: a saved ACTIVE signature signs this certificate too; a freshly prepared file still wins.
-  const signatureSource = resolveWizardSignatureSource({
-    hasReusableSignature: substitutePolicy?.hasReusableSignature ?? false,
-    chosenFile: Boolean(signatureFile),
-    preparedFile: Boolean(cleanedSignatureFile),
-  });
-  // R11: the paper route's signatures are on the linked scan, so this panel asks for none either.
-  const paperSignature = evidence?.signatureMode === 'PAPER';
-  const canApproveEvidence = evidence ? mayApproveSubstituteReceipt({
-    userId,
-    payerUserId: evidence.payerUserId,
-    canConfirm,
-    canSelfApprove,
-    approvalMode: substitutePolicy?.approvalMode,
-  }) : false;
-  // Owner directive: never enable an action the server will reject, and never disable one silently.
-  // The same expense-level blockers the wizard names are enforced here, and every remaining
-  // condition is spelled out under its button instead of leaving it dead.
-  const substitutePrerequisites = evaluateExpensePrerequisites(detail);
-  const prepareBlockers = [
-    ...(substitutePrerequisites.missing.includes('reviewedAmount') ? ['ยอดรวมที่ตรวจแล้วต้องมากกว่า ฿0'] : []),
-    ...(substitutePrerequisites.missing.includes('reviewedCategory') ? ['เลือกหมวดค่าใช้จ่ายให้ครบทุกบรรทัด'] : []),
-    ...(payerState !== 'loaded' ? ['รายชื่อผู้จ่ายเงินยังโหลดไม่เสร็จ'] : []),
-    ...(substitutePolicyState !== 'loaded' || !substitutePolicy?.ready ? ['นโยบายผู้อนุมัติของบริษัท'] : []),
-    ...(!subReason.trim() ? ['เหตุผลที่ไม่มีใบเสร็จ'] : []),
-    ...(!subPurpose.trim() ? ['วัตถุประสงค์ทางธุรกิจ'] : []),
-    ...(!payerId ? ['ผู้จ่ายเงินจริง'] : []),
-    ...(!subPaymentDate ? ['วันที่จ่ายเงิน'] : []),
-    ...(selectedSupportingIds.length === 0 ? ['หลักฐานประกอบอย่างน้อย 1 ไฟล์'] : []),
-    ...(requiresPaymentEvidence && selectedPaymentIds.length === 0 ? ['หลักฐานการชำระเงิน'] : []),
-  ];
-  const certifyBlockers = [
-    ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
-    ...(!previewChecksum ? ['กดสร้างและตรวจตัวอย่างก่อนลงนาม'] : []),
-  ];
-  const approveBlockers = [
-    ...(!paperSignature && signatureSource === 'none' ? ['ลายมือชื่อ'] : []),
-    ...(!certifiedPreviewed ? ['เปิดตรวจฉบับที่ผู้จ่ายลงนาม'] : []),
-  ];
-  const blockedNote = (labels: string[]) => labels.length === 0 ? null : (
-    <p className="text-xs leading-5 text-gray-600"><span className="font-bold text-warning-700">ยังกดไม่ได้ · ต้องทำให้ครบก่อน:</span> {labels.join(' · ')}</p>
-  );
+  const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, evidence);
+  const paperAwaiting = evidence?.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId;
+  const certifierName = evidence?.paperSubmission?.payer.name || evidence?.payerName;
   const DocumentReviewContainer = checkBillBlocked ? 'details' : 'div';
 
   return (
@@ -961,10 +648,9 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       {checkBillBlocked
         ? <CheckBillGuidanceCard key={detail.id} companyId={companyId} expenseId={detail.id} canReview={canReview} receiptUploading={receiptUploading} onAttachPrimaryReceipt={onAttachPrimaryReceipt} />
         : classificationBlocked && <InfoBanner message={t(classificationReviewState.showFinanceOverride ? 'expenses.non_expense_override_hint' : 'expenses.non_expense_waiting_finance', locale)} />}
-      {needsReceiptOrSubstitute && isMutable && canReview && !classificationBlocked && (
+      {!evidence && needsReceiptOrSubstitute && isMutable && canReview && !classificationBlocked && (
         <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
           <p className="text-xs font-semibold text-warning-700">{t('expenses.no_receipt_banner', locale)}</p>
-          <Link className={btnClass} href={`/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(detail.id)}`}>{t('expenses.no_receipt_start_substitute', locale)}</Link>
         </div>
       )}
       {classificationReviewState.showFinanceOverride && (
@@ -1047,189 +733,32 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           )}
           {!classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
             <>
-              <Link className={ghostClass} href={substituteReceiptPreparationHref(companyId, detail.id, detail.aiVerificationSummaryJson)}>
-                {t('expenses.issue_substitute', locale)}
+              <Link className={ghostClass} href={substituteAction.href} aria-disabled={busy || dirty} onClick={(event) => { if (busy || dirty) event.preventDefault(); }}>
+                {t(substituteAction.labelKey, locale)}
               </Link>
               {isCheckBillClassification(detail.aiVerificationSummaryJson) && <p className="text-sm text-gray-600">{t('expenses.check_bill_new_draft_note', locale)}</p>}
             </>
           )}
-          {canShowInlineSubstitute && (
-            <>
-              <button className={ghostClass} disabled={busy} onClick={() => setShowSub((v) => !v)}>{evidence ? 'จัดทำ version แก้ไข' : t('expenses.issue_substitute', locale)}</button>
-              <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_substitute', locale)} />
-            </>
-          )}
+
         </div>
       )}
         </div>
       </DocumentReviewContainer>
-      {showSub && isMutable && canReview && canShowInlineSubstitute && (
-        <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
-        <div className="space-y-3 sm:col-span-2">
-                  <label className="block text-sm font-semibold">แหล่งเงิน
-                    <ThemedSelect className={inputClass} required aria-label="แหล่งเงิน" value={fundingSource} onChange={(event) => { setFundingSource(event.target.value as typeof fundingSource); setPaidInFullAcknowledged(false); }}>
-                      <option value="">เลือกแหล่งเงิน</option>
-                      <option value="COMPANY">บริษัทจ่ายเต็มจำนวน</option>
-                      <option value="PERSONAL_ADVANCE">พนักงานสำรองจ่ายเต็มจำนวน</option>
-                    </ThemedSelect>
-                  </label>
-                  <p className="text-sm text-gray-600">บริษัทในเอกสาร: {substitutePolicy?.companyName ?? 'กำลังโหลดชื่อบริษัท'}</p>
-                  {substitutePolicy?.companyNameSource === 'DISPLAY_NAME' && <p className="text-xs text-warning-700">ยังไม่มีชื่อจดทะเบียนที่บันทึกไว้ กรุณาตรวจข้อมูลบริษัทก่อนลงนาม</p>}
-                  <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={paidInFullAcknowledged} onChange={event => setPaidInFullAcknowledged(event.target.checked)} />ยืนยันว่าจ่ายเต็มจำนวนจากแหล่งเงินที่เลือกแล้ว ไม่มีการแบ่งจ่าย</label>
-                  {fundingSource === 'PERSONAL_ADVANCE' && <p className="text-sm text-gray-600">การออกใบรับรองยังไม่บันทึกเงินออกบริษัท พนักงานนำหลักฐานนี้ไปเบิกคืน</p>}
-                </div>
-
-          <p className="text-xs text-warning-700">{t('expenses.substitute_hint', locale)}</p>
-          <p className="text-xs font-semibold text-error-700">หากใบกำกับภาษีสูญหายและต้องการใช้ภาษีซื้อ ให้ขอใบแทนจากผู้ขาย เอกสารภายในนี้ใช้แทนไม่ได้</p>
-          <ThemedSelect className={inputClass} value={subReasonCode} onChange={(event) => setSubReasonCode(event.target.value as typeof subReasonCode)}>
-            <option value="PAYEE_CANNOT_ISSUE">ผู้รับเงินไม่สามารถออกใบเสร็จ</option>
-            <option value="RECEIPT_UNAVAILABLE">ไม่ได้รับใบเสร็จ</option>
-            <option value="RECEIPT_MATERIALLY_INCOMPLETE">หลักฐานไม่สมบูรณ์</option>
-            <option value="OTHER">อื่น ๆ</option>
-          </ThemedSelect>
-          <textarea className={inputClass} maxLength={500} rows={2} placeholder={t('expenses.substitute_reason_placeholder', locale)} value={subReason} onChange={(e) => setSubReason(stripDisallowed(e.target.value))} onBlur={() => saveSubstituteDraft('missingReceiptReason', subReason, payerWrittenMissingReason(detail.missingReceiptReason))} />
-          <textarea className={inputClass} maxLength={500} rows={2} placeholder="วัตถุประสงค์ทางธุรกิจ (จำเป็น)" value={subPurpose} onChange={(e) => setSubPurpose(stripDisallowed(e.target.value))} onBlur={() => saveSubstituteDraft('note', subPurpose, detail.note)} />
-          <ThemedSelect className={inputClass} value={payerId} onChange={(event) => setPayerId(event.target.value)}>
-            <option value="">เลือกพนักงานผู้จ่ายเงินจริง</option>
-            {payerCandidates.map((payer) => <option key={payer.userId} value={payer.userId}>{payer.displayName}</option>)}
-          </ThemedSelect>
-          {payerState === 'loading' && <p className="text-xs text-gray-500">กำลังโหลดรายชื่อผู้จ่าย...</p>}
-          {payerState === 'error' && <p className="text-xs font-semibold text-error-700">โหลดรายชื่อผู้จ่ายไม่สำเร็จ กรุณาลองใหม่ก่อนจัดทำเอกสาร</p>}
-          {payerState === 'loaded' && payerCandidates.length === 0 && <p className="text-xs font-semibold text-error-700">ไม่พบสมาชิกที่มีสถานะใช้งานในสาขานี้</p>}
-          {substitutePolicyState === 'loading' && <p className="text-xs text-gray-500">กำลังโหลดนโยบายบริษัท...</p>}
-          {substitutePolicyState === 'error' && <p className="text-xs font-semibold text-error-700">โหลดนโยบายใบรับรองแทนใบเสร็จไม่สำเร็จ</p>}
-          {substitutePolicyState === 'loaded' && !substitutePolicy?.ready && (
-            <p className="text-xs font-semibold text-error-700">บริษัทเลือกโหมดกำหนดผู้อนุมัติไว้ แต่ยังไม่ได้เลือกผู้อนุมัติ · <a className="underline" href={`/companies/${companyId}/settings/substitute-receipt`}>ไปหน้าตั้งค่า</a></p>
-          )}
-          <ThemedSelect className={inputClass} value={subPaymentMethod} onChange={(event) => setSubPaymentMethod(event.target.value as typeof subPaymentMethod)}>
-            {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-          </ThemedSelect>
-          <ThemedDate className={inputClass} value={subPaymentDate} onChange={(event) => setSubPaymentDate(event.target.value)} />
-          <div className="space-y-1 rounded-lg border border-warning-100 bg-white p-2 text-xs">
-            <p className="font-semibold text-gray-700">1. เลือกหลักฐานต้นทาง/หลักฐานประกอบ</p>
-            {detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose !== 'expense.review.evidence' && attachment.purpose !== 'expense.payment.evidence').map((attachment) => (
-              <label key={attachment.id} className="flex items-center gap-2">
-                <input type="checkbox" checked={selectedSupportingIds.includes(attachment.id)} onChange={(event) => setSelectedSupportingIds((current) => event.target.checked ? [...new Set([...current, attachment.id])] : current.filter((id) => id !== attachment.id))} />
-                <span>{attachment.originalFileName}</span>
-              </label>
-            ))}
-            <div className="flex flex-wrap items-center gap-2 pt-2">
-              <ThemedFile file={supportingUploadFile} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setSupportingUploadFile} />
-              <button className={ghostClass} disabled={busy || !supportingUploadFile} onClick={() => run(() => uploadEvidence('expense.receipt.supporting'), 'เพิ่มหลักฐานประกอบเรียบร้อยแล้ว')}>เพิ่มหลักฐานประกอบ</button>
-            </div>
-          </div>
-          <div className="space-y-1 rounded-lg border border-warning-100 bg-white p-2 text-xs">
-              <p className="font-semibold text-gray-700">2. เลือกหลักฐานการจ่าย (ต้องเป็นคนละไฟล์กับหลักฐานต้นทาง){requiresPaymentEvidence ? ' · จำเป็น' : ' · ไม่บังคับ'}</p>
-              {subPaymentMethod === 'CASH' && substitutePolicy?.cashEvidenceInstructions && <p className="text-gray-500">{substitutePolicy.cashEvidenceInstructions}</p>}
-              {detail.attachments.filter((attachment) => attachment.status === 'ACTIVE' && attachment.purpose === 'expense.payment.evidence').map((attachment) => (
-                <label key={attachment.id} className="flex items-center gap-2">
-                  <input type="checkbox" checked={selectedPaymentIds.includes(attachment.id)} onChange={(event) => setSelectedPaymentIds((current) => event.target.checked ? [...new Set([...current, attachment.id])] : current.filter((id) => id !== attachment.id))} />
-                  <span>{attachment.originalFileName}</span>
-                </label>
-              ))}
-              <div className="flex flex-wrap items-center gap-2 pt-2">
-                <ThemedFile file={paymentUploadFile} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setPaymentUploadFile} />
-                <button className={ghostClass} disabled={busy || !paymentUploadFile} onClick={() => run(() => uploadEvidence('expense.payment.evidence'), 'เพิ่มหลักฐานการจ่ายเรียบร้อยแล้ว')}>เพิ่มหลักฐานการจ่าย</button>
-              </div>
-            </div>
-          <button className={btnClass} disabled={busy || prepareBlockers.length > 0} onClick={() => run(prepareSubstitute, evidence ? 'บันทึกใบรับรองฉบับแก้ไขเรียบร้อยแล้ว' : 'จัดทำใบรับรองเรียบร้อยแล้ว')}>{evidence ? 'บันทึกเป็น version แก้ไข' : t('expenses.substitute_confirm', locale)}</button>
-          {blockedNote(prepareBlockers)}
-        </div>
-      )}
+      {dirty && isMutable && canReview && <p className="text-xs text-warning-700">บันทึกการตรวจเอกสารก่อนดำเนินการใบรับรองแทนใบเสร็จ</p>}
       {evidence && (
-        <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3 text-xs text-warning-700">
-          <p className="font-semibold">📄 ใบรับรองแทนใบเสร็จรับเงิน {evidence.documentNumber} · version {evidence.version} · {expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, evidence.status)}</p>
-          <p>ผู้จ่ายเงินจริง: {evidence.payerName} · เหตุผล: {evidence.missingReceiptReason}</p>
-          <Link className={btnClass} href={`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidence.id)}`}>
-            <span className="inline-flex items-center gap-2">
-              {evidence.status === 'PREPARED' || evidence.status === 'PAYER_CERTIFIED' ? ICON.edit : ICON.eye}
-              {t(evidence.status === 'PREPARED' || evidence.status === 'PAYER_CERTIFIED'
-                ? 'expenses.substitute_hub.continue'
-                : evidence.status === 'ISSUED' ? 'expenses.substitute_hub.open_document' : 'expenses.substitute_hub.view_history', locale)}
-            </span>
+        <div className="space-y-3 rounded-xl border border-warning-100 bg-warning-50 p-4 text-sm" aria-label="ใบรับรองแทนใบเสร็จของรายการนี้">
+          <p className="font-semibold text-gray-800">ใบรับรองแทนใบเสร็จรับเงิน {evidence.documentNumber}</p>
+          <p className="font-semibold text-warning-700">{paperAwaiting
+            ? evidence.paperSubmission ? 'รอตรวจรับฉบับลงนาม' : 'รออัปโหลดฉบับลงนามบนกระดาษ'
+            : expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, evidence.status)}</p>
+          <p>{evidence.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : evidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่ายเต็มจำนวน' : 'เอกสารเดิมยังไม่ระบุเงินที่ใช้ชำระ'}</p>
+          <p>{t('expenses.substitute_wizard.payer', locale)}: {certifierName || (paperAwaiting ? 'รอกรอกชื่อบนกระดาษ' : '—')}</p>
+          {evidence.fundingSource === 'PERSONAL_ADVANCE' && <p className="text-xs text-gray-600">ใบรับรองนี้ยังไม่ใช่การจ่ายคืนเงินให้พนักงาน</p>}
+          <Link className={btnClass} href={evidence.status === 'SUPERSEDED'
+            ? `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/${encodeURIComponent(evidence.id)}`
+            : substituteAction.href} aria-disabled={busy || dirty} onClick={(event) => { if (busy || dirty) event.preventDefault(); }}>
+            {t(evidence.status === 'SUPERSEDED' ? 'expenses.substitute_hub.view_history' : substituteAction.labelKey, locale)}
           </Link>
-          {evidence.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId ? <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/${evidence.id}`}>ดำเนินการฉบับลงนามบนกระดาษ</Link> : evidence.status === 'PREPARED' && evidence.payerUserId !== userId && <p>รอผู้รับรองการจ่ายเข้าสู่ระบบเพื่อลงนามด้วยตนเอง</p>}
-          {evidence.status === 'PREPARED' && evidence.payerUserId === userId && (
-            <div className="space-y-2 rounded-lg bg-white p-2">
-              <p className="font-semibold">ผู้จ่ายเงินรับรองด้วยตนเอง</p>
-              <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={substitutePolicy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
-              <p className="text-gray-500">ตำแหน่ง (ถ้ามี) ระบุตามจริงหรือเว้นว่างได้ ข้อมูลนี้ไม่ใช่สิทธิ์อนุมัติในระบบ</p>
-              <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
-              <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
-              {signaturePreview && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div><p className="mb-1 text-gray-500">ต้นฉบับ</p><img src={signaturePreview.original} alt="ลายเซ็นต้นฉบับ" className="max-h-28 rounded-lg border bg-white" /></div>
-                  <div><p className="mb-1 text-gray-500">ไฟล์ที่จะวางในเอกสาร</p><img src={signaturePreview.cleaned} alt="ลายเซ็นพื้นหลังโปร่งใส" className="max-h-28 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} /></div>
-                </div>
-              )}
-              <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
-              {signatureSource === 'signature_library' && (
-                <div className="space-y-2">
-                  <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>
-                  {/* A8: the signer was certifying a legal document with an image they had never seen. */}
-                  {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
-                </div>
-              )}
-              <button className={previewChecksum ? ghostClass : btnClass} disabled={busy} onClick={() => run(previewPreparedSubstitute, 'สร้างตัวอย่างสำหรับตรวจแล้ว', false, true)}>สร้างและตรวจตัวอย่างก่อนลงนาม</button>
-              <p>ข้าพเจ้าขอรับรองว่ารายจ่ายนี้ไม่อาจเรียกเก็บใบเสร็จจากผู้รับได้ และได้จ่ายไปในงานของบริษัทโดยแท้</p>
-              <button className={btnClass} disabled={busy || certifyBlockers.length > 0} onClick={() => run(certifySubstitute, 'ลงนามรับรองเรียบร้อยแล้ว')}>ลงนามรับรองตัวอย่างที่ตรวจแล้ว</button>
-              {blockedNote(certifyBlockers)}
-              <p className="text-gray-500">ขั้นถัดไป: ผู้มีอำนาจอนุมัติและออกเอกสาร</p>
-            </div>
-          )}
-          {evidence.status === 'PAYER_CERTIFIED' && !canApproveEvidence && <p>ผู้จ่ายลงนามแล้ว รอผู้มีสิทธิอนุมัติ</p>}
-          {evidence.status === 'PAYER_CERTIFIED' && canApproveEvidence && (
-            <div className="space-y-2 rounded-lg bg-white p-2">
-              <p className="font-semibold">อนุมัติโดยผู้มีอำนาจ</p>
-              <SubstituteSignerPositionField className={inputClass} value={signerPosition} jobTitle={substitutePolicy?.signerJobTitle} onChange={(value) => { setSignerPosition(stripDisallowed(value)); setPreviewChecksum(null); setCertifiedPreviewed(false); }} />
-              <p className="text-gray-500">ตำแหน่ง (ถ้ามี) ระบุตามจริงหรือเว้นว่างได้ ข้อมูลนี้ไม่ใช่สิทธิ์อนุมัติในระบบ</p>
-              <ThemedFile file={signatureFile} accept={IMAGE_UPLOAD_ACCEPT} onChange={(file) => selectSignatureFile(file)} />
-              <button className={ghostClass} disabled={busy || !signatureFile} onClick={() => run(buildTransparentSignature, 'ลบพื้นหลังสีอ่อนและเตรียมลายเซ็นโปร่งใสแล้ว', false, true)}>ลบพื้นหลังสีอ่อนและดูตัวอย่าง</button>
-              {signaturePreview && (
-                <div className="grid grid-cols-2 gap-2">
-                  <div><p className="mb-1 text-gray-500">ต้นฉบับ</p><img src={signaturePreview.original} alt="ลายเซ็นต้นฉบับ" className="max-h-28 rounded-lg border bg-white" /></div>
-                  <div><p className="mb-1 text-gray-500">ไฟล์ที่จะวางในเอกสาร</p><img src={signaturePreview.cleaned} alt="ลายเซ็นพื้นหลังโปร่งใส" className="max-h-28 rounded-lg border" style={{ backgroundImage: 'repeating-conic-gradient(#f3f4f6 0% 25%, white 0% 50%)', backgroundSize: '16px 16px' }} /></div>
-                </div>
-              )}
-              <p>ระบบจะฝัง PNG โปร่งใสที่ตรวจแล้วลงในใบรับรองฉบับนี้โดยตรง</p>
-              {signatureSource === 'signature_library' && (
-                <div className="space-y-2">
-                  <p className="font-semibold text-brand-700">ใช้ลายเซ็นที่บันทึกไว้ ไม่ต้องอัปโหลดใหม่ (เลือกไฟล์ด้านบนหากต้องการใช้ลายเซ็นอื่น)</p>
-                  {/* A8: the signer was certifying a legal document with an image they had never seen. */}
-                  {substitutePolicy?.reusableSignaturePreviewUrl && <SignatureThumb url={substitutePolicy.reusableSignaturePreviewUrl} alt="ลายเซ็นที่บันทึกไว้" />}
-                </div>
-              )}
-              <button className={certifiedPreviewed ? ghostClass : btnClass} disabled={busy || !evidence.certifiedArtifactAttachmentId} onClick={() => run(() => openSubstituteArtifact(evidence.certifiedArtifactAttachmentId, true), 'เปิดฉบับที่ผู้จ่ายลงนามแล้ว', false, true)}>เปิดตรวจฉบับที่ผู้จ่ายลงนาม</button>
-              <button className={btnClass} disabled={busy || approveBlockers.length > 0} onClick={() => run(approveSubstitute, 'อนุมัติและออกเอกสารเรียบร้อยแล้ว')}>อนุมัติฉบับที่ตรวจและออกเอกสาร</button>
-              {blockedNote(approveBlockers)}
-            </div>
-          )}
-          {evidence.status === 'PREPARED' && <p>ดาวน์โหลดใบรับรองฉบับสมบูรณ์ได้หลังผู้จ่ายรับรองและผู้มีอำนาจอนุมัติแล้ว</p>}
-          {evidence.status === 'PAYER_CERTIFIED' && <p>ดาวน์โหลดใบรับรองฉบับสมบูรณ์ได้หลังผู้มีอำนาจอนุมัติแล้ว</p>}
-          {evidence.status === 'ISSUED' && (
-            <div className="flex flex-wrap gap-2">
-              <button className={btnClass} disabled={busy || !evidence.artifactAttachmentId} onClick={() => run(() => downloadSubstituteReceiptPdf(companyId, detail.id, evidence.id, evidence.documentNumber), t('expenses.downloaded', locale), false, true)}>
-                <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute.download_pdf', locale)}</span>
-              </button>
-              <button className={ghostClass} disabled={busy || !evidence.artifactAttachmentId} onClick={() => run(() => openSubstituteArtifact(evidence.artifactAttachmentId), 'เปิดเอกสารแล้ว', false, true)}>เปิดใบรับรองฉบับที่ออกแล้ว</button>
-            </div>
-          )}
-          {canReview && isMutable && (
-            <div className="space-y-2 rounded-lg border border-warning-100 bg-white p-2">
-              <input className={inputClass} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} placeholder="เหตุผลที่ยกเลิกหรือจัดทำ version แก้ไข (เก็บใน audit trail)" />
-              <button className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => run(supersedeCurrentEvidence, 'ยกเลิก version เดิมแล้ว สามารถจัดทำ version แก้ไขได้', true, true)}>ยกเลิก version นี้และเก็บประวัติ</button>
-              {!supersedeReason.trim() && <p className="text-xs text-gray-500">กรอกเหตุผลด้านบนก่อน จึงจะกดยกเลิก version นี้ได้</p>}
-            </div>
-          )}
-          {canReview && evidenceHistoryLoading && <p className="text-xs text-gray-500">กำลังโหลด...</p>}
-          {canReview && !evidenceHistoryLoading && evidenceHistory.length > 1 && (
-            <details className="rounded-lg bg-white p-2">
-              <summary className="cursor-pointer font-semibold">ประวัติทุก version ({evidenceHistory.length})</summary>
-              <ul className="mt-2 space-y-1">
-                {evidenceHistory.map((item) => <li key={item.id}>version {item.version} · {expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, item.status)}{item.supersedeReason ? ` · ${item.supersedeReason}` : ''}</li>)}
-              </ul>
-            </details>
-          )}
         </div>
       )}
     </MangmeeCard>
@@ -2191,7 +1720,6 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
   evidence: 'expenses.step_evidence_helper',
   review: 'expenses.step_review_helper',
 };
-
 
 // ── List (period + cards + export + chips + search + grid rows + detail) ──────
 // All four columns share the spare width. With fixed trailing columns the first one absorbed

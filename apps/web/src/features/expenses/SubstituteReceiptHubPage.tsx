@@ -7,28 +7,32 @@ import type {
   SubstituteReceiptApprovalMode,
   SubstituteReceiptEvidenceStatus,
   SubstituteReceiptListResult,
+  SubstituteReceiptListItem,
   SubstituteReceiptPaperPreview,
 } from '@watchdog-bms/contracts';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { MangmeeCard, MangmeePage, cx } from '@/common/components/mangmee';
-import { DocumentPreviewModal, type DocumentPreviewSource } from '@/common/components/document-preview';
+import { PopoverPanel } from '@/common/components/field/PopoverPanel';
+import { Modal } from '@/common/components/modal/Modal';
+import { useConfirm } from '@/common/components/modal/use-confirm';
+import { useToast } from '@/common/components/toast';
+import { sanitizeReasonInput } from '@/common/forms/sanitize';
 import { LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
 import {
-  downloadSubstituteReceiptPdf,
-  fetchSubstituteReceiptPdfBlob,
   getSubstituteReceiptRuntimePolicy,
   listCompanySubstituteReceipts,
   previewIssuedSubstitutePaper,
+  supersedeSubstituteReceipt,
 } from './expenses.api';
-import { SubstitutePaperDocumentPreview } from './SubstitutePaperSigningPanel';
 import {
   baht0,
   btnClass,
   dateShort,
+  dangerClass,
   err,
   ErrorBanner,
   ghostClass,
@@ -38,7 +42,6 @@ import {
   StatCard,
   StatusBadge,
 } from './ExpensesUi';
-import { IconBtn } from './ExpensesWorkspacePanels';
 import { buildSubstituteReceiptHubModel } from './substitute-receipt-hub.model';
 
 const STATUS_LABEL_KEYS: Record<SubstituteReceiptEvidenceStatus, DictionaryKey> = {
@@ -55,11 +58,100 @@ const STATUS_BADGES: Record<SubstituteReceiptEvidenceStatus, string> = {
   SUPERSEDED: 'VOIDED',
 };
 
-type IssuedArtifactPreviewTarget = {
-  expenseId: string;
-  evidenceId: string;
-  documentNumber: string;
-};
+type PreviewTarget = { item: SubstituteReceiptListItem; data: SubstituteReceiptPaperPreview };
+
+const PRINT_ICON = <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7zM17 11h1" /></svg>;
+
+function ReceiptActions({ item, canReview, canContinue, busy, onEdit, onOpen, onCancel }: {
+  item: SubstituteReceiptListItem; canReview: boolean; canContinue: boolean; busy: boolean;
+  onEdit: () => void; onOpen: () => void; onCancel: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    // Focus only after the portal is placed; a hidden panel cannot receive focus.
+    const panel = panelRef.current;
+    const observer = new MutationObserver(() => focusPlacedPanel());
+    const focusPlacedPanel = () => {
+      if (!panel || getComputedStyle(panel).visibility === 'hidden') return;
+      panel.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+      observer.disconnect();
+    };
+    if (panel) observer.observe(panel, { attributes: true, attributeFilter: ['style'] });
+    focusPlacedPanel();
+    const outside = (event: PointerEvent) => {
+      if (!panelRef.current?.contains(event.target as Node) && !anchorRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => { observer.disconnect(); document.removeEventListener('pointerdown', outside); };
+  }, [open]);
+  const close = () => { setOpen(false); anchorRef.current?.focus(); };
+  const select = (action: () => void) => { close(); action(); };
+  const choices = [
+    { label: 'แก้ไข', icon: ICON.edit, action: onEdit, disabled: !canContinue || item.status === 'SUPERSEDED', reason: !canContinue ? 'ต้องเป็นผู้รับผิดชอบขั้นตอนนี้หรือมีสิทธิ์ตรวจสอบค่าใช้จ่าย' : 'เอกสารถูกยกเลิกหรือแทนที่แล้ว' },
+    { label: 'พิมพ์', icon: PRINT_ICON, action: onOpen },
+    { label: 'ดู', icon: ICON.eye, action: onOpen },
+    { label: 'ยกเลิกเอกสาร', icon: ICON.trash, action: onCancel, disabled: !canReview || !item.canCancel, reason: !canReview ? 'ต้องมีสิทธิ์ตรวจสอบค่าใช้จ่าย' : item.status === 'SUPERSEDED' ? 'เอกสารถูกยกเลิกหรือแทนที่แล้ว' : 'สถานะนี้ต้องดำเนินการผ่านขั้นตอนแก้ไขเอกสาร', danger: true },
+  ];
+  return <>
+    <button ref={anchorRef} type="button" className={cx(ghostClass, 'h-11 w-11 p-2')} aria-label={`ดำเนินการ ${item.documentNumber}`} aria-haspopup="menu" aria-expanded={open} disabled={busy}
+      onClick={() => setOpen(!open)} onKeyDown={(event) => { if (event.key === 'ArrowDown') { event.preventDefault(); setOpen(true); } }}>
+      <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor"><circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" /></svg>
+    </button>
+    <PopoverPanel open={open} anchorRef={anchorRef} panelRef={panelRef} height={220} role="menu" aria-label={`ดำเนินการ ${item.documentNumber}`}
+      className="z-[100001] w-56 overflow-auto rounded-xl border border-gray-200 bg-white p-1.5 text-sm shadow-lg"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.preventDefault(); close(); }
+        if (event.key === 'Tab') { close(); }
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+          event.preventDefault();
+          const buttons = Array.from(panelRef.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? []);
+          const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+          const index = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+          buttons[index]?.focus();
+        }
+      }}>
+      {choices.map((choice) => <button key={choice.label} type="button" role="menuitem" disabled={choice.disabled} title={choice.disabled ? choice.reason : undefined}
+        className={cx('flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left font-semibold outline-none hover:bg-gray-50 focus-visible:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40', choice.danger ? 'text-error-700' : 'text-gray-700')}
+        onClick={() => select(choice.action)}>{choice.icon}{choice.label}</button>)}
+    </PopoverPanel>
+  </>;
+}
+
+function ReceiptPrintPreview({ target, onClose }: { target: PreviewTarget; onClose: () => void }) {
+  const [loaded, setLoaded] = useState<number[]>([]);
+  const [failed, setFailed] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState('');
+  const pages = target.data.pageImageDataUrls ?? [];
+  useEffect(() => {
+    let url = '';
+    try {
+      const prefix = 'data:application/pdf;base64,';
+      if (!target.data.pdfDataUrl.startsWith(prefix)) throw new Error('Invalid PDF');
+      const bytes = Uint8Array.from(atob(target.data.pdfDataUrl.slice(prefix.length)), (character) => character.charCodeAt(0));
+      url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+      setPdfUrl(url);
+    } catch { setFailed(true); }
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [target.data.pdfDataUrl]);
+  return <Modal open title={target.item.documentNumber} onClose={onClose} size="xl" printSurface
+    bodyClassName="bg-gray-100 p-3 sm:p-5" footer={<>
+      {failed && <span className="text-sm text-error-700">โหลดเอกสารไม่ครบ กรุณาปิดแล้วเปิดใหม่</span>}
+      {pdfUrl && <a className={ghostClass} href={pdfUrl} download={`${target.item.documentNumber}.pdf`}>ดาวน์โหลด PDF</a>}
+      <button type="button" className={btnClass} disabled={failed || !pages.length || loaded.length !== pages.length} onClick={() => window.print()}>{PRINT_ICON} พิมพ์</button>
+    </>}>
+    <p className="modal-print-hide mb-4 text-sm font-semibold text-gray-700">{target.item.status === 'PREPARED'
+      ? target.item.paperSubmission ? 'ฉบับลงนามรอตรวจรับ' : target.item.signatureMode === 'PAPER' ? 'แบบฟอร์มสำหรับกรอกและลงนามบนกระดาษ' : 'ฉบับรอลงนาม'
+      : target.item.status === 'PAYER_CERTIFIED' ? 'ฉบับลงนามแล้ว รออนุมัติ' : target.item.status === 'ISSUED' ? 'ฉบับสมบูรณ์' : 'ฉบับประวัติที่ยกเลิกหรือถูกแทนที่'}</p>
+    {pages.map((page, index) => <div key={index} className="mb-4 last:mb-0 print:mb-0 print:break-after-page print:last:break-after-auto">
+      {/* Generated page images preserve every page on paper, including uploaded scans. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={page} alt={`เอกสารหน้า ${index + 1}`} className="mx-auto block h-auto w-full max-w-[794px] bg-white" onLoad={() => setLoaded((current) => current.includes(index) ? current : [...current, index])} onError={() => setFailed(true)} />
+    </div>)}
+  </Modal>;
+}
 
 export function SubstituteReceiptHubPage({
   companyId,
@@ -83,36 +175,19 @@ export function SubstituteReceiptHubPage({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<DocumentPreviewSource | null>(null);
-  const [paperPreview, setPaperPreview] = useState<SubstituteReceiptPaperPreview | null>(null);
-  const [previewTarget, setPreviewTarget] = useState<IssuedArtifactPreviewTarget | null>(null);
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const previewRequestRef = useRef(0);
-  const previewUrlRef = useRef<string | null>(null);
-
-  const releasePreviewUrl = useCallback(() => {
-    const url = previewUrlRef.current;
-    previewUrlRef.current = null;
-    if (url) URL.revokeObjectURL(url);
-  }, []);
-
-  const closePreview = useCallback(() => {
-    previewRequestRef.current += 1;
-    releasePreviewUrl();
-    setPreview(null);
-    setPaperPreview(null);
-    setPreviewTarget(null);
-    setPreviewLoadingId(null);
-  }, [releasePreviewUrl]);
-
-  useEffect(() => () => {
-    previewRequestRef.current += 1;
-    releasePreviewUrl();
-  }, [releasePreviewUrl]);
-
-  useEffect(() => {
-    closePreview();
-  }, [companyId, closePreview]);
+  const [cancelTarget, setCancelTarget] = useState<SubstituteReceiptListItem | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  const cancelPendingRef = useRef(false);
+  const cancelTriggerRef = useRef<HTMLElement | null>(null);
+  const [refresh, setRefresh] = useState(0);
+  const { confirm, confirmDialog } = useConfirm();
+  const toast = useToast();
+  const closePreview = useCallback(() => { previewRequestRef.current += 1; setPreview(null); setPreviewLoadingId(null); }, []);
+  useEffect(() => { closePreview(); setCancelTarget(null); return () => { previewRequestRef.current += 1; }; }, [companyId, closePreview]);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,7 +210,7 @@ export function SubstituteReceiptHubPage({
       .catch((error) => { if (!cancelled) setLoadError(err(error)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [canApprove, companyId, status, yearMonth]);
+  }, [canApprove, companyId, status, yearMonth, refresh]);
 
   const model = useMemo(() => buildSubstituteReceiptHubModel(result?.items ?? [], {
     userId,
@@ -145,58 +220,42 @@ export function SubstituteReceiptHubPage({
     currentYearMonth: new Date().toISOString().slice(0, 7),
   }), [approvalMode, canApprove, canSelfApprove, result?.items, userId]);
 
-  const expenseHref = (expenseId: string) => (
-    `/companies/${companyId}/expenses/${encodeURIComponent(expenseId)}`
-  );
-  const wizardHref = (evidenceId: string) => (
-    `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidenceId)}`
-  );
+  const wizardHref = (evidenceId: string) => `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidenceId)}`;
 
-  async function loadIssuedArtifactPreview(target: IssuedArtifactPreviewTarget) {
+  async function openDocument(item: SubstituteReceiptListItem) {
     const requestId = ++previewRequestRef.current;
-    setPreviewLoadingId(target.evidenceId);
-    setActionError(null);
+    setPreviewLoadingId(item.evidenceId); setActionError(null);
     try {
-      if (result?.items.find((item) => item.evidenceId === target.evidenceId)?.signatureMode === 'PAPER') {
-        const next = await previewIssuedSubstitutePaper(companyId, target.expenseId, target.evidenceId);
-        if (requestId !== previewRequestRef.current) return;
-        setPreviewTarget(target); setPaperPreview(next);
-        return;
-      }
-      const blob = await fetchSubstituteReceiptPdfBlob(companyId, target.expenseId, target.evidenceId);
-      if (requestId !== previewRequestRef.current) return;
-      const url = URL.createObjectURL(blob);
-      releasePreviewUrl();
-      previewUrlRef.current = url;
-      setPreviewTarget(target);
-      setPreview({ name: `${target.documentNumber}.pdf`, mimeType: 'application/pdf', url });
-    } catch (error) {
-      if (requestId !== previewRequestRef.current) return;
-      setActionError(err(error));
-      throw error;
-    } finally {
-      if (requestId === previewRequestRef.current) {
-        setPreviewLoadingId((current) => current === target.evidenceId ? null : current);
-      }
+      const data = await previewIssuedSubstitutePaper(companyId, item.expenseId, item.evidenceId);
+      if (requestId === previewRequestRef.current) setPreview({ item, data });
+    } catch (error) { if (requestId === previewRequestRef.current) setActionError(err(error)); }
+    finally { if (requestId === previewRequestRef.current) setPreviewLoadingId(null); }
+  }
+
+  async function confirmCancellation() {
+    if (!cancelTarget || !cancelReason.trim() || cancelPendingRef.current) return;
+    const item = cancelTarget;
+    const reason = cancelReason.trim();
+    cancelPendingRef.current = true; setCancelling(true); setCancelTarget(null);
+    try {
+      if (!await confirm({ title: 'ยืนยันยกเลิกเอกสารอีกครั้ง',
+        message: `ยืนยันยกเลิก ${item.documentNumber} ด้วยเหตุผล “${reason}” ใช่หรือไม่? เอกสารจะใช้เป็นฉบับปัจจุบันต่อไม่ได้ ประวัติและไฟล์เดิมยังเก็บอยู่`,
+        confirmLabel: 'ยืนยันยกเลิกเอกสาร', cancelLabel: 'กลับไปโดยไม่ยกเลิก', variant: 'danger' })) return;
+      setActionError(null);
+      await supersedeSubstituteReceipt(companyId, item.expenseId, item.evidenceId, { reason, expectedEvidenceUpdatedAt: item.updatedAt });
+      toast.success(`ยกเลิกเอกสาร ${item.documentNumber} แล้ว`);
+      setRefresh((value) => value + 1);
+    } catch (error) { setActionError(err(error)); }
+    finally {
+      cancelPendingRef.current = false; setCancelling(false);
+      requestAnimationFrame(() => cancelTriggerRef.current?.focus());
     }
   }
 
-  async function openIssuedArtifact(expenseId: string, evidenceId: string, documentNumber: string) {
-    try {
-      await loadIssuedArtifactPreview({ expenseId, evidenceId, documentNumber });
-    } catch {
-      // The current request already surfaced a localized error above the table.
-    }
-  }
-
-  async function downloadIssuedArtifact(expenseId: string, evidenceId: string, documentNumber: string) {
-    setActionError(null);
-    try {
-      await downloadSubstituteReceiptPdf(companyId, expenseId, evidenceId, documentNumber);
-    } catch (error) {
-      setActionError(err(error));
-    }
-  }
+  const actions = (item: SubstituteReceiptListItem) => <ReceiptActions item={item} canReview={canReview}
+    canContinue={canReview || model.waitingForSignature.some((task) => task.evidenceId === item.evidenceId) || model.waitingForApproval.some((task) => task.evidenceId === item.evidenceId)} busy={cancelling || previewLoadingId !== null}
+    onEdit={() => router.push(wizardHref(item.evidenceId))} onOpen={() => void openDocument(item)}
+    onCancel={() => { cancelTriggerRef.current = document.activeElement as HTMLElement; setCancelReason(''); setCancelTarget(item); }} />;
 
   const hasWaitingWork = model.waitingForSignature.length > 0 || model.waitingForApproval.length > 0;
 
@@ -218,6 +277,7 @@ export function SubstituteReceiptHubPage({
       ) : result ? (
         <div className="space-y-5">
           {actionError && <ErrorBanner message={actionError} />}
+          {previewLoadingId && <p role="status" className="text-sm text-gray-600">กำลังเปิดเอกสาร...</p>}
 
           {hasWaitingWork && (
             <section>
@@ -325,44 +385,7 @@ export function SubstituteReceiptHubPage({
                         </div>
                       </td>
                       <td>
-                        <div className="flex justify-end gap-1">
-                          {item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED') && (
-                            <IconBtn
-                              title={t('expenses.substitute.download_pdf', locale)}
-                              tone="primary"
-                              onClick={() => void downloadIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}
-                            >
-                              {ICON.download}
-                            </IconBtn>
-                          )}
-                          {item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED') && (
-                            <IconBtn
-                              title={previewLoadingId === item.evidenceId
-                                ? t('expenses.loading', locale)
-                                : t('expenses.substitute_hub.open_document', locale)}
-                              disabled={previewLoadingId === item.evidenceId}
-                              onClick={() => void openIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}
-                            >
-                              {ICON.eye}
-                            </IconBtn>
-                          )}
-                          {(item.status === 'PREPARED' || item.status === 'PAYER_CERTIFIED') && (
-                            <IconBtn
-                              title={t('expenses.substitute_hub.continue', locale)}
-                              onClick={() => router.push(wizardHref(item.evidenceId))}
-                            >
-                              {ICON.edit}
-                            </IconBtn>
-                          )}
-                          {item.status === 'SUPERSEDED' && (
-                            <IconBtn
-                              title={t('expenses.substitute_hub.view_history', locale)}
-                              onClick={() => router.push(wizardHref(item.evidenceId))}
-                            >
-                              {ICON.eye}
-                            </IconBtn>
-                          )}
-                        </div>
+                        <div className="flex justify-end">{actions(item)}</div>
                       </td>
                     </tr>
                   ))}
@@ -370,13 +393,9 @@ export function SubstituteReceiptHubPage({
               </table>
             </div>
 
-            {/* ทดแทนใบเสร็จ on a phone. Desktop keeps the six-column table above untouched; the
-                actions that lived in a last column no thumb reaches sit at the foot of each
-                card, full width. */}
+            {/* Same actions on mobile, without a clipped table menu. */}
             <div className="space-y-3 p-3 md:hidden" data-testid="substitute-receipt-card-list">
               {result.items.map((item) => {
-                const canOpenArtifact = !!item.artifactAttachmentId && (item.status === 'ISSUED' || item.status === 'SUPERSEDED');
-                const canContinue = item.status === 'PREPARED' || item.status === 'PAYER_CERTIFIED';
                 return (
                   <MangmeeCard key={item.evidenceId} className="overflow-hidden p-0">
                     <div className="p-4" data-testid="substitute-receipt-card">
@@ -393,32 +412,7 @@ export function SubstituteReceiptHubPage({
                       </div>
                       <div className="mt-2 text-xs text-gray-500">{dateShort(item.paymentDate ?? item.expenseDate)}</div>
                     </div>
-                    {(canOpenArtifact || canContinue || item.status === 'SUPERSEDED') && (
-                      <div className="flex flex-col gap-2 border-t border-gray-100 p-3">
-                        {canOpenArtifact && (
-                          <>
-                            <button type="button" className={cx(ghostClass, 'w-full')} disabled={previewLoadingId === item.evidenceId}
-                              onClick={() => void openIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}>
-                              {previewLoadingId === item.evidenceId ? t('expenses.loading', locale) : t('expenses.substitute_hub.open_document', locale)}
-                            </button>
-                            <button type="button" className={cx(ghostClass, 'w-full')}
-                              onClick={() => void downloadIssuedArtifact(item.expenseId, item.evidenceId, item.documentNumber)}>
-                              {t('expenses.substitute.download_pdf', locale)}
-                            </button>
-                          </>
-                        )}
-                        {canContinue && (
-                          <button type="button" className={cx(btnClass, 'w-full')} onClick={() => router.push(wizardHref(item.evidenceId))}>
-                            {t('expenses.substitute_hub.continue', locale)}
-                          </button>
-                        )}
-                        {item.status === 'SUPERSEDED' && (
-                          <button type="button" className={cx(ghostClass, 'w-full')} onClick={() => router.push(wizardHref(item.evidenceId))}>
-                            {t('expenses.substitute_hub.view_history', locale)}
-                          </button>
-                        )}
-                      </div>
-                    )}
+                    <div className="flex justify-end border-t border-gray-100 p-3">{actions(item)}</div>
                   </MangmeeCard>
                 );
               })}
@@ -428,18 +422,18 @@ export function SubstituteReceiptHubPage({
         </div>
       ) : null}
       </MangmeePage>
-      {paperPreview && previewTarget && <SubstitutePaperDocumentPreview key={paperPreview.previewChecksumSha256}
-        documentNumber={previewTarget.documentNumber} preview={paperPreview} onClose={closePreview} />}
-      {preview && <DocumentPreviewModal
-        source={preview}
-        closeLabel={t('expenses.close', locale)}
-        loadingLabel={t('expenses.loading', locale)}
-        errorLabel={t('expenses.substitute_wizard.document_not_ready', locale)}
-        retryLabel={t('expenses.substitute_wizard.retry', locale)}
-        openNewTabLabel={t('expenses.open_new_tab', locale)}
-        onClose={closePreview}
-        onRetry={previewTarget ? () => loadIssuedArtifactPreview(previewTarget) : undefined}
-      />}
+      {preview && <ReceiptPrintPreview key={`${preview.item.evidenceId}:${preview.data.previewChecksumSha256}`} target={preview} onClose={() => { closePreview(); setRefresh((value) => value + 1); }} />}
+      <Modal open={cancelTarget !== null} title={`ยกเลิกเอกสาร ${cancelTarget?.documentNumber ?? ''}`} onClose={() => setCancelTarget(null)} size="sm"
+        footer={<>
+          <button type="button" className={ghostClass} onClick={() => setCancelTarget(null)}>กลับ</button>
+          <button type="button" className={dangerClass} disabled={!cancelReason.trim() || cancelling} onClick={() => void confirmCancellation()}>ดำเนินการยกเลิก</button>
+        </>}>
+        <p className="mb-4 text-sm text-gray-600">เอกสารจะถูกยกเลิกและเก็บไว้ในประวัติ การยกเลิกเอกสารไม่ลบรายการค่าใช้จ่ายและไม่ย้อนรายการจ่ายเงิน</p>
+        <label className="block text-sm font-semibold text-gray-700">เหตุผลที่ยกเลิก <span className="text-error-700">*</span>
+          <textarea className={cx(inputClass, 'mt-2')} rows={3} maxLength={500} value={cancelReason} onChange={(event) => setCancelReason(sanitizeReasonInput(event.target.value))} />
+        </label>
+      </Modal>
+      {confirmDialog}
     </>
   );
 }

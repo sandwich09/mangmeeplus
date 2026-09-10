@@ -822,7 +822,7 @@ export class PrismaExpenseRepository {
           id: true,
           expenseId: true,
           documentNumber: true,
-          version: true, fundingSource: true, signatureMode: true, paperSubmissionJson: true, paperReviewedByUserId: true,
+          version: true, fundingSource: true, signatureMode: true, paperSubmissionJson: true, paperReviewedByUserId: true, correctionOfEvidenceId: true,
           status: true,
           paymentDate: true,
           payeeName: true,
@@ -837,6 +837,7 @@ export class PrismaExpenseRepository {
           updatedAt: true,
           expense: {
             select: {
+              status: true,
               expenseNumber: true,
               expenseDate: true,
               vendorNameSnapshot: true,

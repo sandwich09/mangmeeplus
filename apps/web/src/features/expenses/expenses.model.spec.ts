@@ -10,7 +10,7 @@ import {
   formatTaxId,
   taxIdDigits,
   aiGrandTotalValue,
-  canShowInlineSubstitutePreparation,
+  expenseSubstituteReceiptAction,
   substituteReceiptPreparationHref,
   deriveExpenseClassificationReviewState,
   expenseAiFieldProvenance,
@@ -235,22 +235,33 @@ describe('expenses.model', () => {
       ...checkBill,
       classification: { documentKind: 'RECEIPT' },
     }), false);
-    assert.equal(canShowInlineSubstitutePreparation(true, null), false);
-    assert.equal(canShowInlineSubstitutePreparation(false, null), false);
-    assert.equal(canShowInlineSubstitutePreparation(false, 'PREPARED'), true);
-    assert.equal(canShowInlineSubstitutePreparation(false, 'PAYER_CERTIFIED'), false);
-    assert.equal(canShowInlineSubstitutePreparation(false, 'ISSUED'), false);
-    assert.equal(canShowInlineSubstitutePreparation(false, 'SUPERSEDED'), false);
     const overridden = { ...checkBill, classificationResolution: {
       outcome: 'FINANCE_OVERRIDDEN_AS_EXPENSE', sourceDocumentType: 'RECEIPT', reason: 'checked original',
       acknowledged: true, resolvedByUserId: 'finance-1', resolvedAt: '2026-08-27T00:00:00.000Z',
     } };
     assert.equal(isBlockedCheckBillClassification(overridden), false, 'genuine finance correction remains available for normal receipt review');
-    assert.equal(canShowInlineSubstitutePreparation(false, null), false, 'an override must not reopen the old new-preparation form');
     assert.equal(substituteReceiptPreparationHref('co/1', 'exp 1', overridden),
       '/companies/co%2F1/expenses/substitute-receipts/new?expenseId=exp%201&route=check-bill');
     assert.equal(substituteReceiptPreparationHref('co1', 'exp1', { classification: { documentKind: 'RECEIPT' } }),
       '/companies/co1/expenses/substitute-receipts/new?expenseId=exp1');
+  });
+
+  it('opens the existing substitute receipt through every active status and only starts new after cancellation', () => {
+    for (const status of ['PREPARED', 'PAYER_CERTIFIED', 'ISSUED'] as const) {
+      assert.deepEqual(expenseSubstituteReceiptAction('co/1', 'exp 1', null, { id: 'src/1', status }), {
+        href: '/companies/co%2F1/expenses/substitute-receipts/src%2F1',
+        labelKey: status === 'ISSUED' ? 'expenses.substitute_hub.open_document' : 'expenses.substitute_hub.continue',
+      });
+    }
+    for (const evidence of [null, undefined, { id: 'old', status: 'SUPERSEDED' as const }]) {
+      assert.deepEqual(expenseSubstituteReceiptAction('co/1', 'exp 1', null, evidence), {
+        href: '/companies/co%2F1/expenses/substitute-receipts/new?expenseId=exp%201',
+        labelKey: 'expenses.no_receipt_start_substitute',
+      });
+      assert.equal(expenseSubstituteReceiptAction('co1', 'exp1', {
+        classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
+      }, evidence).href, '/companies/co1/expenses/substitute-receipts/new?expenseId=exp1&route=check-bill');
+    }
   });
 
   it('warns only when the AI and server grand totals differ by more than the reconciliation tolerance', () => {

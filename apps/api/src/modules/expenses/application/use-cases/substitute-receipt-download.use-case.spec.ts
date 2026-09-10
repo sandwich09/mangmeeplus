@@ -331,3 +331,77 @@ describe('R11 — the paper-route issued artifact', () => {
     assert.equal(result.fileName, 'SUB-202608-00001.pdf'.replace('SUB', 'SRC'));
   });
 });
+
+describe('hub printing follows the retained document state', () => {
+  const checksum = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  function currentUseCase(evidence: Record<string, unknown>, bytes: Buffer = cleanIssuedSvg) {
+    const repo = formRepo();
+    const originalFind = repo.findSubstituteEvidence;
+    repo.findSubstituteEvidence = async () => ({ ...await originalFind(), ...evidence });
+    repo.findSubstituteArtifactAttachment = mock.fn(async () => ({ bucket: 'bucket', objectKey: 'retained', mimeType: evidence.signatureMode === 'PAPER' ? 'application/pdf' : 'image/svg+xml' }));
+    const getExpense = { execute: mock.fn(async () => formExpense()) };
+    const storage = { getObject: mock.fn(async () => ({ bytes })) };
+    const audit = { log: mock.fn(async () => undefined) };
+    return { repo, getExpense, storage, audit, instance: new DownloadSubstituteReceiptPdfUseCase(getExpense as any, repo, storage as any, audit as any) };
+  }
+
+  it('prints a current unsigned online form with read access and no signing writes', async () => {
+    const { instance, repo, storage } = currentUseCase({ status: 'PREPARED' });
+    const result = await instance.execute(webCtx, 'expense-1', 'evidence-1');
+    await assertNoPageFooter(result.data, 'UNSIGNED');
+    assert.equal(repo.findByIdWithRelations.mock.callCount(), 1);
+    assert.equal(storage.getObject.mock.callCount(), 0);
+  });
+
+  it('prints the prepared blank paper form without adding signatures or a footer', async () => {
+    const { instance, storage } = currentUseCase({ status: 'PREPARED', signatureMode: 'PAPER', payerUserId: null, paperFormSnapshotJson: snapshot() });
+    const result = await instance.execute(webCtx, 'expense-1', 'evidence-1');
+    assert.match(result.fileName, /PAPER-FORM/);
+    await assertNoPageFooter(result.data);
+    assert.equal(storage.getObject.mock.callCount(), 0);
+  });
+
+  it('prints the actual online certified artifact awaiting approval and verifies its checksum', async () => {
+    const evidence = { status: 'PAYER_CERTIFIED', certifiedArtifactAttachmentId: 'signed', certifiedArtifactChecksumSha256: checksum(cleanIssuedSvg) };
+    const { instance, repo } = currentUseCase(evidence);
+    const result = await instance.execute(webCtx, 'expense-1', 'evidence-1');
+    await assertNoPageFooter(result.data, 'AWAITING APPROVAL');
+    assert.equal(repo.findByIdWithRelations.mock.callCount(), 0, 'must not rebuild signed content from current expense');
+    await assert.rejects(currentUseCase({ ...evidence, certifiedArtifactChecksumSha256: 'wrong' }).instance.execute(webCtx, 'expense-1', 'evidence-1'), /ไม่ตรง/);
+  });
+
+  it('prints all uploaded scan pages awaiting acceptance without inventing a reviewer or attestation', async () => {
+    const bytes = await scanPdf([[595, 842], [400, 600]]);
+    const evidence = { status: 'PREPARED', signatureMode: 'PAPER', paperSubmissionJson: { payer: { name: 'ผู้ลงนามจริง' } }, wetSignedScanAttachmentId: 'scan', wetSignedScanChecksumSha256: checksum(bytes) };
+    const { instance, repo } = currentUseCase(evidence, bytes);
+    const result = await instance.execute(webCtx, 'expense-1', 'evidence-1');
+    assert.equal((await PDFDocument.load(result.data)).getPageCount(), 2);
+    await assertNoPageFooter(result.data, 'AWAITING REVIEW');
+    assert.equal(repo.findByIdWithRelations.mock.callCount(), 0);
+    await assert.rejects(currentUseCase({ ...evidence, wetSignedScanChecksumSha256: 'wrong' }, bytes).instance.execute(webCtx, 'expense-1', 'evidence-1'), /ไม่ตรง/);
+  });
+
+  it('prints cancelled certified and prepared snapshots only from retained history', async () => {
+    for (const retained of [{ certifiedArtifactAttachmentId: 'signed', certifiedArtifactChecksumSha256: checksum(cleanIssuedSvg) }, { signatureMode: 'PAPER', payerUserId: null, paperFormSnapshotJson: snapshot() }]) {
+      const { instance, repo } = currentUseCase({ status: 'SUPERSEDED', ...retained });
+      await assertNoPageFooter((await instance.execute(webCtx, 'expense-1', 'evidence-1')).data, 'SUPERSEDED');
+      assert.equal(repo.findByIdWithRelations.mock.callCount(), 0);
+    }
+    const missing = currentUseCase({ status: 'SUPERSEDED' });
+    await assert.rejects(missing.instance.execute(webCtx, 'expense-1', 'evidence-1'), /ข้อมูลฉบับเดิมเพียงพอ/);
+    assert.equal(missing.repo.findByIdWithRelations.mock.callCount(), 0);
+  });
+
+  it('refuses inaccessible, stale unsigned, incomplete signed and missing issued documents', async () => {
+    const denied = currentUseCase({});
+    denied.getExpense.execute.mock.mockImplementation(async () => { throw new Error('access denied'); });
+    await assert.rejects(denied.instance.execute(webCtx, 'expense-1', 'evidence-1'), /access denied/);
+    assert.equal(denied.storage.getObject.mock.callCount(), 0);
+    const stale = currentUseCase({});
+    stale.repo.findByIdWithRelations.mock.mockImplementation(async () => formExpense(new Date(preparedAt.getTime() + 1)));
+    await assert.rejects(stale.instance.execute(webCtx, 'expense-1', 'evidence-1'), /changed after preparation/);
+    for (const status of ['ISSUED', 'PAYER_CERTIFIED']) await assert.rejects(currentUseCase({ status }).instance.execute(webCtx, 'expense-1', 'evidence-1'));
+    await assert.rejects(currentUseCase({ paperSubmissionJson: {}, signatureMode: 'PAPER' }).instance.execute(webCtx, 'expense-1', 'evidence-1'));
+    assert.equal(stale.audit.log.mock.callCount(), 0);
+  });
+});

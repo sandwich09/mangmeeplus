@@ -987,6 +987,8 @@ export type SignatureFillRecordSummary = {
 export type SubstituteReceiptFundingSource = 'COMPANY' | 'PERSONAL_ADVANCE';
 
 export type SubstituteReceiptListItem = {
+  /** State eligibility only; the mutation still checks current policy, claims and revision. */
+  canCancel?: boolean;
   signatureMode?: SubstituteReceiptSignatureMode;
   fundingSource?: SubstituteReceiptFundingSource | null;
   evidenceId: string;
