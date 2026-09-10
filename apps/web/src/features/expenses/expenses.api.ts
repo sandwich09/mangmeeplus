@@ -1,3 +1,4 @@
+import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
 import type {
   ExpenseSummary, ExpenseDetail, ExpenseCategorySummary, ExpenseStatus,
   SignatureAssetSummary, SharedEvidenceView, AccountantPackageResult,
@@ -306,7 +307,10 @@ export async function fetchAttachmentPreviewBlob(
 ): Promise<Blob> {
   if (expectedMimeType !== undefined) checkedPreviewMimeType(expectedMimeType);
   const { downloadUrl } = await getAttachmentDownloadUrl(companyId, attachmentId, { disposition: 'inline' });
-  return checkedPreviewBlob(await fetch(resolveUploadUrl(downloadUrl), { mode: 'cors', credentials: 'omit' }), expectedMimeType);
+  const blob = await checkedPreviewBlob(await fetch(resolveUploadUrl(downloadUrl), { mode: 'cors', credentials: 'omit' }), expectedMimeType);
+  return blob.type === 'image/svg+xml'
+    ? new Blob([removeSubstituteReceiptDisplayMetadata(await blob.text())], { type: blob.type })
+    : blob;
 }
 
 export async function markExpenseReady(companyId: string, expenseId: string): Promise<ExpenseSummary> {

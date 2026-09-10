@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptFooter } from './substitute-receipt.logic';
+import { buildSubstituteCertificationText, canonicalSnapshotHash, renderSubstituteReceiptSvg, thaiBahtText, withoutSubstituteReceiptPrintMetadata } from './substitute-receipt.logic';
 
 describe('substitute receipt evidence', () => {
-  it('removes only the former system footer from a derived receipt or attestation and preserves its source', () => {
+  it('removes only old system heading/footer metadata while preserving references and source bytes', () => {
     const notice = 'เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง';
-    const body = `<svg><text x="50" y="140">${notice}</text><text x="50" y="180">ผู้ตรวจรับ สมชาย</text>`;
-    const source = `${body}<text x="425" y="900" text-anchor="middle" font-size="12" fill="#555">${notice}</text></svg>`;
+    const body = `<svg><text x="50" y="120">เลขอ้างอิงรายการ: SRC-202609-00040</text><text x="50" y="140">${notice}</text><text x="50" y="180">ผู้ตรวจรับ สมชาย</text>`;
+    const source = `${body}<text x="425" y="76" text-anchor="middle">เลขที่ SRC-202609-00040 · version 1</text><text x="425" y="900" text-anchor="middle" font-size="12" fill="#555">${notice}</text></svg>`;
     const original = Buffer.from(source);
-    assert.equal(withoutSubstituteReceiptFooter(original).toString(), `${body}</svg>`);
+    assert.equal(withoutSubstituteReceiptPrintMetadata(original).toString(), `${body}</svg>`);
     assert.equal(original.toString(), source);
   });
 

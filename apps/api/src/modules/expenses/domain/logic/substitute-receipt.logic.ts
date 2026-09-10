@@ -1,14 +1,9 @@
+import { removeSubstituteReceiptDisplayMetadata } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
 import { formatThaiExportDate } from '../../../../common/export/thai-date.logic';
 
 export const SUBSTITUTE_RECEIPT_TITLE = 'ใบรับรองแทนใบเสร็จรับเงิน';
 
-/** R8: the line that keeps a printable pre-signature sheet from reading as an issued document. It
- *  is rendered into the SVG, not stamped onto the PDF, because the PDF stamp uses a Latin-only
- *  standard font — Thai has to come from the same raster as the rest of the sheet. */
-export const SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE = 'เอกสารนี้ยังไม่สมบูรณ์จนกว่าจะมีลายเซ็นผู้จ่ายและผู้อนุมัติ';
-
-/** R11: the system's own page behind the photographed, hand-signed sheet. */
 export const SUBSTITUTE_RECEIPT_ATTESTATION_TITLE = 'หน้ารับรองโดยระบบ (แนบท้ายฟอร์มที่ลงนามด้วยมือ)';
 
 const THAI_DIGITS = ['', 'หนึ่ง', 'สอง', 'สาม', 'สี่', 'ห้า', 'หก', 'เจ็ด', 'แปด', 'เก้า'];
@@ -143,9 +138,8 @@ function sortJsonKeys(value: unknown): unknown {
   );
 }
 
-/** `unsignedForm` renders the R8 `แบบฟอร์มรอลงนาม` variant: the same sheet, with the document number
- *  printed large enough to read back by eye (D9) and the incompleteness notice at the foot. It
- *  never applies to a signed artifact, so no issued document's layout changes. */
+/** Online and paper forms share the clean document heading. Status stamps belong to the PDF
+ * composer; document identity/version remain in the snapshot and reference fields. */
 export function renderSubstituteReceiptSvg(
   snapshot: SubstituteReceiptSnapshot,
   payerSignatureDataUrl?: string,
@@ -228,12 +222,6 @@ export function renderSubstituteReceiptSvg(
     ...evidenceBreaks,
     signaturesStart,
   ])].filter((value) => value > 0 && value < height).sort((left, right) => left - right);
-  // D9 reads this number back off a photographed sheet, so on the unsigned form it prints at title
-  // size instead of the grey sub-heading the signed artifact uses.
-  const documentNumberLine = `เลขที่ ${snapshot.documentNumber} · version ${snapshot.version}`;
-  const documentNumberAttributes = options.unsignedForm
-    ? ` font-size="24" font-weight="700" fill="#111"${fitToWidth(documentNumberLine, 700, 24)}`
-    : ' fill="#555"';
   const payerSignatureY = signaturesStart + 8;
   const approverSignatureY = signaturesStart + 8;
   const payerSignatureBlock = payerSignatureDataUrl
@@ -257,7 +245,6 @@ export function renderSubstituteReceiptSvg(
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
-    ${options.paperForm ? '' : `<text x="425" y="${options.unsignedForm ? 82 : 76}" text-anchor="middle"${documentNumberAttributes}>${xml(documentNumberLine)}</text>`}
     <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
     <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
@@ -299,7 +286,6 @@ export function renderSubstituteReceiptSvg(
     ${approverBlock}
     `}
     ${selfSigned ? `<text x="425" y="${signaturesStart + 174}" text-anchor="middle" font-size="13" fill="#555">ลงนามโดยเจ้าของกิจการในฐานะผู้จ่ายเงินและผู้อนุมัติ</text>` : ''}
-    ${options.unsignedForm && !options.paperForm ? `<text x="425" y="${height - 24}" text-anchor="middle" font-size="14" font-weight="700" fill="#c62828">${SUBSTITUTE_RECEIPT_UNSIGNED_NOTICE}</text>` : ''}
   </g>
 </svg>`;
   return Buffer.from(svg, 'utf8');
@@ -323,7 +309,7 @@ export function renderSubstituteReceiptAttestationSvg(
 ): Buffer {
   const title = snapshot.paperReview ? 'บันทึกตรวจรับฉบับลงนามบนกระดาษ' : SUBSTITUTE_RECEIPT_ATTESTATION_TITLE;
   const facts: Array<[string, string]> = [
-    ['เลขที่เอกสาร', snapshot.paperReview ? snapshot.documentNumber : `${snapshot.documentNumber} · version ${snapshot.version}`],
+    ['เลขที่เอกสาร', snapshot.documentNumber],
     ['บริษัท', snapshot.company.name],
     ...(snapshot.fundingSource ? [[snapshot.paymentStatement ? 'การชำระเงิน' : 'แหล่งเงิน', snapshot.paymentStatement ?? (snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')] as [string, string]] : []),
     ['สาขา', snapshot.company.branchName ?? 'สำนักงานใหญ่'],
@@ -390,12 +376,9 @@ export function renderSubstituteReceiptAttestationSvg(
 </svg>`, 'utf8');
 }
 
-/** Remove only the former system footer from a derived printout; retain the stored SVG unchanged. */
-export function withoutSubstituteReceiptFooter(svg: Buffer): Buffer {
-  return Buffer.from(svg.toString('utf8').replace(
-    /<text x="425" y="\d+" text-anchor="middle" font-size="12" fill="#555">เอกสารนี้เป็นหลักฐานประกอบรายจ่ายภายใน มิใช่ใบกำกับภาษี และไม่ก่อสิทธิภาษีซื้อโดยลำพัง<\/text>/u,
-    '',
-  ), 'utf8');
+/** Retain the stored SVG unchanged; remove only former system display metadata in derived views. */
+export function withoutSubstituteReceiptPrintMetadata(svg: Buffer): Buffer {
+  return Buffer.from(removeSubstituteReceiptDisplayMetadata(svg.toString('utf8')), 'utf8');
 }
 
 export function wrapText(value: unknown, maxWidth: number, fontSize?: number): string[] {

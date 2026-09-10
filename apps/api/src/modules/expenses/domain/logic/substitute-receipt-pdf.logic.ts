@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { dirname } from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFPage } from 'pdf-lib';
 import sharp from 'sharp';
-import { withoutSubstituteReceiptFooter } from './substitute-receipt.logic';
+import { withoutSubstituteReceiptPrintMetadata } from './substitute-receipt.logic';
 import { cancelledDocumentReasonBox, cancelledDocumentWatermark } from '../../../../common/documents/cancelled-document';
 
 // Keep the native ESM import intact in the API's CommonJS build, as in the bank PDF reader.
@@ -246,7 +246,7 @@ export async function renderSubstituteReceiptPaperArtifactPdf(
   // pages and the attestation carry one identical mark instead of two sizes of the same word.
   if (attestationSvg) {
     const attestation = await PDFDocument.load(
-      await renderSubstituteReceiptPdf(options.omitPageFooter ? withoutSubstituteReceiptFooter(attestationSvg) : attestationSvg, documentNumber, { omitPageFooter: true }),
+      await renderSubstituteReceiptPdf(options.omitPageFooter ? withoutSubstituteReceiptPrintMetadata(attestationSvg) : attestationSvg, documentNumber, { omitPageFooter: true }),
     );
     const attestationPages = await pdf.copyPages(attestation, attestation.getPageIndices());
     for (const page of attestationPages) pdf.addPage(page);
@@ -348,8 +348,9 @@ export async function renderSubstituteReceiptPdf(
   }
   // Probe the vector's own size first (72 DPI = its SVG units) so the production density can be
   // fitted to the pixel budget instead of allocating past it and throwing.
-  const intrinsic = await sharp(svg, { density: 72, limitInputPixels: false }).metadata();
-  const raster = sharp(svg, {
+  const printSvg = withoutSubstituteReceiptPrintMetadata(svg);
+  const intrinsic = await sharp(printSvg, { density: 72, limitInputPixels: false }).metadata();
+  const raster = sharp(printSvg, {
     density: rasterDensity(intrinsic.width ?? 0, intrinsic.height ?? 0),
     limitInputPixels: false,
   });
