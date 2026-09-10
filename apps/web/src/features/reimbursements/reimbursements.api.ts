@@ -129,7 +129,7 @@ export function voidReimbursementPayment(companyId: string, id: string, paymentI
 
 /** Renders the claim form on demand; the SVG data URL is shown in the viewer and printed by the browser. */
 export function previewReimbursementClaimForm(companyId: string, id: string) {
-  return apiFetch<{ svgDataUrl: string; checksumSha256: string }>(`${base(companyId)}/${id}/claim-form/preview`, { method: 'POST', body: '{}' });
+  return apiFetch<{ svgDataUrl: string; pageSvgDataUrls?: string[]; checksumSha256: string }>(`${base(companyId)}/${id}/claim-form/preview`, { method: 'POST', body: '{}' });
 }
 
 // ---- Claim-form signatures + signed copies ----

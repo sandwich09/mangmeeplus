@@ -3,7 +3,7 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import sharp from 'sharp';
 import {
@@ -45,6 +45,20 @@ async function extractPageTexts(bytes: Buffer): Promise<string[]> {
     return texts;
   } finally {
     await task.destroy();
+  }
+}
+
+async function assertCancelledWatermarkOnEveryPage(bytes: Buffer) {
+  for (const page of await renderSubstitutePaperPreviewPages(bytes)) {
+    const { data, info } = await sharp(Buffer.from(page.split(',')[1]!, 'base64')).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    let redPixels = 0;
+    for (let y = Math.floor(info.height * 0.25); y < info.height * 0.75; y++) {
+      for (let x = Math.floor(info.width * 0.2); x < info.width * 0.8; x++) {
+        const i = (y * info.width + x) * info.channels;
+        if (data[i]! > data[i + 1]! + 12 && data[i]! > data[i + 2]! + 12) redPixels++;
+      }
+    }
+    assert.ok(redPixels > 300, `central cancellation watermark must survive PDF rendering (${redPixels} red pixels)`);
   }
 }
 
@@ -102,8 +116,7 @@ describe('substitute receipt PDF', () => {
     const bytes = await renderSubstituteReceiptPdf(thaiSvg, 'SRC-EXP-0142-V1', { stateStamp: 'VOID' });
     const pdf = await PDFDocument.load(bytes);
     assert.match(pdf.getSubject() ?? '', /State: VOID/);
-    const pageTexts = await extractPageTexts(bytes);
-    pageTexts.forEach((text) => assert.match(text, /VOID/));
+    await assertCancelledWatermarkOnEveryPage(bytes);
   });
 
   it('rejects an implausibly blank certificate', async () => {
@@ -319,27 +332,19 @@ describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
     }
   });
 
-  it('stamps one size of one word across every page, inside the narrowest page', async () => {
+  it('marks every scan and attestation page and appends the reason without covering the scan', async () => {
     const plain = await renderSubstituteReceiptPaperArtifactPdf(
       { bytes: await photo('png'), mimeType: 'image/png' }, thaiSvg, 'SUB-202608-00007',
     );
-    // SUPERSEDED is the long word: at the old 0.62-em guess it printed wider than the page.
     const superseded = await renderSubstituteReceiptPaperArtifactPdf(
-      { bytes: await photo('png'), mimeType: 'image/png' }, thaiSvg, 'SUB-202608-00007', { stateStamp: 'SUPERSEDED' },
+      { bytes: await photo('png'), mimeType: 'image/png' }, thaiSvg, 'SUB-202608-00007', { stateStamp: 'SUPERSEDED', cancellationReason: 'รายการซ้ำกับเอกสารฉบับก่อน' },
     );
     const texts = await extractPageTexts(superseded);
-    assert.equal(texts.length, 2);
-    for (const [index, text] of texts.entries()) {
-      assert.match(text, /SUPERSEDED/, `page ${index + 1} carries the state`);
-    }
+    assert.equal(texts.length, 3, 'scan, attestation, then reason');
+    await assertCancelledWatermarkOnEveryPage(superseded);
     assert.doesNotMatch((await extractPageTexts(plain))[0] ?? '', /SUPERSEDED/);
     assert.match((await PDFDocument.load(superseded)).getSubject() ?? '', /State: SUPERSEDED/);
 
-    // One size, and it fits: measured from the font, capped, and chosen from the narrowest page.
-    const font = await (await PDFDocument.create()).embedFont(StandardFonts.Helvetica);
-    const pages = (await PDFDocument.load(superseded)).getPages();
-    const narrowest = Math.min(...pages.map((page) => page.getSize().width));
-    assert.ok(font.widthOfTextAtSize('SUPERSEDED', 96) > narrowest, 'the cap alone would overflow, so fitting is what saves it');
   });
 
   it('numbers every page of the composed artifact and names the document on it', async () => {
@@ -366,12 +371,12 @@ describe('renderSubstituteReceiptPaperArtifactPdf (R11)', () => {
         { omitPageFooter: true, stateStamp },
       );
       const texts = await extractPageTexts(data);
-      assert.equal(texts.length, 2);
+      assert.equal(texts.length, stateStamp ? 3 : 2);
       assert.match(texts[0]!, /ORIGINAL SCAN FOOTER/);
       for (const text of texts) {
         assert.doesNotMatch(text, /ID:|Page \d+\/\d+|SHA256:/);
-        if (stateStamp) assert.match(text, new RegExp(stateStamp));
       }
+      if (stateStamp) await assertCancelledWatermarkOnEveryPage(data);
     }
   });
 

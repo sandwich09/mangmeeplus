@@ -6,6 +6,7 @@
  * substitute-receipt renderer on purpose — the two documents live in different
  * modules and must not import each other's domain logic.
  */
+import { cancelledDocumentReasonBox, cancelledDocumentReasonBoxes, cancelledDocumentWatermark } from '../../../../common/documents/cancelled-document';
 
 export const REIMBURSEMENT_CLAIM_FORM_TITLE_EN = 'REIMBURSEMENT CLAIM FORM';
 export const REIMBURSEMENT_CLAIM_FORM_TITLE_TH = 'ใบเบิกค่าใช้จ่าย';
@@ -59,6 +60,7 @@ export type ReimbursementClaimFormSnapshot = {
   missingReceiptReason: string | null;
   /** Printed when policy legitimately skipped the human approval step. */
   approvalDecisionNote?: string | null;
+  cancellation?: { reason: string | null };
   /**
    * null = the step has not happened, so the form prints a blank ruled line for
    * wet ink instead of inventing a signer.
@@ -144,9 +146,11 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
   const reasonY = reasonTitleY + 26;
 
   const contentEnd = reasonY + reasonLines.length * 22 + 40;
-  const height = Math.max(MIN_PAGE_HEIGHT, contentEnd + SIGNATURE_BLOCK_HEIGHT);
+  const cancellationBox = snapshot.cancellation ? cancelledDocumentReasonBox(snapshot.cancellation.reason) : null;
+  const cancellationHeight = cancellationBox ? cancellationBox.height + 24 : 0;
+  const height = Math.max(MIN_PAGE_HEIGHT, contentEnd + SIGNATURE_BLOCK_HEIGHT + cancellationHeight);
   // Signature row sits at the foot of the sheet like the paper form, whatever the body length.
-  const signaturesTop = height - SIGNATURE_BLOCK_HEIGHT;
+  const signaturesTop = height - SIGNATURE_BLOCK_HEIGHT - cancellationHeight;
   const signatures = [
     ['ผู้เบิก', snapshot.signers.requester],
     ['ผู้อนุมัติ', snapshot.signers.approver],
@@ -154,19 +158,11 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     ['ฝ่ายการเงิน', snapshot.signers.finance],
   ].map(([label, signer], index) => signatureBlock(45 + index * 190, signaturesTop, label as string, signer as ClaimFormSigner | null)).join('');
 
-  const branchName = snapshot.company.branchName?.trim() || 'สำนักงานใหญ่';
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${height}" viewBox="0 0 ${PAGE_WIDTH} ${height}" role="img" aria-label="${xml(REIMBURSEMENT_CLAIM_FORM_TITLE_TH)}">
   <rect width="${PAGE_WIDTH}" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
-    <text x="425" y="48" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="1">${REIMBURSEMENT_CLAIM_FORM_TITLE_EN}</text>
-    <text x="425" y="80" text-anchor="middle" font-size="25" font-weight="700">${REIMBURSEMENT_CLAIM_FORM_TITLE_TH}</text>
-    <text x="425" y="110" text-anchor="middle" font-size="17" font-weight="600"${fitToWidth(snapshot.company.name, SHEET_WIDTH, 17)}>${xml(snapshot.company.name)}</text>
-    <text x="425" y="134" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(`สาขา: ${branchName} · เลขประจำตัวผู้เสียภาษี: ${snapshot.company.taxId ?? '-'}`, SHEET_WIDTH, 13)}>สาขา: ${xml(branchName)} · เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
-    <line x1="45" y1="152" x2="805" y2="152" stroke="#444" stroke-width="1.2"/>
-    <text x="45" y="180">เลขที่เอกสาร: ${xml(snapshot.requestNo)}</text>
-    <text x="805" y="180" text-anchor="end">วันที่: ${xml(snapshot.submittedAt ? formatDate(snapshot.submittedAt) : '-')}</text>
-    <text x="45" y="202" font-size="13" fill="#555"${fitToWidth(`ผู้ขอเบิก: ${snapshot.requesterName}`, SHEET_WIDTH, 13)}>ผู้ขอเบิก: ${xml(snapshot.requesterName)}</text>
+    ${claimFormHeader(snapshot)}
     <g fill="none" stroke="#444" stroke-width="1.2">
       <rect x="45" y="${tableTop}" width="760" height="${tableBottom - tableTop}"/>
       <line x1="45" y1="${tableTop + headerHeight}" x2="805" y2="${tableTop + headerHeight}"/>
@@ -196,8 +192,115 @@ export function renderReimbursementClaimFormSvg(snapshot: ReimbursementClaimForm
     <text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ${snapshot.approvalDecisionNote ? ` — ${xml(snapshot.approvalDecisionNote)}` : ''}</text>
     ${signatures}
   </g>
+  ${cancellationBox ? cancellationBox.svg.replace('<svg ', `<svg x="45" y="${height - cancellationHeight}" `) : ''}
+  ${snapshot.cancellation ? cancelledDocumentWatermark(PAGE_WIDTH, height) : ''}
 </svg>`;
   return Buffer.from(svg, 'utf8');
+}
+
+function claimFormHeader(snapshot: ReimbursementClaimFormSnapshot): string {
+  const branchName = snapshot.company.branchName?.trim() || 'สำนักงานใหญ่';
+  return `    <text x="425" y="48" text-anchor="middle" font-size="20" font-weight="700" letter-spacing="1">${REIMBURSEMENT_CLAIM_FORM_TITLE_EN}</text>
+    <text x="425" y="80" text-anchor="middle" font-size="25" font-weight="700">${REIMBURSEMENT_CLAIM_FORM_TITLE_TH}</text>
+    <text x="425" y="110" text-anchor="middle" font-size="17" font-weight="600"${fitToWidth(snapshot.company.name, SHEET_WIDTH, 17)}>${xml(snapshot.company.name)}</text>
+    <text x="425" y="134" text-anchor="middle" font-size="13" fill="#555"${fitToWidth(`สาขา: ${branchName} · เลขประจำตัวผู้เสียภาษี: ${snapshot.company.taxId ?? '-'}`, SHEET_WIDTH, 13)}>สาขา: ${xml(branchName)} · เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
+    <line x1="45" y1="152" x2="805" y2="152" stroke="#444" stroke-width="1.2"/>
+    <text x="45" y="180">เลขที่เอกสาร: ${xml(snapshot.requestNo)}</text>
+    <text x="805" y="180" text-anchor="end">วันที่: ${xml(snapshot.submittedAt ? formatDate(snapshot.submittedAt) : '-')}</text>
+    <text x="45" y="202" font-size="13" fill="#555"${fitToWidth(`ผู้ขอเบิก: ${snapshot.requesterName}`, SHEET_WIDTH, 13)}>ผู้ขอเบิก: ${xml(snapshot.requesterName)}</text>
+`;
+}
+
+/** Fixed A4 pages for preview, printing and PDF export. The legacy tall SVG above remains in the
+ * response for older clients; monetary facts and authorization are identical in both renderings. */
+export function renderReimbursementClaimFormPages(snapshot: ReimbursementClaimFormSnapshot): Buffer[] {
+  const bottom = MIN_PAGE_HEIGHT - 24;
+  const top = 218;
+  const pages: string[][] = [[]];
+  let page = pages[0]!;
+  let y = top;
+  const nextPage = () => { page = []; pages.push(page); y = top; };
+  const ensure = (height: number) => { if (y + height > bottom) nextPage(); };
+  const tableHeading = () => {
+    page.push(`<rect x="45" y="${y}" width="760" height="36" fill="#f7f7f7" stroke="#444"/>
+      ${[['70', 'ลำดับ'], ['148', 'วันที่'], ['340', 'รายการ'], ['568', 'วัตถุประสงค์'], ['730', 'จำนวนเงิน (฿)']].map(([x, label]) => `<text x="${x}" y="${y + 24}" text-anchor="middle" font-weight="600">${label}</text>`).join('')}`);
+    y += 36;
+  };
+  tableHeading();
+  for (const line of [...snapshot.lines].sort((a, b) => a.lineNo - b.lineNo)) {
+    const descriptions = wrapText([line.description, line.sourceReference].filter(Boolean).join(' · '), DESCRIPTION_WIDTH);
+    const purposes = wrapText(line.purpose, PURPOSE_WIDTH);
+    const count = Math.max(descriptions.length, purposes.length);
+    const fullHeight = Math.max(34, count * 20 + 12);
+    // Move an ordinary row intact; only rows taller than a fresh page are split into continuations.
+    if (y + fullHeight > bottom && y > top + 36) { nextPage(); tableHeading(); }
+    for (let offset = 0; offset < count;) {
+      if (bottom - y < 34) { nextPage(); tableHeading(); }
+      const take = Math.min(count - offset, Math.floor((bottom - y - 12) / 20));
+      const height = Math.max(34, take * 20 + 12);
+      const last = offset + take === count;
+      page.push(`<g data-claim-row="${line.lineNo}" data-row-continuation="${offset > 0}">
+        <rect x="45" y="${y}" width="760" height="${height}" fill="none" stroke="#444"/>
+        ${[95, 200, 480, 655].map((x) => `<line x1="${x}" y1="${y}" x2="${x}" y2="${y + height}" stroke="#444"/>`).join('')}
+        <text x="70" y="${y + 23}" text-anchor="middle"${fitToWidth(`${line.lineNo}${offset ? ' (ต่อ)' : ''}`, 40)}>${line.lineNo}${offset ? ' (ต่อ)' : ''}</text>
+        <text x="148" y="${y + 23}" text-anchor="middle">${xml(formatDate(line.incurredDate))}</text>
+        ${multilineText(208, y + 23, descriptions.slice(offset, offset + take), 20, DESCRIPTION_WIDTH)}
+        ${multilineText(488, y + 23, purposes.slice(offset, offset + take), 20, PURPOSE_WIDTH)}
+        ${last ? `<text data-claim-amount="${line.lineNo}" x="795" y="${y + 23}" text-anchor="end">${money(line.amount)}</text>` : ''}
+      </g>`);
+      y += height;
+      offset += take;
+      if (!last) { nextPage(); tableHeading(); }
+    }
+  }
+  ensure(80);
+  page.push(`<g data-claim-total="true"><rect x="45" y="${y}" width="760" height="36" fill="none" stroke="#444"/>
+    <text x="645" y="${y + 24}" text-anchor="end" font-weight="700">รวมเป็นเงิน</text>
+    <text x="795" y="${y + 24}" text-anchor="end" font-weight="700">${money(snapshot.totalAmount)}</text>
+    <text x="45" y="${y + 66}"${fitToWidth(`จำนวนเงินรวม (ตัวอักษร): ${thaiBahtText(snapshot.totalAmount)}`, SHEET_WIDTH)}>จำนวนเงินรวม (ตัวอักษร): ${xml(thaiBahtText(snapshot.totalAmount))}</text></g>`);
+  y += 100;
+  ensure(64);
+  page.push(`<text x="45" y="${y}" font-weight="700">เอกสารแนบ</text>
+    ${checkbox(52, y + 28, snapshot.hasReceiptEvidence, 'ใบเสร็จรับเงิน')}
+    ${checkbox(232, y + 28, false, 'ใบกำกับภาษี')}
+    ${checkbox(392, y + 28, false, 'หลักฐานการชำระเงิน')}
+    ${checkbox(600, y + 28, false, 'อื่น ๆ ______________')}`);
+  y += 64;
+  const paragraph = (title: string, text: string) => {
+    const lines = wrapText(text, 720);
+    for (let offset = 0; offset < lines.length;) {
+      ensure(60);
+      if (y === top) y += 20;
+      const take = Math.min(lines.length - offset, Math.floor((bottom - y - 34) / 22));
+      page.push(`<text x="45" y="${y}" font-weight="700">${xml(title)}${offset ? ' (ต่อ)' : ''}</text>${multilineText(52, y + 26, lines.slice(offset, offset + take), 22, 720)}`);
+      y += 34 + take * 22;
+      offset += take;
+      if (offset < lines.length) nextPage();
+    }
+  };
+  if (!snapshot.hasReceiptEvidence && snapshot.missingReceiptReason?.trim()) paragraph('เหตุผลที่ไม่มีใบเสร็จ', snapshot.missingReceiptReason);
+  paragraph('เหตุผลในการเบิก', snapshot.reason);
+
+  const boxes = snapshot.cancellation ? cancelledDocumentReasonBoxes(snapshot.cancellation.reason, bottom - top) : [];
+  const boxSpace = boxes.length === 1 ? boxes[0]!.height + 24 : 0;
+  ensure(200);
+  const signaturesTop = y + 200 + boxSpace <= bottom ? bottom - 150 - boxSpace : bottom - 150;
+  page.push(`<g data-claim-signatures="true"><text x="45" y="${signaturesTop - 30}" font-weight="700">การอนุมัติ${snapshot.approvalDecisionNote ? ` — ${xml(snapshot.approvalDecisionNote)}` : ''}</text>
+    ${[['ผู้เบิก', snapshot.signers.requester], ['ผู้อนุมัติ', snapshot.signers.approver], ['ฝ่ายบัญชี', snapshot.signers.accounting], ['ฝ่ายการเงิน', snapshot.signers.finance]].map(([label, signer], index) => signatureBlock(45 + index * 190, signaturesTop, label as string, signer as ClaimFormSigner | null)).join('')}</g>`);
+  y = signaturesTop + 150;
+  for (const box of boxes) {
+    ensure(box.height);
+    page.push(box.svg.replace('<svg ', `<svg data-cancellation-reason="true" x="45" y="${bottom - box.height}" `));
+    y = bottom;
+  }
+
+  const header = claimFormHeader(snapshot);
+  return pages.map((content, index) => Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="850" height="1202" viewBox="0 0 850 1202" role="img" aria-label="${REIMBURSEMENT_CLAIM_FORM_TITLE_TH} หน้า ${index + 1}">
+    <rect width="850" height="1202" fill="#fff"/>
+    <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
+      ${header}<text x="805" y="24" text-anchor="end" font-size="12" fill="#555">หน้า ${index + 1} / ${pages.length}</text>${content.join('')}
+    </g>${snapshot.cancellation ? cancelledDocumentWatermark(PAGE_WIDTH, MIN_PAGE_HEIGHT) : ''}
+  </svg>`, 'utf8'));
 }
 
 /** Role label, wet-ink space, ลงชื่อ ruled line, name line, date line — filled only when the step happened. */
