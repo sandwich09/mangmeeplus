@@ -1,6 +1,6 @@
 # Agent Memory: Substitute receipt entry and permission layout
 
-Status: implemented and verified locally; ready for user review. Follow-up is a local checkpoint, not pushed or merged.
+Status: implemented and verified locally; owner authorized merging this checkpoint with the receipt hub actions into develop/main on 2026-09-10.
 Owner: /root
 Scope: unify all expense-review substitute receipt entry points with the canonical wizard; fix overflowing role cards in Settings → Permissions.
 Decisions:
@@ -22,7 +22,7 @@ Verification:
 - Expense browser check: NEW, PAPER_PREPARED, PAPER_UPLOADED, DIGITAL_PREPARED, PAYER_CERTIFIED, ISSUED, SUPERSEDED routes; paper certifier name; cancelled-history/new links; dirty classification blocks navigation until restored; 390px summary card stays within viewport; empty-viewer navigation runs the existing draft-save boundary. Scenario GET responses and draft PATCH responses were mocked over the local fixture; no business writes reached the API, no new expenses/payments/signatures/approvals/cancellations.
 - Scoped `git diff --check` passed. No package.json, backend, database, permission rules or financial effects changed.
 - Local web on 127.0.0.1:3000 and API on 127.0.0.1:3001 restarted with `/tmp/substitute-local-run.py`, explicit local-only environment and existing review database.
-Next: user reviews local expense entry and Settings → Permissions. No new push, merge or deployment performed for this follow-up.
+Next: publish the reviewed checkpoint with the receipt hub action feature. No deployment requested; automatic CI runs on the scoped PRs.
 
 ## Final current-develop checkpoint
 
