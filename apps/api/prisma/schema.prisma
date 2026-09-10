@@ -2726,6 +2726,7 @@ enum SubstituteReceiptFundingSource {
 }
 
 model ExpenseSubstituteReceiptEvidence {
+  revisionOfEvidenceId            String?
   correctionOfEvidenceId          String?
   correctionReason                String?
   fundingSource                   SubstituteReceiptFundingSource?

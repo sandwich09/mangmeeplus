@@ -501,3 +501,14 @@ test('source edits select the current internal revision of the same document onl
   assert.equal(currentSubstituteRevision([old, unrelated], old), old);
   assert.equal(currentSubstituteRevision([current, old], current), current);
 });
+
+
+test('old links follow automatic month revisions including a return to the original number', async () => {
+  const { currentSubstituteRevision } = await import('./substitute-receipt-wizard.model');
+  const september = { id: 'sep', documentNumber: 'SRC-202609-00001', version: 1, status: 'SUPERSEDED' };
+  const august = { id: 'aug', documentNumber: 'SRC-202608-00001', version: 2, status: 'SUPERSEDED', revisionOfEvidenceId: 'sep' };
+  const returned = { id: 'back', documentNumber: september.documentNumber, version: 3, status: 'PREPARED', revisionOfEvidenceId: 'aug' };
+  const other = { id: 'other', documentNumber: 'SRC-202609-00002', version: 4, status: 'PREPARED' };
+  for (const old of [september, august]) assert.equal(currentSubstituteRevision([other, returned, august, september], old), returned);
+  assert.equal(currentSubstituteRevision([other, { ...returned, status: 'SUPERSEDED' }, august, september], september), september);
+});

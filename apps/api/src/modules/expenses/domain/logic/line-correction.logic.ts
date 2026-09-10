@@ -219,12 +219,12 @@ export const LINE_NOTE_PURPOSE_PREFIX = 'วัตถุประสงค์: '
  * answer must REPLACE the first rather than stack beside it. Hence its own segment, rewritten in
  * place, with everything else (provenance first) untouched.
  */
-export function withPurposeNote(existing: string | null | undefined, purpose: string): string {
+export function withPurposeNote(existing: string | null | undefined, purpose: string, maxChars = LINE_NOTE_MAX_CHARS): string {
   const segment = `${LINE_NOTE_PURPOSE_PREFIX}${(purpose ?? '').trim()}`;
   const kept = (existing ?? '').split(LINE_NOTE_SEPARATOR)
     .map((part) => part.trim())
-    .filter((part) => part.length > 0 && !part.startsWith(LINE_NOTE_PURPOSE_PREFIX));
-  return [...kept, segment].join(LINE_NOTE_SEPARATOR).slice(0, LINE_NOTE_MAX_CHARS);
+    .filter((part) => part.length > 0 && !part.startsWith(LINE_NOTE_PURPOSE_PREFIX.trimEnd()));
+  return [...kept, segment].join(LINE_NOTE_SEPARATOR).slice(0, maxChars);
 }
 
 /** Amount lives on the lines, and `UpdateExpenseDraftUseCase` replaces the whole line set — so a

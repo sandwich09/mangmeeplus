@@ -1033,6 +1033,7 @@ export type SubstituteReceiptListResult = {
 
 export type SubstituteReceiptEvidenceSummary = {
   correctionOfEvidenceId?: string | null;
+  revisionOfEvidenceId?: string | null;
   correctionReason?: string | null;
   fundingSource?: SubstituteReceiptFundingSource | null;
   id: string;
@@ -1149,6 +1150,12 @@ export type GenerateSubstituteReceiptInput = {
   continuationId?: string;
   note?: string;
 };
+
+/** Edit incomplete certificate facts; payment month selects its owned number, funding and signing identities stay fixed. */
+export type AmendSubstituteReceiptInput = Pick<GenerateSubstituteReceiptInput,
+  'reasonCode' | 'missingReceiptReason' | 'businessPurpose' | 'payeeName' | 'payeeAddress' | 'payeeTaxId'
+  | 'paymentEvidenceAttachmentIds' | 'supportingAttachmentIds' | 'paymentDate' | 'paymentMethod'
+  | 'expectedExpenseUpdatedAt'> & { expectedEvidenceUpdatedAt: string; paymentDate: string; paymentMethod: ExpensePaymentMethod };
 
 export type LineSubstituteReceiptPrefill = {
   workflowId: string;

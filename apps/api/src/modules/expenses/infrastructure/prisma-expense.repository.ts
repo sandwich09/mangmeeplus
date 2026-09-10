@@ -1,7 +1,7 @@
-import { syncSubstituteAfterExpenseEdit, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
+import { reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
 import { lockExpenseFunding, assertFundingMutation } from './substitute-funding.guard';
-import { assertFullSubstitutePayment } from '../domain/logic/substitute-funding.logic';
+import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../domain/logic/substitute-funding.logic';
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
@@ -273,6 +273,7 @@ export function toSubstituteEvidenceSummary(row: SubstituteReceiptEvidenceRecord
     id: row.id,
     expenseId: row.expenseId,
     fundingSource: row.fundingSource ?? null,
+    revisionOfEvidenceId: row.revisionOfEvidenceId ?? null,
     correctionOfEvidenceId: row.correctionOfEvidenceId ?? null, correctionReason: row.correctionReason ?? null,
     version: row.version,
     status: row.status,
@@ -956,7 +957,7 @@ export class PrismaExpenseRepository {
       finally { if (refreshSubstituteEvidence) this.reviewRefreshTransactions.delete(tx); }
       if (refreshSubstituteEvidence && beforeReview) {
         const afterReview = await tx.expenseRecord.findFirstOrThrow({ where: { id, companyId }, include: { lines: { orderBy: { lineNumber: 'asc' } } } });
-        const refreshed = await syncSubstituteAfterExpenseEdit(tx, beforeReview, afterReview, rest.updatedByUserId);
+        const refreshed = await syncSubstituteAfterExpenseEdit(tx, beforeReview, afterReview, rest.updatedByUserId, this.documentNumbers);
         if (refreshed) await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId: rest.updatedByUserId,
           action: 'expense.substitute_receipt.source_refreshed', targetType: 'expense_substitute_receipt', targetId: refreshed.evidenceId,
           requestId: refreshSubstituteEvidence.requestId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { expenseId: id, ...refreshed } }, tx);
@@ -1397,15 +1398,17 @@ export class PrismaExpenseRepository {
     return null;
   }
 
-  async freezeSubstitutePaperForm(companyId: string, expenseId: string, evidenceId: string, snapshot: Record<string, unknown>) {
+  async freezeSubstitutePaperForm(companyId: string, expenseId: string, evidenceId: string, snapshot: Record<string, unknown>, expectedEvidenceUpdatedAt: Date, expectedExpenseUpdatedAt: Date) {
     return this.prisma.client.$transaction(async (tx) => {
       await lockExpenseFunding(tx, companyId, expenseId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
       const evidence = await tx.expenseSubstituteReceiptEvidence.findFirst({ where: { id: evidenceId, companyId, expenseId } });
       const expense = await tx.expenseRecord.findFirst({ where: { id: expenseId, companyId } });
-      if (!evidence || !expense || evidence.status !== 'PREPARED' || evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null
+      if (!evidence || !expense || expense.updatedAt.getTime() !== expectedExpenseUpdatedAt.getTime()
+        || evidence.status !== 'PREPARED' || evidence.signatureMode !== 'PAPER' || evidence.payerUserId !== null
         || expense.updatedAt.getTime() !== evidence.expenseUpdatedAtAtPreparation.getTime()) throw new ConflictException('substitute_paper_form_changed');
       if (evidence.paperFormSnapshotJson) return mapSubstituteEvidence(evidence);
+      if (evidence.updatedAt.getTime() !== expectedEvidenceUpdatedAt.getTime()) throw new ConflictException('substitute_paper_form_changed');
       return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.update({ where: { id: evidenceId }, data: { paperFormSnapshotJson: snapshot as Prisma.InputJsonValue } }));
     });
   }
@@ -1449,6 +1452,7 @@ export class PrismaExpenseRepository {
     expenseId: string;
     branchId: string | null;
     expectedExpenseUpdatedAt: Date;
+    amendment?: { evidenceId: string; expectedUpdatedAt: Date };
     fundingSource: 'COMPANY' | 'PERSONAL_ADVANCE' | null;
     correctionOfEvidenceId?: string;
     correctionReason?: string;
@@ -1480,6 +1484,52 @@ export class PrismaExpenseRepository {
       await lockExpenseFunding(tx, input.companyId, input.expenseId);
       if (!input.correctionOfEvidenceId) await assertFundingMutation(tx, input.companyId, input.expenseId, 'prepare');
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${input.expenseId}:substitute-receipt`}))`;
+      if (input.amendment) {
+        const current = await tx.expenseSubstituteReceiptEvidence.findFirst({
+          where: { companyId: input.companyId, expenseId: input.expenseId, status: { not: 'SUPERSEDED' } }, orderBy: { version: 'desc' },
+        });
+        const expense = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, id: input.expenseId } });
+        if (!current || current.id !== input.amendment.evidenceId || current.updatedAt.getTime() !== input.amendment.expectedUpdatedAt.getTime()
+          || !['PREPARED', 'PAYER_CERTIFIED'].includes(current.status) || current.correctionOfEvidenceId
+          || !expense || expense.updatedAt.getTime() !== input.expectedExpenseUpdatedAt.getTime()
+          || !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) {
+          throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+        }
+        if (current.signatureMode !== input.signatureMode || current.payerUserId !== input.payerUserId || current.fundingSource !== input.fundingSource) {
+          throw new ConflictException('การแก้ข้อมูลต้องใช้วิธีลงนาม ผู้รับรอง และแหล่งเงินเดิม');
+        }
+        if (!input.paymentDate || !Number.isFinite(input.paymentDate.getTime())) throw new BadRequestException('กรุณาระบุวันที่จ่ายเงินที่ถูกต้อง');
+        assertFullSubstitutePayment(input.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+        assertSubstitutePaymentDetails(input.fundingSource, expense, input);
+        const ids = [...new Set([...input.paymentEvidenceAttachmentIds, ...input.supportingAttachmentIds])].sort();
+        for (const id of ids) await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:${id}:attachment-retention`}))`;
+        if (await tx.attachmentObject.count({ where: { companyId: input.companyId, id: { in: ids }, status: 'ACTIVE', links: { some: { companyId: input.companyId, targetType: 'expense.record', targetId: input.expenseId } } } }) !== ids.length) {
+          throw new ConflictException('หลักฐานเปลี่ยนแปลง กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+        }
+        const facts = Object.fromEntries(['reasonCode', 'missingReceiptReason', 'businessPurpose', 'payeeName', 'payeeAddress', 'payeeTaxId', 'paymentDate', 'paymentMethod', 'paymentEvidenceAttachmentIds', 'supportingAttachmentIds']
+          .map(key => [key, (input as any)[key]]));
+        if (Object.entries(facts).every(([key, value]) => key === 'paymentDate'
+          ? current.paymentDate && input.paymentDate && civilDate(current.paymentDate) === civilDate(input.paymentDate)
+          : JSON.stringify(current[key]) === JSON.stringify(value))) return mapSubstituteEvidence(current);
+        const sourceNote = substitutePurposeSourceNote(expense.note, input.businessPurpose, current.businessPurpose);
+        const sourceChanged = expense.missingReceiptReason !== input.missingReceiptReason || sourceNote !== expense.note;
+        const sourceUpdatedAt = sourceChanged ? new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1)) : expense.updatedAt;
+        const data = {
+          reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason, businessPurpose: input.businessPurpose,
+          payeeName: input.payeeName, payeeAddress: input.payeeAddress, payeeTaxId: input.payeeTaxId,
+          paymentDate: input.paymentDate, paymentMethod: input.paymentMethod,
+          paymentEvidenceAttachmentIds: input.paymentEvidenceAttachmentIds, supportingAttachmentIds: input.supportingAttachmentIds,
+          ...(sourceChanged && current.note && current.note === expense.note ? { note: sourceNote } : {}),
+          expenseUpdatedAtAtPreparation: sourceUpdatedAt,
+        };
+        if (Object.entries(data).every(([key, value]) => JSON.stringify(current[key]) === JSON.stringify(value))) return mapSubstituteEvidence(current);
+        if (sourceChanged) await tx.expenseRecord.update({ where: { id: expense.id }, data: {
+          missingReceiptReason: input.missingReceiptReason, note: sourceNote,
+          updatedAt: sourceUpdatedAt, updatedByUserId: input.preparedByUserId,
+        } });
+        const revised = await reviseSubstituteEvidence(tx, current, data, input.preparedByUserId, input.idempotencyKey, 'แก้ไขข้อมูลใบแทน กรุณาตรวจและลงนามใหม่', this.documentNumbers);
+        return mapSubstituteEvidence(await tx.expenseSubstituteReceiptEvidence.findUniqueOrThrow({ where: { id: revised.evidenceId } }));
+      }
       // A cancelled correction may be restarted; network retries of a pending correction reuse it.
       const latestCorrection = input.correctionOfEvidenceId ? await tx.expenseSubstituteReceiptEvidence.findFirst({
         where: { companyId: input.companyId, expenseId: input.expenseId, correctionOfEvidenceId: input.correctionOfEvidenceId }, orderBy: { version: 'desc' },
@@ -1529,7 +1579,10 @@ export class PrismaExpenseRepository {
           || JSON.stringify(correction.supportingAttachmentIds) !== JSON.stringify(input.supportingAttachmentIds)) throw new ConflictException('substitute_correction_financial_fields_locked');
         const company = await tx.company.findFirst({ where: { id: input.companyId }, select: { taxId: true } });
         if (company?.taxId !== correction.snapshotJson.company.taxId) throw new ConflictException('substitute_correction_company_identity_changed');
-      } else assertFullSubstitutePayment(input.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+      } else {
+        assertFullSubstitutePayment(input.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+        assertSubstitutePaymentDetails(input.fundingSource, expense, input);
+      }
       const preparedAt = new Date();
       const currentSummary = expense.aiVerificationSummaryJson && typeof expense.aiVerificationSummaryJson === 'object'
         && !Array.isArray(expense.aiVerificationSummaryJson)
@@ -1584,6 +1637,8 @@ export class PrismaExpenseRepository {
           status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] },
         },
         data: {
+          missingReceiptReason: input.missingReceiptReason,
+          note: substitutePurposeSourceNote(expense.note, input.businessPurpose),
           taxEvidenceStatus: 'SUPPORTING_ONLY',
           inputVatClaimStatus: 'NON_CLAIMABLE',
           taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE',
@@ -1695,7 +1750,11 @@ export class PrismaExpenseRepository {
         || (!evidence.correctionOfEvidenceId && !['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(expense.status)) || expense.status === 'VOIDED') {
         throw new ConflictException('Expense changed after the reviewed preview. Reload before certifying.');
       }
-      if (!evidence.correctionOfEvidenceId) assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+      if (!evidence.correctionOfEvidenceId) {
+        assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+        assertSubstitutePaymentDetails(evidence.fundingSource, expense, evidence);
+        assertSubstituteFactsComplete(evidence);
+      }
       const activeAttachments = await tx.attachmentObject.count({
         where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
       });
@@ -1804,7 +1863,11 @@ export class PrismaExpenseRepository {
           throw new ConflictException('substitute_correction_source_changed');
         }
       } else await assertFundingMutation(tx, input.companyId, input.expenseId, 'prepare');
-      if (!evidence.correctionOfEvidenceId) assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+      if (!evidence.correctionOfEvidenceId) {
+        assertFullSubstitutePayment(evidence.fundingSource, expense.paidAmount.toString(), expense.netPayableAmount.toString());
+        assertSubstitutePaymentDetails(evidence.fundingSource, expense, evidence);
+        assertSubstituteFactsComplete(evidence);
+      }
       const activeAttachments = await tx.attachmentObject.count({
         where: { id: { in: input.referencedAttachmentIds }, companyId: input.companyId, status: 'ACTIVE' },
       });
@@ -1863,8 +1926,6 @@ export class PrismaExpenseRepository {
         throw new Error('Expense payment totals are inconsistent. Reload before approval.');
       }
       const isCompanyPayment = evidence.fundingSource === 'COMPANY';
-      if (isCompanyPayment && !paidBefore.isZero() && ((expense.paymentMethod && expense.paymentMethod !== evidence.paymentMethod)
-        || (expense.paidAt && expense.paidAt.getTime() !== evidence.paymentDate.getTime()))) throw new ConflictException('substitute_existing_payment_details_mismatch');
       const paymentAmount = isCompanyPayment && paidBefore.isZero() ? payable : new Decimal(0);
       if (paymentAmount.gt(0)) {
         await tx.expensePayment.create({ data: {

@@ -1298,6 +1298,18 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </div>
         )}
 
+        {detail.substituteReceiptEvidence && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-100 bg-brand-25 px-4 py-3 text-sm">
+            <div>
+              <p className="font-bold text-brand-800">ผูกกับใบแทน {detail.substituteReceiptEvidence.documentNumber}</p>
+              <p className="text-gray-600">แก้ข้อมูลแล้วใบแทนใช้ค่าล่าสุด เลขเอกสารอ้างอิงเดือนที่จ่ายเงิน หากลงนามแล้วต้องลงนามฉบับแก้ไขอีกครั้ง</p>
+              {evidenceDirty && <p className="text-warning-700">บันทึกการตรวจเอกสารก่อนกลับไปใบแทน</p>}
+            </div>
+            <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt()}>
+              {step === 'data' && isMutable && canReview && !substituteLocked ? 'บันทึกและกลับไปใบแทน' : 'กลับไปใบแทน'}
+            </button>
+          </div>
+        )}
         <div className="grid min-h-0 lg:grid-cols-[minmax(0,4fr)_minmax(0,5fr)]">
             {/* left pane (lg+): inline document viewer */}
             <div

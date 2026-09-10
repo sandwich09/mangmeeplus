@@ -38,7 +38,7 @@ function expense(overrides: Record<string, unknown> = {}) {
     id: 'exp-1', companyId: 'co-1', branchId: null, expenseNumber: 'EXP-1', status: 'NEEDS_REVIEW',
     captureSource: 'WEB_UPLOAD', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY',
     inputVatClaimStatus: 'NON_CLAIMABLE', grandTotalAmount: '65.00', currency: 'THB', expenseDate: now,
-    paidAt: now, paymentMethod: 'CASH', bankAccountRef: null, expenseCategoryId: 'cat-1', accountHintKey: null,
+    paidAmount: '0', paidAt: now, paymentMethod: 'CASH', bankAccountRef: null, expenseCategoryId: 'cat-1', accountHintKey: null,
     vendorNameSnapshot: 'ผู้ขายในตลาด',
     updatedAt: now, aiVerificationSummaryJson: null,
     lines: [{ description: 'ผักสด', quantity: '1', lineTotalAmount: '65.00', expenseCategoryId: 'cat-1', accountHintKey: null }],
@@ -67,6 +67,40 @@ function prepared(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PrepareSubstituteReceiptUseCase', () => {
+  it('amends incomplete facts through the existing validation and ignores client funding/signer overrides', async () => {
+    let captured: any;
+    const current = prepared();
+    const repo = {
+      findSubstituteEvidence: async (companyId: string, expenseId: string, evidenceId: string) => companyId === 'co-1' && expenseId === 'exp-1' && evidenceId === 'sub-1' ? current : null,
+      findByIdWithRelations: async () => expense(),
+      findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
+      getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
+      listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1' }],
+      findSubstituteEvidenceAttachments: async () => [],
+      createPreparedSubstituteEvidence: async (input: any) => { captured = input; return prepared(); },
+    } as any;
+    const useCase = new PrepareSubstituteReceiptUseCase(repo, audit, notification);
+    const input = { reasonCode: 'OTHER', missingReceiptReason: 'เหตุผลแก้ไข', businessPurpose: 'เพื่อกิจการ', paymentMethod: 'CASH',
+      paymentDate: '2026-08-14', payeeName: 'ร้านใหม่', expectedExpenseUpdatedAt: now.toISOString(), expectedEvidenceUpdatedAt: now.toISOString(),
+      fundingSource: 'PERSONAL_ADVANCE', payerUserId: 'attacker', signatureMode: 'PAPER', continuationId: 'not-allowed',
+    } as any;
+    await useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', input);
+    assert.equal(captured.fundingSource, 'COMPANY'); assert.equal(captured.signatureMode, 'DIGITAL'); assert.equal(captured.payerUserId, 'payer-1');
+    assert.equal(captured.paymentDate.toISOString(), '2026-08-14T00:00:00.000Z'); assert.equal(captured.lineContinuation, undefined);
+    assert.deepEqual(captured.amendment, { evidenceId: 'sub-1', expectedUpdatedAt: now });
+    await assert.rejects(useCase.executeAmendment(ctx('reader', []), 'exp-1', 'sub-1', input), /expense.review/);
+    await assert.rejects(useCase.executeAmendment({ ...ctx(), authProvider: 'line' }, 'exp-1', 'sub-1', input), /authenticated web/);
+    await assert.rejects(useCase.executeAmendment({ ...ctx(), companyId: 'other' }, 'exp-1', 'sub-1', input), /not found/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, expectedEvidenceUpdatedAt: '2026-01-01' }), /โหลดข้อมูลล่าสุด/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, payeeTaxId: '123' }), /13 digits/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentMethod: 'BANK_TRANSFER' }), /Attach separate proof/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentDate: '2026-02-31' }), /วันที่จ่ายเงินที่ถูกต้อง/);
+    await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', { ...input, paymentMethod: 'invalid' }), /วิธีชำระเงินที่ถูกต้อง/);
+    for (const status of ['ISSUED', 'SUPERSEDED']) {
+      current.status = status;
+      await assert.rejects(useCase.executeAmendment(ctx(), 'exp-1', 'sub-1', input), /โหลดข้อมูลล่าสุด/);
+    }
+  });
   it('prepares a version without replacing the original source type', async () => {
     let captured: any;
     const notifications: any[] = [];

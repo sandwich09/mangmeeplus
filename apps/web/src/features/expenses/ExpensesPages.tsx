@@ -1135,7 +1135,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         </label>
         <label>
           <span className="mb-1 block text-xs font-medium text-gray-600"><AiFieldLabel label={t('expenses.expense_date', locale)} field="expenseDate" summary={detail.aiVerificationSummaryJson} /></span>
-          <ThemedDate className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
+          <ThemedDate aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
           <FieldIssueNote issue={expenseDateIssue} />
           <AiFieldMissingHint field="expenseDate" summary={detail.aiVerificationSummaryJson} />
           {!expenseDateIssue && sourceMissingNote('expenseDate')}
@@ -1143,7 +1143,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         {values.businessPurpose !== undefined && (
           <label className="sm:col-span-2">
             <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.source_draft_business_purpose', locale)}</span>
-            <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} className={inputClass} rows={2} maxLength={200} value={values.businessPurpose}
+            <textarea aria-label={t('expenses.source_draft_business_purpose', locale)} className={inputClass} rows={2} maxLength={500} value={values.businessPurpose}
               onChange={(event) => setValues((current) => ({ ...current, businessPurpose: stripDisallowed(event.target.value) }))}
               disabled={!isMutable || busy} />
           </label>

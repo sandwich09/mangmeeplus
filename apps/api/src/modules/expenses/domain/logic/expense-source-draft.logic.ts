@@ -122,6 +122,8 @@ export function sourceDraftState(expense: Expense, categories: ExpenseCategorySu
     hints: { confidence: 1, expenseDate: date, vendorName: vendor, businessPurpose, items: hints }, categories,
   });
   state.status = 'PAUSED';
+  // This value is already stored/reviewed, not a bounded LINE extraction hint.
+  if (businessPurpose) state.header.businessPurpose = businessPurpose;
   if (!hints.length) state.items = [];
   const bound = bindSourceDraftLines(state, expense);
   bound.unresolvedQuestions = collectLineExpenseDraftQuestions(bound, categories);
@@ -165,7 +167,7 @@ export function applyExpenseSourceDraftInput(state: LineExpenseDraftContinuation
   const acceptedFields: string[] = [];
   for (const [field, suffix] of [['expenseDate', 'DATE'], ['vendorName', 'VENDOR'], ['businessPurpose', 'PURPOSE']] as const) {
     if (raw[field] === undefined) continue;
-    const value = text(raw[field], field === 'expenseDate' ? 10 : 200);
+    const value = text(raw[field], field === 'expenseDate' ? 10 : field === 'businessPurpose' ? 500 : 200);
     if (value && field === 'expenseDate') {
       try { if (coerceCivilDate(value) !== value) invalid('Source date must be YYYY-MM-DD.'); } catch { invalid('Source date must be a real YYYY-MM-DD date.'); }
     }

@@ -556,8 +556,17 @@ export function clearSubstituteWizardDraft(
   catch { /* see writeSubstituteWizardDraft */ }
 }
 
-/** A source edit creates an internal revision of the same document after signatures exist. */
-export function currentSubstituteRevision<T extends { id: string; documentNumber: string; version: number; status: string }>(history: T[], requested: T): T {
-  return history.filter((item) => item.documentNumber === requested.documentNumber && item.status !== 'SUPERSEDED')
-    .reduce((latest, item) => item.version > latest.version ? item : latest, requested);
+/** Follow automatic revisions across periods, while keeping unrelated recreation separate. */
+export function currentSubstituteRevision<T extends { id: string; documentNumber: string; version: number; status: string; revisionOfEvidenceId?: string | null }>(history: T[], requested: T): T {
+  const linked = new Set([requested.id]);
+  const numbers = new Set([requested.documentNumber]);
+  let latest = requested;
+  for (const item of [...history].sort((a, b) => a.version - b.version)) {
+    if (item.version <= requested.version) continue;
+    if (item.revisionOfEvidenceId ? linked.has(item.revisionOfEvidenceId) : numbers.has(item.documentNumber)) {
+      linked.add(item.id); numbers.add(item.documentNumber);
+      latest = item;
+    }
+  }
+  return latest.status === 'SUPERSEDED' ? requested : latest;
 }

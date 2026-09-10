@@ -86,7 +86,7 @@ import { LineSubstituteReceiptContinuationUseCase } from '../../application/use-
 import type {
   CreateExpenseDraftInput, UpdateExpenseDraftInput, ExpenseStatus,
   CreateExpenseCategoryInput, UpdateExpenseCategoryInput,
-  SignatureFillInput, GenerateSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
+  SignatureFillInput, GenerateSubstituteReceiptInput, AmendSubstituteReceiptInput, SharedEvidenceFilter, AccountantPackageRequest,
   NonExpenseClassificationOverrideInput, OcrTotalAcknowledgementInput, SourceDocumentType, CertifySubstituteReceiptInput, ApproveSubstituteReceiptInput,
   UpdateSubstituteReceiptPolicyInput,
   PreviewSubstituteReceiptInput,
@@ -273,6 +273,12 @@ export class ExpenseController {
   @RequirePermissions('expense.review')
   prepareSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Body() body: GenerateSubstituteReceiptInput) {
     return this.prepareSubstituteReceipt.execute(ctx, expenseId, body);
+  }
+
+  @Patch(':expenseId/substitute-receipt/:evidenceId')
+  @RequirePermissions('expense.review')
+  amendSubstitute(@ReqCtx() ctx: RequestContext, @Param('expenseId') expenseId: string, @Param('evidenceId') evidenceId: string, @Body() body: AmendSubstituteReceiptInput) {
+    return this.prepareSubstituteReceipt.executeAmendment(ctx, expenseId, evidenceId, body);
   }
 
   @Post(':expenseId/substitute-receipt/:evidenceId/correct-document')

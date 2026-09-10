@@ -328,7 +328,7 @@ export class UpdateExpenseDraftUseCase {
         } else if (source.vendorName !== undefined && input.vendorNameSnapshot === undefined) input = { ...input, vendorNameSnapshot: changed.state.header.vendorName ?? '' };
         if (source.businessPurpose === undefined && input.note !== undefined) {
           if (financialPurpose) changed.state.header.businessPurpose = financialPurpose; else delete changed.state.header.businessPurpose;
-        } else if (source.businessPurpose !== undefined && input.note === undefined) input = { ...input, note: withPurposeNote(expense.note, sourcePurpose) };
+        } else if (source.businessPurpose !== undefined && input.note === undefined) input = { ...input, note: withPurposeNote(expense.note, sourcePurpose, Number.POSITIVE_INFINITY) };
       }
       changed.state = bindSourceDraftLines(changed.state, expense);
       changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
@@ -336,7 +336,7 @@ export class UpdateExpenseDraftUseCase {
         const lines = sourceDraftFinancialLines(changed.state, expense, changed.acceptedFields, categories);
         const nextUpdatedAt = new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1));
         changed.state.targetRevision = nextUpdatedAt.toISOString();
-        const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '') : undefined;
+        const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '', Number.POSITIVE_INFINITY) : undefined;
         options = { ...options, requireExpectedUpdatedAt: true, webSourceDraft: true, sourceExpense: expense,
           lineDraftCollection: { nextUpdatedAt, sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: changed.state },
             aiVerificationSummaryJson: sourceDraftSummary(expense.aiVerificationSummaryJson, changed.state) } };

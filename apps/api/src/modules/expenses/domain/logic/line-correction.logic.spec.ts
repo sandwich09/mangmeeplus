@@ -190,6 +190,7 @@ describe('the header note keeps its provenance under both writers', () => {
 
   it('starts a note from nothing without inventing a separator', () => {
     assert.equal(withPurposeNote(null, 'เลี้ยงลูกค้า'), 'วัตถุประสงค์: เลี้ยงลูกค้า');
+    assert.equal(withPurposeNote(withPurposeNote('LINE receipt upload', ''), 'แก้ไขแล้ว'), 'LINE receipt upload · วัตถุประสงค์: แก้ไขแล้ว');
     assert.equal(withPurposeNote('   ', 'เลี้ยงลูกค้า'), 'วัตถุประสงค์: เลี้ยงลูกค้า');
   });
 
