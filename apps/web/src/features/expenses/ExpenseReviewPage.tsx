@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
+import { canEditSubstituteReceipt } from './substitute-receipt-wizard.model';
 import { useConfirm } from '@/common/components/modal/use-confirm';
 import { Modal } from '@/common/components/modal/Modal';
 import { ThemedSteps } from '@/common/components/steps/ThemedSteps';
@@ -36,7 +37,7 @@ import {
 } from './expenses.model';
 import type { ExpenseReviewTotalsState } from './useExpenseReviewTotals';
 import type { ExpenseDetail, ExpenseReviewStepKey, ExpensePaymentAttempt, ExpensePaymentFailure } from './expenses.model';
-import { isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, isCalculatedExpenseRounding, todayCivilDate, isCivilDate, type BusinessDocumentClassification, type ExpenseVatSourceOverrideInput, type ExpensePaymentMethod, type RemoveExpenseReceiptInput } from '@watchdog-bms/contracts';
 import {
   AiFieldLabel, AiFieldMissingHint, DOCUMENT_KIND_LABELS, DocumentReviewSection, ExpenseReviewEditSection,
   InlineSpinner, MoneyRow, STEP_HELPER_KEYS, STEP_LABEL_KEYS, expenseNoticeKey,
@@ -574,6 +575,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
   const canExtract = caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord);
   const isConfirmed = detail.status === 'CONFIRMED';
+  const canCancelFinancialExpense = canVoidExpenseFinancialState(detail);
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
@@ -611,14 +613,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, detail.substituteReceiptEvidence);
-  const openSubstituteReceipt = async () => {
+  const openSubstituteReceipt = async (editPayment = false) => {
     if (aiReading || stepSaving || evidenceDirty) return;
     if (step === 'data' && reviewSaveRef.current && !substituteLocked) {
       setStepSaving(true);
       const saved = await reviewSaveRef.current().finally(() => setStepSaving(false));
       if (!saved) return;
     }
-    router.push(substituteAction.href);
+    router.push(editPayment ? `${substituteAction.href}?edit=payment` : substituteAction.href);
   };
   const ocrTotalUnacknowledged = needsAiTotalAcknowledgement(detail);
   // Audit H-11: isZeroAmount only ever rendered a warning below and was missing from this gate, so
@@ -682,7 +684,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const approverOnlyActions = !canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && (canConfirm || caps.canReject);
   const canRestartReview = detail.status === 'REJECTED' && (canReview || (caps.canUpdate && isOwnRecord));
   const canDelete = canDeleteExpense(detail, userId, caps);
-  const hasFooterActions = canMutateDraft || approverOnlyActions || isConfirmed || canRestartReview || canDelete;
+  const hasFooterActions = canMutateDraft || approverOnlyActions || isConfirmed || (canCancelFinancialExpense && caps.canVoid) || canRestartReview || canDelete;
   // Guided stepper only for editable drafts (canMutateDraft already implies status ∈ {DRAFT, NEEDS_REVIEW, READY_FOR_CONFIRMATION});
   // every other status/viewer keeps the continuous-scroll layout and footer untouched.
   const guided = canMutateDraft && !sourceOnlyDraft;
@@ -730,7 +732,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
           </>
         )}
-        {isConfirmed && (
+        {canCancelFinancialExpense && (
           <>
             {caps.canVoid && <button className={dangerClass} onClick={() => { setReason(''); setError(null); setShowVoid(true); setShowReject(false); setDuplicateResolution(null); }} disabled={actionLoading}>{t('expenses.void_document', locale)}</button>}
           </>
@@ -789,7 +791,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {confirmBlockedNotice}
           </>
         )}
-        {isConfirmed && (
+        {canCancelFinancialExpense && (
           <>
             {canGenerateJournal && detail.pendingPostingSourceType && (
               <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId}>
@@ -1298,6 +1300,20 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </div>
         )}
 
+        {detail.substituteReceiptEvidence && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-100 bg-brand-25 px-4 py-3 text-sm">
+            <div>
+              <p className="font-bold text-brand-800">ผูกกับใบแทน {detail.substituteReceiptEvidence.documentNumber}</p>
+              <p className="text-gray-600">วันที่จ่ายตามใบแทน: {detail.substituteReceiptEvidence.paymentDate ? dateShort(detail.substituteReceiptEvidence.paymentDate) : 'ยังไม่ระบุ'} · เลขเอกสารคงเดิม</p>
+              <p className="text-gray-600">{canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence) ? 'แก้ข้อมูลแล้วใช้ฟอร์มล่าสุด หากลงนามแล้วต้องลงนามอีกครั้ง' : 'หากต้องการแก้ข้อมูลในใบแทน ให้ตรวจขั้นตอนยกเลิกและรายการจ่ายที่เกี่ยวข้องก่อน'}</p>
+              {canReview && canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence) && <button type="button" className="mt-2 font-semibold text-brand-700 underline" disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt(true)}>แก้วันที่จ่ายในใบแทน</button>}
+              {evidenceDirty && <p className="text-warning-700">บันทึกการตรวจเอกสารก่อนกลับไปใบแทน</p>}
+            </div>
+            <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt()}>
+              {step === 'data' && isMutable && canReview && !substituteLocked ? 'บันทึกและกลับไปใบแทน' : 'กลับไปใบแทน'}
+            </button>
+          </div>
+        )}
         <div className="grid min-h-0 lg:grid-cols-[minmax(0,4fr)_minmax(0,5fr)]">
             {/* left pane (lg+): inline document viewer */}
             <div

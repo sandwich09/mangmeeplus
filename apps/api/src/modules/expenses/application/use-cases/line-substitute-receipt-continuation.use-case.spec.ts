@@ -45,7 +45,7 @@ function expense(overrides: Record<string, unknown> = {}) {
     status: 'NEEDS_REVIEW', sourceDocumentType: 'EXPENSE_NOTE_TEXT', currency: 'THB', grandTotalAmount: '200.0000',
     expenseCategoryId: 'cat-travel', accountHintKey: null, taxEvidenceStatus: 'SUPPORTING_ONLY',
     aiVerificationSummaryJson: null, missingReceiptReason: null, note: null,
-    vendorNameSnapshot: null, paymentMethod: null, paidAt: null,
+    vendorNameSnapshot: null, paymentMethod: null, paidAt: null, paidAmount: '0.0000', netPayableAmount: '200.0000',
     sourceChannelMetadataJson: { channel: 'LINE', kind: 'text_note', chatKeyHash: 'chat-hash' },
     substituteReceiptEvidence: null,
     lines: [{ description: 'ค่าเดินทาง', expenseCategoryId: 'cat-travel', accountHintKey: null }],

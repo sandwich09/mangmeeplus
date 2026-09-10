@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   hasCheckBillSubstituteRoutingResolution,
+  isCivilDate,
+  EXPENSE_PAYMENT_METHODS,
   isCheckBillClassification,
   substituteReceiptRequiresPaymentEvidence,
   SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS,
@@ -28,6 +30,7 @@ import {
   withoutSubstituteReceiptPrintMetadata,
   type SubstituteReceiptSnapshot,
 } from '../../domain/logic/substitute-receipt.logic';
+import { assertSubstitutePaymentDetails, assertSubstituteFactsComplete } from '../../domain/logic/substitute-funding.logic';
 import { hasBlockingNonExpenseClassification } from '../../domain/logic/expense-status.logic';
 import { renderSubstitutePaperPreviewPages, renderSubstituteReceiptPaperArtifactPdf, renderSubstituteReceiptPdf } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { renderPaymentVoucherSvg } from '../../domain/logic/payment-voucher.logic';
@@ -51,6 +54,7 @@ import type {
   ApproveSubstituteReceiptInput,
   CertifySubstituteReceiptInput,
   GenerateSubstituteReceiptInput,
+  AmendSubstituteReceiptInput,
   RequestContext,
   SubstituteReceiptEvidenceSummary,
   SubstituteReceiptEvidenceStatus,
@@ -303,6 +307,10 @@ function paperRouteScanChecksum(evidence: SubstituteReceiptEvidenceRecord): stri
 }
 
 function assertPreparedExpenseUnchanged(expense: ExpenseRecordWithRelations, evidence: SubstituteReceiptEvidenceRecord): void {
+  if (!evidence.correctionOfEvidenceId) {
+    assertSubstitutePaymentDetails(evidence.fundingSource, expense, evidence);
+    assertSubstituteFactsComplete(evidence);
+  }
   if (expense.updatedAt.getTime() !== evidence.expenseUpdatedAtAtPreparation.getTime()) {
     throw new ConflictException('Expense details changed after preparation. Finance must prepare a new version.');
   }
@@ -464,7 +472,35 @@ export class PrepareSubstituteReceiptUseCase {
     return toSubstituteEvidenceSummary(created);
   }
 
+  async executeAmendment(ctx: RequestContext, expenseId: string, evidenceId: string, input: AmendSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
+    assertWeb(ctx);
+    if (!ctx.permissions.includes('expense.review')) throw new ForbiddenException('Missing permission: expense.review');
+    if (!EXPENSE_PAYMENT_METHODS.includes(input.paymentMethod)) throw new BadRequestException('กรุณาระบุวิธีชำระเงินที่ถูกต้อง');
+    if (!isCivilDate(input.paymentDate)) throw new BadRequestException('กรุณาระบุวันที่จ่ายเงินที่ถูกต้อง');
+    const current = await this.repo.findSubstituteEvidence(ctx.companyId, expenseId, evidenceId);
+    if (!current) throw new NotFoundException('Substitute evidence not found.');
+    if (!['PREPARED', 'PAYER_CERTIFIED'].includes(current.status) || current.correctionOfEvidenceId
+      || current.updatedAt.getTime() !== parseExpectedDate(input.expectedEvidenceUpdatedAt, 'expectedEvidenceUpdatedAt').getTime()) {
+      throw new ConflictException('เอกสารเปลี่ยนแปลงหรือออกสมบูรณ์แล้ว กรุณาโหลดข้อมูลล่าสุดก่อนแก้ไข');
+    }
+    return this.prepare(ctx, expenseId, {
+      reasonCode: input.reasonCode, missingReceiptReason: input.missingReceiptReason, businessPurpose: input.businessPurpose,
+      payeeName: input.payeeName, payeeAddress: input.payeeAddress, payeeTaxId: input.payeeTaxId,
+      paymentEvidenceAttachmentIds: input.paymentEvidenceAttachmentIds, supportingAttachmentIds: input.supportingAttachmentIds,
+      paymentDate: input.paymentDate, paymentMethod: input.paymentMethod, expectedExpenseUpdatedAt: input.expectedExpenseUpdatedAt,
+      fundingSource: current.fundingSource!, paidInFullAcknowledged: true,
+      signatureMode: current.signatureMode, ...(current.payerUserId ? { payerUserId: current.payerUserId } : {}),
+      ...(current.note ? { note: current.note } : {}),
+      idempotencyKey: `certificate-edit:${current.id}:${current.updatedAt.toISOString()}`,
+    }, { evidenceId, expectedUpdatedAt: current.updatedAt, keepDocumentNumberConfirmed: input.keepDocumentNumberConfirmed, previousPaymentDate: current.paymentDate?.toISOString() });
+  }
+
   async execute(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
+    return this.prepare(ctx, expenseId, input);
+  }
+
+  private async prepare(ctx: RequestContext, expenseId: string, input: GenerateSubstituteReceiptInput,
+    amendment?: { evidenceId: string; expectedUpdatedAt: Date; keepDocumentNumberConfirmed?: boolean; previousPaymentDate?: string }): Promise<SubstituteReceiptEvidenceSummary> {
     // R7: preparing is the one substitute-receipt step LINE may take. It writes staged facts and
     // reserves a document number; it embeds no signature and grants no approval. The three gates
     // the spec names — `expense.review` below, `assertBranch`, and the payer resolving to an active
@@ -551,6 +587,7 @@ export class PrepareSubstituteReceiptUseCase {
     }
     const paymentDate = input.paymentDate ? parseExpectedDate(input.paymentDate, 'paymentDate') : expense.paidAt;
     if (!paymentDate) throw new BadRequestException('Payment date is required because the payer certifies an amount already paid for company business.');
+    assertSubstitutePaymentDetails(input.fundingSource, expense, { paymentDate, paymentMethod });
 
     try {
       const evidence = await this.repo.createPreparedSubstituteEvidence({
@@ -558,6 +595,7 @@ export class PrepareSubstituteReceiptUseCase {
         expenseId,
         branchId: expense.branchId,
         expectedExpenseUpdatedAt,
+        amendment,
         fundingSource: input.fundingSource,
         originalSourceDocumentType: expense.sourceDocumentType,
         reasonCode: input.reasonCode,
@@ -583,11 +621,12 @@ export class PrepareSubstituteReceiptUseCase {
           : {}),
       });
       void this.audit.log({
-        companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.substitute_receipt.prepare',
+        companyId: ctx.companyId, actorUserId: ctx.userId, action: amendment ? 'expense.substitute_receipt.amend' : 'expense.substitute_receipt.prepare',
         targetType: 'expense_substitute_receipt', targetId: evidence.id, requestId: ctx.requestId,
         // R5: evidenceCount makes every self-certified no-evidence document listable in one query.
         result: 'SUCCESS', riskLevel: 'HIGH',
         metadataJson: {
+          ...(amendment ? { previousEvidenceId: amendment.evidenceId, documentNumber: evidence.documentNumber, previousPaymentDate: amendment.previousPaymentDate, paymentDate: evidence.paymentDate?.toISOString(), keepDocumentNumberConfirmed: amendment.keepDocumentNumberConfirmed === true } : {}),
           expenseId, version: evidence.version, payerUserId, fundingSource: input.fundingSource, paidInFullAcknowledged: true, evidenceCount: allIds.length, preparedFromChannel,
           // Spec §14 names `source: LINE` on the LINE-sourced row; on the web there is no source to state.
           ...(preparedFromChannel === 'LINE' ? { source: 'LINE' } : {}),
@@ -595,7 +634,7 @@ export class PrepareSubstituteReceiptUseCase {
         },
       });
       try {
-        if (payer) await notifySignaturePending(this.notify, ctx, evidence, [payer.userId], 'PAYER');
+        if (payer && (!amendment || evidence.updatedAt.getTime() !== amendment.expectedUpdatedAt.getTime())) await notifySignaturePending(this.notify, ctx, evidence, [payer.userId], 'PAYER');
       } catch (error) {
         this.logger.warn({
           msg: 'Substitute receipt payer notification failed',
@@ -1395,7 +1434,7 @@ async function freezePaperForm(repo: PrismaExpenseRepository, companyId: string,
   snapshot.payer = { userId: null, name: '________________________________', position: '____________________________', certifiedAt: PREVIEW_CERTIFIED_AT, roleLabel: 'ผู้รับรองการจ่าย' };
   delete snapshot.paperReview;
   snapshot.certificationText = buildSubstituteCertificationText(snapshot.payer.name, snapshot.payer.position, true);
-  return repo.freezeSubstitutePaperForm(companyId, expense.id, evidence.id, snapshot);
+  return repo.freezeSubstitutePaperForm(companyId, expense.id, evidence.id, snapshot, evidence.updatedAt, expense.updatedAt);
 }
 
 function paperSigner(value: SubmitSubstituteReceiptPaperInput['payer'] | undefined, field: string): SubstituteReceiptPaperSigner {

@@ -48,7 +48,7 @@ import { CommitDocumentNumberUseCase } from '../../../data-model-core/applicatio
 import { CancelDocumentNumberUseCase } from '../../../data-model-core/application/use-cases/cancel-document-number.use-case';
 import { CompanyVatRegistrationUseCase } from '../../../data-model-core/application/use-cases/company-vat-registration.use-case';
 import { LEDGER_SEQUENCE_KEY, civilDateToUtcDate, coerceCivilDate, utcDateToCivilDate } from '@watchdog-bms/contracts';
-import { civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
+import { canVoidExpenseFinancialState, civilPeriodKey, todayCivilDate } from '@watchdog-bms/contracts';
 import type { AuditLogEntry } from '../../../audit/domain/models/audit-log.model';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
@@ -328,7 +328,7 @@ export class UpdateExpenseDraftUseCase {
         } else if (source.vendorName !== undefined && input.vendorNameSnapshot === undefined) input = { ...input, vendorNameSnapshot: changed.state.header.vendorName ?? '' };
         if (source.businessPurpose === undefined && input.note !== undefined) {
           if (financialPurpose) changed.state.header.businessPurpose = financialPurpose; else delete changed.state.header.businessPurpose;
-        } else if (source.businessPurpose !== undefined && input.note === undefined) input = { ...input, note: withPurposeNote(expense.note, sourcePurpose) };
+        } else if (source.businessPurpose !== undefined && input.note === undefined) input = { ...input, note: withPurposeNote(expense.note, sourcePurpose, Number.POSITIVE_INFINITY) };
       }
       changed.state = bindSourceDraftLines(changed.state, expense);
       changed.state.unresolvedQuestions = collectLineExpenseDraftQuestions(changed.state, categories);
@@ -336,7 +336,7 @@ export class UpdateExpenseDraftUseCase {
         const lines = sourceDraftFinancialLines(changed.state, expense, changed.acceptedFields, categories);
         const nextUpdatedAt = new Date(Math.max(Date.now(), expense.updatedAt.getTime() + 1));
         changed.state.targetRevision = nextUpdatedAt.toISOString();
-        const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '') : undefined;
+        const note = source.businessPurpose !== undefined ? withPurposeNote(expense.note, changed.state.header.businessPurpose ?? '', Number.POSITIVE_INFINITY) : undefined;
         options = { ...options, requireExpectedUpdatedAt: true, webSourceDraft: true, sourceExpense: expense,
           lineDraftCollection: { nextUpdatedAt, sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: changed.state },
             aiVerificationSummaryJson: sourceDraftSummary(expense.aiVerificationSummaryJson, changed.state) } };
@@ -1431,7 +1431,7 @@ export class VoidExpenseUseCase {
     } else {
       assertBranchInScope(ctx, r.branchId);
     }
-    if (r.status !== 'CONFIRMED') throw new BadRequestException(`Can only void CONFIRMED expenses (current: ${r.status})`);
+    if (!canVoidExpenseFinancialState(r)) throw new BadRequestException(`Can only void confirmed expenses or unconfirmed expenses with recorded financial activity (current: ${r.status})`);
 
     // H-04 / GAP-07: reserve a reversal entry number for each posted leg outside
     // the void transaction (sequence rows commit independently) — the accrual

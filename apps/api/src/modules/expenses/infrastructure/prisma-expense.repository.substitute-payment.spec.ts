@@ -13,6 +13,7 @@ function harness(paidAmount: string, fundingSource: 'COMPANY' | 'PERSONAL_ADVANC
     id: 'evidence-1', companyId: 'company-1', expenseId: 'expense-1', branchId: 'branch-1',
     fundingSource, status: 'PAYER_CERTIFIED', version: 1, updatedAt: VERSION, payerUserId: 'payer-1',
     paymentDate: PAID_AT, paymentMethod: 'CASH', missingReceiptReason: 'ไม่มีใบเสร็จ',
+    payeeName: 'ผู้ขาย', businessPurpose: 'ใช้งานบริษัท',
     paymentEvidenceAttachmentIds: [], supportingAttachmentIds: [], snapshotJson: {},
   };
   const expense: any = {

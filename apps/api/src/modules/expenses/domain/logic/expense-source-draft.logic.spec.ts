@@ -8,6 +8,17 @@ const base = { workflowId: 'wf', companyId: 'co', userId: 'u', expenseId: 'ex', 
 const empty = () => buildInitialLineExpenseDraftContinuation({ ...base, messageText: 'กระดาษ', hints: { items: [{ sourceText: 'กระดาษ', description: 'กระดาษ' }] } });
 
 describe('shared receipt source facts (T10/T14–T18)', () => {
+  it('round trips a certificate-length purpose through source review and retains the limit', () => {
+    const purpose = 'ก'.repeat(500);
+    const changed = applyExpenseSourceDraftInput(empty(), { businessPurpose: purpose }, categories);
+    const reloaded = parseLineExpenseDraftContinuation(JSON.parse(JSON.stringify(changed.state)))!;
+    assert.equal(reloaded.header.businessPurpose, purpose);
+    const fromStored = sourceDraftState({ id: 'ex', companyId: 'co', createdByUserId: 'u', captureSource: 'LINE_UPLOAD', status: 'NEEDS_REVIEW',
+      expenseDate: new Date(base.targetRevision), updatedAt: new Date(base.targetRevision), reviewedAt: null,
+      vendorNameSnapshot: 'ร้าน ก', note: `วัตถุประสงค์: ${purpose}`, sourceChannelMetadataJson: null, aiVerificationSummaryJson: null, lines: [] } as any, categories);
+    assert.equal(fromStored?.header.businessPurpose, purpose);
+    assert.throws(() => applyExpenseSourceDraftInput(reloaded, { businessPurpose: `${purpose}ก` }, categories));
+  });
   it('enforces the date guard on web receipts too, without blocking real assumed or legacy dates', () => {
     for (const dateStatus of ['unverified', 'implausible']) assert.throws(() => assertExpenseSourceDraftComplete(null,
       { captureSource: 'WEB_UPLOAD', aiVerificationSummaryJson: { dateStatus } } as any),

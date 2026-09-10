@@ -10,6 +10,7 @@ import type {
   ExpenseExtractionResult,
   ExpenseVatSourceOverrideInput,
   GenerateSubstituteReceiptInput,
+  AmendSubstituteReceiptInput,
   LineSubstituteReceiptPrefill,
   PreviewSubstituteReceiptInput,
   RecordExpensePaymentInput,
@@ -402,6 +403,10 @@ export async function generateSubstituteReceipt(companyId: string, expenseId: st
     emitToast({ tone: 'error', message: apiErrorMessage(error, locale) });
     throw error;
   }
+}
+
+export async function amendSubstituteReceipt(companyId: string, expenseId: string, evidenceId: string, body: AmendSubstituteReceiptInput): Promise<SubstituteReceiptEvidenceSummary> {
+  return apiFetch(`/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 export async function loadLineSubstituteReceiptPrefill(

@@ -85,6 +85,15 @@ function makeRepo(existing: Record<string, any> | null = null, sourceChannelMeta
 }
 
 describe('PrismaExpenseRepository substitute-receipt numbers', () => {
+  it('checks active reimbursement claims before reserving or rewriting a substitute receipt', async () => {
+    const { repo, tx, reserveNumberInTransaction } = makeRepo();
+    tx.reimbursementLine.findFirst = mock.fn(async () => ({ id: 'active-claim-line' }));
+    await assert.rejects(repo.createPreparedSubstituteEvidence(preparedInput()), (error: any) => error.getResponse().code === 'substitute_source_has_live_claim');
+    assert.equal(reserveNumberInTransaction.mock.callCount(), 0);
+    assert.equal(tx.expenseRecord.updateMany.mock.callCount(), 0);
+    assert.equal(tx.reimbursementLine.findFirst.mock.calls[0].arguments[0].where.companyId, 'company-1');
+  });
+
   it('reserves and commits a company running number in the payment month, even when prepared later', async (t) => {
     t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-10T00:00:00.000Z') });
     const { repo, tx, reserveNumberInTransaction, commitNumberInTransaction } = makeRepo();
