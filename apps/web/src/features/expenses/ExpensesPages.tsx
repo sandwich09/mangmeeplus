@@ -1980,7 +1980,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       </div>
 
       {/* KPI cards */}
-      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
+      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
       <details className="rounded-xl border border-gray-200 bg-white p-3 sm:hidden">
         <summary className="cursor-pointer text-sm font-semibold">{kpi.counted} รายการ · {baht(kpi.total)} · ดูสรุปยอด</summary>
         <div className="mt-3 grid gap-2">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>

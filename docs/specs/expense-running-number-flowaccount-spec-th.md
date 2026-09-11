@@ -4,7 +4,7 @@
 สถานะ: **IMPLEMENTED — LOCAL VERIFICATION COMPLETE; RELEASE VALIDATION PENDING**
 เจ้าของ: thawatchai / Codex
 
-ผู้ใช้อนุญาต 2026-09-11 ให้ปรับ spec แก้จุดที่พบและเริ่ม implement จริง ดำเนินการแล้วบน branch `codex/expense-running-number-20260911` ดู [ผล implement และหลักฐานล่าสุด](../qa/evidence/expense-running-number-implementation-2026-09-11/README.md) งานนี้ยังไม่ merge/deploy และไม่เปลี่ยน customer gates
+ผู้ใช้อนุญาต 2026-09-11 ให้ปรับ spec แก้จุดที่พบและเริ่ม implement จริง ดำเนินการแล้วบน branch `codex/expense-running-number-20260911` ดู [ผล implement และหลักฐานล่าสุด](../qa/evidence/expense-running-number-implementation-2026-09-11/README.md) ผู้ใช้อนุญาต commit/push เข้า develop และ main แล้ว กำลังรวมชุดแก้; deployment และการเปิด flag เป็นขั้นตอนแยก ไม่มีการเปลี่ยน customer gates
 
 ## 1. ผลพิสูจน์ระบบเดิมก่อน implement (ประวัติ)
 
@@ -160,3 +160,7 @@ Implementation checklist และหลักฐานใช้ [แผนพ�
 - เมื่อตรวจเลขนำเข้าเก่าที่ไม่มีทะเบียน ใช้เลขสูงสุดจาก ExpenseRecord และ DocumentNumber ทุกสถานะที่ตรงรูปแบบเดียวกันเป็นฐานของ counter ไม่เติมช่องว่างก่อนเลขเก่า; ทดสอบ legacy 00100 แล้วเลขใหม่เป็น 00101
 - Manual retry ในหน้าที่ยังเปิดอยู่ใช้คำสั่งเดิม แม้ผู้ใช้ล้างช่องที่บังคับก่อน retry ก็ต้องตรวจผลเดิมต่อได้; แนบไฟล์ด้วยสาขาของรายจ่ายที่ server คืนมา
 - การเก็บคำสั่งข้าม refresh/ปิดแท็บและ idempotency ของ client รุ่นเก่าที่ไม่ส่ง key ยังไม่ได้เพิ่มใน v1 นี้ ให้เปิดรายการรายจ่ายเพื่อตรวจผลเดิมก่อนสร้างใหม่; ไม่อ้าง retry guarantee ข้าม session
+
+## Responsive KPI follow-up (2026-09-11)
+
+ยอดบนการ์ดปรับขนาดตามพื้นที่ 18–26px; การ์ดแคบวางไอคอนเหนือยอด และยอดยาวมากขึ้นบรรทัดได้โดยไม่ตัดหรือย่อจำนวนเงิน ตาราง KPI รายจ่ายใช้ห้าคอลัมน์ตั้งแต่ 1536px เพื่อไม่บีบยอดบนจอกลาง ผ่านการตรวจ browser 8 ขนาดหน้าจอของรายจ่าย/ใบเบิก/ใบแทน และยอดยาวจำลอง ดู [หลักฐาน](../qa/evidence/expense-kpi-responsive-2026-09-11/README.md)

@@ -1,11 +1,11 @@
 # Agent Memory: Expense running number implementation
 
-Status: IMPLEMENTED; local verification complete 2026-09-11. No merge/deployment. Draft issuance defaults OFF pending compatibility activation.
+Status: IMPLEMENTED; local verification complete 2026-09-11. Merge to develop/main explicitly authorized; integration pending. No deployment. Draft issuance defaults OFF pending compatibility activation.
 Owner: Codex with thawatchai
 Scope: EXP first manual/date-reviewed draft save, preserved numbering, atomic/retry safety, legacy snapshots, linked SRC/RB, PDF identity and related UI gaps.
 
 Decisions:
-- Latest user authorized spec corrections then actual implementation. Earlier waiting instructions are superseded; earlier admin merge authorization is not treated as authorization to release this EXP feature.
+- Latest user explicitly authorized commit/push into develop and main after completion; earlier admin merge permission also persists. This supersedes historical wait/no-merge instructions for this implementation. Deployment and feature-flag activation are not requested.
 - v1 uses document date, keeps assigned numbers after date changes, never automatically returns/decrements/reuses deleted numbers; no manual renumber.
 - Raw upload/LINE capture remains unnumbered until explicit user date review. Legacy dependencies/signed facts are not silently backfilled or rewritten.
 - Isolated worktree `/tmp/mangmee-expense-running-number-20260911`, branch `codex/expense-running-number-20260911`, base `8f988a16`. Unrelated dirty shared checkout and package.json files untouched.
@@ -32,13 +32,20 @@ Verification:
 - API/web typechecks and API build passed. Final diff review and evidence checksum scan recorded in report/manifest.
 
 Next:
-- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Implementation and evidence are ready for review on the scoped branch. If rollout is later requested, follow mandatory runbooks and pending release acceptance. Do not merge/deploy automatically.
+- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Commit the responsive follow-up, push and merge the verified branch into develop and main as authorized; record PR/head evidence. If deployment/activation is later requested, follow mandatory runbooks and pending release acceptance.
 
 ### UI follow-up: explicit EXP table column, 2026-09-11
 
 - User requested implementation after agreeing to a first “เลขรายจ่าย (EXP)” column.
 - Added a dedicated full-number column before vendor/category, Thai/English labels and explicit unnumbered text. Smaller than 1280px uses cards with the number above the vendor; long numbers wrap without truncation.
 - Scoped to list presentation, dictionary and documentation. Browser geometry/read-only review passed at 1440/1280/1024/768/390px, no overflow and 0 expense mutations; web typecheck passed. Evidence: `docs/qa/evidence/expense-number-column-2026-09-11/README.md`. No financial mutation or numbering rule change. Local servers stopped and generated next-env restored.
+
+### UI follow-up: responsive KPI amounts, 2026-09-11
+
+- User reported clipped KPI amounts and explicitly authorized commit/push develop + main.
+- Shared StatCard now scales amount by available width, stacks icon on narrow cards and wraps very long numbers without truncation. Five-column expense grid begins at 1536px.
+- Web typecheck passed; 24 real-API browser page/viewport observations plus 2 DOM-only long-amount cases passed, zero clipped values and zero business mutations. Evidence: `docs/qa/evidence/expense-kpi-responsive-2026-09-11/README.md`.
+- Read the deployment freeze protocol before branch integration. The queued Readiness run `31611733340` is historical (2026-08-12, no jobs); newer Readiness `34447655824` and Production `34448486175` completed successfully on 2026-09-10. No current release run was found. No release workflow dispatched or cloud service changed.
 
 ## Historical investigation and progress log (superseded by current state above)
 
