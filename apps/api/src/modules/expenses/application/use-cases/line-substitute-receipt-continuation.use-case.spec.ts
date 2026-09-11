@@ -1,3 +1,4 @@
+import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RequestContext } from '@watchdog-bms/contracts';
@@ -80,6 +81,13 @@ function harness(overrides: {
   // the table: what that use case creates is what the very next turn's lookup finds.
   const signatureAssets: any[] = [];
   const repo = {
+    findById: async () => current,
+    updateExpense: async (input: any, withinTx?: any) => {
+      if (input.expectedUpdatedAt && input.expectedUpdatedAt.getTime() !== current.updatedAt.getTime()) throw new ConflictException('stale revision');
+      current = { ...current, ...input, updatedAt: input.updatedAt ?? new Date(current.updatedAt.getTime() + 1) };
+      if (typeof withinTx === 'function') await withinTx({ transaction: true });
+      return current;
+    },
     findReusableSignatureAsset: async (_companyId: string, _userId: string, attachmentId?: string) =>
       attachmentId ? null : signatureAssets.find((asset) => asset.status === 'ACTIVE') ?? overrides.signature ?? null,
     findSignatureAssetByLineMessageId: async (_companyId: string, lineMessageId: string) =>
@@ -189,6 +197,8 @@ function harness(overrides: {
       repo, prepare,
       { log: async (entry: any) => { audits.push(entry); } } as any,
       { getObject: async () => overrides.scanObject ?? { bytes: await onePagePdf(), mimeType: 'application/pdf' } } as any,
+      new UpdateExpenseDraftUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any,
+        { resolveLines: async (_ctx: any, _header: any, lines: any[]) => lines } as any),
     ),
     repo, saves, prepares, audits, links, scanLinks, getExpense: () => current,
     /** The state a LINE-prepared expense is in once the web approval issued it: an evidence row plus
@@ -823,6 +833,22 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
     assert.equal(result.replyText.replace(/https:\/\/app\.example\.com\S*/gu, '').includes('/companies/'), false);
   });
 
+  it('reviews an explicitly accepted paid check-bill before preparing without an unresolved-type loop', async () => {
+    const h = await readyHarness();
+    // Reproduce the persisted paid-check-bill continuation at the final explicit decision.
+    const current = h.getExpense();
+    current.sourceDocumentType = 'NEEDS_REVIEW';
+    current.taxEvidenceStatus = 'NEEDS_REVIEW';
+    current.aiVerificationSummaryJson = { classification: { documentKind: 'ORDER_OR_CHECK_BILL' } };
+    current.attachments.push({ id: 'paid-proof', status: 'ACTIVE', purpose: 'expense.payment.evidence', mimeType: 'image/png' });
+    current.sourceChannelMetadataJson.lineSubstituteReceiptContinuation.routeCheckBill = true;
+    const result = await h.useCase.execute(ctx(), { messageText: '2', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(result.status, 'READY_FOR_WEB');
+    assert.equal(h.prepares.length, 1);
+    assert.equal(h.getExpense().sourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
+    assert.equal(h.getExpense().aiVerificationSummaryJson.documentReview.version, 2);
+  });
+
   it('refuses to overwrite a newer web revision with a plain continuation answer', async () => {
     const h = harness();
     await h.useCase.execute(ctx(), {
@@ -1162,7 +1188,8 @@ describe('R13 — the assistant asks before producing the document', () => {
     assert.deepEqual(prepared.supportingAttachmentIds, ['att-1']);
     assert.equal(prepared.idempotencyKey, before.workflowId, 'one prepare per continuation');
     assert.deepEqual(prepared.lineContinuation, { workflowId: before.workflowId, userId: 'user-1', formRequested: false });
-    assert.equal(prepared.expectedExpenseUpdatedAt.toISOString(), before.targetRevision);
+    assert.equal(prepared.expectedExpenseUpdatedAt.toISOString(), h.saves.at(-1).continuation.targetRevision);
+    assert(h.audits.some(entry => entry.action === 'expense.evidence.review'), 'explicit LINE decision records the same human review');
 
     assert.equal(issued.status, 'READY_FOR_WEB');
     assert.equal(issued.webPath, `${WEB_BASE}/companies/company-1/expenses/substitute-receipts/evidence-1`);

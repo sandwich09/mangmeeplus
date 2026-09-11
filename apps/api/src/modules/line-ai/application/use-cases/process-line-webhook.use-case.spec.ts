@@ -4627,9 +4627,9 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
         return { updatedAt: now, continuation };
       },
     } as any;
-    // Develop's constructor takes (repo, prepare, audit, storage); these paths (target-select → confirm →
-    // start-save) never reach prepare/issue, so the extra three are inert stubs.
-    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any);
+    // The constructor takes (repo, prepare, audit, storage, review); these paths (target-select → confirm →
+    // start-save) never reach prepare/issue, so the extra dependencies are inert stubs.
+    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any, { execute: async () => { throw new Error('target selection must not perform evidence review'); } } as any);
     const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
 
     // Turn A — paraphrase, TWO candidates, no open workflow → target-selection pinned to both ids, no write.
@@ -4701,7 +4701,7 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
         return { updatedAt: now, continuation };
       },
     } as any;
-    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any);
+    const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any, { execute: async () => { throw new Error('target selection must not perform evidence review'); } } as any);
     const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
     const candidates = async () => [{ id: 'exp-1', label: 'ค่าวิน · 200' }, { id: 'exp-2', label: 'ค่ากาแฟ · 65' }];
 

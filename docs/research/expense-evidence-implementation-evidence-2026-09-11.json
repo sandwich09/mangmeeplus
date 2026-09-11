@@ -1,0 +1,124 @@
+{
+  "date": "2026-09-11",
+  "branch": "codex/substitute-step3-edit-20260910",
+  "baseHead": "d6abe87e51aa9e87ed08acb702dc9f2f8812cc0d",
+  "environment": "isolated local API/PostgreSQL/MinIO; no cloud/customer changes",
+  "focusedChecks": {
+    "apiAndContracts": 761,
+    "web": 111,
+    "failures": 0,
+    "skipped": 0
+  },
+  "postgresContinuity": {
+    "passed": 17,
+    "failed": 0,
+    "skipped": 0
+  },
+  "typecheck": {
+    "api": "passed",
+    "web": "passed"
+  },
+  "browserRoutes": {
+    "source": {
+      "result": [
+        "partial draft survives reload without approval",
+        "v2 review survives PostgreSQL JSONB and browser reload with supporting-slot receipt",
+        "abbreviated receipt confirmed through real API/transaction without SRC"
+      ],
+      "expenseId": "cmtwkqf4b0000yqk1a85df4ja"
+    },
+    "alternative": {
+      "result": [
+        "alternative evidence requires a reason; stale save retains inputs; current review survives reload without SRC",
+        "alternative evidence confirmed through real API/transaction without SRC or VAT credit"
+      ],
+      "expenseId": "cmtwkruhj0000gek1rcucrg5a"
+    },
+    "substitute": {
+      "result": [
+        "explicit zero-attachment review, wizard entry, actual prepare and unsigned PDF passed in initial run",
+        "synthetic paper form uploaded, reviewed and issued through actual API/storage/transaction",
+        "issued certificate expense confirmed, number unchanged"
+      ],
+      "expenseId": "cmtwl0af30000mrk1vx0xa47f",
+      "evidenceId": "cmtwl2y4j0034qxk1ti7zvve1"
+    }
+  },
+  "repositoryE2E": {
+    "startTime": "2026-09-11T06:59:02.844Z",
+    "duration": 12793.881,
+    "expected": 3,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cleanup": {
+    "before": {
+      "expenses": 9,
+      "certificates": 1,
+      "payments": 1,
+      "attachments": 10
+    },
+    "after": {
+      "expenses": 0,
+      "certificates": 0,
+      "payments": 0,
+      "attachments": 0,
+      "outbox": 0,
+      "journals": 0,
+      "numbers": 0
+    },
+    "deletedLocalObjects": 8,
+    "sequenceCounters": "not reset",
+    "expenseIds": [
+      "cmtwkqf4b0000yqk1a85df4ja",
+      "cmtwkruhj0000gek1rcucrg5a",
+      "cmtwl0af30000mrk1vx0xa47f",
+      "cmtwlp2i8004nqxk1xr84amh2",
+      "cmtwlqefm0053qxk13pn3e604",
+      "cmtwlqer1005pqxk1jut6voml",
+      "cmtwlvdw7001g6zk1ow1alns8",
+      "cmtwlvas900026zk15mhrpgbc",
+      "cmtwlvbc9000o6zk1gz74scmn"
+    ]
+  },
+  "limitations": [
+    "Full T01–T42 browser matrix not run; layer-specific coverage in report",
+    "T34 representative-user usability not run",
+    "T33 mobile390/desktop1440 smoke only; zoom200/full device matrix not run",
+    "First source/alternative fixtures used synthetic attachment metadata, so image rendering was not proven there; SRC used real storage upload/download",
+    "No merge, UAT or Production deployment"
+  ],
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/expense-branch-scope.use-case.spec.ts": "4f14c46f2508e745cc0777cf8d4e19cf16e34e98b3fcf3d3c1c767853d85a713",
+    "apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts": "c64b5b415a0af0bcdb2ffffce4935971e8150caa46144b42c818252768addddf",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts": "f7ec1bcbf429a9b773e271e5e813ac2da087c1e184e98539abe931df6402c2cc",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts": "cd10b14fa3f0ce24b56978bdd496c1f225ec5bdcd7e6daf23cfb5eff2f8d94a0",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts": "6caca17fbaad9274223b26aef639580931fa8b917b34eefb7d40cbb315f93896",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.ts": "8bd0773c8bbe648670b37929912f6532af9277533fbbb1d96ead9b1e01e05f17",
+    "apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.spec.ts": "62388a511103de9df2e0eb3171ff5f61256d7bf082b4ed09bec8942b95ef4b4a",
+    "apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.ts": "0c86f6146fa4110f5440a2df371d37d99f843dc6230d4f7729fc127b1877320a",
+    "apps/api/src/modules/expenses/domain/logic/expense-document.logic.spec.ts": "5ca6e550e8a3e06afe922c56b08cba1afdf8b1c12801b2451c1d54e1c89849cb",
+    "apps/api/src/modules/expenses/domain/logic/expense-document.logic.ts": "79c4b228564ec7888370f5227248829bace942f85c29bd0dc43403cb8d6f67e1",
+    "apps/api/src/modules/expenses/domain/logic/expense-status.logic.ts": "323ce0a4b6174f46f76ec675b16bc285690bedcbd630b4245f5ed41813f6d75b",
+    "apps/api/src/modules/expenses/domain/models/expense.model.ts": "70bfc5a8fd76a46a3e71a651893281036496815b017121e0e86209914efb78ab",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.atomic-confirm.spec.ts": "d6569203b81a0b67b0d06165af4d6d42c617561149a68c0cc41c0f8081176914",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.substitute-number.spec.ts": "188404f095a788c210d0c17fb8a616b1ac0b06ad32ff7d09e47b44aa0ada2aa6",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "303575ab930e7d194d08c281188e650df56f5888c3271de015e0ae83034797e3",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "b8e27daaed8b0310eb671b85bf66ea649ecb119cae9ea84ad47e8998b28c319c",
+    "apps/web/app/(workspace)/companies/[companyId]/expenses/substitute-receipts/[evidenceId]/page.tsx": "13bcef816c10e38f3d9016e148943b27fb4ee9e3a5ea23733e83ee98749ebde8",
+    "apps/web/src/common/i18n/workspace-dictionary.ts": "ac1c3e840e940d1707e063b7e8a6fb9b15595e55af02131ae33f57fa60229f62",
+    "apps/web/src/features/expenses/ExpenseReviewPage.tsx": "a2040494eee3424da0330d4941e10ba4071153acceb49d739c3e40cbb7de684c",
+    "apps/web/src/features/expenses/ExpensesPages.tsx": "fadc6de20b4ff9eaa6de18b5949f895246870639648a29f75d579af3ac6c5170",
+    "apps/web/src/features/expenses/SubstitutePaperSigningPanel.tsx": "ede935b6208c0183e463c9699824dd84efff696f5713b33f4d771230af29ee98",
+    "apps/web/src/features/expenses/SubstituteReceiptWizardPage.tsx": "3693fdf197f8539623f91568b7301c981facf3f313bf49f79210882ada3f7b88",
+    "apps/web/src/features/expenses/expense-review-steps.logic.spec.ts": "561357d2975c4761adaa14407de3dac1b4e5f88250f16cb351133d5692efa966",
+    "apps/web/src/features/expenses/expenses.model.spec.ts": "c9207eb9eaf363eee26b0ebf95a0ee8c4ecb8eb68f3a679bd0299b6650359e57",
+    "apps/web/src/features/expenses/expenses.model.ts": "8d94268562e360bc2bd5348f003502ebbf6f1c2d3b456c52cde64c5fc3e67570",
+    "e2e/expenses.spec.ts": "e4422249043e076ba0f22d1dd0b3a8116b848b98106d2796e3bb7ef2254354af",
+    "e2e/substitute-cancelled-view-only.spec.ts": "93dc3ed6435448b26f18e0329abf491749c326dc92dad41611e2b18048526dc7",
+    "packages/contracts/src/expenses.ts": "8d8f285e5bb5a8ba5c1c816e6106019d415eb4c62079a060810cf9dce6b8dc62",
+    "packages/contracts/src/expense-evidence.ts": "e0d433b51fb5f7772dca242b8c5dc08d1cdc7ce4d20a9f16dc0ebc5508c8baee",
+    "packages/contracts/src/expense-evidence.spec.ts": "d4ebd5a0e4a9cc4eb248dcd64564f5b841e45c2416a44dd82a518dfc4c3467c1"
+  }
+}

@@ -24,7 +24,12 @@ describe('check-bill canonical preparation wiring', () => {
   it('derives the route from the selected server expense on deep link and reload, not URL or LINE flags', () => {
     assert.match(wizardSource, /const checkBillRoute = isCheckBillClassification\(detail\?\.aiVerificationSummaryJson\)/);
     assert.match(wizardSource, /checkBillRoute \? \{ routeCheckBill: true as const \}/);
-    assert.match(wizardSource, /!checkBillRoute && detail\.sourceDocumentType === 'NEEDS_REVIEW'/);
+    // New preparation needs explicit evidence review; check-bill classification alone cannot approve it.
+    assert.doesNotMatch(wizardSource, /sourceDocumentType: !checkBillRoute && detail\.sourceDocumentType === 'NEEDS_REVIEW'/);
+    assert.match(wizardSource, /<DocumentReviewSection/);
+    const continueStep = sourceSection(wizardSource, 'const continueFromExpense = async', 'const prepare = async');
+    assert.match(continueStep, /!continuingExisting && \(!hasCurrentExpenseEvidenceReview\(detail\)/);
+    assert.match(continueStep, /expenseEvidenceAssessment\(detail\)\?\.route !== 'SUBSTITUTE_RECEIPT'/);
     assert.match(wizardSource, /paymentCount: selectedPaymentCount/);
     assert.match(wizardSource, /String\(selectedCount\)/, 'a stale selected id must not count as a ready evidence file');
   });
@@ -40,7 +45,10 @@ describe('check-bill canonical preparation wiring', () => {
     assert.match(section, /if \(busy \|\| dirty\) event\.preventDefault\(\)/);
     const navigate = sourceSection(reviewSource, 'const openSubstituteReceipt = async', 'const ocrTotalUnacknowledged');
     assert.match(navigate, /if \(aiReading \|\| stepSaving \|\| evidenceDirty\) return/);
-    assert.ok(navigate.indexOf('await reviewSaveRef.current()') < navigate.indexOf('router.push('));
+    // Superseded documents open read-only before this save. Active navigation saves first.
+    assert.match(navigate, /detail\.substituteReceiptEvidence\?\.status === 'SUPERSEDED'/);
+    assert.ok(navigate.indexOf('await reviewSaveRef.current()') < navigate.lastIndexOf('router.push('));
+    assert.match(navigate, /!detail\.substituteReceiptEvidence && !canStartSubstitute/);
     assert.match(navigate, /if \(!saved\) return/);
   });
 });

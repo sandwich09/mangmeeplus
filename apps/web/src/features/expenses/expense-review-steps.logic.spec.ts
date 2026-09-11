@@ -1,3 +1,4 @@
+import { expenseEvidenceFingerprint, type ExpenseEvidenceSource } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -9,7 +10,7 @@ type StepsInput = Parameters<typeof deriveExpenseReviewSteps>[0];
 
 // Editable draft where every step is already satisfied — cases below unset one dimension at a time.
 const base: StepsInput = {
-  attachments: [{ purpose: 'expense.receipt.primary', status: 'ACTIVE' }],
+  attachments: [{ id: 'receipt', purpose: 'expense.receipt.primary', status: 'ACTIVE' } as any],
   aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW' },
   vendorNameSnapshot: 'บริษัท ตัวอย่าง จำกัด',
   expenseDate: '2026-07-01',
@@ -21,6 +22,13 @@ const base: StepsInput = {
   substituteReceiptEvidence: null,
   duplicateStatus: 'NO_MATCH',
 };
+
+function reviewed(source: StepsInput) {
+  const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['receipt'], reason: '' };
+  return { ...source.aiVerificationSummaryJson, documentReview: { version: 2, reviewedAt: '2026-09-11T00:00:00Z', reviewedByUserId: 'reviewer', assessment,
+    fingerprint: expenseEvidenceFingerprint(source as ExpenseEvidenceSource, assessment) } };
+}
+base.aiVerificationSummaryJson = reviewed(base);
 
 const stepState = (over: Partial<StepsInput>, key: string) =>
   deriveExpenseReviewSteps({ ...base, ...over }, true).find((step) => step.key === key)?.state;
@@ -91,7 +99,7 @@ describe('deriveExpenseReviewSteps', () => {
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['expenseDate'] } }, 'data'), 'pending');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', dateStatus: 'assumed' } }, 'data'), 'done', 'a date read off the bill is a real date');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['vendorName', 'amount'] } }, 'data'), 'done');
-    assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['receipt_evidence'] } }, 'data'), 'done');
+    assert.equal(stepState({ aiVerificationSummaryJson: { ...base.aiVerificationSummaryJson, missingFields: ['receipt_evidence'] } }, 'data'), 'done');
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: [] } }, 'data'), 'done');
     // a flag the AI raised for a field the form never filled still leaves the step incomplete
     assert.equal(stepState({ vendorNameSnapshot: null, aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['vendorName'] } }, 'data'), 'pending');
@@ -104,7 +112,7 @@ describe('deriveExpenseReviewSteps', () => {
     // "AI อ่านได้ไม่ครบ" banner names: the model emits keys like buyerName/description/
     // categorySuggestion that no form field can clear, and naming those would send the user hunting
     // for an input that does not exist.
-    const summary = (missingFields: string[]) => ({ status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields });
+    const summary = (missingFields: string[]) => ({ ...base.aiVerificationSummaryJson, missingFields });
     assert.equal(stepState({ aiVerificationSummaryJson: summary(['buyerName', 'vendorTaxId']) }, 'data'), 'done');
 
     assert.deepEqual(expenseAiMissingFields(summary(['buyerName']), 'data'), []);
@@ -119,12 +127,13 @@ describe('deriveExpenseReviewSteps', () => {
 
   it('keeps the evidence step pending while tax evidence is still NEEDS_REVIEW', () => {
     assert.equal(stepState({ taxEvidenceStatus: 'NEEDS_REVIEW' }, 'evidence'), 'pending');
-    assert.equal(stepState({ taxEvidenceStatus: 'SUPPORTING_ONLY' }, 'evidence'), 'done');
+    assert.equal(stepState({ taxEvidenceStatus: 'SUPPORTING_ONLY' }, 'evidence'), 'pending');
+    assert.equal(stepState({ taxEvidenceStatus: 'SUPPORTING_ONLY', aiVerificationSummaryJson: reviewed({ ...base, taxEvidenceStatus: 'SUPPORTING_ONLY' }) }, 'evidence'), 'done');
   });
 
-  it('flags the evidence step until a relied-upon substitute receipt is fully issued', () => {
-    assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ' }, 'evidence'), 'attention');
-    assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'PREPARED', artifactAttachmentId: null } }, 'evidence'), 'attention');
+  it('a stale missing-receipt reason does not override a reviewed source document', () => {
+    assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ' }, 'evidence'), 'done');
+    assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'PREPARED', artifactAttachmentId: null } }, 'evidence'), 'done');
     assert.equal(stepState({ missingReceiptReason: 'ไม่ได้รับใบเสร็จ', substituteReceiptEvidence: { status: 'ISSUED', artifactAttachmentId: 'att-1' } }, 'evidence'), 'done');
   });
 
@@ -139,7 +148,7 @@ describe('deriveExpenseReviewSteps', () => {
   it('keeps the evidence step from done while the AI category flag is outstanding, and ignores the stale receipt_evidence flag', () => {
     assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['category'] } }, 'evidence'), 'pending');
     // receipt_evidence is stamped once at LINE text-note capture; live attachment state is the truth
-    assert.equal(stepState({ aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['receipt_evidence'] } }, 'evidence'), 'done');
+    assert.equal(stepState({ aiVerificationSummaryJson: { ...base.aiVerificationSummaryJson, missingFields: ['receipt_evidence'] } }, 'evidence'), 'done');
   });
 
   it('flags the evidence step while the non-expense classification block is unresolved', () => {
@@ -163,7 +172,7 @@ describe('deriveExpenseReviewSteps', () => {
       ...base,
       // §5.2: `amount` is a flag over a value the form really holds; the date is not, so this
       // fixture uses a flag whose field the reviewer can actually see is filled.
-      aiVerificationSummaryJson: { status: 'OCR_EXTRACTED_NEEDS_REVIEW', missingFields: ['amount'] },
+      aiVerificationSummaryJson: { ...base.aiVerificationSummaryJson, missingFields: ['amount'] },
     }, true);
     assert.deepEqual(steps.map((step) => step.state), ['done', 'done', 'done']);
   });
@@ -298,5 +307,27 @@ describe('a replaced receipt is re-read the way the first upload is', () => {
 
   it('never asks for a read the user has no permission to request', () => {
     assert.equal(shouldRereadReplacedReceipt({ status: 'DRAFT', canExtract: false }), false);
+  });
+});
+
+
+describe('explicit document review before Next', () => {
+  it('does not mark step 2 complete just because OCR filled the classifications', () => {
+    assert.equal(stepState({ aiVerificationSummaryJson: null }, 'evidence'), 'pending');
+    assert.equal(stepState({}, 'evidence'), 'done');
+    assert.equal(stepState({ extractionId: 'new-extraction' }, 'evidence'), 'pending');
+    assert.equal(stepState({ primaryAttachmentId: 'new-receipt' }, 'evidence'), 'done', 'moving the primary slot does not replace the explicitly reviewed file');
+  });
+  it('does not require an unavailable save for read-only viewers or an issued certificate', () => {
+    assert.equal(deriveExpenseReviewSteps({ ...base, aiVerificationSummaryJson: null }, false).find((step) => step.key === 'evidence')?.state, 'done');
+    assert.equal(stepState({ aiVerificationSummaryJson: null, substituteReceiptEvidence: { status: 'ISSUED', artifactAttachmentId: 'signed-form' } }, 'evidence'), 'done');
+    assert.equal(stepState({ aiVerificationSummaryJson: null, status: 'CONFIRMED' }, 'evidence'), 'done');
+  });
+  it('blocks an untouched unreviewed form, and prioritizes unsaved edits and classification blockers', () => {
+    const input = { checkBillBlocked: false, classificationBlocked: false, canReview: true, unsavedReview: false, reviewRequired: true };
+    assert.equal(expenseEvidenceStepBlocker(input), 'expenses.doc_review_required_next');
+    assert.equal(expenseEvidenceStepBlocker({ ...input, unsavedReview: true }), 'expenses.doc_review_unsaved_next');
+    assert.equal(expenseEvidenceStepBlocker({ ...input, classificationBlocked: true }), 'expenses.evidence_next_needs_classification');
+    assert.equal(expenseEvidenceStepBlocker({ ...input, reviewRequired: false }), null);
   });
 });

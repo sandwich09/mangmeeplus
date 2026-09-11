@@ -9,6 +9,7 @@ import { isAutoMissingReceiptReason } from '../../domain/logic/expense-document.
 import { substituteWetSignedScanRejection } from '../../domain/logic/substitute-receipt-pdf.logic';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { collectSubstituteReceiptEligibilityIssues, PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
+import { UpdateExpenseDraftUseCase } from './expense-draft.use-case';
 import { maySubmitSignature } from './signature-asset.use-case';
 // LINE renders a bare `/companies/...` as plain text, so these sites shipped an untappable string.
 // `webPath` itself stays a path — only the user-facing render is absolutised. `webLink` is a no-op
@@ -1171,6 +1172,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     private readonly prepare: PrepareSubstituteReceiptUseCase,
     private readonly audit: AuditService,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly review: UpdateExpenseDraftUseCase,
   ) {}
 
   /** Starts the plain-language three-way decision immediately after LINE captures a check bill. */
@@ -2079,6 +2081,35 @@ export class LineSubstituteReceiptContinuationUseCase {
       .filter((item) => item.purpose !== 'expense.payment.evidence' && item.purpose !== 'expense.review.evidence')
       .map((item) => item.id);
     try {
+      // This path is reached only after an explicit, revision-bound ISSUE/FORM answer.
+      // Use the same permission-checked review use case as the web; a chat capture is not a review.
+      const reviewResult = await this.review.execute(ctx, expense.id, {
+        expectedUpdatedAt: expense.updatedAt.toISOString(),
+        // Paid check-bill continuation is an explicit user decision, still requiring
+        // separate payment proof in preflight/prepare. OCR alone cannot take this route.
+        sourceDocumentType: state.routeCheckBill && expense.sourceDocumentType === 'NEEDS_REVIEW'
+          ? 'OTHER_EXPENSE_DOCUMENT' : expense.sourceDocumentType,
+        taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+        evidenceAssessment: { route: 'SUBSTITUTE_RECEIPT',
+          receiptProblem: values.reasonCode === 'RECEIPT_MATERIALLY_INCOMPLETE' ? 'MATERIAL_INCOMPLETE'
+            : values.reasonCode === 'RECEIPT_UNAVAILABLE' ? 'LOST' : 'NOT_AVAILABLE',
+          attachmentIds: [...paymentEvidenceAttachmentIds, ...supportingAttachmentIds],
+          reason: values.missingReceiptReason ?? storedMissingReceiptReason(expense) ?? '',
+        },
+        documentReviewAcknowledged: true,
+      }, { requireExpectedUpdatedAt: true });
+      const reviewed = await this.repo.findByIdWithRelations(ctx.companyId, expense.id);
+      if (!reviewed) throw new NotFoundException();
+      if (reviewed.updatedAt.getTime() !== reviewResult.updatedAt.getTime()) throw new ConflictException('Expense changed after review');
+      // Rebind only the decision we just reviewed. A concurrent edit fails this CAS instead of
+      // silently applying the older chat answers to a newer expense.
+      const rebound = await this.repo.saveLineSubstituteContinuation({
+        companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
+        expectedUpdatedAt: reviewed.updatedAt, scopes: ctx.scopes ?? {},
+        continuation: state as unknown as Record<string, unknown>,
+      });
+      state = rebound.continuation as unknown as LineSubstituteReceiptContinuation;
+      expense = { ...reviewed, updatedAt: rebound.updatedAt };
       const evidence = await this.prepare.execute(ctx, expense.id, {
         // The preflight was clean, so every required value is present; prepare re-validates anyway
         // and any gap comes back as the degraded reply below rather than an exception.

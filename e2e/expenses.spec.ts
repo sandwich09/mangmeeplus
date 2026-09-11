@@ -24,9 +24,11 @@ type DownloadUrl = { downloadUrl: string };
 type ExpenseExtractionResult = { status: 'ok' | 'not_configured' | 'unsupported' | 'no_attachment' | 'failed' };
 
 async function createExpense(api: any, companyId: string, amount = '1000.00') {
+  const { items: [branch] } = await json<{ items: Array<{ id: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+  expect(branch).toBeTruthy();
   return json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
     data: {
-      captureSource: 'WEB_MANUAL',
+      captureSource: 'WEB_MANUAL', branchId: branch!.id,
       expenseDate: new Date().toISOString(),
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NON_CLAIMABLE',
@@ -64,21 +66,34 @@ function uniqueReceiptPng(): Buffer {
   return Buffer.concat([signature, pngChunk('IHDR', ihdr), pngChunk('IDAT', deflateSync(rows)), pngChunk('IEND', Buffer.alloc(0))]);
 }
 
-// Confirming now requires either a primary receipt attachment or a fully-issued substitute
-// receipt certificate (see ConfirmExpenseUseCase.execute in expense-draft.use-case.ts) -- a
-// bare missingReceiptReason no longer reaches CONFIRMED. Tests that must actually confirm
-// attach a throwaway receipt instead of relying on createExpense()'s missingReceiptReason.
+// Test receipts are explicitly reviewed; merely uploading a file is not human approval.
+async function reviewReceipt(api: any, companyId: string, expenseId: string) {
+  const path = `companies/${companyId}/expenses/${expenseId}`;
+  const detail = await json<FullExpenseDetail>(await api.get(path));
+  expect(detail.primaryAttachmentId).toBeTruthy();
+  return json<ExpenseSummary>(await api.patch(`${path}/review-fields`, { data: {
+    expectedUpdatedAt: detail.updatedAt, sourceDocumentType: 'RECEIPT',
+    taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE',
+    evidenceAssessment: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE',
+      attachmentIds: [detail.primaryAttachmentId!], reason: '' },
+    documentReviewAcknowledged: true,
+  } }));
+}
+
 async function createExpenseWithReceipt(api: any, request: any, companyId: string, amount = '1000.00') {
+  const { items: [branch] } = await json<{ items: Array<{ id: string }> }>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+  expect(branch).toBeTruthy();
   const created = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses`, {
     data: {
-      captureSource: 'WEB_MANUAL',
+      captureSource: 'WEB_MANUAL', branchId: branch!.id,
       expenseDate: new Date().toISOString(),
       vatMode: 'NO_VAT',
       inputVatClaimStatus: 'NON_CLAIMABLE',
-      note: unique('E2E expense'),
+      note: unique('E2E expense'), vendorNameSnapshot: unique('Synthetic test vendor'),
       lines: [{ lineNumber: 1, description: unique('E2E expense line'), quantity: '1', unitPrice: amount }],
     },
   }));
+  test.info().annotations.push({ type: 'own-expense', description: created.id });
   const receiptBytes = uniqueReceiptPng();
   const intent = await json<UploadIntent>(await api.post(`companies/${companyId}/attachments/upload-intent`, {
     data: { originalFileName: unique('e2e-primary-receipt') + '.png', mimeType: 'image/png', byteSize: receiptBytes.length, visibility: 'INTERNAL' },
@@ -88,7 +103,7 @@ async function createExpenseWithReceipt(api: any, request: any, companyId: strin
   const completed = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses/${created.id}/receipt-uploads/${intent.attachmentId}/complete`, {
     data: { byteSize: receiptBytes.length, purpose: 'expense.receipt.primary' },
   }));
-  return completed;
+  return reviewReceipt(api, companyId, completed.id);
 }
 
 test.describe('EXP — expenses + receipts', () => {
@@ -348,6 +363,7 @@ test.describe('EXP — expenses + receipts', () => {
 
     const detail = await json<ExpenseDetail>(await api.get(`companies/${companyId}/expenses/${created.id}`));
     expect(Number(detail.grandTotalAmount)).toBe(300);
+    await reviewReceipt(api, companyId, created.id);
 
     const ready = await json<ExpenseSummary>(await api.post(`companies/${companyId}/expenses/${created.id}/mark-ready`, { data: {} }));
     expect(ready.status).toBe('READY_FOR_CONFIRMATION');
@@ -951,4 +967,28 @@ test.describe('expense list filter retention', () => {
     await clickSidebar(authedPage, '/expenses');
     await expect(columns(authedPage)).toHaveText(SUMMARY);
   });
+});
+
+
+test('EXP-EVIDENCE @p1 pending evidence saves and reopens without enabling Next or creating a certificate', async ({ authedPage: page, api, companyId }, testInfo) => {
+  const created = await createExpense(api, companyId);
+  testInfo.annotations.push({ type: 'own-expense', description: created.id });
+  const path = `companies/${companyId}/expenses/${created.id}`;
+  await json(await api.patch(path, { data: { expectedUpdatedAt: created.updatedAt, vendorNameSnapshot: 'Synthetic review test vendor' } }));
+  await gotoCompany(page, companyId, `/expenses/${created.id}`);
+  const next = page.getByRole('button', { name: 'ถัดไป', exact: true });
+  await next.click();
+  const card = page.getByRole('heading', { name: 'ตรวจสอบเอกสารและหลักฐานภาษี', exact: true }).locator('..');
+  await expect(next).toBeDisabled();
+  await chooseThemedOption(page, page.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true }), 'สลิปโอนเงิน');
+  await card.getByRole('button', { name: 'บันทึกแบบร่าง', exact: true }).click();
+  await expect.poll(async () => (await json<FullExpenseDetail>(await api.get(path))).sourceDocumentType).toBe('TRANSFER_SLIP');
+  await page.reload();
+  await next.click();
+  await expect(page.getByRole('combobox', { name: 'ประเภทเอกสาร', exact: true })).toContainText('สลิปโอนเงิน');
+  await expect(next).toBeDisabled();
+  await expect(card.getByRole('button', { name: 'บันทึกการตรวจ', exact: true })).toBeDisabled();
+  const saved = await json<FullExpenseDetail>(await api.get(path));
+  expect(saved.aiVerificationSummaryJson?.documentReview).toBeUndefined();
+  expect(saved.substituteReceiptEvidence).toBeFalsy();
 });

@@ -1,6 +1,6 @@
 # Agent Memory: Substitute receipt step 3 editing
 
-Status: final immutable-number implementation verified and pushed; integration authorized on the existing branch/PR514 and PR515. Awaiting current candidate CI before merging develop and main.
+Status: complete. Payment-date editing and CI repair merged into main PR515 and develop PR514; remote ancestry and immutable-number repository/contract parity verified. No deployment in this task.
 Current follow-up: payment-date confirmation, shared editor, cancellation-first financial safeguards, CI fixture repair and browser verification complete. Latest evidence is at the end of this chronological log. No deployment in scope.
 Owner: /root
 Scope: allow editing incomplete certificate details/evidence from step 3 without manual cancellation or consuming another number.
@@ -150,3 +150,20 @@ Resolved the wizard's five overlapping regions by retaining immutable active-doc
 
 Merged-source verification: full web1688 passed; API amendment/download/PDF and actual PostgreSQL114 passed, no skips; existing cancelled DIGITAL/PAPER browser E2E2 passed at desktop/mobile, including cancellation on focus and zero writes. Web typecheck passed. Logs /tmp/step3-integration-{web-suite,api,viewonly}.log and /tmp/step3-merge-web-types.log. Recheck API types/build and active-date browser, then push this merge on the same branch and require its fresh CI before integration. Prior successful CI is evidence for the previous candidate only.
 API typecheck/build passed on the merged source. Actual active-date browser rerun also passed with the rebuilt API (/tmp/step3-integration-active-browser.log): popup/cancel/Escape, source roundtrip, immutable number and latest PDF/mobile. This verifies both active editing and the upstream cancelled view-only journey together. Final integration candidate is ready for CI.
+
+## Main merged; final develop integration
+Candidate9ac6eb88916d2023aa25dead864b2c832ec81f96 passed both CI34481772687 and34481775762. Main PR515 merged with the already approved admin option after all checks passed: merge commit0b5cb2da8120c7f03f8bf6c1920d60f92f06d57f, 2026-09-10T13:38:18Z. No deployment.
+
+Develop received PR524 (7b689880, featurea5ede2f2) during CI; GitHub rejected PR514 merge with a conflict. Merging the actual develop head locally succeeded without manual source resolution. Retained its preview/print metadata cleanup and removed digital-route download action, alongside the existing payment-date editor and immutable-number rules. This upstream preview work belongs to its own main PR; our payment-date implementation is already merged to main.
+
+Final develop combined source: full web1690 passed; API/PDF/download/immutable-number and actual PostgreSQL121 passed, no skips; web typecheck passed. Logs /tmp/step3-develop-{web-suite,api,web-types}.log. Final API typecheck /tmp/step3-develop-api-types.log. Push this merge on the same branch and finish PR514 after its new CI passes. Keep main's already merged evidence distinct from this develop-only integration candidate.
+Final develop API typecheck passed (exit0). All scoped local integration checks are green.
+
+## Integration complete
+- Main PR515 merged 2026-09-10T13:38:18Z: 0b5cb2da8120c7f03f8bf6c1920d60f92f06d57f. Exact candidate9ac6eb88916d2023aa25dead864b2c832ec81f96 passed CI34481772687 and34481775762 before the authorized admin merge.
+- Develop PR514 merged 2026-09-10T13:59:10Z: 458283508fe10687bc6adc95947ff8bff1abf62e. Exact candidate d6abe87e51aa9e87ed08acb702dc9f2f8812cc0d passed CI34484147563, all checks green, before normal merge.
+- Concurrent hub-menu PR526 changed different files; verified clean merge-tree without restarting CI or overwriting it. Final fetched main98fe8d72dfdf073f90d0609d925bd2d617f4b7c8 contains the verified payment-date candidate; develop458283508fe10687bc6adc95947ff8bff1abf62e contains the final integration candidate. Both PRs are MERGED. Core immutable-number repository/contracts are identical between the fetched branches. Main additionally received independent signing-navigation PR528, which moves the wizard navigation controls below the content; the payment-date/number rules are unchanged.
+- No package manifests/dependency symlinks committed. Test-owned local data cleaned. No cloud operations or deployments in this implementation/integration task. This final merge-evidence entry is recorded locally after the merges; implementation/spec and preceding validation evidence were committed with the candidates.
+Next: task complete; any deployment is a separate authorized operation with the repository deployment protocol.
+
+Post-merge status observation: unrelated concurrent UI edits appeared in SubstitutePaperSigningPanel.tsx and SubstituteReceiptWizardPage.tsx, matching the separate signing-navigation work. Left these untouched and uncommitted; they are not part of this completed merge. Final task-memory evidence is the only local edit made here after merging.

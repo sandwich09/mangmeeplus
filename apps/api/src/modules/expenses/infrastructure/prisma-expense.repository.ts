@@ -8,6 +8,7 @@ import { assertFullSubstitutePayment, assertSubstitutePaymentDetails, assertSubs
 import { assertExpenseSourceDraftComplete } from '../domain/logic/expense-source-draft.logic';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { expenseEvidenceConfirmationError, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { Prisma } from '../../../generated/prisma/client';
 import { branchScopeWhere, isBranchInScope, type BranchScopes } from '../../data-model-core/domain/logic/branch.logic';
@@ -1671,6 +1672,12 @@ export class PrismaExpenseRepository {
         };
         sourceChannelMetadataJson = metadata as Record<string, unknown>;
       }
+      if (!correction) {
+        const reviewedSource = await this.findByIdWithRelations(input.companyId, input.expenseId, tx);
+        if (!reviewedSource || !hasCurrentExpenseEvidenceReview(reviewedSource) || expenseEvidenceAssessment(reviewedSource)?.route !== 'SUBSTITUTE_RECEIPT') {
+          throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'หลักฐานเปลี่ยนแล้ว กรุณาบันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
+        }
+      }
       const safeUpdate = correction ? { count: 1 } : await tx.expenseRecord.updateMany({
         where: {
           id: input.expenseId,
@@ -2403,12 +2410,10 @@ export class PrismaExpenseRepository {
       };
       if (expenseTaxSourceChecksum(currentRecord) !== input.expectedSourceChecksum) throw new ConflictException('expense_confirmation_source_checksum_changed');
 
-      const reliesOnSubstitute = Boolean(current.missingReceiptReason || current.substituteReceiptGeneratedAt || current.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
       const coveredByClaimForm = Boolean(input.substituteCoveredByClaimForm)
         && !current.substituteReceiptGeneratedAt && current.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-      if (reliesOnSubstitute && !coveredByClaimForm && (!substitute || substitute.status !== 'ISSUED' || !substitute.artifactAttachmentId)) {
-        throw new ConflictException('expense_confirmation_substitute_evidence_changed');
-      }
+      const evidenceError = expenseEvidenceConfirmationError(currentRecord, coveredByClaimForm);
+      if (evidenceError) throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
       let acceptedVat: ReturnType<typeof acceptExpenseVatSource> | undefined;
       if (input.vatSourceOverride) {
         if (typeof input.vatSourceOverride.expectedUpdatedAt !== 'string'

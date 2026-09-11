@@ -67,7 +67,8 @@ import {
   removeLightBackground,
 } from './expenses.model';
 import type { ExpenseCategorySummary, ExpenseDetail, ExpenseSummary } from './expenses.model';
-import { ExpenseReviewEditSection, reviewValues } from './ExpensesPages';
+import { DocumentReviewSection, ExpenseReviewEditSection, reviewValues } from './ExpensesPages';
+import { hasCurrentExpenseEvidenceReview, expenseEvidenceAssessment } from '@watchdog-bms/contracts';
 import {
   baht,
   btnClass,
@@ -765,8 +766,10 @@ export function SubstituteReceiptWizardPage({
 
   const initializeDraft = useCallback((nextDetail: ExpenseDetail, cancelledEvidence?: SubstituteReceiptEvidenceSummary) => {
     setDetail(nextDetail);
-    setReasonCode(defaultSubstituteReceiptReason(nextDetail.sourceDocumentType));
-    setMissingReason(payerWrittenMissingReason(nextDetail.missingReceiptReason));
+    const assessment = expenseEvidenceAssessment(nextDetail);
+    setReasonCode(assessment?.receiptProblem === 'LOST' ? 'RECEIPT_UNAVAILABLE'
+      : assessment?.receiptProblem === 'MATERIAL_INCOMPLETE' ? 'RECEIPT_MATERIALLY_INCOMPLETE' : defaultSubstituteReceiptReason(nextDetail.sourceDocumentType));
+    setMissingReason(assessment?.route === 'SUBSTITUTE_RECEIPT' ? assessment.reason : payerWrittenMissingReason(nextDetail.missingReceiptReason));
     setBusinessPurpose(nextDetail.sourceDraft?.header.businessPurpose ?? nextDetail.note?.split(' · ').find(part => part.trim().startsWith('วัตถุประสงค์:'))?.trim().slice('วัตถุประสงค์:'.length).trim() ?? nextDetail.note ?? '');
     setPayeeName(nextDetail.vendorNameSnapshot ?? '');
     setPayeeAddress('');
@@ -779,10 +782,10 @@ export function SubstituteReceiptWizardPage({
       setPaymentMethod(nextDetail.paymentMethod ?? previous.paymentMethod ?? 'CASH');
     }
     setPaymentDate(coerceCivilDate(nextDetail.paidAt ?? previous?.paymentDate ?? todayIso()));
-    setSupportingIds(nextDetail.attachments.filter((attachment) => attachment.status === 'ACTIVE'
+    setSupportingIds(nextDetail.attachments.filter((attachment) => (!assessment || assessment.attachmentIds.includes(attachment.id)) && attachment.status === 'ACTIVE'
       && attachment.purpose !== 'expense.review.evidence'
       && attachment.purpose !== 'expense.payment.evidence').map((attachment) => attachment.id));
-    setPaymentIds(nextDetail.attachments.filter((attachment) => attachment.status === 'ACTIVE'
+    setPaymentIds(nextDetail.attachments.filter((attachment) => (!assessment || assessment.attachmentIds.includes(attachment.id)) && attachment.status === 'ACTIVE'
       && attachment.purpose === 'expense.payment.evidence').map((attachment) => attachment.id));
     setPayerId('');
     setFundingSource(''); setPaidInFullAcknowledged(false);
@@ -1117,22 +1120,15 @@ export function SubstituteReceiptWizardPage({
     const renderabilityIssue = substituteReceiptRenderabilityIssue(detail);
     if (renderabilityIssue) throw new Error(renderabilityIssueMessage(renderabilityIssue, locale));
     assertExpensePrerequisites(detail);
-    const nextDocType = !checkBillRoute && detail.sourceDocumentType === 'NEEDS_REVIEW' ? 'EXPENSE_NOTE_TEXT' as const : detail.sourceDocumentType;
-    const nextTaxStatus = !checkBillRoute && detail.taxEvidenceStatus === 'NEEDS_REVIEW' ? 'SUPPORTING_ONLY' as const : detail.taxEvidenceStatus;
-    if (nextDocType !== detail.sourceDocumentType || nextTaxStatus !== detail.taxEvidenceStatus) {
-      const disallowsTaxCode = !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus);
-      const currentReview = reviewValues(detail);
-      await updateExpenseReviewFields(companyId, detail.id, {
-        expectedUpdatedAt: detail.updatedAt,
-        ...(disallowsTaxCode ? buildExpenseDraftReviewPayload({
-          ...currentReview,
-          lines: clearExpenseTaxSelections(currentReview.lines),
-        }) : {}),
-        sourceDocumentType: nextDocType,
-        taxEvidenceStatus: nextTaxStatus,
-        ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
-      });
-      setDetail(await getExpense(companyId, detail.id));
+    const continuingExisting = ['PREPARED', 'PAYER_CERTIFIED'].includes(detail.substituteReceiptEvidence?.status ?? '');
+    if (!continuingExisting && (!hasCurrentExpenseEvidenceReview(detail) || expenseEvidenceAssessment(detail)?.route !== 'SUBSTITUTE_RECEIPT')) {
+      throw new Error('ระบุปัญหาเอกสาร เลือกจัดทำใบรับรอง และบันทึกการตรวจก่อนดำเนินการต่อ');
+    }
+    if (!continuingExisting) {
+      const assessment = expenseEvidenceAssessment(detail)!;
+      setMissingReason(assessment.reason || payerWrittenMissingReason(detail.missingReceiptReason));
+      setReasonCode(assessment.receiptProblem === 'LOST' ? 'RECEIPT_UNAVAILABLE'
+        : assessment.receiptProblem === 'MATERIAL_INCOMPLETE' ? 'RECEIPT_MATERIALLY_INCOMPLETE' : defaultSubstituteReceiptReason(detail.sourceDocumentType));
     }
     setActiveStep('details');
     requestWorkflowFocus('details');
@@ -1981,6 +1977,8 @@ export function SubstituteReceiptWizardPage({
             </div>
             {renderPrerequisiteCard()}
             <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />
+            <DocumentReviewSection companyId={companyId} detail={detail} isMutable={!busy} canReview={canReview} showSubstituteAction={false}
+              onSaved={async () => { setDetail(await getExpense(companyId, detail.id)); }} />
             {checkBillRoute && <p className="rounded-xl bg-warning-50 p-3 text-sm leading-6 text-warning-800">{t('expenses.check_bill_new_draft_note', locale)}</p>}
             {selectedExpenseRenderabilityIssue && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning-200 bg-warning-50 px-3 py-2">

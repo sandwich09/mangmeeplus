@@ -77,6 +77,10 @@ export function deriveTaxEvidence(input: TaxEvidenceInput): TaxEvidenceResult {
       // Valid tax-invoice fields inside a screenshot upgrade it during review, not at intake.
       return { taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'MARKETPLACE_SCREENSHOT_ONLY' };
     case 'HANDWRITTEN_CASH_BILL':
+      if (!toPositiveNumber(input.grandTotalAmount ?? undefined) || !input.vendorName) {
+        return { taxEvidenceStatus: 'NEEDS_REVIEW', taxEvidenceReasonCode: 'UNREADABLE_OR_LOW_CONFIDENCE' };
+      }
+      return { taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'HANDWRITTEN_RECEIPT_REVIEW' };
     case 'EXPENSE_NOTE_TEXT':
       return { taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE' };
     case 'SUBSTITUTE_RECEIPT':

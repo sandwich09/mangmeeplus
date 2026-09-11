@@ -778,6 +778,12 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     const expenses = new PrismaExpenseRepository({ client: source.db } as any);
     const confirm = new ConfirmExpenseUseCase(expenses, { log: async () => undefined } as any, { resolveLines: async () => [] } as any,
       {} as any);
+    const confirmationCtx = { companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any;
+    await assert.rejects(() => confirm.executeForReimbursement(confirmationCtx, projection!.expenseId,
+      { reimbursementRequestId: request.id, reimbursementLineId: 'wrong-line', branchId, allowMissingReceiptWithReason: false }),
+      /reimbursement_projection_authority_mismatch/);
+    await assert.rejects(() => confirm.execute({ ...confirmationCtx, permissions: ['expense.confirm'] }, projection!.expenseId),
+      error => errorCode(error) === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
     const confirmed = await confirm.executeForReimbursement({ companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any, projection!.expenseId,
       { reimbursementRequestId: request.id, reimbursementLineId: request.lines![0]!.id, branchId, allowMissingReceiptWithReason: false });
     assert.equal(confirmed.status, 'CONFIRMED');
