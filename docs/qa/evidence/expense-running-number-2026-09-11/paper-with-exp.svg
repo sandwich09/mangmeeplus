@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="850" height="998" viewBox="0 0 850 998" data-pdf-breaks="283,357,425,563,663,720,778" role="img" aria-label="ใบรับรองแทนใบเสร็จรับเงิน">
+  <rect width="850" height="998" fill="#fff"/>
+  <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
+    <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">ใบรับรองแทนใบเสร็จรับเงิน</text>
+    <text x="50" y="120">บริษัท: บริษัทตัวอย่าง</text>
+    <text x="470" y="120">สาขา: สำนักงานใหญ่</text>
+    <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: 0000000000000</text>
+    <text x="470" y="148">วันที่รายจ่าย: 31 ส.ค. 2569</text>
+    <text x="50" y="176">เลขอ้างอิงรายการ: EXP-202608-00001</text>
+    <text x="470" y="176">วันที่จ่าย: 11 ก.ย. 2569</text>
+    <text x="50" y="204">หลักฐานต้นทาง: บันทึกค่าใช้จ่าย (ข้อความ)</text>
+    <text x="470" y="204">วิธีชำระเงิน: อื่น ๆ</text>
+
+    <g fill="none" stroke="#444" stroke-width="1.2">
+      <rect x="45" y="283" width="760" height="142"/>
+      <line x1="150" y1="283" x2="150" y2="357"/>
+      <line x1="560" y1="283" x2="560" y2="357"/>
+      <line x1="630" y1="283" x2="630" y2="425"/>
+      <line x1="730" y1="283" x2="730" y2="425"/>
+      <line x1="45" y1="357" x2="805" y2="357"/>
+      <line x1="45" y1="393" x2="805" y2="393"/>
+    </g>
+    <text x="96" y="308" text-anchor="middle">วัน เดือน ปี</text>
+    <text x="355" y="308" text-anchor="middle">รายละเอียดรายจ่าย</text>
+    <text x="595" y="308" text-anchor="middle">จำนวน</text>
+    <text x="680" y="308" text-anchor="middle">จำนวนเงิน</text>
+    <text x="767" y="308" text-anchor="middle">หมายเหตุ</text>
+    <line x1="45" y1="321" x2="805" y2="321" stroke="#bbb"/>
+      <text x="54" y="345">31 ส.ค. 2569</text>
+      <text x="165" y="345"><tspan x="165" dy="0">วัสดุ</tspan></text>
+      <text x="615" y="345" text-anchor="end">1</text>
+      <text x="710" y="345" text-anchor="end">1,200.00</text>
+      <text x="742" y="345"><tspan x="742" dy="0">-</tspan></text>
+    <text x="620" y="381" text-anchor="end" font-weight="700">รวมทั้งสิ้น</text><text x="720" y="381" text-anchor="end" font-weight="700">1,200.00</text>
+    <text x="54" y="415">รวมเป็นตัวอักษร: หนึ่งพันสองร้อยบาทถ้วน</text>
+    <text x="50" y="463"><tspan x="50" dy="0">เหตุผลที่ไม่สามารถเรียกใบเสร็จ: ผู้ขายไม่ออกใบเสร็จ</tspan></text>
+    <text x="50" y="497"><tspan x="50" dy="0">วัตถุประสงค์ทางธุรกิจ: ซื้อวัสดุ</tspan></text>
+    <text x="50" y="531"><tspan x="50" dy="0">-</tspan></text>
+    <rect x="45" y="563" width="760" height="62" fill="#fafafa" stroke="#777"/>
+    <text x="60" y="590"><tspan x="60" dy="0">รับรองรายจ่ายตามข้อมูลที่ระบุ</tspan></text>
+    <text x="50" y="663" font-weight="700">หลักฐานประกอบ/หลักฐานการจ่ายที่เชื่อมโยง</text>
+    <text x="64" y="693"><tspan x="64" dy="0">• ไม่มีเอกสารแนบเพิ่มเติม</tspan></text>
+
+    <text x="240" y="793" text-anchor="middle" font-weight="700">ผู้รับรองการจ่าย</text>
+    <line x1="105" y1="870" x2="375" y2="870" stroke="#222"/>
+    <text x="240" y="896" text-anchor="middle">ชื่อ (________________________________)</text>
+    <text x="240" y="928" text-anchor="middle">ตำแหน่ง (ถ้ามี) _______________________</text>
+    <text x="240" y="960" text-anchor="middle">วันที่ ________ / ________ / ____________</text>
+    <text x="615" y="793" text-anchor="middle" font-weight="700">ผู้อนุมัติ</text>
+    <line x1="480" y1="870" x2="750" y2="870" stroke="#222"/>
+    <text x="615" y="896" text-anchor="middle">ชื่อ (________________________________)</text>
+    <text x="615" y="928" text-anchor="middle">ตำแหน่ง (ถ้ามี) _______________________</text>
+    <text x="615" y="960" text-anchor="middle">วันที่ ________ / ________ / ____________</text>
+
+  </g>
+</svg>

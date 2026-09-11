@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 [chromium] › e2e/expense-number-proof.spec.ts:84:5 › Recovery proof: refresh after already-voided response then cancel the same request (197ms)
+
+  1 passed (676ms)

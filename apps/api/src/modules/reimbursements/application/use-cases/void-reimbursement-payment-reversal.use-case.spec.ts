@@ -8,11 +8,6 @@ import { VoidReimbursementPaymentUseCase } from './reimbursement-finance.use-cas
 const fakeDetailEvidence = { getAttachmentFileName: async () => undefined, getAttachmentFileNames: async () => ({}) };
 
 
-// GAP-02 Phase 3 closure evidence: the payment void reserves the reversal entry
-// number only when a posted settlement journal exists, commits it only when a
-// reversal was created, and releases it on failure or when it was unnecessary —
-// mirroring VoidExpenseUseCase (H-04).
-
 const ctx: any = {
   companyId: 'co-1', userId: 'fin-1', requestId: 'req-1',
   permissions: ['reimbursement.payment.void'], scopes: {},
@@ -56,45 +51,34 @@ describe('VoidReimbursementPaymentUseCase (GAP-02 true reversal)', () => {
     };
   });
 
-  const make = () => new VoidReimbursementPaymentUseCase(repo, s.audit as any, s.outbox as any, s.reserveNumber as any, s.commitNumber as any, s.cancelNumber as any, fakeDetailEvidence as any);
+  const make = () => new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any);
 
-  it('reserves and commits the reversal number when the payment was posted', async () => {
-    const detail: any = await make().execute(ctx, 'rb-1', 'pay-1', { reason: 'จ่ายผิดบัญชี' });
+  it('passes audit identity to the atomic void and returns its current detail', async () => {
+    const detail = await make().execute(ctx, 'rb-1', 'pay-1', { reason: 'จ่ายผิดบัญชี' });
     assert.ok(detail);
-    assert.equal(s.reserveNumber.execute.mock.callCount(), 1);
-    // reversal entry number is threaded into the repo transaction
-    assert.equal(repo.voidPaymentTrueReversal.mock.calls[0].arguments[5], 'JV-REV-1');
-    assert.equal(s.commitNumber.execute.mock.callCount(), 1);
-    assert.equal((s.commitNumber.execute.mock.calls[0] as any).arguments[0].ownerId, 'je-rev');
-    assert.equal(s.cancelNumber.execute.mock.callCount(), 0);
-    const outboxPayload = (s.outbox.append.mock.calls[0] as any).arguments[3];
-    assert.equal(outboxPayload.data.reversalEntryId, 'je-rev');
+    assert.deepEqual(repo.voidPaymentTrueReversal.mock.calls[0].arguments, ['co-1', 'rb-1', 'pay-1', 'fin-1', 'จ่ายผิดบัญชี', undefined, 'req-1']);
+  });
+  it('propagates transaction failure without emitting a second event or committing a number', async () => {
+    repo.voidPaymentTrueReversal = mock.fn(async () => { throw new UnprocessableEntityException('injected rollback'); });
+    await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ผิดพลาด' }), /injected rollback/);
+  });
+  it('checks permission, branch and payment association before replay', async () => {
+    await assert.rejects(make().execute({ ...ctx, permissions: [] }, 'rb-1', 'pay-1', { reason: 'ซ้ำ' }), /permission/);
+    repo.findRequestById = mock.fn(async () => ({ ...requestDetail('UNPAID'), branchId: 'outside' }));
+    await assert.rejects(make().execute({ ...ctx, scopes: { branchIds: ['inside'] } }, 'rb-1', 'pay-1', { reason: 'ซ้ำ' }));
+    repo.findRequestById = mock.fn(async () => requestDetail('UNPAID'));
+    repo.findPaymentById = mock.fn(async () => ({ id: 'pay-1', reimbursementRequestId: 'other-request', status: 'VOIDED' }));
+    await assert.rejects(make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ซ้ำ' }), /not found/);
+    assert.equal(repo.voidPaymentTrueReversal.mock.callCount(), 0);
   });
 
-  it('skips the reversal number and reverses nothing when the payment was never posted', async () => {
-    repo.findPostedGeneratedJournalId = mock.fn(async () => null);
-    repo.voidPaymentTrueReversal = mock.fn(async () => ({ request: requestDetail('READY_FOR_PAYMENT'), payment: { id: 'pay-1', status: 'VOIDED' }, reversalEntryId: null }));
-    await make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ยกเลิก' });
-    assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
-    // no reserved number is threaded through
-    assert.equal(repo.voidPaymentTrueReversal.mock.calls[0].arguments[5], undefined);
-    assert.equal(s.commitNumber.execute.mock.callCount(), 0);
-    assert.equal(s.cancelNumber.execute.mock.callCount(), 0);
-    const outboxPayload = (s.outbox.append.mock.calls[0] as any).arguments[3];
-    assert.equal(outboxPayload.data.reversalEntryId, null);
-  });
-
-  it('releases the reserved number and rethrows when the void transaction fails', async () => {
-    repo.voidPaymentTrueReversal = mock.fn(async () => { throw new UnprocessableEntityException('boom'); });
-    await assert.rejects(() => make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ผิดพลาด' }), UnprocessableEntityException);
-    assert.equal(s.cancelNumber.execute.mock.callCount(), 1);
-    assert.equal(s.commitNumber.execute.mock.callCount(), 0);
-    assert.equal(s.outbox.append.mock.callCount(), 0);
-  });
-
-  it('rejects voiding an already-voided payment', async () => {
+  it('recovers an already-voided payment without another reversal or event', async () => {
     repo.findPaymentById = mock.fn(async () => ({ id: 'pay-1', reimbursementRequestId: 'rb-1', status: 'VOIDED', paidAmount: '500.0000' }));
-    await assert.rejects(() => make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ซ้ำ' }), UnprocessableEntityException);
+    const result = await make().execute(ctx, 'rb-1', 'pay-1', { reason: 'ซ้ำ' });
+    assert.ok(result);
+    assert.equal(s.reserveNumber.execute.mock.callCount(), 0);
+    assert.equal(s.audit.log.mock.callCount(), 0);
+    assert.equal(s.outbox.append.mock.callCount(), 0);
     assert.equal(repo.voidPaymentTrueReversal.mock.callCount(), 0);
   });
 });

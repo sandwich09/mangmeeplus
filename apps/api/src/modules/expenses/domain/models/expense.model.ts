@@ -207,6 +207,11 @@ export type SubstituteReceiptPolicyRecord = {
 };
 
 export type CreateExpenseRecordInput = {
+  /** Server-owned identity of a deliberate save; never supplied to upload/OCR repository writes. */
+  draftIdempotencyKey?: string;
+  draftPayloadHash?: string;
+  draftReplayScopes?: import('../../../data-model-core/domain/logic/branch.logic').BranchScopes;
+  assignExpenseNumber?: boolean;
   companyId: string;
   branchId?: string;
   captureSource: ExpenseCaptureSource;
@@ -241,7 +246,7 @@ export type CreateExpenseRecordInput = {
   outstandingAmount: string;
 };
 
-export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId'>> & {
+export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId' | 'draftIdempotencyKey' | 'draftPayloadHash' | 'draftReplayScopes'>> & {
   id: string;
   companyId: string;
   updatedByUserId: string;

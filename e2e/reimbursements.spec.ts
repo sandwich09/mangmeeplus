@@ -3,6 +3,7 @@ import { gotoCompany, json, unique } from './harness/e2e-utils';
 import { addCivilDays, todayCivilDate } from '../packages/contracts/src/civil-date';
 
 type Policy = {
+  id?: string; updatedAt?: string;
   allowSelfApproval: boolean;
   allowMissingReceiptWithReason: boolean;
   requireReceipt: boolean;
@@ -25,9 +26,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /** One claim, N rows. The server computes the total — no amount is ever posted at header level. */
 async function createReimbursement(api: any, companyId: string, amounts: string[] = ['123.00']) {
+  const branches = await json<any>(await api.get(`companies/${companyId}/branches?status=ACTIVE&pageSize=100`));
+  const branchId = (branches.data ?? branches.items ?? branches)[0].id;
   return json<Reimbursement>(await api.post(`companies/${companyId}/reimbursements`, {
     data: {
-      reason: unique('E2E reimbursement'),
+      reason: unique('E2E reimbursement'), branchId,
       currency: 'THB',
       missingReceiptReason: 'E2E local run without receipt upload',
       lines: amounts.map((amount, index) => ({
@@ -43,11 +46,13 @@ async function createReimbursement(api: any, companyId: string, amounts: string[
 
 async function withPolicy(api: any, companyId: string, patch: Partial<Policy>, fn: () => Promise<void>) {
   const original = await json<Policy>(await api.get(`companies/${companyId}/reimbursement-policy`));
-  await json<Policy>(await api.put(`companies/${companyId}/reimbursement-policy`, { data: { ...original, ...patch } }));
+  const body = (p: Policy) => ({ allowSelfApproval: p.allowSelfApproval, allowMissingReceiptWithReason: p.allowMissingReceiptWithReason, requireReceipt: p.requireReceipt, financeReviewRequired: p.financeReviewRequired });
+  await json<Policy>(await api.put(`companies/${companyId}/reimbursement-policy`, { data: { ...body(original), ...patch, ...(original.id !== 'default' && { expectedUpdatedAt: original.updatedAt }) } }));
   try {
     await fn();
   } finally {
-    await api.put(`companies/${companyId}/reimbursement-policy`, { data: original });
+    const latest = await json<Policy>(await api.get(`companies/${companyId}/reimbursement-policy`));
+    await json(await api.put(`companies/${companyId}/reimbursement-policy`, { data: { ...body(original), expectedUpdatedAt: latest.updatedAt } }));
   }
 }
 
@@ -112,11 +117,12 @@ test.describe('REIMB — reimbursements', () => {
     expect(response.status()).toBe(400);
   });
 
-  test('REIMB-03 @p1 owner approves, finance-reviews, and pays throwaway request', async ({ api, companyId }) => {
+  test('REIMB-03 @p1 manager approves, owner finance-reviews, and pays throwaway request', async ({ api, apiAs, companyId }) => {
+    const manager = await apiAs('MANAGER');
     await withPolicy(api, companyId, { requireReceipt: false, allowSelfApproval: true, allowMissingReceiptWithReason: true, financeReviewRequired: true }, async () => {
       const draft = await createReimbursement(api, companyId, ['88.00']);
       const submitted = await json<Reimbursement>(await api.post(`companies/${companyId}/reimbursements/${draft.id}/submit`, { data: {} }));
-      const approved = await json<Reimbursement>(await api.post(`companies/${companyId}/reimbursements/${draft.id}/approve`, {
+      const approved = await json<Reimbursement>(await manager.post(`companies/${companyId}/reimbursements/${draft.id}/approve`, {
         data: { approvalSnapshotHash: submitted.approvalSnapshotHash },
       }));
       expect(['FINANCE_REVIEW', 'READY_FOR_PAYMENT']).toContain(approved.status);
@@ -127,7 +133,7 @@ test.describe('REIMB — reimbursements', () => {
       expect(reviewed.status).toBe('READY_FOR_PAYMENT');
 
       const paid = await json<Reimbursement>(await api.post(`companies/${companyId}/reimbursements/${draft.id}/payments`, {
-        data: { paidAmount: '88.00', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date().toISOString() },
+        data: { idempotencyKey: `e2e-pay-${draft.id}`, paidAmount: '88.00', currency: 'THB', paymentMethod: 'CASH', paidAt: new Date().toISOString() },
       }));
       expect(paid.status).toBe('PAID');
       expect(paid.paymentStatus).toBe('PAID');

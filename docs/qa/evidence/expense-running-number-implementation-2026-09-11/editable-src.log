@@ -1,0 +1,9 @@
+
+Running 2 tests using 1 worker
+
+{"fixture":"NAV-FORM-DIGITAL-1789107065793","expenseId":"cmtwk5j3f004yk0k1bed6xkoy","evidenceId":"cmtwk5l9g005nk0k1h6jqyj7j","documentNumber":"SRC-202608-00005"}
+  ✓  1 [chromium] › e2e/substitute-editable-navigation.spec.ts:11:7 › DIGITAL: Back opens forms, saves source and certificate facts with the same number (4.0s)
+{"fixture":"NAV-FORM-PAPER-1789107069607","expenseId":"cmtwk5m0k005xk0k1twq5uqo6","evidenceId":"cmtwk5m2r0063k0k1mnxhc6yj","documentNumber":"SRC-202608-00006"}
+  ✓  2 [chromium] › e2e/substitute-editable-navigation.spec.ts:11:7 › PAPER: Back opens forms, saves source and certificate facts with the same number (3.3s)
+
+  2 passed (8.0s)

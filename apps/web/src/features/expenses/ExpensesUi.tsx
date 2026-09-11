@@ -56,13 +56,13 @@ export function StatCard({ icon, label, value, sub, color, bg, danger }: {
   icon: ReactNode; label: ReactNode; value: ReactNode; sub?: ReactNode; color: string; bg: string; danger?: boolean;
 }) {
   return (
-    <div className="h-full">
-      <div className="flex h-full items-start gap-3 rounded-2xl border bg-white p-4" style={{ borderColor: danger ? '#FECDCA' : 'var(--color-gray-200)' }}>
+    <div className="h-full min-w-0 [container-type:inline-size]">
+      <div className="flex h-full flex-col items-start gap-3 rounded-2xl border bg-white p-4 @[18rem]:flex-row" style={{ borderColor: danger ? '#FECDCA' : 'var(--color-gray-200)' }}>
         {/* 48px frame with a 24px glyph: the ICON set hardcodes h-5 w-5, so the
             child-combinator override (higher specificity) scales it up here only. */}
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl [&>svg]:h-6 [&>svg]:w-6" style={{ background: bg, color }}>{icon}</span>
-        <div className="ml-auto min-w-0 text-right">
-          <div className="text-[26px] font-extrabold leading-none tracking-tight tabular-nums" style={{ color: danger ? '#D92D20' : 'var(--color-gray-900)' }}>{value}</div>
+        <div className="ml-auto w-full min-w-0 text-right [container-type:inline-size]">
+          <div className="text-[clamp(1.125rem,12cqi,1.625rem)] font-extrabold leading-tight tracking-tight tabular-nums [overflow-wrap:anywhere]" style={{ color: danger ? '#D92D20' : 'var(--color-gray-900)' }}>{value}</div>
           <div className="mt-2 text-sm font-semibold text-gray-700">{label}</div>
           {sub != null && <div className="mt-0.5 text-[12.5px] text-gray-400">{sub}</div>}
         </div>

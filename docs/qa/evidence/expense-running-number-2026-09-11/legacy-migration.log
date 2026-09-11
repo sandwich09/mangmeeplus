@@ -1,0 +1,13 @@
+▶ production A5 reimbursement dual-build compatibility (real PostgreSQL)
+  ✔ backfills zero-line only, preserves one/many-line aggregates byte-for-byte and is idempotent (23.579792ms)
+  ✔ bridges a legacy insert and lets the current writer replace the fallback atomically (7.647541ms)
+  ✔ rolls trigger work back and detects line-less, amount, tenant and derived-header corruption (17.978459ms)
+✔ production A5 reimbursement dual-build compatibility (real PostgreSQL) (82.408292ms)
+ℹ tests 3
+ℹ suites 1
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 569.56175

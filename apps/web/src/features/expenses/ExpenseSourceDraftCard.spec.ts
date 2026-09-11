@@ -34,7 +34,7 @@ test('renders every staged item, inline missing hints, known zero, and the parti
   const html = render();
   assert.equal((html.match(/data-source-draft-item="true"/g) ?? []).length, 3);
   assert.match(html, /aria-label="ข้อมูลบิลที่ยังไม่ครบ"/);
-  assert.match(html, /aria-label="วันที่ค่าใช้จ่าย"/);
+  assert.match(html, /aria-label="วันที่เอกสาร"/);
   assert.match(html, /aria-label="ชื่อผู้ขาย"/);
   assert.match(html, /aria-label="ซื้อไปใช้ทำอะไร"/);
   assert.match(html, /ซื้อไปใช้ทำอะไร/);

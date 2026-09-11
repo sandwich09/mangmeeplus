@@ -1,0 +1,195 @@
+TAP version 13
+# Subtest: document number branch collision (audit CR-7)
+    # Subtest: keeps one counter for a template that cannot name the branch
+    ok 1 - keeps one counter for a template that cannot name the branch
+      ---
+      duration_ms: 1.885208
+      type: 'test'
+      ...
+    # Subtest: still splits the counter per branch once the template names the branch
+    ok 2 - still splits the counter per branch once the template names the branch
+      ---
+      duration_ms: 0.397583
+      type: 'test'
+      ...
+    # Subtest: carries a live branch counter over instead of restarting the company-wide one at 1
+    ok 3 - carries a live branch counter over instead of restarting the company-wide one at 1
+      ---
+      duration_ms: 0.202334
+      type: 'test'
+      ...
+    # Subtest: keeps a customized template when the counter becomes company-wide
+    ok 4 - keeps a customized template when the counter becomes company-wide
+      ---
+      duration_ms: 0.305875
+      type: 'test'
+      ...
+    # Subtest: refuses to configure a branch sequence whose numbers cannot name the branch
+    ok 5 - refuses to configure a branch sequence whose numbers cannot name the branch
+      ---
+      duration_ms: 0.518917
+      type: 'test'
+      ...
+    # Subtest: leaves no default template that would split a counter it cannot label
+    ok 6 - leaves no default template that would split a counter it cannot label
+      ---
+      duration_ms: 0.627125
+      type: 'test'
+      ...
+    1..6
+ok 1 - document number branch collision (audit CR-7)
+  ---
+  duration_ms: 4.544542
+  type: 'suite'
+  ...
+# Subtest: PrismaDocumentSequenceRepository
+    # Subtest: rejects same idempotency key with different period
+    ok 1 - rejects same idempotency key with different period
+      ---
+      duration_ms: 1.057583
+      type: 'test'
+      ...
+    # Subtest: allocates using incremented sequence row without duplicating visible numbers
+    ok 2 - allocates using incremented sequence row without duplicating visible numbers
+      ---
+      duration_ms: 0.3395
+      type: 'test'
+      ...
+    # Subtest: reuses reserve and commit logic inside a caller-owned transaction
+    ok 3 - reuses reserve and commit logic inside a caller-owned transaction
+      ---
+      duration_ms: 0.323583
+      type: 'test'
+      ...
+    # Subtest: lazily provisions the system default on first use
+    ok 4 - lazily provisions the system default on first use
+      ---
+      duration_ms: 0.279375
+      type: 'test'
+      ...
+    # Subtest: formats monthly and yearly sequences from the canonical period instead of the wall clock
+    ok 5 - formats monthly and yearly sequences from the canonical period instead of the wall clock
+      ---
+      duration_ms: 0.182084
+      type: 'test'
+      ...
+    # Subtest: inherits the latest active configuration into a missing period
+    ok 6 - inherits the latest active configuration into a missing period
+      ---
+      duration_ms: 0.211834
+      type: 'test'
+      ...
+    # Subtest: does not bypass a disabled latest configuration
+    ok 7 - does not bypass a disabled latest configuration
+      ---
+      duration_ms: 0.153167
+      type: 'test'
+      ...
+    # Subtest: keeps unknown unconfigured document types blocked
+    ok 8 - keeps unknown unconfigured document types blocked
+      ---
+      duration_ms: 0.396084
+      type: 'test'
+      ...
+    # Subtest: only voids committed document numbers
+    ok 9 - only voids committed document numbers
+      ---
+      duration_ms: 0.164375
+      type: 'test'
+      ...
+    1..9
+ok 2 - PrismaDocumentSequenceRepository
+  ---
+  duration_ms: 4.012833
+  type: 'suite'
+  ...
+# Subtest: expense running identity (PostgreSQL)
+    # Subtest: parallel retries save one header, lines, committed number and create audit
+    ok 1 - parallel retries save one header, lines, committed number and create audit
+      ---
+      duration_ms: 294.153083
+      type: 'test'
+      ...
+    # Subtest: allocates distinct numbers across concurrent branches and months
+    ok 2 - allocates distinct numbers across concurrent branches and months
+      ---
+      duration_ms: 136.185125
+      type: 'test'
+      ...
+    # Subtest: rolls back header, lines, audit and sequence when number commitment fails
+    ok 3 - rolls back header, lines, audit and sequence when number commitment fails
+      ---
+      duration_ms: 43.659709
+      type: 'test'
+      ...
+    # Subtest: staging and flag-off writes have no number; reviewed save assigns once and retains it across date edit
+    ok 4 - staging and flag-off writes have no number; reviewed save assigns once and retains it across date edit
+      ---
+      duration_ms: 167.216917
+      type: 'test'
+      ...
+    # Subtest: concurrent confirmation keeps the draft number and creates exactly one outbox event
+    ok 5 - concurrent confirmation keeps the draft number and creates exactly one outbox event
+      ---
+      duration_ms: 111.955209
+      type: 'test'
+      ...
+    # Subtest: legacy confirm uses document month and rolls back a new number on outbox failure
+    ok 6 - legacy confirm uses document month and rolls back a new number on outbox failure
+      ---
+      duration_ms: 199.185792
+      type: 'test'
+      ...
+    # Subtest: closed period rejects confirmation without consuming a number
+    ok 7 - closed period rejects confirmation without consuming a number
+      ---
+      duration_ms: 108.166917
+      type: 'test'
+      ...
+    # Subtest: serializes a monthless custom template across different period counters
+    ok 8 - serializes a monthless custom template across different period counters
+      ---
+      duration_ms: 83.796667
+      type: 'test'
+      ...
+    # Subtest: retains an imported EXP without registry and continues above it without filling earlier gaps
+    ok 9 - retains an imported EXP without registry and continues above it without filling earlier gaps
+      ---
+      duration_ms: 69.808334
+      type: 'test'
+      ...
+    # Subtest: deleting a numbered draft retains its number and rejects stale create replay
+    ok 10 - deleting a numbered draft retains its number and rejects stale create replay
+      ---
+      duration_ms: 49.069834
+      type: 'test'
+      ...
+    # Subtest: does not add a number on save to legacy evidence or rewrite its frozen snapshot
+    ok 11 - does not add a number on save to legacy evidence or rewrite its frozen snapshot
+      ---
+      duration_ms: 21.422125
+      type: 'test'
+      ...
+# (node:23575) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: posted payout void is atomic, concurrent/idempotent and refuses a closed period
+    ok 12 - posted payout void is atomic, concurrent/idempotent and refuses a closed period
+      ---
+      duration_ms: 139.433042
+      type: 'test'
+      ...
+    1..12
+ok 3 - expense running identity (PostgreSQL)
+  ---
+  duration_ms: 1742.759
+  type: 'suite'
+  ...
+1..3
+# tests 27
+# suites 3
+# pass 27
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2467.304

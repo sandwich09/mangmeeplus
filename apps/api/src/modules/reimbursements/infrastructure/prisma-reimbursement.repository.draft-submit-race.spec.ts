@@ -59,6 +59,8 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       return;
     }
     reachable = true;
+    // Confirmation writes its real audit in the aggregate transaction.
+    await clients[0]!.user.create({ data: { id: `${TAG}-finance`, displayName: 'Race Finance' } });
     companyId = (await clients[0]!.company.create({
       data: { name: TAG, status: 'ACTIVE' },
       select: { id: true },
@@ -75,8 +77,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
 
   after(async () => {
     if (reachable) {
+      await clients[0]!.auditLog.deleteMany({ where: { companyId } });
       await clients[0]!.expenseSubstituteReceiptEvidence.deleteMany({ where: { companyId } });
       await clients[0]!.company.deleteMany({ where: { id: companyId } });
+      await clients[0]!.user.deleteMany({ where: { id: `${TAG}-finance` } });
     }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });
@@ -773,11 +777,17 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     const [projection] = await repos[0]!.prepareClaimProjections({ companyId, requestId: request.id, decisionKind: 'FINANCE', decisionActorUserId: `${TAG}-finance`, scopes: {}, items });
     const expenses = new PrismaExpenseRepository({ client: source.db } as any);
     const confirm = new ConfirmExpenseUseCase(expenses, { log: async () => undefined } as any, { resolveLines: async () => [] } as any,
-      { execute: async () => ({ id: `reserve-${request.id}`, documentNumber: `EXP-${request.id}` }) } as any,
-      { execute: async () => undefined } as any, { execute: async () => undefined } as any, {} as any);
+      {} as any);
+    const confirmationCtx = { companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any;
+    await assert.rejects(() => confirm.executeForReimbursement(confirmationCtx, projection!.expenseId,
+      { reimbursementRequestId: request.id, reimbursementLineId: 'wrong-line', branchId, allowMissingReceiptWithReason: false }),
+      /reimbursement_projection_authority_mismatch/);
+    await assert.rejects(() => confirm.execute({ ...confirmationCtx, permissions: ['expense.confirm'] }, projection!.expenseId),
+      error => errorCode(error) === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
     const confirmed = await confirm.executeForReimbursement({ companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any, projection!.expenseId,
       { reimbursementRequestId: request.id, reimbursementLineId: request.lines![0]!.id, branchId, allowMissingReceiptWithReason: false });
     assert.equal(confirmed.status, 'CONFIRMED');
+    assert.equal(await source.db.auditLog.count({ where: { companyId, targetId: projection!.expenseId, action: 'expense.confirm' } }), 1);
     assert.equal(confirmed.primaryAttachmentId, null);
     const cost = await source.db.expenseLine.findMany({ where: { expenseId: projection!.expenseId }, orderBy: { lineNumber: 'asc' } });
     assert.deepEqual(cost.map(line => [line.lineTotalAmount.toString(), line.accountHintKey]), [['60', 'travel'], ['40', 'delivery']]);

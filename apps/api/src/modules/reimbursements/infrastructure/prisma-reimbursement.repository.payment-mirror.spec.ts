@@ -67,7 +67,9 @@ function voidHarness(amount = '289.0000', paidAmount = amount, netPayable = amou
     categoryKey: 'other', currency: 'THB', incurredDate: VERSION, createdByUserId: 'staff-1',
   };
   const tx: any = {
+    $executeRaw: async () => 0,
     reimbursementPayment: {
+      findFirst: async () => ({ id: 'pay-1', status: 'RECORDED' }),
       updateMany: async () => ({ count: 1 }),
       findFirstOrThrow: async () => ({
         id: 'pay-1', companyId: 'co-1', reimbursementRequestId: 'rb-1', paidAmount,

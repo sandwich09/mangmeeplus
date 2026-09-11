@@ -1,3 +1,5 @@
+import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
+import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
@@ -101,6 +103,9 @@ export class CreateExpenseDraftUseCase {
   constructor(private readonly repo: PrismaExpenseRepository, private readonly audit: AuditService, private readonly transactionTax: ExpenseTransactionTaxService, private readonly launchGate: LaunchGateGuardService) {}
 
   async execute(ctx: RequestContext, input: CreateExpenseDraftInput): Promise<ExpenseRecord> {
+    if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== 'string' || !PAYMENT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey))) {
+      throw new BadRequestException('Invalid draft idempotency key');
+    }
     const canCreate = hasPerm(ctx, 'expense.create') || hasPerm(ctx, 'expense.receipt.upload') || hasPerm(ctx, 'expense.receipt.line_upload');
     if (!canCreate) throw new ForbiddenException('Missing permission: expense.create');
     // One of the two roots of the expenses journey — the manual draft. Guarded here rather than in
@@ -131,6 +136,10 @@ export class CreateExpenseDraftUseCase {
 
     const record = await this.repo.createExpense({
       companyId: ctx.companyId,
+      draftIdempotencyKey: input.idempotencyKey ?? ctx.requestId ?? randomUUID(),
+      draftReplayScopes: ctx.scopes ?? {},
+      draftPayloadHash: canonicalFingerprint({ version: 1, ...input, idempotencyKey: null }),
+      assignExpenseNumber: input.captureSource === 'WEB_MANUAL' && expenseDraftNumberingEnabled(),
       branchId: branchId ?? undefined,
       captureSource: input.captureSource,
       expenseDate: civilDateToUtcDate(coerceCivilDate(input.expenseDate)),
@@ -149,36 +158,31 @@ export class CreateExpenseDraftUseCase {
       ...(input.whtInput !== undefined && { whtInputJson: { ...input.whtInput, origin: 'REVIEWER' as const } }),
       ...totals,
       outstandingAmount: totals.netPayableAmount,
-    });
-
-    if (lines.length > 0) {
-      const prepared = lines.map((l, i) => {
-        const reconciled = vat.lines[i]!;
-        const t = reconciled.totals;
-        return {
-          expenseId: record.id, companyId: ctx.companyId, lineNumber: l.lineNumber,
-          description: l.description, chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice,
-          discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
-          vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
-          whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
-          lineSubtotalAmount: t.lineSubtotalAmount, lineTotalAmount: t.lineTotalAmount,
-          expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
-          ...taxSelection(l),
-        };
-      });
-      try {
+    }, async (tx, record) => {
+      if (lines.length > 0) {
+        const prepared = lines.map((l, i) => {
+          const reconciled = vat.lines[i]!;
+          const t = reconciled.totals;
+          return {
+            expenseId: record.id, companyId: ctx.companyId, lineNumber: l.lineNumber,
+            description: l.description, chargeKind: l.chargeKind ?? null, quantity: l.quantity, unitPrice: l.unitPrice,
+            discountAmount: t.discountAmount, taxableAmount: t.taxableAmount,
+            vatRate: reconciled.vatRate, vatTreatment: l.vatTreatment ?? null, vatAmount: t.vatAmount,
+            whtRate: expenseWhtLineRate(input.whtInput, l.whtRate), whtAmount: t.whtAmount,
+            lineSubtotalAmount: t.lineSubtotalAmount, lineTotalAmount: t.lineTotalAmount,
+            expenseCategoryId: l.expenseCategoryId ?? null, accountHintKey: l.accountHintKey ?? null, taxCategory: l.taxCategory ?? null,
+            ...taxSelection(l),
+          };
+        });
         const resolved = await this.transactionTax.resolveLines(ctx, {
           expenseId: record.id, branchId: branchId ?? undefined, expenseDate: input.expenseDate, currency: input.currency ?? 'THB',
-        }, prepared);
+        }, prepared, 'DRAFT', tx);
         assertExpenseTotalsIdentity(input.vatMode, resolved, totals);
-        await this.repo.upsertLines(ctx.companyId, record.id, resolved);
-      } catch (error) {
-        await this.repo.deleteDraftExpense(ctx.companyId, record.id);
-        throw error;
+        await this.repo.upsertLines(ctx.companyId, record.id, resolved, tx);
       }
-    }
 
-    await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.create', targetType: 'expense_record', targetId: record.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { captureSource: input.captureSource, grandTotalAmount: totals.grandTotalAmount } });
+      await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.create', targetType: 'expense_record', targetId: record.id, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { captureSource: input.captureSource, grandTotalAmount: totals.grandTotalAmount } }, tx);
+    });
     return record;
   }
 }
@@ -777,6 +781,8 @@ export class UpdateExpenseDraftUseCase {
     }
     const updated = await this.repo.updateExpense({
       id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+      assignExpenseNumber: Boolean(dateReviewInput) && expenseDraftNumberingEnabled()
+        && (ctx.authProvider !== 'line' || (options.lineDraftCollection?.sourceChannelMetadataJson[EXPENSE_SOURCE_DRAFT_KEY] as { provenance?: Record<string, { source: string }> } | undefined)?.provenance?.['D-DATE']?.source === 'LINE_USER_TEXT'),
       ...(ctx.authProvider !== 'line' ? { refreshSubstituteEvidence: { requestId: ctx.requestId } } : {}),
       ...(reopenSourceReview && { status: 'NEEDS_REVIEW' }),
       ...(expectedUpdatedAt && { expectedUpdatedAt }),
@@ -987,9 +993,6 @@ export class ConfirmExpenseUseCase {
     private readonly repo: PrismaExpenseRepository,
     private readonly audit: AuditService,
     private readonly transactionTax: ExpenseTransactionTaxService,
-    private readonly reserveNumber: ReserveDocumentNumberUseCase,
-    private readonly commitNumber: CommitDocumentNumberUseCase,
-    private readonly cancelNumber: CancelDocumentNumberUseCase,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
   ) {}
 
@@ -1073,6 +1076,7 @@ export class ConfirmExpenseUseCase {
     } else {
       assertBranchInScope(ctx, r.branchId);
     }
+    if (r.status === 'CONFIRMED') return r;
     requireExpenseBranchId(r.branchId);
     assertExpenseSourceDraftComplete(r.sourceChannelMetadataJson, r);
     if (hasBlockingNonExpenseClassification(r.aiVerificationSummaryJson)) {
@@ -1122,14 +1126,13 @@ export class ConfirmExpenseUseCase {
         });
       }
     }
-    // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument
-    // is the signed ใบเบิกค่าใช้จ่าย — that is what `allowMissingReceiptWithReason` on the authority
-    // means. Demanding an expense-side substitute receipt here dead-ends the claim: this confirm
-    // runs inside the finance-review projection, where no substitute artifact can be issued. An
-    // expense that actually entered the substitute-receipt flow still needs its artifact.
-    const reasonCoveredByClaimForm = Boolean(authority?.allowMissingReceiptWithReason)
+    // Claim projections use the approved claim's evidence through the exact authority checked above.
+    // Finance materialization has no separate expense-review screen. Source snapshots are checked
+    // again inside the transaction; missing-receipt permission remains a separate validation below.
+    // An expense that entered the substitute-receipt flow still needs its own artifact.
+    const evidenceCoveredByClaimForm = Boolean(authority)
       && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-    const evidenceError = expenseEvidenceConfirmationError(r, reasonCoveredByClaimForm);
+    const evidenceError = expenseEvidenceConfirmationError(r, evidenceCoveredByClaimForm);
     if (evidenceError) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
     const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
     const reviewedAttachmentId = reviewedEvidence ? expenseEvidenceAssessment(r)?.attachmentIds[0] ?? r.primaryAttachmentId : r.primaryAttachmentId;
@@ -1193,94 +1196,59 @@ export class ConfirmExpenseUseCase {
     const eventRequestId = authority
       ? `reimbursement:${authority.reimbursementRequestId}:${authority.reimbursementLineId}`
       : ctx.requestId ?? buildIdempotencyKey(expenseId, 'confirmed');
-    const reserved = await this.reserveNumber.execute({
-      companyId: ctx.companyId,
-      documentType: 'expense.record',
-      periodKey: occurredAt.slice(0, 7),
-      idempotencyKey: `confirm:${expenseId}:${eventRequestId}`,
-      reservedByUserId: ctx.userId,
-    });
     let updated: ExpenseRecord;
     let finalized: ExpenseLineInput[];
-    try {
-      ({ expense: updated, finalized } = await this.repo.finalizeAndConfirmExpenseCas({
-        id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
-        expectedSourceChecksum: expenseTaxSourceChecksum(r),
-        substituteCoveredByClaimForm: reasonCoveredByClaimForm,
-        vatSourceOverride,
-        postingStatus, vendorSnapshotJson, expenseNumber: reserved.documentNumber,
-        outboxEvent: {
-          eventKey: `expense.confirmed:expense_record:${expenseId}:${eventRequestId}`,
-          payloadJson: {
-            companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId,
-            requestId: eventRequestId, occurredAt, data: { expenseId, expenseNumber: reserved.documentNumber, postingStatus },
-          },
+    ({ expense: updated, finalized } = await this.repo.finalizeAndConfirmExpenseCas({
+      id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
+      expectedSourceChecksum: expenseTaxSourceChecksum(r),
+      substituteCoveredByClaimForm: evidenceCoveredByClaimForm,
+      vatSourceOverride,
+      postingStatus, vendorSnapshotJson,
+      confirmationAudit: { requestId: ctx.requestId ?? eventRequestId, ...(authority && { authority: {
+        authority: 'REIMBURSEMENT_APPROVAL', reimbursementRequestId: authority.reimbursementRequestId,
+        reimbursementLineId: authority.reimbursementLineId, systemReconcile: Boolean(authority.systemReconcile),
+      } }) },
+      outboxEvent: {
+        eventKey: `expense.confirmed:expense_record:${expenseId}:${eventRequestId}`,
+        payloadJson: {
+          companyId: ctx.companyId, aggregateType: 'expense_record', aggregateId: expenseId,
+          requestId: eventRequestId, occurredAt, data: { expenseId, expenseNumber: r.expenseNumber, postingStatus },
         },
-      }, async ({ db, expense: current }) => {
-        const selectedLines = (current.lines ?? []).filter(hasSelectedTaxCode).map((line) => ({
-          expenseId: current.id, companyId: ctx.companyId, lineNumber: line.lineNumber, sourceLineId: line.id,
-          description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
-          discountAmount: line.discountAmount, taxableAmount: line.taxableAmount,
-          vatRate: line.vatRate, vatTreatment: line.vatTreatment ?? null, vatAmount: line.vatAmount, whtRate: line.whtRate, whtAmount: line.whtAmount,
-          lineSubtotalAmount: line.lineSubtotalAmount, lineTotalAmount: line.lineTotalAmount,
-          expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
-          taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
-          externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
-          transactionContext: line.taxSnapshot?.taxContext ?? undefined,
-        }));
-        const lines = selectedLines.length ? await this.transactionTax.resolveLines(ctx, {
-          expenseId: current.id, branchId: current.branchId ?? undefined,
-          expenseDate: current.expenseDate.toISOString(), currency: current.currency,
-          preserveAcceptedVat: current.vatCaptureSnapshotJson?.reconciliation.acceptedSource === 'SOURCE_AMOUNT',
-        }, selectedLines, 'FINAL', db) : [];
-        if (vatSourceOverride && snapshot) {
-          await this.audit.log({
-            companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.vat.source_override',
-            targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-            metadataJson: {
-              reason: vatSourceOverride.reason.trim(), vatLineNumber: vatSourceOverride.vatLineNumber,
-              reconciliationStatus: snapshot.reconciliation.status,
-              documentVatAmount: snapshot.source.vatAmount, calculatedVatAmount: snapshot.calculation.vatAmount,
-              differenceAmount: snapshot.reconciliation.differenceAmount, toleranceAmount: snapshot.reconciliation.toleranceAmount,
-              acceptedVatAmount: current.vatAmount, acceptedPreVatAmount: current.taxableAmount,
-              acceptedGrossAmount: current.grandTotalAmount, acceptedWhtAmount: current.whtAmount,
-              acceptedNetPayableAmount: current.netPayableAmount,
-            },
-          }, db);
-        }
-        return lines;
-      }));
-      await this.commitNumber.execute({
-        id: reserved.id, companyId: ctx.companyId, ownerType: 'expense_record', ownerId: expenseId,
-      }, ctx.userId);
-    } catch (cause) {
-      // The reservation is still RESERVED here (commit happens only after a
-      // successful finalize), so it must be cancelled — voidNumber accepts
-      // COMMITTED numbers only and would mask the real error.
-      await this.cancelNumber.execute({ id: reserved.id, companyId: ctx.companyId }, ctx.userId);
-      throw cause;
-    }
-
-    await this.audit.log({
-      companyId: ctx.companyId,
-      actorUserId: ctx.userId,
-      action: 'expense.confirm',
-      targetType: 'expense_record',
-      targetId: expenseId,
-      requestId: ctx.requestId,
-      result: 'SUCCESS',
-      riskLevel: 'HIGH',
-      metadataJson: {
-        expenseNumber: updated.expenseNumber,
-        grandTotalAmount: updated.grandTotalAmount,
-        ...(authority && {
-          authority: 'REIMBURSEMENT_APPROVAL',
-          reimbursementRequestId: authority.reimbursementRequestId,
-          reimbursementLineId: authority.reimbursementLineId,
-          systemReconcile: Boolean(authority.systemReconcile),
-        }),
       },
-    });
+    }, async ({ db, expense: current }) => {
+      const selectedLines = (current.lines ?? []).filter(hasSelectedTaxCode).map((line) => ({
+        expenseId: current.id, companyId: ctx.companyId, lineNumber: line.lineNumber, sourceLineId: line.id,
+        description: line.description, quantity: line.quantity, unitPrice: line.unitPrice,
+        discountAmount: line.discountAmount, taxableAmount: line.taxableAmount,
+        vatRate: line.vatRate, vatTreatment: line.vatTreatment ?? null, vatAmount: line.vatAmount, whtRate: line.whtRate, whtAmount: line.whtAmount,
+        lineSubtotalAmount: line.lineSubtotalAmount, lineTotalAmount: line.lineTotalAmount,
+        expenseCategoryId: line.expenseCategoryId, accountHintKey: line.accountHintKey, taxCategory: line.taxCategory,
+        taxCodeDefinitionId: line.taxSnapshot?.taxCodeDefinitionId ?? undefined,
+        externalTaxCode: line.taxSnapshot?.externalTaxCode ?? undefined,
+        transactionContext: line.taxSnapshot?.taxContext ?? undefined,
+      }));
+      const lines = selectedLines.length ? await this.transactionTax.resolveLines(ctx, {
+        expenseId: current.id, branchId: current.branchId ?? undefined,
+        expenseDate: current.expenseDate.toISOString(), currency: current.currency,
+        preserveAcceptedVat: current.vatCaptureSnapshotJson?.reconciliation.acceptedSource === 'SOURCE_AMOUNT',
+      }, selectedLines, 'FINAL', db) : [];
+      if (vatSourceOverride && snapshot) {
+        await this.audit.log({
+          companyId: ctx.companyId, actorUserId: ctx.userId, action: 'expense.vat.source_override',
+          targetType: 'expense_record', targetId: expenseId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
+          metadataJson: {
+            reason: vatSourceOverride.reason.trim(), vatLineNumber: vatSourceOverride.vatLineNumber,
+            reconciliationStatus: snapshot.reconciliation.status,
+            documentVatAmount: snapshot.source.vatAmount, calculatedVatAmount: snapshot.calculation.vatAmount,
+            differenceAmount: snapshot.reconciliation.differenceAmount, toleranceAmount: snapshot.reconciliation.toleranceAmount,
+            acceptedVatAmount: current.vatAmount, acceptedPreVatAmount: current.taxableAmount,
+            acceptedGrossAmount: current.grandTotalAmount, acceptedWhtAmount: current.whtAmount,
+            acceptedNetPayableAmount: current.netPayableAmount,
+          },
+        }, db);
+      }
+      return lines;
+    }));
     // Spec S1-R5: the reviewer confirmed a category that is not the AI's. `fromSuggested` says
     // whether AI had a usable suggestion at all, so override rate = these events with
     // `fromSuggested: true` over `expense_category_suggested`. Ids and booleans only — no category

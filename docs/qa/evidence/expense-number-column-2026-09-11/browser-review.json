@@ -1,0 +1,40 @@
+{
+  "headers": [
+    "เลขรายจ่าย (EXP)",
+    "ผู้ขาย / หมวดหมู่",
+    "วันที่เอกสาร / เข้าระบบ",
+    "ยอดรวม",
+    "สถานะ",
+    "การทำงาน"
+  ],
+  "firstExpenseNumber": "EXP-202609-00005",
+  "views": [
+    {
+      "width": 1440,
+      "table": true,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 1280,
+      "table": true,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 1024,
+      "table": false,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 768,
+      "table": false,
+      "horizontalOverflow": false
+    },
+    {
+      "width": 390,
+      "table": false,
+      "horizontalOverflow": false
+    }
+  ],
+  "unnumberedText": "ยังไม่มีเลขรายจ่าย",
+  "businessMutations": 0
+}
