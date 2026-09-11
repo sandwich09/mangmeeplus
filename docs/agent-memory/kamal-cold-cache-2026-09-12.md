@@ -17,4 +17,9 @@ Verification:
 - Known GitHub ghost31611733340 excluded after exact timestamp/source/check-suite/zero-jobs/zero-check-runs/zero-pending verification. No new GitHub UAT/READY/Production workflows dispatched (IDs N/A).
 - AWS readback after completion: both UAT instances running, dev `i-0883f1ff88440ca07` stopped. Production unchanged. Worker readiness delay of 7 seconds confirmed in this operation's actual Kamal log.
 - Evidence extraction validated all passed phases/signature/readiness/source/cache conditions and scanned selected output against resolved sensitive config values. Main controller/build helper stayed unchanged; no package.json edits.
-Next: report measured cold/warm differences and full totals to owner. No further deployment or optimization is running. A future cold-cache optimization needs its own measured result before claiming under 10 minutes.
+Next: owner accepted the current result and explicitly authorized commit/merge into develop and main on 2026-09-12. Archive this state; no further deployment or optimization is requested. A future cold-cache optimization needs its own measured result before claiming under 10 minutes.
+
+Integration handoff:
+- Evidence commits `6a60aa89` (two warm successes) and `17dba732` (one cold success) contain the complete measured record. Runtime/controller files are byte-identical to tested main `6b95e505`; required executed jobs in CI `34623709238` passed for reviewed head `7b799784`.
+- The reviewed main-to-develop merge simulation was conflict-free and produced exactly the evidence branch tree. Develop is missing the already-tested Kamal implementation and UAT migration-history repair present on main; the integration preserves both branch histories.
+- Merge scope is the existing deployment implementation plus its documentation/evidence. The unrelated dirty original checkout remains outside this integration. Workflow inspection confirms branch pushes do not dispatch UAT or Production deployment; those remain manual.
