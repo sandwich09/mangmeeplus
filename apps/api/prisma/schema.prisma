@@ -2362,6 +2362,8 @@ model ExpenseRecord {
   companyId                          String
   branchId                           String?
   expenseNumber                      String?
+  draftIdempotencyKey                 String?
+  draftPayloadHash                   String?
   // GAP-02: set when this expense record was materialized from a reimbursement
   // claim; drives the employee-payable (2130-01) accrual path in the posting engine.
   sourceReimbursementRequestId       String?
@@ -2458,6 +2460,7 @@ model ExpenseRecord {
   payments                           ExpensePayment[]
 
   @@unique([companyId, expenseNumber])
+  @@unique([companyId, draftIdempotencyKey])
   @@unique([companyId, id])
   // RECEIPT-02: hard idempotency for LINE media intake — one expense per LINE message.
   // Postgres treats NULL lineMessageId as distinct, so web-created expenses are unaffected.

@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { test, expect } from './harness/fixtures';
 import type { APIResponse } from '@playwright/test';
 
@@ -84,6 +85,14 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
     if (signatureMode === 'DIGITAL') {
       expect(current.id).not.toBe(previous.id);
       expect(history.find((row: {id:string}) => row.id === previous.id).status).toBe('SUPERSEDED');
+    }
+    expect(detail.expenseNumber).toBe(draft.expenseNumber);
+    if (signatureMode === 'PAPER') {
+      const printed = await api.get(`${base}/expenses/${draft.id}/substitute-receipt/${current.id}/form.pdf`);
+      expect(printed.status()).toBe(200);
+      const pdf = await printed.body();
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+      await writeFile(test.info().outputPath('paper-form.pdf'), pdf);
     }
     expect(current.certifiedAt).toBeNull();
     expect(errors).toEqual([]);

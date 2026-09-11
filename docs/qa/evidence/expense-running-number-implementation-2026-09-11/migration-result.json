@@ -1,0 +1,72 @@
+{
+  "rehearsal": "additive EXP migration on restored pre-change local DB",
+  "equal": true,
+  "backfilledRows": 0,
+  "tables": {
+    "ExpenseRecord": {
+      "count": 37,
+      "beforeSha256": "bc62549cc46165e2837b8ad88e3987789e71c78249a0eefbc6578c4bce4c58df",
+      "afterSha256": "bc62549cc46165e2837b8ad88e3987789e71c78249a0eefbc6578c4bce4c58df"
+    },
+    "ExpenseLine": {
+      "count": 36,
+      "beforeSha256": "b649be784a169cf8806dea5da6bb46a70a29456f91839d39530e9a2eddf5d042",
+      "afterSha256": "b649be784a169cf8806dea5da6bb46a70a29456f91839d39530e9a2eddf5d042"
+    },
+    "ExpenseSubstituteReceiptEvidence": {
+      "count": 33,
+      "beforeSha256": "478909b3e673d210b68400afe43b3cb1a56decac5bcedc255305333d7f5084e1",
+      "afterSha256": "478909b3e673d210b68400afe43b3cb1a56decac5bcedc255305333d7f5084e1"
+    },
+    "ReimbursementRequest": {
+      "count": 2,
+      "beforeSha256": "e511096fefe9fc4127d6d460aacfe7e75b017147f99f7a97e6f5c274cd6d4dcd",
+      "afterSha256": "e511096fefe9fc4127d6d460aacfe7e75b017147f99f7a97e6f5c274cd6d4dcd"
+    },
+    "ReimbursementLine": {
+      "count": 2,
+      "beforeSha256": "5affbf8080cae1b41343c5cd503c2762a131e9b0270f9d606ba7dcb8735ad738",
+      "afterSha256": "5affbf8080cae1b41343c5cd503c2762a131e9b0270f9d606ba7dcb8735ad738"
+    },
+    "ReimbursementPayment": {
+      "count": 0,
+      "beforeSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "afterSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "ExpensePayment": {
+      "count": 13,
+      "beforeSha256": "85a0d4a5bdacf3cc6d03a99e005ea1d4a161c480fe41d7673cc44dfcac4587f0",
+      "afterSha256": "85a0d4a5bdacf3cc6d03a99e005ea1d4a161c480fe41d7673cc44dfcac4587f0"
+    },
+    "JournalEntry": {
+      "count": 0,
+      "beforeSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "afterSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "JournalLine": {
+      "count": 0,
+      "beforeSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "afterSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    "DocumentNumber": {
+      "count": 33,
+      "beforeSha256": "c034ab5a54c1a34e4b7eee6447cc90b3935a2952a4a599da52534cd07491cf6d",
+      "afterSha256": "c034ab5a54c1a34e4b7eee6447cc90b3935a2952a4a599da52534cd07491cf6d"
+    },
+    "DocumentSequence": {
+      "count": 43,
+      "beforeSha256": "300a5e169abfa5aec06b8db58d68077e34e6e2a3084d757c90f2436b77178096",
+      "afterSha256": "300a5e169abfa5aec06b8db58d68077e34e6e2a3084d757c90f2436b77178096"
+    },
+    "AttachmentObject": {
+      "count": 70,
+      "beforeSha256": "160f23061d2b68ddb442bd51eec148e66ae0787eeb964554f157f1ba2d761890",
+      "afterSha256": "160f23061d2b68ddb442bd51eec148e66ae0787eeb964554f157f1ba2d761890"
+    },
+    "OutboxEvent": {
+      "count": 18,
+      "beforeSha256": "aa34147906bf4d90a7e6492dcba298a0b0fffa326ed1d6b0dc5e24ca05217690",
+      "afterSha256": "aa34147906bf4d90a7e6492dcba298a0b0fffa326ed1d6b0dc5e24ca05217690"
+    }
+  }
+}

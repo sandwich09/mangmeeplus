@@ -1,3 +1,7 @@
+import { serializableTransaction } from '../../../common/database/serializable-transaction';
+import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
+import { civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
+import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
 import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbursementSource, sourceError, type SourceLine } from './reimbursement-source';
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
@@ -1363,6 +1367,10 @@ export class PrismaReimbursementRepository {
             skipDuplicates: true,
           });
         }
+        if (expenseDraftNumberingEnabled()) {
+          const expenseNumber = await expenseNumberInTransaction(tx, this.documentNumbers, expense, data.decisionActorUserId);
+          await tx.expenseRecord.update({ where: { id: expense.id }, data: { expenseNumber, updatedAt: expense.updatedAt } });
+        }
         // Source evidence stays unchanged; projection identity is sourceReimbursementLineId.
         results.push({ reimbursementLineId: line.id, expenseId: expense.id, created: true });
       }
@@ -2249,9 +2257,6 @@ export class PrismaReimbursementRepository {
     if (original.status !== 'POSTED') {
       throw new UnprocessableEntityException(`Generated journal ${original.entryNumber} is ${original.status}; resolve its posting state before voiding`);
     }
-    if (!opts.reversalEntryNumber) {
-      throw new ConflictException({ code: 'posting_state_changed', message: 'Posting state changed while voiding. Retry the void.' });
-    }
     const period = await tx.accountingPeriod.findFirst({ where: { companyId: opts.companyId, id: original.periodId } });
     if (!period) {
       throw new UnprocessableEntityException(`Accounting period for journal ${original.entryNumber} was not found; cannot void`);
@@ -2259,6 +2264,10 @@ export class PrismaReimbursementRepository {
     if (!['OPEN', 'REOPENED'].includes(period.status)) {
       throw new ConflictException({ code: 'accounting_period_locked', message: `Accounting period ${period.periodKey} is not open; reopen it before voiding.` });
     }
+    const reserved = opts.reversalEntryNumber ? null : await this.documentNumbers.reserveNumberInTransaction(tx, {
+      companyId: opts.companyId, documentType: LEDGER_SEQUENCE_KEY, periodKey: civilPeriodKey(todayCivilDate()),
+      idempotencyKey: `void-reversal:reimbursement.payment:${opts.paymentId}`, reservedByUserId: opts.actorUserId,
+    });
     const reversalLines = buildReversalLines((original.lines ?? []).map((l: any) => ({
       accountId: l.accountId, branchId: l.branchId, description: l.description,
       debitAmount: l.debitAmount.toString(), creditAmount: l.creditAmount.toString(),
@@ -2269,7 +2278,7 @@ export class PrismaReimbursementRepository {
     // REVERSAL for this source abort the transaction — DB-level idempotency.
     const reversal = await tx.journalEntry.create({
       data: {
-        companyId: opts.companyId, periodId: original.periodId, entryNumber: opts.reversalEntryNumber,
+        companyId: opts.companyId, periodId: original.periodId, entryNumber: opts.reversalEntryNumber ?? reserved!.documentNumber,
         entryType: 'REVERSAL', sourceType: 'reimbursement.payment', sourceId: opts.paymentId,
         reversalOfJournalEntryId: original.id, status: 'POSTED', entryDate: now, postedAt: now,
         postedByUserId: opts.actorUserId, memo: opts.memo, createdByUserId: opts.actorUserId,
@@ -2283,6 +2292,9 @@ export class PrismaReimbursementRepository {
           })),
         },
       },
+    });
+    if (reserved) await this.documentNumbers.commitNumberInTransaction(tx, {
+      id: reserved.id, companyId: opts.companyId, ownerType: 'journal_entry', ownerId: reversal.id,
     });
     // The original stays POSTED: GL/report queries count POSTED entries only,
     // so original + reversal net to zero.
@@ -2298,8 +2310,20 @@ export class PrismaReimbursementRepository {
     actorUserId: string,
     reason: string,
     reversalEntryNumber?: string,
-  ): Promise<{ request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; reversalEntryId: string | null }> {
-    return await (this.prisma.client as any).$transaction(async (tx: any) => {
+    auditRequestId?: string,
+  ): Promise<{ request: ReimbursementRequestRecord; payment: ReimbursementPaymentRecord; reversalEntryId: string | null; alreadyVoided?: boolean }> {
+    return serializableTransaction(this.prisma.client, async (tx: any) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${requestId}:reimbursement-payment`}))`;
+      await this.lockRequest(tx, companyId, requestId);
+      const prior = await tx.reimbursementPayment.findFirst({ where: { id: paymentId, companyId, reimbursementRequestId: requestId } });
+      if (!prior) throw new NotFoundException('Payment not found');
+      if (prior.status === 'VOIDED') {
+        const request = await tx.reimbursementRequest.findFirstOrThrow({ where: { id: requestId, companyId }, include: {
+          lines: { orderBy: { lineNo: 'asc' } }, approvalSteps: { orderBy: { sequenceNo: 'asc' } },
+          payments: { orderBy: { createdAt: 'asc' } }, duplicateCandidates: true, claimSignatures: { orderBy: { signedAt: 'asc' } },
+        } });
+        return { request: this.toRequest(request), payment: this.toPayment(prior), reversalEntryId: null, alreadyVoided: true };
+      }
       const voided = await tx.reimbursementPayment.updateMany({
         where: { id: paymentId, companyId, reimbursementRequestId: requestId, status: 'RECORDED' },
         data: { status: 'VOIDED', voidedAt: new Date(), voidReason: reason, voidedByUserId: actorUserId },
@@ -2365,8 +2389,18 @@ export class PrismaReimbursementRepository {
           claimSignatures: { orderBy: { signedAt: 'asc' } },
         },
       });
+      if (auditRequestId) {
+        await new PrismaAuditRepository(this.prisma).log({ companyId, actorUserId, action: 'reimbursement.payment.void',
+          targetType: 'reimbursement_payment', targetId: paymentId, requestId: auditRequestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
+          metadataJson: { reason, requestId, reversalEntryId: reversal.reversalEntryId } }, tx);
+        await tx.outboxEvent.create({ data: { companyId, eventType: 'reimbursement.payment_voided',
+          aggregateType: 'reimbursement_payment', aggregateId: paymentId, eventKey: `reimbursement.payment_voided:${paymentId}`,
+          payloadJson: { companyId, actorUserId, requestId: auditRequestId, aggregateType: 'reimbursement_payment', aggregateId: paymentId,
+            occurredAt: new Date().toISOString(), data: { requestId, paymentStatus, reversalEntryId: reversal.reversalEntryId } },
+          priority: 'NORMAL', status: 'PENDING' } });
+      }
       return { request: this.toRequest(updated), payment: this.toPayment(payment), reversalEntryId: reversal.reversalEntryId };
-    }, { isolationLevel: 'Serializable' });
+    });
   }
 
   // GAP-02: recorded-but-unposted settlement payments awaiting a generate call.

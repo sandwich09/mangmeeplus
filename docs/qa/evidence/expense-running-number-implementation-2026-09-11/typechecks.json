@@ -1,0 +1,15 @@
+[
+  {
+    "command": "pnpm --filter @watchdog-bms/api exec tsc --noEmit",
+    "exitCode": 0,
+    "environment": "NODE_OPTIONS=--max-old-space-size=10240"
+  },
+  {
+    "command": "pnpm --filter @watchdog-bms/web exec tsc --noEmit",
+    "exitCode": 0
+  },
+  {
+    "command": "pnpm --filter @watchdog-bms/api build",
+    "exitCode": 0
+  }
+]

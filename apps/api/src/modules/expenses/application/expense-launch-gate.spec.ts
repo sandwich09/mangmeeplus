@@ -31,7 +31,12 @@ function harness(launchGate: any) {
   const useCase = new CreateExpenseDraftUseCase(
     {
       resolveCreateBranchId: async () => 'branch-1',
-      createExpense: async (data: any) => { created.push(data); return { id: 'expense-1', ...data }; },
+      createExpense: async (data: any, withinTx?: (tx: unknown, record: any) => Promise<void>) => {
+        const record = { id: 'expense-1', ...data };
+        if (withinTx) await withinTx({}, record);
+        created.push(data);
+        return record;
+      },
       // §5.1: an omitted chargeKind on a replacement PATCH keeps the stored one, so the
       // update path reads them back before it validates.
       listLineChargeKinds: async () => new Map<number, { chargeKind: string | null; description: string }>(),
@@ -113,7 +118,7 @@ describe('expenses runoff stays open while the route is closed', () => {
   // arity is the fence: injecting a guard into either one fails here first.
   it('does not wire a launch gate into mark-ready or confirm', () => {
     assert.equal(MarkExpenseReadyUseCase.length, 1, 'mark-ready takes the repository only');
-    assert.equal(ConfirmExpenseUseCase.length, 7, 'confirm takes repo, audit, tax, 3 numbering use cases, VAT registration');
+    assert.equal(ConfirmExpenseUseCase.length, 4, 'confirm takes repo, audit, tax and VAT registration; numbering is inside the repository transaction');
   });
 
   it('moves an existing draft to READY_FOR_CONFIRMATION with no gate in the path', async () => {

@@ -1,0 +1,471 @@
+TAP version 13
+# Subtest: expense running identity (PostgreSQL)
+    # Subtest: parallel retries save one header, lines, committed number and create audit
+    ok 1 - parallel retries save one header, lines, committed number and create audit
+      ---
+      duration_ms: 368.146833
+      type: 'test'
+      ...
+    # Subtest: allocates distinct numbers across concurrent branches and months
+    ok 2 - allocates distinct numbers across concurrent branches and months
+      ---
+      duration_ms: 390.124417
+      type: 'test'
+      ...
+    # Subtest: rolls back header, lines, audit and sequence when number commitment fails
+    ok 3 - rolls back header, lines, audit and sequence when number commitment fails
+      ---
+      duration_ms: 106.762375
+      type: 'test'
+      ...
+    # Subtest: staging and flag-off writes have no number; reviewed save assigns once and retains it across date edit
+    ok 4 - staging and flag-off writes have no number; reviewed save assigns once and retains it across date edit
+      ---
+      duration_ms: 163.091
+      type: 'test'
+      ...
+    # Subtest: concurrent confirmation keeps the draft number and creates exactly one outbox event
+    ok 5 - concurrent confirmation keeps the draft number and creates exactly one outbox event
+      ---
+      duration_ms: 110.300458
+      type: 'test'
+      ...
+    # Subtest: legacy confirm uses document month and rolls back a new number on outbox failure
+    ok 6 - legacy confirm uses document month and rolls back a new number on outbox failure
+      ---
+      duration_ms: 81.309792
+      type: 'test'
+      ...
+    # Subtest: closed period rejects confirmation without consuming a number
+    ok 7 - closed period rejects confirmation without consuming a number
+      ---
+      duration_ms: 35.407208
+      type: 'test'
+      ...
+    # Subtest: serializes a monthless custom template across different period counters
+    ok 8 - serializes a monthless custom template across different period counters
+      ---
+      duration_ms: 47.629959
+      type: 'test'
+      ...
+    # Subtest: retains an imported EXP without registry and continues above it without filling earlier gaps
+    ok 9 - retains an imported EXP without registry and continues above it without filling earlier gaps
+      ---
+      duration_ms: 89.056042
+      type: 'test'
+      ...
+    # Subtest: deleting a numbered draft retains its number and rejects stale create replay
+    ok 10 - deleting a numbered draft retains its number and rejects stale create replay
+      ---
+      duration_ms: 70.183292
+      type: 'test'
+      ...
+    # Subtest: does not add a number on save to legacy evidence or rewrite its frozen snapshot
+    ok 11 - does not add a number on save to legacy evidence or rewrite its frozen snapshot
+      ---
+      duration_ms: 30.837583
+      type: 'test'
+      ...
+    # Subtest: numbers multi-month claim projections atomically and reuses each line on concurrent retry
+    ok 12 - numbers multi-month claim projections atomically and reuses each line on concurrent retry
+      ---
+      duration_ms: 106.979291
+      type: 'test'
+      ...
+# (node:24098) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: posted payout void is atomic, concurrent/idempotent and refuses a closed period
+    ok 13 - posted payout void is atomic, concurrent/idempotent and refuses a closed period
+      ---
+      duration_ms: 128.936416
+      type: 'test'
+      ...
+    1..13
+ok 1 - expense running identity (PostgreSQL)
+  ---
+  duration_ms: 2054.100625
+  type: 'suite'
+  ...
+# Subtest: expense edit to signing and receipt removal (PostgreSQL)
+    # Subtest: DIGITAL: changes a step-3 payment month with the same ID/number and invalidates the previous form
+    ok 1 - DIGITAL: changes a step-3 payment month with the same ID/number and invalidates the previous form
+      ---
+      duration_ms: 203.93575
+      type: 'test'
+      ...
+    # Subtest: PAPER: changes a step-3 payment month with the same ID/number and invalidates the previous form
+    ok 2 - PAPER: changes a step-3 payment month with the same ID/number and invalidates the previous form
+      ---
+      duration_ms: 1476.765083
+      type: 'test'
+      ...
+    # Subtest: keeps a signed no-op intact; a month edit retains the signed revision and resets signing with the same immutable number
+    ok 3 - keeps a signed no-op intact; a month edit retains the signed revision and resets signing with the same immutable number
+      ---
+      duration_ms: 40.727084
+      type: 'test'
+      ...
+    # Subtest: edits a submitted paper without removing the old scan and rejects cross-tenant/stale/funding/signing changes
+    ok 4 - edits a submitted paper without removing the old scan and rejects cross-tenant/stale/funding/signing changes
+      ---
+      duration_ms: 61.723083
+      type: 'test'
+      ...
+    # Subtest: does not amend ISSUED certificates
+    ok 5 - does not amend ISSUED certificates
+      ---
+      duration_ms: 38.845792
+      type: 'test'
+      ...
+    # Subtest: does not amend SUPERSEDED certificates
+    ok 6 - does not amend SUPERSEDED certificates
+      ---
+      duration_ms: 20.483125
+      type: 'test'
+      ...
+    # Subtest: DIGITAL: refreshes unsigned data under the same ID/number and invalidates an old form
+    ok 7 - DIGITAL: refreshes unsigned data under the same ID/number and invalidates an old form
+      ---
+      duration_ms: 50.361
+      type: 'test'
+      ...
+    # Subtest: PAPER: refreshes unsigned data under the same ID/number and invalidates an old form
+    ok 8 - PAPER: refreshes unsigned data under the same ID/number and invalidates an old form
+      ---
+      duration_ms: 712.314917
+      type: 'test'
+      ...
+    # Subtest: preserves signed history and starts an unsigned internal revision with the same number
+    ok 9 - preserves signed history and starts an unsigned internal revision with the same number
+      ---
+      duration_ms: 48.88175
+      type: 'test'
+      ...
+    # Subtest: clears a submitted paper signature without losing the old scan association
+    ok 10 - clears a submitted paper signature without losing the old scan association
+      ---
+      duration_ms: 31.89475
+      type: 'test'
+      ...
+    # Subtest: issued source edits require cancellation; metadata remains writable and all payment/history facts stay intact
+    ok 11 - issued source edits require cancellation; metadata remains writable and all payment/history facts stay intact
+      ---
+      duration_ms: 64.000583
+      type: 'test'
+      ...
+    # Subtest: cancels a paid unconfirmed draft atomically, retiring its active revision and root-owned number
+    ok 12 - cancels a paid unconfirmed draft atomically, retiring its active revision and root-owned number
+      ---
+      duration_ms: 48.297458
+      type: 'test'
+      ...
+    # Subtest: cannot use the financial cancellation path for an ordinary unpaid unconfirmed expense
+    ok 13 - cannot use the financial cancellation path for an ordinary unpaid unconfirmed expense
+      ---
+      duration_ms: 17.301541
+      type: 'test'
+      ...
+    # Subtest: treats a time-only payment-date normalization as a signed no-op
+    ok 14 - treats a time-only payment-date normalization as a signed no-op
+      ---
+      duration_ms: 19.985084
+      type: 'test'
+      ...
+    # Subtest: keeps incomplete source edits in draft and retains DB enforcement at certification
+    ok 15 - keeps incomplete source edits in draft and retains DB enforcement at certification
+      ---
+      duration_ms: 43.106042
+      type: 'test'
+      ...
+    # Subtest: synchronizes amended purpose/reason atomically, preserves notes and separately entered payee
+    ok 16 - synchronizes amended purpose/reason atomically, preserves notes and separately entered payee
+      ---
+      duration_ms: 417.760625
+      type: 'test'
+      ...
+    # Subtest: preserves a full-length reviewed purpose and unrelated source notes without truncating either
+    ok 17 - preserves a full-length reviewed purpose and unrelated source notes without truncating either
+      ---
+      duration_ms: 64.661917
+      type: 'test'
+      ...
+    # Subtest: propagates plain/structured purpose changes and clearing; an incomplete form can be repaired under the same number
+    ok 18 - propagates plain/structured purpose changes and clearing; an incomplete form can be repaired under the same number
+      ---
+      duration_ms: 478.538666
+      type: 'test'
+      ...
+    # Subtest: clears company payment fields instead of retaining stale certificate values, preserving personal advance facts
+    ok 19 - clears company payment fields instead of retaining stale certificate values, preserving personal advance facts
+      ---
+      duration_ms: 72.564166
+      type: 'test'
+      ...
+    # Subtest: paid drafts require cancellation before material edits from either side
+    ok 20 - paid drafts require cancellation before material edits from either side
+      ---
+      duration_ms: 35.003292
+      type: 'test'
+      ...
+    # Subtest: posted drafts require cancellation before material edits from either side
+    ok 21 - posted drafts require cancellation before material edits from either side
+      ---
+      duration_ms: 31.532208
+      type: 'test'
+      ...
+    # Subtest: rejects an unacknowledged payment-month change atomically but allows a same-month day change
+    ok 22 - rejects an unacknowledged payment-month change atomically but allows a same-month day change
+      ---
+      duration_ms: 29.592875
+      type: 'test'
+      ...
+    # Subtest: DIGITAL: September → August → September never changes the number or consumes a sequence
+    ok 23 - DIGITAL: September → August → September never changes the number or consumes a sequence
+      ---
+      duration_ms: 71.042333
+      type: 'test'
+      ...
+    # Subtest: PAPER: September → August → September never changes the number or consumes a sequence
+    ok 24 - PAPER: September → August → September never changes the number or consumes a sequence
+      ---
+      duration_ms: 65.617833
+      type: 'test'
+      ...
+    # Subtest: serializes concurrent month changes, rejects stale retry and rolls date changes back with source edits
+    ok 25 - serializes concurrent month changes, rejects stale retry and rolls date changes back with source edits
+      ---
+      duration_ms: 28.706125
+      type: 'test'
+      ...
+    # Subtest: keeps its number over a Bangkok year boundary and ignores expense-date-only edits
+    ok 26 - keeps its number over a Bangkok year boundary and ignores expense-date-only edits
+      ---
+      duration_ms: 30.599209
+      type: 'test'
+      ...
+    # Subtest: source date/branch edits keep the assigned number
+    ok 27 - source date/branch edits keep the assigned number
+      ---
+      duration_ms: 38.564792
+      type: 'test'
+      ...
+    # Subtest: can edit a legacy document without a number registry; never creates or transfers a reservation
+    ok 28 - can edit a legacy document without a number registry; never creates or transfers a reservation
+      ---
+      duration_ms: 18.822292
+      type: 'test'
+      ...
+    # Subtest: matches recorded payments and no-op amendments using the Bangkok day at midnight boundaries
+    ok 29 - matches recorded payments and no-op amendments using the Bangkok day at midnight boundaries
+      ---
+      duration_ms: 26.535833
+      type: 'test'
+      ...
+    # Subtest: keeps branch-specific numbers after template and branch changes
+    ok 30 - keeps branch-specific numbers after template and branch changes
+      ---
+      duration_ms: 64.419
+      type: 'test'
+      ...
+# (node:24099) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: removes a receipt without replacement and rejects a late OCR summary
+    ok 31 - removes a receipt without replacement and rejects a late OCR summary
+      ---
+      duration_ms: 86.136541
+      type: 'test'
+      ...
+    1..31
+ok 2 - expense edit to signing and receipt removal (PostgreSQL)
+  ---
+  duration_ms: 4724.061666
+  type: 'suite'
+  ...
+# Subtest: full substitute funding boundaries (PostgreSQL)
+    # Subtest: concurrent company issue creates one full payment; partial history remains unchanged
+    ok 1 - concurrent company issue creates one full payment; partial history remains unchanged
+      ---
+      duration_ms: 243.742084
+      type: 'test'
+      ...
+    # Subtest: personal full payment issues evidence without recording company money
+    ok 2 - personal full payment issues evidence without recording company money
+      ---
+      duration_ms: 61.929375
+      type: 'test'
+      ...
+    # Subtest: posted/paid document correction preserves expense, payment and original snapshot bytes
+    ok 3 - posted/paid document correction preserves expense, payment and original snapshot bytes
+      ---
+      duration_ms: 249.519
+      type: 'test'
+      ...
+    # Subtest: cancel/restart of a personal correction preserves the original and does not pay
+    ok 4 - cancel/restart of a personal correction preserves the original and does not pay
+      ---
+      duration_ms: 316.452209
+      type: 'test'
+      ...
+    # Subtest: paper COMPANY: upload has no financial effect; concurrent acceptance issues once
+    ok 5 - paper COMPANY: upload has no financial effect; concurrent acceptance issues once
+      ---
+      duration_ms: 108.902041
+      type: 'test'
+      ...
+    # Subtest: paper PERSONAL_ADVANCE: upload has no financial effect; concurrent acceptance issues once
+    ok 6 - paper PERSONAL_ADVANCE: upload has no financial effect; concurrent acceptance issues once
+      ---
+      duration_ms: 65.055791
+      type: 'test'
+      ...
+    # Subtest: paper submission rejects wrong uploader, stale source, and a cancelled version without linking a scan
+    ok 7 - paper submission rejects wrong uploader, stale source, and a cancelled version without linking a scan
+      ---
+      duration_ms: 44.479292
+      type: 'test'
+      ...
+    1..7
+ok 3 - full substitute funding boundaries (PostgreSQL)
+  ---
+  duration_ms: 1440.8985
+  type: 'suite'
+  ...
+# Subtest: reimbursement draft edit vs submit (real PostgreSQL)
+    # Subtest: commits exactly one winner and leaves one internally consistent aggregate
+    ok 1 - commits exactly one winner and leaves one internally consistent aggregate
+      ---
+      duration_ms: 881.05
+      type: 'test'
+      ...
+    # Subtest: a stale submit rolls back candidates and numbering, then retry uses the unconsumed number
+    ok 2 - a stale submit rolls back candidates and numbering, then retry uses the unconsumed number
+      ---
+      duration_ms: 111.702542
+      type: 'test'
+      ...
+    # Subtest: two requests submitting the same receipt have exactly one winner
+    ok 3 - two requests submitting the same receipt have exactly one winner
+      ---
+      duration_ms: 66.0465
+      type: 'test'
+      ...
+    # Subtest: reuses only a committed document number already owned by the same request
+    ok 4 - reuses only a committed document number already owned by the same request
+      ---
+      duration_ms: 129.980042
+      type: 'test'
+      ...
+    # Subtest: cancel and submit use the same request lock and have exactly one winner
+    ok 5 - cancel and submit use the same request lock and have exactly one winner
+      ---
+      duration_ms: 176.571334
+      type: 'test'
+      ...
+    # Subtest: a failed rejection transition rolls its step decision back before retry
+    ok 6 - a failed rejection transition rolls its step decision back before retry
+      ---
+      duration_ms: 66.427917
+      type: 'test'
+      ...
+    # Subtest: two concurrent approval decisions have exactly one winner
+    ok 7 - two concurrent approval decisions have exactly one winner
+      ---
+      duration_ms: 39.993791
+      type: 'test'
+      ...
+    # Subtest: blocks approval after a requester cancellation intent has started
+    ok 8 - blocks approval after a requester cancellation intent has started
+      ---
+      duration_ms: 48.162166
+      type: 'test'
+      ...
+    # Subtest: imports the actual payer independently of the preparer and retains source facts after JSONB round-trip
+    ok 9 - imports the actual payer independently of the preparer and retains source facts after JSONB round-trip
+      ---
+      duration_ms: 73.335
+      type: 'test'
+      ...
+    # Subtest: rejects wrong tenant/branch/payee, company money, unissued/paper-unlinked evidence, tax handoff and amount/date tampering
+    ok 10 - rejects wrong tenant/branch/payee, company money, unissued/paper-unlinked evidence, tax handoff and amount/date tampering
+      ---
+      duration_ms: 53.103042
+      type: 'test'
+      ...
+    # Subtest: requires draft refresh after source edits and locks ordinary expense edits after submit
+    ok 11 - requires draft refresh after source edits and locks ordinary expense edits after submit
+      ---
+      duration_ms: 99.759208
+      type: 'test'
+      ...
+    # Subtest: prevents claiming one expense twice through different receipt files and catches a newly linked manual receipt
+    ok 12 - prevents claiming one expense twice through different receipt files and catches a newly linked manual receipt
+      ---
+      duration_ms: 80.33275
+      type: 'test'
+      ...
+    # Subtest: rejects source changes at claim-born confirmation, without attaching the original receipt twice
+    ok 13 - rejects source changes at claim-born confirmation, without attaching the original receipt twice
+      ---
+      duration_ms: 63.069959
+      type: 'test'
+      ...
+    # Subtest: retains a finance-owned upload for the employee while rejecting unvalidated or changed files
+    ok 14 - retains a finance-owned upload for the employee while rejecting unvalidated or changed files
+      ---
+      duration_ms: 49.792875
+      type: 'test'
+      ...
+    # Subtest: freezes generic file deletion and new evidence links after a source is submitted
+    ok 15 - freezes generic file deletion and new evidence links after a source is submitted
+      ---
+      duration_ms: 61.758541
+      type: 'test'
+      ...
+# (node:24101) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: confirms source-backed gross costs and pays the employee once without settling the original expense twice
+    ok 16 - confirms source-backed gross costs and pays the employee once without settling the original expense twice
+      ---
+      duration_ms: 143.71225
+      type: 'test'
+      ...
+    1..16
+ok 4 - reimbursement draft edit vs submit (real PostgreSQL)
+  ---
+  duration_ms: 2539.558583
+  type: 'suite'
+  ...
+# Subtest: production A5 reimbursement dual-build compatibility (real PostgreSQL)
+    # Subtest: backfills zero-line only, preserves one/many-line aggregates byte-for-byte and is idempotent
+    ok 1 - backfills zero-line only, preserves one/many-line aggregates byte-for-byte and is idempotent
+      ---
+      duration_ms: 69.288917
+      type: 'test'
+      ...
+    # Subtest: bridges a legacy insert and lets the current writer replace the fallback atomically
+    ok 2 - bridges a legacy insert and lets the current writer replace the fallback atomically
+      ---
+      duration_ms: 20.607
+      type: 'test'
+      ...
+    # Subtest: rolls trigger work back and detects line-less, amount, tenant and derived-header corruption
+    ok 3 - rolls trigger work back and detects line-less, amount, tenant and derived-header corruption
+      ---
+      duration_ms: 61.5225
+      type: 'test'
+      ...
+    1..3
+ok 5 - production A5 reimbursement dual-build compatibility (real PostgreSQL)
+  ---
+  duration_ms: 216.156417
+  type: 'suite'
+  ...
+1..5
+# tests 70
+# suites 5
+# pass 70
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5973.793542

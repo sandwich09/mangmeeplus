@@ -83,6 +83,11 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
     tx: Prisma.TransactionClient,
     input: ReserveDocumentNumberInput,
   ): Promise<ReservedDocumentNumberRecord> {
+    // A custom EXP template can omit the month. Serialize its whole tenant namespace so
+    // different period rows cannot race for the same rendered number or idempotency key.
+    if (input.documentType === 'expense.record') {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${input.companyId}:expense-number`}))`;
+    }
     // Idempotency check
     const existing = await tx.documentNumber.findFirst({
       where: { companyId: input.companyId, documentType: input.documentType, idempotencyKey: input.idempotencyKey },
@@ -184,22 +189,46 @@ export class PrismaDocumentSequenceRepository implements DocumentSequenceReposit
     }
 
     const date = this.documentDateParts(input.periodKey);
-    const updatedSequence = await tx.documentSequence.update({
-      where: { id: sequence.id },
-      data: { nextNumber: { increment: 1 } },
-    });
-    const sequenceNumber = updatedSequence.nextNumber - 1;
     const branch = input.branchId
       ? await tx.branch.findFirst({ where: { id: input.branchId, companyId: input.companyId }, select: { code: true } })
       : null;
-    const documentNumber = formatDocumentNumber(sequence.prefixTemplate, {
-      year: date.year,
-      month: date.month,
-      branchCode: branch?.code,
-      documentType: input.documentType,
-      sequenceNumber,
-      padding: sequence.padding,
-    });
+    if (input.documentType === 'expense.record' && !sequence.prefixTemplate.includes('{SEQ}')) throw new UnprocessableEntityException('Expense prefix template must contain {SEQ}.');
+    if (input.documentType === 'expense.record') {
+      const context = { year: date.year, month: date.month, branchCode: branch?.code, documentType: input.documentType, sequenceNumber: 0, padding: sequence.padding };
+      const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const position = sequence.prefixTemplate.indexOf('{SEQ}');
+      const prefix = formatDocumentNumber(sequence.prefixTemplate.slice(0, position), context);
+      const suffix = formatDocumentNumber(sequence.prefixTemplate.slice(position + 5), context);
+      const pattern = `^${escape(prefix)}([0-9]+)${escape(suffix)}$`;
+      // Imported rows can have no registry/counter. Continue above the retained high-water
+      // mark, including cancelled numbers; filling an earlier gap would lose audit ordering.
+      const [retained] = await tx.$queryRaw<Array<{ maximum: string | null }>>`
+        SELECT MAX(substring(value FROM ${pattern})::numeric)::text AS maximum FROM (
+          SELECT "documentNumber" AS value FROM "DocumentNumber"
+          WHERE "companyId" = ${input.companyId} AND "documentType" = 'expense.record'
+          UNION ALL
+          SELECT "expenseNumber" AS value FROM "ExpenseRecord" WHERE "companyId" = ${input.companyId}
+        ) numbers`;
+      const maximum = Number(retained?.maximum ?? 0);
+      if (maximum >= 2147483647) throw new UnprocessableEntityException('Expense number sequence is exhausted.');
+      if (maximum >= sequence.nextNumber) {
+        sequence = await tx.documentSequence.update({ where: { id: sequence.id }, data: { nextNumber: maximum + 1 } });
+      }
+    }
+    let documentNumber: string;
+    // An imported legacy EXP may have no registry row/counter. Preserve it and consume forward.
+    // The sequence row update serializes allocations; never recycle cancelled/voided numbers.
+    for (;;) {
+      const updatedSequence = await tx.documentSequence.update({ where: { id: sequence.id }, data: { nextNumber: { increment: 1 } } });
+      documentNumber = formatDocumentNumber(sequence.prefixTemplate, {
+        year: date.year, month: date.month, branchCode: branch?.code, documentType: input.documentType,
+        sequenceNumber: updatedSequence.nextNumber - 1, padding: sequence.padding,
+      });
+      if (input.documentType !== 'expense.record') break;
+      const registered = await tx.documentNumber.findFirst({ where: { companyId: input.companyId, documentType: input.documentType, documentNumber }, select: { id: true } });
+      const legacy = await tx.expenseRecord.findFirst({ where: { companyId: input.companyId, expenseNumber: documentNumber }, select: { id: true } });
+      if (!registered && !legacy) break;
+    }
 
     const numRow = await tx.documentNumber.create({
       data: {

@@ -42,6 +42,9 @@ const numberRow = {
 
 function makeRepo(txOverrides: Record<string, any> = {}, clientOverrides: Record<string, any> = {}) {
   const tx = {
+    $executeRaw: async () => undefined,
+    $queryRaw: async () => [{ maximum: null }],
+    expenseRecord: { findFirst: async () => null },
     documentNumber: {
       findFirst: mock.fn(async () => null),
       create: mock.fn(async (args: any) => ({ ...numberRow, ...args.data })),

@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
+import type { CreateExpenseDraftInput } from '@watchdog-bms/contracts';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -1141,6 +1142,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <ThemedDate aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
           <FieldIssueNote issue={expenseDateIssue} />
           <AiFieldMissingHint field="expenseDate" summary={detail.aiVerificationSummaryJson} />
+          <p className="mt-1 text-sm text-gray-500">{detail.expenseNumber ? `แก้วันที่ได้ เลขรายจ่าย ${detail.expenseNumber} จะคงเดิม` : 'ตรวจวันที่เอกสารให้ตรงกับหลักฐานก่อนบันทึก วันที่จ่ายบันทึกแยกในขั้นตอนชำระเงิน'}</p>
           {!expenseDateIssue && sourceMissingNote('expenseDate')}
         </label>
         {values.businessPurpose !== undefined && (
@@ -1725,10 +1727,8 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
 };
 
 // ── List (period + cards + export + chips + search + grid rows + detail) ──────
-// All four columns share the spare width. With fixed trailing columns the first one absorbed
-// every extra pixel on wide screens (~66% of the table) and pushed the rest into a cluster on
-// the right; the minimums keep them readable once the min-w track starts scrolling.
-const GRID = 'grid grid-cols-[minmax(0,1.6fr)_minmax(140px,1fr)_minmax(130px,1fr)_minmax(170px,1fr)_minmax(84px,auto)] items-center gap-3';
+// Identity, vendor, dates, amount and status share the table width; narrower screens use cards.
+const GRID = 'grid grid-cols-[minmax(160px,1fr)_minmax(150px,1.4fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_84px] items-center gap-3';
 const LIST_PAGE_SIZE = 10;
 
 function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
@@ -1980,7 +1980,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       </div>
 
       {/* KPI cards */}
-      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
+      <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
       <details className="rounded-xl border border-gray-200 bg-white p-3 sm:hidden">
         <summary className="cursor-pointer text-sm font-semibold">{kpi.counted} รายการ · {baht(kpi.total)} · ดูสรุปยอด</summary>
         <div className="mt-3 grid gap-2">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
@@ -2012,11 +2012,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           {loading || categoryNamesLoading ? <LoadingState label="กำลังโหลด..." />
             : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
               : <>
-          <div className="hidden md:block">
+          <div className="hidden xl:block">
           <div className="overflow-x-auto" data-testid="expenses-grid">
-            <div className="min-w-[760px]">
+            <div className="min-w-[900px]">
               <div className={cx(GRID, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold uppercase tracking-wide text-gray-400')}>
-                <div>{t('expenses.col_vendor_category', locale)}</div><div>{t('expenses.col_date_source', locale)}</div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
+                <div>{t('expenses.col_expense_number', locale)}</div><div>{t('expenses.col_vendor_category', locale)}</div><div>{t('expenses.col_date_source', locale)}</div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
               </div>
               {loading ? <p className="py-8 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</p>
                 : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
@@ -2025,11 +2025,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                         {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                         className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
                           e.id === highlightId && 'rounded-xl ring-2 ring-brand-500 bg-brand-25')}>
+                        <div className="min-w-0 font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</div>
                         <div className="min-w-0">
                           <div className="truncate text-[15px] font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
                           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
                             {e.expenseCategoryId && catNames[e.expenseCategoryId] && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-semibold text-gray-600">{catNames[e.expenseCategoryId]}</span>}
-                            <span className="tabular-nums truncate">{firstFilled(e.expenseNumber, e.vendorDocumentNumber) ?? '—'}</span>
                           </div>
                         </div>
                         <div>
@@ -2054,7 +2054,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             </div>
           </div>
           </div>
-          <div className="mt-3 space-y-3 md:hidden" data-testid="expenses-card-list">
+          <div className="mt-3 space-y-3 xl:hidden" data-testid="expenses-card-list">
             {pagedRows.map((e) => (
               <MangmeeCard key={e.id} className={cx('overflow-hidden', e.id === highlightId && 'ring-2 ring-brand-500')}>
                 <button
@@ -2064,9 +2064,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                   data-testid="expenses-card"
                   {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{firstFilled(e.expenseNumber, e.vendorDocumentNumber) ?? '—'}</span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
+                  <div className="min-w-0">
+                    <span className="block text-xs font-medium text-gray-500">{t('expenses.col_expense_number', locale)}</span>
+                    <span className="mt-1 block font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span>
+                    <span className="mt-2 block truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
                     <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{dateShort(e.expenseDate)}</div>
@@ -2150,6 +2151,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   // Set when the draft was created but the receipt upload failed: submitting again
   // would create a second draft, so the submit button becomes "open the saved draft".
   const [savedExpenseId, setSavedExpenseId] = useState<string | null>(null);
+  const draftSave = useRef<{ key: string; body?: CreateExpenseDraftInput }>({ key: '' });
 
   const selectReceiptFile = async (file: File | null) => {
     setReceiptFile(null); setError('');
@@ -2180,19 +2182,31 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   async function submit(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError('');
     try {
-      if (!branchId) throw new Error(t('transaction.source_branch_required', locale));
-      const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
-      if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
-      if (!(totals.grandTotal > 0)) throw new Error(t('expenses.manual_total_required', locale));
-      const result = await createExpenseDraft(companyId, {
-        captureSource: 'WEB_MANUAL', expenseDate, branchId, vatMode,
-        inputVatClaimStatus: taxCodeDefinitionId ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE',
-        lines,
-      });
+      if (!draftSave.current.body) {
+        if (!branchId) throw new Error(t('transaction.source_branch_required', locale));
+        const forbidden = findForbiddenChars(items.map((item) => item.description).join(''));
+        if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
+        if (!(totals.grandTotal > 0)) throw new Error(t('expenses.manual_total_required', locale));
+        draftSave.current.key ||= crypto.randomUUID();
+        draftSave.current.body = {
+          idempotencyKey: draftSave.current.key,
+          captureSource: 'WEB_MANUAL', expenseDate, branchId, vatMode,
+          inputVatClaimStatus: taxCodeDefinitionId ? 'NEEDS_REVIEW' : 'NON_CLAIMABLE',
+          lines,
+        };
+      }
+      let result: ExpenseSummary;
+      try { result = await createExpenseDraft(companyId, draftSave.current.body); }
+      catch (cause) {
+        // A validation refusal has not committed. A network/5xx outcome is ambiguous:
+        // retain that exact command until its retry recovers the original expense.
+        if ([400, 422].includes((cause as { statusCode?: number }).statusCode ?? 0)) draftSave.current.body = undefined;
+        throw cause;
+      }
       if (receiptFile) {
         try {
           // The receipt slot: only expense.receipt.primary satisfies the confirm rule.
-          await uploadExpenseEvidenceFile(companyId, result.id, branchId ?? null, receiptFile, 'expense.receipt.primary');
+          await uploadExpenseEvidenceFile(companyId, result.id, result.branchId ?? null, receiptFile, 'expense.receipt.primary');
         } catch (uploadCause) {
           setSavedExpenseId(result.id);
           setError(`${t('expenses.manual_receipt_upload_failed', locale)}: ${err(uploadCause)}`);
@@ -2225,12 +2239,13 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
   return <div className="space-y-4">
     <div><h2 className="text-lg font-bold text-gray-900">{t('expenses.manual_title', locale)}</h2><p className="text-sm text-gray-500">{t('expenses.manual_intro', locale)}</p></div>
     {error && <ErrorBanner message={error} focus />}
+    {error && draftSave.current.body && !savedExpenseId && <p role="status" className="text-sm text-gray-600">ยังยืนยันผลการบันทึกไม่ได้ กดบันทึกซ้ำเพื่อตรวจคำสั่งเดิม แล้วเปิดรายการที่บันทึกไว้เพื่อแก้ไขต่อ</p>}
     <form onSubmit={submit} className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <div className="space-y-4">
         <MangmeeCard className="space-y-3 p-4">
           {sectionTitle(ICON.doc, 'expenses.manual_document_section', 'expenses.manual_document_helper')}
           <div className="grid gap-3 sm:grid-cols-3">
-            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)}{req}</span><ThemedDate className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /></label>
+            <label><span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_date', locale)}{req}</span><ThemedDate aria-label={t('expenses.manual_date', locale)} className={inputClass} value={expenseDate} onChange={(event) => setExpenseDate(event.target.value)} /><span className="mt-1 block text-sm text-gray-500">ตรวจวันที่ให้ตรงกับเอกสารก่อนบันทึก วันที่จ่ายระบุแยกในขั้นตอนชำระเงิน</span></label>
             <div className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_receipt', locale)}</span>
               {canAttachReceipt ? <>
@@ -2321,7 +2336,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
             : <>
               {/* `item.unitPrice` is truthy for "0", so a ฿0 draft used to save happily here and was
                   only refused much later, by จัดทำใบรับรองแทนใบเสร็จ. The rule belongs to this form. */}
-              <button disabled={busy || preparingReceipt || !expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
+              <button formNoValidate={Boolean(draftSave.current.body)} disabled={busy || preparingReceipt || (!draftSave.current.body && (!expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)))} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
               {!amountReady && <p className="text-xs font-semibold leading-5 text-warning-700">{t('expenses.manual_total_required', locale)}</p>}
             </>}
           <p className="text-xs leading-relaxed text-gray-500">{t('expenses.manual_intro', locale)}</p>

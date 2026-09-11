@@ -294,7 +294,7 @@ describe('expense Tax Code confirmation guard', () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3]).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       (error: any) => {
         const body = error?.getResponse?.();
         assert.equal(body.code, 'EXPENSE_VAT_RECONCILIATION_REQUIRED');
@@ -316,7 +316,7 @@ describe('expense Tax Code confirmation guard', () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
     let permissionError: unknown = null;
 
-    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+    await new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3])
       .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1, expectedUpdatedAt: readyRecord.updatedAt.toISOString() })
       .catch((error: unknown) => { permissionError = error; });
 
@@ -334,7 +334,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3])
         .execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', { reason: 'ตามเอกสาร', vatLineNumber: 2, expectedUpdatedAt: readyRecord.updatedAt.toISOString() }),
       (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_OVERRIDE_INVALID',
     );
@@ -358,7 +358,7 @@ describe('expense Tax Code confirmation guard', () => {
       repo, { log: async (entry: any, tx: any) => {
         if (entry.action === 'expense.vat.source_override') assert.equal(tx.transaction, true);
         auditEntries.push(entry);
-      } } as any, transactionTax, ...numberServices,
+      } } as any, transactionTax, numberServices[3],
     ).execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', {
       reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ ตรวจกับร้านแล้ว', vatLineNumber: 1,
       expectedUpdatedAt: readyRecord.updatedAt.toISOString(),
@@ -390,7 +390,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3]).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /cannot retain a Tax Code/,
     );
   });
@@ -409,7 +409,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
     const recordingAudit = { log: async (entry: any) => { auditEntries.push(entry); } } as any;
 
-    await new ConfirmExpenseUseCase(repo, recordingAudit, transactionTax, ...numberServices)
+    await new ConfirmExpenseUseCase(repo, recordingAudit, transactionTax, numberServices[3])
       .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
 
     const finalized = auditEntries.find((entry) => entry.action === 'tax.document_tax.finalize');
@@ -439,7 +439,7 @@ describe('expense Tax Code confirmation guard', () => {
           return { expense: { ...input, status: 'CONFIRMED' }, finalized };
         },
       } as any;
-      await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      await new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3])
         .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
       assert.equal(finalizedTreatment, vatTreatment);
     }
@@ -462,7 +462,7 @@ describe('expense Tax Code confirmation guard', () => {
           return { expense: { ...input, expenseNumber: 'EXP-1' }, finalized };
         },
       } as any;
-      const useCase = new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices);
+      const useCase = new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3]);
       (useCase as any).logger = { log: (entry: any) => events.push(entry) };
       await useCase.execute(ctx(undefined, ['expense.confirm']), 'exp-1');
       return events.filter((entry) => entry.msg === 'expense_category_overridden');
@@ -498,35 +498,22 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3]).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /requires verified Tax Code evidence/,
     );
   });
 
-  it('tears down the reserved number and rethrows the original error when finalize fails', async () => {
-    // Regression: the catch once ran voidNumber on a still-RESERVED number,
-    // which 409'd ("Only COMMITTED document numbers can be voided"), masking
-    // the real failure and leaking the reservation. It must cancel instead,
-    // never commit, and surface the underlying cause unchanged.
-    const numberCalls: any[] = [];
-    const tracked = [
-      { execute: async () => ({ id: 'number-1', documentNumber: 'EXP-202607-00001' }) } as any,
-      { execute: async () => { numberCalls.push(['commit']); } } as any,
-      { execute: async (input: any) => { numberCalls.push(['cancel', input]); } } as any,
-      // 4th slot: VAT registration read. Only consulted for a CLAIMABLE expense, which none of
-  // these fixtures is, so an UNKNOWN stub keeps the confirm path unchanged.
-  { get: async () => ({ status: 'UNKNOWN' }) } as any,
-] as const;
+  it('rethrows the original atomic-confirmation failure without a second number mutation', async () => {
+    let attempts = 0;
     const repo = {
       findByIdWithRelations: async () => readyRecord,
-      finalizeAndConfirmExpenseCas: async () => { throw new Error('expense_confirmation_source_checksum_changed'); },
+      finalizeAndConfirmExpenseCas: async () => { attempts++; throw new Error('expense_confirmation_source_checksum_changed'); },
     } as any;
-
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...tracked).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3]).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /expense_confirmation_source_checksum_changed/,
     );
-    assert.deepEqual(numberCalls, [['cancel', { id: 'number-1', companyId: 'company-1' }]]);
+    assert.equal(attempts, 1);
   });
 });
 
@@ -585,7 +572,7 @@ describe('manual web upload non-expense workflow guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, numberServices[3])
         .execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /classified as non-expense/,
     );
@@ -770,12 +757,11 @@ describe('manual web upload non-expense workflow guard', () => {
         };
       },
     } as any;
-    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...trackedNumberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+    await new ConfirmExpenseUseCase(repo, audit, transactionTax, trackedNumberServices[3]).execute(ctx(undefined, ['expense.confirm']), 'exp-1');
 
     assert.equal(updates[0].status, 'CONFIRMED');
-    assert.equal(updates[0].expenseNumber, 'EXP-202607-00001');
-    assert.equal(numberCalls[0][1].documentType, 'expense.record');
-    assert.deepEqual(numberCalls[1], ['commit', { id: 'number-1', companyId: 'company-1', ownerType: 'expense_record', ownerId: 'exp-1' }]);
+    assert.equal(updates[0].expenseNumber, undefined, 'the aggregate transaction owns number allocation');
+    assert.equal(numberCalls.length, 0);
     assert.equal(updates[0].outboxEvent.payloadJson.data.expenseId, 'exp-1');
     assert.match(updates[0].outboxEvent.eventKey, /^expense\.confirmed:expense_record:exp-1:/);
   });

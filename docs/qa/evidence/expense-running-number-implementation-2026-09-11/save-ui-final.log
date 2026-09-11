@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium] › e2e/expense-number-save.spec.ts:3:5 › numbered manual draft recovers a lost response with the same command (4.4s)
+  ✓  2 [chromium] › e2e/expense-number-save.spec.ts:48:5 › upload staging receives EXP only after deliberate date review and keeps it when OCR date is corrected (155ms)
+
+  2 passed (6.3s)
