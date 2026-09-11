@@ -35,7 +35,7 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     lines: [{ lineNumber: 1, description: 'Local numbering test', quantity: '1', unitPrice: '100', vatRate: '0' }], ...overrides,
   }) as any;
   before(async () => {
-    process.env.EXPENSE_DRAFT_NUMBERING_ENABLED = 'true';
+    delete process.env.EXPENSE_DRAFT_NUMBERING_ENABLED;
     companyId = (await client.company.create({ data: { name: `expense-number-${randomUUID()}` } })).id;
     branchId = (await client.branch.create({ data: { companyId, code: 'HO', name: 'Head Office' } })).id;
     otherBranchId = (await client.branch.create({ data: { companyId, code: 'B02', name: 'Branch two' } })).id;
@@ -70,7 +70,7 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
       expectedSourceChecksum: expenseTaxSourceChecksum(source), postingStatus: 'pending' as const, vendorSnapshotJson: null,
       outboxEvent: { eventKey: `number-test:${id}`, payloadJson: { data: { expenseId: id } } } };
   }
-  it('parallel retries save one header, lines, committed number and create audit', async () => {
+  it('without a flag, parallel retries save one header, lines, committed number and create audit', async () => {
     const input = draft();
     const rows = await Promise.all(Array.from({ length: 5 }, () => create.execute(ctx(), input)));
     assert.equal(new Set(rows.map(r => r.id)).size, 1);

@@ -1,16 +1,16 @@
 # Agent Memory: Expense running number implementation
 
-Status: IMPLEMENTED; local verification complete 2026-09-11. Merge to develop/main explicitly authorized via [main PR #538](https://github.com/MangmeeDev/mangmeeplus/pull/538) and [develop PR #539](https://github.com/MangmeeDev/mangmeeplus/pull/539); GitHub records the current merge state. No deployment. Draft issuance defaults OFF pending compatibility activation.
+Status: IMPLEMENTED; local verification complete 2026-09-11. Merge to develop/main explicitly authorized via [main PR #538](https://github.com/MangmeeDev/mangmeeplus/pull/538) and [develop PR #539](https://github.com/MangmeeDev/mangmeeplus/pull/539); GitHub records the current merge state. No deployment. Latest user explicitly requests draft issuance ON by default in the next deployed version; this supersedes the previous opt-in decision.
 Owner: Codex with thawatchai
 Scope: EXP first manual/date-reviewed draft save, preserved numbering, atomic/retry safety, legacy snapshots, linked SRC/RB, PDF identity and related UI gaps.
 
 Decisions:
-- Latest user explicitly authorized commit/push into develop and main after completion; earlier admin merge permission also persists. This supersedes historical wait/no-merge instructions for this implementation. Deployment and feature-flag activation are not requested.
+- Latest user explicitly authorized commit/push into develop and main after completion; earlier admin merge permission also persists. This supersedes historical wait/no-merge instructions for this implementation. Deployment is not requested; the latest user explicitly authorizes enabling the flag in code for the next deployment.
 - v1 uses document date, keeps assigned numbers after date changes, never automatically returns/decrements/reuses deleted numbers; no manual renumber.
 - Raw upload/LINE capture remains unnumbered until explicit user date review. Legacy dependencies/signed facts are not silently backfilled or rewritten.
 - Isolated worktree `/tmp/mangmee-expense-running-number-20260911`, branch `codex/expense-running-number-20260911`, base `8f988a16`. Unrelated dirty shared checkout and package.json files untouched.
 - Reuse canonical allocator/fingerprint and existing source/permission/tax/period guards. Nullable key/hash migration only. Serializable confirm/void with bounded P2034 retry; no external side effects in retry callbacks.
-- Keep draft flag OFF by default; old overwrite-on-confirm runtime is not a valid rollback target after issuing a draft EXP.
+- Draft issuance is ON when the environment variable is absent or `true`; explicit `false` disables new issuance. Old overwrite-on-confirm runtime is not a valid rollback target after issuing a draft EXP.
 
 Open questions / release boundaries:
 - No implementation-blocking product question in v1. Target-environment cohorts A–H, live LINE/OCR, old browser/jobs, real ledger worker plus partial multi-projection cancellation, production-size allocator performance and older-user usability still need release acceptance.
@@ -32,7 +32,7 @@ Verification:
 - API/web typechecks and API build passed. Final diff review and evidence checksum scan recorded in report/manifest.
 
 Next:
-- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Complete the authorized integration through the linked PRs after CI; preserve the reviewed feature commit as an ancestor of both remote branches. Deployment/activation requires the mandatory runbooks and pending release acceptance.
+- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. The previous integration is complete: develop `fccf06c2`, main `725207a1`, identical trees; exact candidate `41e59015` passed CI `34577320883` and `34577483571`. Complete the authorized default-ON follow-up on both branches. Future deployment follows the mandatory runbooks and pending release acceptance.
 
 ### UI follow-up: explicit EXP table column, 2026-09-11
 
@@ -63,6 +63,14 @@ Next:
 - Refreshed only the numbering PG fixture with an actual linked receipt and current evidence fingerprint. Rebuilt contracts after checkout; an initial stale-dist export failure and default-heap tsc OOM were local setup issues, resolved by rebuilding contracts and using the documented 10 GB typecheck heap.
 - Combined source validation: full `pnpm test` passed; API/web tsc passed; API build passed; 70 real PG tests passed with zero skips; two real API/browser save/date-review E2Es passed. Logs `/tmp/expense-number-develop-{final-tests,final-pg,final-api-types,combined-web-types,combined-build,combined-browser}.log`. Counts overlap earlier evidence, not additional independent cases.
 - Complete PR #539 and synchronize the same verified integration into main; no deployment, flag activation or customer gate change.
+
+### User-authorized default-ON follow-up, 2026-09-11
+
+- User: “ทำเปิด flag ไว้เลยนะ เดี๋ยวขึ้นไปแล้ว ลืมเปิด flag อีก”. Enable in code for the next deployment, with existing admin merge authorization to develop/main. No live infrastructure edit or deployment.
+- Work branch `codex/expense-draft-numbering-default-on-20260911`, based on origin/main `725207a1`. The shared helper covers manual drafts, explicit date review and claim projection creation. Unset now means ON; explicit `true`/`false` retain their meanings. Existing invalid/empty values do not enable issuance.
+- Added the enabled setting to `.env.example`; no repository deployment override was found. Keep additive schema-first deployment and all source/permission/frozen-evidence guards. Historical evidence above describes the previous opt-in revision.
+- Verification: `python3 /tmp/expense-number-impl-run.py cmd env EXPENSE_NUMBER_PG_TEST=1 pnpm --filter @watchdog-bms/api exec tsx --test src/modules/expenses/infrastructure/expense-number.pg.spec.ts` passed all 13 real PostgreSQL cases (zero skips). The suite removes the flag before saving concurrent drafts and retains explicit opt-out/assigned-reference coverage. Log: `/tmp/expense-number-default-on-pg.log`.
+- Full workspace `pnpm test` passed, including API/web/callers; log `/tmp/expense-number-default-on-workspace-tests.log`. `git diff --check` passed. No live environment was changed; integration into develop/main is the remaining step.
 
 ## Historical investigation and progress log (superseded by current state above)
 
