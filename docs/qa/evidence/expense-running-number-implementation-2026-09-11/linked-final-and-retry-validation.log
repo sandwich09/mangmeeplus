@@ -1,0 +1,43 @@
+
+Running 3 tests using 1 worker
+
+  ✘  1 [chromium] › e2e/expense-number-save.spec.ts:3:5 › numbered manual draft recovers a lost response with the same command (14.3s)
+  ✓  2 [chromium] › e2e/expense-number-save.spec.ts:48:5 › upload staging receives EXP only after deliberate date review and keeps it when OCR date is corrected (935ms)
+  ✓  3 [chromium] › e2e/expense-running-number.spec.ts:6:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API (11.3s)
+
+
+  1) [chromium] › e2e/expense-number-save.spec.ts:3:5 › numbered manual draft recovers a lost response with the same command
+
+    Error: expect(page).toHaveURL(expected) failed
+
+    Expected pattern: /\/expenses\/cmtwl0w580004nik1vf1t3is4/
+    Received string:  "http://127.0.0.1:3012/companies/seed-local-company/expenses/manual"
+    Timeout: 10000ms
+
+    Call log:
+      - Expect "toHaveURL" with timeout 10000ms
+        24 × unexpected value "http://127.0.0.1:3012/companies/seed-local-company/expenses/manual"
+
+
+      27 |   await description.fill('');
+      28 |   await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
+    > 29 |   await expect(page).toHaveURL(new RegExp(`/expenses/${saved.id}`));
+         |                      ^
+      30 |   expect(commands).toHaveLength(2);
+      31 |   expect(commands[1]).toEqual(commands[0]);
+      32 |   const detail = await (await api.get(`companies/${companyId}/expenses/${saved.id}`)).json();
+        at /private/tmp/mangmee-expense-running-number-20260911/e2e/expense-number-save.spec.ts:29:22
+
+    Error Context: test-results/expense-number-save-number-115c1-ponse-with-the-same-command-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/expense-number-save-number-115c1-ponse-with-the-same-command-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/expense-number-save-number-115c1-ponse-with-the-same-command-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/expense-number-save.spec.ts:3:5 › numbered manual draft recovers a lost response with the same command
+  2 passed (30.4s)

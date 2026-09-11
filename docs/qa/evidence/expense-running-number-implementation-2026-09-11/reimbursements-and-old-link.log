@@ -1,0 +1,48 @@
+
+Running 7 tests using 1 worker
+
+  ✘  1 [chromium] › e2e/expense-running-number.spec.ts:6:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API (2.0m)
+  ✓  2 [chromium] › e2e/reimbursements.spec.ts:60:7 › REIMB — reimbursements › REIMB-06 @p1 incurred-date picker permits today but disables tomorrow (1.9s)
+  ✓  3 [chromium] › e2e/reimbursements.spec.ts:75:7 › REIMB — reimbursements › REIMB-01 @smoke reimbursements list renders (1.4s)
+  ✓  4 [chromium] › e2e/reimbursements.spec.ts:83:7 › REIMB — reimbursements › REIMB-02 @p1 creates and submits a reimbursement request (1.2s)
+  ✓  5 [chromium] › e2e/reimbursements.spec.ts:94:7 › REIMB — reimbursements › REIMB-04 @p1 rolls a multi-line claim up into the header total (178ms)
+  ✓  6 [chromium] › e2e/reimbursements.spec.ts:113:7 › REIMB — reimbursements › REIMB-05 @p2 rejects a claim with no lines (33ms)
+  ✓  7 [chromium] › e2e/reimbursements.spec.ts:120:7 › REIMB — reimbursements › REIMB-03 @p1 manager approves, owner finance-reviews, and pays throwaway request (393ms)
+
+
+  1) [chromium] › e2e/expense-running-number.spec.ts:6:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API
+
+    Test timeout of 120000ms exceeded.
+
+    Error: apiRequestContext.get: Request context disposed.
+    Call log:
+      - → GET http://127.0.0.1:3011/v1/companies/seed-local-company/reimbursement-policy
+        - user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.7827.55 Safari/537.36
+        - accept: */*
+        - accept-encoding: gzip,deflate,br
+        - Authorization: Bearer [REDACTED]
+        - X-Company-Id: seed-local-company
+
+
+      83 |     expect((await read(await api.get(url),'cancelled detail')).lines[0].linkedExpenseId).toBe(sourceId);
+      84 |   } finally {
+    > 85 |     const latestPolicy = await (await api.get(`${base}/reimbursement-policy`)).json();
+         |                                           ^
+      86 |     await read(await api.put(`${base}/reimbursement-policy`,{data:{allowSelfApproval:original.allowSelfApproval,requireReceipt:original.requireReceipt,financeReviewRequired:original.financeReviewRequired,expectedUpdatedAt:latestPolicy.updatedAt}}),'restore policy');
+      87 |   }
+      88 | });
+        at /private/tmp/mangmee-expense-running-number-20260911/e2e/expense-running-number.spec.ts:85:43
+
+    Error Context: test-results/expense-running-number-Pro-27759-and-cancel-through-real-API-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/expense-running-number-Pro-27759-and-cancel-through-real-API-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace test-results/expense-running-number-Pro-27759-and-cancel-through-real-API-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/expense-running-number.spec.ts:6:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API
+  6 passed (2.1m)

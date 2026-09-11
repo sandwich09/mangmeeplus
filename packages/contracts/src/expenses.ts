@@ -771,6 +771,8 @@ export type ExpenseDetail = ExpenseSummary & {
 };
 
 export type CreateExpenseDraftInput = {
+  /** One deliberate save attempt, retained when retrying after an uncertain response. */
+  idempotencyKey?: string;
   captureSource: ExpenseCaptureSource;
   branchId?: string;
   vendorCounterpartyId?: string;
@@ -814,7 +816,7 @@ export type CreateExpenseDraftInput = {
   }>;
 };
 
-export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines'>> & {
+export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines' | 'idempotencyKey'>> & {
   /** Interactive callers send the version they loaded; API PATCH/override routes require it. */
   expectedUpdatedAt?: string;
   /** Existing row identity survives edits/reordering; omit id for a new row. */

@@ -1,0 +1,1051 @@
+TAP version 13
+# Subtest: document number branch collision (audit CR-7)
+    # Subtest: keeps one counter for a template that cannot name the branch
+    ok 1 - keeps one counter for a template that cannot name the branch
+      ---
+      duration_ms: 3.007625
+      type: 'test'
+      ...
+    # Subtest: still splits the counter per branch once the template names the branch
+    ok 2 - still splits the counter per branch once the template names the branch
+      ---
+      duration_ms: 0.917083
+      type: 'test'
+      ...
+    # Subtest: carries a live branch counter over instead of restarting the company-wide one at 1
+    ok 3 - carries a live branch counter over instead of restarting the company-wide one at 1
+      ---
+      duration_ms: 0.365167
+      type: 'test'
+      ...
+    # Subtest: keeps a customized template when the counter becomes company-wide
+    ok 4 - keeps a customized template when the counter becomes company-wide
+      ---
+      duration_ms: 0.701708
+      type: 'test'
+      ...
+    # Subtest: refuses to configure a branch sequence whose numbers cannot name the branch
+    ok 5 - refuses to configure a branch sequence whose numbers cannot name the branch
+      ---
+      duration_ms: 1.04075
+      type: 'test'
+      ...
+    # Subtest: leaves no default template that would split a counter it cannot label
+    ok 6 - leaves no default template that would split a counter it cannot label
+      ---
+      duration_ms: 4.07475
+      type: 'test'
+      ...
+    1..6
+ok 1 - document number branch collision (audit CR-7)
+  ---
+  duration_ms: 10.85325
+  type: 'suite'
+  ...
+# Subtest: PrismaDocumentSequenceRepository
+    # Subtest: rejects same idempotency key with different period
+    ok 1 - rejects same idempotency key with different period
+      ---
+      duration_ms: 1.60975
+      type: 'test'
+      ...
+    # Subtest: allocates using incremented sequence row without duplicating visible numbers
+    ok 2 - allocates using incremented sequence row without duplicating visible numbers
+      ---
+      duration_ms: 0.488
+      type: 'test'
+      ...
+    # Subtest: reuses reserve and commit logic inside a caller-owned transaction
+    ok 3 - reuses reserve and commit logic inside a caller-owned transaction
+      ---
+      duration_ms: 0.634125
+      type: 'test'
+      ...
+    # Subtest: lazily provisions the system default on first use
+    ok 4 - lazily provisions the system default on first use
+      ---
+      duration_ms: 0.597916
+      type: 'test'
+      ...
+    # Subtest: formats monthly and yearly sequences from the canonical period instead of the wall clock
+    ok 5 - formats monthly and yearly sequences from the canonical period instead of the wall clock
+      ---
+      duration_ms: 0.445791
+      type: 'test'
+      ...
+    # Subtest: inherits the latest active configuration into a missing period
+    ok 6 - inherits the latest active configuration into a missing period
+      ---
+      duration_ms: 0.386834
+      type: 'test'
+      ...
+    # Subtest: does not bypass a disabled latest configuration
+    ok 7 - does not bypass a disabled latest configuration
+      ---
+      duration_ms: 0.127959
+      type: 'test'
+      ...
+    # Subtest: keeps unknown unconfigured document types blocked
+    ok 8 - keeps unknown unconfigured document types blocked
+      ---
+      duration_ms: 0.555042
+      type: 'test'
+      ...
+    # Subtest: only voids committed document numbers
+    ok 9 - only voids committed document numbers
+      ---
+      duration_ms: 0.389
+      type: 'test'
+      ...
+    1..9
+ok 2 - PrismaDocumentSequenceRepository
+  ---
+  duration_ms: 7.104916
+  type: 'suite'
+  ...
+# Subtest: ListExpensesUseCase branch scope
+    # Subtest: passes the caller scope to the repository
+    ok 1 - passes the caller scope to the repository
+      ---
+      duration_ms: 1.145042
+      type: 'test'
+      ...
+    # Subtest: rejects an explicit branch filter outside the scope
+    ok 2 - rejects an explicit branch filter outside the scope
+      ---
+      duration_ms: 0.604
+      type: 'test'
+      ...
+    # Subtest: allows an explicit branch filter inside the scope
+    ok 3 - allows an explicit branch filter inside the scope
+      ---
+      duration_ms: 0.137458
+      type: 'test'
+      ...
+    # Subtest: clamps oversized pagination before querying the repository
+    ok 4 - clamps oversized pagination before querying the repository
+      ---
+      duration_ms: 0.095875
+      type: 'test'
+      ...
+    1..4
+ok 3 - ListExpensesUseCase branch scope
+  ---
+  duration_ms: 2.538541
+  type: 'suite'
+  ...
+# Subtest: CreateExpenseDraftUseCase branch tagging
+    # Subtest: defaults the only available scoped branch
+    ok 1 - defaults the only available scoped branch
+      ---
+      duration_ms: 1.790333
+      type: 'test'
+      ...
+    # Subtest: does not guess the first scoped branch when more than one is available
+    ok 2 - does not guess the first scoped branch when more than one is available
+      ---
+      duration_ms: 0.119417
+      type: 'test'
+      ...
+    # Subtest: requires unrestricted creators to select a source branch
+    ok 3 - requires unrestricted creators to select a source branch
+      ---
+      duration_ms: 0.096334
+      type: 'test'
+      ...
+    # Subtest: preserves an explicitly selected branch without inventing a reviewer VAT snapshot
+    ok 4 - preserves an explicitly selected branch without inventing a reviewer VAT snapshot
+      ---
+      duration_ms: 0.306541
+      type: 'test'
+      ...
+    # Subtest: stores a snapshot when the creator explicitly supplies the document VAT source
+    ok 5 - stores a snapshot when the creator explicitly supplies the document VAT source
+      ---
+      duration_ms: 0.925458
+      type: 'test'
+      ...
+    # Subtest: rejects an explicit branch outside the scope
+    ok 6 - rejects an explicit branch outside the scope
+      ---
+      duration_ms: 0.2285
+      type: 'test'
+      ...
+    1..6
+ok 4 - CreateExpenseDraftUseCase branch tagging
+  ---
+  duration_ms: 3.74275
+  type: 'suite'
+  ...
+# Subtest: GetExpenseUseCase branch scope
+    # Subtest: hides a record from another branch
+    ok 1 - hides a record from another branch
+      ---
+      duration_ms: 0.233959
+      type: 'test'
+      ...
+    # Subtest: shows company-central records to restricted scopes
+    ok 2 - shows company-central records to restricted scopes
+      ---
+      duration_ms: 0.08625
+      type: 'test'
+      ...
+    # Subtest: allows the exact selected payer to open a non-owned signing task
+    ok 3 - allows the exact selected payer to open a non-owned signing task
+      ---
+      duration_ms: 0.101583
+      type: 'test'
+      ...
+    # Subtest: lets a creator reopen only the draft they created
+    ok 4 - lets a creator reopen only the draft they created
+      ---
+      duration_ms: 0.121167
+      type: 'test'
+      ...
+    # Subtest: lets an expense confirmer read the branch-scoped record needed for the decision
+    ok 5 - lets an expense confirmer read the branch-scoped record needed for the decision
+      ---
+      duration_ms: 0.040583
+      type: 'test'
+      ...
+    1..5
+ok 5 - GetExpenseUseCase branch scope
+  ---
+  duration_ms: 0.682292
+  type: 'suite'
+  ...
+# Subtest: UpdateExpenseDraftUseCase branch scope
+    # Subtest: blocks mutating a record from another branch
+    ok 1 - blocks mutating a record from another branch
+      ---
+      duration_ms: 0.630291
+      type: 'test'
+      ...
+    # Subtest: blocks re-tagging a record to an out-of-scope branch
+    ok 2 - blocks re-tagging a record to an out-of-scope branch
+      ---
+      duration_ms: 0.052709
+      type: 'test'
+      ...
+    # Subtest: keeps document, tax, and accounting classification fields finance-only
+    ok 3 - keeps document, tax, and accounting classification fields finance-only
+      ---
+      duration_ms: 0.17025
+      type: 'test'
+      ...
+    # Subtest: blocks an API bypass that keeps a Tax Code while classifying the draft as a receipt
+    ok 4 - blocks an API bypass that keeps a Tax Code while classifying the draft as a receipt
+      ---
+      duration_ms: 0.188042
+      type: 'test'
+      ...
+    # Subtest: blocks a document-only API bypass when persisted Tax Code snapshots would become stale
+    ok 5 - blocks a document-only API bypass when persisted Tax Code snapshots would become stale
+      ---
+      duration_ms: 0.116458
+      type: 'test'
+      ...
+    1..5
+ok 6 - UpdateExpenseDraftUseCase branch scope
+  ---
+  duration_ms: 1.208458
+  type: 'suite'
+  ...
+# Subtest: expense Tax Code confirmation guard
+    # Subtest: blocks confirmation while VAT source reconciliation needs review, naming the line to check
+    ok 1 - blocks confirmation while VAT source reconciliation needs review, naming the line to check
+      ---
+      duration_ms: 0.664834
+      type: 'test'
+      ...
+    # Subtest: lets whoever may confirm accept the document VAT total, so nobody is stranded
+    ok 2 - lets whoever may confirm accept the document VAT total, so nobody is stranded
+      ---
+      duration_ms: 0.412625
+      type: 'test'
+      ...
+    # Subtest: refuses to hang the difference on a line that bears no VAT
+    ok 3 - refuses to hang the difference on a line that bears no VAT
+      ---
+      duration_ms: 0.08775
+      type: 'test'
+      ...
+    # Subtest: lets a reviewer confirm on the document VAT total and writes the decision to audit
+    ok 4 - lets a reviewer confirm on the document VAT total and writes the decision to audit
+      ---
+      duration_ms: 0.374459
+      type: 'test'
+      ...
+    # Subtest: rejects confirmation when a receipt still has a Tax Code snapshot
+    ok 5 - rejects confirmation when a receipt still has a Tax Code snapshot
+      ---
+      duration_ms: 0.091917
+      type: 'test'
+      ...
+    # Subtest: emits the finalized tax source ledger metadata after confirmation
+    ok 6 - emits the finalized tax source ledger metadata after confirmation
+      ---
+      duration_ms: 0.134416
+      type: 'test'
+      ...
+    # Subtest: carries zero-treatment meaning into the final Tax Code resolution clone
+    ok 7 - carries zero-treatment meaning into the final Tax Code resolution clone
+      ---
+      duration_ms: 1.079417
+      type: 'test'
+      ...
+    # Subtest: emits a category override event when the confirmed category is not the AI suggestion
+    ok 8 - emits a category override event when the confirmed category is not the AI suggestion
+      ---
+      duration_ms: 0.611208
+      type: 'test'
+      ...
+    # Subtest: rejects a usable tax-invoice header while its domestic Tax Code evidence is not verified
+    ok 9 - rejects a usable tax-invoice header while its domestic Tax Code evidence is not verified
+      ---
+      duration_ms: 0.287833
+      type: 'test'
+      ...
+    # Subtest: rethrows the original atomic-confirmation failure without a second number mutation
+    ok 10 - rethrows the original atomic-confirmation failure without a second number mutation
+      ---
+      duration_ms: 0.302375
+      type: 'test'
+      ...
+    1..10
+ok 7 - expense Tax Code confirmation guard
+  ---
+  duration_ms: 4.223583
+  type: 'suite'
+  ...
+# Subtest: manual web upload non-expense workflow guard
+    # Subtest: exposes the explicit override endpoint only to expense reviewers
+    ok 1 - exposes the explicit override endpoint only to expense reviewers
+      ---
+      duration_ms: 0.198708
+      type: 'test'
+      ...
+    # Subtest: guards shared accounting evidence with its dedicated permission
+    ok 2 - guards shared accounting evidence with its dedicated permission
+      ---
+      duration_ms: 0.077792
+      type: 'test'
+      ...
+    # Subtest: exposes a reviewer mark-ready route without weakening the own-update route
+    ok 3 - exposes a reviewer mark-ready route without weakening the own-update route
+      ---
+      duration_ms: 0.07175
+      type: 'test'
+      ...
+    # Subtest: blocks sending an unresolved non-expense draft for confirmation
+    ok 4 - blocks sending an unresolved non-expense draft for confirmation
+      ---
+      duration_ms: 0.248792
+      type: 'test'
+      ...
+    # Subtest: blocks direct confirmation for an unresolved non-expense classification
+    ok 5 - blocks direct confirmation for an unresolved non-expense classification
+      ---
+      duration_ms: 0.240458
+      type: 'test'
+      ...
+    # Subtest: allows finance to explicitly override the classification while preserving its history
+    ok 6 - allows finance to explicitly override the classification while preserving its history
+      ---
+      duration_ms: 0.308416
+      type: 'test'
+      ...
+    # Subtest: does not treat an incidental source document field as an override
+    ok 7 - does not treat an incidental source document field as an override
+      ---
+      duration_ms: 0.248958
+      type: 'test'
+      ...
+    # Subtest: requires reviewer permission, a reviewed document type, and a bounded reason for override
+    ok 8 - requires reviewer permission, a reviewed document type, and a bounded reason for override
+      ---
+      duration_ms: 2.350292
+      type: 'test'
+      ...
+    # Subtest: allows the reviewed draft to advance after the explicit override
+    ok 9 - allows the reviewed draft to advance after the explicit override
+      ---
+      duration_ms: 0.372125
+      type: 'test'
+      ...
+    # Subtest: allows confirmation after a valid finance resolution and emits one outbox event
+    ok 10 - allows confirmation after a valid finance resolution and emits one outbox event
+      ---
+      duration_ms: 0.412167
+      type: 'test'
+      ...
+    1..10
+ok 8 - manual web upload non-expense workflow guard
+  ---
+  duration_ms: 4.81625
+  type: 'suite'
+  ...
+# Subtest: LINE draft edit — frozen security eval
+    # Subtest: executes every frozen case, and none of them writes
+    ok 1 - executes every frozen case, and none of them writes
+      ---
+      duration_ms: 21.4685
+      type: 'test'
+      ...
+    # Subtest: keys the pending preview by company AND chat, and by nothing else
+    ok 2 - keys the pending preview by company AND chat, and by nothing else
+      ---
+      duration_ms: 4.518458
+      type: 'test'
+      ...
+    # Subtest: subtracts a charge line's own discount from the charges total
+    ok 3 - subtracts a charge line's own discount from the charges total
+      ---
+      duration_ms: 0.467375
+      type: 'test'
+      ...
+    # Subtest: answers a second tap as already applied, not as expired
+    ok 4 - answers a second tap as already applied, not as expired
+      ---
+      duration_ms: 0.468709
+      type: 'test'
+      ...
+    # Subtest: has a runner for every frozen case and no runner without one
+    ok 5 - has a runner for every frozen case and no runner without one
+      ---
+      duration_ms: 2.013542
+      type: 'test'
+      ...
+    1..5
+ok 9 - LINE draft edit — frozen security eval
+  ---
+  duration_ms: 29.761958
+  type: 'suite'
+  ...
+# Subtest: parseLineDraftPatch
+    # Subtest: refuses a call with no field to change rather than writing nothing quietly
+    ok 1 - refuses a call with no field to change rather than writing nothing quietly
+      ---
+      duration_ms: 2.025834
+      type: 'test'
+      ...
+    # Subtest: refuses a charge with both bases, or with neither
+    ok 2 - refuses a charge with both bases, or with neither
+      ---
+      duration_ms: 0.480958
+      type: 'test'
+      ...
+    # Subtest: bounds a charge percent to (0, 100]
+    ok 3 - bounds a charge percent to (0, 100]
+      ---
+      duration_ms: 0.30375
+      type: 'test'
+      ...
+    # Subtest: bounds every value the model wire can carry
+    ok 4 - bounds every value the model wire can carry
+      ---
+      duration_ms: 0.180042
+      type: 'test'
+      ...
+    # Subtest: reserves recordType for the record kinds this release does not write
+    ok 5 - reserves recordType for the record kinds this release does not write
+      ---
+      duration_ms: 0.031042
+      type: 'test'
+      ...
+    1..5
+ok 10 - parseLineDraftPatch
+  ---
+  duration_ms: 3.797416
+  type: 'suite'
+  ...
+# Subtest: groundingFailure
+    # Subtest: refuses a number nobody said and the record does not hold
+    ok 1 - refuses a number nobody said and the record does not hold
+      ---
+      duration_ms: 3.5755
+      type: 'test'
+      ...
+    # Subtest: accepts a number the user said
+    ok 2 - accepts a number the user said
+      ---
+      duration_ms: 2.415167
+      type: 'test'
+      ...
+    # Subtest: accepts a number already on the record — moving money the bill printed is not authoring it
+    ok 3 - accepts a number already on the record — moving money the bill printed is not authoring it
+      ---
+      duration_ms: 1.197166
+      type: 'test'
+      ...
+    # Subtest: grounds a VAT rate written either way round
+    ok 4 - grounds a VAT rate written either way round
+      ---
+      duration_ms: 2.270208
+      type: 'test'
+      ...
+    1..4
+ok 11 - groundingFailure
+  ---
+  duration_ms: 10.048542
+  type: 'suite'
+  ...
+# Subtest: projectLineDraftPatch
+    # Subtest: adds a charge after the products, renumbered, at quantity 1
+    ok 1 - adds a charge after the products, renumbered, at quantity 1
+      ---
+      duration_ms: 1.134916
+      type: 'test'
+      ...
+    # Subtest: refuses to guess VAT for a charge when the products do not agree, and says so
+    ok 2 - refuses to guess VAT for a charge when the products do not agree, and says so
+      ---
+      duration_ms: 0.22425
+      type: 'test'
+      ...
+    # Subtest: preserves every field of an untouched line — the whole set is replaced on save
+    ok 3 - preserves every field of an untouched line — the whole set is replaced on save
+      ---
+      duration_ms: 0.450916
+      type: 'test'
+      ...
+    # Subtest: carries a moved line's own discount into the charge it becomes
+    ok 4 - carries a moved line's own discount into the charge it becomes
+      ---
+      duration_ms: 0.149083
+      type: 'test'
+      ...
+    # Subtest: refuses a document number carrying a total and a host
+    ok 5 - refuses a document number carrying a total and a host
+      ---
+      duration_ms: 1.993875
+      type: 'test'
+      ...
+    # Subtest: refuses to delete the last line
+    ok 6 - refuses to delete the last line
+      ---
+      duration_ms: 0.124458
+      type: 'test'
+      ...
+    # Subtest: refuses a second row of a charge the record already carries as a charge
+    ok 7 - refuses a second row of a charge the record already carries as a charge
+      ---
+      duration_ms: 0.157125
+      type: 'test'
+      ...
+    # Subtest: scrubs record free text out of the diff a card will print
+    ok 8 - scrubs record free text out of the diff a card will print
+      ---
+      duration_ms: 6.12725
+      type: 'test'
+      ...
+    1..8
+ok 12 - projectLineDraftPatch
+  ---
+  duration_ms: 10.693292
+  type: 'suite'
+  ...
+# Subtest: detectLineDraftEditRequest
+    # Subtest: reads the J3 turn as an add_charge percent request
+    ok 1 - reads the J3 turn as an add_charge percent request
+      ---
+      duration_ms: 0.460625
+      type: 'test'
+      ...
+    # Subtest: reads a flat charge amount, and only from AFTER the charge word
+    ok 2 - reads a flat charge amount, and only from AFTER the charge word
+      ---
+      duration_ms: 0.173292
+      type: 'test'
+      ...
+    # Subtest: reads a line removal and the J3.3 move
+    ok 3 - reads a line removal and the J3.3 move
+      ---
+      duration_ms: 0.125959
+      type: 'test'
+      ...
+    # Subtest: refuses a request that names somebody else's document
+    ok 4 - refuses a request that names somebody else's document
+      ---
+      duration_ms: 0.031917
+      type: 'test'
+      ...
+    # Subtest: reads the answer to the "which line?" clarify
+    ok 5 - reads the answer to the "which line?" clarify
+      ---
+      duration_ms: 0.050791
+      type: 'test'
+      ...
+    # Subtest: folds Thai and fullwidth numerals before parsing
+    ok 6 - folds Thai and fullwidth numerals before parsing
+      ---
+      duration_ms: 0.077542
+      type: 'test'
+      ...
+    # Subtest: leaves slice A's E4 and J4 turns alone
+    ok 7 - leaves slice A's E4 and J4 turns alone
+      ---
+      duration_ms: 0.282125
+      type: 'test'
+      ...
+    # Subtest: is an allowlist: an ordinary sentence routes nowhere
+    ok 8 - is an allowlist: an ordinary sentence routes nowhere
+      ---
+      duration_ms: 0.110417
+      type: 'test'
+      ...
+    1..8
+ok 13 - detectLineDraftEditRequest
+  ---
+  duration_ms: 1.478917
+  type: 'suite'
+  ...
+# Subtest: existingChargeLikeProductLine + appendNote
+    # Subtest: finds the OCR-written service charge sitting as a product line
+    ok 1 - finds the OCR-written service charge sitting as a product line
+      ---
+      duration_ms: 0.144709
+      type: 'test'
+      ...
+    # Subtest: appends the note and never overwrites the capture provenance
+    ok 2 - appends the note and never overwrites the capture provenance
+      ---
+      duration_ms: 0.068833
+      type: 'test'
+      ...
+    1..2
+ok 14 - existingChargeLikeProductLine + appendNote
+  ---
+  duration_ms: 0.368958
+  type: 'suite'
+  ...
+# Subtest: substitute receipt evidence
+    # Subtest: removes only old system heading/footer metadata while preserving references and source bytes
+    ok 1 - removes only old system heading/footer metadata while preserving references and source bytes
+      ---
+      duration_ms: 1.093875
+      type: 'test'
+      ...
+    # Subtest: renders Thai baht text without losing satang
+    ok 2 - renders Thai baht text without losing satang
+      ---
+      duration_ms: 0.263583
+      type: 'test'
+      ...
+    # Subtest: renders a UTF-8 immutable certificate and escapes reviewed values
+    ok 3 - renders a UTF-8 immutable certificate and escapes reviewed values
+      ---
+      duration_ms: 16.528583
+      type: 'test'
+      ...
+    # Subtest: rejects active-content signatures
+    ok 4 - rejects active-content signatures
+      ---
+      duration_ms: 0.174792
+      type: 'test'
+      ...
+    # Subtest: omits the payee block for a legacy snapshot and grows it for captured payee lines
+    ok 5 - omits the payee block for a legacy snapshot and grows it for captured payee lines
+      ---
+      duration_ms: 6.434083
+      type: 'test'
+      ...
+    # Subtest: wraps long required fields without dropping their trailing content
+    ok 6 - wraps long required fields without dropping their trailing content
+      ---
+      duration_ms: 14.555083
+      type: 'test'
+      ...
+    # Subtest: breaks a single word wider than its column instead of letting it run into the next one
+    ok 7 - breaks a single word wider than its column instead of letting it run into the next one
+      ---
+      duration_ms: 1.989083
+      type: 'test'
+      ...
+    1..7
+ok 15 - substitute receipt evidence
+  ---
+  duration_ms: 41.983125
+  type: 'suite'
+  ...
+# Subtest: document VAT acceptance through real confirmation and tax resolution
+    # Subtest: also preserves in-tolerance source VAT without requiring a reviewer override
+    ok 1 - also preserves in-tolerance source VAT without requiring a reviewer override
+      ---
+      duration_ms: 8.023417
+      type: 'test'
+      ...
+    # Subtest: refuses missing permissions, missing reason/carrier and obsolete decisions without an audit
+    ok 2 - refuses missing permissions, missing reason/carrier and obsolete decisions without an audit
+      ---
+      duration_ms: 1.350625
+      type: 'test'
+      ...
+    # Subtest: lets a confirmer accept the document VAT total, with the decision still written to the audit
+    ok 3 - lets a confirmer accept the document VAT total, with the decision still written to the audit
+      ---
+      duration_ms: 1.487708
+      type: 'test'
+      ...
+    # Subtest: VAT_INCLUDED receipt persists accepted 8 through reload, FINAL tax and reports
+    ok 4 - VAT_INCLUDED receipt persists accepted 8 through reload, FINAL tax and reports
+      ---
+      duration_ms: 2.017875
+      type: 'test'
+      ...
+    # Subtest: VAT_INCLUDED receipt persists accepted 6 through reload, FINAL tax and reports
+    ok 5 - VAT_INCLUDED receipt persists accepted 6 through reload, FINAL tax and reports
+      ---
+      duration_ms: 1.479209
+      type: 'test'
+      ...
+    # Subtest: VAT_INCLUDED configured tax persists accepted 8 through reload, FINAL tax and reports
+    ok 6 - VAT_INCLUDED configured tax persists accepted 8 through reload, FINAL tax and reports
+      ---
+      duration_ms: 1.571166
+      type: 'test'
+      ...
+    # Subtest: VAT_INCLUDED configured tax persists accepted 6 through reload, FINAL tax and reports
+    ok 7 - VAT_INCLUDED configured tax persists accepted 6 through reload, FINAL tax and reports
+      ---
+      duration_ms: 3.5525
+      type: 'test'
+      ...
+    # Subtest: VAT_EXCLUDED receipt persists accepted 8 through reload, FINAL tax and reports
+    ok 8 - VAT_EXCLUDED receipt persists accepted 8 through reload, FINAL tax and reports
+      ---
+      duration_ms: 1.327042
+      type: 'test'
+      ...
+    # Subtest: VAT_EXCLUDED receipt persists accepted 6 through reload, FINAL tax and reports
+    ok 9 - VAT_EXCLUDED receipt persists accepted 6 through reload, FINAL tax and reports
+      ---
+      duration_ms: 2.397
+      type: 'test'
+      ...
+    # Subtest: VAT_EXCLUDED configured tax persists accepted 8 through reload, FINAL tax and reports
+    ok 10 - VAT_EXCLUDED configured tax persists accepted 8 through reload, FINAL tax and reports
+      ---
+      duration_ms: 2.890875
+      type: 'test'
+      ...
+    # Subtest: VAT_EXCLUDED configured tax persists accepted 6 through reload, FINAL tax and reports
+    ok 11 - VAT_EXCLUDED configured tax persists accepted 6 through reload, FINAL tax and reports
+      ---
+      duration_ms: 9.990417
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on tax tolerance failure
+    ok 12 - rolls back amounts, decision and outbox on tax tolerance failure
+      ---
+      duration_ms: 1.252709
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on tax rate failure
+    ok 13 - rolls back amounts, decision and outbox on tax rate failure
+      ---
+      duration_ms: 1.161291
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on evidence failure
+    ok 14 - rolls back amounts, decision and outbox on evidence failure
+      ---
+      duration_ms: 2.256292
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on period failure
+    ok 15 - rolls back amounts, decision and outbox on period failure
+      ---
+      duration_ms: 1.442917
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on tax period failure
+    ok 16 - rolls back amounts, decision and outbox on tax period failure
+      ---
+      duration_ms: 1.495375
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on audit failure
+    ok 17 - rolls back amounts, decision and outbox on audit failure
+      ---
+      duration_ms: 0.968792
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on outbox failure
+    ok 18 - rolls back amounts, decision and outbox on outbox failure
+      ---
+      duration_ms: 0.629542
+      type: 'test'
+      ...
+    # Subtest: rolls back amounts, decision and outbox on CAS failure
+    ok 19 - rolls back amounts, decision and outbox on CAS failure
+      ---
+      duration_ms: 0.59
+      type: 'test'
+      ...
+    # Subtest: rejects stale source/line changes before applying or auditing a decision
+    ok 20 - rejects stale source/line changes before applying or auditing a decision
+      ---
+      duration_ms: 2.029
+      type: 'test'
+      ...
+    # Subtest: rejects an old or missing UI version even when the source changed before POST began
+    ok 21 - rejects an old or missing UI version even when the source changed before POST began
+      ---
+      duration_ms: 1.351792
+      type: 'test'
+      ...
+    1..21
+ok 16 - document VAT acceptance through real confirmation and tax resolution
+  ---
+  duration_ms: 50.230292
+  type: 'suite'
+  ...
+# Subtest: PrismaExpenseRepository atomic tax confirmation
+    # Subtest: blocks legacy unassigned expenses before any tax, header or outbox write
+    ok 1 - blocks legacy unassigned expenses before any tax, header or outbox write
+      ---
+      duration_ms: 0.53475
+      type: 'test'
+      ...
+    # Subtest: persists FINAL snapshots, status CAS, and outbox in one locked transaction
+    ok 2 - persists FINAL snapshots, status CAS, and outbox in one locked transaction
+      ---
+      duration_ms: 0.640667
+      type: 'test'
+      ...
+    # Subtest: confirms an attachment-bearing expense — the CAS re-read must include attachments in the checksum
+    ok 3 - confirms an attachment-bearing expense — the CAS re-read must include attachments in the checksum
+      ---
+      duration_ms: 0.262959
+      type: 'test'
+      ...
+    # Subtest: blocks confirmation while the accounting period is closing or closed
+    ok 4 - blocks confirmation while the accounting period is closing or closed
+      ---
+      duration_ms: 0.200583
+      type: 'test'
+      ...
+    # Subtest: blocks confirmation into a filed PP30 period
+    ok 5 - blocks confirmation into a filed PP30 period
+      ---
+      duration_ms: 0.22375
+      type: 'test'
+      ...
+    1..5
+ok 17 - PrismaExpenseRepository atomic tax confirmation
+  ---
+  duration_ms: 1.978584
+  type: 'suite'
+  ...
+# Subtest: refuses a new payout without the saved claim branch before reserving a number or writing
+ok 18 - refuses a new payout without the saved claim branch before reserving a number or writing
+  ---
+  duration_ms: 0.779875
+  type: 'test'
+  ...
+# Subtest: reimbursement branch ABAC (audit H-2)
+    # Subtest: refuses to record a payment in a branch outside the caller's scope
+    ok 1 - refuses to record a payment in a branch outside the caller's scope
+      ---
+      duration_ms: 0.255334
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: record a payment
+    ok 2 - stops refusing on branch once branch-2 is in scope: record a payment
+      ---
+      duration_ms: 2.812125
+      type: 'test'
+      ...
+    # Subtest: refuses to void a payment and its ledger reversal in a branch outside the caller's scope
+    ok 3 - refuses to void a payment and its ledger reversal in a branch outside the caller's scope
+      ---
+      duration_ms: 0.267541
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: void a payment and its ledger reversal
+    ok 4 - stops refusing on branch once branch-2 is in scope: void a payment and its ledger reversal
+      ---
+      duration_ms: 0.261125
+      type: 'test'
+      ...
+    # Subtest: refuses to export the whole claim as evidence in a branch outside the caller's scope
+    ok 5 - refuses to export the whole claim as evidence in a branch outside the caller's scope
+      ---
+      duration_ms: 0.127625
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: export the whole claim as evidence
+    ok 6 - stops refusing on branch once branch-2 is in scope: export the whole claim as evidence
+      ---
+      duration_ms: 0.310625
+      type: 'test'
+      ...
+    # Subtest: refuses to finance-review a claim in a branch outside the caller's scope
+    ok 7 - refuses to finance-review a claim in a branch outside the caller's scope
+      ---
+      duration_ms: 0.199583
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: finance-review a claim
+    ok 8 - stops refusing on branch once branch-2 is in scope: finance-review a claim
+      ---
+      duration_ms: 0.5275
+      type: 'test'
+      ...
+    # Subtest: refuses to edit the amount of a draft in a branch outside the caller's scope
+    ok 9 - refuses to edit the amount of a draft in a branch outside the caller's scope
+      ---
+      duration_ms: 0.54575
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: edit the amount of a draft
+    ok 10 - stops refusing on branch once branch-2 is in scope: edit the amount of a draft
+      ---
+      duration_ms: 1.141334
+      type: 'test'
+      ...
+    # Subtest: refuses to submit a draft into another branch approval chain in a branch outside the caller's scope
+    ok 11 - refuses to submit a draft into another branch approval chain in a branch outside the caller's scope
+      ---
+      duration_ms: 0.594458
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: submit a draft into another branch approval chain
+    ok 12 - stops refusing on branch once branch-2 is in scope: submit a draft into another branch approval chain
+      ---
+      duration_ms: 0.68125
+      type: 'test'
+      ...
+    # Subtest: refuses to cancel a claim in a branch outside the caller's scope
+    ok 13 - refuses to cancel a claim in a branch outside the caller's scope
+      ---
+      duration_ms: 0.272375
+      type: 'test'
+      ...
+    # Subtest: stops refusing on branch once branch-2 is in scope: cancel a claim
+    ok 14 - stops refusing on branch once branch-2 is in scope: cancel a claim
+      ---
+      duration_ms: 0.192917
+      type: 'test'
+      ...
+    # Subtest: creating a claim
+        # Subtest: refuses a branch the requester cannot see
+        ok 1 - refuses a branch the requester cannot see
+          ---
+          duration_ms: 0.463542
+          type: 'test'
+          ...
+        # Subtest: tags an omitted branch with the requester own branch rather than company-central
+        ok 2 - tags an omitted branch with the requester own branch rather than company-central
+          ---
+          duration_ms: 0.83025
+          type: 'test'
+          ...
+        # Subtest: rejects an unrestricted requester without a selection when multiple branches exist
+        ok 3 - rejects an unrestricted requester without a selection when multiple branches exist
+          ---
+          duration_ms: 0.1125
+          type: 'test'
+          ...
+        1..3
+    ok 15 - creating a claim
+      ---
+      duration_ms: 1.47525
+      type: 'suite'
+      ...
+    # Subtest: scopes the unposted-payment worklist instead of listing every branch
+    ok 16 - scopes the unposted-payment worklist instead of listing every branch
+      ---
+      duration_ms: 0.555917
+      type: 'test'
+      ...
+    # Subtest: leaves no use case in the module without branch handling or a recorded exemption
+    ok 17 - leaves no use case in the module without branch handling or a recorded exemption
+      ---
+      duration_ms: 2.576375
+      type: 'test'
+      ...
+    1..17
+ok 19 - reimbursement branch ABAC (audit H-2)
+  ---
+  duration_ms: 13.4405
+  type: 'suite'
+  ...
+# Subtest: VoidReimbursementPaymentUseCase (GAP-02 true reversal)
+    # Subtest: passes audit identity to the atomic void and returns its current detail
+    ok 1 - passes audit identity to the atomic void and returns its current detail
+      ---
+      duration_ms: 3.712917
+      type: 'test'
+      ...
+    # Subtest: propagates transaction failure without emitting a second event or committing a number
+    ok 2 - propagates transaction failure without emitting a second event or committing a number
+      ---
+      duration_ms: 0.734209
+      type: 'test'
+      ...
+    # Subtest: checks permission, branch and payment association before replay
+    ok 3 - checks permission, branch and payment association before replay
+      ---
+      duration_ms: 0.661458
+      type: 'test'
+      ...
+    # Subtest: recovers an already-voided payment without another reversal or event
+    ok 4 - recovers an already-voided payment without another reversal or event
+      ---
+      duration_ms: 0.52775
+      type: 'test'
+      ...
+    1..4
+ok 20 - VoidReimbursementPaymentUseCase (GAP-02 true reversal)
+  ---
+  duration_ms: 6.504375
+  type: 'suite'
+  ...
+# Subtest: reimbursement payout mirrors the claim expense projections
+    # Subtest: refuses an unassigned claim again under the payment lock without changing its totals
+    ok 1 - refuses an unassigned claim again under the payment lock without changing its totals
+      ---
+      duration_ms: 1.23825
+      type: 'test'
+      ...
+    # Subtest: marks confirmed projections PAID with the payout method/date and no ExpensePayment row
+    ok 2 - marks confirmed projections PAID with the payout method/date and no ExpensePayment row
+      ---
+      duration_ms: 1.606541
+      type: 'test'
+      ...
+    # Subtest: reverts projections to unpaid when the payout is voided
+    ok 3 - reverts projections to unpaid when the payout is voided
+      ---
+      duration_ms: 0.611
+      type: 'test'
+      ...
+    # Subtest: settles a legacy 4dp claim paid at its displayed satang amount
+    ok 4 - settles a legacy 4dp claim paid at its displayed satang amount
+      ---
+      duration_ms: 0.380084
+      type: 'test'
+      ...
+    # Subtest: resets a legacy 4dp projection to its satang outstanding on void
+    ok 5 - resets a legacy 4dp projection to its satang outstanding on void
+      ---
+      duration_ms: 0.208416
+      type: 'test'
+      ...
+    1..5
+ok 21 - reimbursement payout mirrors the claim expense projections
+  ---
+  duration_ms: 4.441
+  type: 'suite'
+  ...
+1..21
+# tests 149
+# suites 21
+# pass 149
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 956.437709

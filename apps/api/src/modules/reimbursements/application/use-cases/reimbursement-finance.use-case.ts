@@ -448,23 +448,9 @@ export class RecordReimbursementPaymentUseCase {
 
 @Injectable()
 export class VoidReimbursementPaymentUseCase {
-  constructor(
-    private readonly repo: PrismaReimbursementRepository,
-    private readonly audit: AuditService,
-    private readonly outbox: OutboxAppendService,
-    private readonly reserveNumber: ReserveDocumentNumberUseCase,
-    private readonly commitNumber: CommitDocumentNumberUseCase,
-    private readonly cancelNumber: CancelDocumentNumberUseCase,
-    private readonly evidence: ReimbursementEvidenceService,
-  ) {}
+  constructor(private readonly repo: PrismaReimbursementRepository, private readonly evidence: ReimbursementEvidenceService) {}
 
-  // GAP-02: void is now a true reversal, mirroring VoidExpenseUseCase (H-04).
-  // If the settlement journal was posted, the void reserves a reversal number
-  // outside the transaction and commits it only when a reversal is created;
-  // if the payment was never posted, no number is reserved and postingStatus
-  // resolves to 'not_required'. The reversal itself is a ledger-side concern
-  // done inside the repo transaction (importing only the pure buildReversalLines
-  // function), so reimbursements never imports LedgerModule — no dependency cycle.
+  // The aggregate owns the reversal, number, audit and outbox in a single transaction.
   async execute(ctx: RequestContext, requestId: string, paymentId: string, input: VoidReimbursementPaymentInput): Promise<ReimbursementRequestDetail> {
     if (!ctx.permissions.includes('reimbursement.payment.void')) throw new ForbiddenException('Missing permission: reimbursement.payment.void');
     if (!input.reason || input.reason.trim() === '') throw new BadRequestException('void_reason_required');
@@ -476,52 +462,10 @@ export class VoidReimbursementPaymentUseCase {
     assertReimbursementBranchInScope(ctx, req.branchId);
     const payment = await this.repo.findPaymentById(ctx.companyId, paymentId);
     if (!payment || payment.reimbursementRequestId !== requestId) throw new NotFoundException('Payment not found');
-    if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment is already voided');
+    if (payment.status === 'VOIDED') return detailWithFileNames(this.repo, this.evidence, ctx.companyId, (await this.repo.findRequestById(ctx.companyId, requestId)) ?? req);
+    if (payment.status !== 'RECORDED') throw new UnprocessableEntityException('Payment cannot be voided');
 
-    const now = new Date();
-    // The ledger journal table is the source of truth for whether a reversing
-    // entry is needed — the payment's postingStatus can lag and must not gate it.
-    const postedJournalId = await this.repo.findPostedGeneratedJournalId(ctx.companyId, paymentId);
-    const reserved = postedJournalId
-      ? await this.reserveNumber.execute({
-          companyId: ctx.companyId, documentType: LEDGER_SEQUENCE_KEY,
-          periodKey: civilPeriodKey(todayCivilDate()),
-          // Date.now() is deliberate: reserveNumber returns a matching-key row
-          // regardless of its status, so a deterministic key would hand a
-          // retried void the CANCELLED reservation from the failed attempt.
-          idempotencyKey: `void-reversal:reimbursement.payment:${paymentId}:${Date.now()}`,
-          reservedByUserId: ctx.userId,
-        })
-      : null;
-
-    let result: { request: Awaited<ReturnType<PrismaReimbursementRepository['findRequestById']>>; payment: typeof payment; reversalEntryId: string | null };
-    try {
-      result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, reserved?.documentNumber) as any;
-    } catch (err) {
-      // The reservation is still RESERVED here (commit happens only after a
-      // successful reversal), so it must be cancelled.
-      if (reserved) await this.cancelNumber.execute({ id: reserved.id, companyId: ctx.companyId }, ctx.userId);
-      throw err;
-    }
-    if (reserved) {
-      if (result.reversalEntryId) {
-        await this.commitNumber.execute({ id: reserved.id, companyId: ctx.companyId, ownerType: 'journal_entry', ownerId: result.reversalEntryId }, ctx.userId);
-      } else {
-        await this.cancelNumber.execute({ id: reserved.id, companyId: ctx.companyId }, ctx.userId);
-      }
-    }
-
-    const paymentStatus = result.request!.paymentStatus;
-    await this.audit.log({
-      companyId: ctx.companyId, actorUserId: ctx.userId, action: 'reimbursement.payment.void',
-      targetType: 'reimbursement_payment', targetId: paymentId, requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'CRITICAL',
-      metadataJson: { reason: input.reason, requestId, reversalEntryId: result.reversalEntryId },
-    });
-    void this.outbox.append('reimbursement.payment_voided', 'reimbursement_payment', paymentId, {
-      companyId: ctx.companyId, actorUserId: ctx.userId, requestId: ctx.requestId,
-      aggregateType: 'reimbursement_payment', aggregateId: paymentId, occurredAt: now.toISOString(),
-      data: { requestId, paymentStatus, reversalEntryId: result.reversalEntryId },
-    });
+    const result = await this.repo.voidPaymentTrueReversal(ctx.companyId, requestId, paymentId, ctx.userId, input.reason, undefined, ctx.requestId ?? `reimbursement-payment-void:${paymentId}`);
 
     return detailWithFileNames(this.repo, this.evidence, ctx.companyId, result.request!);
   }

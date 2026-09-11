@@ -341,7 +341,7 @@ function DetailSummary({ detail, title, categories = [] }: { detail: ExpenseDeta
     <MangmeeCard className="border-brand-100 bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm font-bold text-gray-900">{title}</div>
-        <MangmeeBadge tone="brand">{detail.expenseNumber}</MangmeeBadge>
+        <MangmeeBadge tone="brand">{detail.expenseNumber ?? 'ยังไม่มีเลขรายจ่าย'}</MangmeeBadge>
       </div>
       <div className="mt-3 grid gap-3 rounded-xl bg-gray-50 p-3 text-sm text-gray-600 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
         <div className="min-w-0">
@@ -2432,6 +2432,7 @@ export function SubstituteReceiptWizardPage({
                   {payersLoading && <p className="mt-1 text-xs text-gray-500">{t('expenses.substitute_wizard.payers_loading', locale)}</p>}
                   {!payersLoading && payers.length === 0 && <p className="mt-2 rounded-xl border border-warning-100 bg-warning-50 px-3 py-2 text-xs font-normal leading-5 text-warning-700">{t('expenses.substitute_wizard.payer_empty', locale)}</p>}
                 </label></div>}
+    {signingMethod === 'PAPER' && fundingSource === 'PERSONAL_ADVANCE' && <p role="note" className="rounded-xl bg-amber-50 p-4 text-sm leading-6">ถ้าต้องการทำใบเบิกคืนเงินต่อจากใบแทนนี้ ให้เลือกลงนามออนไลน์และเลือกบัญชีพนักงานที่สำรองจ่ายก่อน ขณะนี้ใบแทนที่เซ็นบนกระดาษโดยไม่มีบัญชีผู้สำรองจ่ายยังนำไปทำใบเบิกในระบบไม่ได้</p>}
     {signingMethod === 'PAPER' && <p className="rounded-xl bg-sky-50 p-4 text-sm leading-6">กรอกชื่อและเซ็นทั้งผู้รับรองการจ่ายและผู้อนุมัติบนกระดาษให้ครบ ผู้จัดทำอัปโหลดแทนได้ ผู้มีสิทธิ์ของบริษัทจะตรวจรับอีกครั้งก่อนเป็นเอกสารฉบับสมบูรณ์</p>}
     <div className="flex flex-wrap gap-3"><button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('evidence')}>{t('expenses.substitute_wizard.back', locale)}</button>
       <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.continue', locale)}</button></div>

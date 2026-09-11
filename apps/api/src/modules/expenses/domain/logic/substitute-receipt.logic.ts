@@ -245,11 +245,12 @@ export function renderSubstituteReceiptSvg(
   <rect width="850" height="${height}" fill="#fff"/>
   <g font-family="Noto Sans Thai, Tahoma, sans-serif" font-size="15" fill="#111">
     <text x="425" y="46" text-anchor="middle" font-size="25" font-weight="700">${SUBSTITUTE_RECEIPT_TITLE}</text>
+    <text x="425" y="80" text-anchor="middle"${fitToWidth(`เลขใบแทน: ${snapshot.documentNumber}`, 750)}>เลขใบแทน: ${xml(snapshot.documentNumber)}</text>
     <text x="50" y="120"${fitToWidth(`บริษัท: ${snapshot.company.name}`, 410)}>บริษัท: ${xml(snapshot.company.name)}</text>
     <text x="470" y="120"${fitToWidth(`สาขา: ${snapshot.company.branchName ?? 'สำนักงานใหญ่'}`, 335)}>สาขา: ${xml(snapshot.company.branchName ?? 'สำนักงานใหญ่')}</text>
     <text x="50" y="148">เลขประจำตัวผู้เสียภาษี: ${xml(snapshot.company.taxId ?? '-')}</text>
     <text x="470" y="148">วันที่รายจ่าย: ${xml(formatDate(snapshot.expense.expenseDate))}</text>
-    <text x="50" y="176">เลขอ้างอิงรายการ: ${xml(snapshot.expense.expenseNumber ?? snapshot.documentNumber)}</text>
+    <text x="50" y="176"${fitToWidth(`เลขรายจ่าย: ${snapshot.expense.expenseNumber ?? '-'}`, 400)}>เลขรายจ่าย: ${xml(snapshot.expense.expenseNumber ?? '-')}</text>
     <text x="470" y="176">วันที่จ่าย: ${xml(snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-')}</text>
     <text x="50" y="204">หลักฐานต้นทาง: ${xml(DOCUMENT_TYPE_LABELS[snapshot.originalSourceDocumentType] ?? 'เอกสารค่าใช้จ่าย')}</text>
     <text x="470" y="204">วิธีชำระเงิน: ${xml(snapshot.expense.paymentMethod ? PAYMENT_METHOD_LABELS[snapshot.expense.paymentMethod] ?? 'อื่น ๆ' : '-')}</text>
@@ -314,7 +315,7 @@ export function renderSubstituteReceiptAttestationSvg(
     ...(snapshot.fundingSource ? [[snapshot.paymentStatement ? 'การชำระเงิน' : 'แหล่งเงิน', snapshot.paymentStatement ?? (snapshot.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : 'พนักงานสำรองจ่ายเต็มจำนวน')] as [string, string]] : []),
     ['สาขา', snapshot.company.branchName ?? 'สำนักงานใหญ่'],
     ['เลขประจำตัวผู้เสียภาษี', snapshot.company.taxId ?? '-'],
-    ['เลขอ้างอิงรายการ', snapshot.expense.expenseNumber ?? snapshot.documentNumber],
+    ['เลขรายจ่าย', snapshot.expense.expenseNumber ?? '-'],
     ['วันที่รายจ่าย', formatDate(snapshot.expense.expenseDate)],
     ['วันที่จ่าย', snapshot.expense.paymentDate ? formatDate(snapshot.expense.paymentDate) : '-'],
     ['วิธีชำระเงิน', snapshot.expense.paymentMethod ? PAYMENT_METHOD_LABELS[snapshot.expense.paymentMethod] ?? 'อื่น ๆ' : '-'],

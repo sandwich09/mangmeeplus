@@ -1,0 +1,781 @@
+{
+  "views": [
+    {
+      "path": "/expenses?view=pending",
+      "width": 1920,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "25.3669px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "25.3687px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "25.3669px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "25.3687px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "25.3669px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 1536,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "23.3512px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "23.3512px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "23.3531px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "23.3512px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "23.3531px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 1440,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 1280,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "25.1588px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "25.1606px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "25.1588px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "25.1588px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "25.1606px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 1024,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "22.1194px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "22.1194px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "22.1194px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "22.1194px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "22.1194px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 768,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "20.7056px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "20.7075px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "20.7056px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "20.7075px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "20.7056px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 640,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "18px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "18px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "18px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "18px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "18px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses?view=pending",
+      "width": 390,
+      "measured": [
+        {
+          "value": "฿10,931.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "51 ใบ",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿0.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿448.00",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 1920,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 1536,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 1440,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "24.5775px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "24.5775px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "24.5775px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "24.5775px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 1280,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "25.5375px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "25.5394px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "25.5394px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "25.5394px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 1024,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 768,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "24.1369px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "24.1369px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "24.1369px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "24.1369px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 640,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "20.0531px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "20.055px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "20.0531px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "20.055px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/reimbursements",
+      "width": 390,
+      "measured": [
+        {
+          "value": "9",
+          "fontSize": "23.1731px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "2",
+          "fontSize": "23.1731px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "3",
+          "fontSize": "23.1731px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿1,511",
+          "fontSize": "23.1731px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 1920,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 1536,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 1440,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "24.6187px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "24.6187px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "24.6187px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "24.6206px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 1280,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "25.5094px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "25.5112px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "25.5094px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "25.5112px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 1024,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "26px",
+          "direction": "row",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 768,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "24.075px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "24.075px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "24.075px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "24.075px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 640,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "20.9906px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "20.9925px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "20.9906px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "20.9925px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "path": "/expenses/substitute-receipts",
+      "width": 390,
+      "measured": [
+        {
+          "value": "20",
+          "fontSize": "25.365px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "฿795",
+          "fontSize": "25.365px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "11 / 1",
+          "fontSize": "25.365px",
+          "direction": "column",
+          "clipped": false
+        },
+        {
+          "value": "10",
+          "fontSize": "25.365px",
+          "direction": "column",
+          "clipped": false
+        }
+      ]
+    },
+    {
+      "stressValue": "฿999,999,999.99",
+      "clipped": false
+    },
+    {
+      "stressValue": "฿999,999,999,999.99",
+      "clipped": false
+    }
+  ],
+  "businessMutations": 0
+}

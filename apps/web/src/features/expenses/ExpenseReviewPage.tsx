@@ -698,7 +698,11 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const pageTitle = (
     <span className="min-w-0">
       <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="tabular-nums text-xs font-bold text-gray-400">{firstFilled(detail.expenseNumber) ?? t('expenses.draft_label', locale)}</span>
+        <span className="tabular-nums text-xs font-bold text-gray-400">{firstFilled(detail.expenseNumber) ?? 'ยังไม่มีเลขรายจ่าย'}</span>
+        {detail.expenseNumber && <button type="button" className="min-h-11 rounded-lg px-2 text-xs font-semibold text-brand-700" onClick={async () => {
+          try { await navigator.clipboard.writeText(detail.expenseNumber!); toast.success('คัดลอกเลขรายจ่ายแล้ว'); }
+          catch { setError('คัดลอกไม่สำเร็จ กรุณาเลือกเลขรายจ่ายแล้วคัดลอกอีกครั้ง'); }
+        }}>คัดลอกเลขรายจ่าย</button>}
         <span className="max-w-full truncate text-lg font-extrabold text-gray-900">{firstFilled(detail.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
         <span className="text-xs font-normal text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย')} · {visibleSourceDraft && !visibleSourceDraft.header.expenseDate
           ? t('expenses.source_draft_date_unknown', locale)
