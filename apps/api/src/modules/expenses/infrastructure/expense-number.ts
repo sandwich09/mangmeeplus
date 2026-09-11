@@ -3,8 +3,8 @@ import { civilPeriodKey, utcDateToCivilDate } from '@watchdog-bms/contracts';
 import type { Prisma } from '../../../generated/prisma/client';
 import type { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 
-/** Compatibility rollout: disabling new draft issuance never changes an assigned number. */
-export const expenseDraftNumberingEnabled = () => process.env['EXPENSE_DRAFT_NUMBERING_ENABLED'] === 'true';
+/** Enabled by default; an explicit opt-out never changes an assigned number. */
+export const expenseDraftNumberingEnabled = () => (process.env['EXPENSE_DRAFT_NUMBERING_ENABLED'] ?? 'true') === 'true';
 
 type NumberedExpense = {
   id: string; companyId: string; branchId: string | null; expenseDate: Date;

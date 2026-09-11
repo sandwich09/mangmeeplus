@@ -4,7 +4,7 @@
 สถานะ: **IMPLEMENTED — LOCAL VERIFICATION COMPLETE; RELEASE VALIDATION PENDING**
 เจ้าของ: thawatchai / Codex
 
-ผู้ใช้อนุญาต 2026-09-11 ให้ปรับ spec แก้จุดที่พบและเริ่ม implement จริง ดำเนินการแล้วบน branch `codex/expense-running-number-20260911` ดู [ผล implement และหลักฐานล่าสุด](../qa/evidence/expense-running-number-implementation-2026-09-11/README.md) ผู้ใช้อนุญาต commit/push เข้า develop และ main แล้ว กำลังรวมชุดแก้; deployment และการเปิด flag เป็นขั้นตอนแยก ไม่มีการเปลี่ยน customer gates
+ผู้ใช้อนุญาต 2026-09-11 ให้ปรับ spec แก้จุดที่พบและเริ่ม implement จริง ดำเนินการแล้วบน branch `codex/expense-running-number-20260911` ดู [ผล implement และหลักฐานล่าสุด](../qa/evidence/expense-running-number-implementation-2026-09-11/README.md) ชุดหลัก merge เข้า develop/main แล้ว ผู้ใช้สั่งให้เปิด flag เป็นค่าเริ่มต้นในรุ่นถัดไป เพื่อไม่ต้องเปิดเองหลัง deploy; ยังไม่มีการ deploy หรือเปลี่ยน customer gates
 
 ## 1. ผลพิสูจน์ระบบเดิมก่อน implement (ประวัติ)
 
@@ -127,7 +127,7 @@ Migration ใหม่เพิ่ม nullable draft identity 2 columns แล�
 
 ## 9. สถานะถัดไป
 
-พัฒนา v1 และตรวจ local integration แล้วตามรายงานล่าสุด เปิดออกเลขร่างด้วย flag เฉพาะ clone ทดสอบ ค่าเริ่มต้นยังปิด ระยะถัดไปเป็นการตรวจ release ตามข้อมูลและ environment ที่จะเปิดจริง ไม่อ้างว่า live LINE/OCR, ผู้ใช้สูงวัยจริง หรือทุก cohort ใน Production ผ่านแล้ว
+พัฒนา v1 และตรวจ local integration แล้วตามรายงานล่าสุด ผู้ใช้อนุญาตให้เปิดออกเลขร่างเป็นค่าเริ่มต้นเมื่อไม่ได้กำหนด environment flag (2026-09-11) ระยะถัดไปเป็นการตรวจ release ตามข้อมูลและ environment ที่จะเปิดจริง ไม่อ้างว่า live LINE/OCR, ผู้ใช้สูงวัยจริง หรือทุก cohort ใน Production ผ่านแล้ว
 
 
 ## 10. แนวแก้ที่กำหนดก่อน implement (2026-09-11)
@@ -139,7 +139,7 @@ Migration ใหม่เพิ่ม nullable draft identity 2 columns แล�
 - Legacy null EXP ที่มี SRC evidence หรือ source reference ใน RB ยังคงไม่มีเลขเมื่อแก้ร่าง; confirm ภายใต้ guard เดิมสามารถผูกเลขแสดงผลได้ใน transaction โดยไม่แก้ retained snapshot/artifact
 - Confirm allocator ย้ายเข้า finalize transaction, อิง expenseDate และใช้เลขเดิม เมื่อมีเลขแต่ registry เก่าหายให้คงเลขเดิมโดยไม่ตีความว่าเป็นของใหม่; ถ้าพบ registry ที่เป็นเจ้าของคนละรายการให้ conflict ชัดเจน
 - Projection จากใบเบิกออกเลขพร้อม materialization ของแต่ละ line และไม่สร้างซ้ำใน retry
-- การเปิดออกเลขตอนร่างควบคุมด้วย `EXPENSE_DRAFT_NUMBERING_ENABLED=true` (default ปิดระหว่าง compatibility rollout) โดย confirm compatibility ทำงานเสมอ; ปิด flag ไม่ลบ/เปลี่ยนเลขที่ออกแล้ว และไม่อนุญาต rollback ไป writer ที่ overwrite เลขเดิม
+- การออกเลขตอนร่างเปิดเป็นค่าเริ่มต้นเมื่อไม่มี `EXPENSE_DRAFT_NUMBERING_ENABLED` หรือกำหนด `true` ตามคำสั่งล่าสุดของผู้ใช้; กำหนด `false` เพื่อปิดได้ โดย confirm compatibility ทำงานเสมอ; ปิด flag ไม่ลบ/เปลี่ยนเลขที่ออกแล้ว และไม่อนุญาต rollback ไป writer ที่ overwrite เลขเดิม
 - Allocator ต้องข้ามเลขที่ถูกใช้แล้วในทะเบียน/ExpenseRecord สำหรับ expense.record โดยไม่ลด counter และไม่แก้เลข legacy เพื่อแก้การชน
 - Void payout retry คืน detail ล่าสุดหลังตรวจ tenant/branch/permission; concurrent retry ต้องไม่สร้าง reversal/audit/outbox ซ้ำของ successful mutation
 - เก็บ rendering fix แยกสองเลขทุก form โดยไม่ rerender/overwrite frozen historical files อัตโนมัติ ตรวจ PDF จริงใน local test

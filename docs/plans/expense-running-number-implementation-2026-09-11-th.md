@@ -8,7 +8,7 @@ Spec: [expense-running-number-flowaccount-spec-th.md](../specs/expense-running-n
 
 Issue EXP on the first deliberately saved/date-reviewed draft; keep it forever across edit/confirm/pay/void. Keep capture staging recoverable without issuing a number. Preserve historic SRC/RB facts, identity, ownership and accounting boundaries. v1 does not enable manual renumber/reuse or guess a paper payer without an account.
 
-Reuse the existing transaction-capable allocator and canonical fingerprint helper. Add nullable draft idempotency key/hash plus tenant-scoped uniqueness; no historical backfill or destructive schema change. Numbering joins create/update/confirmation/projection transactions. Existing numbers and snapshots are immutable; legacy compatibility is explicit. Draft issuance has a rollout flag disabled by default; confirmation always preserves assigned numbers and uses document month for unnumbered records.
+Reuse the existing transaction-capable allocator and canonical fingerprint helper. Add nullable draft idempotency key/hash plus tenant-scoped uniqueness; no historical backfill or destructive schema change. Numbering joins create/update/confirmation/projection transactions. Existing numbers and snapshots are immutable; legacy compatibility is explicit. Draft issuance defaults ON when its environment flag is absent, as explicitly requested by the user on 2026-09-11; explicit `false` remains available for rollback. Confirmation always preserves assigned numbers and uses document month for unnumbered records.
 
 ## Implementation checklist
 
@@ -33,7 +33,7 @@ Reuse the existing transaction-capable allocator and canonical fingerprint helpe
 
 ## Rollout and rollback
 
-Apply additive schema first. Deploy compatible readers/confirm writers and inventory legacy cohorts A–H before enabling draft issuance. Isolated local E2E enables `EXPENSE_DRAFT_NUMBERING_ENABLED=true`. Turning the flag off must preserve all already assigned numbers and every historical reference. The pre-feature confirm writer is not a valid rollback target after any draft EXP has been issued. Production activation/deployment, if requested, follows mandatory runbooks separately.
+Apply additive schema first. The next deployed version defaults to issuing draft EXP without a separate enable step. Deploy compatible readers/confirm writers and inventory legacy cohorts A–H as part of release validation. `EXPENSE_DRAFT_NUMBERING_ENABLED=false` is an explicit opt-out; unset or `true` enables issuance. Turning the flag off must preserve all already assigned numbers and every historical reference. The pre-feature confirm writer is not a valid rollback target after any draft EXP has been issued. Production activation/deployment, if requested, follows mandatory runbooks separately.
 
 Verification: [current evidence, commands and limitations](../qa/evidence/expense-running-number-implementation-2026-09-11/README.md). The baseline proof remains historical evidence.
 
