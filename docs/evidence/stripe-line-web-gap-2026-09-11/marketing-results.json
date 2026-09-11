@@ -1,0 +1,163 @@
+{
+  "mode": "REAL_LOCAL_MARKETING_BUNDLE",
+  "results": [
+    {
+      "width": 1440,
+      "status": "PASS",
+      "catalog": 5,
+      "paidDisabled": 4,
+      "trialKeyboard": "PASS",
+      "externalPostCount": 0
+    },
+    {
+      "width": 390,
+      "status": "PASS",
+      "catalog": 5,
+      "paidDisabled": 4,
+      "trialKeyboard": "PASS",
+      "externalPostCount": 0
+    },
+    {
+      "width": 1440,
+      "form": "trial",
+      "outcome": "offline",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "trial",
+      "outcome": "500",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "trial",
+      "outcome": "malformed",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "trial",
+      "outcome": "refused",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "trial",
+      "outcome": "success",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "contact",
+      "outcome": "offline",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "contact",
+      "outcome": "500",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "contact",
+      "outcome": "malformed",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "contact",
+      "outcome": "refused",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 1440,
+      "form": "contact",
+      "outcome": "success",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "trial",
+      "outcome": "offline",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "trial",
+      "outcome": "500",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "trial",
+      "outcome": "malformed",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "trial",
+      "outcome": "refused",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "trial",
+      "outcome": "success",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "contact",
+      "outcome": "offline",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "contact",
+      "outcome": "500",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "contact",
+      "outcome": "malformed",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "contact",
+      "outcome": "refused",
+      "status": "PASS",
+      "externalDelivery": false
+    },
+    {
+      "width": 390,
+      "form": "contact",
+      "outcome": "success",
+      "status": "PASS",
+      "externalDelivery": false
+    }
+  ],
+  "stripePayment": "NOT_RUN",
+  "leadSubmission": "SIMULATED_PROVIDER_RESPONSE"
+}

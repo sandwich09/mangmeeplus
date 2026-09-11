@@ -1,5 +1,7 @@
 # ADR 0009: Auth-Security Email Delivery via AWS SES
 
+> **2026-09-11 addendum — Postmark selected by owner:** Use Postmark for application transactional email. Its own PDF Receipt supports Mangmee’s supplier-expense bookkeeping; Stripe creates and sends customer payment invoices/receipts. [Current spec](../specs/mangmee-transactional-email-provider-spec-th.md), [API reference](../research/postmark-developer-reference-th.md) and [plan](../plans/mangmee-transactional-email-provider-plan-th.md) supersede the earlier Sender proposal and SES-only provider choice for new work. Preserve disabled-by-default/local-only console, existing SES adapter and delayed callbacks, token lifecycle and company boundaries. The original accepted SES rationale/evidence below remains historical. Postmark uses server-token REST and HTTPS Basic Auth webhooks, not SNS signatures. No new runtime activation, campaign system or custom fiscal-document generator is approved by this docs update.
+
 ## Status
 
 Accepted

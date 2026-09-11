@@ -1,5 +1,7 @@
 # Email Delivery และ Claim Account — Spec P11
 
+> **Postmark decision 2026-09-11:** Owner เลือก Postmark แล้ว; [provider spec](mangmee-transactional-email-provider-spec-th.md), [API reference](../research/postmark-developer-reference-th.md) และ [M0–M4 plan](../plans/mangmee-transactional-email-provider-plan-th.md) กำหนด transport/config/Basic Auth webhook/attempt migration. SES ด้านล่างเป็นฐานและหลักฐานเดิม; ไม่ต้องเปิด SES ก่อนทำ Postmark. รักษา hash-only/mint-at-send/atomic claim/legacy Flow B และแยก Postmark MessageID จาก claimEmailSesMessageId. Postmark ยังไม่ implement/activate. Invoice/Receipt ฝั่งลูกค้าใช้ Stripe; ไม่เพิ่ม tax payload หรือ duplicate receipt mail ใน auth claim.
+
 สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); exact-head CI `33040896057` SUCCESS บน `6f85339d`. Phase 1 durable claim send ปลดล็อกแล้ว (secret-lifecycle ตัดสินเป็น mint-at-send — §5 ข้อ 3, 2026-08-30) และปรับเข้า P10 Flow B; live delivery ยังรอ Owner/operations §5 ข้อ 1–2. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
 
 ที่มา: [แผนหลัก P11 + §13.6](../plans/mangmee-brain-2-5-day-priority-plan-th.md); STOP-SHIP: EMAIL-01 (§13.3); AUTH-02 (credential ชุดเดียว) บังคับกับหน้า claim

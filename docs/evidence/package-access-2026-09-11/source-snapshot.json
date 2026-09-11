@@ -1,0 +1,31 @@
+{
+  "scope": "Selected current dirty-worktree files, not full-repo attestation",
+  "heads": {
+    "mangmeeplus": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "mangmee_web": "9cc2ae6e916f53395eaf8542739d2182298d6110"
+  },
+  "sha256": {
+    "mangmeeplus/docs/specs/mangmee-package-entitlements-spec-th.md": "9e208f4e9469c47528a0a48deba37cc9511995bb1bbea3d667408e9a970898f9",
+    "mangmeeplus/docs/plans/mangmee-package-entitlements-plan-th.md": "38aeab82239d196499ad569a820f2b434727d3764534eb27789b91b445c3366d",
+    "mangmeeplus/docs/research/package-access-admin-web-line-audit-2026-09-11.md": "ebe600f0f0cab5147784ba38bddedfb06fc7f38280a26ad5ba4e6ae73caf153a",
+    "mangmeeplus/docs/agent-memory/package-access-admin-web-line-2026-09-11.md": "6a2604cda4579b1b448ac6b2b3be57258fe8d2d925f4410bfe30a6510d6cbeab",
+    "mangmeeplus/docs/specs/line-ai-capability-help-entitlement-spec.md": "53f3f27874f7d5fc7bb230f2560dcb540903c9a6fd43cd912a8cbd4ade023279",
+    "mangmeeplus/docs/plans/line-ai-capability-help-entitlement-plan.md": "64299d30c61d83cec69399b7c3b222362a48ef9131f87b2a14ceea95f25a11d3",
+    "mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md": "63a1b9e9b3cc86640694f6db7d320f5dc653337eb9c0ee2b035032c66999d2a0",
+    "mangmee_web/docs/plans/package-entitlements-alignment-plan-th.md": "c7961c12757f5bdfd01e99292aa63bf579c7b9220ea054976f9f634bffa29c7e",
+    "mangmee_web/docs/agent-memory/package-access-admin-web-line-2026-09-11.md": "5ec37031e3b61327fbb2c1f20888e97babb23d5ca55e785459c7c7c4b68374f6",
+    "mangmeeplus/docs/evidence/package-access-2026-09-11/README.md": "2ce108cc85caa1e69ee0dd1993cb203bcb135d2c932390383f0eda79accc1388",
+    "mangmeeplus/apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts": "c2e3b0c852b22baa69336cb715beb5a6795e75258ccdefa00f0de9d4bb37023f",
+    "mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts": "3d677915beffd2ccbd04680eed7ae2aab011c0696cc5d78f37f8195d3b42cbb8",
+    "mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "aab3143f197ab617950df5b6787f4d34d3e2abc6df82d39f16a9a19eed04f5ae",
+    "mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "089f5a07431d7ef189588fea7bc2161a2445f2c2a1edac3f411b59f74b4b2129",
+    "mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts": "5fa7bf5e5796903c6668c8eeb89f47c21ef8505e5e2def40c5c38535114dd382",
+    "mangmeeplus/apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts": "2d9292e71cd74002f46b438f8ed409353229c8c783284e11aaecdc719bab5c2f",
+    "mangmeeplus/apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts": "9a013fda0515cb00eec6ee934190778825a822213f25cb0d4e70327990b347de",
+    "mangmeeplus/packages/contracts/src/ai-tools.ts": "1199d85ee960595163bafb123619b17211fe5d193cba91cf1f27d85a309730f9",
+    "mangmeeplus/packages/contracts/src/feature-entitlements.ts": "3fa86b80f2267f925b682346a5b2bc71c83b705060fa06228a0acfff67706ad9",
+    "mangmeeplus/packages/contracts/src/menu-entitlements.ts": "0dc633300c447845449e9fdcf39c3244c3788e460f0b184fa8e7e880e1435d8f",
+    "mangmeeplus/docs/evidence/package-access-2026-09-11/verify-current.sh": "7563488f8fecfb71f8dbaa1e55ef3339dd491549396443590a3672742008c29e",
+    "mangmeeplus/docs/evidence/package-access-2026-09-11/verify-docs.py": "b7474066d10917e1b8c06f0dbd2cfb3632a29d10e31b1dbc3233156e23d84293"
+  }
+}

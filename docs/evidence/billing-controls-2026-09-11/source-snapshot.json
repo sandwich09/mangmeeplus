@@ -1,0 +1,29 @@
+{
+  "heads": {
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web": "9cc2ae6e916f53395eaf8542739d2182298d6110"
+  },
+  "sha256": {
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-billing-controls-spec-th.md": "abefdb1fbefc347342ab962072a2001fc875daea1cb716a90dc8aebb67bd9135",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-billing-controls-plan-th.md": "70c336d5a0e276711080c88b0e09bafdd2f8e199b2f8a3ba5394ed47a7213e49",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/research/billing-controls-impact-2026-09-11.md": "981b6906cbbf42aa634cfcf0acd85d7a95fb43c6590cb9cdc0df0112803fbc6b",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/agent-memory/billing-controls-web-2026-09-11.md": "ad4a896c8c8e2a817f54b50a396fb3f0abc91b25435f0e69137ac37450929d91",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-billing-subscription-spec-th.md": "3a76f442a0967e0f87f6acb27a6a2eadce6dbc07ff3d214f04708f81c0fcb40e",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-owned-billing-integration-spec-th.md": "2b4f820232244f8e186871fe1b9dca74fd52c4353c792f762a4e60f9d63b6fdf",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-line-web-billing-ui-spec-th.md": "981e918de1459022361b4ab462c39a8adb2d307b58be59b06f75a4760148e902",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-line-web-billing-ui-plan-th.md": "41842a83532395de519a2cf3f1aaae80997a789623869d5cc66faba2d1c4b9bb",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-stripe-billing-implementation-and-test-plan-th.md": "6aaefe785c2155f3e63b9cf4fc3d0d55f74df2b86446a603bce0335099a4b096",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/line-rich-menu-v2-spec.md": "e1239719f8f92e589b9f78f77a8c8438d832dbe1daf8ce1f117466123e15c3c5",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/line-rich-menu-v2-plan.md": "05f47a80fe955a1bf843f6729ee667a7670de052e98b2a53d5cdc15e0bfdf584",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/billing-controls-2026-09-11/README.md": "f706057df64ccf36d865acf3a2c7f064b68c485d85791e36685ee2799e6eb731",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md": "fec1de3e7eb305f20c2eabfcd042a6333b65b0580920b4225d20ff2a28652a8d",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web/docs/agent-memory/billing-controls-web-2026-09-11.md": "b8907dbda3bd07f544ad4e6c15e4a90065050c534b30f77f6381bb69d1987dce",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/app/system/layout.tsx": "ebc14658b49fb70129fa8aaa74581874070bf762f4367aec9647f9ec9ccaa1dc",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/src/common/auth/session-gate.logic.ts": "6f086b235c47e337495e2da052bdbb27a847c0179e9d8bf2c408f68d451d36fd",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/src/common/auth/session-gate.logic.spec.ts": "1e36a59c04946c3c301b953085f1a2467ab3be63c755889cd5b068f0bfbe82f4",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/src/features/system-partners/PartnerDetailPage.tsx": "d69f159d97c80c5f3d9439b1846d5e5fc813b632a3b1e634a5246e14e8f5d24e",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts": "c1bedbfe86c9022bb9c1540f91c8937806eec930bf7196a46dee535f69f3fe68",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/billing-controls-2026-09-11/verify-docs.py": "cf0dc406bb641c29189902c45998626f82329c4930420eb3dacee3c88f896ac0"
+  },
+  "note": "Dirty working tree; scoped final sources, not a clean commit or provider acceptance."
+}

@@ -1,0 +1,81 @@
+✔ PG00 ordinary manual renewal really activates a term-disabled company (261.128667ms)
+✖ PG01 R01 replay must finish activation after failure following the term commit (106.1595ms)
+✖ PG02 same requestId arriving concurrently must renew exactly once (119.46025ms)
+✖ PG03 R03 a stale expiry batch must not disable a company renewed after selection (107.807792ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 1
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 959.056834
+
+✖ failing tests:
+
+test at docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:2:3551
+✖ PG01 R01 replay must finish activation after failure following the term commit (106.1595ms)
+  AssertionError [ERR_ASSERTION]: R01: committed renewal must not skip unfinished activation on replay
+  + actual - expected
+  
+  + 'DISABLED'
+  - 'ACTIVE'
+  
+      at <anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:65:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async fixture (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:31:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'DISABLED',
+    expected: 'ACTIVE',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:2:4682
+✖ PG02 same requestId arriving concurrently must renew exactly once (119.46025ms)
+  AssertionError [ERR_ASSERTION]: concurrent replay must have one durable renewal
+  + actual - expected
+  
+    {
+  +   audits: 2,
+  +   renewCount: 2
+  -   audits: 1,
+  -   renewCount: 1
+    }
+  
+      at <anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:89:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async fixture (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:31:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { renewCount: 2, audits: 2 },
+    expected: { renewCount: 1, audits: 1 },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:2:5801
+✖ PG03 R03 a stale expiry batch must not disable a company renewed after selection (107.807792ms)
+  AssertionError [ERR_ASSERTION]: R03: stale sweep disabled an already renewed company
+  + actual - expected
+  
+  + 'DISABLED'
+  - 'ACTIVE'
+  
+      at <anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:119:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+      at async fixture (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts:31:5)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'DISABLED',
+    expected: 'ACTIVE',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

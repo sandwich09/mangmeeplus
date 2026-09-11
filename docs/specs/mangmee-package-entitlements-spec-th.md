@@ -1,0 +1,167 @@
+# สิทธิ์แพ็กเกจ สมัครเริ่มต้น และราคารายเดือน/รายปี
+
+> **ขอบเขต merge 2026-09-11: เอกสารเท่านั้น** — ผล runtime repair/test ที่อ้างเป็นหลักฐานจาก branch งานแยก ยังไม่ใช่การนำโค้ดนั้นเข้า main/develop. ดู [สถานะส่งมอบเอกสาร](../agent-memory/billing-spec-docs-merge-2026-09-11.md).
+
+สถานะ: **OWNER REQUIREMENTS RECORDED / SPEC READY; Stripe runtime NOT IMPLEMENTED; full package E2E NOT RUN**. มติ Owner 2026-09-11 ตามภาพแพ็กเกจและคำขอให้ผู้สมัครทั่วไปได้ชุดเริ่มต้นเดิม 7 ฟีเจอร์/15 ใบ พร้อมล็อกแพ็กเกจ 1,999 บาทและ ภ.ง.ด.53/50 ทวิเป็น Coming soon กดจ่ายไม่ได้. งานนี้ไม่เปิดขายหรือเปลี่ยน config ลูกค้าจริง.
+
+เอกสารนี้เป็น amendment ที่มีผลเหนือข้อความเก่าซึ่งจำกัด paid เป็นรายเดือนหรือทำให้ Enterprise ดูซื้อได้: [P26](mangmee-billing-subscription-spec-th.md), [owned integration](mangmee-owned-billing-integration-spec-th.md), [UI](mangmee-line-web-billing-ui-spec-th.md), [controls](mangmee-billing-controls-spec-th.md), [plan](../plans/mangmee-package-entitlements-plan-th.md), [marketing mirror](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md). ขอบเขตหลักเดิม F01–F24/T/LB/CT/DA ยังใช้ทั้งหมด; amendment เพิ่ม acceptance ไม่แทนหลักฐานเดิม.
+
+## 1. Catalog เดียว: feature preset, plan tier และรอบจ่ายเป็นคนละแกน
+
+`modulePackage='starter'` คือชุดเมนูเริ่มต้น ไม่ใช่แพ็กเกจเสียเงิน `STARTER_249`. `FREE_TRIAL` คือ public signup offer ที่ provision เป็น `FREE_TRIAL_15`. ราคาซื้อเป็นต่อบริษัท ไม่ใช่ต่อบุคคล/ต่อสาขา/ต่อช่องทาง. การเพิ่มวิธี login, กดสมัครซ้ำ หรือเลือก offer จาก marketing ไม่เริ่ม trial/สร้างสิทธิ์ paid ใหม่.
+
+<!-- package-catalog:start -->
+| tierKey | ราคา/เดือน บาท | ราคา/ปี บาท | สาขารวม | ผู้ใช้รวม | ใบ/เดือน | สถานะการซื้อเป้าหมาย |
+|---|---:|---:|---:|---:|---:|---|
+| `FREE_TRIAL_15` | 0 | — | 1 | 2 | 15 | SIGNUP_ONLY |
+| `STARTER_249` | 249 | 2,490 | 1 | 2 | 30 | AFTER_READINESS |
+| `BASIC_499` | 499 | 4,990 | 2 | 5 | 50 | AFTER_READINESS |
+| `PRO_999` | 999 | 9,990 | 5 | 10 | 100 | AFTER_READINESS |
+| `ENTERPRISE_1999` | 1,999 | 19,990 | 10 | 30 | 2,000 | COMING_SOON_LOCKED |
+<!-- package-catalog:end -->
+
+- ราคาสตางค์รายเดือน = 24,900 / 49,900 / 99,900 / 199,900; รายปี = 249,000 / 499,000 / 999,000 / 1,999,000. ห้ามคำนวณยอดจากข้อความแสดงผลหรือใช้ annual/12 เป็นยอดเรียกเก็บ.
+- รายปีชำระก้อนรายปีและต่ออายุรายปีตาม consent; เทียบซื้อรายเดือน 12 ครั้งประหยัด 498 / 998 / 1,998 / 3,998 บาทตามลำดับ. เปรียบเทียบบนฐานภาษีเดียวกัน ไม่อ้างส่วนลดผิดเมื่อ tax policy เปลี่ยน. Enterprise เป็นราคา preview เท่านั้น.
+- `AFTER_READINESS` หมายถึงเป้าหมายเปิดขายหลัง implementation/การทดสอบ/config/นโยบายที่เกี่ยวข้องผ่าน; **ขณะนี้ paid ทุก tier ยัง disabled**. Trial ไม่มีการบังคับบัตร ไม่มี Checkout/Subscription/การตัดเงินจากการสมัครเฉย ๆ; การเปลี่ยนเป็น paid ต้อง opt-in แยก.
+- B06 รวม/บวกภาษีและ fiscal identity ยังไม่ถูกตัดสินจากรูป; invoice แสดงยอดตาม approved policy. Stripe Receipt ไม่ถูกแปลงเป็นใบกำกับภาษีไทยเต็มรูปแบบเพียงเพราะมี PDF.
+
+## 2. สมัครอย่างเดียว: 7 เมนูตาม default ที่ตั้งไว้
+
+หลังผ่าน signup/identity/approval ที่เกี่ยวข้องและ provision สำเร็จ ทั้ง web และ LINE ต้องได้ `FEATURE_PACKAGE_PRESETS.starter` ตรงกันทุก key พร้อม `FREE_TRIAL_15`: **1 สาขา / ผู้ใช้รวม 2 คน / อ่านใบเสร็จ 15 ใบต่อเดือนตั้งแต่วันแรก / trial default 30 วันจาก provision**. ไม่เริ่มนับตั้งแต่กรอก lead หรือ pending review และไม่ตีความเป็นแพ็กเกจฟรีถาวร. Admin override เดิมมี provenance แยก.
+
+| เมนูที่ผู้ใช้เห็น | feature/child keys ตาม default |
+|---|---|
+| แดชบอร์ด | `dashboard_notifications` |
+| AI แนะนำ | `ai_line_assistant` |
+| ค่าใช้จ่ายและใบเสร็จ | `expenses`, `expenses.list`, `expenses.upload`, `expenses.manual`, `expenses.categories`, `expenses.evidence`, `expenses.signatures` |
+| การเบิกจ่าย | `reimbursement` |
+| พนักงานและสิทธิ์ | `employee_access`, `employee_access.employees`, `employee_access.roles`, `employee_access.overview` |
+| ตั้งค่าบริษัท | `company_settings`, `company_settings.branches`, `company_settings.security` |
+| การแจ้งเตือน | `dashboard_notifications` — ใช้ key ร่วมกับแดชบอร์ด |
+
+นี่คือ **7 เมนู / 6 parent families / 17 explicit entitlement keys** ไม่ใช่ 7 parent keys. Reuse [menu preset](../../packages/contracts/src/menu-entitlements.ts) และ [menu mirror §8](partner-package-menu-mirror-spec.md); อย่าใช้ `DEFAULT_ENABLED_FEATURE_KEYS` ของ admin onboarding ที่กว้างกว่า หรือเพิ่ม CRM/สินค้า/ภาษี/บัญชีทั้งชุดเพื่อทำให้ตัวนับเป็น 7. Explicit false สำหรับ keys นอก starter; foundation invariant และ role/branch permissions ยังบังคับ. สมาชิกที่เป็นพนักงานไม่จำเป็นต้องเห็นทุกเมนูเหมือน OWNER.
+
+เส้นทางจริงคือ [signup provisioning](../../apps/api/src/modules/external-signup/application/provision-signup.use-case.ts) → [onboarding](../../apps/api/src/modules/system-onboarding/application/use-cases/create-company-onboarding.use-case.ts). Retry/adopt existing company ต้องไม่เขียน preset ทับ paid tier, วันหมดอายุ, admin exception หรือ entitlement ที่เปลี่ยนภายหลัง. หน้า marketing lead success ยังไม่ใช่ provision success; easy web signup ใช้ [unified signup](unified-easy-signup-spec-th.md) และ E0 แยก.
+
+## 3. หลังจ่าย: ต้องใช้สิทธิ์ได้จริงทั้งสองช่องทาง
+
+- STARTER/BASIC/PRO คงชุดเมนูเริ่มต้นข้างต้นและความสามารถเอกสารเบิก/จ่ายที่มีใน expense/reimbursement เดิม พร้อมเพิ่มเพดานตามตาราง. ภาพไม่ใช่มติให้เปิด `standard`/`full`, sales invoice, CRM หรือภาษีทุกโมดูลตามราคาสูงขึ้น. Feature snapshot ของแต่ละ paid version ต้อง explicit แม้มีชุดเท่ากัน; เพิ่มฟีเจอร์ในอนาคตผ่าน approved version.
+- ตรวจ verified invoice ของ base subscription และ approved quote/Price/interval/account/mode/company → transaction เดียว apply term + package-owned grants/limits + audit + outbox + applied marker. Reuse application service/CAS/permission epoch เดิม; ไม่เรียก admin HTTP endpoint, ไม่ผูกกับการกลับจาก Stripe หรือการส่งเมล/LINEสำเร็จ.
+- สิทธิ์บริษัทใหม่ = เพดานรวมของ tier ไม่ใช่บวกเพดานเดิม: Starter→Basic ให้รวม 2 สาขา/5 คน/50 ใบ. มี 1 สาขา/2 คนแล้วสร้างเพิ่มได้ 1 สาขา/3 คน; อ่านไป 10 ใบในเดือนนี้เหลือ 40 หลัง upgrade มีผล. ไม่สร้างสาขา/ผู้ใช้/role ให้อัตโนมัติ.
+- Branch limit นับ ACTIVE branches; seat limit นับ ACTIVE memberships รวม OWNER และไม่รวม SYSTEM_ADMIN ตาม [existing guard](../../apps/api/src/modules/system-partner-management/application/plan-term-limit.ts). บริษัทเดียวกันใช้ยอดรวม web+LINE ทุกผู้ใช้/สาขา; ป้องกัน concurrent create/re-activate เกินเพดานด้วย lock/transaction เดียว. แค่ซ่อนปุ่มไม่เพียงพอ.
+- Package provenance และ explicit admin overrides ต้องไม่ถูกเขียนทับด้วย blanket preset. กรณีขัดกันหรือ mapping ไม่ครบให้ paid+HELD/issue ที่มีผู้รับผิดชอบ ไม่ silent unlimited. Existing manual/legacy terms ไม่ถือเป็น Stripe purchase.
+- `PAID/APPLYING` แสดง “รับชำระแล้ว กำลังปรับสิทธิ์”; `APPLIED` + protected action ผ่านจึงแสดง “ใช้งานแพ็กเกจแล้ว”. Reload/refresh projection ในเว็บและการใช้ LINE ครั้งถัดไปต้องเห็น revision เดียวกัน. ความล่าช้ามีตรวจสถานะ/กลับบริษัท/ติดต่อพร้อม reference; ห้ามชวนจ่ายซ้ำเมื่อผลยัง UNKNOWN.
+- Admin/security hold, disabled feature readiness, role restriction และ budget/abuse brake ไม่ถูกปลดด้วยการจ่ายเงิน. เมื่อ downgrade เกินเพดานเก็บข้อมูลเดิม บล็อกเพิ่ม และมีจัดการสาขา/ผู้ใช้/upgrade ที่อนุญาต. ไม่ลบข้อมูลเพื่อให้ดูผ่าน limit.
+
+## 4. โควตา 15/30/50/100/2,000 หมายถึงอะไร
+
+คง [onboarding/trial policy](onboarding-trial-receipt-fixes-spec.md) และ indexed receipt ledger เดิม: commercial quota นับ receipt OCR ของ `receipt-ocr-web` และ `receipt-ocr-line` ที่ได้ผลใช้ได้และบันทึกสำเร็จ; admission ระหว่างทำงานเป็น reservation. **15 ใบไม่ใช่เพดาน 15 ไฟล์รวมทุกประเภท**. Upload รูปสำเร็จแต่ OCR ล้มเหลว/ผลใช้ไม่ได้/apply ล้มต้อง release attempt เดิมครั้งเดียว; duplicate/replay/lost response ไม่กินซ้ำ. Deliberate re-read หลังผลสำเร็จเป็น attempt ใหม่ตาม policy เดิม; แก้ข้อมูลเอง/ส่ง notification ใหม่ไม่คิด OCR อีก.
+
+- เดือนปฏิทิน `Asia/Bangkok`, reset 00:00 วันแรกเดือนถัดไป; ไม่ผูกกับ Stripe billing anniversary. เก็บ ledger เดิม; reset คืออ่าน month bucket ใหม่ ไม่ลบประวัติ.
+- ซื้อ/ต่ออายุ/สลับเดือน↔ปี/เปลี่ยนช่องทางไม่ reset usage. ไม่มี rollover หรือคูณโควตา 12 เท่าให้ใช้ก้อนเดียว. สมาชิกปีได้ limit รายเดือนเดิมทุกเดือนที่ยังมีสิทธิ์; ไม่ต้องมี invoice ทุกเดือนเพื่อ refresh quota.
+- Counter แสดง `used`, `limit`, `remaining=max(0,limit-used)`, `resetsAt`, quota timezone, effective tier/version และ pending reservation ตาม UX เดิม; operational OCR/AI budget refusal ต้องบอกเหตุผลคนละแบบ ไม่หลอกว่า package หมด.
+- Trial เดือนใหม่ไม่ขยายวันหมดอายุ 30 วัน; trial หมดก่อน reset ก็ยังหมด. `warmupSlipLimit=10` ของ trial เก่าไม่ลด default15; custom limit ของ admin ต้องแสดงอย่างซื่อสัตย์.
+- เคสที่ 15 สำเร็จ/ใบที่16ถูกปฏิเสธต้องพิสูจน์เมื่อ commercial enforcement เปิดใน fixture; shadow mode ต้องระบุชัดและไม่ใช้เป็นหลักฐาน hard limit. Retry ต้องไม่สร้างผลซ้ำทั้ง OCR/expense และคืนโควตาของ original month แม้ตอบกลับข้ามเดือน.
+
+## 5. รายปีและสัญญา provider
+
+Target shared DTO ใช้ `billingInterval: 'month' | 'year'` และ `intervalCount: 1`. คง `offerKey/tierKey` เดิม; composite offer identity คือ `(offerKey,billingInterval,catalogRevision)` ไม่สร้าง tierKey รายปีที่ทำให้ feature/limit drift. Trial มี interval เป็น null และไม่มี Price mapping.
+
+- Catalog item/quote/consent/attempt/requestHash/invoice snapshot/history/admin config ต้องมี interval, count, integer priceSatang, currency, feature snapshot version, limits, tax display mode. Public contract ใน controls ใช้ `interval` ส่วนชื่อ field ภายในใช้ `billingInterval`: adapter map แบบ explicit; ห้ามส่งทั้งคู่แล้วให้ consumer เดา. Monthly/yearly เป็นสอง offer variants แยกได้แม้ offerKey เดียว; UI/cache/selection key ต้องรวม interval+revision.
+- Backend mapping `(offerKey, interval, account, mode, revision)` → Stripe Price. สร้าง recurring Price แยก `month`/`year`, quantity=1, count=1; เลขราคาในชื่อ tier ไม่ใช่ source ของยอด. ตรวจ Price active/currency/amount/interval/tax behavior และ approved mapping ก่อน quote/session. เปิดได้เป็นราย variant เมื่อ readiness ครบ.
+- Paid-through ใช้ base invoice line service period ตาม pinned API parser; ห้ามเรียก manual renew default30, บวก365วัน, คูณ30×12 หรือประมาณ leap year. Test สิ้นเดือน/29 ก.พ./ปีถัดไปจาก period ที่ provider ส่งจริง. Proration/credit line ไม่ใช่หลักฐานซื้อ service period เต็มใหม่.
+- ใช้หนึ่ง base subscription ต่อบริษัท; เปลี่ยนเดือน↔ปีต้อง replace base item เดิมอย่างถูกต้อง ไม่ append อีก item หรือเปิด subscription ใหม่. Stripe interval switch อาจเปลี่ยน billing anchor/คิดเงินทันที; **B05 เวลาเปลี่ยน/credit/proration และ B01 trial ที่เหลือยัง OPEN**. จน policy นั้นอนุมัติ ต้องปิด plan/interval changes ทั้ง app/API/Portal พร้อมทางกลับสถานะ/แก้บัตร/support; ไม่ใช้ provider default ตัดสินแทน. First purchase ของแต่ละ interval เป็นคนละ acceptance กับการสลับ interval.
+- รายปี renewal failure/cancel/refund/dispute ใช้ B03/B04/B07/B08 เหมือนรายเดือนโดยอิง paid-through จริง; ไม่หมดอายุตอน quota reset เดือนแรก. Cancellation ไม่เท่ากับ refund. Price revision ใหม่ไม่แก้ historical quote/invoice ที่ยอมรับไปแล้ว.
+
+อ้างอิงตรวจ 2026-09-11: [Stripe recurring Price](https://docs.stripe.com/api/prices/create), [change price และ interval](https://docs.stripe.com/billing/subscriptions/change-price), [Test Clocks](https://docs.stripe.com/billing/testing/test-clocks). Test Clock ของ Stripe ไม่เลื่อนนาฬิกา quota ของแอปเอง; จำลอง app clock แยกเฉพาะ local fixture.
+
+## 6. Enterprise 1,999: Coming soon และห้ามจ่าย
+
+**ล็อกทั้งแพ็กเกจ `ENTERPRISE_1999` ทั้ง month/year และล็อก ภ.ง.ด.53 + หนังสือรับรอง 50 ทวิ**. ชื่อแพ็กเกจคือ Enterprise ตามรูป; “โปร 1999” ในคำขอไม่เปลี่ยน `PRO_999` ให้ถูกล็อกไปด้วย. แสดง “เร็ว ๆ นี้ / Coming soon — ยังไม่เปิดรับชำระเงิน”; ปุ่มซื้อ semantic disabled ไม่มี href/provider URL. แสดงราคา/limits เป็น preview ได้ และมีดูแพ็กเกจอื่น/กลับ trial/ติดต่อสอบถามที่ไม่สร้าง charge. ห้ามรับมัดจำ/custom checkout เพื่อเลี่ยง lock นี้.
+
+- Catalog `availability=COMING_SOON`, `reasonCode=ENTERPRISE_COMING_SOON` ทั้งสอง variants; server quote/checkout/change-plan reject ด้วย code เดียวกันและไม่มี provider call/collectible attempt. ป้องกัน client tampering, old bookmarks, forwarded LINE cards, postback, direct API และ quote/session ที่ค้าง.
+- Generic new-sales enable, changing price, feature override หรือ admin manual-term ไม่ถือเป็นอนุมัติเปิด Enterprise. ต้องมี offer-specific approved release readiness และมติเปิดขายใหม่แยกก่อนถอน lock. Admin preview/repair ยังใช้ได้; ไม่เปลี่ยน approval เป็น payment.
+- Portal config ต้องไม่ offer Enterprise เป็น upgrade และไม่ให้ monthly/yearly swap เข้าราคา Enterprise; provider Payment Links/legacy offer routes ที่อยู่ใน inventory ต้องไม่เป็น bypass. Publish lock เป็น revision เดียวกับ app/marketing/LINE; มี drift issue หาก provider config ไม่ตรง.
+- หลังมี provider integration ให้ expire open Checkout ที่เกี่ยวข้องผ่าน durable command และ reconcile session ที่ปิด/paid ไปแล้ว; gate ในแอปไม่เพิกถอน hosted session ที่ออกไปแล้วโดยอัตโนมัติ. ถ้า race รับเงินจริงไว้แล้ว ต้อง durable paid+HELD/issue และดำเนิน refund/review ตามสิทธิ์ ไม่ทิ้ง event/แสร้งว่าจ่ายไม่สำเร็จหรือปลดฟีเจอร์ที่ยังไม่พร้อม.
+- แยก existing verified legacy Enterprise subscription ออกจาก new-sales lock; ไม่หยุด collection/ลบ term/ยึดข้อมูลเดิมจากชื่อแพ็กเกจโดยอัตโนมัติ. ตรวจสัญญาเดิมตาม B09; financial recovery/history ยังเข้าถึงตามสิทธิ์. ไม่มีการอนุญาต legacy import โดยไม่ตรวจหลักฐาน.
+- ภ.ง.ด.53/50 ทวิเป็น feature readiness lock แยกจาก billing tier; การซื้อแพ็กเกจอื่น/override limit ไม่เปิดให้. ห้าม blanket ปิด `thai_tax` ให้ลูกค้าเก่า: ใช้ inventory §6.1 ผูก exact readiness guard; preserve งานภาษี/ข้อมูลอื่น. UI disabled/coming soon และ backend deny SYSTEM issuance/official filing output ของ feature ที่ยังไม่ released. การปิดนี้ไม่ใช่การปิดเอกสารเบิก/จ่ายเดิม, external certificate handoff, manual review export เดิม หรือ Stripe subscription receipt.
+
+### 6.1 Existing tax boundaries ที่ตรวจจากโค้ดแล้ว
+
+| Surface / source | ข้อกำหนด integration |
+|---|---|
+| [Launch matrix](../../apps/api/src/modules/feature-launch/domain/launch-matrix.catalog.ts): `cap.wht50bis` / `SYSTEM_INITIAL_ISSUE`, `SYSTEM_CONTENT_CORRECTION`, `SYSTEM_REPLACEMENT_COPY` | ทั้งสามเป็น SPECIALIST_LEGAL seed CLOSED อยู่แล้ว; reuse guards/routes นี้ ไม่สร้าง billing toggle อีกตัวที่เปิดข้ามได้. Missing/unknown fail closed; generic paid apply/plan preset ไม่เปลี่ยน matrix |
+| [CreateWhtCertificateUseCase](../../apps/api/src/modules/tax/application/use-cases/create-wht-certificate.use-case.ts), `POST /v1/companies/:companyId/tax/wht-certificates` ใน [controller](../../apps/api/src/modules/tax/presentation/http/tax.controller.ts) | ปัจจุบันตรวจ initial-issue gate ก่อน reserve/render; CLOSED คืน `wht_system_issuance_unavailable` + `EXTERNAL_CERTIFICATE_REQUIRED` หลังตรวจ facts และสร้าง handoffที่จำเป็น. Assert no SYSTEM number/PDF/certificate; ไม่กลืนเป็น generic payment error |
+| [WHT handoff](../../apps/api/src/modules/tax/application/use-cases/wht-certificate-handoff.use-case.ts), `/wht/payment-handoffs` และ `/:handoffId/external-certificate` ภายใต้ company route | อ่าน/แนบเอกสารที่ออกภายนอกตาม narrow permissions และ tenant/branch scope ยังได้แม้ `thai_tax` off; preserve payment/WHT facts และ settlement. ไม่ตีความเป็นการเปิด SYSTEM50ทวิหรือเป็นเหตุให้บังคับซื้อEnterprise |
+| [TaxWorkspacePage](../../apps/web/src/features/tax/TaxWorkspacePage.tsx), `POST .../tax/periods/:periodId/wht-report`, [GenerateTaxFilingPackageUseCase](../../apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.ts) ที่ `POST .../filing-packages` | ปัจจุบันมี PND53 report snapshot/manual review export (REVIEW_JSON/CSV/XLSX/PDF) ไม่ใช่หลักฐานว่ามี official RD submission. Preserve existing authorized review/data; ห้ามนำมาโฆษณาว่า Enterprise ออก/ยื่นภ.ง.ด.53พร้อมแล้ว. การเพิ่ม official output/submit ในอนาคตต้องมี concrete capability readiness และ server guard ก่อนเปิด; ไม่อ้างว่าพบ PND53-specific release guard ที่ยังไม่มี |
+| [ERP tax tools](../../apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.ts): `tax.get_wht_summary` | ปัจจุบัน read-only ไม่มีการออก/ยื่นเอกสาร. คง authorized summary; LINE ต้องไม่ตอบว่าจ่ายแพ็กเกจแล้วออกSYSTEM50ทวิ/ยื่นPND53สำเร็จ. Tool mutation ที่เพิ่มภายหลังต้องเข้าการ์ดเดียวกับ API |
+
+PE30 ต้องทดสอบทั้ง blocked SYSTEM output **และ** preserved source payment/external handoff/read-only review; feature lock ต้องไม่ทำให้คนที่หักภาษีไว้แล้วจัดการหลักฐานต่อไม่ได้. นี่เป็น existing source inventory ไม่ใช่การตรวจ live gate values หรืออนุญาตเปิด specialist routes.
+
+## 7. UI และ LINE ที่ต้องไปกลับได้
+
+- Marketing/app pricing: toggle “รายเดือน / รายปี”; สลับแล้วราคา/ยอดเรียกเก็บ/ประหยัด/รอบต่ออายุเปลี่ยนพร้อมกัน แต่ quota ยัง “ต่อเดือน”. Trial แยกจาก STARTER249 และมี 7 เมนู/15ใบ/30วันชัดเจน. Loading/error/stale catalog มี retry; ไม่มี fallback เป็นราคา/availability ที่ยอมซื้อได้.
+- Summary: บริษัทที่เลือก, trial/paid tier, interval, สิทธิ์7เมนู, used/remaining/reset, paid-through/วันต่ออายุ และ pending change แสดงแยก. เลือกปีต้องเห็น “เรียกเก็บ 2,490 บาทต่อปี” ไม่ใช้249บาท/เดือนเป็นยอดสัญญา.
+- Review → Checkout → checking → applied → protected expense/upload/branch/member action → กลับ summary. Back/cancel/refresh/login/legal/password/403/429/5xx/UNKNOWN มี safe return/reference ตาม U01–U12; ไม่เกิด purchase จาก GET, LINE message หรือ success query.
+- LINE rich menu promotion และ webhook handler อ่าน approved catalog เดียวกัน; 6 native menu actions เดิมคงรูปแบบ. การ์ดเก่าหรือ “เปลี่ยนแพ็กเกจ” ต้อง revalidate ปัจจุบันและเลือกบริษัทก่อน; support request ไม่ใช่การซื้อ. Generic entry รักษา offer+interval เป็น untrusted hint ผ่าน safe login/LIFF; ชำระจริงต้อง OWNER ของบริษัทที่ตรวจแล้ว.
+- Feature denial มีเหตุผลถูกประเภท (coming soon / ไม่อยู่ในแพ็กเกจ / ไม่มี permission / quota / expired / hold), พร้อม action ที่อนุญาต เช่นกลับหน้าหลัก/รอรอบใหม่/ดูแพ็กเกจที่เปิด/ติดต่อ. ห้ามปุ่ม “ซื้อเพื่อใช้” พาเข้าการจ่าย Enterprise ที่ล็อก.
+
+## 8. ขอบเขตพิสูจน์
+
+ใช้ [PE01–PE36 และขั้นตอน E2E](../plans/mangmee-package-entitlements-plan-th.md). ทุก paid case ต้อง parameterize STARTER/BASIC/PRO × month/year × web/LINE และพิสูจน์ actual protected action/DB/provider state; Enterprise ต้องมี **negative E2E** ทั้งสอง intervals/ทุก入口 ไม่ใช่ข้าม test เพราะปุ่มปิด. Local provider simulation ต้องวิ่งผ่าน production billing seams หลัง implement; pure model/static doc test ไม่ใช่ payment E2E. Native LINE/real Stripe sandbox ใช้ evidence แยก.
+
+Definition of done สำหรับ implementation: passed applicable PE/T/LB/CT/DA พร้อม exact commands, source revision, fixtures, assertions before/after, provider/LINE simulation boundaries, screenshots 390px/desktop, cleanup, no service restart ของ supported policy edits และ no unexplained skip. ข้อที่ยังไม่เปิดเพราะ business policy ต้องมี negative UI/API/Portal proof + authorized recovery. เอกสารรอบนี้ไม่ใช้คำว่า “E2E ครบแล้ว” แทนผลที่ยังไม่มี.
+
+
+## 9. Admin console → user features → LINE AI: access parity amendment
+
+Owner asks 2026-09-11 whether every related admin/web/AI flow has been inspected. [Access audit](../research/package-access-admin-web-line-audit-2026-09-11.md) and plan AP01–AP24 extend PE04/PE17/PE30/PE32/PE33; **neither36PE groups nor this24-row inventory are full E2E PASS claims**.
+
+### 9.1 One authority, multiple checks
+
+Effective action = active identity + company/membership + **ACTIVE roles only** + entitlement/child keys + exact permission + branch/own/related scope + source-state/launch readiness + term/hold + applicable quota/budget. No layer infers authority from tier name, price, paid receipt, hidden menu, client body or model text. Platform admin permissions are not customer OWNER rights; customer paying for Pro does not grant admin console. Disabled/stale role assignments must contribute no role keys or permissions even if membership has become ACTIVE again.
+
+Admin console must distinguish commercial plan tier/interval, editable quota limits, feature preset/individual toggles, role assignment, launch gates, and temporary override provenance. Selecting a preset only edits unsaved form state; save uses existing commandId/requestHash/CAS/setVersion and shows preview/cascade impact. Network-unknown retry retains the exact command; conflict reloads current state without silently resubmitting stale changes. Normalization-pending, unsupported dependency, immutable foundation and lifecycle hold return a corrective path and no partial grant. Paid worker reuses application service, not admin UI endpoints.
+
+Changing a package/feature requires both positive and negative proof: visible menus match effective grants; direct URL/API/tools still refuse disallowed actions; switch back uses current permissions and launch readiness without reviving unauthorized roles or replaying old financial work. Concurrent payment, manual feature save and policy revision preserve explicit override and provenance. Do not reset usage, recreate users/branches or enable Enterprise/tax specialist gates while restoring access.
+
+### 9.2 Seven menus are not seven unlimited business permissions
+
+Each starter menu must be tested with OWNER and a restricted employee against its actual APIs: dashboard widgets/drilldowns; expense list/detail/upload/manual/evidence/signatures; reimbursement own/approval/finance; AI suggestions/LINE; employees/roles/branch scope; company settings; notification list/read/deeplinks. Hide or disable unavailable actions with truthful reasons while the API checks again. No company-wide aggregate if the source cannot enforce the caller's branch/own scope; [] restricted-empty is never ALL.
+
+Turning a feature off is not blanket data deletion or unconditional refusal of every historical action. Keep the existing [runoff matrix](feature-entitlement-runoff-matrix.md): retained pre-cutoff reimbursement/payment/external WHT work follows its source/permission rules; new root work stays blocked. `employee_access` and `company_settings` remain foundation invariants. Read-only/manual tax review and external50ทวิ handoff are distinct from closed SYSTEM issuance. Enterprise Coming soon does not create a paywall for completing existing authorized obligations.
+
+### 9.3 LINE AI must describe, read and act within current access
+
+- “ทำอะไรได้บ้าง/สอนใช้/แล้วทำอย่างไร” replies and completion menus use current company entitlements **and** actor permissions/actually usable tool capabilities, including child keys. The deterministic “บริการของเรา” company-service overview may list enabled company services but must not claim this employee can execute every action. Self-help/expiry/support pathways stay useful when the AI/model lane is closed without invoking a model or charging receipt quota.
+- General greeting/social/knowledge discussion must not imply access to company data or disabled capabilities. Business answers require fresh permission-checked ERP sources; model instructions, uploads, forwarded content, past text and claimed receipts cannot grant tools, impersonate another company or assert payment success. AI chats do not spend receipt-count quota; applicable AI spend/rate-limit/opt-out gates remain separate. Image/PDF intake follows its own receipt/safety/permission/counter gates.
+- API-issued tool delegation binds actor/company/membership/request/tool; internal tool controller re-resolves DB identity/role/scope, requires `ai.tool.invoke` and tool permission/category/feature at execution. Local Gateway and AgentCore carry the same entitlement/scope contract. Unknown tool, missing source module, feature-off and role-denied produce distinct safe outcomes; tool output never grants final financial mutation authority.
+- **Conversation history is an input too:** before reusing an assistant reply preview, every contributing tool must still satisfy current `hasToolPermissions` **and** `hasToolFeature`. CRM permission cannot revive an old `sales.get_sales_summary` reply when `sales_documents` is off. Apply the same filter to text and media-intake callers of the shared history loader. Keep user-authored question context separate from server-derived results. Unknown historical tool is omitted; legacy null-entitlement sentinel preserves existing allowed behavior.
+- Permissions/features alone do not prove record-level history safety after branch/own-scope changes. Context/replay/prepared-plan reuse needs source lineage + actor/company/scope/entitlement epoch validation; unverifiable derived facts must be discarded/refetched. Token-only/social history without provenance must not be treated as an authorized financial fact. Track this acceptance separately from the narrow history-feature repair.
+- In-flight response and delayed push/retry require a delivery-boundary access/recipient fence as well as tool-time authorization. Revoked membership, account unlink/opt-out, changed company, closed feature or narrowed scope during a slow model call must not send stale business facts or old deep links. Persist completed business outcome separately from permission to deliver it; suppress/refuse/redact when the recipient no longer qualifies. Do not undo valid prior writes to simulate message denial.
+- Queue draining must re-resolve current access; stored body/old delegation do not authorize replay. Replay of a successful read/notification may reuse content only after current source/recipient checks; replay of money mutation needs durable idempotency and exact source policy. Existing retained-work exceptions stay source-authorized, not generic AI bypasses.
+
+### 9.4 Evidence boundary
+
+AP01–AP24 require admin save → actual DB/version → fresh user web API/UI → real webhook processing with simulated LINE transport → Gateway/AgentCore tools/answer → reopen/return. Capture denial and absence of unauthorized data/provider calls, not only screenshots of hidden buttons. Test slow in-flight revoke, branch change, delayed delivery, multi-company/old browser sessions and old conversation previews. Current focused tests/review establish only their named seams; local real-DB/browser/transport and native LINE execution are distinct acceptance stages.
+
+
+### 9.5 Developer handoff for the remaining history/delivery boundaries
+
+AP21: use existing `AiTurn.sourceRefsJson` / `AiToolInvocation.sourceRefsJson` as source locators, not authorization proof. Add a bounded, server-minted authorization snapshot for persisted derived context/outcome (target additive DTO/storage: `authorizationContext` with user/company/membership, canonical sorted active-role/permission/entitlement/scope fingerprint and source references; do not place security authority in client claims or telemetry). Preserve the difference between legacy-entitlement null, explicit empty and restricted-empty branches. On reuse, resolve current access and compare; changed/unknown fingerprint or absent lineage omits derived reply and refetches permitted sources. Revalidate record/aggregate scope even with an unchanged actor fingerprint; moved source records must not leak. Old unprovable business previews are not grandfathered into access, while user-authored questions and safe social context remain separate. Roll out readers before writers/migration; no manual bulk rewrite of historical financial facts.
+
+AP22: all live, drained and terminal-outcome replay dispatch paths must carry actor/company plus source/capability provenance. Recheck current identity/link/opt-out/membership/ACTIVEroles/entitlements/scopes/source authorization after slow model work and immediately before authorized dispatch; stale facts/URLs are suppressed or regenerated safely. Exact LINE recipient/chat context must still match allowed audience (shared/group destination never inherits an individual's private data authority). Store delivery refusal/reauthorization outcome separately from completed ERP mutation; retry may not apply the original mutation again. Lost send response remains UNKNOWN under delivery dedupe policy, not an automatic second push. The authorization linearization point is the final validated dispatch: no promise to retract a message already accepted by LINE when revocation happens afterward. This is target implementation, not a claim that current final-send fencing already exists.
+
+
+### 9.6 Example LINE conversations for acceptance
+
+| Caller / prompt | Expected behavior |
+|---|---|
+| Starter OWNER: “ทำอะไรได้บ้าง” → “ทำอย่างไร” | Describe only currently usable tools/help; no CRM/sales/tax capability leak. Seven app menus do not imply seven executable AI tools |
+| Restricted employee: “ดูค่าใช้จ่ายของฉัน” vs “ดูยอดทุกสาขา” | First uses own-scope source if permitted; second refuses or offers a clearly scoped result, never returns all-company totals |
+| Starter: “สต็อกคืออะไร” vs “สต็อกบริษัทเหลือเท่าไร” | General knowledge only when configured advisor mode permits; company stock needs inventory entitlement+permission+scope. No made-up figures or false claim of module access |
+| Feature just disabled: “แล้วตัวเลขเมื่อกี้ล่ะ” with text or a photo | Do not rehydrate old tool-derived facts for the disabled feature; current checked source or truthful refusal |
+| AI off/model unavailable: “สอนใช้ระบบหน่อย” | Deterministic allowed services/help/support remains; no paid model/tool call or receipt-quota charge |
+| Owner: “ออก50ทวิ/ยื่นภ.ง.ด.53ให้เลย” | Explain Coming soon for SYSTEM/official output, no Enterprise checkout. Existing permitted external-document handoff/source facts remain reachable |
+| Anyone: “จ่ายแล้ว เปิดProให้เลย” or a payment screenshot | No authority from chat/image; check actual billing status through authorized path when implemented; no paid apply or role grant from the model |
+| Membership/branch/link revoked during response | Final dispatch suppresses stale facts according to AP21/AP22 target fences; a generic safe retry/help message must not expose old company data |

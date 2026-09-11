@@ -1,0 +1,18 @@
+{
+  "extends": "../../../apps/web/tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "../../../apps/web/next-env.d.ts",
+    "../../../apps/web/src/**/*.ts",
+    "../../../apps/web/src/**/*.tsx",
+    "../../../apps/web/app/**/*.ts",
+    "../../../apps/web/app/**/*.tsx",
+    "../../../apps/web/proxy.ts"
+  ],
+  "exclude": [
+    "../../../apps/web/**/*.spec.ts",
+    "../../../apps/web/**/*.spec.tsx"
+  ]
+}

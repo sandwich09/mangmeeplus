@@ -1,5 +1,7 @@
 # แผนส่งมอบ Auto-register จากเว็บไซต์ทางการ — P10
 
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](../specs/mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+
 สถานะ: **Slice A+B+C IMPLEMENTED บน branch `codex/auto-register-round1` (2026-08-30, Opus implements / Fable supervises+integrates); flag `EXTERNAL_SIGNUP_ENABLED` ปิดทุก env; Slice D (SES ops) รอ Owner ตาม [runbook](../runbooks/ses-email-setup.md); Slice E รอ SES + UAT ตาม [test plan](mangmee-auto-register-uat-test-plan-th.md)**
 
 Source of truth: [External Signup Contract Spec](../specs/mangmee-external-signup-contract-spec-th.md) (Flow B) + [Email Delivery/Claim Spec P11](../specs/mangmee-email-delivery-claim-spec-th.md)

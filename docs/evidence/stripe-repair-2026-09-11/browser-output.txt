@@ -1,0 +1,107 @@
+[WebServer] (node:1375) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1394) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1421) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1434) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1455) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1487) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1507) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1534) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1554) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1565) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1576) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1581) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1577) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1582) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1585) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1586) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1587) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1588) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1589) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 20 tests using 1 worker
+
+(node:1600) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1629) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1636) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1637) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [chromium] › e2e/plan-term-billing-readiness.spec.ts:149:3 › Billing readiness — SIMULATED payment / real existing access stack › BR01 expiry + decline stays blocked; success permits a real browser mutation (3.4s)
+[WebServer] (node:1639) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   2 [chromium] › e2e/plan-term-billing-readiness.spec.ts:187:3 › Billing readiness — SIMULATED payment / real existing access stack › BR02 term-disabled company activates; sequential replay does not extend again (753ms)
+  ✓   3 [chromium] › e2e/plan-term-billing-readiness.spec.ts:207:5 › Billing readiness — SIMULATED payment / real existing access stack › BR03 DISABLED hold is preserved after simulated payment (308ms)
+  ✓   4 [chromium] › e2e/plan-term-billing-readiness.spec.ts:207:5 › Billing readiness — SIMULATED payment / real existing access stack › BR03 SUSPENDED hold is preserved after simulated payment (312ms)
+  ✓   5 [chromium] › e2e/plan-term-billing-readiness.spec.ts:207:5 › Billing readiness — SIMULATED payment / real existing access stack › BR03 ARCHIVED hold is preserved after simulated payment (306ms)
+  ✓   6 [chromium] › e2e/plan-term-billing-readiness.spec.ts:215:3 › Billing readiness — SIMULATED payment / real existing access stack › BR04 company OWNER cannot invoke the admin renewal driver (298ms)
+  ✓   7 [chromium] › e2e/plan-term-billing-readiness.spec.ts:221:3 › Billing readiness — SIMULATED payment / real existing access stack › BR05 expired OWNER can read recovery notice after sweep disables company (646ms)
+[WebServer] (node:1672) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   8 [chromium] › e2e/plan-term-billing-readiness.spec.ts:229:3 › Billing readiness — SIMULATED payment / real existing access stack › BR06 multi-company OWNER sees the selected expired company recovery screen (804ms)
+[WebServer] (node:1678) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1679) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   9 [chromium] › e2e/plan-term-billing-readiness.spec.ts:238:3 › Billing readiness — SIMULATED payment / real existing access stack › BR07/RG04 password login with only a term-disabled company reaches recovery and then real access (1.4s)
+[WebServer] (node:1682) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  10 [chromium] › e2e/plan-term-billing-readiness.spec.ts:256:3 › Billing readiness — SIMULATED payment / real existing access stack › BR08/RG04 staff recovery stays non-owner and cannot cross tenant, renew or use business routes (870ms)
+  ✓  11 [chromium] › e2e/plan-term-billing-readiness.spec.ts:282:5 › Billing readiness — SIMULATED payment / real existing access stack › BR09/RG04 DISABLED admin/security hold denies recovery and single-company login (412ms)
+  ✓  12 [chromium] › e2e/plan-term-billing-readiness.spec.ts:282:5 › Billing readiness — SIMULATED payment / real existing access stack › BR09/RG04 SUSPENDED admin/security hold denies recovery and single-company login (425ms)
+  ✓  13 [chromium] › e2e/plan-term-billing-readiness.spec.ts:282:5 › Billing readiness — SIMULATED payment / real existing access stack › BR09/RG04 ARCHIVED admin/security hold denies recovery and single-company login (407ms)
+[WebServer] (node:1690) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  14 [chromium] › e2e/plan-term-billing-readiness.spec.ts:293:5 › Billing readiness — SIMULATED payment / real existing access stack › BR10/RG05 notice 401 is an explicit error, never employee/no-term (694ms)
+[WebServer] (node:1692) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  15 [chromium] › e2e/plan-term-billing-readiness.spec.ts:293:5 › Billing readiness — SIMULATED payment / real existing access stack › BR10/RG05 notice 403 is an explicit error, never employee/no-term (743ms)
+[WebServer] (node:1694) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  16 [chromium] › e2e/plan-term-billing-readiness.spec.ts:293:5 › Billing readiness — SIMULATED payment / real existing access stack › BR10/RG05 notice 500 is an explicit error, never employee/no-term (709ms)
+[WebServer] (node:1697) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  17 [chromium] › e2e/plan-term-billing-readiness.spec.ts:307:3 › Billing readiness — SIMULATED payment / real existing access stack › BR11/RG05 offline notice can retry; mobile OWNER controls are visible and keyboard accessible (683ms)
+[WebServer] (node:1699) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  18 [chromium] › e2e/plan-term-billing-readiness.spec.ts:322:3 › Billing readiness — SIMULATED payment / real existing access stack › BR12/RG05 no term is a real usable-company state, not an error or employee suspension (675ms)
+  ✓  19 [chromium] › e2e/plan-term-billing-readiness.spec.ts:330:3 › Billing readiness — SIMULATED payment / real existing access stack › BR13/RG04 expired company can accept current legal documents without opening business access (472ms)
+[WebServer] (node:1703) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1705) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:1707) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  20 [chromium] › e2e/plan-term-billing-readiness.spec.ts:344:3 › Billing readiness — SIMULATED payment / real existing access stack › BR14/RG05 switch A to B while A notice is delayed; back and refresh retain selected company (2.4s)
+
+  20 passed (28.3s)

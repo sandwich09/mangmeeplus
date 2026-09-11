@@ -1,0 +1,2759 @@
+TAP version 13
+# Subtest: AgentCore Runtime – payload validation
+    # Subtest: loads the internal secret from its exact ARN instead of runtime metadata
+    ok 1 - loads the internal secret from its exact ARN instead of runtime metadata
+      ---
+      duration_ms: 3.230416
+      type: 'test'
+      ...
+    # Subtest: fails closed when the managed secret reference is absent or empty
+    ok 2 - fails closed when the managed secret reference is absent or empty
+      ---
+      duration_ms: 0.504333
+      type: 'test'
+      ...
+    # Subtest: resolves the JWT signing key from its own ARN pointer
+    ok 3 - resolves the JWT signing key from its own ARN pointer
+      ---
+      duration_ms: 0.170834
+      type: 'test'
+      ...
+    # Subtest: leaves an already-injected JWT key alone so ECS valueFrom still wins
+    ok 4 - leaves an already-injected JWT key alone so ECS valueFrom still wins
+      ---
+      duration_ms: 0.173333
+      type: 'test'
+      ...
+    # Subtest: fails closed when the JWT secret reference is absent or empty
+    ok 5 - fails closed when the JWT secret reference is absent or empty
+      ---
+      duration_ms: 0.231542
+      type: 'test'
+      ...
+    # Subtest: valid payload with all required fields is accepted
+    ok 6 - valid payload with all required fields is accepted
+      ---
+      duration_ms: 1.259167
+      type: 'test'
+      ...
+    # Subtest: re-validates the trusted outer intakeIntent by explicit membership and carries it (forged → dropped)
+    ok 7 - re-validates the trusted outer intakeIntent by explicit membership and carries it (forged → dropped)
+      ---
+      duration_ms: 0.390416
+      type: 'test'
+      ...
+    # Subtest: missing turnId is rejected
+    ok 8 - missing turnId is rejected
+      ---
+      duration_ms: 0.171416
+      type: 'test'
+      ...
+    # Subtest: missing companyId is rejected
+    ok 9 - missing companyId is rejected
+      ---
+      duration_ms: 0.270417
+      type: 'test'
+      ...
+    # Subtest: missing userId is rejected
+    ok 10 - missing userId is rejected
+      ---
+      duration_ms: 0.22025
+      type: 'test'
+      ...
+    # Subtest: missing messageText is rejected
+    ok 11 - missing messageText is rejected
+      ---
+      duration_ms: 0.063708
+      type: 'test'
+      ...
+    # Subtest: null body is rejected
+    ok 12 - null body is rejected
+      ---
+      duration_ms: 0.074333
+      type: 'test'
+      ...
+    # Subtest: non-object body is rejected
+    ok 13 - non-object body is rejected
+      ---
+      duration_ms: 0.141542
+      type: 'test'
+      ...
+    # Subtest: mutation payload is accepted structurally (enforcement is orchestrator responsibility)
+    ok 14 - mutation payload is accepted structurally (enforcement is orchestrator responsibility)
+      ---
+      duration_ms: 0.235
+      type: 'test'
+      ...
+    # Subtest: permissions default to empty array when absent
+    ok 15 - permissions default to empty array when absent
+      ---
+      duration_ms: 0.804792
+      type: 'test'
+      ...
+    # Subtest: reconstructs authoritative membership, branch, location, and role scope
+    ok 16 - reconstructs authoritative membership, branch, location, and role scope
+      ---
+      duration_ms: 1.155208
+      type: 'test'
+      ...
+    # Subtest: carries company feature entitlements through to the rebuilt turn request
+    ok 17 - carries company feature entitlements through to the rebuilt turn request
+      ---
+      duration_ms: 0.188208
+      type: 'test'
+      ...
+    # Subtest: leaves entitlements undefined when an older gateway does not send them (fail-open)
+    ok 18 - leaves entitlements undefined when an older gateway does not send them (fail-open)
+      ---
+      duration_ms: 0.1435
+      type: 'test'
+      ...
+    # Subtest: parses, bounds, and forwards an optional prepared plan (latency/autonomy §7)
+    ok 19 - parses, bounds, and forwards an optional prepared plan (latency/autonomy §7)
+      ---
+      duration_ms: 0.90825
+      type: 'test'
+      ...
+    # Subtest: drops a forged prepared plan rather than casting wire JSON as authority
+    ok 20 - drops a forged prepared plan rather than casting wire JSON as authority
+      ---
+      duration_ms: 0.2275
+      type: 'test'
+      ...
+    # Subtest: leaves the prepared plan undefined for a legacy caller that never sends one
+    ok 21 - leaves the prepared plan undefined for a legacy caller that never sends one
+      ---
+      duration_ms: 0.089542
+      type: 'test'
+      ...
+    # Subtest: drops malformed internal availability evidence and preserves legacy null
+    ok 22 - drops malformed internal availability evidence and preserves legacy null
+      ---
+      duration_ms: 0.174667
+      type: 'test'
+      ...
+    # Subtest: reconstructs a valid turn request when authoritative scope fields are absent
+    ok 23 - reconstructs a valid turn request when authoritative scope fields are absent
+      ---
+      duration_ms: 0.157959
+      type: 'test'
+      ...
+    # Subtest: accepts AgentCore playground prompt shorthand
+    ok 24 - accepts AgentCore playground prompt shorthand
+      ---
+      duration_ms: 0.057042
+      type: 'test'
+      ...
+    # Subtest: bounds conversation context to LINE_AI_CONTEXT_MAX_TURNS turns and 500 chars per preview
+    ok 25 - bounds conversation context to LINE_AI_CONTEXT_MAX_TURNS turns and 500 chars per preview
+      ---
+      duration_ms: 0.149334
+      type: 'test'
+      ...
+    1..25
+ok 1 - AgentCore Runtime – payload validation
+  ---
+  duration_ms: 13.643084
+  type: 'suite'
+  ...
+# Subtest: AgentCore Runtime – HTTP endpoints
+    # Subtest: GET /ping returns 200 with ok status and discloses nothing else (L-13)
+    ok 1 - GET /ping returns 200 with ok status and discloses nothing else (L-13)
+      ---
+      duration_ms: 49.597292
+      type: 'test'
+      ...
+    # Subtest: POST /invocations with invalid JSON returns 400 INVALID_JSON
+    ok 2 - POST /invocations with invalid JSON returns 400 INVALID_JSON
+      ---
+      duration_ms: 10.679542
+      type: 'test'
+      ...
+    # Subtest: POST /invocations with missing required fields returns 400 INVALID_PAYLOAD
+    ok 3 - POST /invocations with missing required fields returns 400 INVALID_PAYLOAD
+      ---
+      duration_ms: 3.797334
+      type: 'test'
+      ...
+    # Subtest: POST /invocations with valid payload calls stub orchestrator and returns 200
+    ok 4 - POST /invocations with valid payload calls stub orchestrator and returns 200
+      ---
+      duration_ms: 4.106208
+      type: 'test'
+      ...
+    # Subtest: reports the usage its own model calls produced
+    ok 5 - reports the usage its own model calls produced
+      ---
+      duration_ms: 6.018708
+      type: 'test'
+      ...
+    # Subtest: reports complete artifact identity, measured stages, normalized refusal, and model-call count
+    ok 6 - reports complete artifact identity, measured stages, normalized refusal, and model-call count
+      ---
+      duration_ms: 7.849375
+      type: 'test'
+      ...
+    # Subtest: POST /invocations accepts playground prompt shorthand
+    ok 7 - POST /invocations accepts playground prompt shorthand
+      ---
+      duration_ms: 3.568083
+      type: 'test'
+      ...
+    1..7
+ok 2 - AgentCore Runtime – HTTP endpoints
+  ---
+  duration_ms: 86.119167
+  type: 'suite'
+  ...
+# Subtest: AgentCore Runtime – L-12 invocation bounds
+    # Subtest: rejects an oversize Content-Length without reading the body at all
+    ok 1 - rejects an oversize Content-Length without reading the body at all
+      ---
+      duration_ms: 0.336167
+      type: 'test'
+      ...
+    # Subtest: answers 413 for a declared-oversize body
+    ok 2 - answers 413 for a declared-oversize body
+      ---
+      duration_ms: 5.030167
+      type: 'test'
+      ...
+    # Subtest: stops reading and stops buffering the moment a chunked body crosses the cap
+    ok 3 - stops reading and stops buffering the moment a chunked body crosses the cap
+      ---
+      duration_ms: 0.660958
+      type: 'test'
+      ...
+    # Subtest: answers 413 to a real chunked oversize upload and destroys the request itself
+    ok 4 - answers 413 to a real chunked oversize upload and destroys the request itself
+      ---
+      duration_ms: 3.345375
+      type: 'test'
+      ...
+    # Subtest: accepts an at-limit body
+    ok 5 - accepts an at-limit body
+      ---
+      duration_ms: 6.343583
+      type: 'test'
+      ...
+    # Subtest: rejects oversize messageText and oversize prompt
+    ok 6 - rejects oversize messageText and oversize prompt
+      ---
+      duration_ms: 0.5445
+      type: 'test'
+      ...
+    # Subtest: rejects an oversize attachments array
+    ok 7 - rejects an oversize attachments array
+      ---
+      duration_ms: 0.215833
+      type: 'test'
+      ...
+    # Subtest: answers 429 beyond the concurrent-invocation cap
+    ok 8 - answers 429 beyond the concurrent-invocation cap
+      ---
+      duration_ms: 58.457458
+      type: 'test'
+      ...
+    1..8
+ok 3 - AgentCore Runtime – L-12 invocation bounds
+  ---
+  duration_ms: 75.434542
+  type: 'suite'
+  ...
+# Subtest: LINE_TOOL_REGISTRY – drift guard
+    # Subtest: registry has no duplicate tool names
+    ok 1 - registry has no duplicate tool names
+      ---
+      duration_ms: 1.455875
+      type: 'test'
+      ...
+    # Subtest: every tool carries canonical routing metadata
+    ok 2 - every tool carries canonical routing metadata
+      ---
+      duration_ms: 0.417917
+      type: 'test'
+      ...
+    # Subtest: own-scope tranche-A tools use any-of permission policy
+    ok 3 - own-scope tranche-A tools use any-of permission policy
+      ---
+      duration_ms: 1.236208
+      type: 'test'
+      ...
+    # Subtest: accounting tools admit relation-scoped reads but never permissionless calls
+    ok 4 - accounting tools admit relation-scoped reads but never permissionless calls
+      ---
+      duration_ms: 0.136916
+      type: 'test'
+      ...
+    # Subtest: tranche-A registry inputs and subjects match the API adapters
+    ok 5 - tranche-A registry inputs and subjects match the API adapters
+      ---
+      duration_ms: 0.171625
+      type: 'test'
+      ...
+    # Subtest: specialists emit grounded tranche-A detail and summary facts
+    ok 6 - specialists emit grounded tranche-A detail and summary facts
+      ---
+      duration_ms: 0.581209
+      type: 'test'
+      ...
+    # Subtest: every tool advertised by the Tax Agent exists and supports tax
+    ok 7 - every tool advertised by the Tax Agent exists and supports tax
+      ---
+      duration_ms: 0.107167
+      type: 'test'
+      ...
+    # Subtest: Tax Agent is limited-ready and advertises the item-11B read contracts
+    ok 8 - Tax Agent is limited-ready and advertises the item-11B read contracts
+      ---
+      duration_ms: 0.080167
+      type: 'test'
+      ...
+    # Subtest: Tax Agent guidance forbids profileless SAP Tax Code assumptions
+    ok 9 - Tax Agent guidance forbids profileless SAP Tax Code assumptions
+      ---
+      duration_ms: 0.082125
+      type: 'test'
+      ...
+    # Subtest: Phase 4 CRM tools are registered, enabled, specialist-reachable, and advertised without new agents
+    ok 10 - Phase 4 CRM tools are registered, enabled, specialist-reachable, and advertised without new agents
+      ---
+      duration_ms: 0.205583
+      type: 'test'
+      ...
+    # Subtest: Phase 4 CRM registry inputs and ERP permissions match the API adapters
+    ok 11 - Phase 4 CRM registry inputs and ERP permissions match the API adapters
+      ---
+      duration_ms: 0.204
+      type: 'test'
+      ...
+    # Subtest: CRM source modules match the authoritative adapter SourceRefs
+    ok 12 - CRM source modules match the authoritative adapter SourceRefs
+      ---
+      duration_ms: 0.124709
+      type: 'test'
+      ...
+    # Subtest: Phase 5 procurement and ledger tools have exact subjects, permissions, inputs, and reachability
+    ok 13 - Phase 5 procurement and ledger tools have exact subjects, permissions, inputs, and reachability
+      ---
+      duration_ms: 0.296291
+      type: 'test'
+      ...
+    # Subtest: accounting specialist shapes honest procurement and ledger answers with source evidence
+    ok 14 - accounting specialist shapes honest procurement and ledger answers with source evidence
+      ---
+      duration_ms: 0.144334
+      type: 'test'
+      ...
+    # Subtest: shared CRM specialist emits grounded summary facts for Phase 4 tool results
+    ok 15 - shared CRM specialist emits grounded summary facts for Phase 4 tool results
+      ---
+      duration_ms: 0.157666
+      type: 'test'
+      ...
+    # Subtest: accounting specialist preserves one permission-checked source reference per tool result
+    ok 16 - accounting specialist preserves one permission-checked source reference per tool result
+      ---
+      duration_ms: 0.387958
+      type: 'test'
+      ...
+    # Subtest: accounting specialist propagates item-11B ambiguity as human review required
+    ok 17 - accounting specialist propagates item-11B ambiguity as human review required
+      ---
+      duration_ms: 0.227541
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "accounting.get_summary" exists in LINE_TOOL_REGISTRY
+    ok 18 - AccountingSummaryAgent ALLOWED_TOOL "accounting.get_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.056708
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "accounting.list_recent_documents" exists in LINE_TOOL_REGISTRY
+    ok 19 - AccountingSummaryAgent ALLOWED_TOOL "accounting.list_recent_documents" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.035125
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "accounting.get_document_detail" exists in LINE_TOOL_REGISTRY
+    ok 20 - AccountingSummaryAgent ALLOWED_TOOL "accounting.get_document_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.109958
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "accounting.get_receivable_summary" exists in LINE_TOOL_REGISTRY
+    ok 21 - AccountingSummaryAgent ALLOWED_TOOL "accounting.get_receivable_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.043041
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "ledger.get_financial_summary" exists in LINE_TOOL_REGISTRY
+    ok 22 - AccountingSummaryAgent ALLOWED_TOOL "ledger.get_financial_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.037458
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "ledger.get_period_status" exists in LINE_TOOL_REGISTRY
+    ok 23 - AccountingSummaryAgent ALLOWED_TOOL "ledger.get_period_status" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "ledger.get_report_summary" exists in LINE_TOOL_REGISTRY
+    ok 24 - AccountingSummaryAgent ALLOWED_TOOL "ledger.get_report_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.038041
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.list_recent" exists in LINE_TOOL_REGISTRY
+    ok 25 - AccountingSummaryAgent ALLOWED_TOOL "expense.list_recent" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.030958
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.get_detail" exists in LINE_TOOL_REGISTRY
+    ok 26 - AccountingSummaryAgent ALLOWED_TOOL "expense.get_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.0355
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.explain_record" exists in LINE_TOOL_REGISTRY
+    ok 27 - AccountingSummaryAgent ALLOWED_TOOL "expense.explain_record" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.0355
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.get_breakdown" exists in LINE_TOOL_REGISTRY
+    ok 28 - AccountingSummaryAgent ALLOWED_TOOL "expense.get_breakdown" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033583
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.get_daily_closing" exists in LINE_TOOL_REGISTRY
+    ok 29 - AccountingSummaryAgent ALLOWED_TOOL "expense.get_daily_closing" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032916
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "procurement.get_ap_outstanding" exists in LINE_TOOL_REGISTRY
+    ok 30 - AccountingSummaryAgent ALLOWED_TOOL "procurement.get_ap_outstanding" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032667
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "procurement.get_summary" exists in LINE_TOOL_REGISTRY
+    ok 31 - AccountingSummaryAgent ALLOWED_TOOL "procurement.get_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.03675
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "procurement.search_suppliers" exists in LINE_TOOL_REGISTRY
+    ok 32 - AccountingSummaryAgent ALLOWED_TOOL "procurement.search_suppliers" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032417
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "procurement.get_purchase_order_detail" exists in LINE_TOOL_REGISTRY
+    ok 33 - AccountingSummaryAgent ALLOWED_TOOL "procurement.get_purchase_order_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031792
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "sales.get_sales_summary" exists in LINE_TOOL_REGISTRY
+    ok 34 - AccountingSummaryAgent ALLOWED_TOOL "sales.get_sales_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031791
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_customer_summary" exists in LINE_TOOL_REGISTRY
+    ok 35 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_customer_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032416
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.search_customers" exists in LINE_TOOL_REGISTRY
+    ok 36 - AccountingSummaryAgent ALLOWED_TOOL "crm.search_customers" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032375
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_customer_360" exists in LINE_TOOL_REGISTRY
+    ok 37 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_customer_360" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.035917
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_report_summary" exists in LINE_TOOL_REGISTRY
+    ok 38 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_report_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031584
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_pipeline_summary" exists in LINE_TOOL_REGISTRY
+    ok 39 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_pipeline_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.035166
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.list_open_followups" exists in LINE_TOOL_REGISTRY
+    ok 40 - AccountingSummaryAgent ALLOWED_TOOL "crm.list_open_followups" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034125
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_booking_summary" exists in LINE_TOOL_REGISTRY
+    ok 41 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_booking_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032167
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.list_bookings" exists in LINE_TOOL_REGISTRY
+    ok 42 - AccountingSummaryAgent ALLOWED_TOOL "crm.list_bookings" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.051834
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_inbox_summary" exists in LINE_TOOL_REGISTRY
+    ok 43 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_inbox_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032916
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.list_conversations" exists in LINE_TOOL_REGISTRY
+    ok 44 - AccountingSummaryAgent ALLOWED_TOOL "crm.list_conversations" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.037166
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.get_conversation_summary" exists in LINE_TOOL_REGISTRY
+    ok 45 - AccountingSummaryAgent ALLOWED_TOOL "crm.get_conversation_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.035375
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "crm.suggest_sales_followups" exists in LINE_TOOL_REGISTRY
+    ok 46 - AccountingSummaryAgent ALLOWED_TOOL "crm.suggest_sales_followups" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033792
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "company.get_current_context" exists in LINE_TOOL_REGISTRY
+    ok 47 - AccountingSummaryAgent ALLOWED_TOOL "company.get_current_context" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033292
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "company.list_branches" exists in LINE_TOOL_REGISTRY
+    ok 48 - AccountingSummaryAgent ALLOWED_TOOL "company.list_branches" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034167
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "company.get_employee_summary" exists in LINE_TOOL_REGISTRY
+    ok 49 - AccountingSummaryAgent ALLOWED_TOOL "company.get_employee_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031625
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "company.get_employee_detail" exists in LINE_TOOL_REGISTRY
+    ok 50 - AccountingSummaryAgent ALLOWED_TOOL "company.get_employee_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033208
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "dashboard.get_business_health_summary" exists in LINE_TOOL_REGISTRY
+    ok 51 - AccountingSummaryAgent ALLOWED_TOOL "dashboard.get_business_health_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034916
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "notifications.list_open_alerts" exists in LINE_TOOL_REGISTRY
+    ok 52 - AccountingSummaryAgent ALLOWED_TOOL "notifications.list_open_alerts" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031208
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "notifications.get_daily_summary" exists in LINE_TOOL_REGISTRY
+    ok 53 - AccountingSummaryAgent ALLOWED_TOOL "notifications.get_daily_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031666
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_upcoming_tax_obligations" exists in LINE_TOOL_REGISTRY
+    ok 54 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_upcoming_tax_obligations" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.031833
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_vat_summary" exists in LINE_TOOL_REGISTRY
+    ok 55 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_vat_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.052917
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_wht_summary" exists in LINE_TOOL_REGISTRY
+    ok 56 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_wht_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.032375
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_cit_calendar" exists in LINE_TOOL_REGISTRY
+    ok 57 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_cit_calendar" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.037
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.list_missing_tax_documents" exists in LINE_TOOL_REGISTRY
+    ok 58 - AccountingSummaryAgent ALLOWED_TOOL "tax.list_missing_tax_documents" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034125
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_tax_code_profile" exists in LINE_TOOL_REGISTRY
+    ok 59 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_tax_code_profile" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.03075
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_transaction_tax_summary" exists in LINE_TOOL_REGISTRY
+    ok 60 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_transaction_tax_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.108625
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "tax.get_reconciliation_summary" exists in LINE_TOOL_REGISTRY
+    ok 61 - AccountingSummaryAgent ALLOWED_TOOL "tax.get_reconciliation_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.049958
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "workflow.explain_run" exists in LINE_TOOL_REGISTRY
+    ok 62 - AccountingSummaryAgent ALLOWED_TOOL "workflow.explain_run" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.039583
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "workflow.list_assigned_tasks" exists in LINE_TOOL_REGISTRY
+    ok 63 - AccountingSummaryAgent ALLOWED_TOOL "workflow.list_assigned_tasks" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.26925
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "workflow.list_recent_failures" exists in LINE_TOOL_REGISTRY
+    ok 64 - AccountingSummaryAgent ALLOWED_TOOL "workflow.list_recent_failures" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033917
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "workflow.summarize_rule_health" exists in LINE_TOOL_REGISTRY
+    ok 65 - AccountingSummaryAgent ALLOWED_TOOL "workflow.summarize_rule_health" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.034375
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "reimbursement.list_pending_approvals" exists in LINE_TOOL_REGISTRY
+    ok 66 - AccountingSummaryAgent ALLOWED_TOOL "reimbursement.list_pending_approvals" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.020583
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "reimbursement.get_summary" exists in LINE_TOOL_REGISTRY
+    ok 67 - AccountingSummaryAgent ALLOWED_TOOL "reimbursement.get_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.021125
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "reimbursement.get_detail" exists in LINE_TOOL_REGISTRY
+    ok 68 - AccountingSummaryAgent ALLOWED_TOOL "reimbursement.get_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.016541
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "reports.get_monthly_report_summary" exists in LINE_TOOL_REGISTRY
+    ok 69 - AccountingSummaryAgent ALLOWED_TOOL "reports.get_monthly_report_summary" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.015917
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_header" exists in LINE_TOOL_REGISTRY
+    ok 70 - AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_header" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.050584
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_line" exists in LINE_TOOL_REGISTRY
+    ok 71 - AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_line" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.070958
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.draft.add_charge" exists in LINE_TOOL_REGISTRY
+    ok 72 - AccountingSummaryAgent ALLOWED_TOOL "expense.draft.add_charge" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.033459
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.draft.remove_line" exists in LINE_TOOL_REGISTRY
+    ok 73 - AccountingSummaryAgent ALLOWED_TOOL "expense.draft.remove_line" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.018458
+      type: 'test'
+      ...
+    # Subtest: AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_vat_mode" exists in LINE_TOOL_REGISTRY
+    ok 74 - AccountingSummaryAgent ALLOWED_TOOL "expense.draft.set_vat_mode" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.016958
+      type: 'test'
+      ...
+    # Subtest: InventoryAgent ALLOWED_TOOL "inventory.search_products" exists in LINE_TOOL_REGISTRY
+    ok 75 - InventoryAgent ALLOWED_TOOL "inventory.search_products" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.015917
+      type: 'test'
+      ...
+    # Subtest: InventoryAgent ALLOWED_TOOL "inventory.get_product_detail" exists in LINE_TOOL_REGISTRY
+    ok 76 - InventoryAgent ALLOWED_TOOL "inventory.get_product_detail" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.015083
+      type: 'test'
+      ...
+    # Subtest: InventoryAgent ALLOWED_TOOL "inventory.list_low_stock" exists in LINE_TOOL_REGISTRY
+    ok 77 - InventoryAgent ALLOWED_TOOL "inventory.list_low_stock" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.075667
+      type: 'test'
+      ...
+    # Subtest: InventoryAgent ALLOWED_TOOL "inventory.get_stock_balance" exists in LINE_TOOL_REGISTRY
+    ok 78 - InventoryAgent ALLOWED_TOOL "inventory.get_stock_balance" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.077792
+      type: 'test'
+      ...
+    # Subtest: InventoryAgent ALLOWED_TOOL "inventory.summarize_stock_movements" exists in LINE_TOOL_REGISTRY
+    ok 79 - InventoryAgent ALLOWED_TOOL "inventory.summarize_stock_movements" exists in LINE_TOOL_REGISTRY
+      ---
+      duration_ms: 0.03975
+      type: 'test'
+      ...
+    # Subtest: every registry tool has at least one all-of or any-of permission
+    ok 80 - every registry tool has at least one all-of or any-of permission
+      ---
+      duration_ms: 0.353291
+      type: 'test'
+      ...
+    # Subtest: every registry tool requires ERP permission check
+    ok 81 - every registry tool requires ERP permission check
+      ---
+      duration_ms: 0.251042
+      type: 'test'
+      ...
+    # Subtest: tools with requiredInputFields list at least one field
+    ok 82 - tools with requiredInputFields list at least one field
+      ---
+      duration_ms: 0.182959
+      type: 'test'
+      ...
+    1..82
+ok 4 - LINE_TOOL_REGISTRY – drift guard
+  ---
+  duration_ms: 11.581
+  type: 'suite'
+  ...
+# Subtest: buildAnswerPresentation
+    # Subtest: uses the final grounded reply for one successful output
+    ok 1 - uses the final grounded reply for one successful output
+      ---
+      duration_ms: 1.808958
+      type: 'test'
+      ...
+    # Subtest: creates one deterministic card per successful output and bounds the carousel
+    ok 2 - creates one deterministic card per successful output and bounds the carousel
+      ---
+      duration_ms: 0.360958
+      type: 'test'
+      ...
+    # Subtest: presents explicit empty results as a grounded answer card
+    ok 3 - presents explicit empty results as a grounded answer card
+      ---
+      duration_ms: 0.188041
+      type: 'test'
+      ...
+    # Subtest: labels a daily-closing link as the generic expense list it actually opens
+    ok 4 - labels a daily-closing link as the generic expense list it actually opens
+      ---
+      duration_ms: 0.197708
+      type: 'test'
+      ...
+    # Subtest: omits cards for forbidden, unavailable, unsupported, and clarification outcomes
+    ok 5 - omits cards for forbidden, unavailable, unsupported, and clarification outcomes
+      ---
+      duration_ms: 0.067334
+      type: 'test'
+      ...
+    1..5
+ok 5 - buildAnswerPresentation
+  ---
+  duration_ms: 3.03225
+  type: 'suite'
+  ...
+# Subtest: withoutRefusedCoverage
+    # Subtest: removes a paraphrased private request using the router refusal instead of keywords
+    ok 1 - removes a paraphrased private request using the router refusal instead of keywords
+      ---
+      duration_ms: 1.382417
+      type: 'test'
+      ...
+    1..1
+ok 6 - withoutRefusedCoverage
+  ---
+  duration_ms: 1.425
+  type: 'suite'
+  ...
+# Subtest: OrchestratorAgent
+    # Subtest: answers capability help without reading company or dashboard data
+    ok 1 - answers capability help without reading company or dashboard data
+      ---
+      duration_ms: 4.794542
+      type: 'test'
+      ...
+    # Subtest: teaches a beginner from the same permission-derived set, still without reading any data (spec §8.1)
+    ok 2 - teaches a beginner from the same permission-derived set, still without reading any data (spec §8.1)
+      ---
+      duration_ms: 1.924
+      type: 'test'
+      ...
+    # Subtest: lets Nong Mangmee handle pure casual conversation without ERP tools
+    ok 3 - lets Nong Mangmee handle pure casual conversation without ERP tools
+      ---
+      duration_ms: 0.829208
+      type: 'test'
+      ...
+    # Subtest: handles the reported casual and joking-provocation phrases with zero ERP tools
+    ok 4 - handles the reported casual and joking-provocation phrases with zero ERP tools
+      ---
+      duration_ms: 0.760042
+      type: 'test'
+      ...
+    # Subtest: gives deterministic crisis support and never calls ERP tools, even beside a business request
+    ok 5 - gives deterministic crisis support and never calls ERP tools, even beside a business request
+      ---
+      duration_ms: 0.243667
+      type: 'test'
+      ...
+    # Subtest: rescues a joke request the router refused as out-of-scope into the casual lane
+    ok 6 - rescues a joke request the router refused as out-of-scope into the casual lane
+      ---
+      duration_ms: 0.85525
+      type: 'test'
+      ...
+    # Subtest: keeps the honest refusal for out-of-scope questions that merely contain joke-ish substrings
+    ok 7 - keeps the honest refusal for out-of-scope questions that merely contain joke-ish substrings
+      ---
+      duration_ms: 2.05
+      type: 'test'
+      ...
+    # Subtest: never rescues a joke wrapped around a protected refusal or a business clause
+    ok 8 - never rescues a joke wrapped around a protected refusal or a business clause
+      ---
+      duration_ms: 2.68425
+      type: 'test'
+      ...
+    # Subtest: mutation request returns UNROUTABLE plan and safe reply
+    ok 9 - mutation request returns UNROUTABLE plan and safe reply
+      ---
+      duration_ms: 0.413125
+      type: 'test'
+      ...
+    # Subtest: uses English safe reply when user input is English
+    ok 10 - uses English safe reply when user input is English
+      ---
+      duration_ms: 0.730084
+      type: 'test'
+      ...
+    # Subtest: bounds the grounding text it forwards, and sends none while the draft lane is off
+    ok 11 - bounds the grounding text it forwards, and sends none while the draft lane is off
+      ---
+      duration_ms: 1.696459
+      type: 'test'
+      ...
+    # Subtest: inventory query only invokes inventory-allowlisted tools
+    ok 12 - inventory query only invokes inventory-allowlisted tools
+      ---
+      duration_ms: 1.85225
+      type: 'test'
+      ...
+    # Subtest: M-02: specialist tool calls carry the failing ToolResult errorCode, and nothing on success
+    ok 13 - M-02: specialist tool calls carry the failing ToolResult errorCode, and nothing on success
+      ---
+      duration_ms: 2.099542
+      type: 'test'
+      ...
+    # Subtest: keeps broad expense amounts concise while preserving source-backed details and counts on request
+    ok 14 - keeps broad expense amounts concise while preserving source-backed details and counts on request
+      ---
+      duration_ms: 11.72125
+      type: 'test'
+      ...
+    # Subtest: expense query with unavailable tool does not fall back to accounting no-data copy
+    ok 15 - expense query with unavailable tool does not fall back to accounting no-data copy
+      ---
+      duration_ms: 0.487917
+      type: 'test'
+      ...
+    # Subtest: sales query invokes the permission-checked sales summary tool and includes its transaction count
+    ok 16 - sales query invokes the permission-checked sales summary tool and includes its transaction count
+      ---
+      duration_ms: 0.890041
+      type: 'test'
+      ...
+    # Subtest: disabled provider says the LINE capability is unavailable, not that a company feature is disabled
+    ok 17 - disabled provider says the LINE capability is unavailable, not that a company feature is disabled
+      ---
+      duration_ms: 0.2355
+      type: 'test'
+      ...
+    # Subtest: states the privacy boundary once while still answering the permitted business part
+    ok 18 - states the privacy boundary once while still answering the permitted business part
+      ---
+      duration_ms: 0.884292
+      type: 'test'
+      ...
+    # Subtest: PERMISSION_DENIED from all tools produces safe refused reply with no hidden data leak
+    ok 19 - PERMISSION_DENIED from all tools produces safe refused reply with no hidden data leak
+      ---
+      duration_ms: 1.048084
+      type: 'test'
+      ...
+    # Subtest: permission-filtered routed tools return forbidden instead of pretending there is no data
+    ok 20 - permission-filtered routed tools return forbidden instead of pretending there is no data
+      ---
+      duration_ms: 0.529
+      type: 'test'
+      ...
+    # Subtest: agent/tool mismatch: inventory agent does not call accounting/ledger tools
+    ok 21 - agent/tool mismatch: inventory agent does not call accounting/ledger tools
+      ---
+      duration_ms: 0.815959
+      type: 'test'
+      ...
+    # Subtest: respects aiMaxToolCalls limit
+    ok 22 - respects aiMaxToolCalls limit
+      ---
+      duration_ms: 0.766583
+      type: 'test'
+      ...
+    # Subtest: unsupported module returns safe reply without calling ERP
+    ok 23 - unsupported module returns safe reply without calling ERP
+      ---
+      duration_ms: 0.299916
+      type: 'test'
+      ...
+    # Subtest: out-of-scope chat returns safe reply without calling ERP
+    ok 24 - out-of-scope chat returns safe reply without calling ERP
+      ---
+      duration_ms: 0.265458
+      type: 'test'
+      ...
+    # Subtest: E4: a business turn with no tool is "not yet", not "out of scope"
+        # Subtest: hands the owner question to the explain lane rather than refusing it at all
+        ok 1 - hands the owner question to the explain lane rather than refusing it at all
+          ---
+          duration_ms: 0.5745
+          type: 'test'
+          ...
+        # Subtest: answers "ยังทำผ่าน LINE ไม่ได้" with a web link, not "นอกขอบเขต"
+        ok 2 - answers "ยังทำผ่าน LINE ไม่ได้" with a web link, not "นอกขอบเขต"
+          ---
+          duration_ms: 0.455417
+          type: 'test'
+          ...
+        # Subtest: keeps the out-of-scope answer when intake did not call the turn business
+        ok 3 - keeps the out-of-scope answer when intake did not call the turn business
+          ---
+          duration_ms: 0.74425
+          type: 'test'
+          ...
+        # Subtest: never repaints a safety, privacy, permission or mutation refusal
+        ok 4 - never repaints a safety, privacy, permission or mutation refusal
+          ---
+          duration_ms: 0.250833
+          type: 'test'
+          ...
+        1..4
+    ok 25 - E4: a business turn with no tool is "not yet", not "out of scope"
+      ---
+      duration_ms: 2.069292
+      type: 'suite'
+      ...
+    # Subtest: free-form model refusal reason still returns out-of-scope copy
+    ok 26 - free-form model refusal reason still returns out-of-scope copy
+      ---
+      duration_ms: 0.073125
+      type: 'test'
+      ...
+    # Subtest: permission refusal reason still returns forbidden copy
+    ok 27 - permission refusal reason still returns forbidden copy
+      ---
+      duration_ms: 0.045041
+      type: 'test'
+      ...
+    # Subtest: attachment turns follow text orchestration without invoking receipt tools
+    ok 28 - attachment turns follow text orchestration without invoking receipt tools
+      ---
+      duration_ms: 1.312375
+      type: 'test'
+      ...
+    1..28
+ok 7 - OrchestratorAgent
+  ---
+  duration_ms: 43.123834
+  type: 'suite'
+  ...
+# Subtest: OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3–4, default off)
+    # Subtest: Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted
+    ok 1 - Phase 4 default off: a forwarded prepared plan is ignored; the router runs and no prepared-lane log is emitted
+      ---
+      duration_ms: 0.894917
+      type: 'test'
+      ...
+    # Subtest: Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router
+    ok 2 - Phase 4 on with empty family allowlist: eligibility fails on the formatter family and falls back to the router
+      ---
+      duration_ms: 1.651
+      type: 'test'
+      ...
+    # Subtest: Phase 3 shadow on: logs a best-effort comparison and still executes via the router
+    ok 3 - Phase 3 shadow on: logs a best-effort comparison and still executes via the router
+      ---
+      duration_ms: 0.759334
+      type: 'test'
+      ...
+    1..3
+ok 8 - OrchestratorAgent – prepared-plan lanes (latency/autonomy Phases 3–4, default off)
+  ---
+  duration_ms: 3.413333
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent – Nong Mangmee zero-tool replies
+    # Subtest: describes capabilities without claiming that every feature is available
+    ok 1 - describes capabilities without claiming that every feature is available
+      ---
+      duration_ms: 0.766584
+      type: 'test'
+      ...
+    # Subtest: offers only the capabilities this member can actually reach
+    ok 2 - offers only the capabilities this member can actually reach
+      ---
+      duration_ms: 0.180625
+      type: 'test'
+      ...
+    # Subtest: does not invent capabilities for a member whose permissions open nothing
+    ok 3 - does not invent capabilities for a member whose permissions open nothing
+      ---
+      duration_ms: 0.105916
+      type: 'test'
+      ...
+    # Subtest: keeps the English answer permission-scoped too
+    ok 4 - keeps the English answer permission-scoped too
+      ---
+      duration_ms: 0.0945
+      type: 'test'
+      ...
+    # Subtest: names the disabled business capability without leaking keys, links, or permission wording
+    ok 5 - names the disabled business capability without leaking keys, links, or permission wording
+      ---
+      duration_ms: 0.634083
+      type: 'test'
+      ...
+    # Subtest: keeps feature-disabled and genuine permission reasons distinct when both clauses are blocked
+    ok 6 - keeps feature-disabled and genuine permission reasons distinct when both clauses are blocked
+      ---
+      duration_ms: 0.060875
+      type: 'test'
+      ...
+    # Subtest: declines product recommendations instead of substituting stock or aggregate sales
+    ok 7 - declines product recommendations instead of substituting stock or aggregate sales
+      ---
+      duration_ms: 0.337959
+      type: 'test'
+      ...
+    # Subtest: uses the warm female employee persona for pure casual conversation
+    ok 8 - uses the warm female employee persona for pure casual conversation
+      ---
+      duration_ms: 0.205709
+      type: 'test'
+      ...
+    # Subtest: falls back safely when casual generation is unavailable
+    ok 9 - falls back safely when casual generation is unavailable
+      ---
+      duration_ms: 0.110834
+      type: 'test'
+      ...
+    # Subtest: drops an incomplete long tail instead of sending a sentence cut mid-word
+    ok 10 - drops an incomplete long tail instead of sending a sentence cut mid-word
+      ---
+      duration_ms: 0.638709
+      type: 'test'
+      ...
+    # Subtest: keeps only completed sentences when the provider stops at max tokens below the character cap
+    ok 11 - keeps only completed sentences when the provider stops at max tokens below the character cap
+      ---
+      duration_ms: 0.075916
+      type: 'test'
+      ...
+    1..11
+ok 9 - ResponseComposerAgent – Nong Mangmee zero-tool replies
+  ---
+  duration_ms: 3.714791
+  type: 'suite'
+  ...
+# Subtest: MANGMEE_JOKE_BANK – curated Thai joke bank
+    # Subtest: is non-empty and every entry is well formed
+    ok 1 - is non-empty and every entry is well formed
+      ---
+      duration_ms: 0.128417
+      type: 'test'
+      ...
+    # Subtest: has unique ids and no duplicated joke
+    ok 2 - has unique ids and no duplicated joke
+      ---
+      duration_ms: 0.103292
+      type: 'test'
+      ...
+    # Subtest: carries at least 4 entries in every category except the deliberately empty กระแส
+    ok 3 - carries at least 4 entries in every category except the deliberately empty กระแส
+      ---
+      duration_ms: 0.068459
+      type: 'test'
+      ...
+    1..3
+ok 10 - MANGMEE_JOKE_BANK – curated Thai joke bank
+  ---
+  duration_ms: 0.363416
+  type: 'suite'
+  ...
+# Subtest: isJokeRequest – gates the bank onto the prompt
+    # Subtest: is true for a Thai or English ask for a joke
+    ok 1 - is true for a Thai or English ask for a joke
+      ---
+      duration_ms: 0.095083
+      type: 'test'
+      ...
+    # Subtest: is false for ordinary chit-chat and business asks
+    ok 2 - is false for ordinary chit-chat and business asks
+      ---
+      duration_ms: 0.03275
+      type: 'test'
+      ...
+    # Subtest: isExplicitJokeAsk catches every real joke ask
+    ok 3 - isExplicitJokeAsk catches every real joke ask
+      ---
+      duration_ms: 0.850583
+      type: 'test'
+      ...
+    # Subtest: isExplicitJokeAsk refuses the Thai substring collisions the loose test leaks
+    ok 4 - isExplicitJokeAsk refuses the Thai substring collisions the loose test leaks
+      ---
+      duration_ms: 0.079083
+      type: 'test'
+      ...
+    # Subtest: appends the bank to the casual prompt ONLY when a joke is asked for
+    ok 5 - appends the bank to the casual prompt ONLY when a joke is asked for
+      ---
+      duration_ms: 0.125708
+      type: 'test'
+      ...
+    1..5
+ok 11 - isJokeRequest – gates the bank onto the prompt
+  ---
+  duration_ms: 1.255959
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent.polishLanguage (grounded language layer)
+    # Subtest: uses the model wording when it preserves the grounded numbers
+    ok 1 - uses the model wording when it preserves the grounded numbers
+      ---
+      duration_ms: 9.842958
+      type: 'test'
+      ...
+    # Subtest: falls back to grounded text when the model invents a number
+    ok 2 - falls back to grounded text when the model invents a number
+      ---
+      duration_ms: 0.165791
+      type: 'test'
+      ...
+    # Subtest: falls back to grounded text when the provider is unavailable
+    ok 3 - falls back to grounded text when the provider is unavailable
+      ---
+      duration_ms: 0.08625
+      type: 'test'
+      ...
+    # Subtest: strips code fences/quotes from model output
+    ok 4 - strips code fences/quotes from model output
+      ---
+      duration_ms: 0.20675
+      type: 'test'
+      ...
+    # Subtest: does not call the model for an empty grounded reply
+    ok 5 - does not call the model for an empty grounded reply
+      ---
+      duration_ms: 0.065
+      type: 'test'
+      ...
+    # Subtest: rejects a runaway/expanded reply
+    ok 6 - rejects a runaway/expanded reply
+      ---
+      duration_ms: 0.079334
+      type: 'test'
+      ...
+    # Subtest: falls back when wording inverts a nonnumeric payment status
+    ok 7 - falls back when wording inverts a nonnumeric payment status
+      ---
+      duration_ms: 0.135417
+      type: 'test'
+      ...
+    # Subtest: falls back when wording invents a nonnumeric entity name
+    ok 8 - falls back when wording invents a nonnumeric entity name
+      ---
+      duration_ms: 0.155958
+      type: 'test'
+      ...
+    1..8
+ok 12 - ResponseComposerAgent.polishLanguage (grounded language layer)
+  ---
+  duration_ms: 10.895166
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent.composeAnswer (model-composed grounded answer)
+    # Subtest: uses the model answer when its numbers come from the tool data
+    ok 1 - uses the model answer when its numbers come from the tool data
+      ---
+      duration_ms: 1.180833
+      type: 'test'
+      ...
+    # Subtest: falls back when a count explicitly requested by the user is omitted
+    ok 2 - falls back when a count explicitly requested by the user is omitted
+      ---
+      duration_ms: 0.22025
+      type: 'test'
+      ...
+    # Subtest: accepts value-equal number reformatting (85 vs 85.0000)
+    ok 3 - accepts value-equal number reformatting (85 vs 85.0000)
+      ---
+      duration_ms: 0.158792
+      type: 'test'
+      ...
+    # Subtest: keeps the canonical expense total concise without model composition
+    ok 4 - keeps the canonical expense total concise without model composition
+      ---
+      duration_ms: 1.033667
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: ค่าใช้จ่ายเดือนนี้กี่บาท
+    ok 5 - amount wording golden: ค่าใช้จ่ายเดือนนี้กี่บาท
+      ---
+      duration_ms: 0.088208
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: ค่าใช้จ่ายเดือนนี้กี่ บาท
+    ok 6 - amount wording golden: ค่าใช้จ่ายเดือนนี้กี่ บาท
+      ---
+      duration_ms: 0.046792
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: จำนวนเงินค่าใช้จ่ายเดือนนี้เท่าไหร่
+    ok 7 - amount wording golden: จำนวนเงินค่าใช้จ่ายเดือนนี้เท่าไหร่
+      ---
+      duration_ms: 0.034083
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: ค่าใช้จ่ายเดือนนี้มีจำนวน เงินเท่าไหร่
+    ok 8 - amount wording golden: ค่าใช้จ่ายเดือนนี้มีจำนวน เงินเท่าไหร่
+      ---
+      duration_ms: 0.0325
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: what is the expense total this month?
+    ok 9 - amount wording golden: what is the expense total this month?
+      ---
+      duration_ms: 0.281709
+      type: 'test'
+      ...
+    # Subtest: amount wording golden: summarize expenses this month
+    ok 10 - amount wording golden: summarize expenses this month
+      ---
+      duration_ms: 0.264792
+      type: 'test'
+      ...
+    # Subtest: keeps the current expense total instead of a date/context/candidate amount: ค่าใช้จ่ายเดือน 8 ปี 2026 กี่บาท / ค่าใช้จ่ายทั้งหมด 2026 บาท
+    ok 11 - keeps the current expense total instead of a date/context/candidate amount: ค่าใช้จ่ายเดือน 8 ปี 2026 กี่บาท / ค่าใช้จ่ายทั้งหมด 2026 บาท
+      ---
+      duration_ms: 0.131458
+      type: 'test'
+      ...
+    # Subtest: keeps the current expense total instead of a date/context/candidate amount: what is the expense total for August 2026? / Expense total 2026
+    ok 12 - keeps the current expense total instead of a date/context/candidate amount: what is the expense total for August 2026? / Expense total 2026
+      ---
+      duration_ms: 0.057208
+      type: 'test'
+      ...
+    # Subtest: keeps the current expense total instead of a date/context/candidate amount: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ / ค่าใช้จ่ายทั้งหมด 2026 บาท
+    ok 13 - keeps the current expense total instead of a date/context/candidate amount: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ / ค่าใช้จ่ายทั้งหมด 2026 บาท
+      ---
+      duration_ms: 0.047375
+      type: 'test'
+      ...
+    # Subtest: keeps the current expense total instead of a date/context/candidate amount: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ / ค่าใช้จ่ายทั้งหมด 150 บาท
+    ok 14 - keeps the current expense total instead of a date/context/candidate amount: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ / ค่าใช้จ่ายทั้งหมด 150 บาท
+      ---
+      duration_ms: 0.072958
+      type: 'test'
+      ...
+    # Subtest: keeps the current expense total instead of a date/context/candidate amount: หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม / ค่าใช้จ่ายทั้งหมด 60 บาท
+    ok 15 - keeps the current expense total instead of a date/context/candidate amount: หกสิบบาทคือยอดค่าใช้จ่ายเดือนนี้ไหม / ค่าใช้จ่ายทั้งหมด 60 บาท
+      ---
+      duration_ms: 0.073875
+      type: 'test'
+      ...
+    # Subtest: count golden: ค่าใช้จ่ายเดือนนี้มีกี่ใบ
+    ok 16 - count golden: ค่าใช้จ่ายเดือนนี้มีกี่ใบ
+      ---
+      duration_ms: 0.113709
+      type: 'test'
+      ...
+    # Subtest: count golden: ค่าใช้จ่ายเดือนนี้มีกี่รายการ
+    ok 17 - count golden: ค่าใช้จ่ายเดือนนี้มีกี่รายการ
+      ---
+      duration_ms: 0.057708
+      type: 'test'
+      ...
+    # Subtest: count golden: ขอจำนวนค่าใช้จ่ายเดือนนี้
+    ok 18 - count golden: ขอจำนวนค่าใช้จ่ายเดือนนี้
+      ---
+      duration_ms: 0.024542
+      type: 'test'
+      ...
+    # Subtest: count golden: how many expenses this month?
+    ok 19 - count golden: how many expenses this month?
+      ---
+      duration_ms: 0.023416
+      type: 'test'
+      ...
+    # Subtest: count golden: count expenses this month
+    ok 20 - count golden: count expenses this month
+      ---
+      duration_ms: 0.022959
+      type: 'test'
+      ...
+    # Subtest: count golden: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ มีกี่ใบ
+    ok 21 - count golden: ยอดค่าใช้จ่ายเดือนนี้เท่าไหร่ มีกี่ใบ
+      ---
+      duration_ms: 0.020458
+      type: 'test'
+      ...
+    # Subtest: count golden: ค่าใช้จ่ายเดือนนี้กี่บาท มีกี่ใบ
+    ok 22 - count golden: ค่าใช้จ่ายเดือนนี้กี่บาท มีกี่ใบ
+      ---
+      duration_ms: 0.01975
+      type: 'test'
+      ...
+    # Subtest: count golden: ค่าใช้จ่ายเดือนนี้มีกี่ใบ จำนวนเงินเท่าไหร่
+    ok 23 - count golden: ค่าใช้จ่ายเดือนนี้มีกี่ใบ จำนวนเงินเท่าไหร่
+      ---
+      duration_ms: 0.019166
+      type: 'test'
+      ...
+    # Subtest: keeps the exact expense count without a model that could omit, invent, or use preview cardinality
+    ok 24 - keeps the exact expense count without a model that could omit, invent, or use preview cardinality
+      ---
+      duration_ms: 0.075375
+      type: 'test'
+      ...
+    # Subtest: keeps canonical count/money roles: ยอดค่าใช้จ่ายเท่าไหร่ มีกี่ใบ
+    ok 25 - keeps canonical count/money roles: ยอดค่าใช้จ่ายเท่าไหร่ มีกี่ใบ
+      ---
+      duration_ms: 0.0435
+      type: 'test'
+      ...
+    # Subtest: keeps canonical count/money roles: how many expenses and total amount?
+    ok 26 - keeps canonical count/money roles: how many expenses and total amount?
+      ---
+      duration_ms: 0.023375
+      type: 'test'
+      ...
+    # Subtest: keeps canonical count/money roles: ค่าใช้จ่ายวันที่ 7 เดือนนี้มีกี่ใบ
+    ok 27 - keeps canonical count/money roles: ค่าใช้จ่ายวันที่ 7 เดือนนี้มีกี่ใบ
+      ---
+      duration_ms: 0.021
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: ค่าใช้จ่ายของร้านเรามีกี่ใบ
+    ok 28 - supported count scope golden: ค่าใช้จ่ายของร้านเรามีกี่ใบ
+      ---
+      duration_ms: 0.065459
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: ค่าใช้จ่ายร้านของเรามีกี่รายการ
+    ok 29 - supported count scope golden: ค่าใช้จ่ายร้านของเรามีกี่รายการ
+      ---
+      duration_ms: 0.022125
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: ค่าใช้จ่ายของบริษัทเรามีกี่ใบ
+    ok 30 - supported count scope golden: ค่าใช้จ่ายของบริษัทเรามีกี่ใบ
+      ---
+      duration_ms: 0.020625
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: ค่าใช้จ่ายร้านของฉันมีกี่ใบ
+    ok 31 - supported count scope golden: ค่าใช้จ่ายร้านของฉันมีกี่ใบ
+      ---
+      duration_ms: 0.020042
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ
+    ok 32 - supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ
+      ---
+      duration_ms: 0.024
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมยกเลิกหรือถูกปฏิเสธ
+    ok 33 - supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมยกเลิกหรือถูกปฏิเสธ
+      ---
+      duration_ms: 0.023459
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมรายการที่ถูกปฏิเสธและยกเลิก
+    ok 34 - supported count scope golden: เดือนนี้มีค่าใช้จ่ายกี่ใบ ไม่รวมรายการที่ถูกปฏิเสธและยกเลิก
+      ---
+      duration_ms: 0.032084
+      type: 'test'
+      ...
+    # Subtest: supported count scope golden: how many expenses for our company, excluding rejected or voided records?
+    ok 35 - supported count scope golden: how many expenses for our company, excluding rejected or voided records?
+      ---
+      duration_ms: 0.023708
+      type: 'test'
+      ...
+    # Subtest: preserves detail/vendor/status intent instead of reducing it to an amount
+    ok 36 - preserves detail/vendor/status intent instead of reducing it to an amount
+      ---
+      duration_ms: 0.755167
+      type: 'test'
+      ...
+    # Subtest: does not substitute the overall expense count for unsupported distinct or subset counts
+    ok 37 - does not substitute the overall expense count for unsupported distinct or subset counts
+      ---
+      duration_ms: 0.222708
+      type: 'test'
+      ...
+    # Subtest: requires the canonical expense total even if a preview carries a different count key
+    ok 38 - requires the canonical expense total even if a preview carries a different count key
+      ---
+      duration_ms: 0.051792
+      type: 'test'
+      ...
+    # Subtest: keeps a real zero count distinct from missing data, including fallback
+    ok 39 - keeps a real zero count distinct from missing data, including fallback
+      ---
+      duration_ms: 0.057834
+      type: 'test'
+      ...
+    # Subtest: never infers a missing or invalid expense count from preview rows or zero
+    ok 40 - never infers a missing or invalid expense count from preview rows or zero
+      ---
+      duration_ms: 0.123125
+      type: 'test'
+      ...
+    # Subtest: never projects an incomplete expense aggregate into an exact amount or count
+    ok 41 - never projects an incomplete expense aggregate into an exact amount or count
+      ---
+      duration_ms: 0.116583
+      type: 'test'
+      ...
+    # Subtest: keeps multi-tool answers outside the expense-only deterministic path
+    ok 42 - keeps multi-tool answers outside the expense-only deterministic path
+      ---
+      duration_ms: 0.076083
+      type: 'test'
+      ...
+    # Subtest: falls back when the model invents a number not in the tool data
+    ok 43 - falls back when the model invents a number not in the tool data
+      ---
+      duration_ms: 0.044458
+      type: 'test'
+      ...
+    # Subtest: rejects semantic mutations of name, status, negation, and outcome
+    ok 44 - rejects semantic mutations of name, status, negation, and outcome
+      ---
+      duration_ms: 0.373209
+      type: 'test'
+      ...
+    # Subtest: does not treat a negated textual status as support for its positive inverse
+    ok 45 - does not treat a negated textual status as support for its positive inverse
+      ---
+      duration_ms: 0.154
+      type: 'test'
+      ...
+    # Subtest: accepts a supported semantic paraphrase
+    ok 46 - accepts a supported semantic paraphrase
+      ---
+      duration_ms: 0.098459
+      type: 'test'
+      ...
+    # Subtest: allows counts equal to array lengths even without an explicit total field
+    ok 47 - allows counts equal to array lengths even without an explicit total field
+      ---
+      duration_ms: 0.112084
+      type: 'test'
+      ...
+    # Subtest: falls back when the provider is unavailable
+    ok 48 - falls back when the provider is unavailable
+      ---
+      duration_ms: 0.02725
+      type: 'test'
+      ...
+    # Subtest: falls back for a runaway-long answer
+    ok 49 - falls back for a runaway-long answer
+      ---
+      duration_ms: 0.030083
+      type: 'test'
+      ...
+    # Subtest: returns the fallback without a model call when there is no tool data
+    ok 50 - returns the fallback without a model call when there is no tool data
+      ---
+      duration_ms: 0.027334
+      type: 'test'
+      ...
+    # Subtest: keeps daily-closing bucket semantics deterministic without a model rewrite
+    ok 51 - keeps daily-closing bucket semantics deterministic without a model rewrite
+      ---
+      duration_ms: 0.031916
+      type: 'test'
+      ...
+    1..51
+ok 13 - ResponseComposerAgent.composeAnswer (model-composed grounded answer)
+  ---
+  duration_ms: 7.260667
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent.composeAnswer – multi-turn context grounding
+    # Subtest: allows a follow-up answer to repeat a number from recent conversation previews
+    ok 1 - allows a follow-up answer to repeat a number from recent conversation previews
+      ---
+      duration_ms: 0.144708
+      type: 'test'
+      ...
+    # Subtest: still rejects numbers absent from tool data, question, and context
+    ok 2 - still rejects numbers absent from tool data, question, and context
+      ---
+      duration_ms: 0.036625
+      type: 'test'
+      ...
+    # Subtest: does not treat context timestamps as allowed numbers
+    ok 3 - does not treat context timestamps as allowed numbers
+      ---
+      duration_ms: 0.032084
+      type: 'test'
+      ...
+    1..3
+ok 14 - ResponseComposerAgent.composeAnswer – multi-turn context grounding
+  ---
+  duration_ms: 0.243458
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent.composeAnswer – value candidates (item 10F)
+    # Subtest: allows a number the user wrote in Thai words (หกสิบ → 60) via candidates
+    ok 1 - allows a number the user wrote in Thai words (หกสิบ → 60) via candidates
+      ---
+      duration_ms: 1.451541
+      type: 'test'
+      ...
+    # Subtest: still falls back without candidates – 60 derives from nothing in toolData/question
+    ok 2 - still falls back without candidates – 60 derives from nothing in toolData/question
+      ---
+      duration_ms: 0.105958
+      type: 'test'
+      ...
+    # Subtest: allows both Buddhist-era and CE year forms of a candidate date
+    ok 3 - allows both Buddhist-era and CE year forms of a candidate date
+      ---
+      duration_ms: 0.983125
+      type: 'test'
+      ...
+    # Subtest: an invented figure still falls back even with candidates present
+    ok 4 - an invented figure still falls back even with candidates present
+      ---
+      duration_ms: 0.089208
+      type: 'test'
+      ...
+    1..4
+ok 15 - ResponseComposerAgent.composeAnswer – value candidates (item 10F)
+  ---
+  duration_ms: 2.688833
+  type: 'suite'
+  ...
+# Subtest: ResponseComposerAgent – capability help
+    # Subtest: names only the enabled capabilities on an expenses-only company (AC-1)
+    ok 1 - names only the enabled capabilities on an expenses-only company (AC-1)
+      ---
+      duration_ms: 0.141458
+      type: 'test'
+      ...
+    # Subtest: drops the receipt sentence when expenses.upload is off, keeping expenses (AC-2)
+    ok 2 - drops the receipt sentence when expenses.upload is off, keeping expenses (AC-2)
+      ---
+      duration_ms: 0.046209
+      type: 'test'
+      ...
+    # Subtest: drops the receipt sentence for a caller without any upload permission (AC-3)
+    ok 3 - drops the receipt sentence for a caller without any upload permission (AC-3)
+      ---
+      duration_ms: 0.055875
+      type: 'test'
+      ...
+    # Subtest: is unchanged for a legacy company with no entitlement rows (AC-5)
+    ok 4 - is unchanged for a legacy company with no entitlement rows (AC-5)
+      ---
+      duration_ms: 0.119584
+      type: 'test'
+      ...
+    # Subtest: hides sales on a crm-on / sales-off company (AC-6)
+    ok 5 - hides sales on a crm-on / sales-off company (AC-6)
+      ---
+      duration_ms: 0.039417
+      type: 'test'
+      ...
+    # Subtest: falls back honestly when the caller can reach nothing (AC-7)
+    ok 6 - falls back honestly when the caller can reach nothing (AC-7)
+      ---
+      duration_ms: 0.044416
+      type: 'test'
+      ...
+    # Subtest: leaks no feature key, permission key, or tool name in either language (AC-8)
+    ok 7 - leaks no feature key, permission key, or tool name in either language (AC-8)
+      ---
+      duration_ms: 0.077375
+      type: 'test'
+      ...
+    # Subtest: suggests an example question only from a capability it just advertised (R2)
+    ok 8 - suggests an example question only from a capability it just advertised (R2)
+      ---
+      duration_ms: 0.125166
+      type: 'test'
+      ...
+    # Subtest: answers mixed Thai/English input fully in Thai, with the same groups as English (AC-12)
+    ok 9 - answers mixed Thai/English input fully in Thai, with the same groups as English (AC-12)
+      ---
+      duration_ms: 0.103459
+      type: 'test'
+      ...
+    # Subtest: keeps the pre-entitlement full text when no caller context is supplied
+    ok 10 - keeps the pre-entitlement full text when no caller context is supplied
+      ---
+      duration_ms: 0.039834
+      type: 'test'
+      ...
+    # Subtest: walks an expenses-only owner through photo → draft → summary → alerts, and nothing hidden (AC-13)
+    ok 11 - walks an expenses-only owner through photo → draft → summary → alerts, and nothing hidden (AC-13)
+      ---
+      duration_ms: 0.104041
+      type: 'test'
+      ...
+    # Subtest: drops the photo steps without an upload permission, and adds the approvals line only for an approver (AC-14)
+    ok 12 - drops the photo steps without an upload permission, and adds the approvals line only for an approver (AC-14)
+      ---
+      duration_ms: 0.117958
+      type: 'test'
+      ...
+    # Subtest: gives the R4 none reply to a zero-permission caller, mirrors Thai and English, and stays LINE-sized (AC-15)
+    ok 13 - gives the R4 none reply to a zero-permission caller, mirrors Thai and English, and stays LINE-sized (AC-15)
+      ---
+      duration_ms: 0.208834
+      type: 'test'
+      ...
+    # Subtest: scopes every short phrasing the API used to answer with the fixed card (F1)
+    ok 14 - scopes every short phrasing the API used to answer with the fixed card (F1)
+      ---
+      duration_ms: 1.556709
+      type: 'test'
+      ...
+    # Subtest: opens every rendering with a LINE_CAPABILITY_REPLY_PREFIXES entry, so the API recognises "ยังไง" after it (T6)
+    ok 15 - opens every rendering with a LINE_CAPABILITY_REPLY_PREFIXES entry, so the API recognises "ยังไง" after it (T6)
+      ---
+      duration_ms: 0.178042
+      type: 'test'
+      ...
+    1..15
+ok 16 - ResponseComposerAgent – capability help
+  ---
+  duration_ms: 3.101708
+  type: 'suite'
+  ...
+# Subtest: isTeachingRequest – deterministic teaching trigger (capability-help spec §8.1)
+    # Subtest: matches the UAT sentence and the literal phrasings, Thai and English, anywhere in the message
+    ok 1 - matches the UAT sentence and the literal phrasings, Thai and English, anywhere in the message
+      ---
+      duration_ms: 0.119208
+      type: 'test'
+      ...
+    # Subtest: leaves the ordinary capability question, business questions and small talk alone
+    ok 2 - leaves the ordinary capability question, business questions and small talk alone
+      ---
+      duration_ms: 0.040791
+      type: 'test'
+      ...
+    1..2
+ok 17 - isTeachingRequest – deterministic teaching trigger (capability-help spec §8.1)
+  ---
+  duration_ms: 0.190167
+  type: 'suite'
+  ...
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unsupported_module',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'unsupported_yet',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unsupported_module',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'unsupported_module',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unsupported_module',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'unsupported_module',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 1,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_summary',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 5,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_summary',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 5,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'mutation_blocked',
+#   toolCount: 0,
+#   durationMs: 1,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: '',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'forbidden',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM   ERROR [LineAiTurnUseCase] Object(5) {
+#   msg: 'ai.provider.failure',
+#   requestId: 'req-spec',
+#   code: 'ORCHESTRATOR_FAILED',
+#   path: 'orchestrator',
+#   error: 'Bedrock error details'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'tool_unavailable',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: 'ORCHESTRATOR_FAILED'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 20,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 1,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 1,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 1,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'mutation_blocked',
+#   toolCount: 0,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: {
+#     sourceCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+#     artifactSha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+#     serviceVersion: 'candidate-a',
+#     contractVersion: 1
+#   },
+#   expectedRuntimeIdentity: {
+#     sourceCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+#     artifactSha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+#     contractVersion: 1
+#   },
+#   runtimeBinding: {
+#     runtimeArnHash: 'cccccccccccccccc',
+#     qualifier: 'candidate-1'
+#   },
+#   stageDurationsMs: {
+#     orchestrationMs: 10,
+#     runtimeTotalMs: 12,
+#     agentcoreHttpMs: 20
+#   },
+#   modelCallCount: 1,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'tool_unavailable',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: 'INVOKE_ERROR'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM   ERROR [LineAiTurnUseCase] Object(5) {
+#   msg: 'ai.provider.failure',
+#   requestId: 'req-spec',
+#   code: 'INVOKE_ERROR',
+#   path: 'agentcore',
+#   error: 'runtime ARN 403 forbidden'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_summary',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 5,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 2,
+#   durationMs: 10,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'tool_unavailable',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: 'AGENTCORE_INVOKE_FAILED'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'tool_unavailable',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: {
+#     sourceCommit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+#     artifactSha256: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+#     contractVersion: 1
+#   },
+#   runtimeBinding: {
+#     runtimeArnHash: 'cccccccccccccccc',
+#     qualifier: 'candidate-1'
+#   },
+#   stageDurationsMs: {
+#     agentcoreHttpMs: 20000
+#   },
+#   modelCallCount: null,
+#   errorCode: 'TIMEOUT'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'unknown',
+#   agent: 'general',
+#   refused: true,
+#   refusalReason: 'tool_unavailable',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: 'PROVIDER_TIMEOUT'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_summary',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 5,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_summary',
+#   agent: 'general',
+#   refused: false,
+#   refusalReason: null,
+#   toolCount: 0,
+#   durationMs: 5,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM   ERROR [LineAiTurnUseCase] Object(5) {
+#   msg: 'ai.provider.failure',
+#   requestId: 'req-spec',
+#   code: 'AGENTCORE_INVOKE_FAILED',
+#   path: 'agentcore',
+#   error: 'socket hang up'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM   ERROR [LineAiTurnUseCase] Object(5) {
+#   msg: 'ai.provider.failure',
+#   requestId: 'req-spec',
+#   code: 'TIMEOUT',
+#   path: 'agentcore',
+#   error: 'timeout'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM   ERROR [LineAiTurnUseCase] Object(5) {
+#   msg: 'ai.provider.failure',
+#   requestId: 'req-spec',
+#   code: 'PROVIDER_TIMEOUT',
+#   path: 'orchestrator',
+#   error: 'timeout'
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: true,
+#   refusalReason: 'feature_disabled',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# [Nest] 54135  - 09/11/2026, 9:12:22 PM     LOG [LineAiTurnUseCase] Object(16) {
+#   msg: 'ai.turn.complete',
+#   requestId: 'req-spec',
+#   companyId: 'company-1',
+#   intent: 'read_detail',
+#   agent: 'inventory',
+#   refused: true,
+#   refusalReason: 'forbidden',
+#   toolCount: 0,
+#   durationMs: 0,
+#   modelLineage: [
+#     {
+#       provider: 'deterministic',
+#       modelId: 'watchdog-line-rules-v1',
+#       region: 'local',
+#       purpose: 'employee_line_assistant'
+#     }
+#   ],
+#   runtimeIdentity: null,
+#   expectedRuntimeIdentity: null,
+#   runtimeBinding: null,
+#   stageDurationsMs: null,
+#   modelCallCount: null,
+#   errorCode: null
+# }
+# Subtest: LineAiTurnUseCase – feature flag routing
+    # Subtest: feature disabled uses item 07 deterministic path (not orchestrator)
+    ok 1 - feature disabled uses item 07 deterministic path (not orchestrator)
+      ---
+      duration_ms: 2.322041
+      type: 'test'
+      ...
+    # Subtest: deterministic path splits "not on LINE yet" from "out of scope"
+        # Subtest: says it is in the system and links to the web app when intake called it business
+        ok 1 - says it is in the system and links to the web app when intake called it business
+          ---
+          duration_ms: 0.772792
+          type: 'test'
+          ...
+        # Subtest: keeps the out-of-scope copy when no trusted intake provenance says business
+        ok 2 - keeps the out-of-scope copy when no trusted intake provenance says business
+          ---
+          duration_ms: 0.493625
+          type: 'test'
+          ...
+        1..2
+    ok 2 - deterministic path splits "not on LINE yet" from "out of scope"
+      ---
+      duration_ms: 1.340042
+      type: 'suite'
+      ...
+    # Subtest: deterministic fallback preserves scalar zero as a successful answer card
+    ok 3 - deterministic fallback preserves scalar zero as a successful answer card
+      ---
+      duration_ms: 0.405458
+      type: 'test'
+      ...
+    # Subtest: feature enabled routes to local orchestrator (strands-local) and uses its reply
+    ok 4 - feature enabled routes to local orchestrator (strands-local) and uses its reply
+      ---
+      duration_ms: 0.153708
+      type: 'test'
+      ...
+    # Subtest: passes local orchestrator presentation through unchanged
+    ok 5 - passes local orchestrator presentation through unchanged
+      ---
+      duration_ms: 0.144917
+      type: 'test'
+      ...
+    # Subtest: feature enabled – UNROUTABLE plan sets refused=true
+    ok 6 - feature enabled – UNROUTABLE plan sets refused=true
+      ---
+      duration_ms: 0.891375
+      type: 'test'
+      ...
+    # Subtest: validation failure returns forbidden before reaching orchestrator
+    ok 7 - validation failure returns forbidden before reaching orchestrator
+      ---
+      duration_ms: 0.569917
+      type: 'test'
+      ...
+    # Subtest: orchestrator error produces safe error reply (no stack traces)
+    ok 8 - orchestrator error produces safe error reply (no stack traces)
+      ---
+      duration_ms: 0.339125
+      type: 'test'
+      ...
+    1..8
+ok 18 - LineAiTurnUseCase – feature flag routing
+  ---
+  duration_ms: 6.879291
+  type: 'suite'
+  ...
+# Subtest: LineAiTurnUseCase – agentcore runtime routing
+    # Subtest: routes to AgentCore adapter when LINE_AI_AGENT_RUNTIME=agentcore
+    ok 1 - routes to AgentCore adapter when LINE_AI_AGENT_RUNTIME=agentcore
+      ---
+      duration_ms: 0.296
+      type: 'test'
+      ...
+    # Subtest: forwards company feature entitlements to the AgentCore runtime
+    ok 2 - forwards company feature entitlements to the AgentCore runtime
+      ---
+      duration_ms: 0.124667
+      type: 'test'
+      ...
+    # Subtest: maps runtime tool and source lineage onto the turn response
+    ok 3 - maps runtime tool and source lineage onto the turn response
+      ---
+      duration_ms: 0.154833
+      type: 'test'
+      ...
+    # Subtest: passes AgentCore presentation through unchanged
+    ok 4 - passes AgentCore presentation through unchanged
+      ---
+      duration_ms: 0.0725
+      type: 'test'
+      ...
+    # Subtest: AgentCore UNROUTABLE result sets refused=true
+    ok 5 - AgentCore UNROUTABLE result sets refused=true
+      ---
+      duration_ms: 0.073792
+      type: 'test'
+      ...
+    # Subtest: passes hosted runtime identity, binding, stage timings, and model-call count to the API
+    ok 6 - passes hosted runtime identity, binding, stage timings, and model-call count to the API
+      ---
+      duration_ms: 0.109333
+      type: 'test'
+      ...
+    # Subtest: AgentCore invoke error produces safe reply without leaking error details
+    ok 7 - AgentCore invoke error produces safe reply without leaking error details
+      ---
+      duration_ms: 0.179458
+      type: 'test'
+      ...
+    1..7
+ok 19 - LineAiTurnUseCase – agentcore runtime routing
+  ---
+  duration_ms: 1.084916
+  type: 'suite'
+  ...
+# Subtest: LineAiTurnUseCase – per-tool records (M-02)
+    # Subtest: deterministic path builds toolCalls from the measured ToolResults
+    ok 1 - deterministic path builds toolCalls from the measured ToolResults
+      ---
+      duration_ms: 0.196833
+      type: 'test'
+      ...
+    # Subtest: deterministic path carries the per-tool errorCode and falls back to 0 when unmeasured
+    ok 2 - deterministic path carries the per-tool errorCode and falls back to 0 when unmeasured
+      ---
+      duration_ms: 0.112584
+      type: 'test'
+      ...
+    # Subtest: local orchestrator path flattens specialist toolCalls onto the response
+    ok 3 - local orchestrator path flattens specialist toolCalls onto the response
+      ---
+      duration_ms: 0.19075
+      type: 'test'
+      ...
+    # Subtest: AgentCore path passes real per-tool outcomes through, bounded to contract fields
+    ok 4 - AgentCore path passes real per-tool outcomes through, bounded to contract fields
+      ---
+      duration_ms: 0.129958
+      type: 'test'
+      ...
+    # Subtest: AgentCore version skew cannot poison the per-tool rows the API persists
+    ok 5 - AgentCore version skew cannot poison the per-tool rows the API persists
+      ---
+      duration_ms: 0.11075
+      type: 'test'
+      ...
+    1..5
+ok 20 - LineAiTurnUseCase – per-tool records (M-02)
+  ---
+  duration_ms: 0.805625
+  type: 'suite'
+  ...
+# Subtest: LineAiTurnUseCase – provider failure trace (M-02)
+    # Subtest: AgentCore failure sets the provider error code on the refused response and emits ai.provider.failure
+    ok 1 - AgentCore failure sets the provider error code on the refused response and emits ai.provider.failure
+      ---
+      duration_ms: 0.190667
+      type: 'test'
+      ...
+    # Subtest: AgentCore failure without a typed code falls back to AGENTCORE_INVOKE_FAILED
+    ok 2 - AgentCore failure without a typed code falls back to AGENTCORE_INVOKE_FAILED
+      ---
+      duration_ms: 0.11625
+      type: 'test'
+      ...
+    # Subtest: AgentCore timeout retains the signed expected identity without claiming an actual artifact
+    ok 3 - AgentCore timeout retains the signed expected identity without claiming an actual artifact
+      ---
+      duration_ms: 0.11075
+      type: 'test'
+      ...
+    # Subtest: orchestrator failure sets ORCHESTRATOR_FAILED and emits ai.provider.failure with path=orchestrator
+    ok 4 - orchestrator failure sets ORCHESTRATOR_FAILED and emits ai.provider.failure with path=orchestrator
+      ---
+      duration_ms: 0.066583
+      type: 'test'
+      ...
+    # Subtest: orchestrator ProviderError code is preserved on the refused response
+    ok 5 - orchestrator ProviderError code is preserved on the refused response
+      ---
+      duration_ms: 0.0795
+      type: 'test'
+      ...
+    1..5
+ok 21 - LineAiTurnUseCase – provider failure trace (M-02)
+  ---
+  duration_ms: 0.608542
+  type: 'suite'
+  ...
+# Subtest: LineAiTurnUseCase – coverage passthrough (item 10F)
+    # Subtest: maps orchestrator coverage verdicts onto the turn response
+    ok 1 - maps orchestrator coverage verdicts onto the turn response
+      ---
+      duration_ms: 0.099166
+      type: 'test'
+      ...
+    # Subtest: omits coverage when the orchestrator has none (10B paths unchanged)
+    ok 2 - omits coverage when the orchestrator has none (10B paths unchanged)
+      ---
+      duration_ms: 0.0525
+      type: 'test'
+      ...
+    1..2
+ok 22 - LineAiTurnUseCase – coverage passthrough (item 10F)
+  ---
+  duration_ms: 0.177791
+  type: 'suite'
+  ...
+# Subtest: LineAiTurnUseCase – company feature switched off
+    # Subtest: names the feature switch instead of reporting no data or a missing permission
+    ok 1 - names the feature switch instead of reporting no data or a missing permission
+      ---
+      duration_ms: 0.228458
+      type: 'test'
+      ...
+    # Subtest: still reports a genuine permission denial as a permission denial
+    ok 2 - still reports a genuine permission denial as a permission denial
+      ---
+      duration_ms: 0.075542
+      type: 'test'
+      ...
+    1..2
+ok 23 - LineAiTurnUseCase – company feature switched off
+  ---
+  duration_ms: 0.329666
+  type: 'suite'
+  ...
+1..23
+# tests 294
+# suites 25
+# pass 294
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1385.807667

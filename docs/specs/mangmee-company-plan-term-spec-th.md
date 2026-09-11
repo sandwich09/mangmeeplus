@@ -1,5 +1,15 @@
 # Company Plan Limits & Term (Admin-managed) — Spec P29
 
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](../plans/mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+
+> **LINE/web payment UI extension 2026-09-11 — DESIGN ONLY:** /companies/{companyId}/renew จะพา OWNER เข้า [billing overview/Checkout/Portal](mangmee-line-web-billing-ui-spec-th.md) เมื่อผ่าน gate; employee คงข้อความกลาง. LINE-only expired OWNER ต้องเข้าผ่าน LIFF/handoff recovery ที่ออกแบบเพิ่ม ไม่ใช่ handler ปัจจุบันที่เลือก ACTIVE บริษัทแรก. [แผน UI](../plans/mangmee-line-web-billing-ui-plan-th.md) แยกผล manual-renew ที่ผ่านแล้วจาก Stripe paid/device tests ที่ยัง NOT RUN.
+
+> **Current-policy amendment 2026-09-08:** trial ของ self-signup ใช้ `FREE_TRIAL` → `FREE_TRIAL_15` (1 สาขา/2 คน/15 ใบต่อเดือนตั้งแต่วันแรก, default 30 วันจาก provision) ตามมติ 2026-09-05/07 ใน [External Signup §3A](mangmee-external-signup-contract-spec-th.md) และ [onboarding/trial fixes](onboarding-trial-receipt-fixes-spec.md). ข้อความ PRO trial/100 ใบด้านล่างเป็นประวัติ 2026-08-30 ที่ถูกแทนที่แล้ว; admin STARTER/manual override ไม่เปลี่ยน.
+
+> **Stripe integration boundary (spec-only):** [P26 F-BILL-3](mangmee-billing-subscription-spec-th.md#billing-stripe) จะต่อ paid term จาก service period ที่ Stripe ยืนยันผ่าน application logic เดิม ไม่เรียก manual renew `max(now, termEndsAt) + N×24h` ทุก webhook. Manual/trial term และ Bangkok quota month คงกติกาเดิม; payment replay ไม่ reset usage. ห้าม re-enable admin-disabled/SUSPENDED/ARCHIVED. Paid grace/access/cancellation ยังรอมติ P26 §10; P29 expiry/sweep ต้องใช้ policy เดียวกับ billing ก่อน LIVE และ OWNER ต้องเข้าเส้นแก้บัตร/ต่ออายุได้โดยไม่เปิด business routes. การแก้ spec นี้ไม่เปลี่ยนพฤติกรรมหมดอายุที่ใช้อยู่.
+
+> **Repair acceptance 2026-09-11 — IMPLEMENTED / LOCAL PASS:** R01/R02/R03/R05/R06 แก้แล้ว และ R07 ผ่าน fault-injection/durable-delivery proof. [ผลหลังแก้](../evidence/stripe-repair-2026-09-11/README.md) มี browser 20/20, real PG 15/15, focused 198/198 และ source hashes; §9 เป็น implemented contract ของ manual flow. Stripe collection/paid-period adapter ยังไม่ implement และไม่มี deploy. ผล red run เก็บไว้ใน report เดิม.
+
 สถานะ: **IMPLEMENTATION IN PROGRESS 2026-08-30** (Owner ตอบ §8 ครบและสั่งลุยพร้อมรอบ auto-register; ห้าม deploy UAT จนกว่า SES ops จะเสร็จ); แผนส่งมอบอยู่ [แผน P29](../plans/mangmee-company-plan-term-plan-th.md)
 
 ที่มา: คำสั่ง Owner 2026-08-30 ในแชต: หน้า company system ของ admin ต้อง config ได้ว่าแต่ละบริษัท "สร้างได้กี่สาขา พนักงานกี่คน อ่านสลิปได้กี่ใบ" default ตาม tier STARTER, มีระยะเวลาใช้งาน default 30 วัน (config ได้), แจ้งเตือนก่อนครบกำหนด**สีเหลือง** ครบกำหนด**สีแดง**, มีระบบต่ออายุ (renew) — ไม่ต่อ = **disable บริษัทตามเวลาวัน-ชั่วโมงจริง**ที่ครบกำหนด. ฟีเจอร์นี้คือ "subscription แบบแอดมินจัดการมือ" — ตัวคั่นก่อน P26 (payment/enforcement เต็มรูป) และเป็นกลไก trial ของ auto-register P10 (`PRO_TRIAL` 30 วัน)
@@ -63,7 +73,7 @@
 - ปุ่ม "ต่ออายุ" บน PartnerDetailPage: ระบุจำนวนวัน (default 30) → `termEndsAt ใหม่ = max(now, termEndsAt เดิม) + N×24 ชม.` (ยังไม่หมด = ต่อจากวันหมดเดิม; หมดไปแล้ว = นับจากตอนกด) → `renewCount+1`, `lastRenewedAt=now`, audit CRITICAL
 - ถ้าบริษัทถูก disable เพราะ term (`termDisabledAt` มีค่า และ status = DISABLED): renew → กลับ ACTIVE อัตโนมัติ + ล้าง `termDisabledAt` + แจ้ง OWNER "ต่ออายุแล้ว ใช้งานได้ตามเดิม"
 - ถ้า DISABLED โดยแอดมิน (ไม่มี `termDisabledAt`): renew แก้แค่วันที่ **ไม่** re-enable — ต้องกด activate แยกทาง lifecycle เดิม
-- Idempotent ด้วย requestId ตามแบบ use-case แอดมินเดิม
+- Idempotent ด้วย company/action/requestId + normalized payload ภายใต้ concurrency ตาม §9; audit read ก่อน transaction ไม่เพียงพอ
 
 ### 4D. ลิมิตสาขา / พนักงาน / สลิป
 
@@ -98,3 +108,17 @@ Payment/ชำระเงินทุกชนิด (P26), ตัดโคว�
 2. ~~ใครเห็นแบนเนอร์~~ → OWNER เท่านั้น จนกว่าจะสั่งเปลี่ยน
 3. ~~LINE ตอนหมดอายุ~~ → ตอบสุภาพ+ชวนติดต่อ ยืนยัน (แจ้งเฉพาะ OWNER เหมือนเดิม)
 4. ~~ลูกค้าเดิม~~ → ไม่มีเส้นตายจนกว่าแอดมินตั้งเอง ยืนยัน + ต้องมีช่อง config ให้เติม term ย้อนหลังจากหน้า Partner (§5)
+
+<a id="plan-term-repair"></a>
+## 9. Recovery/concurrency amendment — 2026-09-11
+
+ข้อกำหนดต่อไปนี้ขยายคำว่า idempotent/renew แล้วใช้ได้/แจ้งเตือนครั้งเดียวใน §4–6; ไม่เปลี่ยนสูตรจำนวนวัน manual renew หรือเลือก policy paid ของ P26.
+
+- **R01/R05:** อ่าน term/status/dedupe และคำนวณวันใน transaction/fence เดียวกับ update. Same requestId + days เดิมต่ออายุครั้งเดียวรวม activation/audit; days ต่างต้อง conflict. ต่าง requestId ที่ตั้งใจต่อสองครั้งต้องบวกวันครบ. ถ้า term/lifecycle แยก commit ต้องมี durable continuation; ห้าม completion ข้าม activation ที่ค้าง. ข้อผิดพลาดก่อน commit ต้อง rollback; response หายหลัง commit ต้อง replay โดยไม่บวกวันใหม่.
+- **R03:** sweep ใช้ batch เป็น candidate แล้ว revalidate deadline/current status ภายใน boundary ที่ป้องกัน concurrent renew/set/lifecycle ได้จริง. Deadline เปลี่ยนแล้วต้องข้าม stale disable และ stale notice. Admin disable บนบริษัทที่ term-disabled อยู่แล้วต้องเก็บเหตุ admin hold ที่ renewal ล้างไม่ได้; status DISABLED + marker เก่าลำพังไม่พอพิสูจน์ว่าเปิดคืนได้.
+- **R02/R06:** authenticated recovery notice ของบริษัทที่เลือกต้องยังเข้าถึงได้เมื่อหมด term/term-disabled ตาม [P26 §14](mangmee-billing-subscription-spec-th.md#billing-recovery-contract); OWNER เห็นรายละเอียด, employee เห็นข้อความกลาง, business routes ยังคงปิด. ไม่เพิ่ม public route/ข้าม security hold; null ไม่มี term ต้องแยกจาก auth/network error และห้าม fallback บริษัทอื่น.
+- **R07:** durable notification intent ต้องอยู่ครบก่อนถือว่า claim สำเร็จ; worker retry แยกจาก term/lifecycle. คำว่า exactly-once ใน §6 หมายถึง dedupe business event ต่อ company/term/point ไม่ใช่รับประกันว่า LINE/email จะถูกส่งทางเครือข่ายครั้งเดียว. ต้องกู้ได้ทั้งก่อน event persistence และหลัง event ก่อน recipient/delivery, ตรวจ flag/claim กับ current period ไม่ส่ง warning ของรอบที่ต่ออายุไปแล้ว.
+- ห้ามใช้ batch activate/ล้าง marker เพื่อซ่อม R01 โดยไม่ตรวจประวัติ hold. เริ่มจาก read-only report แล้วซ่อมเฉพาะ operation ที่มีหลักฐานแน่นอน; กรณีแยก admin hold ไม่ได้ให้เป็นงานตรวจ ไม่เดา.
+- Gates บังคับ: existing browser 8/8 + real PG 4/4 และ RG01–RG05 ในแผน P26 ต้องผ่าน โดยคง regression ของ no-term grandfathered company, quota/data/role/tenant isolation. ผลหลังแก้คือ browser 20/20 และ PG 15/15 รวม RG01–RG05; R07 fault injection ผ่านแล้ว. Paid invoice application ใช้ service period ใน P26 ไม่เรียก manual days renewal ทุก event.
+
+Implementation evidence §9: Company lock ร่วมใน set/renew/lifecycle/sweep, atomic term/lifecycle/audit, transaction-bound NotificationEvent/Recipient/Delivery และ worker เดิม, selected-company recovery รวม password login/legal acceptance. มี [read-only legacy report](../evidence/stripe-repair-2026-09-11/inspect-legacy-recovery.sql) สำหรับ audit/term/status mismatch; report ไม่อนุมัติให้ activate ใครเอง. Production-source API/web typecheck ผ่าน; full API typecheck ยังติด 2 Buffer errors ใน expense test ที่ไม่ได้แก้ในงานนี้.

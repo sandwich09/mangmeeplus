@@ -1,0 +1,10 @@
+{
+  "documents": 14,
+  "local_links": 156,
+  "controls": 8,
+  "target_acceptance_rows": 32,
+  "impact_rows": 19,
+  "errors": [],
+  "status": "PASS",
+  "scope": "Local links/file presence and ID coverage; not runtime acceptance or web-link verification."
+}

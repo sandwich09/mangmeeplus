@@ -56,7 +56,7 @@
 
 | ID | มุม | ตะขอ | ทำอะไรรอบนี้ | เสียบอะไรวันหน้า |
 |---|---|---|---|---|
-| H-01 | BA/ROI | **จ่ายเงิน** | `PackageChangeRequest` มีคอลัมน์ nullable: `amountSatang`, `offerSnapshotJson`, `paymentState (NONE\|PENDING\|VERIFIED\|FAILED)`, `paymentRef`, `slipAttachmentId`, `verifiedAt`; การเปลี่ยน tier ผ่าน `PUT /system/partners/:id/plan-term` เดิมเท่านั้น (จุดเดียว) | P26/EasySlip ตั้ง `paymentState=VERIFIED` → auto-approve; การ์ดราคาแสดงจาก `PLAN_TIER_PRESETS` เดิม |
+| H-01 | BA/ROI | **จ่ายเงิน** | ตะขอ `PackageChangeRequest` เดิมเป็น historical design; ห้ามเพิ่ม slip fields เพื่อ Stripe. Reuse plan-term/entitlement application logic และแยก request intent จากหลักฐาน paid | **แก้ 2026-09-08:** [P26 Stripe](../specs/mangmee-billing-subscription-spec-th.md#billing-stripe) ตรวจ signed event + subscription invoice + company/offer mapping ก่อน apply paid package ครั้งเดียว; ไม่ข้าม approval/security hold; ยัง planned/disabled |
 | H-02 | UX/SUP | **อีเมล** | `AuthMailerPort` เพิ่ม `sendLineSignupWelcome` + `sendPackageChangeNotice` (no-op ใน disabled/local-console/SES-sandbox); อีเมลของผู้ใช้เก็บผ่าน L-E ด้วย `EmailVerificationToken` เดิม | Resend/SES production adapter implement 2 เมธอด → เมลต้อนรับ/ใบเสร็จออกอัตโนมัติ |
 | H-03 | SUP | **ตอบมือจากแอป LINE** | ข้อความจากแอดมินผ่านกล่องในหน้า partner (push) | Owner เปิด Chat ใน OA เมื่อไหร่ก็ตอบจากแอปได้ ไม่ต้องแก้โค้ด |
 | H-04 | BA | **ทดลองฟรีทางเว็บ** | tier `FREE_TRIAL_15` อยู่ใน contracts แล้ว; เว็บ Flow B ยังใช้ PRO_999 (หลังแก้ B-01) | ถ้าอยากให้เว็บได้ทดลองแบบเดียวกัน เปลี่ยน 1 บรรทัดใน provision-signup |
