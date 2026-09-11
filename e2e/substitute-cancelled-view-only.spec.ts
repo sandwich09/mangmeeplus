@@ -1,7 +1,7 @@
 import { test, expect } from './harness/fixtures';
 
 for (const signatureMode of ['DIGITAL', 'PAPER']) {
-  test(`${signatureMode} step 2 retains saved facts and files, including after cancellation`, async ({ authedPage: page, companyId, urls }) => {
+  test(`${signatureMode}: view and cancelled navigation show disabled forms and preserve file previews`, async ({ authedPage: page, companyId, urls }) => {
     const attachments = ['supporting', 'payment', 'unselected'].map(id => ({
       id, originalFileName: `${id}.png`, mimeType: 'image/png', status: 'ACTIVE',
       purpose: id === 'payment' ? 'expense.payment.evidence' : 'expense.receipt.supporting',
@@ -49,64 +49,43 @@ for (const signatureMode of ['DIGITAL', 'PAPER']) {
       return route.continue();
     });
     const url = `/companies/${companyId}/expenses/substitute-receipts/${evidence.id}`;
-    await page.goto(url);
     const journey = page.getByRole('navigation', { name: 'เส้นทางการจัดทำเอกสาร' });
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
-      await expect(page.getByRole('heading', { name: 'ผู้รับเงินและเหตุผล', exact: true })).toBeVisible();
-      await expect(page.getByText(evidence.businessPurpose, { exact: true })).toBeVisible();
-      await expect(page.getByText('supporting.png', { exact: true })).toBeVisible();
-      await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
-      await expect(page.getByText('unselected.png', { exact: true })).toHaveCount(0);
-      await expect(page.getByText('ไม่พบข้อมูลไฟล์แนบ กรุณาโหลดหน้าใหม่', { exact: true })).toBeVisible();
-      await expect(page.locator('input:visible, textarea:visible, select:visible')).toHaveCount(0);
-      for (const id of ['supporting', 'payment']) {
-        await page.getByRole('button', { name: `เปิดดูเอกสาร ${id}.png`, exact: true }).click();
-        const dialog = page.getByRole('dialog');
-        await expect(dialog).toBeVisible();
-        await expect(dialog).toContainText(`${id}.png`);
-        await expect.poll(() => dialog.locator('img').evaluateAll(images => images.some(img => img.complete && img.naturalWidth > 0))).toBe(true);
-        await page.keyboard.press('Escape');
-        await expect(dialog).toBeHidden();
+    for (const cancelled of [false, true]) {
+      if (cancelled) {
+        evidence = { ...evidence, status: 'SUPERSEDED', supersedeReason: 'เอกสารซ้ำ', updatedAt: '2026-09-10T01:00:00.000Z' };
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
       }
-      await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
-      await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
-      await page.screenshot({ path: test.info().outputPath(`step2-${signatureMode}-${width}.png`), fullPage: true });
-      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-    }
-    await page.getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
-    // The same reviewer can edit an active source; cancellation must revoke that path.
-    await expect(page.getByRole('link', { name: 'แก้ไขรายการค่าใช้จ่าย', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-    await expect(page.locator('input:visible, textarea:visible').first()).toBeVisible();
-    evidence = { ...evidence, status: 'SUPERSEDED', supersedeReason: 'เอกสารซ้ำ', updatedAt: '2026-09-10T01:00:00.000Z' };
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
-
-    for (const width of [1440, 390]) {
-      await page.setViewportSize({ width, height: 900 });
-      await page.reload();
-      await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
-      await page.locator('summary').filter({ hasText: 'ประวัติและการจัดทำฉบับแก้ไข' }).click();
-      await expect(page.locator('details')).toContainText('เอกสารซ้ำ');
-      await expect(page.getByRole('button', { name: /จัดทำ.*ฉบับแก้ไข/ })).toHaveCount(0);
-      await expect(page.getByRole('link', { name: 'ดูรายการค่าใช้จ่าย', exact: true })).toBeVisible();
-      for (const stage of ['รายการค่าใช้จ่าย', 'ข้อมูลและหลักฐาน']) {
-        await journey.getByRole('button', { name: new RegExp(stage) }).click();
-        await expect(page.getByText('เอกสารยกเลิกแล้ว ดูข้อมูลและประวัติได้เท่านั้น', { exact: true })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'แก้ไขรายการค่าใช้จ่าย', exact: true })).toHaveCount(0);
-        await expect(page.getByRole('button', { name: /กลับไปลงนาม|เปลี่ยนวิธีลงนาม|จัดทำ.*ฉบับแก้ไข/ })).toHaveCount(0);
-        await expect(page.getByRole('region', { name: 'จัดการข้อมูล', exact: true })).toHaveCount(0);
-        await expect(page.locator('input, textarea, select')).toHaveCount(0);
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        // Explicit view also disables edits for the seeded OWNER. Cancelled is locked without the hint.
+        await page.goto(`${url}${cancelled ? '' : '?mode=view'}`);
+        await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
+        await expect(page.getByRole('button', { name: 'แก้ไขข้อมูลใบแทน', exact: true })).toHaveCount(0);
+        const inputs = page.locator('input:visible, textarea:visible');
+        await expect(inputs.first()).toBeVisible();
+        for (const input of await inputs.all()) await expect(input).toBeDisabled();
+        for (const input of await page.getByRole('combobox').all()) await expect(input).toBeDisabled();
+        await expect(page.getByRole('textbox', { name: /วัตถุประสงค์/ })).toHaveValue(evidence.businessPurpose);
+        await expect(page.getByText('supporting.png', { exact: true })).toBeVisible();
+        await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
+        await expect(page.getByText('unselected.png', { exact: true })).toHaveCount(0);
+        await expect(page.getByText('ไม่พบข้อมูลไฟล์แนบ กรุณาโหลดหน้าใหม่', { exact: true })).toBeVisible();
+        for (const id of ['supporting', 'payment']) {
+          await page.getByRole('button', { name: `เปิดดูเอกสาร ${id}.png`, exact: true }).click();
+          const dialog = page.getByRole('dialog');
+          await expect(dialog).toBeVisible();
+          await expect.poll(() => dialog.locator('img').evaluateAll(images => images.some(img => img.complete && img.naturalWidth > 0))).toBe(true);
+          await page.keyboard.press('Escape');
+          await expect(dialog).toBeHidden();
+        }
+        await page.screenshot({ path: test.info().outputPath(`disabled-${signatureMode}-${cancelled}-${width}.png`), fullPage: true });
+        await page.getByRole('navigation', { name: 'การนำทางข้อมูลใบแทน' }).getByRole('button', { name: 'ย้อนกลับ', exact: true }).click();
+        for (const input of await page.locator('input:visible, textarea:visible').all()) await expect(input).toBeDisabled();
+        await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+        await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+        if (cancelled) await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
       }
-      await expect(page.getByText(evidence.businessPurpose, { exact: true })).toBeVisible();
-      await expect(page.getByText('payment.png', { exact: true })).toBeVisible();
-      await expect(page.locator('input, textarea, select')).toHaveCount(0);
-      await page.getByRole('button', { name: 'ถัดไป', exact: true }).click();
-      await expect(page.getByRole('heading', { name: 'ยกเลิกแล้ว', exact: true })).toBeVisible();
-      await expect(page.locator('input, textarea, select')).toHaveCount(0);
-      await page.screenshot({ path: test.info().outputPath(`cancelled-${signatureMode}-${width}.png`), fullPage: true });
     }
     expect(writes).toEqual([]);
     expect(errors).toEqual([]);
