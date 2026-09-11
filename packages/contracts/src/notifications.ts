@@ -37,6 +37,7 @@ export type NotificationSourceRef = {
 };
 
 export type NotificationSummaryDto = {
+  status?: NotificationEventStatus;
   id: string;
   companyId: string;
   triggerKey: NotificationTriggerKey | string;

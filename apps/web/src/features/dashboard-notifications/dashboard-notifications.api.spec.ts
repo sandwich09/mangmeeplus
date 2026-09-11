@@ -113,3 +113,9 @@ describe('dashboard-notifications.api normalizers', () => {
     assert.deepEqual(rule.channels, ['web', 'line']);
   });
 });
+
+it('preserves the source-resolved status independently of unread history', () => {
+  const item = normalizeNotification({ id: 'completed', companyId: 'c1', triggerKey: 'workflow.reimbursement_ready_for_payment', severity: 'action', status: 'resolved', title: 'old work', body: '', createdAt: '', readAt: undefined });
+  assert.equal(item.status, 'resolved');
+  assert.equal(item.read, false);
+});

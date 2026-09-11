@@ -121,9 +121,8 @@ export type CreateCompanyOnboardingCommand = {
    */
   allowDuplicateCompanyName?: boolean;
   /**
-   * 'starter' seeds the same feature set as the admin console's "เริ่มต้น" preset button
-   * (FEATURE_PACKAGE_PRESETS.starter) instead of DEFAULT_ENABLED_FEATURE_KEYS. Any other value is
-   * recorded on the run but keeps the standard seeding, so existing console callers are unchanged.
+   * Omitted or 'starter' seeds the 7-menu starter preset, independently of the purchased tier.
+   * Explicit other package requests retain their existing seeding; existing companies are untouched.
    */
   modulePackage?: string;
   /**
@@ -570,7 +569,7 @@ export class CreateCompanyOnboardingUseCase {
       // modulePackage 'starter' mirrors the admin console's "เริ่มต้น" preset button exactly:
       // enabled iff the key is in the preset (the preset lists submenus explicitly, so membership
       // is the whole decision — same rows applyPreset would submit).
-      const starterKeys = cmd.modulePackage === 'starter'
+      const starterKeys = (cmd.modulePackage ?? 'starter') === 'starter'
         ? new Set<string>(FEATURE_PACKAGE_PRESETS.starter.featureKeys)
         : null;
       const entitlementRows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
@@ -620,7 +619,7 @@ export class CreateCompanyOnboardingUseCase {
           companyId: company.id,
           ownerUserId: owner.id,
           status: 'COMPLETED',
-          modulePackage: cmd.modulePackage,
+          modulePackage: cmd.modulePackage ?? 'starter',
           handoffUrl,
           lineAddUrl: cmd.lineOaAddUrl,
           lineLinkUrl: cmd.lineLinkUrl,
@@ -641,7 +640,7 @@ export class CreateCompanyOnboardingUseCase {
           metadataJson: {
             companyId: company.id,
             ownerUserId: owner.id,
-            modulePackage: cmd.modulePackage ?? null,
+            modulePackage: cmd.modulePackage ?? 'starter',
             attachExistingOwner: attach,
             businessCategory: cmd.businessCategory,
             chartTemplateKey: chartOfAccounts.templateKey,

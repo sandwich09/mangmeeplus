@@ -19,8 +19,11 @@ function toIso(value: Date | string | null | undefined): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function toAttachmentRef(a: { id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date | string }): ExpenseAttachmentRef {
+function toAttachmentRef(a: { id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date | string; sourceExpenseId?: string; isHistorical?: boolean; substituteReceiptStatus?: string }): ExpenseAttachmentRef {
   return {
+    ...(a.sourceExpenseId && { sourceExpenseId: a.sourceExpenseId }),
+    ...(a.isHistorical !== undefined && { isHistorical: a.isHistorical }),
+    ...(a.substituteReceiptStatus && { substituteReceiptStatus: a.substituteReceiptStatus }),
     id: a.id,
     purpose: a.purpose as ExpenseAttachmentRef['purpose'],
     originalFileName: a.originalFileName,
@@ -60,6 +63,7 @@ export class GetSharedEvidenceViewUseCase {
         expenseNumber: r.expenseNumber,
         status: r.status,
         sourceReimbursementRequestId: r.sourceReimbursementRequestId ?? null,
+        sourceEvidenceUnavailable: r.evidenceSources?.sourceEvidenceUnavailable,
         missingReceiptReason: r.missingReceiptReason ?? null,
         sourceDocumentType: r.sourceDocumentType,
         taxEvidenceStatus: r.taxEvidenceStatus,
@@ -127,32 +131,16 @@ export class CreateAccountantPackageUseCase {
       where: { companyId: ctx.companyId, id: { in: branchIds } }, select: { id: true, code: true },
     }) : [];
     const branchCodes = new Map(branches.map((branch) => [branch.id, branch.code]));
-    const issuedSubstitutes = page.rows.length
-      ? await this.prisma.client.expenseSubstituteReceiptEvidence.findMany({
-        where: { companyId: ctx.companyId, expenseId: { in: page.rows.map(row => row.id) }, issuedAt: { not: null } },
-        orderBy: { version: 'asc' },
-        select: { id: true, expenseId: true, version: true, status: true, fundingSource: true, payerName: true, snapshotJson: true,
-          snapshotChecksumSha256: true, correctionOfEvidenceId: true, correctionReason: true, artifactAttachmentId: true, wetSignedScanAttachmentId: true },
-      }) : [];
-    const certificatesFor = (id: string) => issuedSubstitutes.filter(row => row.expenseId === id);
-    const currentCertificate = (id: string) => certificatesFor(id).reverse().find(row => row.status === 'ISSUED');
+    const certificatesFor = (id: string) => page.rows.find(row => row.id === id)?.evidenceSources?.certificates ?? [];
+    const currentCertificate = (id: string) => certificatesFor(id).slice().reverse().find(row => row.status === 'ISSUED');
     const substituteArtifactByExpense = new Map(page.rows.flatMap(row => {
       const cert = currentCertificate(row.id);
       return cert?.artifactAttachmentId ? [[row.id, cert.artifactAttachmentId] as const] : [];
     }));
-    const certificateAttachmentIds = [...new Set(issuedSubstitutes.flatMap(row => [row.artifactAttachmentId, row.wetSignedScanAttachmentId]).filter((id): id is string => !!id))];
-    const certificateAttachments = certificateAttachmentIds.length ? await this.prisma.client.attachmentObject.findMany({ where: { companyId: ctx.companyId, id: { in: certificateAttachmentIds } } }) : [];
-    const attachmentsFor = (row: typeof page.rows[number]) => [...new Map([...row.attachments, ...certificateAttachments
-      .filter(file => certificatesFor(row.id).some(cert => cert.artifactAttachmentId === file.id || cert.wetSignedScanAttachmentId === file.id))
-      .map(file => ({ ...file, purpose: 'expense.review.evidence' }))].map(file => [file.id, file])).values()];
-    // R11: the hand-signed scan belongs to the certificate, not to the expense's supporting evidence.
-    const wetSignedScansByExpense = new Map<string, string[]>();
-    for (const row of issuedSubstitutes) {
-      if (!row.wetSignedScanAttachmentId) continue;
-      wetSignedScansByExpense.set(row.expenseId, [
-        ...(wetSignedScansByExpense.get(row.expenseId) ?? []), row.wetSignedScanAttachmentId,
-      ]);
-    }
+    const attachmentsFor = (row: typeof page.rows[number]) => row.attachments;
+    const wetSignedScansByExpense = new Map(page.rows.map(row => [row.id, certificatesFor(row.id)
+      .filter(cert => cert.status !== 'SUPERSEDED' && cert.wetSignedScanAttachmentId)
+      .map(cert => cert.wetSignedScanAttachmentId!)]));
 
     const indexRows = page.rows.map((r) => buildAccountantIndexRow({
       aiVerificationSummaryJson: r.aiVerificationSummaryJson as Record<string, unknown> | null,
@@ -171,13 +159,13 @@ export class CreateAccountantPackageUseCase {
       journalEntryNumber: r.journalEntryNumber,
       uploadedAt: toIso(r.uploadedAt),
       expenseDate: toIso(r.expenseDate).slice(0, 10),
-      requesterName: null,
+      requesterName: r.evidenceSources?.requesterName ?? null,
       uploaderName: userName.get(r.createdByUserId) ?? null,
       reviewerName: r.reviewedByUserId ? userName.get(r.reviewedByUserId) ?? null : null,
-      vendorNameSnapshot: (currentCertificate(r.id)?.snapshotJson as any)?.payee?.name ?? r.vendorNameSnapshot,
-      vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,
-      vendorBranchCodeSnapshot: r.vendorBranchCodeSnapshot,
-      vendorDocumentNumber: r.vendorDocumentNumber,
+      vendorNameSnapshot: r.evidenceSources?.sourceSnapshot?.seller?.name ?? (currentCertificate(r.id)?.snapshotJson as any)?.payee?.name ?? r.vendorNameSnapshot,
+      vendorTaxIdSnapshot: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.taxId ?? null : r.vendorTaxIdSnapshot,
+      vendorBranchCodeSnapshot: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.branchCode ?? null : r.vendorBranchCodeSnapshot,
+      vendorDocumentNumber: r.evidenceSources?.sourceSnapshot ? r.evidenceSources.sourceSnapshot.seller?.documentNumber ?? null : r.vendorDocumentNumber,
       categoryName: r.categoryName,
       accountHintKey: r.accountHintKey,
       description: r.note,
@@ -207,7 +195,7 @@ export class CreateAccountantPackageUseCase {
         webUrl: `/companies/${ctx.companyId}/expenses/${cert.expenseId}`,
       }))) : null,
       primaryAttachmentId: r.primaryAttachmentId,
-      attachments: attachmentsFor(r).map(toAttachmentRef),
+      attachments: attachmentsFor(r).filter(file => !file.isHistorical).map(toAttachmentRef),
       wetSignedScanAttachmentIds: wetSignedScansByExpense.get(r.id) ?? [],
       webUrl: `/companies/${ctx.companyId}/expenses/${r.id}`,
       notes: r.internalMemo,
@@ -215,7 +203,10 @@ export class CreateAccountantPackageUseCase {
 
     // Per-file signed links re-check the caller's attachment permission and expire.
     const evidenceManifest: EvidenceManifestEntry[] = [];
-    const skippedEvidence: SkippedEvidenceEntry[] = [];
+    const skippedEvidence: SkippedEvidenceEntry[] = page.rows.filter(row => row.evidenceSources?.sourceEvidenceUnavailable).map(row => ({
+      expense_id: row.id, expense_number: row.expenseNumber ?? '', attachment_id: '', file_name: '',
+      reason: 'หลักฐานต้นทางบางส่วนไม่พร้อมใช้งาน หรือไม่ผ่านการตรวจสอบสิทธิ์และฉบับที่บันทึกไว้',
+    }));
     for (const r of page.rows) {
       for (const attachment of attachmentsFor(r)) {
         if (attachment.status !== 'ACTIVE' && attachment.status !== 'active') continue;

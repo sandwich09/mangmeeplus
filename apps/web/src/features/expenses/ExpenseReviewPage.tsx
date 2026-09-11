@@ -1,5 +1,6 @@
 'use client';
 
+import { expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
 import { expenseEvidenceAssessment } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -571,14 +572,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     );
   }
 
-  const isMutable = ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
+  const claimedSource = Boolean(detail.reimbursementProgress?.requestId && detail.reimbursementProgress.status !== 'DRAFT');
+  const isMutable = !claimedSource && ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status);
   // Backend: PATCH/mark-ready require expense.review OR (expense.update AND owner) — ownership alone is not enough.
   const isOwnRecord = detail.createdByUserId === userId;
   const canMutateDraft = isMutable && (canReview || (caps.canUpdate && isOwnRecord));
   // Extraction: expense.ocr.request OR expense.review OR (expense.receipt.upload on own record).
-  const canExtract = caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord);
+  const canExtract = !claimedSource && (caps.canRequestOcr || (caps.canUploadReceipts && isOwnRecord));
   const isConfirmed = detail.status === 'CONFIRMED';
-  const canCancelFinancialExpense = canVoidExpenseFinancialState(detail);
+  const canCancelFinancialExpense = !claimedSource && canVoidExpenseFinancialState(detail);
   const canGenerateJournal = isConfirmed && caps.canPostLedger && detail.pendingPostingSourceType !== null;
   const canViewJournal = isConfirmed && caps.canReadLedger && detail.journalEntryId !== null;
   const canCheckDuplicates = canReview && canRunExpenseDuplicateCheck(detail.status);
@@ -694,7 +696,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     { key: 'expenses.nav_documents', ref: documentsRef },
     { key: 'expenses.nav_payment', ref: paymentRef },
   ];
-  const approverOnlyActions = !canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && (canConfirm || caps.canReject);
+  const approverOnlyActions = !claimedSource && !canMutateDraft && detail.status === 'READY_FOR_CONFIRMATION' && (canConfirm || caps.canReject);
   const canRestartReview = detail.status === 'REJECTED' && (canReview || (caps.canUpdate && isOwnRecord));
   const canDelete = canDeleteExpense(detail, userId, caps);
   const hasFooterActions = canMutateDraft || approverOnlyActions || isConfirmed || (canCancelFinancialExpense && caps.canVoid) || canRestartReview || canDelete;
@@ -725,7 +727,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   );
   const pageMeta = (
     <div className="mt-1.5 flex flex-wrap gap-2">
-      <StatusBadge status={detail.status} />
+      {detail.reimbursementProgress ? <span className="text-sm text-success-700">{expenseReimbursementProgressLabel(detail.reimbursementProgress)}{detail.reimbursementProgress.requestNo ? ` · ${detail.reimbursementProgress.requestNo}` : ''}</span> : <StatusBadge status={detail.status} />}
+      {detail.reimbursementProgress?.requestId && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/reimbursements?tab=mine&focus=${detail.reimbursementProgress.requestId}`}>เปิดใบเบิกคืน</Link>}
+      {detail.costSourceExpenseId && <Link className="text-sm font-semibold text-brand-700 underline" href={`/companies/${companyId}/expenses/${detail.costSourceExpenseId}`}>เปิดค่าใช้จ่ายต้นทาง</Link>}
+      {claimedSource && <span className="w-full text-xs text-gray-500">หลักฐานต้นทางของใบเบิก รายการนี้นับยอดครั้งเดียวร่วมกับรายการบัญชีจากใบเบิก การแก้ไขและจ่ายคืนให้ดำเนินการผ่านใบเบิก</span>}
       {!sourceOnlyDraft && <MangmeeBadge tone={TAX_TONE(detail.taxEvidenceStatus)}>{expenseValueLabel(TAX_EVIDENCE_STATUS_LABELS, detail.taxEvidenceStatus, 'รอตรวจหลักฐานภาษี')}</MangmeeBadge>}
       {/* the AI badge is gone: the AI strip on the data step already says it, in words */}
       <MangmeeBadge tone="slate">{expenseValueLabel(CAPTURE_SOURCE_LABELS, detail.captureSource, 'ช่องทางอื่น')}</MangmeeBadge>
@@ -860,7 +865,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       <ForeignCurrencyNotice summary={aiMap} />
     </>
   );
-  const postingCard = isConfirmed ? (
+  const postingCard = isConfirmed && caps.canReadLedger ? (
     <MangmeeCard className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -984,7 +989,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           <div className="mt-2 flex flex-wrap items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
             <div>
               <div className="text-xs font-semibold text-brand-700">{t(moneyHasWht ? 'expenses.amount_due_after_wht' : 'expenses.amount_due', locale)}</div>
-              <div className="mt-1"><StatusBadge status={detail.paymentStatus} /></div>
+              <div className="mt-1">{detail.reimbursementProgress ? <span>{expenseReimbursementProgressLabel(detail.reimbursementProgress)}</span> : <StatusBadge status={detail.paymentStatus} />}</div>
             </div>
             <div className="text-right">
               <div className="tabular-nums text-2xl font-black text-brand-700">{baht(money.outstandingAmount)}</div>
@@ -1176,7 +1181,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
     <div ref={paymentRef} className="scroll-mt-24">
       <MangmeeCard className="space-y-3 p-4">
         <h3 className="text-sm font-semibold text-gray-800">{t('expenses.payment_section_title', locale)}</h3>
-        {personalSubstitute && <p className="text-sm text-gray-600">พนักงานจ่ายร้านเต็มจำนวนแล้ว ใบรับรองนี้ยังไม่ถือว่าบริษัทจ่ายคืนให้พนักงาน</p>}
+        {personalSubstitute && <p className="text-sm text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)} · ดูการจ่ายและประวัติจากใบเบิกคืน` : "พนักงานจ่ายร้านเต็มจำนวนแล้ว ยื่นใบเบิกเพื่อดำเนินการคืนเงิน"}</p>}
         {Boolean(detail.sourceReimbursementRequestId) && (
           <p className="text-sm text-gray-500">
             รายการนี้มาจากการเบิกคืนพนักงาน{detail.vendorDocumentNumber ? ` (ใบเบิก ${detail.vendorDocumentNumber})` : ''} — ระบบบันทึกการชำระให้อัตโนมัติเมื่อการเงินบันทึกจ่ายใบเบิก
@@ -1358,7 +1363,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       <div className="truncate text-sm font-semibold text-gray-800">{activeAttachment?.originalFileName}</div>
                       <div className="text-xs text-gray-500">{activeAttachment && isWetSignedScanAttachment(activeAttachment.id, detail.substituteReceiptEvidence)
                         ? t('expenses.attachment.wet_signed_scan', locale)
-                        : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
+                        : activeAttachment?.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, activeAttachment?.purpose, 'เอกสารแนบ')}</div>
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {/* Owner 2026-08-28: "เผื่ออัพโหลดผิด". Re-uploading has always worked on the server —
@@ -1422,7 +1427,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         <div className="truncate text-sm font-semibold text-gray-800">{attachment.originalFileName}</div>
                         <div className="text-xs text-gray-500">{isWetSignedScanAttachment(attachment.id, detail.substituteReceiptEvidence)
                           ? t('expenses.attachment.wet_signed_scan', locale)
-                          : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseValueLabel(MIME_TYPE_LABELS, attachment.mimeType, 'ไฟล์เอกสาร')}</div>
+                          : attachment.isHistorical ? 'ประวัติเอกสารที่ยกเลิก/แทนที่' : expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, attachment.purpose, 'เอกสารแนบ')} · {expenseValueLabel(MIME_TYPE_LABELS, attachment.mimeType, 'ไฟล์เอกสาร')}</div>
                       </div>
                       <span className="flex-shrink-0 text-xs font-semibold text-brand-600">{previewLoading ? t('expenses.opening', locale) : t('expenses.view_file', locale)}</span>
                     </button>

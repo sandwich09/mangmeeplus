@@ -25,12 +25,12 @@ import type {
 import {
   EXPENSE_STATUS_LABELS, EXPENSE_PAYMENT_STATUS_LABELS, EXPENSE_VAT_MODE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, SIGNATURE_ASSET_STATUS_LABELS,
-  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
+  isExpenseCancelled, isExpenseDeletableState, isExpensePending, isExpensePendingReview, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
   expenseDocumentDateStatus, expenseDateIsReadable, isCalculatedExpenseRounding, hasCurrentExpenseDocumentReview,
 } from '@watchdog-bms/contracts';
-export { isExpensePending, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview } from '@watchdog-bms/contracts';
+export { isExpensePending, isExpensePendingReview, expenseReimbursementProgressLabel, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
@@ -310,6 +310,8 @@ export function substituteReceiptPreparationHref(companyId: string, expenseId: s
 }
 
 export type ExpenseSummary = {
+  costSourceExpenseId?: string;
+  reimbursementProgress?: import('@watchdog-bms/contracts').ExpenseReimbursementProgress;
   id: string;
   branchId: string | null;
   expenseNumber: string | null;
@@ -434,6 +436,9 @@ export type ExpenseDetail = ExpenseSummary & {
    *  parts contradict it. Branch on `ok`; see `ExpenseTotalsIdentity.gapAmount`. */
   totalsIdentity: ExpenseTotalsIdentity;
   attachments: Array<{
+    sourceExpenseId?: string;
+    isHistorical?: boolean;
+    substituteReceiptStatus?: string;
     id: string;
     purpose: string;
     originalFileName: string;
@@ -1487,17 +1492,23 @@ export type ExpenseKpis = {
 
 /** `today` is passed in rather than read here so the overdue boundary stays testable. */
 export function summarizeExpenseKpis(
-  rows: ReadonlyArray<Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'vatAmount' | 'outstandingAmount' | 'paymentStatus' | 'dueDate'>>,
+  rows: ReadonlyArray<Pick<ExpenseSummary, 'status' | 'grandTotalAmount' | 'vatAmount' | 'outstandingAmount' | 'paymentStatus' | 'dueDate'> & Partial<Pick<ExpenseSummary, 'id' | 'costSourceExpenseId' | 'reimbursementProgress'>>>,
   today: string,
 ): ExpenseKpis {
   const kpi: ExpenseKpis = { counted: 0, total: 0, outstanding: 0, overdue: 0, overdueCount: 0, vat: 0, pending: 0 };
-  for (const row of rows) {
+  const countedSources = new Set<string>();
+  // Prefer the final accounting projection when both documents are in the current filter.
+  for (const row of [...rows].sort((a, b) => Number(b.status === 'CONFIRMED') - Number(a.status === 'CONFIRMED'))) {
     // Captured totals include unconfirmed documents. VAT is observed, not a claimable tax total.
     if (isExpenseCancelled(row.status)) continue;
-    kpi.counted += 1;
-    kpi.total += Number(row.grandTotalAmount || 0);
-    kpi.vat += Number(row.vatAmount || 0);
-    if (isExpensePending(row.status)) kpi.pending += 1;
+    const costId = row.costSourceExpenseId ?? row.id;
+    if (!costId || !countedSources.has(costId)) {
+      kpi.counted += 1;
+      kpi.total += Number(row.grandTotalAmount || 0);
+      kpi.vat += Number(row.vatAmount || 0);
+      if (costId) countedSources.add(costId);
+    }
+    if (isExpensePendingReview(row)) kpi.pending += 1;
     if (row.status !== 'CONFIRMED' || row.paymentStatus === 'PAID') continue;
     kpi.outstanding += Number(row.outstandingAmount || 0);
     if (row.dueDate && row.dueDate.slice(0, 10) < today) {

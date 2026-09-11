@@ -1,3 +1,5 @@
+import { loadExpenseReimbursementProgress } from './expense-reimbursement-progress';
+import { loadExpenseEvidenceSources } from './expense-evidence-sources';
 import { serializableTransaction } from '../../../common/database/serializable-transaction';
 import { canNumberReviewedDraft, expenseDraftNumberKey, expenseNumberInTransaction } from './expense-number';
 import { assertSubstituteEditAllowed, reviseSubstituteEvidence, syncSubstituteAfterExpenseEdit, substitutePurposeSourceNote, EXPENSE_EDIT_RESIGN_REASON } from './substitute-expense-edit';
@@ -124,6 +126,7 @@ export function expenseRelatedToUserWhere(userId: string): Prisma.ExpenseRecordW
 function mapExpense(r: any): ExpenseRecord {
   return {
     ...r,
+    costSourceExpenseId: r.sourceReimbursementRequestId && typeof r.sourceChannelMetadataJson?.reimbursementSource?.expenseId === 'string' ? r.sourceChannelMetadataJson.reimbursementSource.expenseId : undefined,
     journalEntryNumber: r.journalEntryNumber ?? null,
     pendingPostingSourceType: r.pendingPostingSourceType ?? null,
     pendingPostingSourceId: r.pendingPostingSourceId ?? null,
@@ -697,22 +700,9 @@ export class PrismaExpenseRepository {
         journalEntryNumber: paymentJournal?.entryNumber ?? null,
       });
     });
-    // fetch attachment links for this expense
-    const links: Array<{ attachmentId: string; purpose: string; attachment: { originalFileName: string; mimeType: string; byteSize: bigint | number; checksumSha256: string | null; perceptualHash: string | null; status: string; createdAt: Date } }> = await db.attachmentLink.findMany({
-      where: { companyId, targetType: 'expense.record', targetId: id, attachment: { companyId } },
-      include: { attachment: true },
-    }) as any;
-    const attachments = links.map((l) => ({
-      id: l.attachmentId,
-      purpose: l.purpose as any,
-      originalFileName: l.attachment.originalFileName,
-      mimeType: l.attachment.mimeType,
-      byteSize: Number(l.attachment.byteSize),
-      checksumSha256: l.attachment.checksumSha256 ?? null,
-      perceptualHash: l.attachment.perceptualHash ?? null,
-      status: l.attachment.status,
-      createdAt: l.attachment.createdAt.toISOString(),
-    }));
+    const evidence = (await loadExpenseEvidenceSources(db, companyId, [r], scopes)).get(id)!;
+    const attachments = evidence.attachments;
+    const reimbursementProgress = (await loadExpenseReimbursementProgress(db, companyId, [r], scopes)).get(id);
     const duplicateCandidates: DuplicateCandidateSummary[] = (r as any).duplicateCandidates.map((d: any) => ({
       id: d.id,
       candidateExpenseId: d.candidateExpenseId,
@@ -740,6 +730,7 @@ export class PrismaExpenseRepository {
     return {
       ...base,
       categoryDefaultInputTaxCode,
+      reimbursementProgress,
       duplicateOfExpenseId: visibleDuplicateOfExpenseId,
       journalEntryId: journal?.id ?? null,
       journalEntryNumber: journal?.entryNumber ?? null,
@@ -795,7 +786,8 @@ export class PrismaExpenseRepository {
       this.prisma.client.expenseRecord.findMany({ where, skip, take: pageSize, orderBy }),
       this.prisma.client.expenseRecord.count({ where }),
     ]);
-    return { data: data.map(mapExpense), total, page, pageSize };
+    const progress = await loadExpenseReimbursementProgress(this.prisma.client, companyId, data, scopes);
+    return { data: data.map(row => ({ ...mapExpense(row), reimbursementProgress: progress.get(row.id) })), total, page, pageSize };
   }
 
   async listCompanySubstituteReceipts(
@@ -2378,10 +2370,7 @@ export class PrismaExpenseRepository {
       // The source checksum covers attachments, so the CAS re-read must load
       // them the same way findByIdWithRelations does — an empty list here
       // makes every attachment-bearing expense fail the checksum guard.
-      const attachmentLinks: Array<{ attachmentId: string; purpose: string; attachment: { originalFileName: string; mimeType: string; byteSize: bigint | number; checksumSha256: string | null; status: string; createdAt: Date } }> = await tx.attachmentLink.findMany({
-        where: { companyId: input.companyId, targetType: 'expense.record', targetId: input.id, attachment: { companyId: input.companyId } },
-        include: { attachment: true },
-      }) as any;
+      const evidenceSources = (await loadExpenseEvidenceSources(tx, input.companyId, [current])).get(current.id)!;
       const currentLines = current.lines.map(mapLine);
       const mappedCurrent = mapExpense(current);
       const currentRecord: ExpenseRecordWithRelations = {
@@ -2389,16 +2378,7 @@ export class PrismaExpenseRepository {
         lines: currentLines,
         charges: expenseLineCharges(currentLines),
         totalsIdentity: expenseTotalsIdentity({ vatMode: mappedCurrent.vatMode, totals: mappedCurrent, lines: currentLines }),
-        attachments: attachmentLinks.map((l) => ({
-          id: l.attachmentId,
-          purpose: l.purpose as any,
-          originalFileName: l.attachment.originalFileName,
-          mimeType: l.attachment.mimeType,
-          byteSize: Number(l.attachment.byteSize),
-          checksumSha256: l.attachment.checksumSha256 ?? null,
-          status: l.attachment.status,
-          createdAt: l.attachment.createdAt.toISOString(),
-        })),
+        attachments: evidenceSources.attachments,
         // Candidate identity stays null here on purpose: this record only feeds the confirm
         // checksum guard (which ignores duplicateCandidates) and never reaches a screen, so
         // joining the other expense would buy nothing on the hot confirm path.
@@ -3486,7 +3466,7 @@ export class PrismaExpenseRepository {
   }
 
   async listSharedEvidence(companyId: string, filter: SharedEvidenceFilter, scopes?: { branchIds?: string[] }): Promise<{
-    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: Array<{ id: string; purpose: string; originalFileName: string; mimeType: string; byteSize: number; checksumSha256: string | null; status: string; createdAt: Date }> }>;
+    rows: Array<ExpenseRecord & { categoryName: string | null; journalEntryNumber: string | null; additionalChargesAmount: string; attachments: import('@watchdog-bms/contracts').ExpenseAttachmentRef[]; evidenceSources: Awaited<ReturnType<typeof loadExpenseEvidenceSources>> extends Map<string, infer T> ? T : never }>;
     total: number;
     page: number;
     pageSize: number;
@@ -3509,10 +3489,7 @@ export class PrismaExpenseRepository {
 
     const ids = records.map((r) => r.id);
     const journalIds = records.map((r) => r.journalEntryId).filter((id): id is string => !!id);
-    const links = ids.length > 0 ? await this.prisma.client.attachmentLink.findMany({
-      where: { companyId, targetType: 'expense.record', targetId: { in: ids }, attachment: { companyId, status: 'ACTIVE' } },
-      include: { attachment: true },
-    }) : [];
+    const evidenceByExpense = await loadExpenseEvidenceSources(this.prisma.client, companyId, records, scopes);
     const payments = ids.length > 0 ? await this.prisma.client.expensePayment.findMany({
       where: { companyId, expenseId: { in: ids }, status: 'RECORDED' },
       orderBy: [{ paidAt: 'asc' }, { createdAt: 'asc' }],
@@ -3558,22 +3535,6 @@ export class PrismaExpenseRepository {
         });
       }
     }
-    const byExpense = new Map<string, any[]>();
-    for (const link of links) {
-      const list = byExpense.get(link.targetId) ?? [];
-      list.push({
-        id: link.attachmentId,
-        purpose: link.purpose,
-        originalFileName: (link as any).attachment.originalFileName,
-        mimeType: (link as any).attachment.mimeType,
-        byteSize: Number((link as any).attachment.byteSize),
-        checksumSha256: (link as any).attachment.checksumSha256 ?? null,
-        status: (link as any).attachment.status,
-        createdAt: (link as any).attachment.createdAt,
-      });
-      byExpense.set(link.targetId, list);
-    }
-
     return {
       rows: records.map((r) => {
         const fallbackJournal = generatedJournalByExpense.get(r.id);
@@ -3605,7 +3566,8 @@ export class PrismaExpenseRepository {
           postingStatus: effectivePostingStatus,
           postingError: effectivePostingError,
           additionalChargesAmount: chargeTotalByExpense.get(r.id) ?? '0',
-          attachments: byExpense.get(r.id) ?? [],
+          attachments: evidenceByExpense.get(r.id)!.attachments,
+          evidenceSources: evidenceByExpense.get(r.id)!,
         };
       }),
       total,
@@ -3620,15 +3582,11 @@ export class PrismaExpenseRepository {
     const where = this.buildSharedEvidenceWhere(companyId, { ...filter, yearMonth: undefined }, scopes);
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: where as any,
-      select: { id: true, [dateField]: true, grandTotalAmount: true } as any,
+      select: { id: true, branchId: true, sourceReimbursementRequestId: true, sourceReimbursementLineId: true, [dateField]: true, grandTotalAmount: true } as any,
       take: 5000,
     });
-    const ids = (rows as Array<Record<string, any>>).map((row) => row['id'] as string);
-    const evidenceLinks = ids.length > 0 ? await this.prisma.client.attachmentLink.findMany({
-      where: { companyId, targetType: 'expense.record', targetId: { in: ids }, attachment: { status: 'ACTIVE' } },
-      select: { targetId: true },
-    }) : [];
-    const evidencedIds = new Set(evidenceLinks.map((link) => link.targetId));
+    const evidence = await loadExpenseEvidenceSources(this.prisma.client, companyId, rows as any, scopes);
+    const evidencedIds = new Set([...evidence].filter(([, value]) => value.attachments.some(file => !file.isHistorical)).map(([id]) => id));
     const buckets = new Map<string, { count: number; evidenceCount: number; total: number }>();
     for (const row of rows as Array<Record<string, any>>) {
       const date = row[dateField] as Date | null;

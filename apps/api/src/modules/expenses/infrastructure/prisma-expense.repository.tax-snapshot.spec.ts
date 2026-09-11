@@ -21,7 +21,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
       attachmentLink: { findMany: async () => [] },
-      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
       reimbursementLine: { findFirst: async () => null },
       expenseRecord: {
         findFirst: async () => stored,
@@ -61,7 +61,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
       attachmentLink: { findMany: async () => [] },
-      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),
         upsert: async ({ create, update }: any) => {
@@ -95,7 +95,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
       attachmentLink: { findMany: async () => [] },
-      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),
         upsert: async ({ create }: any) => { persistedLine = { id: 'line-1', ...create }; return persistedLine; },
@@ -128,7 +128,7 @@ describe('PrismaExpenseRepository tax snapshot mapping', () => {
       $transaction: async (work: (tx: any) => Promise<unknown>) => work(client),
       $executeRaw: async () => undefined,
       attachmentLink: { findMany: async () => [] },
-      expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+      expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
       expenseLine: {
         deleteMany: async () => ({ count: 0 }),
         upsert: async (input: any) => { upsertInput = input; return input.create; },

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDateTime } from '@/common/i18n/thai-date';
@@ -15,6 +16,7 @@ import {
 } from './ai-suggestions.api';
 import {
   SUGGESTION_TABS,
+  permittedUsageGuidance,
   aiActionLabel,
   aiActionStatusLabel,
   aiDraftPayloadSummary,
@@ -31,6 +33,7 @@ import {
 } from './ai-suggestions.logic';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { useToast } from '@/common/components/toast';
+import { Modal as SharedModal } from '@/common/components/modal';
 
 const btnClass = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
 const ghostClass = 'rounded border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
@@ -55,7 +58,9 @@ function ErrorBanner({ message }: { message: string }) {
 
 const TABS = SUGGESTION_TABS;
 
-export function AiSuggestionsHubPage({ companyId }: { companyId: string }) {
+export function AiSuggestionsHubPage({ companyId, permissions = [] }: { companyId: string; permissions?: string[] }) {
+  const guidance = permittedUsageGuidance(permissions);
+  const canRequest = permissions.some((key) => ['ai.suggestion.request', 'ai.draft.request'].includes(key));
   const [tab, setTab] = useState<string>('new');
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,13 +89,26 @@ export function AiSuggestionsHubPage({ companyId }: { companyId: string }) {
           <h1 className="text-2xl font-bold text-gray-900">AI แนะนำ (AI Suggestions)</h1>
           <p className="text-sm text-gray-500">AI แนะนำและร่างได้ การสร้างร่างในระบบต้องรีวิวและยืนยันที่นี่เท่านั้น</p>
         </div>
-        <button className={btnClass} onClick={() => setShowRequest(true)}>ขอคำแนะนำ</button>
+        <button className={btnClass} disabled={!canRequest} onClick={() => setShowRequest(true)}>ขอคำแนะนำ</button>
       </div>
 
       {provider && !provider.available && (
         <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          โหมดผู้ให้บริการ AI: <b>{provider.mode}</b> — {provider.reason ?? 'ใช้ข้อมูลจากระบบแบบ deterministic'}
+          ผู้ให้บริการ AI ยังไม่พร้อมสร้างคำแนะนำ คุณยังทำรายการและอ่านวิธีใช้งานด้านล่างได้
         </div>
+      )}
+
+      {guidance.length > 0 && (
+        <section className="rounded-lg border border-gray-200 bg-white p-4">
+          <h2 className="font-semibold">เริ่มใช้งานตามสิทธิ์ของคุณ</h2>
+          <p className="mt-1 text-sm text-gray-500">วิธีใช้งานของระบบสำหรับงานที่คุณทำได้ การเปิดแต่ละหน้าจะตรวจสิทธิ์อีกครั้ง</p>
+          <ul className="mt-3 space-y-3">
+            {guidance.map((item) => <li key={item.path}>
+              <Link className="font-medium text-brand-700 underline" href={`/companies/${companyId}/${item.path}`}>{item.title}</Link>
+              <p className="text-sm text-gray-600">{item.help}</p>
+            </li>)}
+          </ul>
+        </section>
       )}
 
       <div className="flex gap-2 overflow-x-auto border-b border-gray-200">
@@ -155,12 +173,14 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [loadingTemplates, setLoadingTemplates] = useState(true);
 
-  useEffect(() => { listAiTemplates(companyId).then((t) => { setTemplates(t); setTemplateKey(t.find((x) => x.enabled)?.key ?? ''); }).catch((e) => setError(err(e))); }, [companyId]);
+  useEffect(() => { listAiTemplates(companyId).then((t) => { setTemplates(t); setTemplateKey(t.find((x) => x.enabled)?.key ?? ''); }).catch((e) => setError(err(e))).finally(() => setLoadingTemplates(false)); }, [companyId]);
   const selected = templates.find((t) => t.key === templateKey);
   const needsCustomer = templateKey === 'crm_followup_next_action';
 
   const submit = async () => {
+    if (!selected?.enabled || (needsCustomer && !sourceRecordId.trim())) return;
     setBusy(true); setError(null);
     try {
       const body: Record<string, unknown> = { templateKey };
@@ -182,8 +202,10 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
       ) : (
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-sm text-gray-600">เทมเพลต</label>
-            <ThemedSelect className={inputClass} value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
+            <label className="mb-1 block text-sm text-gray-600">เรื่องที่ต้องการคำแนะนำ</label>
+            {loadingTemplates && <p className="text-sm text-gray-500">กำลังตรวจงานที่ขอคำแนะนำได้...</p>}
+            {!loadingTemplates && !error && templates.length === 0 && <p className="text-sm text-gray-600">ยังไม่มีคำขอ AI ที่รองรับสิทธิ์ปัจจุบัน ใช้วิธีใช้งานตามสิทธิ์บนหน้าหลักได้</p>}
+            <ThemedSelect aria-label="เรื่องที่ต้องการคำแนะนำ" disabled={loadingTemplates || templates.length === 0} className={inputClass} value={templateKey} onChange={(e) => setTemplateKey(e.target.value)}>
               {templates.map((t) => <option key={t.key} value={t.key} disabled={!t.enabled}>{t.title}{t.enabled ? '' : ` (${t.unavailableReason ?? 'ไม่พร้อมใช้งาน'})`}</option>)}
             </ThemedSelect>
             {selected && <p className="mt-1 text-xs text-gray-500">{selected.description}</p>}
@@ -196,7 +218,7 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
           )}
           <div className="flex justify-end gap-2">
             <button className={ghostClass} onClick={onClose} disabled={busy}>ยกเลิก</button>
-            <button className={btnClass} onClick={submit} disabled={busy || !templateKey}>ส่งคำขอ</button>
+            <button className={btnClass} onClick={submit} disabled={busy || loadingTemplates || !selected?.enabled || (needsCustomer && !sourceRecordId.trim())}>ส่งคำขอ</button>
           </div>
         </div>
       )}
@@ -330,15 +352,5 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Modal({ title, children, onClose, wide }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
-      <div className={`max-h-[90vh] w-full overflow-y-auto rounded bg-white p-6 shadow-xl ${wide ? 'max-w-3xl' : 'max-w-lg'}`} onClick={(e) => e.stopPropagation()}>
-        <div className="mb-3 flex items-start justify-between gap-4">
-          <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
-          <button className="text-gray-400 hover:text-gray-600" onClick={onClose}>✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
+  return <SharedModal open title={title} onClose={onClose} size={wide ? 'lg' : 'sm'}>{children}</SharedModal>;
 }

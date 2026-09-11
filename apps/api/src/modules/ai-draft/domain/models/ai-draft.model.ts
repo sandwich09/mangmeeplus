@@ -40,6 +40,8 @@ export type AiDraftRequestRecord = {
 };
 
 export type AiSuggestionRecord = {
+  /** Branch scope used to generate the retained content; absent for legacy artifacts. */
+  sourceBranchIds?: string[] | null;
   id: string;
   companyId: string;
   draftRequestId: string;

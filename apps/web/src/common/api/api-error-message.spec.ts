@@ -403,3 +403,13 @@ test('guides incomplete or stale evidence review back to the review action', () 
     assert.doesNotMatch(message, /EXPENSE_|Internal diagnostic/);
   }
 });
+
+
+test('preserves only known quota messages and translates positive plan limits', () => {
+  for (const message of [
+    'แพ็กเกจปัจจุบันสร้างได้สูงสุด 1 สาขา — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ',
+    'แพ็กเกจปัจจุบันเพิ่มพนักงานได้สูงสุด 2 คน — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ',
+  ]) assert.equal(apiErrorMessage(apiError(message, { status: 422 })), message);
+  assert.match(apiErrorMessage(apiError('branchLimit must be a whole number of at least 1.', { status: 422 })), /จำนวนสาขา.*1/);
+  assert.doesNotMatch(apiErrorMessage(apiError('ข้อมูลภายใน database secret', { status: 422 })), /database|secret/);
+});

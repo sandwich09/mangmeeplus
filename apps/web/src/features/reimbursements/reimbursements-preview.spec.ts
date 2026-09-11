@@ -30,7 +30,7 @@ describe('reimbursement document preview lifecycle', () => {
     assert.match(source, /previewRequestRef\.current \+= 1/);
     assert.match(source, /URL\.revokeObjectURL\(url\)/);
     assert.match(source, /const openDetail = useCallback[\s\S]*?closeDocumentPreview\(\)/);
-    assert.match(source, /onClose=\{\(\) => \{ closeDocumentPreview\(\); setDetail\(null\)/);
+    assert.match(source, /onClose=\{\(\) => \{\s*closeDocumentPreview\(\); setDetail\(null\)/);
     assert.match(source, /\[companyId, detail\?\.id, closeDocumentPreview\]/);
   });
 
