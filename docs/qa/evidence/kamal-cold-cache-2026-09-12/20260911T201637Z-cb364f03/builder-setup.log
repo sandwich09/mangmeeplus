@@ -1,0 +1,47 @@
+kamal-cold-20260912-9a51c543
+#1 [internal] booting buildkit
+#1 pulling image moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+#1 pulling image moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec 10.0s done
+#1 creating container buildx_buildkit_kamal-cold-20260912-9a51c5430
+#1 creating container buildx_buildkit_kamal-cold-20260912-9a51c5430 0.8s done
+#1 DONE 10.8s
+Name:          kamal-cold-20260912-9a51c543
+Driver:        docker-container
+Last Activity: 2026-09-11 20:16:25 +0000 UTC
+
+Nodes:
+Name:                  kamal-cold-20260912-9a51c5430
+Endpoint:              desktop-linux
+Driver Options:        default-load="true" image="moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec"
+Status:                running
+BuildKit daemon flags: --allow-insecure-entitlement=network.host
+BuildKit version:      v0.31.2
+Platforms:             linux/arm64, linux/amd64, linux/amd64/v2, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6
+Labels:
+ org.mobyproject.buildkit.worker.executor:         oci
+ org.mobyproject.buildkit.worker.hostname:         9d3f5346579a
+ org.mobyproject.buildkit.worker.network:          host
+ org.mobyproject.buildkit.worker.oci.process-mode: sandbox
+ org.mobyproject.buildkit.worker.selinux.enabled:  false
+ org.mobyproject.buildkit.worker.snapshotter:      overlayfs
+GC Policy rule#0:
+ All:            false
+ Filters:        type==source.local type==exec.cachemount type==source.git.checkout
+ Keep Duration:  48h0m0s
+ Max Used Space: 488.3MiB
+GC Policy rule#1:
+ All:            false
+ Keep Duration:  1440h0m0s
+ Reserved Space: 9.313GiB
+ Max Used Space: 93.13GiB
+ Min Free Space: 170.4GiB
+GC Policy rule#2:
+ All:            false
+ Reserved Space: 9.313GiB
+ Max Used Space: 93.13GiB
+ Min Free Space: 170.4GiB
+GC Policy rule#3:
+ All:            true
+ Reserved Space: 9.313GiB
+ Max Used Space: 93.13GiB
+ Min Free Space: 170.4GiB

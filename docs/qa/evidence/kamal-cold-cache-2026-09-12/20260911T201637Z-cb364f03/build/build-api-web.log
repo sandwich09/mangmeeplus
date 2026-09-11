@@ -1,0 +1,855 @@
+#0 building with "kamal-cold-20260912-9a51c543" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile.api-web
+#1 transferring dockerfile: 9.33kB 0.0s done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#2 DONE 2.8s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 1.06kB done
+#3 DONE 0.0s
+
+#4 [system 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 resolve docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 0.0s done
+#4 DONE 0.1s
+
+#5 [internal] load build context
+#5 ...
+
+#6 [system 3/5] ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+#6 DONE 1.1s
+
+#5 [internal] load build context
+#5 transferring context: 19.68MB 2.8s done
+#5 DONE 2.9s
+
+#4 [system 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 sha256:437216719022b2853003498de36b055604c6ff1bcee290b912ed44226f2d3d46 446B / 446B 0.4s done
+#4 sha256:392df1351ac2d7628088ee58b248e62a2c1b749e4beb94b7640994df1857c8ca 1.71MB / 1.71MB 1.1s done
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 23.07MB / 49.94MB 2.7s
+#4 sha256:e33bee2ce77b0c3748e6a8f2b808a5ab1d2ed466d5ee5a9b991cba597bd028e2 3.31kB / 3.31kB 1.2s done
+#4 sha256:597c6c618d36213af657a6a8444a5d87801f9a219682b206ad21ccb8f3e57bbd 20.97MB / 28.23MB 2.4s
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 26.21MB / 49.94MB 2.9s
+#4 sha256:597c6c618d36213af657a6a8444a5d87801f9a219682b206ad21ccb8f3e57bbd 27.26MB / 28.23MB 2.9s
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 35.87MB / 49.94MB 3.5s
+#4 sha256:597c6c618d36213af657a6a8444a5d87801f9a219682b206ad21ccb8f3e57bbd 28.23MB / 28.23MB 2.9s done
+#4 extracting sha256:597c6c618d36213af657a6a8444a5d87801f9a219682b206ad21ccb8f3e57bbd
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 40.89MB / 49.94MB 3.8s
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 44.68MB / 49.94MB 3.9s
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 49.10MB / 49.94MB 4.1s
+#4 sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 49.94MB / 49.94MB 4.1s done
+#4 extracting sha256:597c6c618d36213af657a6a8444a5d87801f9a219682b206ad21ccb8f3e57bbd 1.8s done
+#4 DONE 5.3s
+
+#7 [runner  1/22] ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436   https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb   /tmp/clamav.deb
+#7 ...
+
+#4 [system 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 extracting sha256:e33bee2ce77b0c3748e6a8f2b808a5ab1d2ed466d5ee5a9b991cba597bd028e2 0.0s done
+#4 extracting sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3
+#4 extracting sha256:bb65bd65926c2b38f8a7d518cefa8524e1484182dd6ffba7883654d886b4cfb3 2.2s done
+#4 DONE 7.5s
+
+#7 [runner  1/22] ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436   https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb   /tmp/clamav.deb
+#7 ...
+
+#4 [system 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 extracting sha256:392df1351ac2d7628088ee58b248e62a2c1b749e4beb94b7640994df1857c8ca 0.1s done
+#4 extracting sha256:437216719022b2853003498de36b055604c6ff1bcee290b912ed44226f2d3d46 0.0s done
+#4 DONE 7.6s
+
+#8 [system 2/5] RUN apt-get update -y   && apt-get upgrade -y --no-install-recommends   && apt-get install -y --no-install-recommends ca-certificates openssl   && rm -rf /var/lib/apt/lists/*
+#8 0.459 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#8 0.538 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#8 0.538 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#8 1.388 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#8 2.132 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#8 2.732 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [338 kB]
+#8 2.885 Fetched 9376 kB in 3s (3698 kB/s)
+#8 2.885 Reading package lists...
+#8 3.519 Reading package lists...
+#8 4.283 Building dependency tree...
+#8 4.446 Reading state information...
+#8 4.481 Calculating upgrade...
+#8 5.020 The following packages will be upgraded:
+#8 5.020   libpcre2-8-0
+#8 5.230 1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+#8 5.230 Need to get 261 kB of archives.
+#8 5.230 After this operation, 0 B of additional disk space will be used.
+#8 5.230 Get:1 http://deb.debian.org/debian-security bookworm-security/main amd64 libpcre2-8-0 amd64 10.42-1+deb12u1 [261 kB]
+#8 5.497 debconf: delaying package configuration, since apt-utils is not installed
+#8 5.565 Fetched 261 kB in 0s (1239 kB/s)
+#8 5.653 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+#8 5.694 Preparing to unpack .../libpcre2-8-0_10.42-1+deb12u1_amd64.deb ...
+#8 5.705 Unpacking libpcre2-8-0:amd64 (10.42-1+deb12u1) over (10.42-1) ...
+#8 5.848 Setting up libpcre2-8-0:amd64 (10.42-1+deb12u1) ...
+#8 5.878 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#8 5.989 Reading package lists...
+#8 6.413 Building dependency tree...
+#8 6.549 Reading state information...
+#8 6.730 The following additional packages will be installed:
+#8 6.731   libssl3
+#8 6.813 The following NEW packages will be installed:
+#8 6.816   ca-certificates libssl3 openssl
+#8 6.933 0 upgraded, 3 newly installed, 0 to remove and 0 not upgraded.
+#8 6.933 Need to get 3637 kB of archives.
+#8 6.933 After this operation, 8940 kB of additional disk space will be used.
+#8 6.933 Get:1 http://deb.debian.org/debian bookworm/main amd64 libssl3 amd64 3.0.20-1~deb12u2 [2036 kB]
+#8 7.005 Get:2 http://deb.debian.org/debian bookworm/main amd64 openssl amd64 3.0.20-1~deb12u2 [1439 kB]
+#8 7.026 Get:3 http://deb.debian.org/debian-security bookworm-security/main amd64 ca-certificates all 20250419~deb12u1 [162 kB]
+#8 7.424 debconf: delaying package configuration, since apt-utils is not installed
+#8 7.466 Fetched 3637 kB in 0s (18.4 MB/s)
+#8 7.532 Selecting previously unselected package libssl3:amd64.
+#8 7.532 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+#8 7.536 Preparing to unpack .../libssl3_3.0.20-1~deb12u2_amd64.deb ...
+#8 7.541 Unpacking libssl3:amd64 (3.0.20-1~deb12u2) ...
+#8 7.801 Selecting previously unselected package openssl.
+#8 7.802 Preparing to unpack .../openssl_3.0.20-1~deb12u2_amd64.deb ...
+#8 7.804 Unpacking openssl (3.0.20-1~deb12u2) ...
+#8 8.083 Selecting previously unselected package ca-certificates.
+#8 8.085 Preparing to unpack .../ca-certificates_20250419~deb12u1_all.deb ...
+#8 8.087 Unpacking ca-certificates (20250419~deb12u1) ...
+#8 8.187 Setting up libssl3:amd64 (3.0.20-1~deb12u2) ...
+#8 8.199 Setting up openssl (3.0.20-1~deb12u2) ...
+#8 8.255 Setting up ca-certificates (20250419~deb12u1) ...
+#8 8.807 debconf: unable to initialize frontend: Dialog
+#8 8.807 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 8.807 debconf: falling back to frontend: Readline
+#8 8.807 debconf: unable to initialize frontend: Readline
+#8 8.807 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC contains: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.36.0 /usr/local/share/perl/5.36.0 /usr/lib/x86_64-linux-gnu/perl5/5.36 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.36 /usr/share/perl/5.36 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 7.)
+#8 8.807 debconf: falling back to frontend: Teletype
+#8 ...
+
+#7 [runner  1/22] ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436   https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb   /tmp/clamav.deb
+#7 DONE 18.2s
+
+#8 [system 2/5] RUN apt-get update -y   && apt-get upgrade -y --no-install-recommends   && apt-get install -y --no-install-recommends ca-certificates openssl   && rm -rf /var/lib/apt/lists/*
+#8 13.42 Updating certificates in /etc/ssl/certs...
+#8 23.46 150 added, 0 removed; done.
+#8 23.58 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#8 23.61 Processing triggers for ca-certificates (20250419~deb12u1) ...
+#8 23.68 Updating certificates in /etc/ssl/certs...
+#8 30.24 0 added, 0 removed; done.
+#8 30.24 Running hooks in /etc/ca-certificates/update.d...
+#8 30.26 done.
+#8 DONE 30.8s
+
+#9 [system 3/5] ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+#9 DONE 0.1s
+
+#10 [system 4/5] RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem
+#10 DONE 0.1s
+
+#11 [system 5/5] WORKDIR /app
+#11 DONE 0.0s
+
+#12 [build-base 1/1] RUN corepack enable
+#12 ...
+
+#13 [runner  1/22] ADD --checksum=sha256:0c69e033a976855cfecfa1b6c36563822f2cc618f0c7e40ce5bcc2703d0dc436   https://github.com/Cisco-Talos/clamav/releases/download/clamav-1.5.3/clamav-1.5.3.linux.x86_64.deb   /tmp/clamav.deb
+#13 DONE 0.2s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 0.358 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#14 ...
+
+#12 [build-base 1/1] RUN corepack enable
+#12 DONE 0.7s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 0.429 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#14 0.429 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#14 ...
+
+#15 [manifests 1/6] COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+#15 DONE 0.1s
+
+#16 [manifests 2/6] COPY apps/api/package.json apps/api/package.json
+#16 DONE 0.0s
+
+#17 [manifests 3/6] COPY apps/web/package.json apps/web/package.json
+#17 DONE 0.0s
+
+#18 [manifests 4/6] COPY packages/config/package.json packages/config/package.json
+#18 DONE 0.0s
+
+#19 [manifests 5/6] COPY packages/contracts/package.json packages/contracts/package.json
+#19 DONE 0.0s
+
+#20 [manifests 6/6] COPY packages/design-tokens/package.json packages/design-tokens/package.json
+#20 DONE 0.0s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 0.922 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#14 1.699 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#14 2.242 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [338 kB]
+#14 3.050 Fetched 9376 kB in 3s (3417 kB/s)
+#14 3.050 Reading package lists...
+#14 5.896 Reading package lists...
+#14 8.606 Building dependency tree...
+#14 9.039 Reading state information...
+#14 9.925 The following NEW packages will be installed:
+#14 9.925   clamav
+#14 ...
+
+#21 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+#21 0.851 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#21 5.739 Scope: 3 of 6 workspace projects
+#21 6.207 Lockfile is up to date, resolution step is skipped
+#21 6.370 Progress: resolved 1, reused 0, downloaded 0, added 0
+#21 6.982 .                                        | +263 ++++++++++++++++++++++++++
+#21 7.408 Progress: resolved 263, reused 0, downloaded 0, added 0
+#21 9.152 
+#21 9.152    ╭──────────────────────────────────────────────────────────────────╮
+#21 9.152    │                                                                  │
+#21 9.152    │                Update available! 9.15.0 → 12.4.1.                │
+#21 9.152    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#21 9.152    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#21 9.152    │                                                                  │
+#21 9.152    ╰──────────────────────────────────────────────────────────────────╯
+#21 9.152 
+#21 ...
+
+#22 [deps 1/1] RUN pnpm install --frozen-lockfile
+#22 0.521 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#22 5.738 Scope: all 6 workspace projects
+#22 6.207 Lockfile is up to date, resolution step is skipped
+#22 6.907 Progress: resolved 1, reused 0, downloaded 0, added 0
+#22 7.550 Packages: +700
+#22 7.550 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#22 8.297 Progress: resolved 700, reused 0, downloaded 0, added 0
+#22 9.523 
+#22 9.523    ╭──────────────────────────────────────────────────────────────────╮
+#22 9.523    │                                                                  │
+#22 9.523    │                Update available! 9.15.0 → 12.4.1.                │
+#22 9.523    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#22 9.523    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#22 9.523    │                                                                  │
+#22 9.523    ╰──────────────────────────────────────────────────────────────────╯
+#22 9.523 
+#22 ...
+
+#21 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+#21 10.46 Progress: resolved 263, reused 0, downloaded 1, added 0
+#21 11.57 Progress: resolved 263, reused 0, downloaded 11, added 1
+#21 12.58 Progress: resolved 263, reused 0, downloaded 26, added 23
+#21 13.59 Progress: resolved 263, reused 0, downloaded 41, added 33
+#21 14.61 Progress: resolved 263, reused 0, downloaded 56, added 45
+#21 15.61 Progress: resolved 263, reused 0, downloaded 89, added 76
+#21 16.64 Progress: resolved 263, reused 0, downloaded 169, added 168
+#21 ...
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 13.03 0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+#14 13.03 Need to get 0 B/108 MB of archives.
+#14 13.03 After this operation, 559 MB of additional disk space will be used.
+#14 13.03 Get:1 /tmp/clamav.deb clamav amd64 1.5.3-1 [108 MB]
+#14 16.71 debconf: delaying package configuration, since apt-utils is not installed
+#14 17.71 Selecting previously unselected package clamav.
+#14 17.71 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6593 files and directories currently installed.)
+#14 17.83 Preparing to unpack /tmp/clamav.deb ...
+#14 17.85 Unpacking clamav (1.5.3-1) ...
+#14 ...
+
+#21 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+#21 17.65 Progress: resolved 263, reused 0, downloaded 198, added 192
+#21 18.89 Progress: resolved 263, reused 0, downloaded 220, added 215
+#21 20.02 Progress: resolved 263, reused 0, downloaded 258, added 258
+#21 21.02 Progress: resolved 263, reused 0, downloaded 260, added 260
+#21 22.55 Progress: resolved 263, reused 0, downloaded 261, added 260
+#21 23.56 Progress: resolved 263, reused 0, downloaded 262, added 262
+#21 ...
+
+#22 [deps 1/1] RUN pnpm install --frozen-lockfile
+#22 18.93 Progress: resolved 700, reused 0, downloaded 1, added 0
+#22 20.04 Progress: resolved 700, reused 0, downloaded 8, added 0
+#22 21.09 Progress: resolved 700, reused 0, downloaded 12, added 2
+#22 22.14 Progress: resolved 700, reused 0, downloaded 24, added 19
+#22 23.14 Progress: resolved 700, reused 0, downloaded 39, added 38
+#22 24.17 Progress: resolved 700, reused 0, downloaded 62, added 59
+#22 25.24 Progress: resolved 700, reused 0, downloaded 75, added 74
+#22 26.32 Progress: resolved 700, reused 0, downloaded 97, added 93
+#22 ...
+
+#21 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+#21 27.22 Progress: resolved 263, reused 0, downloaded 263, added 262
+#21 27.30 Progress: resolved 263, reused 0, downloaded 263, added 263, done
+#21 28.17 .../node_modules/@scarf/scarf postinstall$ node ./report.js
+#21 32.73 .../node_modules/@scarf/scarf postinstall: Done
+#21 ...
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 31.94 Setting up clamav (1.5.3-1) ...
+#14 32.81 ClamAV update process started at Fri Sep 11 20:18:05 2026
+#14 33.16 daily database available for download (remote version: 28119)
+#14 37.20 Testing database: '/var/lib/clamav/tmp.52ad28fb69/daily.cvd' ...
+#14 ...
+
+#22 [deps 1/1] RUN pnpm install --frozen-lockfile
+#22 27.36 Progress: resolved 700, reused 0, downloaded 119, added 110
+#22 28.41 Progress: resolved 700, reused 0, downloaded 132, added 130
+#22 29.42 Progress: resolved 700, reused 0, downloaded 166, added 166
+#22 30.44 Progress: resolved 700, reused 0, downloaded 217, added 216
+#22 31.49 Progress: resolved 700, reused 0, downloaded 223, added 219
+#22 32.49 Progress: resolved 700, reused 0, downloaded 260, added 254
+#22 33.53 Progress: resolved 700, reused 0, downloaded 287, added 277
+#22 34.53 Progress: resolved 700, reused 0, downloaded 302, added 297
+#22 35.60 Progress: resolved 700, reused 0, downloaded 338, added 332
+#22 36.66 Progress: resolved 700, reused 0, downloaded 409, added 404
+#22 37.69 Progress: resolved 700, reused 0, downloaded 434, added 426
+#22 38.78 Progress: resolved 700, reused 0, downloaded 445, added 438
+#22 ...
+
+#21 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/api...
+#21 33.99 Done in 29.9s
+#21 DONE 39.4s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#22 [deps 1/1] RUN pnpm install --frozen-lockfile
+#22 40.30 Progress: resolved 700, reused 0, downloaded 459, added 453
+#22 41.34 Progress: resolved 700, reused 0, downloaded 489, added 485
+#22 42.43 Progress: resolved 700, reused 0, downloaded 536, added 533
+#22 43.45 Progress: resolved 700, reused 0, downloaded 555, added 551
+#22 44.48 Progress: resolved 700, reused 0, downloaded 564, added 562
+#22 45.48 Progress: resolved 700, reused 0, downloaded 604, added 594
+#22 46.50 Progress: resolved 700, reused 0, downloaded 667, added 661
+#22 47.50 Progress: resolved 700, reused 0, downloaded 698, added 698
+#22 48.50 Progress: resolved 700, reused 0, downloaded 699, added 698
+#22 49.33 Progress: resolved 700, reused 0, downloaded 700, added 700, done
+#22 50.28 .../node_modules/@swc/core postinstall$ node postinstall.js
+#22 50.29 .../node_modules/@prisma/engines postinstall$ node scripts/postinstall.js
+#22 50.29 .../node_modules/@scarf/scarf postinstall$ node ./report.js
+#22 50.51 .../esbuild@0.28.1/node_modules/esbuild postinstall$ node install.js
+#22 52.12 .../node_modules/@swc/core postinstall: Done
+#22 52.17 .../esbuild@0.28.1/node_modules/esbuild postinstall: Done
+#22 54.44 .../node_modules/@prisma/engines postinstall: Done
+#22 54.69 .../node_modules/@scarf/scarf postinstall: Done
+#22 55.33 .../node_modules/prisma preinstall$ node scripts/preinstall-entry.js
+#22 56.09 .../node_modules/prisma preinstall: Done
+#22 58.70 
+#22 58.70 devDependencies:
+#22 58.70 + @playwright/test 1.61.1
+#22 58.70 + @types/node 22.20.0
+#22 58.70 + tsx 4.22.4
+#22 58.70 + turbo 2.9.18
+#22 58.70 + typescript 5.9.3
+#22 58.70 
+#22 58.94 Done in 55s
+#22 ...
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 68.04 Database test passed.
+#14 68.10 daily.cvd updated (version: 28120, sigs: 355655, f-level: 90, builder: svc.clamav-publisher)
+#14 68.11 main database available for download (remote version: 63)
+#14 ...
+
+#22 [deps 1/1] RUN pnpm install --frozen-lockfile
+#22 DONE 68.4s
+
+#23 [build  1/22] COPY apps/api/src apps/api/src
+#23 DONE 7.4s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#24 [build  2/22] COPY apps/api/prisma/schema.prisma apps/api/prisma/schema.prisma
+#24 DONE 0.1s
+
+#25 [build  3/22] COPY apps/api/.swcrc apps/api/.swcrc
+#25 DONE 0.1s
+
+#26 [build  4/22] COPY apps/api/tsconfig.json apps/api/tsconfig.json
+#26 DONE 0.1s
+
+#27 [build  5/22] COPY apps/web/app apps/web/app
+#27 DONE 0.3s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#28 [build  6/22] COPY apps/web/public apps/web/public
+#28 DONE 0.2s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#29 [build  7/22] COPY apps/web/src apps/web/src
+#29 DONE 0.3s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#30 [build  8/22] COPY apps/web/next-env.d.ts apps/web/next-env.d.ts
+#30 DONE 0.1s
+
+#31 [build  9/22] COPY apps/web/next.config.mjs apps/web/next.config.mjs
+#31 DONE 0.1s
+
+#32 [build 10/22] COPY apps/web/postcss.config.mjs apps/web/postcss.config.mjs
+#32 DONE 0.1s
+
+#33 [build 11/22] COPY apps/web/proxy.ts apps/web/proxy.ts
+#33 DONE 0.1s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#34 [build 12/22] COPY apps/web/tsconfig.json apps/web/tsconfig.json
+#34 DONE 0.0s
+
+#35 [build 13/22] COPY packages/config/src packages/config/src
+#35 DONE 0.1s
+
+#36 [build 14/22] COPY packages/config/tsconfig.json packages/config/tsconfig.json
+#36 DONE 0.1s
+
+#37 [build 15/22] COPY packages/contracts/src packages/contracts/src
+#37 DONE 0.1s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#38 [build 16/22] COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
+#38 DONE 0.1s
+
+#39 [build 17/22] COPY packages/design-tokens/generated packages/design-tokens/generated
+#39 DONE 0.1s
+
+#40 [build 18/22] COPY packages/design-tokens/scripts packages/design-tokens/scripts
+#40 DONE 0.0s
+
+#41 [build 19/22] COPY packages/design-tokens/tokens.json packages/design-tokens/tokens.json
+#41 DONE 0.0s
+
+#42 [build 20/22] RUN mkdir -p apps/api/.turbo apps/web/.turbo packages/config/.turbo packages/contracts/.turbo packages/design-tokens/.turbo
+#42 DONE 0.5s
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 ...
+
+#43 [build 21/22] RUN pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+#43 7.049 Prisma schema loaded from prisma/schema.prisma.
+#43 ...
+
+#14 [runner  2/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends /tmp/clamav.deb   && cp /usr/local/etc/clamd.conf.sample /usr/local/etc/clamd.conf   && cp /usr/local/etc/freshclam.conf.sample /usr/local/etc/freshclam.conf   && sed -i '/^Example$/d' /usr/local/etc/clamd.conf /usr/local/etc/freshclam.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nPidFile /run/clamav/clamd.pid\nUser node\nForeground true\nTCPSocket 3310\nTCPAddr 127.0.0.1\nStreamMaxLength 30M\n' >> /usr/local/etc/clamd.conf   && printf '\nDatabaseDirectory /var/lib/clamav\nDatabaseMirror database.clamav.net\n' >> /usr/local/etc/freshclam.conf   && mkdir -p /run/clamav /var/log/clamav /var/lib/clamav   && chown -R node:node /run/clamav /var/log/clamav /var/lib/clamav   && freshclam --stdout --user=node   && rm -rf /tmp/clamav.deb /var/lib/apt/lists/*
+#14 80.02 Testing database: '/var/lib/clamav/tmp.52ad28fb69/main.cvd' ...
+#14 91.58 Database test passed.
+#14 91.59 main.cvd updated (version: 63, sigs: 3287027, f-level: 90, builder: tomjudge)
+#14 91.60 bytecode database available for download (remote version: 339)
+#14 91.99 Testing database: '/var/lib/clamav/tmp.52ad28fb69/bytecode.cvd' ...
+#14 92.09 Database test passed.
+#14 92.09 bytecode.cvd updated (version: 339, sigs: 80, f-level: 90, builder: nrandolp)
+#14 DONE 92.4s
+
+#43 [build 21/22] RUN pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+#43 ...
+
+#44 [runner  3/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends fonts-noto-core   && find /usr/share/fonts/truetype/noto -type f ! -name 'NotoSansThai*' ! -name 'NotoSans-Regular*' ! -name 'NotoSans-Bold*' -delete   && mkdir -p /etc/fonts   && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf   && cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt   && apt-get purge -y openssl ca-certificates   && apt-get purge -y --allow-remove-essential     util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs   && apt-get purge -y --allow-remove-essential perl-base   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt   && test -s /etc/ssl/certs/ca-certificates.crt   && dpkg-query -W libssl3   && ! dpkg-query -W openssl ca-certificates >/dev/null 2>&1   && rm -rf /var/lib/apt/lists/*
+#44 0.503 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#44 0.576 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#44 0.576 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#44 1.236 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#44 1.730 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#44 2.172 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [338 kB]
+#44 2.461 Fetched 9376 kB in 2s (4608 kB/s)
+#44 2.461 Reading package lists...
+#44 3.177 Reading package lists...
+#44 3.699 Building dependency tree...
+#44 3.865 Reading state information...
+#44 4.133 The following NEW packages will be installed:
+#44 4.134   fonts-noto-core
+#44 4.255 0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+#44 4.255 Need to get 12.2 MB of archives.
+#44 4.255 After this operation, 43.6 MB of additional disk space will be used.
+#44 4.255 Get:1 http://deb.debian.org/debian bookworm/main amd64 fonts-noto-core all 20201225-1 [12.2 MB]
+#44 4.861 debconf: delaying package configuration, since apt-utils is not installed
+#44 4.944 Fetched 12.2 MB in 0s (33.6 MB/s)
+#44 5.064 Selecting previously unselected package fonts-noto-core.
+#44 5.064 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6792 files and directories currently installed.)
+#44 5.111 Preparing to unpack .../fonts-noto-core_20201225-1_all.deb ...
+#44 5.120 Unpacking fonts-noto-core (20201225-1) ...
+#44 6.075 Setting up fonts-noto-core (20201225-1) ...
+#44 6.273 Reading package lists...
+#44 ...
+
+#43 [build 21/22] RUN pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+#43 20.61 
+#43 20.61 ✔ Generated Prisma Client (7.8.0) to ./src/generated/prisma in 6.81s
+#43 20.61 
+#43 DONE 21.2s
+
+#44 [runner  3/22] RUN apt-get update -y   && apt-get install -y --no-install-recommends fonts-noto-core   && find /usr/share/fonts/truetype/noto -type f ! -name 'NotoSansThai*' ! -name 'NotoSans-Regular*' ! -name 'NotoSans-Bold*' -delete   && mkdir -p /etc/fonts   && printf '<?xml version="1.0"?>\n<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">\n<fontconfig><dir>/usr/share/fonts</dir><cachedir>/tmp/fontconfig</cachedir></fontconfig>\n' > /etc/fonts/fonts.conf   && cp /etc/ssl/certs/ca-certificates.crt /tmp/ca-certificates.crt   && apt-get purge -y openssl ca-certificates   && apt-get purge -y --allow-remove-essential     util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs   && apt-get purge -y --allow-remove-essential perl-base   && install -m 0644 /tmp/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt   && test -s /etc/ssl/certs/ca-certificates.crt   && dpkg-query -W libssl3   && ! dpkg-query -W openssl ca-certificates >/dev/null 2>&1   && rm -rf /var/lib/apt/lists/*
+#44 6.273 Reading package lists...
+#44 7.005 Building dependency tree...
+#44 7.217 Reading state information...
+#44 7.390 The following package was automatically installed and is no longer required:
+#44 7.390   libssl3
+#44 7.390 Use 'apt autoremove' to remove it.
+#44 7.418 The following packages will be REMOVED:
+#44 7.420   ca-certificates* openssl*
+#44 7.842 0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.
+#44 7.842 After this operation, 2765 kB disk space will be freed.
+#44 7.866 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 7076 files and directories currently installed.)
+#44 7.879 Removing ca-certificates (20250419~deb12u1) ...
+#44 7.975 Removing dangling symlinks from /etc/ssl/certs... done.
+#44 11.76 Removing openssl (3.0.20-1~deb12u2) ...
+#44 11.90 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6594 files and directories currently installed.)
+#44 11.90 Purging configuration files for ca-certificates (20250419~deb12u1) ...
+#44 12.15 debconf: unable to initialize frontend: Dialog
+#44 12.15 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#44 12.15 debconf: falling back to frontend: Readline
+#44 12.15 debconf: unable to initialize frontend: Readline
+#44 12.15 debconf: (Can't locate Term/ReadLine.pm in @INC (you may need to install the Term::ReadLine module) (@INC contains: /etc/perl /usr/local/lib/x86_64-linux-gnu/perl/5.36.0 /usr/local/share/perl/5.36.0 /usr/lib/x86_64-linux-gnu/perl5/5.36 /usr/share/perl5 /usr/lib/x86_64-linux-gnu/perl-base /usr/lib/x86_64-linux-gnu/perl/5.36 /usr/share/perl/5.36 /usr/local/lib/site_perl) at /usr/share/perl5/Debconf/FrontEnd/Readline.pm line 7.)
+#44 12.15 debconf: falling back to frontend: Teletype
+#44 12.25 Removing dangling symlinks from /etc/ssl/certs... done.
+#44 12.31 Purging configuration files for openssl (3.0.20-1~deb12u2) ...
+#44 12.32 dpkg: warning: while removing openssl, directory '/etc/ssl/certs' not empty so not removed
+#44 12.46 Reading package lists...
+#44 13.05 Building dependency tree...
+#44 13.23 Reading state information...
+#44 13.43 The following packages were automatically installed and are no longer required:
+#44 13.43   libcom-err2 libext2fs2 libss2 libssl3 logsave
+#44 13.43 Use 'apt autoremove' to remove them.
+#44 13.46 The following packages will be REMOVED:
+#44 13.46   bsdutils* e2fsprogs* libblkid1* libmount1* libsmartcols1* libuuid1* mount*
+#44 13.46   util-linux* util-linux-extra*
+#44 13.46 WARNING: The following essential packages will be removed.
+#44 13.46 This should NOT be done unless you know exactly what you are doing!
+#44 13.46   bsdutils e2fsprogs libblkid1 (due to e2fsprogs) libuuid1 (due to e2fsprogs)
+#44 13.46   util-linux libmount1 (due to util-linux) libsmartcols1 (due to util-linux)
+#44 13.46   util-linux-extra (due to util-linux)
+#44 13.78 0 upgraded, 0 newly installed, 9 to remove and 0 not upgraded.
+#44 13.78 After this operation, 9020 kB disk space will be freed.
+#44 13.81 dpkg: warning: overriding problem because --force enabled:
+#44 13.81 dpkg: warning: this is an essential package; it should not be removed
+#44 13.81 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6591 files and directories currently installed.)
+#44 13.82 Removing bsdutils (1:2.38.1-5+deb12u3) ...
+#44 13.87 Removing e2fsprogs (1.47.0-2+b2) ...
+#44 13.93 dpkg: warning: overriding problem because --force enabled:
+#44 13.93 dpkg: warning: this is an essential package; it should not be removed
+#44 13.94 Removing util-linux (2.38.1-5+deb12u3) ...
+#44 14.04 Removing mount (2.38.1-5+deb12u3) ...
+#44 14.08 Removing libmount1:amd64 (2.38.1-5+deb12u3) ...
+#44 14.13 Removing util-linux-extra (2.38.1-5+deb12u3) ...
+#44 14.19 Removing libsmartcols1:amd64 (2.38.1-5+deb12u3) ...
+#44 14.22 Removing libuuid1:amd64 (2.38.1-5+deb12u3) ...
+#44 14.27 Removing libblkid1:amd64 (2.38.1-5+deb12u3) ...
+#44 14.33 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#44 14.45 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6122 files and directories currently installed.)
+#44 14.45 Purging configuration files for e2fsprogs (1.47.0-2+b2) ...
+#44 14.63 Purging configuration files for util-linux (2.38.1-5+deb12u3) ...
+#44 14.79 Purging configuration files for util-linux-extra (2.38.1-5+deb12u3) ...
+#44 15.02 Reading package lists...
+#44 15.54 Building dependency tree...
+#44 15.72 Reading state information...
+#44 15.92 The following packages were automatically installed and are no longer required:
+#44 15.92   libcom-err2 libext2fs2 libss2 libssl3 logsave
+#44 15.92 Use 'apt autoremove' to remove them.
+#44 15.95 The following packages will be REMOVED:
+#44 15.95   perl-base*
+#44 15.95 WARNING: The following essential packages will be removed.
+#44 15.95 This should NOT be done unless you know exactly what you are doing!
+#44 15.95   perl-base
+#44 16.27 0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.
+#44 16.27 After this operation, 7822 kB disk space will be freed.
+#44 16.30 dpkg: warning: overriding problem because --force enabled:
+#44 16.30 dpkg: warning: this is an essential package; it should not be removed
+#44 16.30 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6109 files and directories currently installed.)
+#44 16.30 Removing perl-base (5.36.0-7+deb12u3) ...
+#44 16.85 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5381 files and directories currently installed.)
+#44 16.86 Purging configuration files for perl-base (5.36.0-7+deb12u3) ...
+#44 17.03 libssl3:amd64	3.0.20-1~deb12u2
+#44 DONE 17.1s
+
+#45 [runner  4/22] WORKDIR /app
+#45 DONE 0.1s
+
+#46 [build 22/22] RUN pnpm exec turbo run build --filter=@watchdog-bms/api --filter=@watchdog-bms/web
+#46 1.692 
+#46 1.692 Attention:
+#46 1.692 Turborepo now collects completely anonymous telemetry regarding usage.
+#46 1.692 This information is used to shape the Turborepo roadmap and prioritize features.
+#46 1.692 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#46 1.692 https://turborepo.dev/docs/telemetry
+#46 1.692 
+#46 1.711 • turbo 2.9.18
+#46 1.955 
+#46 1.956    • Packages in scope: @watchdog-bms/api, @watchdog-bms/web
+#46 1.956    • Running build in 2 packages
+#46 1.956    • Remote caching disabled
+#46 1.956 
+#46 2.460 @watchdog-bms/contracts:build: cache miss, executing a52a058881ab0780
+#46 2.460 @watchdog-bms/design-tokens:build: cache miss, executing eb0437ce67069a23
+#46 2.460 @watchdog-bms/config:build: cache miss, executing 8454c786f95a8cb2
+#46 3.243 @watchdog-bms/contracts:build: 
+#46 3.243 @watchdog-bms/contracts:build: > @watchdog-bms/contracts@0.1.0 build /app/packages/contracts
+#46 3.243 @watchdog-bms/contracts:build: > tsc -p tsconfig.json
+#46 3.243 @watchdog-bms/contracts:build: 
+#46 3.243 @watchdog-bms/config:build: 
+#46 3.243 @watchdog-bms/config:build: > @watchdog-bms/config@0.1.0 build /app/packages/config
+#46 3.243 @watchdog-bms/config:build: > tsc -p tsconfig.json
+#46 3.243 @watchdog-bms/config:build: 
+#46 3.282 @watchdog-bms/design-tokens:build: 
+#46 3.282 @watchdog-bms/design-tokens:build: > @watchdog-bms/design-tokens@0.1.0 build /app/packages/design-tokens
+#46 3.282 @watchdog-bms/design-tokens:build: > node scripts/build-tokens.mjs
+#46 3.282 @watchdog-bms/design-tokens:build: 
+#46 6.995 @watchdog-bms/web:build: cache miss, executing 057df5deb66a25ab
+#46 6.995 @watchdog-bms/api:build: cache miss, executing 41be26e81fc2e5e3
+#46 7.655 @watchdog-bms/web:build: 
+#46 7.655 @watchdog-bms/web:build: > @watchdog-bms/web@0.1.0 build /app/apps/web
+#46 7.655 @watchdog-bms/web:build: > next build --webpack
+#46 7.655 @watchdog-bms/web:build: 
+#46 7.659 @watchdog-bms/api:build: 
+#46 7.659 @watchdog-bms/api:build: > @watchdog-bms/api@0.1.0 build /app/apps/api
+#46 7.659 @watchdog-bms/api:build: > swc src -d ${API_DIST_DIR:-dist}/apps/api/src --strip-leading-paths --copy-files -q
+#46 7.659 @watchdog-bms/api:build: 
+#46 8.725 @watchdog-bms/web:build: ▲ Next.js 16.3.4 (webpack)
+#46 8.763 @watchdog-bms/web:build: ✓ Running next.config.mjs took 35ms
+#46 8.776 @watchdog-bms/web:build: Attention: Next.js now collects completely anonymous telemetry regarding usage.
+#46 8.791 @watchdog-bms/web:build: This information is used to shape Next.js' roadmap and prioritize features.
+#46 8.791 @watchdog-bms/web:build: You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#46 8.791 @watchdog-bms/web:build: https://nextjs.org/telemetry
+#46 8.806 @watchdog-bms/web:build: 
+#46 9.048 @watchdog-bms/web:build: - Experiments (use with caution):
+#46 9.048 @watchdog-bms/web:build:   · proxyTimeout: 180000
+#46 9.049 @watchdog-bms/web:build: 
+#46 9.229 @watchdog-bms/web:build:   Creating an optimized production build ...
+#46 ...
+
+#47 [runner  5/22] COPY --from=prod-deps --chown=node:node /app/node_modules ./api-runtime/node_modules
+#47 DONE 3.4s
+
+#46 [build 22/22] RUN pnpm exec turbo run build --filter=@watchdog-bms/api --filter=@watchdog-bms/web
+#46 ...
+
+#48 [runner  6/22] COPY --from=prod-deps --chown=node:node /app/apps/api/node_modules ./api-runtime/apps/api/node_modules
+#48 DONE 0.1s
+
+#49 [runner  7/22] COPY --from=prod-deps --chown=node:node /app/packages/config/node_modules ./api-runtime/packages/config/node_modules
+#49 DONE 0.0s
+
+#46 [build 22/22] RUN pnpm exec turbo run build --filter=@watchdog-bms/api --filter=@watchdog-bms/web
+#46 41.91 @watchdog-bms/web:build: ✓ Compiled successfully in 31.5s
+#46 41.93 @watchdog-bms/web:build:   Skipping validation of types
+#46 41.93 @watchdog-bms/web:build:   Finished TypeScript config validation in 6ms ...
+#46 41.93 @watchdog-bms/web:build:   Collecting page data using 9 workers ...
+#46 43.88 @watchdog-bms/web:build:   Generating static pages using 9 workers (0/22) ...
+#46 44.12 @watchdog-bms/web:build:   Generating static pages using 9 workers (5/22) 
+#46 44.12 @watchdog-bms/web:build:   Generating static pages using 9 workers (10/22) 
+#46 44.12 @watchdog-bms/web:build:   Generating static pages using 9 workers (16/22) 
+#46 45.33 @watchdog-bms/web:build: ✓ Generating static pages using 9 workers (22/22) in 1453ms
+#46 46.62 @watchdog-bms/web:build:   Finalizing page optimization ...
+#46 46.62 @watchdog-bms/web:build:   Collecting build traces ...
+#46 74.86 @watchdog-bms/web:build: 
+#46 74.87 @watchdog-bms/web:build: Route (app)
+#46 74.87 @watchdog-bms/web:build: ┌ ○ /
+#46 74.87 @watchdog-bms/web:build: ├ ○ /_not-found
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/account-merge
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/account-merge/ticket
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/change-password
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/dev-login
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-login/availability
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-login/callback
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-login/start
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-qr/approve
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-qr/start
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/line-qr/status
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/login
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/logout
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/refresh
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /api/auth/signup-claim
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /change-password
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /claim-account
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/accounting
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/accounts-payable
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/ai-suggestions
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/banking
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/bookings
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/crm
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/crm-reports
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/crm/customers/[customerId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/crm/payment-proofs
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/customers
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/dashboard
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/[expenseId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/categories
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/evidence
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/manual
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/signatures
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/substitute-receipts
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/substitute-receipts/[evidenceId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/substitute-receipts/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/expenses/upload
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inbox
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/income-expense-ledger
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/locations
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/movements
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/movements/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/products
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/products/[productId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/products/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/reports/stock
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/scan
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/inventory/stock-count
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/journal
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/notifications
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/notifications/preferences
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/notifications/rules
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/period-closing
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/procurement
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/reimbursements
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/reimbursements/[requestId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/reimbursements/[requestId]/edit
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/reimbursements/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/renew
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/reports
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/sales
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/sales-documents
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/sales-documents/record-income
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/sales-documents/revenue-categories
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/access-overview
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/chart
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/chart/review
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/mappings
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/prerequisites
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/profile
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/accounting-tax-setup/review
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/branches
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/chart-of-accounts
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/crm-catalog
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/crm-catalog/[productId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/crm-catalog/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/discount-policy
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/employees
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/line-oa
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/notification-rules
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/notifications
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/permissions
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/po-approval
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/profile
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/roles
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/security
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/substitute-receipt
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/tax-accounts
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/settings/tax-codes
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/tax
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/tax/evidence
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/tax/reconciliation
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/user-guide/expenses
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/user-guide/reimbursements
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/user-guide/reports
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/user-guide/substitute-receipts
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/user-guide/tax
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /companies/[companyId]/workflow
+#46 74.87 @watchdog-bms/web:build: ├ ○ /data-deletion
+#46 74.87 @watchdog-bms/web:build: ├ ○ /forgot-password
+#46 74.87 @watchdog-bms/web:build: ├ ○ /icon.svg
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /l/[token]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /legal-acceptance
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /line-qr/[code]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /login
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /maintenance
+#46 74.87 @watchdog-bms/web:build: ├ ○ /privacy
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /signup
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /signup/status/[requestId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /signup/welcome
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/ai-budget
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/company-onboardings/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/data-rights
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/data-rights/[caseId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/data-rights/new
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/line-settings
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/partners
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/partners/[companyId]
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/platform-access
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/signup-requests
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/support-requests
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /system/users
+#46 74.87 @watchdog-bms/web:build: ├ ○ /terms
+#46 74.87 @watchdog-bms/web:build: ├ ƒ /unsupported-browser
+#46 74.87 @watchdog-bms/web:build: └ ƒ /verify-email
+#46 74.87 @watchdog-bms/web:build: 
+#46 74.87 @watchdog-bms/web:build: 
+#46 74.87 @watchdog-bms/web:build: ƒ Proxy (Middleware)
+#46 74.87 @watchdog-bms/web:build: 
+#46 74.87 @watchdog-bms/web:build: ○  (Static)   prerendered as static content
+#46 74.87 @watchdog-bms/web:build: ƒ  (Dynamic)  server-rendered on demand
+#46 74.87 @watchdog-bms/web:build: 
+#46 75.02 
+#46 75.02  Tasks:    5 successful, 5 total
+#46 75.02 Cached:    0 cached, 5 total
+#46 75.02   Time:    1m13.268s 
+#46 75.02 
+#46 DONE 75.7s
+
+#50 [runtime-artifacts 1/1] RUN find apps/api/dist packages/config/dist packages/contracts/dist -type f   ( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' ) -delete   && find apps/web/.next/standalone -type f -name '*.map' -delete
+#50 DONE 0.3s
+
+#51 [runner  8/22] COPY --from=runtime-artifacts --chown=node:node /app/apps/api/package.json ./api-runtime/apps/api/package.json
+#51 DONE 0.0s
+
+#52 [runner  9/22] COPY --from=runtime-artifacts --chown=node:node /app/apps/api/dist ./api-runtime/apps/api/dist
+#52 DONE 0.1s
+
+#53 [runner 10/22] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.json ./api-runtime/packages/config/package.json
+#53 DONE 0.0s
+
+#54 [runner 11/22] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./api-runtime/packages/config/dist
+#54 DONE 0.0s
+
+#55 [runner 12/22] COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.json ./api-runtime/packages/contracts/package.json
+#55 DONE 0.0s
+
+#56 [runner 13/22] COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./api-runtime/packages/contracts/dist
+#56 DONE 0.0s
+
+#57 [runner 14/22] COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
+#57 DONE 0.0s
+
+#58 [runner 15/22] COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+#58 DONE 0.0s
+
+#59 [runner 16/22] RUN sharp_dir="$(readlink -f './api-runtime/apps/api/node_modules/sharp')"   && mkdir -p "$sharp_dir/node_modules/@img"   && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/"   && rm -rf /tmp/sharp-native   && node -e "require('./api-runtime/apps/api/node_modules/sharp')"
+#59 DONE 0.4s
+
+#60 [runner 17/22] RUN node -e "const sharp=require('./api-runtime/apps/api/node_modules/sharp');const svg=Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="850" height="120"><rect width="850" height="120" fill="white"/><text x="425" y="75" text-anchor="middle" font-family="Noto Sans Thai" font-size="32" font-weight="700">ใบรับรองแทนใบเสร็จรับเงิน</text></svg>');sharp(svg).removeAlpha().greyscale().raw().toBuffer().then(data=>{let ink=0;for(const pixel of data)if(pixel<200)ink+=1;if(ink<1000)throw new Error('Thai font smoke check failed: '+ink+' dark pixels');console.log('Thai font smoke check:',ink,'dark pixels');});"
+#60 0.375 Thai font smoke check: 4224 dark pixels
+#60 DONE 0.4s
+
+#61 [runner 18/22] COPY --from=runtime-artifacts --chown=node:node /app/apps/web/.next/standalone ./web-runtime
+#61 DONE 0.3s
+
+#62 [runner 19/22] COPY --from=build --chown=node:node /app/apps/web/.next/static ./web-runtime/apps/web/.next/static
+#62 DONE 0.0s
+
+#63 [runner 20/22] COPY --from=build --chown=node:node /app/apps/web/public ./web-runtime/apps/web/public
+#63 DONE 0.0s
+
+#64 [runner 21/22] COPY --chown=node:node infra/api-web/start-api-web-runtime.sh ./runtime/start-api-web-runtime.sh
+#64 DONE 0.0s
+
+#65 [runner 22/22] COPY --chown=node:node infra/api-web/web-api-proxy.mjs ./runtime/web-api-proxy.mjs
+#65 DONE 0.0s
+
+#66 exporting to oci image format
+#66 exporting layers
+#66 exporting layers 9.1s done
+#66 exporting manifest sha256:77122da70fd8a58c54eb52c0a903673097ad7e4b001087ffd253075987641119 done
+#66 exporting config sha256:0bcfbd9310ef73b51f394be0ffd9d7f67e45a09847cf9d5af30a28e4c6122dd1 done
+#66 sending tarball
+#66 ...
+
+#67 importing to docker
+#67 DONE 0.0s
+
+#66 exporting to oci image format
+#66 sending tarball 6.0s done
+#66 DONE 15.1s

@@ -13,22 +13,23 @@ infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, app
 passing `--environment` cannot turn the UAT command into Production. There is no implicit bootstrap,
 infrastructure creation, gate opening, DNS change or fallback to another environment.
 
-**Current deployment status:** Production remains on ECS Express and dev is stopped. The controller
-was merged in PR551. Real UAT update `20260911T160653Z-45db64e5` accepted main `ca50f0a6` with full
-configuration, provider/readiness, public OPEN, owner browser acceptance and a verified KMS signature.
-Merge to command exit was13m3.966s, including290.870s of browser wait/operator work; no deployment
-repair or retry occurred in that update. A subsequent rollback stopped before runtime mutation because
-application PATH contaminated native CLI validation. Its failure is retained and is not a successful
-rollback proof. See [stability task state](../../docs/agent-memory/kamal-stability-2026-09-11.md).
+**Current deployment status:** PR551/552 are merged. Main `6b95e505` deployed successfully to real
+UAT twice with complete config/readiness and verified KMS signatures, without repair or retry:
+`20260911T170623Z-c8d84820` took4m14.836s from merge to exit;
+`20260911T171058Z-8c83ebfc` took4m25.786s including operator prechecks (command alone4m21.191s).
+Both used existing build caches and reran TypeScript. These are measured UAT runs, not a fixed
+future duration or Production benchmark. Production remains on ECS Express and dev is stopped.
+[Full timings and signed evidence](../../docs/research/kamal-uat-stable-hotfix-proof-2026-09-11.md).
+The earlier failed rollback was reconciled without runtime changes; its failure is retained.
 
-The owner subsequently authorized consolidated rehearsal followed by two real UAT deployments,
+The owner authorized consolidated rehearsal followed by two real UAT deployments,
 without login/logout. The explicit `--uat-smoke-acceptance` option is for this real UAT scope:
 
 ```sh
 infra/kamal/deploy-uat --profile mangmee-kamal-uat --mode hotfix --apply --uat-smoke-acceptance
 ```
 
-It requires complete image/source/environment readback, all3HTTP health endpoints, API database
+It requires complete image/source/environment readback, all three HTTP health endpoints, API database
 readiness, workers' actual Redis PING and internal API connectivity, public OPEN and frontend
 availability, observed build retirement and a verified KMS result. The receipt explicitly records
 `owner_authorized_uat_config_readiness_smoke` and `loginLogout: NOT_REQUIRED_BY_OWNER`; it does not
@@ -50,7 +51,7 @@ private files. The `.env.*` paths are ignored by Git. The target must contain:
 | `publicUrl` | Permanent public HTTPS origin |
 | `apiInternalUrl`, `aiInternalUrl` | Reachable HTTPS URLs ending in `/v1`; ingress routing/TLS already installed |
 | `sshKey` | Absolute local path to the private deployment key; optional `sshProxyCommand` for a verified bastion |
-| `acceptanceCredentials` | Absolute path to private acceptance account JSON below; omitted for the explicit UAT browser option |
+| `acceptanceCredentials` | Absolute path to private acceptance account JSON below; omitted for explicit UAT browser/smoke acceptance |
 | `browserAcceptanceUserId` | Expected real UAT account ID when using `--uat-browser-acceptance`; contains no password |
 | `agentcoreRuntimeArn` | Existing environment runtime ARN |
 | `agentcoreQualifier`, `agentcoreCandidateQualifier` | Two dedicated, stable, non-DEFAULT endpoints; one active and one spare |

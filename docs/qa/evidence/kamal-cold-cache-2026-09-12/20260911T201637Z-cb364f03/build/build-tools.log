@@ -1,0 +1,92 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile.tools
+#1 transferring dockerfile: 390B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 1.06kB done
+#3 DONE 0.0s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 resolve docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c done
+#4 ...
+
+#5 [internal] load build context
+#5 transferring context: 4.90MB 0.1s done
+#5 DONE 0.1s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 DONE 0.3s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 extracting sha256:1f5598db1ee3a710e4ae1f295bb5626237642c431c2075ec11856711b2daf985 0.1s done
+#4 extracting sha256:03b1fa93aa37ccba06ee1e642b6bf3b18410ad5febc3d774b00cee81df47ee3e done
+#4 extracting sha256:8c216b5f7edfb756b716fdb87fc62c555091768dc42a73dee9afac8a3a853254 done
+#4 extracting sha256:18440d660eaf875e464abd3f76e23a6d4cb6d55b8d1c81556bc733cfad6949c9 done
+#4 extracting sha256:deda0f0496f2bd5f9eef015e84d05a41bde2ec4da45dfde61bff1f6d5e6a5f03 done
+#4 extracting sha256:be9f7aa555725f6b73876e8b07090aafee37a76b740b0fecf0fb2f32c95310cc done
+#4 extracting sha256:a109183c926e9b6956c979649ae88c3b8c17d62b91a0722007f3fbe05e920d8a done
+#4 extracting sha256:2301e0924d48236da7193c3b8880120ce3b54560e916a307f81ce3301d5a9d5b done
+#4 extracting sha256:ea01e1cea13f2174cc7d618706042a6c19fe6f2d187aa2b6f2a55e8a36a07ed5 done
+#4 extracting sha256:9f259b3c89bafc03235cd259252d1f9f5a76429542c27acb2baa0bc63f3a2d91 done
+#4 extracting sha256:712f8a96fcac174bde2375f944a7ca6529de070d454d3c7238c751e15f5223d7 done
+#4 DONE 0.4s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 extracting sha256:a905940c340b2abe9b465a8852b97bdd62362a5b28bfe59ea206c2cd77ffdf3e
+#4 extracting sha256:a905940c340b2abe9b465a8852b97bdd62362a5b28bfe59ea206c2cd77ffdf3e 9.6s done
+#4 DONE 10.0s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 extracting sha256:72f04d58f048f7d92d44242326f9636b66e8e9c25cf44966d08414fefc372916 0.1s done
+#4 extracting sha256:79437ea3986ad51fd68cc95961c2f141edf99ba6e71e06dab258625b3b6e99f9 done
+#4 extracting sha256:9f9d075aa82296b31390bde09167f63486b43db1d5ccb29553c6e476845b7566 done
+#4 extracting sha256:9d50a4d84031c80f2db5d1906aeacc9dab2c5a898d3d0fb1328dea8a61f1e1eb done
+#4 extracting sha256:a3a5bb7f1c93f3db41f42ea81f2524d5d7efd41c684ed0d78756118953c91e90 0.0s done
+#4 DONE 10.1s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 extracting sha256:b615dc95affc7dba71c569bdd5e29167f226d1cf6afcf38d3d5ae8d6594e8391 0.0s done
+#4 extracting sha256:917433feb1605b2cbf2a4f02c99db2a1d038395a2136b39b2eb93d34e345efe3 0.0s done
+#4 extracting sha256:103935bef33267fdf8749458ea9da110aad98d97de30059f0d33a49f314ceeb4 done
+#4 extracting sha256:d658f50833364674f48a42ee21d20bc53a8aa513600d68b5237192c50971ade0 done
+#4 extracting sha256:f268e2f6d266613f57a03873893b7eb9f4b98481be3c5312425895bbd2b33b98 done
+#4 extracting sha256:38a9edeb632255f6cade9760a7671716dfa96381a0467f344a06036fec4d6576 done
+#4 extracting sha256:f78eebfcb4cd6a6b1d30c87448925129fdb55b14b1770bae9f2c81f747e673d7 done
+#4 extracting sha256:3fe57741878314d748b9927ce93656528692f150324de3a1623d82318ee316b5 done
+#4 extracting sha256:dc332c97cbbab368436c602f8d3e04708b33659446c1d7176165372204cbd7ff done
+#4 extracting sha256:b2653345545f7dcbcb14144f30836efe2b2616c13a28e75074faeb8a123255f2 done
+#4 extracting sha256:bf2d988ded62e4a6860a518e76c25318464ecdeaeeee26860c66adcc22c8d4b3 done
+#4 extracting sha256:c8e44b9c6eb2f0d8c8e0a9ff2eb87bf2e5ad0e1c9fb0bcfe75d66fa1f1d93bcc done
+#4 extracting sha256:df4f1e2ceef100474f1cfe7e3a7012a004e8b9dc35367038d91d9ff678741b9d 0.0s done
+#4 DONE 10.2s
+
+#4 [1/4] FROM docker.io/library/mangmee-complete-build:6b95e50555c9905aa32d17d1372241bb4889cc1b@sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c
+#4 extracting sha256:f5c07e5ab7ebe5594e759793e00249c884fb07301e01ddf2ac38daf00bb66786 done
+#4 extracting sha256:5f2acabe4d178b698d5617cc861f9dc953a960175d53c17723ae42e634bd70f2 done
+#4 extracting sha256:72dc8f1b6dff5f9edf94e9b943dda72c43e10ab0ce0511fae0e33d09dce4aadf 0.1s done
+#4 extracting sha256:27ea26f444137ea2a3dac8a3d9fac919f8c1f5a924773426c20b61112671edc1
+#4 extracting sha256:27ea26f444137ea2a3dac8a3d9fac919f8c1f5a924773426c20b61112671edc1 2.2s done
+#4 DONE 12.5s
+
+#6 [2/4] COPY apps/api/prisma /app/apps/api/prisma
+#6 DONE 0.4s
+
+#7 [3/4] COPY apps/api/prisma.config.ts /app/apps/api/prisma.config.ts
+#7 DONE 0.0s
+
+#8 [4/4] WORKDIR /app/apps/api
+#8 DONE 0.0s
+
+#9 exporting to image
+#9 exporting layers 0.1s done
+#9 exporting manifest sha256:7a2eff8fbe72fbfdec7579d980b0a8518bceae262426d9cf3988cc121f4dabdf done
+#9 exporting config sha256:776647fd1d4b644cc60c1f030faa82eb80a2967dd5f0b5d2e3a620e0ecd4ab9b done
+#9 exporting attestation manifest sha256:576957f4e44df191497a68bdeaa1f58c44ff865ef02f3ad1b6d5587e52d4b47c done
+#9 exporting manifest list sha256:6ccd7fab0565b34c5f306cc2158f67d07a5032d2d4e7e5755a6502755e7bdf7f done
+#9 naming to docker.io/library/mangmee-complete-tools:6b95e50555c9905aa32d17d1372241bb4889cc1b done
+#9 DONE 0.2s

@@ -1,0 +1,307 @@
+#0 building with "kamal-cold-20260912-9a51c543" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 3.95kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 1.06kB done
+#3 DONE 0.0s
+
+#4 [system 1/3] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 resolve docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 done
+#4 CACHED
+
+#5 [internal] load build context
+#5 transferring context: 692.06kB 0.2s done
+#5 DONE 0.2s
+
+#6 [system 2/3] RUN apt-get update -y   && apt-get upgrade -y --no-install-recommends   && rm -rf /var/lib/apt/lists/*
+#6 0.328 Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+#6 0.373 Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+#6 0.373 Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [34.8 kB]
+#6 0.722 Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+#6 1.038 Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+#6 1.326 Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [338 kB]
+#6 1.677 Fetched 9376 kB in 1s (6623 kB/s)
+#6 1.677 Reading package lists...
+#6 2.038 Reading package lists...
+#6 2.411 Building dependency tree...
+#6 2.493 Reading state information...
+#6 2.512 Calculating upgrade...
+#6 2.627 The following packages will be upgraded:
+#6 2.627   libpcre2-8-0
+#6 2.700 1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+#6 2.700 Need to get 261 kB of archives.
+#6 2.700 After this operation, 0 B of additional disk space will be used.
+#6 2.700 Get:1 http://deb.debian.org/debian-security bookworm-security/main amd64 libpcre2-8-0 amd64 10.42-1+deb12u1 [261 kB]
+#6 2.880 debconf: delaying package configuration, since apt-utils is not installed
+#6 2.917 Fetched 261 kB in 0s (2899 kB/s)
+#6 2.972 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+#6 2.988 Preparing to unpack .../libpcre2-8-0_10.42-1+deb12u1_amd64.deb ...
+#6 2.995 Unpacking libpcre2-8-0:amd64 (10.42-1+deb12u1) over (10.42-1) ...
+#6 3.062 Setting up libpcre2-8-0:amd64 (10.42-1+deb12u1) ...
+#6 3.086 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#6 DONE 3.2s
+
+#7 [system 3/3] WORKDIR /app
+#7 DONE 0.0s
+
+#8 [runner  1/15] RUN apt-get purge -y --allow-remove-essential   util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs   && apt-get purge -y --allow-remove-essential perl-base
+#8 0.092 Reading package lists...
+#8 0.129 Building dependency tree...
+#8 0.131 Reading state information...
+#8 0.139 The following packages were automatically installed and are no longer required:
+#8 0.139   libcom-err2 libext2fs2 libss2 logsave
+#8 0.139 Use 'apt autoremove' to remove them.
+#8 0.148 The following packages will be REMOVED:
+#8 0.148   bsdutils* e2fsprogs* libblkid1* libmount1* libsmartcols1* libuuid1* mount*
+#8 0.148   util-linux* util-linux-extra*
+#8 0.148 WARNING: The following essential packages will be removed.
+#8 0.148 This should NOT be done unless you know exactly what you are doing!
+#8 0.148   bsdutils e2fsprogs libblkid1 (due to e2fsprogs) libuuid1 (due to e2fsprogs)
+#8 0.148   util-linux libmount1 (due to util-linux) libsmartcols1 (due to util-linux)
+#8 0.148   util-linux-extra (due to util-linux)
+#8 0.337 0 upgraded, 0 newly installed, 9 to remove and 0 not upgraded.
+#8 0.337 After this operation, 9020 kB disk space will be freed.
+#8 ...
+
+#9 [build-base 1/1] RUN corepack enable
+#9 DONE 0.4s
+
+#10 [manifests 1/4] COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+#10 DONE 0.0s
+
+#11 [manifests 2/4] COPY apps/ai-gateway/package.json apps/ai-gateway/package.json
+#11 DONE 0.0s
+
+#12 [manifests 3/4] COPY packages/config/package.json packages/config/package.json
+#12 DONE 0.0s
+
+#13 [manifests 4/4] COPY packages/contracts/package.json packages/contracts/package.json
+#13 DONE 0.0s
+
+#8 [runner  1/15] RUN apt-get purge -y --allow-remove-essential   util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs   && apt-get purge -y --allow-remove-essential perl-base
+#8 0.361 dpkg: warning: overriding problem because --force enabled:
+#8 0.361 dpkg: warning: this is an essential package; it should not be removed
+#8 0.361 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 6096 files and directories currently installed.)
+#8 0.365 Removing bsdutils (1:2.38.1-5+deb12u3) ...
+#8 0.393 Removing e2fsprogs (1.47.0-2+b2) ...
+#8 0.433 dpkg: warning: overriding problem because --force enabled:
+#8 0.433 dpkg: warning: this is an essential package; it should not be removed
+#8 0.434 Removing util-linux (2.38.1-5+deb12u3) ...
+#8 0.491 Removing mount (2.38.1-5+deb12u3) ...
+#8 0.505 Removing libmount1:amd64 (2.38.1-5+deb12u3) ...
+#8 0.515 Removing libblkid1:amd64 (2.38.1-5+deb12u3) ...
+#8 0.525 Removing util-linux-extra (2.38.1-5+deb12u3) ...
+#8 0.558 Removing libsmartcols1:amd64 (2.38.1-5+deb12u3) ...
+#8 0.571 Removing libuuid1:amd64 (2.38.1-5+deb12u3) ...
+#8 0.605 Processing triggers for libc-bin (2.36-9+deb12u14) ...
+#8 0.690 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5627 files and directories currently installed.)
+#8 0.693 Purging configuration files for e2fsprogs (1.47.0-2+b2) ...
+#8 0.831 Purging configuration files for util-linux (2.38.1-5+deb12u3) ...
+#8 0.963 Purging configuration files for util-linux-extra (2.38.1-5+deb12u3) ...
+#8 1.168 Reading package lists...
+#8 1.213 Building dependency tree...
+#8 1.215 Reading state information...
+#8 1.223 The following packages were automatically installed and are no longer required:
+#8 1.223   libcom-err2 libext2fs2 libss2 logsave
+#8 1.223 Use 'apt autoremove' to remove them.
+#8 1.228 The following packages will be REMOVED:
+#8 1.228   perl-base*
+#8 1.229 WARNING: The following essential packages will be removed.
+#8 1.229 This should NOT be done unless you know exactly what you are doing!
+#8 1.229   perl-base
+#8 1.441 0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.
+#8 1.441 After this operation, 7822 kB disk space will be freed.
+#8 1.465 dpkg: warning: overriding problem because --force enabled:
+#8 1.465 dpkg: warning: this is an essential package; it should not be removed
+#8 1.465 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 5614 files and directories currently installed.)
+#8 1.468 Removing perl-base (5.36.0-7+deb12u3) ...
+#8 1.762 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 4886 files and directories currently installed.)
+#8 1.767 Purging configuration files for perl-base (5.36.0-7+deb12u3) ...
+#8 DONE 1.9s
+
+#14 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/ai-gateway...
+#14 0.349 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#14 ...
+
+#15 [runner  2/15] WORKDIR /app
+#15 DONE 0.0s
+
+#16 [deps 1/1] RUN pnpm install --frozen-lockfile
+#16 0.351 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#16 1.888 Scope: all 4 workspace projects
+#16 1.964 Lockfile is up to date, resolution step is skipped
+#16 2.006 Progress: resolved 1, reused 0, downloaded 0, added 0
+#16 2.085 Packages: +248
+#16 2.085 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#16 2.516 
+#16 2.516    ╭──────────────────────────────────────────────────────────────────╮
+#16 2.516    │                                                                  │
+#16 2.516    │                Update available! 9.15.0 → 12.4.1.                │
+#16 2.516    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#16 2.516    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#16 2.516    │                                                                  │
+#16 2.516    ╰──────────────────────────────────────────────────────────────────╯
+#16 2.516 
+#16 3.014 Progress: resolved 248, reused 0, downloaded 0, added 0
+#16 4.020 Progress: resolved 248, reused 0, downloaded 29, added 29
+#16 5.017 Progress: resolved 248, reused 0, downloaded 82, added 80
+#16 6.023 Progress: resolved 248, reused 0, downloaded 204, added 201
+#16 6.916 Progress: resolved 248, reused 0, downloaded 248, added 248, done
+#16 7.011 .../node_modules/@scarf/scarf postinstall$ node ./report.js
+#16 7.039 .../esbuild@0.28.1/node_modules/esbuild postinstall$ node install.js
+#16 7.458 .../esbuild@0.28.1/node_modules/esbuild postinstall: Done
+#16 8.163 .../node_modules/@scarf/scarf postinstall: Done
+#16 8.347 
+#16 8.347 devDependencies:
+#16 8.347 + @playwright/test 1.61.1
+#16 8.347 + @types/node 22.20.0
+#16 8.347 + tsx 4.22.4
+#16 8.347 + turbo 2.9.18
+#16 8.347 + typescript 5.9.3
+#16 8.347 
+#16 8.378 Done in 6.8s
+#16 DONE 8.9s
+
+#14 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/ai-gateway...
+#14 1.886 Scope: 3 of 4 workspace projects
+#14 1.961 Lockfile is up to date, resolution step is skipped
+#14 1.984 Progress: resolved 1, reused 0, downloaded 0, added 0
+#14 2.100 .                                        | +222 ++++++++++++++++++++++
+#14 2.545 
+#14 2.545    ╭──────────────────────────────────────────────────────────────────╮
+#14 2.545    │                                                                  │
+#14 2.545    │                Update available! 9.15.0 → 12.4.1.                │
+#14 2.545    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#14 2.545    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#14 2.545    │                                                                  │
+#14 2.545    ╰──────────────────────────────────────────────────────────────────╯
+#14 2.545 
+#14 2.987 Progress: resolved 222, reused 0, downloaded 0, added 0
+#14 4.022 Progress: resolved 222, reused 0, downloaded 18, added 12
+#14 5.057 Progress: resolved 222, reused 0, downloaded 70, added 67
+#14 6.066 Progress: resolved 222, reused 0, downloaded 186, added 183
+#14 6.488 Progress: resolved 222, reused 0, downloaded 222, added 222, done
+#14 6.685 .../node_modules/@scarf/scarf postinstall$ node ./report.js
+#14 7.932 .../node_modules/@scarf/scarf postinstall: Done
+#14 8.070 Done in 6.5s
+#14 DONE 8.9s
+
+#17 [build 1/7] COPY apps/ai-gateway/src apps/ai-gateway/src
+#17 DONE 0.2s
+
+#18 [build 2/7] COPY apps/ai-gateway/tsconfig.json apps/ai-gateway/tsconfig.json
+#18 DONE 0.0s
+
+#19 [build 3/7] COPY packages/config/src packages/config/src
+#19 DONE 0.0s
+
+#20 [build 4/7] COPY packages/config/tsconfig.json packages/config/tsconfig.json
+#20 DONE 0.0s
+
+#21 [build 5/7] COPY packages/contracts/src packages/contracts/src
+#21 DONE 0.0s
+
+#22 [build 6/7] COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
+#22 DONE 0.0s
+
+#23 [build 7/7] RUN pnpm exec turbo run build --filter=@watchdog-bms/ai-gateway
+#23 1.227 
+#23 1.227 Attention:
+#23 1.227 Turborepo now collects completely anonymous telemetry regarding usage.
+#23 1.227 This information is used to shape the Turborepo roadmap and prioritize features.
+#23 1.227 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#23 1.227 https://turborepo.dev/docs/telemetry
+#23 1.227 
+#23 1.233 • turbo 2.9.18
+#23 1.344 
+#23 ...
+
+#24 [runner  3/15] COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+#24 DONE 1.1s
+
+#23 [build 7/7] RUN pnpm exec turbo run build --filter=@watchdog-bms/ai-gateway
+#23 1.344    • Packages in scope: @watchdog-bms/ai-gateway
+#23 1.344    • Running build in 1 packages
+#23 1.344    • Remote caching disabled
+#23 1.344 
+#23 1.442 @watchdog-bms/contracts:build: cache miss, executing 538cb67452b10139
+#23 1.442 @watchdog-bms/config:build: cache miss, executing 91c4337583ce7339
+#23 ...
+
+#25 [runner  4/15] COPY --from=prod-deps --chown=node:node /app/apps/ai-gateway/node_modules ./apps/ai-gateway/node_modules
+#25 DONE 0.1s
+
+#26 [runner  5/15] COPY --from=prod-deps --chown=node:node /app/packages/config/node_modules ./packages/config/node_modules
+#26 DONE 0.0s
+
+#23 [build 7/7] RUN pnpm exec turbo run build --filter=@watchdog-bms/ai-gateway
+#23 2.029 @watchdog-bms/contracts:build: 
+#23 2.029 @watchdog-bms/contracts:build: > @watchdog-bms/contracts@0.1.0 build /app/packages/contracts
+#23 2.029 @watchdog-bms/contracts:build: > tsc -p tsconfig.json
+#23 2.029 @watchdog-bms/contracts:build: 
+#23 2.053 @watchdog-bms/config:build: 
+#23 2.053 @watchdog-bms/config:build: > @watchdog-bms/config@0.1.0 build /app/packages/config
+#23 2.053 @watchdog-bms/config:build: > tsc -p tsconfig.json
+#23 2.053 @watchdog-bms/config:build: 
+#23 4.869 @watchdog-bms/ai-gateway:build: cache miss, executing be4d36446d9ca76d
+#23 5.332 @watchdog-bms/ai-gateway:build: 
+#23 5.332 @watchdog-bms/ai-gateway:build: > @watchdog-bms/ai-gateway@0.1.0 build /app/apps/ai-gateway
+#23 5.332 @watchdog-bms/ai-gateway:build: > tsc -p tsconfig.json
+#23 5.332 @watchdog-bms/ai-gateway:build: 
+#23 10.85 
+#23 10.85  Tasks:    3 successful, 3 total
+#23 10.85 Cached:    0 cached, 3 total
+#23 10.85   Time:    9.598s 
+#23 10.85 
+#23 DONE 10.9s
+
+#27 [runtime-artifacts 1/1] RUN find apps/ai-gateway/dist packages/config/dist packages/contracts/dist -type f   ( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' ) -delete
+#27 DONE 0.2s
+
+#28 [runner  6/15] COPY --from=runtime-artifacts --chown=node:node /app/apps/ai-gateway/package.json ./apps/ai-gateway/package.json
+#28 DONE 0.1s
+
+#29 [runner  7/15] COPY --from=runtime-artifacts --chown=node:node /app/apps/ai-gateway/dist ./apps/ai-gateway/dist
+#29 DONE 0.0s
+
+#30 [runner  8/15] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.json ./packages/config/package.json
+#30 DONE 0.0s
+
+#31 [runner  9/15] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./packages/config/dist
+#31 DONE 0.0s
+
+#32 [runner 10/15] COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.json ./packages/contracts/package.json
+#32 DONE 0.0s
+
+#33 [runner 11/15] COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./packages/contracts/dist
+#33 DONE 0.0s
+
+#34 [runner 12/15] COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
+#34 DONE 0.0s
+
+#35 [runner 13/15] COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+#35 DONE 0.0s
+
+#36 [runner 14/15] RUN sharp_dir="$(readlink -f './apps/ai-gateway/node_modules/sharp')"   && mkdir -p "$sharp_dir/node_modules/@img"   && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/"   && rm -rf /tmp/sharp-native   && node -e "const sharp=require('./apps/ai-gateway/node_modules/sharp');sharp({create:{width:4,height:2,channels:3,background:'white'}}).rotate(90).jpeg().toBuffer({resolveWithObject:true}).then(({info})=>{if(info.width!==2||info.height!==4)throw new Error('Receipt orientation runtime check failed');}).catch(error=>{console.error(error);process.exit(1);});"
+#36 DONE 0.5s
+
+#37 [runner 15/15] WORKDIR /app/apps/ai-gateway
+#37 DONE 0.0s
+
+#38 exporting to oci image format
+#38 exporting layers
+#38 exporting layers 1.7s done
+#38 exporting manifest sha256:6ed397cac3e4edc3b24d0be8ebddafce3917596208fd96d884333fdd3dc317e9 done
+#38 exporting config sha256:78cba3df935beeb0d4adc93a0a3d1086cc52bde464ff44523b96d69b3b1c95fd done
+#38 sending tarball
+#38 sending tarball 1.4s done
+#38 DONE 3.2s
+
+#39 importing to docker
+#39 DONE 0.0s

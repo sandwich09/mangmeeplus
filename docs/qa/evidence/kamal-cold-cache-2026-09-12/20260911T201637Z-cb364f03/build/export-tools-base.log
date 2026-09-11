@@ -1,0 +1,140 @@
+#0 building with "kamal-cold-20260912-9a51c543" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile.api-web
+#1 transferring dockerfile: 9.33kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 1.06kB done
+#3 DONE 0.0s
+
+#4 [system 3/5] ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+#4 DONE 0.0s
+
+#5 [system 1/5] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#5 resolve docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 19.30MB 0.3s done
+#6 DONE 0.3s
+
+#7 [build 17/22] COPY packages/design-tokens/generated packages/design-tokens/generated
+#7 CACHED
+
+#8 [manifests 1/6] COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+#8 CACHED
+
+#9 [build 18/22] COPY packages/design-tokens/scripts packages/design-tokens/scripts
+#9 CACHED
+
+#10 [manifests 2/6] COPY apps/api/package.json apps/api/package.json
+#10 CACHED
+
+#11 [build  7/22] COPY apps/web/src apps/web/src
+#11 CACHED
+
+#12 [system 4/5] RUN chmod 0644 /etc/ssl/certs/aws-rds-global-bundle.pem
+#12 CACHED
+
+#13 [manifests 4/6] COPY packages/config/package.json packages/config/package.json
+#13 CACHED
+
+#14 [build  2/22] COPY apps/api/prisma/schema.prisma apps/api/prisma/schema.prisma
+#14 CACHED
+
+#15 [build  3/22] COPY apps/api/.swcrc apps/api/.swcrc
+#15 CACHED
+
+#16 [build 10/22] COPY apps/web/postcss.config.mjs apps/web/postcss.config.mjs
+#16 CACHED
+
+#17 [build 19/22] COPY packages/design-tokens/tokens.json packages/design-tokens/tokens.json
+#17 CACHED
+
+#18 [manifests 5/6] COPY packages/contracts/package.json packages/contracts/package.json
+#18 CACHED
+
+#19 [build 14/22] COPY packages/config/tsconfig.json packages/config/tsconfig.json
+#19 CACHED
+
+#20 [system 2/5] RUN apt-get update -y   && apt-get upgrade -y --no-install-recommends   && apt-get install -y --no-install-recommends ca-certificates openssl   && rm -rf /var/lib/apt/lists/*
+#20 CACHED
+
+#21 [build  9/22] COPY apps/web/next.config.mjs apps/web/next.config.mjs
+#21 CACHED
+
+#22 [system 3/5] ADD --checksum=sha256:e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3 https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
+#22 CACHED
+
+#23 [build  8/22] COPY apps/web/next-env.d.ts apps/web/next-env.d.ts
+#23 CACHED
+
+#24 [build  4/22] COPY apps/api/tsconfig.json apps/api/tsconfig.json
+#24 CACHED
+
+#25 [build 16/22] COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
+#25 CACHED
+
+#26 [system 5/5] WORKDIR /app
+#26 CACHED
+
+#27 [build  5/22] COPY apps/web/app apps/web/app
+#27 CACHED
+
+#28 [build 13/22] COPY packages/config/src packages/config/src
+#28 CACHED
+
+#29 [manifests 3/6] COPY apps/web/package.json apps/web/package.json
+#29 CACHED
+
+#30 [build 21/22] RUN pnpm --filter @watchdog-bms/api exec prisma generate --schema prisma/schema.prisma
+#30 CACHED
+
+#31 [build 12/22] COPY apps/web/tsconfig.json apps/web/tsconfig.json
+#31 CACHED
+
+#32 [build 15/22] COPY packages/contracts/src packages/contracts/src
+#32 CACHED
+
+#33 [build 11/22] COPY apps/web/proxy.ts apps/web/proxy.ts
+#33 CACHED
+
+#34 [manifests 6/6] COPY packages/design-tokens/package.json packages/design-tokens/package.json
+#34 CACHED
+
+#35 [build  1/22] COPY apps/api/src apps/api/src
+#35 CACHED
+
+#36 [build  6/22] COPY apps/web/public apps/web/public
+#36 CACHED
+
+#37 [build 20/22] RUN mkdir -p apps/api/.turbo apps/web/.turbo packages/config/.turbo packages/contracts/.turbo packages/design-tokens/.turbo
+#37 CACHED
+
+#38 [deps 1/1] RUN pnpm install --frozen-lockfile
+#38 CACHED
+
+#39 [build-base 1/1] RUN corepack enable
+#39 CACHED
+
+#40 [build 22/22] RUN pnpm exec turbo run build --filter=@watchdog-bms/api --filter=@watchdog-bms/web
+#40 CACHED
+
+#41 exporting to oci image format
+#41 exporting layers
+#41 exporting layers 29.6s done
+#41 exporting manifest sha256:aaa4d0b40fb6ac0c22f486b5d43c5d423fc02575083d826e3a7d4d857ad7a69c 0.0s done
+#41 exporting config sha256:333c270a4a9dc2f354ee84540cc5600f760ec290e5ca53d417cf7efe3aaa0f52 done
+#41 sending tarball
+#41 ...
+
+#42 importing to docker
+#42 DONE 0.0s
+
+#41 exporting to oci image format
+#41 sending tarball 7.6s done
+#41 DONE 37.2s

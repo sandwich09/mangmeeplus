@@ -1,0 +1,4 @@
+
+> @watchdog-bms/contracts@0.1.0 build /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/.env.kamal/uat/runs/20260911T201637Z-cb364f03/source/packages/contracts
+> tsc -p tsconfig.json
+
