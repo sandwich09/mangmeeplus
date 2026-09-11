@@ -186,7 +186,8 @@ describe('R8 — แบบฟอร์มรอลงนาม', () => {
     for (const options of [{}, { unsignedForm: true }, { paperForm: true }]) {
       const form = renderSubstituteReceiptSvg(snapshot(), undefined, undefined, undefined, options).toString('utf8');
       assert.doesNotMatch(form, /เลขที่ SUB-|version 1|มิใช่ใบกำกับภาษี|เอกสารนี้ยังไม่สมบูรณ์/);
-      assert.match(form, /เลขอ้างอิงรายการ: EXP-001/);
+      assert.match(form, /เลขรายจ่าย: EXP-001/);
+      assert.match(form, /เลขใบแทน: SUB-202608-00007/);
       if (!('paperForm' in options)) assert.ok(form.includes('รอลงนาม') && form.includes('รอผู้อนุมัติลงนาม'));
     }
     assert.deepEqual(

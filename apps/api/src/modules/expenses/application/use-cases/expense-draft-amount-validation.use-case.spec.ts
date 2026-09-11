@@ -23,9 +23,11 @@ function setup(resolveLines?: (lines: any[]) => any[]) {
   const upserted: any[] = [];
   const repo = {
     resolveCreateBranchId: async () => 'branch-1',
-    createExpense: async (data: any) => {
+    createExpense: async (data: any, withinTx?: (tx: unknown, record: any) => Promise<void>) => {
+      const record = { id: 'expense-1', ...data };
+      if (withinTx) await withinTx({}, record);
       created.push(data);
-      return { id: 'expense-1', ...data };
+      return record;
     },
     upsertLines: async (_companyId: string, _expenseId: string, lines: any[]) => { upserted.push(...lines); },
     // §5.1: an omitted chargeKind on PATCH keeps the stored one, so the update path reads them.
