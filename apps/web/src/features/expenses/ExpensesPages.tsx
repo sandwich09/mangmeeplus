@@ -1727,10 +1727,8 @@ export const STEP_HELPER_KEYS: Record<ExpenseReviewStepKey, DictionaryKey> = {
 };
 
 // ── List (period + cards + export + chips + search + grid rows + detail) ──────
-// All four columns share the spare width. With fixed trailing columns the first one absorbed
-// every extra pixel on wide screens (~66% of the table) and pushed the rest into a cluster on
-// the right; the minimums keep them readable once the min-w track starts scrolling.
-const GRID = 'grid grid-cols-[minmax(0,1.6fr)_minmax(140px,1fr)_minmax(130px,1fr)_minmax(170px,1fr)_minmax(84px,auto)] items-center gap-3';
+// Identity, vendor, dates, amount and status share the table width; narrower screens use cards.
+const GRID = 'grid grid-cols-[minmax(160px,1fr)_minmax(150px,1.4fr)_minmax(150px,1fr)_minmax(100px,0.7fr)_minmax(140px,1fr)_84px] items-center gap-3';
 const LIST_PAGE_SIZE = 10;
 
 function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: string; caps: ExpenseCapabilities; userId: string; onSelect: (id: string) => void }) {
@@ -2014,11 +2012,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           {loading || categoryNamesLoading ? <LoadingState label="กำลังโหลด..." />
             : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
               : <>
-          <div className="hidden md:block">
+          <div className="hidden xl:block">
           <div className="overflow-x-auto" data-testid="expenses-grid">
-            <div className="min-w-[760px]">
+            <div className="min-w-[900px]">
               <div className={cx(GRID, 'mt-3 border-b border-gray-100 px-2 pb-2 text-[13px] font-bold uppercase tracking-wide text-gray-400')}>
-                <div>{t('expenses.col_vendor_category', locale)}</div><div>{t('expenses.col_date_source', locale)}</div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
+                <div>{t('expenses.col_expense_number', locale)}</div><div>{t('expenses.col_vendor_category', locale)}</div><div>{t('expenses.col_date_source', locale)}</div><div className="text-right">{t('expenses.col_total', locale)}</div><div className="text-right">{t('expenses.col_status', locale)}</div><div className="text-right"><span className="sr-only">การทำงาน</span></div>
               </div>
               {loading ? <p className="py-8 text-center text-sm text-gray-500">{t('expenses.loading', locale)}</p>
                 : filtered.length === 0 ? <p className="py-10 text-center text-sm text-gray-500">{t('expenses.empty_period', locale)}</p>
@@ -2027,11 +2025,11 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                         {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                         className={cx(GRID, 'cursor-pointer border-b border-gray-50 px-2 py-3 transition hover:bg-gray-50',
                           e.id === highlightId && 'rounded-xl ring-2 ring-brand-500 bg-brand-25')}>
+                        <div className="min-w-0 font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</div>
                         <div className="min-w-0">
                           <div className="truncate text-[15px] font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</div>
                           <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-400">
                             {e.expenseCategoryId && catNames[e.expenseCategoryId] && <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-semibold text-gray-600">{catNames[e.expenseCategoryId]}</span>}
-                            <span className="tabular-nums truncate">{firstFilled(e.expenseNumber) ?? 'ยังไม่มีเลขรายจ่าย'}</span>
                           </div>
                         </div>
                         <div>
@@ -2056,7 +2054,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
             </div>
           </div>
           </div>
-          <div className="mt-3 space-y-3 md:hidden" data-testid="expenses-card-list">
+          <div className="mt-3 space-y-3 xl:hidden" data-testid="expenses-card-list">
             {pagedRows.map((e) => (
               <MangmeeCard key={e.id} className={cx('overflow-hidden', e.id === highlightId && 'ring-2 ring-brand-500')}>
                 <button
@@ -2066,9 +2064,10 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                   data-testid="expenses-card"
                   {...(e.id === highlightId ? { 'data-highlighted': 'true' } : {})}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="max-w-[45%] truncate font-mono text-xs text-gray-600">{firstFilled(e.expenseNumber) ?? 'ยังไม่มีเลขรายจ่าย'}</span>
-                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
+                  <div className="min-w-0">
+                    <span className="block text-xs font-medium text-gray-500">{t('expenses.col_expense_number', locale)}</span>
+                    <span className="mt-1 block font-mono text-sm font-semibold text-gray-700 [overflow-wrap:anywhere]">{firstFilled(e.expenseNumber) ?? t('expenses.number_pending', locale)}</span>
+                    <span className="mt-2 block truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
                     <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{dateShort(e.expenseDate)}</div>

@@ -34,6 +34,12 @@ Verification:
 Next:
 - Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Implementation and evidence are ready for review on the scoped branch. If rollout is later requested, follow mandatory runbooks and pending release acceptance. Do not merge/deploy automatically.
 
+### UI follow-up: explicit EXP table column, 2026-09-11
+
+- User requested implementation after agreeing to a first “เลขรายจ่าย (EXP)” column.
+- Added a dedicated full-number column before vendor/category, Thai/English labels and explicit unnumbered text. Smaller than 1280px uses cards with the number above the vendor; long numbers wrap without truncation.
+- Scoped to list presentation, dictionary and documentation. Browser geometry/read-only review passed at 1440/1280/1024/768/390px, no overflow and 0 expense mutations; web typecheck passed. Evidence: `docs/qa/evidence/expense-number-column-2026-09-11/README.md`. No financial mutation or numbering rule change. Local servers stopped and generated next-env restored.
+
 ## Historical investigation and progress log (superseded by current state above)
 
 Status: Proof investigation completed 2026-09-11; spec recorded, WAITING FOR IMPLEMENTATION. New EXP policy, migration and full browser/ledger acceptance are not implemented or proven.
