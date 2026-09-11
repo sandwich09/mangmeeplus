@@ -8,6 +8,7 @@ import { MaterializeClaimExpensesService } from '../application/services/materia
 import { computeLegacySnapshotHashV1, computeSnapshotHash } from '../domain/logic/reimbursement.logic';
 import { PrismaReimbursementRepository } from './prisma-reimbursement.repository';
 import { readReimbursementSource, resolveReimbursementSourceLines, assertReimbursementSources, assertProjectionSource } from './reimbursement-source';
+import { expenseTaxSourceChecksum } from '../../expenses/domain/logic/expense-status.logic';
 import { ConfirmExpenseUseCase } from '../../expenses/application/use-cases/expense-draft.use-case';
 import { PrismaAttachmentRepository } from '../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { ReimbursementEvidenceService } from '../application/services/reimbursement-evidence.service';
@@ -782,8 +783,19 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     await assert.rejects(() => confirm.executeForReimbursement(confirmationCtx, projection!.expenseId,
       { reimbursementRequestId: request.id, reimbursementLineId: 'wrong-line', branchId, allowMissingReceiptWithReason: false }),
       /reimbursement_projection_authority_mismatch/);
-    await assert.rejects(() => confirm.execute({ ...confirmationCtx, permissions: ['expense.confirm'] }, projection!.expenseId),
+    const projectionSource = (await expenses.findByIdWithRelations(companyId, projection!.expenseId))!;
+    const confirmInput = {
+      companyId, id: projection!.expenseId, actorUserId: `${TAG}-finance`, expectedUpdatedAt: projectionSource.updatedAt,
+      expectedSourceChecksum: expenseTaxSourceChecksum(projectionSource), postingStatus: 'pending' as const, vendorSnapshotJson: null,
+      outboxEvent: { eventKey: `claim-review:${projection!.expenseId}`, payloadJson: {} },
+    };
+    await assert.rejects(confirm.execute({ companyId, userId: `${TAG}-finance`, permissions: ['expense.confirm'], scopes: {}, authProvider: 'dev' } as any,
+      projection!.expenseId), error => errorCode(error) === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
+    await assert.rejects(expenses.finalizeAndConfirmExpenseCas(confirmInput, async () => []),
       error => errorCode(error) === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
+    await assert.rejects(expenses.finalizeAndConfirmExpenseCas({ ...confirmInput,
+      reimbursementReview: { requestId: request.id, lineId: 'wrong-line' } }, async () => []), /reimbursement_projection_authority_mismatch/);
+    assert.equal(await source.db.outboxEvent.count({ where: { companyId, aggregateId: projection!.expenseId, eventType: 'expense.confirmed' } }), 0);
     const confirmed = await confirm.executeForReimbursement({ companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any, projection!.expenseId,
       { reimbursementRequestId: request.id, reimbursementLineId: request.lines![0]!.id, branchId, allowMissingReceiptWithReason: false });
     assert.equal(confirmed.status, 'CONFIRMED');

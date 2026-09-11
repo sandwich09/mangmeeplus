@@ -8,10 +8,10 @@ import { PrismaClient } from '../../../generated/prisma/client';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
 import { PrismaDocumentSequenceRepository } from '../../data-model-core/infrastructure/repositories/prisma-document-sequence.repository';
 import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.repository';
-import { CreateExpenseDraftUseCase } from '../application/use-cases/expense-draft.use-case';
+import { CreateExpenseDraftUseCase, UpdateExpenseDraftUseCase } from '../application/use-cases/expense-draft.use-case';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { canNumberReviewedDraft } from './expense-number';
-import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
+import { hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 
 // Opt-in local PostgreSQL; every row is test-owned. Launch/tax services are isolated here;
 // allocation, transactions, audit, lines, source constraints and uniqueness are real PostgreSQL.
@@ -53,19 +53,22 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     if (userId) await client.user.delete({ where: { id: userId } });
     await client.$disconnect();
   });
-  async function ready(id: string) {
-    const file = await client.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'LOCAL', bucket: 'local',
-      objectKey: `number-test/${id}`, originalFileName: 'receipt.png', mimeType: 'image/png', byteSize: 1,
-      checksumSha256: 'a'.repeat(64), uploadedByUserId: userId, status: 'ACTIVE' } });
+  async function ready(id: string, expenseDate?: string) {
+    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY' } });
+    const file = await client.attachmentObject.create({ data: {
+      companyId, branchId, storageProvider: 'LOCAL', bucket: 'test', objectKey: `${companyId}/${id}`,
+      originalFileName: 'receipt.pdf', mimeType: 'application/pdf', byteSize: 1,
+      checksumSha256: 'b'.repeat(64), uploadedByUserId: userId, status: 'ACTIVE',
+    } });
     await client.attachmentLink.create({ data: { companyId, attachmentId: file.id, targetType: 'expense.record', targetId: id,
-      purpose: 'expense.receipt', linkedByUserId: userId } });
-    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT',
-      taxEvidenceStatus: 'SUPPORTING_ONLY', primaryAttachmentId: file.id } });
-    const reviewed = (await repo.findByIdWithRelations(companyId, id))!;
-    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [file.id], reason: '' };
-    await client.expenseRecord.update({ where: { id }, data: { aiVerificationSummaryJson: { documentReview: { version: 2,
-      reviewedAt: reviewed.updatedAt.toISOString(), reviewedByUserId: userId, assessment, fingerprint: expenseEvidenceFingerprint(reviewed, assessment) } } } });
+      purpose: 'expense.receipt.primary', linkedByUserId: userId } });
+    const before = (await repo.findByIdWithRelations(companyId, id))!;
+    await new UpdateExpenseDraftUseCase(repo, audit as any, tax).execute({ ...ctx(), permissions: ['expense.review'] }, id, {
+      expectedUpdatedAt: before.updatedAt.toISOString(), ...(expenseDate && { expenseDate }), documentReviewAcknowledged: true,
+      evidenceAssessment: { route: 'SOURCE_DOCUMENT', receiptProblem: 'NONE', attachmentIds: [file.id], reason: '' },
+    }, { suppressGenericAudit: true });
     const source = (await repo.findByIdWithRelations(companyId, id))!;
+    assert.equal(hasCurrentExpenseEvidenceReview(source), true);
     return { companyId, id, actorUserId: userId, confirmationAudit: { requestId: randomUUID() }, expectedUpdatedAt: source.updatedAt,
       expectedSourceChecksum: expenseTaxSourceChecksum(source), postingStatus: 'pending' as const, vendorSnapshotJson: null,
       outboxEvent: { eventKey: `number-test:${id}`, payloadJson: { data: { expenseId: id } } } };
@@ -118,6 +121,18 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     const confirmed = await repo.finalizeAndConfirmExpenseCas(await ready(staged.id), async () => []);
     assert.equal(confirmed.expense.expenseNumber, reviewed.expenseNumber);
     process.env.EXPENSE_DRAFT_NUMBERING_ENABLED = 'true';
+  });
+  it('date and evidence review save one current review with the new draft number', async () => {
+    const staged = await create.execute(ctx(), draft({ captureSource: 'WEB_UPLOAD' }));
+    assert.equal(staged.expenseNumber, null);
+    const input = await ready(staged.id, '2026-07-31');
+    const reviewed = (await repo.findByIdWithRelations(companyId, staged.id))!;
+    assert.match(reviewed.expenseNumber!, /^EXP-202607-/);
+    assert.equal(hasCurrentExpenseEvidenceReview(reviewed), true);
+    const confirmed = await repo.finalizeAndConfirmExpenseCas(input, async () => []);
+    assert.equal(confirmed.expense.expenseNumber, reviewed.expenseNumber);
+    assert.equal(await client.documentNumber.count({ where: { companyId, ownerId: staged.id } }), 1);
+    assert.equal(await client.auditLog.count({ where: { companyId, targetId: staged.id, action: 'expense.evidence.review' } }), 1);
   });
   it('concurrent confirmation keeps the draft number and creates exactly one outbox event', async () => {
     const saved = await create.execute(ctx(), draft());
