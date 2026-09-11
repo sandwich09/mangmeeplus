@@ -129,3 +129,13 @@ Scope: Commit scoped code/docs/evidence, reconcile each remote target, run PR ch
 Remote baseline: origin/main 120256910c9a320409e9cfabfe3ec5ae377c4e18; origin/develop 4153bbe9725ad0d96142fb3b66894e782f0335d6. Main adds restored migration history relative to tested baseline; develop has equivalent product tree with different merge ancestry. Main protection requires one approving review; develop does not require reviews. Follow normal PR protection.
 Evidence hygiene: removed presigned local URL query strings from committed JSON, preserving file/checksum/history metadata.
 Next: Commit, prepare target branches/PRs, verify checks, merge each allowed target and record exact commit/PR outcomes.
+
+
+### PR integration and runner correction — 2026-09-11
+
+Status: Product fixes committed and pushed; integration is tracked by [main PR #545](https://github.com/MangmeeDev/mangmeeplus/pull/545) and [develop PR #546](https://github.com/MangmeeDev/mangmeeplus/pull/546). Use these PRs for current review, CI and merge state.
+Commits: shared fixes e84989e8; initial main integration 5366e5832954da3a32a095c0b4dff7baa4dc5bb3; initial develop integration 96ec220d4d9f43f04de4e519bff30c0f0a7cf13e. Both target integrations were conflict-free, with identical product trees.
+Verification correction: full API `pnpm typecheck` with the configured 8 GiB heap passed, including historical spec typings; this supersedes the earlier 4 GiB memory-limit caveat.
+CI: initial main run 34611572872 failed the spec-suite coverage gate because three newly added regression files were only run explicitly in local QA. They are now wired into the existing executable API behavior catalog so CI runs them; the gate and package.json remain unchanged. Initial develop run 34611595009 also failed at the default test step on the same product tree. Replacement runs and exact merged commit IDs are recorded by the linked PRs.
+Scope: no new product behavior in this follow-up; retain all existing assertions and automatic checks. Main still requires one approving review under branch protection. No UAT or Production deployment is part of this request.
+Focused verification: the suite coverage guard and all three newly wired specs pass 12/12; the catalog tests pass 4/4. No package.json edits. Next: push the correction to both PRs, then merge targets once their checks and review policy allow it.
