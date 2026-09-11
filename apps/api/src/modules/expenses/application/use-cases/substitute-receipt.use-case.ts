@@ -566,6 +566,9 @@ export class PrepareSubstituteReceiptUseCase {
         `A substitute receipt supports at most ${SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS.maxEvidenceAttachments} linked evidence files.`,
       );
     }
+    if (allIds.some(id => expense.attachments.some(file => file.id === id && file.isHistorical))) {
+      throw new BadRequestException({ code: 'substitute_evidence_unavailable', message: 'เอกสารที่ยกเลิกหรือแทนที่แล้วใช้เป็นหลักฐานฉบับปัจจุบันไม่ได้' });
+    }
     const attachments = await this.repo.findSubstituteEvidenceAttachments(ctx.companyId, expenseId, allIds);
     if (attachments.length !== allIds.length) throw new BadRequestException({
       code: 'substitute_evidence_unavailable', message: 'Every evidence attachment must be ACTIVE and linked to this expense.',

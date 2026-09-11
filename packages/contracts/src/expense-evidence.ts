@@ -43,8 +43,8 @@ function validAssessmentShape(value: unknown): value is ExpenseEvidenceAssessmen
   return true;
 }
 
-export function isExpenseEvidenceFile(file: { status?: string; purpose?: string }): boolean {
-  return file.status === 'ACTIVE' && file.purpose !== 'expense.review.evidence';
+export function isExpenseEvidenceFile(file: { status?: string; purpose?: string; isHistorical?: boolean }): boolean {
+  return !file.isHistorical && file.status === 'ACTIVE' && file.purpose !== 'expense.review.evidence';
 }
 
 /** Unresolved facts may be saved; malformed or foreign file references may not. */

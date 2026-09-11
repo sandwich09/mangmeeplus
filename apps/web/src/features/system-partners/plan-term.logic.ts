@@ -50,8 +50,8 @@ export function parseDaysInput(raw: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-/** Limits may legitimately be 0 (a tier that grants none), so only negatives are rejected. */
+/** Match the plan-term API: every configured limit and warning period is a positive integer. */
 export function parseLimitInput(raw: string): number | null {
   const value = Number(raw.trim());
-  return raw.trim() !== '' && Number.isInteger(value) && value >= 0 ? value : null;
+  return raw.trim() !== '' && Number.isInteger(value) && value > 0 ? value : null;
 }

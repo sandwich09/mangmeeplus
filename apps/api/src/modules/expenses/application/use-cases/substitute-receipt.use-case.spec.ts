@@ -293,6 +293,8 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', {
       ...input, supportingAttachmentIds: ['proof'], paymentEvidenceAttachmentIds: ['proof'],
     }), codeIs('substitute_evidence_overlap'));
+    // Cancelled certificate files remain viewable history, never new payment proof.
+    await assert.rejects(() => make(checkBillSummary, null, [payment], { attachments: [{ ...payment, isHistorical: true }] }).execute(ctx(), 'exp-1', proofInput), codeIs('substitute_evidence_unavailable'));
     // Repository returns no match for inactive, unlinked, or other-tenant evidence.
     await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', proofInput), codeIs('substitute_evidence_unavailable'));
     await assert.rejects(() => make(checkBillSummary, null).execute(ctx(), 'exp-1', {

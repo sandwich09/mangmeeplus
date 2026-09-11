@@ -159,3 +159,16 @@ export function canCreateSourceDraft(
   const actionable = ['NEW', 'IN_REVIEW', 'ACCEPTED_FOR_SOURCE_DRAFT'].includes(suggestionStatus);
   return !needsData && actionable && actionType !== 'NO_SOURCE_DRAFT_AVAILABLE' && actionStatus !== 'SOURCE_DRAFT_CREATED';
 }
+
+
+/** Code-owned usage guidance never invents an action outside the effective permission set. */
+export function permittedUsageGuidance(permissions: readonly string[]) {
+  return [
+    { path: 'expenses/upload', permission: 'expense.receipt.upload', title: 'อัปโหลดใบเสร็จ', help: 'แนบเอกสาร รออ่านข้อมูล แล้วตรวจยอดและหลักฐานก่อนส่งตรวจ' },
+    { path: 'expenses/manual', permission: 'expense.create', title: 'บันทึกค่าใช้จ่ายด้วยมือ', help: 'กรอกผู้รับเงิน รายการและยอด พร้อมแนบหลักฐานหรือระบุเหตุผลที่ไม่มีใบเสร็จ' },
+    { path: 'expenses', permission: 'expense.review', title: 'ตรวจค่าใช้จ่าย', help: 'ตรวจข้อมูลและหลักฐานที่ยังไม่ครบก่อนยืนยันรายการ' },
+    { path: 'reimbursements', permission: 'reimbursement.create', title: 'ขอเบิกคืนเงินสำรองจ่าย', help: 'เลือกเอกสารต้นทางที่รองรับ ตรวจข้อมูล แล้วส่งตามลำดับอนุมัติ' },
+    { path: 'expenses/evidence', permission: 'expense.evidence.read', title: 'ตรวจหลักฐานทางบัญชี', help: 'ตรวจรายการยืนยันแล้วและความครบของหลักฐานก่อนส่งต่อบัญชี' },
+    { path: 'settings/employees', permission: 'access.employee.update', title: 'จัดการพนักงาน', help: 'กำหนดบทบาทและสาขาที่พนักงานทำงานได้' },
+  ].filter((item) => permissions.includes(item.permission));
+}

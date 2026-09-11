@@ -567,6 +567,10 @@ export type ExpenseLineSummary = {
 };
 
 export type ExpenseAttachmentRef = {
+  /** Read-only provenance; superseded certificate files remain downloadable as history. */
+  sourceExpenseId?: string;
+  isHistorical?: boolean;
+  substituteReceiptStatus?: string;
   id: string;
   purpose: ExpenseAttachmentPurpose;
   originalFileName: string;
@@ -603,7 +607,18 @@ export type ExpensePaymentSummary = {
   createdAt: string;
 };
 
+export type ExpenseReimbursementProgress = { requestId?: string; requestNo?: string | null; status: string };
+export function isExpensePendingReview(row: { status: ExpenseStatus; reimbursementProgress?: ExpenseReimbursementProgress }): boolean {
+  return isExpensePending(row.status) && !row.reimbursementProgress;
+}
+export function expenseReimbursementProgressLabel(progress: ExpenseReimbursementProgress): string {
+  const labels: Record<string, string> = { WAITING_CLAIM: 'รอยื่นเบิกคืน', DRAFT: 'ใบเบิกฉบับร่าง', PENDING_APPROVAL: 'รออนุมัติเบิกคืน', APPROVED: 'อนุมัติเบิกคืนแล้ว', FINANCE_REVIEW: 'รอตรวจการเงิน', READY_FOR_PAYMENT: 'รอจ่ายคืน', PARTIALLY_PAID: 'จ่ายคืนบางส่วน', PAID: 'จ่ายคืนแล้ว' };
+  return labels[progress.status] ?? 'ติดตามใบเบิกคืน';
+}
+
 export type ExpenseSummary = {
+  costSourceExpenseId?: string;
+  reimbursementProgress?: ExpenseReimbursementProgress;
   id: string;
   companyId: string;
   branchId: string | null;
@@ -1312,6 +1327,7 @@ export type SharedEvidenceFilter = {
 };
 
 export type SharedEvidenceRow = {
+  sourceEvidenceUnavailable?: boolean;
   expenseId: string;
   expenseNumber: string | null;
   status: ExpenseStatus;
@@ -1487,6 +1503,9 @@ export function accountantIndexColumns(columnSet: AccountantIndexColumnSet): rea
 export type AccountantPackageIndexRow = Record<AccountantIndexColumn, string>;
 
 export type EvidenceManifestEntry = {
+  source_expense_id?: string;
+  is_historical?: boolean;
+  substitute_receipt_status?: string;
   evidence_ref: string;
   expense_id: string;
   attachment_id: string;

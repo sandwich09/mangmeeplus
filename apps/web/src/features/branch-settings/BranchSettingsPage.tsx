@@ -118,7 +118,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
         </div>
         {canManage && <button
           className="mangmee-btn mangmee-btn-primary"
-          onClick={() => { setCreating((c) => !c); setEditing(null); }}
+          onClick={() => { setCreating((c) => !c); setEditing(null); setError(null); setErrorCode(null); }}
         >
           {creating ? 'ยกเลิก' : '+ เพิ่มสาขา'}
         </button>}
@@ -199,7 +199,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
                     <span className={b.status === 'ACTIVE' ? 'text-green-700' : 'text-gray-400'}>{STATUS_LABELS[b.status] ?? b.status}</span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {canManage && <button className="text-brand-700 hover:underline" onClick={() => { setEditing({ ...b }); setCreating(false); }}>
+                    {canManage && <button className="text-brand-700 hover:underline" onClick={() => { setEditing({ ...b }); setCreating(false); setError(null); setErrorCode(null); }}>
                       แก้ไข
                     </button>}
                   </td>
@@ -245,7 +245,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
             >
               บันทึก
             </button>
-            <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => setEditing(null)}>ยกเลิก</button>
+            <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => { setEditing(null); setError(null); setErrorCode(null); }}>ยกเลิก</button>
           </div>
         </div>
       )}

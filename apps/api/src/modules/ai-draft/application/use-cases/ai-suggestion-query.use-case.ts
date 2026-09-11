@@ -13,7 +13,7 @@ import { SourceStateService } from '../source-state.service';
 import { LLM_DRAFT_PORT } from '../../infrastructure/provider/llm-draft.port';
 import type { LlmDraftPort } from '../../infrastructure/provider/llm-draft.port';
 import { canReadSuggestions, hasBroadSuggestionRead } from '../../domain/logic/ai-draft-permission.logic';
-import { AI_SUGGESTION_TEMPLATES } from '../../domain/ai-draft-template-catalog';
+import { AI_SUGGESTION_TEMPLATES, canAccessTemplateSources } from '../../domain/ai-draft-template-catalog';
 import { toSuggestionSummary, toSuggestionDetail, toTemplateSummary } from '../dto/ai-draft.mapper';
 
 function paginate<T>(rows: T[], page?: number, pageSize?: number) {
@@ -25,7 +25,7 @@ function paginate<T>(rows: T[], page?: number, pageSize?: number) {
 
 @Injectable()
 export class ListSuggestionsUseCase {
-  constructor(private readonly repo: PrismaAiDraftRepository) {}
+  constructor(private readonly repo: PrismaAiDraftRepository, private readonly sourceState: SourceStateService) {}
 
   async execute(
     ctx: RequestContext,
@@ -45,7 +45,9 @@ export class ListSuggestionsUseCase {
       riskLevel: filter.riskLevel,
       sourceModule: filter.sourceModule,
     });
-    const page = paginate(rows, filter.page, filter.pageSize);
+    const permitted = rows.filter(row => canAccessTemplateSources(row.templateKey, ctx.permissions));
+    const readable = await Promise.all(permitted.map(row => this.sourceState.canRead(ctx, row)));
+    const page = paginate(permitted.filter((_, index) => readable[index]), filter.page, filter.pageSize);
     return { ...page, items: page.items.map((r) => toSuggestionSummary(r, r.citationCountActual)) };
   }
 }
@@ -65,6 +67,8 @@ export class GetSuggestionDetailUseCase {
     if (!hasBroadSuggestionRead(ctx.permissions) && found.suggestion.reviewOwnerUserId !== ctx.userId) {
       throw new ForbiddenException('Not permitted to read this suggestion');
     }
+    if (!canAccessTemplateSources(found.suggestion.templateKey, ctx.permissions)) throw new ForbiddenException('Missing source permission for this suggestion');
+    if (!await this.sourceState.canRead(ctx, found.suggestion)) throw new ForbiddenException('Source is no longer readable');
     const sourceStateChanged = await this.sourceState.isChanged(ctx, found.suggestion);
     return toSuggestionDetail({ ...found, sourceStateChanged });
   }
@@ -79,7 +83,7 @@ export class ListTemplatesUseCase {
       ctx.permissions.includes(AI_PERMISSION_KEYS.DRAFT_REQUEST) ||
       ctx.permissions.includes(AI_PERMISSION_KEYS.SUGGESTION_READ);
     if (!canRead) throw new ForbiddenException('Missing permission: ai.template.read');
-    return AI_SUGGESTION_TEMPLATES.map(toTemplateSummary);
+    return AI_SUGGESTION_TEMPLATES.filter((template) => canAccessTemplateSources(template.key, ctx.permissions)).map(toTemplateSummary);
   }
 }
 

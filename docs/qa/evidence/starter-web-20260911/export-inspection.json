@@ -1,0 +1,874 @@
+{
+  "รายการค่าใช้จ่าย": [
+    [
+      {
+        "cell": "A1",
+        "value": "บริษัท",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "B1",
+        "value": "เลขผู้เสียภาษีบริษัท",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "C1",
+        "value": "สาขา",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "D1",
+        "value": "งวดบัญชี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "E1",
+        "value": "วันที่ส่งเข้าระบบ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "F1",
+        "value": "วันที่เอกสาร",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "G1",
+        "value": "เลขที่ค่าใช้จ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "H1",
+        "value": "สถานะรายการ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "I1",
+        "value": "ช่องทางส่งเข้า",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "J1",
+        "value": "ประเภทเอกสาร",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "K1",
+        "value": "สถานะหลักฐานภาษี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "L1",
+        "value": "เหตุผลสถานะภาษี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "M1",
+        "value": "สถานะลงบัญชี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "N1",
+        "value": "สาเหตุลงบัญชีไม่สำเร็จ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "O1",
+        "value": "เลขที่ JV",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "P1",
+        "value": "ผู้ขอเบิก/ผู้ใช้จ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Q1",
+        "value": "ผู้ส่งเอกสาร",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "R1",
+        "value": "ผู้ตรวจ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "S1",
+        "value": "ผู้ขาย/ผู้รับเงิน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "T1",
+        "value": "เลขผู้เสียภาษีผู้ขาย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "U1",
+        "value": "สาขาผู้ขาย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "V1",
+        "value": "เลขที่เอกสารผู้ขาย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "W1",
+        "value": "หมวดค่าใช้จ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "X1",
+        "value": "ผังบัญชีแนะนำ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Y1",
+        "value": "รายละเอียด",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Z1",
+        "value": "จำนวน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AA1",
+        "value": "มูลค่าก่อนส่วนลด/ภาษี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AB1",
+        "value": "ส่วนลด",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AC1",
+        "value": "ฐานภาษี",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AD1",
+        "value": "ภาษีมูลค่าเพิ่ม (VAT)",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AE1",
+        "value": "หัก ณ ที่จ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AF1",
+        "value": "ยอดรวม",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AG1",
+        "value": "ยอดสุทธิที่ต้องจ่าย/คืน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AH1",
+        "value": "ยอดที่จ่ายแล้ว",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AI1",
+        "value": "ยอดค้างจ่าย/ค้างคืน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AJ1",
+        "value": "วิธีชำระเงิน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AK1",
+        "value": "วันที่จ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AL1",
+        "value": "เลขอ้างอิงการจ่าย",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AM1",
+        "value": "อ้างอิงใบแทนใบเสร็จ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AN1",
+        "value": "ไฟล์หลักฐานหลัก",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AO1",
+        "value": "ไฟล์แนบเพิ่มเติม",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AP1",
+        "value": "ลิงก์เปิดในระบบ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AQ1",
+        "value": "หมายเหตุ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AR1",
+        "value": "ค่าใช้จ่ายเพิ่ม",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AS1",
+        "value": "สถานะวันที่เอกสาร",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AT1",
+        "value": "แหล่งเงิน",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AU1",
+        "value": "ผู้จ่ายและรับรอง",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AV1",
+        "value": "ต้นทางใบรับรองและประวัติแก้ไข",
+        "type": "s",
+        "link": null
+      }
+    ],
+    [
+      {
+        "cell": "A2",
+        "value": "บริษัท QA เริ่มต้น จำกัด",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "B2",
+        "value": "0000000000000",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "C2",
+        "value": "HO",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "D2",
+        "value": "2026-09",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "E2",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "F2",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "G2",
+        "value": "EXP-202609-00003",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "H2",
+        "value": "ยืนยันแล้ว",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "I2",
+        "value": "WEB",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "J2",
+        "value": "โน้ตค่าใช้จ่าย (ข้อความ)",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "K2",
+        "value": "หลักฐานประกอบเท่านั้น",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "L2",
+        "value": "HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "M2",
+        "value": "pending",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "N2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "O2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "P2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Q2",
+        "value": "พนักงาน ทดสอบ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "R2",
+        "value": "เจ้าของ QA เริ่มต้น",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "S2",
+        "value": "ร้าน QA บริการ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "T2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "U2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "V2",
+        "value": "QA1109-VAT",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "W2",
+        "value": "ค่าบริการวิชาชีพ (บัญชี/กฎหมาย/ตรวจสอบ)",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "X2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Y2",
+        "value": "วัตถุประสงค์: QA บริการสำนักงานสำหรับทดสอบใบแทนกระดาษ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Z2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AA2",
+        "value": "1000",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AB2",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AC2",
+        "value": "1000",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AD2",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AE2",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AF2",
+        "value": "1000",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AG2",
+        "value": "1000",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AH2",
+        "value": "1000",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AI2",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AJ2",
+        "value": "CASH",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AK2",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AL2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AM2",
+        "value": "EXP-202609-00003-p01mxui0",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AN2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AO2",
+        "value": "EXP-202609-00003-ldeo7tq1,EXP-202609-00003-p01mxui0",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AP2",
+        "value": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwwa63i00b6buk1h4jm3myq",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AQ2",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AR2",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AS2",
+        "value": "verified",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AT2",
+        "value": "COMPANY",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AU2",
+        "value": "QA Payer",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AV2",
+        "value": "[{\"expenseId\":\"cmtwwa63i00b6buk1h4jm3myq\",\"evidenceId\":\"cmtwwqq4q00e0buk1av6cxy41\",\"version\":2,\"status\":\"ISSUED\",\"snapshotChecksumSha256\":\"ea7e1af90abf1ccfcbb7269cc560a6a1affc17e503b89cc3e47b1e6bfe036978\",\"correctionOfEvidenceId\":null,\"correctionReason\":null,\"artifactAttachmentId\":\"cmtwwtnlt00ehbuk1p01mxui0\",\"webUrl\":\"/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwwa63i00b6buk1h4jm3myq\"}]",
+        "type": "s",
+        "link": null
+      }
+    ],
+    [
+      {
+        "cell": "A3",
+        "value": "บริษัท QA เริ่มต้น จำกัด",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "B3",
+        "value": "0000000000000",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "C3",
+        "value": "HO",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "D3",
+        "value": "2026-09",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "E3",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "F3",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "G3",
+        "value": "EXP-202609-00002",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "H3",
+        "value": "ยืนยันแล้ว",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "I3",
+        "value": "API",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "J3",
+        "value": "เอกสารค่าใช้จ่ายอื่น",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "K3",
+        "value": "หลักฐานประกอบเท่านั้น",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "L3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "M3",
+        "value": "pending",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "N3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "O3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "P3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Q3",
+        "value": "เจ้าของ QA เริ่มต้น",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "R3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "S3",
+        "value": "เบิกคืนพนักงาน: พนักงาน ทดสอบ",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "T3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "U3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "V3",
+        "value": "RB-202609-00001",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "W3",
+        "value": "ค่าเครื่องเขียนและวัสดุสิ้นเปลือง",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "X3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Y3",
+        "value": "QA วัสดุสำนักงาน; QA ค่าส่ง; ค่าบริการเพิ่มเติม (ใช้วัสดุสำนักงานสำหรับงานทดสอบร้าน)",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "Z3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AA3",
+        "value": "125",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AB3",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AC3",
+        "value": "125",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AD3",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AE3",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AF3",
+        "value": "125",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AG3",
+        "value": "125",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AH3",
+        "value": "125",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AI3",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AJ3",
+        "value": "CASH",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AK3",
+        "value": "11 ก.ย. 2569",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AL3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AM3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AN3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AO3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AP3",
+        "value": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwvy9a1005sbuk1tqead05q",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AQ3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AR3",
+        "value": "0",
+        "type": "n",
+        "link": null
+      },
+      {
+        "cell": "AS3",
+        "value": "verified",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AT3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AU3",
+        "value": "",
+        "type": "s",
+        "link": null
+      },
+      {
+        "cell": "AV3",
+        "value": "",
+        "type": "s",
+        "link": null
+      }
+    ]
+  ]
+}

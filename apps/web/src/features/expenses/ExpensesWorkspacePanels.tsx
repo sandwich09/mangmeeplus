@@ -599,6 +599,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
   onOpenExpense: (expenseId: string) => void;
 }) {
   const toast = useToast();
+  const showPosting = canReadLedger || canPostLedger;
   const branchFilter = useBranchFilter();
   const branchId = branchFilter?.branchId ?? '';
   const branchLabel = useBranchScopeLabel();
@@ -810,13 +811,13 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                 {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
               </ThemedSelect>
             </label>
-            <label>
+            {showPosting && <label>
               <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะลงบัญชี</span>
               <ThemedSelect className={cx(inputClass, 'w-auto')} value={postingStatus} onChange={(e) => setPostingStatus(e.target.value)}>
                 <option value="">ทุกสถานะลงบัญชี</option>
                 {Object.entries(POSTING_STATUS_LABELS).map(([key, labelText]) => <option key={key} value={key}>{labelText}</option>)}
               </ThemedSelect>
-            </label>
+            </label>}
             {showsTax && <label>
               <span className="mb-1 block text-xs font-semibold text-gray-600">สถานะหลักฐานภาษี</span>
               <ThemedSelect className={cx(inputClass, 'w-auto')} value={taxEvidenceStatus} onChange={(e) => setTaxEvidenceStatus(e.target.value)}>
@@ -909,7 +910,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                   <table className="mangmee-table [&_td]:!px-3 [&_th]:!px-3">
                     {/* The หลักฐานภาษี header and its cell below are dropped together — dropping one
                         alone silently shifts every column right of it. */}
-                    <thead><tr>{['สถานะ', 'เอกสาร', 'ลงบัญชี', 'วันที่', 'ผู้ขาย', 'ยอดรวม', ...(showsTax ? ['หลักฐานภาษี'] : []), 'สิ่งที่ต้องแก้', ''].map((heading) => <th key={heading} className={cx(
+                    <thead><tr>{['สถานะ', 'เอกสาร', ...(showPosting ? ['ลงบัญชี'] : []), 'วันที่', 'ผู้ขาย', 'ยอดรวม', ...(showsTax ? ['หลักฐานภาษี'] : []), 'สิ่งที่ต้องแก้', ''].map((heading) => <th key={heading} className={cx(
                       '!text-[13px]',
                       heading !== 'สิ่งที่ต้องแก้' && 'whitespace-nowrap',
                       heading === 'ยอดรวม' && 'whitespace-nowrap text-right tabular-nums',
@@ -917,7 +918,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                     )}>{heading}</th>)}</tr></thead>
                     <tbody>
                       {visibleRows.length === 0 && (
-                        <tr><td colSpan={showsTax ? 9 : 8}>
+                        <tr><td colSpan={7 + Number(showsTax) + Number(showPosting)}>
                           <EmptyState
                             title={flagFilter === 'attention' ? 'ไม่มีรายการที่ต้องตรวจ' : flagFilter === 'all' ? 'ไม่มีรายการ' : 'ไม่มีรายการที่ตรงกับตัวกรอง'}
                             description={flagFilter === 'attention' ? 'ทุกรายการในช่วงนี้มีหลักฐานครบแล้ว' : flagFilter === 'all' ? 'ลองเลือกเดือนอื่น หรือปรับตัวกรองด้านบน' : 'ลองเลือกทั้งหมด หรือปรับตัวกรองด้านบน'}
@@ -952,7 +953,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                             <div className={cx('text-xs font-bold tabular-nums', r.expenseNumber ? 'text-brand-700' : 'text-gray-400')}>{r.expenseNumber || 'รายการเดิม'}</div>
                             <div className="mt-1 text-xs text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, r.sourceDocumentType, 'เอกสารค่าใช้จ่าย')}</div>
                           </td>
-                          <td className="whitespace-nowrap text-xs" title={r.postingError ?? undefined}><MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : r.postingStatus === 'posting_error' ? 'danger' : r.postingStatus === 'pending' ? 'amber' : 'slate'}>{POSTING_STATUS_LABELS[r.postingStatus]}</MangmeeBadge></td>
+                          {showPosting && <td className="whitespace-nowrap text-xs" title={r.postingError ?? undefined}><MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : r.postingStatus === 'posting_error' ? 'danger' : r.postingStatus === 'pending' ? 'amber' : 'slate'}>{POSTING_STATUS_LABELS[r.postingStatus]}</MangmeeBadge></td>}
                           <td className="whitespace-nowrap text-xs">
                             <div>{dateShort(r.expenseDate)}</div>
                             <div className="mt-1 text-gray-500">ส่งเข้า {dateShort(r.uploadedAt)}</div>
@@ -1013,7 +1014,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
                             <MangmeeBadge tone={rowState === 'attention' ? 'amber' : 'brand'}>{rowState === 'attention' ? 'ต้องตรวจ' : 'ครบ'}</MangmeeBadge>
-                            <MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : 'slate'}>{r.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : 'ยังไม่ลงบัญชี'}</MangmeeBadge>
+                            {showPosting && <MangmeeBadge tone={r.postingStatus === 'posted' ? 'brand' : 'slate'}>{r.postingStatus === 'posted' ? 'ลงบัญชีแล้ว' : 'ยังไม่ลงบัญชี'}</MangmeeBadge>}
                             {actionFlags.map((flag) => (
                               <MangmeeBadge key={flag.key} tone={flag.severity === 'warn' ? 'amber' : 'slate'} className="whitespace-nowrap">{flag.label}</MangmeeBadge>
                             ))}

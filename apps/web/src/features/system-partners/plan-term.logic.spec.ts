@@ -97,8 +97,8 @@ describe('input parsing', () => {
     assert.equal(parseDaysInput('abc'), null);
   });
 
-  it('allows a zero limit but never a negative or blank one', () => {
-    assert.equal(parseLimitInput('0'), 0);
+  it('rejects zero, negative and blank limits like the API', () => {
+    assert.equal(parseLimitInput('0'), null);
     assert.equal(parseLimitInput('10'), 10);
     assert.equal(parseLimitInput('-1'), null);
     assert.equal(parseLimitInput(''), null);

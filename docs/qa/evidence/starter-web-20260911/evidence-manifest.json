@@ -1,0 +1,44 @@
+[
+  {
+    "evidence_ref": "EXP-202609-00003-ldeo7tq1",
+    "expense_id": "cmtwwa63i00b6buk1h4jm3myq",
+    "attachment_id": "cmtwwp63100dmbuk1ldeo7tq1",
+    "file_name": "QA-LOCAL-SRC-00002-signed-fixture.pdf",
+    "mime_type": "application/pdf",
+    "file_size_bytes": 314186,
+    "evidence_role": "expense.review.evidence",
+    "source_document_type": "EXPENSE_NOTE_TEXT",
+    "tax_evidence_status": "SUPPORTING_ONLY",
+    "download_url": "http://127.0.0.1:19000/watchdog-bms-local/evidence/cmtwv2xtb0003tek1mpgwuwwc/235f58a5e857876064a9378e0178e20cbb0b96b11a7027ddbc400ca9fb3705cc/897211e9-b02e-4e75-ad36-fc22a78c4780_QA-LOCAL-SRC-00002-signed-fixture.pdf",
+    "download_url_expires_at": "2026-09-11T12:22:43.990Z",
+    "web_url": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwwa63i00b6buk1h4jm3myq"
+  },
+  {
+    "evidence_ref": "EXP-202609-00003-yv1lwdjq",
+    "expense_id": "cmtwwa63i00b6buk1h4jm3myq",
+    "attachment_id": "cmtwwrvg200e7buk1yv1lwdjq",
+    "file_name": "QA-LOCAL-SRC-00003-signed-fixture.pdf",
+    "mime_type": "application/pdf",
+    "file_size_bytes": 314316,
+    "evidence_role": "substitute.wet_signed_scan",
+    "source_document_type": "EXPENSE_NOTE_TEXT",
+    "tax_evidence_status": "SUPPORTING_ONLY",
+    "download_url": "http://127.0.0.1:19000/watchdog-bms-local/evidence/cmtwv2xtb0003tek1mpgwuwwc/df3c649e86544f78c03a031337fef4c0920349c86d2719e81733fbe8a376f2e4/12a68e2d-d28e-4021-a77f-c55e5015bc21_QA-LOCAL-SRC-00003-signed-fixture.pdf",
+    "download_url_expires_at": "2026-09-11T12:22:43.993Z",
+    "web_url": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwwa63i00b6buk1h4jm3myq"
+  },
+  {
+    "evidence_ref": "EXP-202609-00003-p01mxui0",
+    "expense_id": "cmtwwa63i00b6buk1h4jm3myq",
+    "attachment_id": "cmtwwtnlt00ehbuk1p01mxui0",
+    "file_name": "SRC-202609-00003-paper-review.svg",
+    "mime_type": "image/svg+xml",
+    "file_size_bytes": 5697,
+    "evidence_role": "expense.review.evidence",
+    "source_document_type": "EXPENSE_NOTE_TEXT",
+    "tax_evidence_status": "SUPPORTING_ONLY",
+    "download_url": "http://127.0.0.1:19000/watchdog-bms-local/cmtwv2xtb0003tek1mpgwuwwc/substitute-receipts/cmtwwqq4q00e0buk1av6cxy41/issued-de7e3ad2-ec94-4b6f-98a9-904117628e53.svg",
+    "download_url_expires_at": "2026-09-11T12:22:43.995Z",
+    "web_url": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwwa63i00b6buk1h4jm3myq"
+  }
+]

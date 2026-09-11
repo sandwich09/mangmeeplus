@@ -13,6 +13,7 @@ import { authedApiFetch, type AuthedInit } from '@/common/api/authed-fetch';
 
 type RawNotificationItem = Omit<NotificationItem, 'sourceModule' | 'status' | 'read' | 'deliveryChannels'> & {
   sourceRefs?: Array<{ module?: string }>;
+  status?: NotificationItem['status'];
   readAt?: string;
   dismissedAt?: string;
   deliveryChannels?: NotificationChannel[];
@@ -140,7 +141,7 @@ export function normalizeNotification(raw: RawNotificationItem): NotificationIte
   return {
     ...raw,
     sourceModule: raw.sourceRefs?.[0]?.module ?? 'dashboard',
-    status: raw.dismissedAt ? 'dismissed' : 'open',
+    status: raw.dismissedAt ? 'dismissed' : raw.status ?? 'open',
     read: Boolean(raw.readAt),
     deliveryChannels: raw.deliveryChannels ?? [],
   };

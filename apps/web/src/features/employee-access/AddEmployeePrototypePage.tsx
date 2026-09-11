@@ -16,6 +16,7 @@ import { QrLinkCard } from './EmployeeAccessPages';
 import { employeeDateToIso, formatEmployeeDateInput } from './employee-date.logic';
 import { isEmployeeEmail } from './employee-email.logic';
 import { assignableRoleOptions, isOperationalRoleTargetReadOnly, isSelfEmployee, roleDisplayName } from './role-picker.logic';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 import { localizedErrorMessage } from '@/common/i18n/error-message.logic';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
@@ -586,8 +587,10 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
         setError('');
         return false;
       }
-      const message = localizedErrorMessage(e, locale, { fallback: 'error.save_failed', conflictCodes: EMPLOYEE_CONFLICT_KEYS });
       const code = (e as { code?: keyof typeof EMPLOYEE_CONFLICT_KEYS })?.code;
+      const message = code && EMPLOYEE_CONFLICT_KEYS[code]
+        ? localizedErrorMessage(e, locale, { fallback: 'error.save_failed', conflictCodes: EMPLOYEE_CONFLICT_KEYS })
+        : apiErrorMessage(e, locale);
       const target = code ? EMPLOYEE_CONFLICT_FIELDS[code] : undefined;
       if (target) {
         setStep(target.step);

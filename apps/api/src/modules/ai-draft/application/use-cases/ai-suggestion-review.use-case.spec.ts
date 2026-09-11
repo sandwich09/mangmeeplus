@@ -12,7 +12,7 @@ const noopAudit = { log: async () => undefined } as any;
 function ctx(overrides: Partial<any> = {}) {
   return {
     requestId: 'req-1', authSubject: 's', userId: 'user-1', companyId: 'co-1', membershipId: 'm',
-    roles: ['OWNER'], permissions: ['ai.draft.create_source_draft', 'ai.draft.review', 'crm.follow_up.create'],
+    roles: ['OWNER'], permissions: ['ai.draft.create_source_draft', 'ai.draft.review', 'crm.follow_up.create', 'crm.customer.read'],
     scopes: {}, authProvider: 'watchdog', ...overrides,
   } as any;
 }
@@ -52,8 +52,8 @@ const adapter = {
   createDraft: mock.fn(async () => ({ createdSourceModule: 'crm', createdSourceRecordType: 'crm_follow_up', createdSourceRecordId: 'fu1', deepLink: '/x' })),
 } as any;
 
-const unchangedSourceState = { isChanged: async () => false } as any;
-const changedSourceState = { isChanged: async () => true } as any;
+const unchangedSourceState = { canRead: async () => true, isChanged: async () => false } as any;
+const changedSourceState = { canRead: async () => true, isChanged: async () => true } as any;
 
 describe('CreateSourceDraftUseCase', () => {
   it('refuses source draft creation from LINE (web-only)', async () => {
@@ -141,7 +141,7 @@ describe('ValidateCandidateActionUseCase', () => {
   it('validates a well-formed CRM follow-up action', async () => {
     const action = crmAction();
     const repo = makeRepo(suggestion(), action);
-    const uc = new ValidateCandidateActionUseCase(repo, noopAudit);
+    const uc = new ValidateCandidateActionUseCase(repo, noopAudit, unchangedSourceState);
     const out = await uc.execute(ctx(), 'sugg1', 'act1');
     assert.equal(out.status, 'VALIDATED');
   });
@@ -149,7 +149,7 @@ describe('ValidateCandidateActionUseCase', () => {
   it('reports validation failure for a payload missing required fields', async () => {
     const action = crmAction({ draftPayloadJson: { customerId: 'cust1' } });
     const repo = makeRepo(suggestion(), action);
-    const uc = new ValidateCandidateActionUseCase(repo, noopAudit);
+    const uc = new ValidateCandidateActionUseCase(repo, noopAudit, unchangedSourceState);
     const out = await uc.execute(ctx(), 'sugg1', 'act1');
     assert.equal(out.status, 'VALIDATION_FAILED');
   });
@@ -157,7 +157,7 @@ describe('ValidateCandidateActionUseCase', () => {
   it('does not mark a needs-data action as validated', async () => {
     const action = crmAction();
     const repo = makeRepo(suggestion({ needsDataReasonsJson: ['citation required'] }), action);
-    const uc = new ValidateCandidateActionUseCase(repo, noopAudit);
+    const uc = new ValidateCandidateActionUseCase(repo, noopAudit, unchangedSourceState);
     await assert.rejects(
       () => uc.execute(ctx(), 'sugg1', 'act1'),
       (error: any) => error.getResponse?.().code === 'ai_suggestion_needs_data',
@@ -170,7 +170,7 @@ describe('ReviewSuggestionUseCase', () => {
   it('keeps needs-data suggestions out of accepted state with zero review writes', async () => {
     const repo = makeRepo(suggestion({ needsDataReasonsJson: ['citation required'] }), crmAction());
     const createRequest = { execute: mock.fn(async () => ({ id: 'req2' })) } as any;
-    const uc = new ReviewSuggestionUseCase(repo, noopAudit, createRequest);
+    const uc = new ReviewSuggestionUseCase(repo, noopAudit, createRequest, unchangedSourceState);
     await assert.rejects(
       () => uc.execute(ctx(), 'sugg1', { decision: 'ACCEPT_AS_SOURCE_DRAFT' }),
       (error: any) => error.getResponse?.().code === 'ai_suggestion_needs_data',
@@ -183,7 +183,7 @@ describe('ReviewSuggestionUseCase', () => {
   it('still lets a needs-data suggestion request regeneration', async () => {
     const repo = makeRepo(suggestion({ needsDataReasonsJson: ['citation required'] }), crmAction());
     const createRequest = { execute: mock.fn(async () => ({ id: 'req2' })) } as any;
-    const uc = new ReviewSuggestionUseCase(repo, noopAudit, createRequest);
+    const uc = new ReviewSuggestionUseCase(repo, noopAudit, createRequest, unchangedSourceState);
     await uc.execute(ctx(), 'sugg1', { decision: 'REQUEST_REGENERATION' });
     assert.equal(repo.createReview.mock.calls.length, 1);
     assert.ok(repo.updateSuggestionStatus.mock.calls.some((call: any) => call.arguments[2] === 'SUPERSEDED'));
@@ -201,4 +201,19 @@ describe('SourceDraftAdapterService', () => {
       (error: any) => error.getResponse?.().code === 'ai_source_draft_unavailable',
     );
   });
+});
+
+
+it('blocks validate, review and create after source access is revoked, with zero writes', async () => {
+  for (const missingPermission of [true, false]) {
+    const repo = makeRepo(suggestion(), crmAction());
+    const access = ctx(missingPermission ? { permissions: ctx().permissions.filter((p: string) => p !== 'crm.customer.read') } : {});
+    const state = { ...unchangedSourceState, canRead: async () => missingPermission } as any;
+    const createRequest = { execute: mock.fn() } as any;
+    const localAdapter = { createDraft: mock.fn() } as any;
+    await assert.rejects(() => new ValidateCandidateActionUseCase(repo, noopAudit, state).execute(access, 'sugg1', 'act1'), /no longer readable/);
+    await assert.rejects(() => new ReviewSuggestionUseCase(repo, noopAudit, createRequest, state).execute(access, 'sugg1', { decision: 'REQUEST_REGENERATION' }), /no longer readable/);
+    await assert.rejects(() => new CreateSourceDraftUseCase(repo, noopAudit, state, localAdapter).execute(access, 'sugg1', 'act1', { acknowledgeSourceStateChanged: true }), /no longer readable/);
+    for (const fn of [repo.updateCandidateAction, repo.updateSuggestionStatus, repo.createReview, createRequest.execute, localAdapter.createDraft]) assert.equal(fn.mock.calls.length, 0);
+  }
 });

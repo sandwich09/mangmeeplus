@@ -1,0 +1,20 @@
+[
+  {
+    "level": "error",
+    "message": "Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. cmtwv2xtb0003tek1mpgwuwwc",
+    "timestamp": "2026-09-11T11:17:23.151Z",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/15yo_next_dist_0znlmpc._.js"
+  },
+  {
+    "level": "error",
+    "message": "Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. cmtwv2xtb0003tek1mpgwuwwc",
+    "timestamp": "2026-09-11T11:17:23.208Z",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/15yo_next_dist_0znlmpc._.js"
+  },
+  {
+    "level": "error",
+    "message": "Encountered two children with the same key, `%s`. Keys should be unique so that components maintain their identity across updates. Non-unique keys may cause children to be duplicated and/or omitted — the behavior is unsupported and could change in a future version. cmtwv2xtb0003tek1mpgwuwwc",
+    "timestamp": "2026-09-11T11:20:20.640Z",
+    "url": "http://127.0.0.1:3000/_next/static/chunks/15yo_next_dist_0znlmpc._.js"
+  }
+]

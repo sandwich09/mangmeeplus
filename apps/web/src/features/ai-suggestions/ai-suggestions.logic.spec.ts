@@ -103,3 +103,12 @@ describe('canCreateSourceDraft', () => {
     assert.equal(canCreateSourceDraft('NEW', 'CREATE_CRM_FOLLOW_UP_DRAFT', 'PROPOSED', true), false);
   });
 });
+
+
+it('shows usage guidance only for permitted actions', async () => {
+  const { permittedUsageGuidance } = await import('./ai-suggestions.logic');
+  assert.deepEqual(permittedUsageGuidance([]), []);
+  const own = permittedUsageGuidance(['expense.create']);
+  assert.deepEqual(own.map((g) => g.path), ['expenses/manual']);
+  assert.ok(!JSON.stringify(own).includes('CRM'));
+});
