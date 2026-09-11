@@ -1133,7 +1133,11 @@ export class ConfirmExpenseUseCase {
     // expense that actually entered the substitute-receipt flow still needs its artifact.
     const reasonCoveredByClaimForm = Boolean(authority?.allowMissingReceiptWithReason)
       && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-    const evidenceError = expenseEvidenceConfirmationError(r, reasonCoveredByClaimForm);
+    // Approved claim projections have their own review workflow, including claims with receipts.
+    // Keep missing-receipt permission separate; normal expense confirmation cannot use this path.
+    const reviewCoveredByClaimForm = Boolean(authority)
+      && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
+    const evidenceError = expenseEvidenceConfirmationError(r, reviewCoveredByClaimForm);
     if (evidenceError) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
     const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
     const reviewedAttachmentId = reviewedEvidence ? expenseEvidenceAssessment(r)?.attachmentIds[0] ?? r.primaryAttachmentId : r.primaryAttachmentId;
@@ -1203,6 +1207,7 @@ export class ConfirmExpenseUseCase {
       id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
       expectedSourceChecksum: expenseTaxSourceChecksum(r),
       substituteCoveredByClaimForm: reasonCoveredByClaimForm,
+      reimbursementReview: authority ? { requestId: authority.reimbursementRequestId, lineId: authority.reimbursementLineId } : undefined,
       vatSourceOverride,
       postingStatus, vendorSnapshotJson,
       confirmationAudit: { requestId: ctx.requestId ?? eventRequestId, ...(authority && { authority: {
