@@ -1,0 +1,50 @@
+▶ mapAuthMeStatus
+  ✔ keeps signed-out, forbidden, platform closure and unavailable distinct (0.288666ms)
+✔ mapAuthMeStatus (0.7745ms)
+▶ isSystemAdmin
+  ✔ is true only for the SYSTEM_ADMIN role (0.161958ms)
+✔ isSystemAdmin (0.330417ms)
+▶ resolveLoginLanding
+  ✔ falls back to the session company when the remembered home is skipped (0.174084ms)
+  ✔ prefers an explicit safe next target (0.049375ms)
+  ✔ never lands off-origin (0.041875ms)
+  ✔ falls back to the percent-encoded home cookie (0.059875ms)
+  ✔ defaults system admins to the platform access control and everyone else to their dashboard (0.146333ms)
+  ✔ refuses targets that would bounce straight back to /login (0.079375ms)
+  ✔ returns null when no safe landing exists, so the caller renders the form instead of looping (0.053541ms)
+  ✔ lands a valid session with no watchdog_home cookie on its own dashboard (0.116542ms)
+  ✔ sends a signed-in user through the legal gate while preserving the intended destination (0.188708ms)
+  ✔ fails closed when a rolling-deployment response omits the legal flag (0.055042ms)
+✔ resolveLoginLanding (1.139584ms)
+▶ legal acceptance redirects
+  ✔ carries only safe same-app paths into and out of the gate (0.067917ms)
+  ✔ binds the gate to the company in the destination before using a fallback company (0.038458ms)
+  ✔ uses the correct role-based fallback after acceptance (0.024541ms)
+✔ legal acceptance redirects (0.163708ms)
+▶ session recovery bounce
+  ✔ attempts recovery once, then treats the marker as spent (0.031792ms)
+  ✔ returns through /login so the server re-validates the rotated cookies (0.038792ms)
+  ✔ never carries an off-origin target through recovery (0.023209ms)
+✔ session recovery bounce (0.146125ms)
+▶ resolvePasswordChangeTarget
+  ✔ honours a safe relative next target (0.037958ms)
+  ✔ refuses protocol-relative and absolute targets (0.065ms)
+  ✔ refuses /login and root, which would bounce the fresh session straight back (0.023958ms)
+  ✔ falls back to the remembered redirect path, then the company dashboard, then root (0.022667ms)
+✔ resolvePasswordChangeTarget (0.180417ms)
+▶ companyGateReturnPath
+  ✔ returns a company visitor to the page they actually opened (0.039ms)
+  ✔ falls back to the dashboard for anything outside this company (0.032417ms)
+✔ companyGateReturnPath (0.0895ms)
+▶ systemGateReturnPath
+  ✔ preserves the system company and query through authentication recovery (0.030917ms)
+  ✔ falls back for missing, external, gate and out-of-scope paths (0.037541ms)
+✔ systemGateReturnPath (0.086167ms)
+ℹ tests 26
+ℹ suites 8
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 234.402083

@@ -1,0 +1,56 @@
+apps/web/src/features/expenses/expense-review-validation.ts(2,40): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'isCalculatedExpenseRounding'.
+apps/web/src/features/expenses/ExpenseReviewPage.tsx(3,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseEvidenceAssessment'.
+apps/web/src/features/expenses/ExpenseReviewPage.tsx(42,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'canVoidExpenseFinancialState'.
+apps/web/src/features/expenses/ExpenseReviewPage.tsx(42,40): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'isCalculatedExpenseRounding'.
+apps/web/src/features/expenses/expenses.api.ts(1,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'removeSubstituteReceiptDisplayMetadata'.
+apps/web/src/features/expenses/expenses.api.ts(13,3): error TS2724: '"@watchdog-bms/contracts"' has no exported member named 'AmendSubstituteReceiptInput'. Did you mean 'ApproveSubstituteReceiptInput'?
+apps/web/src/features/expenses/expenses.api.ts(28,3): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'ExpenseDraftTotalsPreview'.
+apps/web/src/features/expenses/expenses.model.ts(1,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseEvidenceAssessment'.
+apps/web/src/features/expenses/expenses.model.ts(1,37): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'hasCurrentExpenseEvidenceReview'.
+apps/web/src/features/expenses/expenses.model.ts(31,53): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'isCalculatedExpenseRounding'.
+apps/web/src/features/expenses/expenses.model.ts(31,82): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'hasCurrentExpenseDocumentReview'.
+apps/web/src/features/expenses/expenses.model.ts(33,28): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseDocumentReviewFieldsComplete'.
+apps/web/src/features/expenses/expenses.model.ts(33,65): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'hasCurrentExpenseDocumentReview'.
+apps/web/src/features/expenses/expenses.model.ts(945,3): error TS2353: Object literal may only specify known properties, and 'HANDWRITTEN_RECEIPT_REVIEW' does not exist in type 'Record<TaxEvidenceReasonCode, string>'.
+apps/web/src/features/expenses/ExpensesPages.tsx(3,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'isExpenseEvidenceFile'.
+apps/web/src/features/expenses/ExpensesPages.tsx(3,33): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseEvidenceAssessment'.
+apps/web/src/features/expenses/ExpensesPages.tsx(3,60): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseEvidenceInputError'.
+apps/web/src/features/expenses/ExpensesPages.tsx(3,87): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'EXPENSE_RECEIPT_SOURCE_TYPES'.
+apps/web/src/features/expenses/ExpensesPages.tsx(3,122): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'ExpenseEvidenceAssessment'.
+apps/web/src/features/expenses/ExpensesPages.tsx(45,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'isCalculatedExpenseRounding'.
+apps/web/src/features/expenses/ExpensesPages.tsx(605,46): error TS7006: Parameter 'type' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(606,55): error TS7006: Parameter 'type' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(768,29): error TS7006: Parameter 'value' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(778,179): error TS7006: Parameter 'value' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(782,42): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(784,131): error TS7006: Parameter 'value' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(784,195): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(788,124): error TS7006: Parameter 'value' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(788,247): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(793,261): error TS7006: Parameter 'value' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(932,17): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(933,13): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(935,25): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(935,30): error TS7006: Parameter 'amount' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(938,75): error TS7006: Parameter 'groups' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(938,83): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(959,11): error TS7006: Parameter 'lineNumber' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(1376,45): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/web/src/features/expenses/ExpensesPages.tsx(2263,11): error TS2353: Object literal may only specify known properties, and 'idempotencyKey' does not exist in type 'CreateExpenseDraftInput'.
+apps/web/src/features/expenses/ExpensesPages.tsx(2270,58): error TS2345: Argument of type 'CreateExpenseDraftInput | undefined' is not assignable to parameter of type 'CreateExpenseDraftInput'.
+  Type 'undefined' is not assignable to type 'CreateExpenseDraftInput'.
+apps/web/src/features/expenses/SubstituteReceiptWizardPage.tsx(71,10): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'hasCurrentExpenseEvidenceReview'.
+apps/web/src/features/expenses/SubstituteReceiptWizardPage.tsx(71,43): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'expenseEvidenceAssessment'.
+apps/web/src/features/expenses/useExpenseReviewTotals.ts(2,15): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'ExpenseDraftTotalsPreview'.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(6,63): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'ReimbursementSourceOptions'.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(6,96): error TS2724: '"@watchdog-bms/contracts"' has no exported member named 'ReimbursementSourceSnapshot'. Did you mean 'ReimbursementPolicySnapshotV1'?
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(135,70): error TS7006: Parameter 'current' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(147,45): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(161,41): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(166,57): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(308,49): error TS7006: Parameter 'member' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(309,47): error TS7006: Parameter 'member' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(371,73): error TS7006: Parameter 'source' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/ReimbursementCreatePage.tsx(372,50): error TS7006: Parameter 'source' implicitly has an 'any' type.
+apps/web/src/features/reimbursements/reimbursements.api.ts(7,76): error TS2305: Module '"@watchdog-bms/contracts"' has no exported member 'ReimbursementSourceOptions'.
+apps/web/src/features/reimbursements/ReimbursementSourceFacts.tsx(1,15): error TS2724: '"@watchdog-bms/contracts"' has no exported member named 'ReimbursementSourceSnapshot'. Did you mean 'ReimbursementPolicySnapshotV1'?

@@ -1,5 +1,7 @@
 # แผนส่งมอบ Email Delivery และ Claim Account — P11
 
+> **Postmark decision 2026-09-11:** ใช้ [Postmark implementation/test plan](mangmee-transactional-email-provider-plan-th.md) และ [API reference](../research/postmark-developer-reference-th.md); provider selection ปิดแล้ว. M1/M2 reuse P11 foundation/claim/outbox พร้อม migration และ Postmark callback แยกจาก SES/SNS. Checklist/CI ของ SES ด้านล่างเป็น evidence เดิม ไม่ใช่ Postmark acceptance. Receipt ค่า provider เป็นงานบัญชีบริษัทมั่งมี; customer Invoice/Receipt ใช้ Stripe. Default disabled ยังไม่เปลี่ยน.
+
 สถานะ: **PARTIAL — Phase 0 disabled-safe foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); CI `33040896057` SUCCESS บน exact head `6f85339d`. Phase 1–4 และ provider activation ยังไม่เปิด.
 
 Source of truth: [P11 spec](../specs/mangmee-email-delivery-claim-spec-th.md), [ADR-0009](../adr/0009-auth-security-email-delivery.md), [P10 plan](mangmee-external-signup-plan-th.md), [task memory](../agent-memory/p11-email-provider-foundation.md).

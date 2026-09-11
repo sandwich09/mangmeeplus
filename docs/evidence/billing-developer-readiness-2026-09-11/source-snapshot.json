@@ -1,0 +1,30 @@
+{
+  "heads": {
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web": "9cc2ae6e916f53395eaf8542739d2182298d6110"
+  },
+  "sha256": {
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/research/billing-developer-readiness-2026-09-11.md": "373facf7a6fa937567da3553005a09e4e935b363120e7ba23f6acca73f6e7f07",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-billing-controls-spec-th.md": "97b14e314fdea59485fa2e85141a7ff18a5e0814df697fde4e27aa93177463a7",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-billing-controls-plan-th.md": "836bbdcd956d897bc373bd798d10ee211b3c32f0c98834bf8ecfc6dfb97ffd0b",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-owned-billing-integration-spec-th.md": "53b0a1768ad850a23c5dc618473d2df7920f174ae3fd0cae03546aa2bdc301f6",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-line-web-billing-ui-spec-th.md": "4a29c75c90b16de1fc45a43a635f4d447a5f59adf3c2e716a1a2c9193823b193",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-stripe-billing-implementation-and-test-plan-th.md": "bf599a39ff003f8e0afec404cbd0219bb24d991cc2dedba8f479b4f2af60a4b3",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/research/billing-controls-impact-2026-09-11.md": "75ab89da84834ff615f52248f1bb0b088987c96700804f67a6842890d64826f6",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/agent-memory/billing-controls-web-2026-09-11.md": "49b2357556a1a8a400797fe83733a23dc432eb421e4eefbbb61f9cee27341006",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/unified-easy-signup-spec-th.md": "fdf994e2b68cfb074477ec59ffcb1ae047d047fcd7045c2baf638633ecd4155a",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/unified-easy-signup-plan-th.md": "97d351cc7281b9fb84d87415456f4b2fc3fb46d0b8a427b8a2ddd1623ea5af8b",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/specs/mangmee-transactional-email-provider-spec-th.md": "c8f39bbae1001a57c27fe5b2a70705d8c5e687001ab8c96581b4e2461c897165",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/plans/mangmee-transactional-email-provider-plan-th.md": "c07d95d530447f5573086b8eb9efb4e0faa8bdb7c9677317fb3c2cbb1277c744",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/billing-developer-readiness-2026-09-11/README.md": "cba82e7e6f2abcc1ef082d8ac4feeef9ff7b901d5b0643493047f5700d8fe6dc",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md": "d3b39fab3a06ec0404f33ad83a27c66cdac635b4d0b770b6d8be9d3ad16ce92e",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web/docs/agent-memory/billing-controls-web-2026-09-11.md": "bbcd0d86d20049bcd9fe516785a2bf25818762762bcd2e021e925b5bfb2aba63",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/app/system/layout.tsx": "ebc14658b49fb70129fa8aaa74581874070bf762f4367aec9647f9ec9ccaa1dc",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/web/app/(workspace)/companies/[companyId]/layout.tsx": "918be9e08d83e5fa9a55205985e5c06a052c6390fbb24996307e38233cbc9502",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts": "77f0e2c720449c3ef2ff72422dff63e8080285f3d9876ec2ebaff9b2e67e187c",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/auth/application/use-cases/exchange-line-handoff-token.use-case.ts": "ac4cf7abeaa4858d9db809b8ef9fc3f1c5a3d355719a0fd9082428b8073cbedb",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "4e53a8c3b647c80c531f2d2c5299dd63f5a70d35354979fff7193ce8e992849c",
+    "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/docs/evidence/billing-developer-readiness-2026-09-11/verify-docs.py": "1fbfb6a315af9102d975fffe9d8c355905f1167c121951b9704feca55927baf1"
+  },
+  "note": "Current dirty sources. Review only; prior runtime evidence unchanged."
+}

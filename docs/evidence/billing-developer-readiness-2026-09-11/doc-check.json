@@ -1,0 +1,11 @@
+{
+  "status": "PASS",
+  "documents": 15,
+  "local_links": 149,
+  "known_flows": 24,
+  "design_findings": 8,
+  "additional_target_cases": 8,
+  "errors": [],
+  "runtime_tests_this_review": "NOT RUN — docs only",
+  "scope": "File presence, IDs and declared boundaries, not correctness proof."
+}

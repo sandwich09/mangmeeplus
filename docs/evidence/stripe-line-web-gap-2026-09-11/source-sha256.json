@@ -1,0 +1,40 @@
+{
+  "note": "Dirty local worktree; source hashes are not a commit/deployment claim.",
+  "mangmeeplus": {
+    "baseHead": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "files": {
+      "apps/api/src/common/security/liff-page.security.ts": "cd416f1ae38c24292436bcd8fae130acb749d0260f9d2d4ee5686c01a7f52098",
+      "apps/api/src/common/security/liff-start-handoff.spec.ts": "1d17a3e925cb5f0ab6da41909de624dab1b7504e2436a9d29215c5067d2876ba",
+      "apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts": "77f0e2c720449c3ef2ff72422dff63e8080285f3d9876ec2ebaff9b2e67e187c",
+      "apps/api/src/modules/auth/application/use-cases/exchange-line-handoff-token.use-case.ts": "ac4cf7abeaa4858d9db809b8ef9fc3f1c5a3d355719a0fd9082428b8073cbedb",
+      "apps/api/src/modules/auth/domain/logic/line-handoff.logic.ts": "945cb3786cae2de9858116c2b506e24146f28945fc7d039531754cec887a5f90",
+      "apps/api/src/modules/auth/presentation/auth.controller.ts": "1fc2542eeac67beb420193bc69911951b1c4c7034fa51ad784f11032664e2da1",
+      "apps/api/src/modules/auth/line-liff-signup.spec.ts": "21256ae82c7aa41d8942cef756a277baa70b009d83574f6f3e056d1eb34a4133",
+      "apps/api/src/modules/auth/line-handoff.spec.ts": "17e40b5d685b7577b0804ff03ad685eed41bcf005d0d2aeffb0a1c38974f532d",
+      "apps/api/src/modules/auth/line-webhook.controller.spec.ts": "c5e9965bc6aaf107607b85ece207f10cca3c03c033a88bbdc957555d4dd9f801",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "4e53a8c3b647c80c531f2d2c5299dd63f5a70d35354979fff7193ce8e992849c",
+      "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "b15d30faba1e8f7e31bfd67e59b5db377623d812dddd1950f29bc92c6750d187",
+      "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts": "4aab1f8d55278a94258cc4c539e5a371f85f16f2a42965d49477d94b4213ce2b",
+      "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts": "60bbbe69b4d95aa2f8359c77df85935202954b82502c83eaee72ccd41f9b6a75",
+      "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "c0c7b158440972bc46a27b99f124d797f3a04d92b8d8af85b8f63c32748db359",
+      "apps/api/src/modules/line-ai/application/line-message-buffer.service.spec.ts": "4aff55542c90d6f4f05d6be38620e2058cddb10a9d24279088081462b9d44ee3",
+      "apps/web/app/(workspace)/companies/[companyId]/layout.tsx": "918be9e08d83e5fa9a55205985e5c06a052c6390fbb24996307e38233cbc9502",
+      "apps/web/src/features/plan-term/CompanyTermExpiredPage.tsx": "dff992c35c22c0890c176f9f27cc8ebb60b7891bbd9727527d70abc38fcdbc82",
+      "scripts/line-oa/rich-menu-v2-ver2.manifest.json": "6ba9a4bee299d76a6b03a9cb2643ab951a7de6e872644073176eb9a4a0409e76",
+      "scripts/line-oa/rich-menu-v2-ver2.manifest.spec.mjs": "936628b64a392797e17a4e14b413fd441ff82206499dfe4e02de6b4e67f02cda",
+      "e2e/plan-term-billing-readiness.spec.ts": "b8db6d4efe6a17f5cf7c1ecde929f7bd3db882316f923df4a2d9a3218b138f02",
+      "e2e/stripe-marketing-readiness.mjs": "67552eff2e1498261853157d32d07f7ad793ba00076867ffb13e5284058f608e",
+      "docs/specs/mangmee-owned-billing-integration-spec-th.md": "b8a90611fb12c640cd40095cd6c194ae925d727c367e8e6db175eeb772147ee2",
+      "docs/specs/mangmee-line-web-billing-ui-spec-th.md": "6552a75e6116cd124d90a73968bb290cd8ef77447a31cf464e8d66915cad1539",
+      "docs/plans/mangmee-line-web-billing-ui-plan-th.md": "4d8766acd338c44d3ce33ba363ff2ee842d30169a9f76d0e776639e133d2fb83",
+      "docs/research/stripe-line-web-gap-closure-2026-09-11.md": "936a3d22092b8cdbe9c802f800ba3ff580b609add8f861acdfbf4c7675072ee0"
+    }
+  },
+  "mangmee_web": {
+    "baseHead": "9cc2ae6e916f53395eaf8542739d2182298d6110",
+    "files": {
+      "index.html": "8bafb6a019f1a8ff9d4e65b56992694a4a3f61a561a7fb942beaf815f170dc88",
+      "docs/specs/stripe-billing-alignment-spec-th.md": "dc1be3c648a6d09ba9fa16de399d03b4db85151cbf79c3e721393139cc4b54d1"
+    }
+  }
+}

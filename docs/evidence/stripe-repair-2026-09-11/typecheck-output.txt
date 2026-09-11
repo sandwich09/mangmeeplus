@@ -1,0 +1,15 @@
+API production-source tsc: exit 0
+Web production-source tsc: exit 0
+Configs: api-production.tsconfig.json / web-production.tsconfig.json
+
+Full API tsc (including unrelated expense specs):
+apps/api/src/modules/expenses/application/use-cases/substitute-receipt-download.use-case.spec.ts(376,57): error TS2345: Argument of type 'Buffer<ArrayBufferLike>' is not assignable to parameter of type 'Buffer<ArrayBuffer>'.
+  Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+    Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+      Types of property '[Symbol.toStringTag]' are incompatible.
+        Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
+apps/api/src/modules/expenses/application/use-cases/substitute-receipt-download.use-case.spec.ts(381,96): error TS2345: Argument of type 'Buffer<ArrayBufferLike>' is not assignable to parameter of type 'Buffer<ArrayBuffer>'.
+  Type 'ArrayBufferLike' is not assignable to type 'ArrayBuffer'.
+    Type 'SharedArrayBuffer' is not assignable to type 'ArrayBuffer'.
+      Types of property '[Symbol.toStringTag]' are incompatible.
+        Type '"SharedArrayBuffer"' is not assignable to type '"ArrayBuffer"'.
