@@ -41,3 +41,8 @@ Next:
 ## Integration request
 
 Latest user: commit/push develop and main. Inspect remote branches, preserve newer signing/navigation changes, commit the scoped implementation/docs, run PR CI and integrate both branches. Existing PR514/515 are already merged; their old approval was specific to PR515. No new deployment or cloud operation is part of this request.
+
+Integration verification:
+- Main PR536 / develop PR537, initial candidate e201b7c0 includes current main8f988a16/develop21fb6f67. Post-merge local focused872, web typecheck and DIGITAL/PAPER read-only/cancelled browser2 passed.
+- CI34574009544 and34574012540 failed three web assertions: missing Thai labels for two new errors and two source-wiring expectations from the superseded automatic check-bill behavior. Added actionable Thai text and updated tests to require explicit current review while preserving read-only navigation. No business guard relaxed.
+- Main requires one reviewer; requested admin approval specifically for PR536 after all CI passes. Old PR515 approval does not automatically cover it. Develop has no reviewer requirement.
