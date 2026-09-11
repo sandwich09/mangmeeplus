@@ -1,3 +1,5 @@
+import { hasCurrentExpenseEvidenceReview } from './expense-evidence.js';
+export * from './expense-evidence.js';
 // Item 09 – Expense and Receipt Upload contracts
 
 import {
@@ -145,6 +147,7 @@ export type TaxEvidenceReasonCode =
   | 'PAYMENT_EVIDENCE_ONLY'
   | 'MARKETPLACE_SCREENSHOT_ONLY'
   | 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE'
+  | 'HANDWRITTEN_RECEIPT_REVIEW'
   | 'MISSING_VENDOR_TAX_ID'
   | 'MISSING_DOCUMENT_NUMBER'
   | 'MISSING_MONETARY_AMOUNT'
@@ -705,7 +708,30 @@ export type ExpenseSourceDraft = {
   missingFields: Array<{ id: string; scope: 'DOCUMENT' | 'ITEM'; itemRef?: string; field: string; prompt: string }>;
 };
 
+/** Server-owned acknowledgement of the document/tax review, bound to the receipt being reviewed. */
+export type ExpenseDocumentReviewSource = {
+  sourceDocumentType: SourceDocumentType;
+  taxEvidenceStatus: TaxEvidenceStatus;
+  expenseCategoryId?: string | null;
+  primaryAttachmentId?: string | null;
+  extractionId?: string | null;
+};
+
+export function expenseDocumentReviewFieldsComplete(source: Pick<ExpenseDocumentReviewSource, 'sourceDocumentType' | 'taxEvidenceStatus'>): boolean {
+  return source.sourceDocumentType !== 'NEEDS_REVIEW' && Object.prototype.hasOwnProperty.call(SOURCE_DOCUMENT_TYPE_LABELS, source.sourceDocumentType)
+    && source.taxEvidenceStatus !== 'NEEDS_REVIEW' && Object.prototype.hasOwnProperty.call(TAX_EVIDENCE_STATUS_LABELS, source.taxEvidenceStatus);
+}
+
+export function hasCurrentExpenseDocumentReview(source: import('./expense-evidence.js').ExpenseEvidenceSource): boolean {
+  const raw = source.aiVerificationSummaryJson?.documentReview;
+  if (!raw || typeof raw !== 'object' || !expenseDocumentReviewFieldsComplete(source)) return false;
+  const review = raw as Record<string, unknown>;
+  return review.version === 2 && hasCurrentExpenseEvidenceReview(source);
+}
+
 export type ExpenseDetail = ExpenseSummary & {
+  primaryAttachmentId?: string | null;
+  extractionId?: string | null;
   sourceDraft?: ExpenseSourceDraft | null;
   /** Set when this expense is a reimbursement-claim projection — it is settled by the
    *  claim payout (RBPAY), never by a manual expense payment. */
@@ -816,7 +842,9 @@ export type CreateExpenseDraftInput = {
   }>;
 };
 
-export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines' | 'idempotencyKey'>> & {
+export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'captureSource' | 'lines' | 'idempotencyKey' | 'expenseCategoryId'>> & {
+  /** Null explicitly clears the document-level category; line categories remain independent. */
+  expenseCategoryId?: string | null;
   /** Interactive callers send the version they loaded; API PATCH/override routes require it. */
   expectedUpdatedAt?: string;
   /** Existing row identity survives edits/reordering; omit id for a new row. */
@@ -840,6 +868,10 @@ export type UpdateExpenseDraftInput = Partial<Omit<CreateExpenseDraftInput, 'cap
   sourceDocumentLanguage?: string;
   taxEvidenceStatus?: TaxEvidenceStatus;
   taxEvidenceReasonCode?: TaxEvidenceReasonCode;
+  /** Explicit step-2 review; generic draft saves and OCR must not set this. */
+  documentReviewAcknowledged?: true;
+  /** Reviewed evidence route, independent of VAT eligibility. Partial draft saves do not acknowledge it. */
+  evidenceAssessment?: import('./expense-evidence.js').ExpenseEvidenceAssessment;
   nonExpenseClassificationOverride?: NonExpenseClassificationOverrideInput;
   ocrTotalAcknowledgement?: OcrTotalAcknowledgementInput;
 };

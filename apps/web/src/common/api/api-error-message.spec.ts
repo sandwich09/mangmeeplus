@@ -395,3 +395,11 @@ test('maps AI needs-data and no-source safety refusals to actionable Thai', () =
   assert.match(translateApiError('ai_suggestion_needs_data')!, /ข้อมูลไม่ครบ/);
   assert.match(translateApiError('ai_source_draft_unavailable')!, /ยังไม่มีร่าง/);
 });
+
+test('guides incomplete or stale evidence review back to the review action', () => {
+  for (const code of ['EXPENSE_DOCUMENT_REVIEW_INCOMPLETE', 'EXPENSE_EVIDENCE_REVIEW_REQUIRED']) {
+    const message = apiErrorMessage(apiError('Internal diagnostic', { status: 400, code }));
+    assert.match(message, /บันทึกการตรวจ/);
+    assert.doesNotMatch(message, /EXPENSE_|Internal diagnostic/);
+  }
+});

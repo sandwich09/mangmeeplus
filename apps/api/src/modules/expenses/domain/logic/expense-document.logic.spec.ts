@@ -49,12 +49,11 @@ describe('deriveTaxEvidence', () => {
     assert.equal(result.taxEvidenceReasonCode, 'MARKETPLACE_SCREENSHOT_ONLY');
   });
 
-  it('maps handwritten bill and text note to substitute-receipt policy', () => {
-    for (const type of ['HANDWRITTEN_CASH_BILL', 'EXPENSE_NOTE_TEXT'] as const) {
-      const result = deriveTaxEvidence({ sourceDocumentType: type });
-      assert.equal(result.taxEvidenceStatus, 'SUPPORTING_ONLY');
-      assert.equal(result.taxEvidenceReasonCode, 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE');
-    }
+  it('keeps a readable handwritten receipt as supporting evidence without requiring a substitute', () => {
+    assert.deepEqual(deriveTaxEvidence({ sourceDocumentType: 'HANDWRITTEN_CASH_BILL', vendorName: 'ตลาด', grandTotalAmount: '3500' }),
+      { taxEvidenceStatus: 'SUPPORTING_ONLY', taxEvidenceReasonCode: 'HANDWRITTEN_RECEIPT_REVIEW' });
+    assert.equal(deriveTaxEvidence({ sourceDocumentType: 'HANDWRITTEN_CASH_BILL' }).taxEvidenceStatus, 'NEEDS_REVIEW');
+    assert.equal(deriveTaxEvidence({ sourceDocumentType: 'EXPENSE_NOTE_TEXT' }).taxEvidenceStatus, 'SUPPORTING_ONLY');
   });
 
   it('keeps low-confidence and unknown types in NEEDS_REVIEW', () => {

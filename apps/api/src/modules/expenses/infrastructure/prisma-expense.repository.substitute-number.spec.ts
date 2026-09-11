@@ -1,3 +1,4 @@
+import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import { PrismaExpenseRepository } from './prisma-expense.repository';
@@ -81,6 +82,14 @@ function makeRepo(existing: Record<string, any> | null = null, sourceChannelMeta
     { client } as any,
     { reserveNumberInTransaction, commitNumberInTransaction } as any,
   );
+  // Numbering tests begin with the current human-selected substitute route.
+  repo.findByIdWithRelations = async () => {
+    const source: any = { sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', inputVatClaimStatus: 'NON_CLAIMABLE', attachments: [], lines: [] };
+    const assessment = { route: 'SUBSTITUTE_RECEIPT' as const, receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: [], reason: 'ไม่มีใบเสร็จ' };
+    source.aiVerificationSummaryJson = { documentReview: { version: 2, reviewedAt: UPDATED_AT.toISOString(), reviewedByUserId: 'preparer-1', assessment,
+      fingerprint: expenseEvidenceFingerprint(source, assessment) } };
+    return source;
+  };
   return { repo, tx, reserveNumberInTransaction, commitNumberInTransaction };
 }
 
@@ -244,4 +253,12 @@ it('reads position from this signer and company only without directory access', 
   const repo = new PrismaExpenseRepository({ client: { employeeAccessProfile: { findFirst: async (input: any) => { query = input; return { jobTitle: ' ผู้จัดการ ' }; } } } } as any);
   assert.equal(await repo.getSignerJobTitle('company-1', 'signer-1'), 'ผู้จัดการ');
   assert.deepEqual(query, { where: { companyId: 'company-1', userId: 'signer-1' }, select: { jobTitle: true } });
+});
+
+it('rechecks human review before reserving any new certificate number', async () => {
+  const h = makeRepo();
+  h.repo.findByIdWithRelations = async () => ({ sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY', aiVerificationSummaryJson: null } as any);
+  await assert.rejects(() => h.repo.createPreparedSubstituteEvidence(preparedInput()), (error: any) => error.getResponse().code === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
+  assert.equal(h.reserveNumberInTransaction.mock.callCount(), 0);
+  assert.equal(h.tx.expenseRecord.updateMany.mock.callCount(), 0);
 });

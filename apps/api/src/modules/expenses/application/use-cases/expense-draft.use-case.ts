@@ -2,6 +2,7 @@ import { canonicalFingerprint } from '../../../../common/security/canonical-fing
 import { expenseDraftNumberingEnabled } from '../../infrastructure/expense-number';
 import { Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException, ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { expenseEvidenceAssessment, expenseEvidenceInputError, expenseEvidenceFingerprint, expenseEvidenceConfirmationError, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
 import { applyExpenseSourceDraftInput, sourceDraftState, projectExpenseSourceDraft, sourceDraftFinancialLines, sourceDraftSummary, bindSourceDraftLines, assertExpenseSourceDraftComplete, EXPENSE_SOURCE_DRAFT_KEY, SOURCE_DRAFT_MUTABLE_STATUSES } from '../../domain/logic/expense-source-draft.logic';
 import { collectLineExpenseDraftQuestions, parseLineExpenseDraftContinuation, nextLineExpenseDraftItemRef } from '../../domain/logic/line-expense-draft-conversation.logic';
@@ -40,7 +41,7 @@ import {
 } from '../../domain/logic/expense-status.logic';
 import type { ExpenseLineInput, ExpenseRecord, ExpenseRecordWithRelations, PaginatedExpenses } from '../../domain/models/expense.model';
 import type { RequestContext, CreateExpenseDraftInput, UpdateExpenseDraftInput, ListExpensesFilter, ExpenseStatus, ExpenseLineChargeKind, ExpenseVatMode, ExpenseVatSourceOverrideInput, RecordExpensePaymentInput } from '@watchdog-bms/contracts';
-import { isCalculatedExpenseRounding, type ExpenseDraftTotalsPreview, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
+import { expenseDocumentReviewFieldsComplete, isCalculatedExpenseRounding, type ExpenseDraftTotalsPreview, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, validateExpenseWhtInput } from '@watchdog-bms/contracts';
 import { ExpenseTransactionTaxService, type ExpenseTaxLineSelection } from '../services/expense-transaction-tax.service';
 import { RECEIPT_REVIEW_REASONS } from '../services/receipt-ocr-apply.service';
 import { LaunchGateGuardService } from '../../../feature-launch/application/launch-gate.guard';
@@ -378,7 +379,7 @@ export class UpdateExpenseDraftUseCase {
     }
     const financeOnlyFields: Array<keyof UpdateExpenseDraftInput> = [
       'sourceDocumentType', 'sourceDocumentLanguage', 'taxEvidenceStatus', 'taxEvidenceReasonCode',
-      'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride',
+      'expenseCategoryId', 'accountHintKey', 'taxCategory', 'nonExpenseClassificationOverride', 'documentReviewAcknowledged', 'evidenceAssessment',
     ];
     if (!canReview && !canCollectOwnLineDraft && financeOnlyFields.some((field) => input[field] !== undefined)) {
       throw new ForbiddenException('Missing permission: expense.review for document, tax, or accounting classification fields.');
@@ -474,6 +475,20 @@ export class UpdateExpenseDraftUseCase {
     let resolvedLines: ExpenseLineInput[] | undefined;
     const nextSourceDocumentType = input.sourceDocumentType ?? r.sourceDocumentType;
     const nextTaxEvidenceStatus = input.taxEvidenceStatus ?? r.taxEvidenceStatus;
+    if (input.evidenceAssessment !== undefined || input.documentReviewAcknowledged) {
+      const source = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, options.db, ctx.scopes ?? {});
+      if (!source) throw new NotFoundException();
+      const assessment = input.evidenceAssessment ?? expenseEvidenceAssessment(source);
+      const error = expenseEvidenceInputError(assessment, { ...source, sourceDocumentType: nextSourceDocumentType,
+        taxEvidenceStatus: nextTaxEvidenceStatus, inputVatClaimStatus: input.inputVatClaimStatus ?? source.inputVatClaimStatus }, Boolean(input.documentReviewAcknowledged));
+      if (error) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: error });
+    }
+    if (input.documentReviewAcknowledged !== undefined) {
+      if (input.documentReviewAcknowledged !== true || !expenseDocumentReviewFieldsComplete({
+        sourceDocumentType: nextSourceDocumentType, taxEvidenceStatus: nextTaxEvidenceStatus,
+      })) throw new BadRequestException({ code: 'EXPENSE_DOCUMENT_REVIEW_INCOMPLETE', message: 'เลือกประเภทเอกสารและสถานะหลักฐานภาษีให้ครบก่อนบันทึกการตรวจ' });
+      if (!expectedUpdatedAt) throw new BadRequestException({ code: 'EXPENSE_UPDATE_VERSION_REQUIRED', message: 'expectedUpdatedAt is required.' });
+    }
     const disallowsTaxCode = isReceiptOrSupportingOnly(nextSourceDocumentType, nextTaxEvidenceStatus);
     if (disallowsTaxCode && input.inputVatClaimStatus === 'CLAIMABLE') {
       throw new BadRequestException('A receipt, substitute receipt, or supporting-only document cannot claim input VAT.');
@@ -736,6 +751,10 @@ export class UpdateExpenseDraftUseCase {
       nextSummaryJson = { ...(nextSummaryJson ?? r.aiVerificationSummaryJson), missingFields: nextMissingFields };
     }
 
+    if (input.evidenceAssessment) {
+      nextSummaryJson = { ...(nextSummaryJson ?? r.aiVerificationSummaryJson), documentEvidenceDraft: input.evidenceAssessment };
+    }
+
     if (options.lineDraftCollection) {
       const summary = options.lineDraftCollection.aiVerificationSummaryJson;
       if (Array.isArray(summary['missingFields'])) summary['missingFields'] = summary['missingFields'].filter((field) =>
@@ -806,7 +825,7 @@ export class UpdateExpenseDraftUseCase {
       ...(reviewedByUserId && { reviewedByUserId, reviewedAt }),
       ...(totals ?? {}),
       ...(totals ? { outstandingAmount: totals.netPayableAmount } : {}),
-    }, resolvedLines || options.transactionalAudit || hasSourceDraft
+    }, resolvedLines || options.transactionalAudit || hasSourceDraft || input.evidenceAssessment || input.documentReviewAcknowledged
       ? async (tx) => {
         if (resolvedLines) {
           await this.repo.upsertLines(ctx.companyId, expenseId, resolvedLines, tx, canCollectOwnLineDraft || identityMode);
@@ -893,9 +912,29 @@ export class UpdateExpenseDraftUseCase {
             sourceChannelMetadataJson: { ...saved.sourceChannelMetadataJson, [EXPENSE_SOURCE_DRAFT_KEY]: state },
             aiVerificationSummaryJson: sourceDraftSummary(saved.aiVerificationSummaryJson, state), updatedAt: saved.updatedAt }, undefined, tx);
         }
+        if (input.evidenceAssessment || input.documentReviewAcknowledged) {
+          const saved = await this.repo.findByIdWithRelations(ctx.companyId, expenseId, tx, ctx.scopes ?? {});
+          if (!saved) throw new NotFoundException();
+          const assessment = input.evidenceAssessment ?? expenseEvidenceAssessment(saved);
+          const error = expenseEvidenceInputError(assessment, saved, Boolean(input.documentReviewAcknowledged));
+          if (error) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: error });
+          if (input.documentReviewAcknowledged) {
+            nextSummaryJson = { ...saved.aiVerificationSummaryJson, documentEvidenceDraft: assessment, documentReview: {
+              version: 2, reviewedAt: reviewedAt!.toISOString(), reviewedByUserId: ctx.userId,
+              assessment, fingerprint: expenseEvidenceFingerprint(saved, assessment!),
+            } };
+            await this.repo.updateExpense({ id: expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+              aiVerificationSummaryJson: nextSummaryJson, updatedAt: saved.updatedAt }, undefined, tx);
+            await this.audit.log({ companyId: ctx.companyId, actorUserId: ctx.userId,
+              action: 'expense.evidence.review', targetType: 'expense_record', targetId: expenseId,
+              requestId: ctx.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
+              metadataJson: { documentReview: nextSummaryJson.documentReview } }, tx);
+          }
+        }
         if (options.transactionalAudit) await this.audit.log(options.transactionalAudit, tx);
       }
       : undefined, options.db);
+    if (nextSummaryJson) updated.aiVerificationSummaryJson = nextSummaryJson;
     if (options.suppressGenericAudit) return updated;
     void this.audit.log({
       companyId: ctx.companyId,
@@ -906,8 +945,9 @@ export class UpdateExpenseDraftUseCase {
       requestId: ctx.requestId,
       result: 'SUCCESS',
       riskLevel: classificationOverride ? 'HIGH' : 'MEDIUM',
-      ...((classificationOverride || input.vatSource || input.whtInput) && {
+      ...((classificationOverride || input.vatSource || input.whtInput || input.documentReviewAcknowledged) && {
         metadataJson: {
+          ...(input.documentReviewAcknowledged && { documentReview: nextSummaryJson?.documentReview }),
           ...(input.whtInput && {
             whtInput: { before: r.whtInputJson ?? null, after: { ...input.whtInput, origin: 'REVIEWER' } },
           }),
@@ -1086,7 +1126,6 @@ export class ConfirmExpenseUseCase {
         });
       }
     }
-    const reliesOnSubstitute = Boolean(r.missingReceiptReason || r.substituteReceiptGeneratedAt || r.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
     // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument
     // is the signed ใบเบิกค่าใช้จ่าย — that is what `allowMissingReceiptWithReason` on the authority
     // means. Demanding an expense-side substitute receipt here dead-ends the claim: this confirm
@@ -1094,10 +1133,10 @@ export class ConfirmExpenseUseCase {
     // expense that actually entered the substitute-receipt flow still needs its artifact.
     const reasonCoveredByClaimForm = Boolean(authority?.allowMissingReceiptWithReason)
       && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-    if (reliesOnSubstitute && !reasonCoveredByClaimForm
-      && (r.substituteReceiptEvidence?.status !== 'ISSUED' || !r.substituteReceiptEvidence.artifactAttachmentId)) {
-      throw new BadRequestException('A current issued ใบรับรองแทนใบเสร็จรับเงิน artifact is required; a text reason or legacy timestamp is not sufficient.');
-    }
+    const evidenceError = expenseEvidenceConfirmationError(r, reasonCoveredByClaimForm);
+    if (evidenceError) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
+    const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
+    const reviewedAttachmentId = reviewedEvidence ? expenseEvidenceAssessment(r)?.attachmentIds[0] ?? r.primaryAttachmentId : r.primaryAttachmentId;
     if (r.substituteReceiptEvidence?.status === 'ISSUED'
       && (r.taxEvidenceStatus !== 'SUPPORTING_ONLY' || r.inputVatClaimStatus !== 'NON_CLAIMABLE')) {
       throw new BadRequestException('Internal substitute evidence must remain supporting-only and non-claimable for input VAT.');
@@ -1106,7 +1145,7 @@ export class ConfirmExpenseUseCase {
     const validationErr = validateConfirm({
       status: r.status,
       duplicateStatus: r.duplicateStatus,
-      primaryAttachmentId: r.primaryAttachmentId,
+      primaryAttachmentId: reviewedAttachmentId,
       missingReceiptReason: r.missingReceiptReason,
       vendorNameSnapshot: r.vendorNameSnapshot,
       vendorDocumentNumber: r.vendorDocumentNumber,
@@ -1117,6 +1156,7 @@ export class ConfirmExpenseUseCase {
       vatMode: r.vatMode,
       inputVatClaimStatus: r.inputVatClaimStatus,
       hasMissingReceiptPermission: authority?.allowMissingReceiptWithReason ?? hasPerm(ctx, 'expense.review'),
+      hasReviewedEvidence: reviewedEvidence,
       hasLinkedClaimEvidence: Boolean(authority && r.sourceChannelMetadataJson?.reimbursementSource),
       aiVerifiedFieldsJson: r.aiVerifiedFieldsJson,
       aiVerificationSummaryJson: r.aiVerificationSummaryJson,
@@ -1127,7 +1167,7 @@ export class ConfirmExpenseUseCase {
       sourceDocumentType: r.sourceDocumentType,
       taxEvidenceStatus: r.taxEvidenceStatus,
       inputVatClaimStatus: r.inputVatClaimStatus,
-      primaryAttachmentId: r.primaryAttachmentId,
+      primaryAttachmentId: reviewedAttachmentId,
       vendorTaxIdSnapshot: r.vendorTaxIdSnapshot,
       vendorDocumentNumber: r.vendorDocumentNumber,
       lines: r.lines ?? [],

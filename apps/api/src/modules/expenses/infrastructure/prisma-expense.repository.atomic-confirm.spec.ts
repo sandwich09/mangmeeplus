@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isBlockingExpenseVatReconciliation, type ExpenseVatMode, type TransactionTaxComponentPreview, type TransactionTaxSnapshot } from '@watchdog-bms/contracts';
+import { expenseEvidenceFingerprint, isBlockingExpenseVatReconciliation, type ExpenseVatMode, type TransactionTaxComponentPreview, type TransactionTaxSnapshot } from '@watchdog-bms/contracts';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic.js';
 import { PrismaExpenseRepository } from './prisma-expense.repository.js';
 import { ConfirmExpenseUseCase } from '../application/use-cases/expense-draft.use-case';
@@ -25,6 +25,8 @@ const components: TransactionTaxComponentPreview[] = [{
   accountAssignments: [{ accountRole: 'INPUT_VAT_CLAIMABLE', accountId: 'account-vat', postingSide: 'DEBIT', ruleVersion: 1 }],
   reportContributions: [{ formType: 'PP30', boxKey: 'INPUT_VAT', amount: '7.00', amountSource: 'TAX_AMOUNT' }],
 }];
+
+const reviewFixtures = new WeakMap<PrismaExpenseRepository, () => Promise<void>>();
 
 function harness(options: { accountingStatus?: string; taxStatus?: string; withAttachment?: boolean; branchId?: string | null } = {}) {
   const updatedAt = new Date('2026-07-15T10:00:00.000Z');
@@ -84,7 +86,7 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
     expenseSubstituteReceiptEvidence: { findFirst: async () => null },
     reimbursementLine: { findFirst: async () => null },
     attachmentLink: {
-      findMany: async () => options.withAttachment ? [{
+      findMany: async () => options.withAttachment !== false ? [{
         attachmentId: 'attachment-1', purpose: 'RECEIPT',
         attachment: {
           originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1024,
@@ -99,10 +101,18 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
     outboxEvent: { create: async () => { writes.outbox++; } },
     auditLog: { create: async ({ data }: any) => { if (data.action === 'expense.vat.source_override') audits.push(data); } },
   };
-  return { repo: new PrismaExpenseRepository({ client } as any), writes, updatedAt, row, client, audits };
+  const repo = new PrismaExpenseRepository({ client } as any);
+  const review = async () => {
+    const source = (await repo.findByIdWithRelations('company-1', 'expense-1'))!;
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['attachment-1'], reason: '' };
+    row.aiVerificationSummaryJson = { documentReview: { version: 2, reviewedAt: updatedAt.toISOString(), reviewedByUserId: 'reviewer-1',
+      assessment, fingerprint: expenseEvidenceFingerprint(source, assessment) } };
+  };
+  reviewFixtures.set(repo, review);
+  return { repo, review, writes, updatedAt, row, client, audits };
 }
 
-function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat?: string; taxCode?: boolean; tolerance?: string; accountingStatus?: string; taxStatus?: string } = {}) {
+async function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat?: string; taxCode?: boolean; tolerance?: string; accountingStatus?: string; taxStatus?: string } = {}) {
   const h = harness({ ...options, withAttachment: true });
   const vatMode = options.vatMode ?? 'VAT_EXCLUDED';
   const units = [
@@ -156,13 +166,14 @@ function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat?: str
   const useCase = new ConfirmExpenseUseCase(h.repo, audit as any, transactionTax,
     { get: async () => ({ status: 'REGISTERED' }) } as any);
   const ctx: any = { companyId: 'company-1', userId: 'reviewer-1', requestId: 'req-1', authProvider: 'watchdog', permissions: ['expense.confirm', 'expense.review'], scopes: {} };
+  await h.review();
   return { ...h, ctx, useCase, definition, transactionTax };
 }
 
 describe('document VAT acceptance through real confirmation and tax resolution', () => {
   it('also preserves in-tolerance source VAT without requiring a reviewer override', async () => {
     for (const vatMode of ['VAT_INCLUDED', 'VAT_EXCLUDED'] as const) {
-      const h = documentVatHarness({ vatMode, sourceVat: '7.01', taxCode: true, tolerance: '0.01' });
+      const h = await documentVatHarness({ vatMode, sourceVat: '7.01', taxCode: true, tolerance: '0.01' });
       const confirmed = await h.useCase.execute(h.ctx, 'expense-1');
       const line = (await h.repo.findByIdWithRelations('company-1', 'expense-1'))!.lines[0]!;
       assert.equal(Number(confirmed.vatAmount), 7.01);
@@ -176,15 +187,15 @@ describe('document VAT acceptance through real confirmation and tax resolution',
     for (const change of [
       // `expense.confirm` alone is no longer refused — owner decision 2026-08-28, below. What still
       // is: reviewing without the right to confirm, and a decision about a snapshot that is gone.
-      (h: ReturnType<typeof documentVatHarness>) => { h.ctx.permissions = ['expense.review']; },
-      (h: ReturnType<typeof documentVatHarness>) => { h.row.vatCaptureSnapshotJson = null; },
+      (h: Awaited<ReturnType<typeof documentVatHarness>>) => { h.ctx.permissions = ['expense.review']; },
+      (h: Awaited<ReturnType<typeof documentVatHarness>>) => { h.row.vatCaptureSnapshotJson = null; },
     ]) {
-      const h = documentVatHarness(); change(h);
+      const h = await documentVatHarness(); change(h);
       await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1', { reason: 'Checked', vatLineNumber: 1, expectedUpdatedAt: h.updatedAt.toISOString() }));
       assert.equal(h.audits.length, 0); assert.equal(h.writes.header, 0);
     }
     for (const decision of [{ reason: '', vatLineNumber: 1 }, { reason: 'Checked', vatLineNumber: 2 }, { reason: 'Checked', vatLineNumber: 99 }]) {
-      const h = documentVatHarness();
+      const h = await documentVatHarness();
       await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1', { ...decision, expectedUpdatedAt: h.updatedAt.toISOString() }));
       assert.equal(h.audits.length, 0); assert.equal(h.writes.header, 0);
     }
@@ -195,7 +206,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
   // through at all — the save was refused and the control that clears it was never rendered for
   // them. The decision is still deliberate and still audited; it is simply no longer a second role.
   it('lets a confirmer accept the document VAT total, with the decision still written to the audit', async () => {
-    const h = documentVatHarness();
+    const h = await documentVatHarness();
     h.ctx.permissions = ['expense.confirm'];
 
     await h.useCase.execute(h.ctx, 'expense-1', { reason: 'Checked printed VAT', vatLineNumber: 1, expectedUpdatedAt: h.updatedAt.toISOString() });
@@ -208,7 +219,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
     for (const taxCode of [false, true]) {
       for (const sourceVat of ['8', '6']) {
         it(`${vatMode} ${taxCode ? 'configured tax' : 'receipt'} persists accepted ${sourceVat} through reload, FINAL tax and reports`, async () => {
-          const h = documentVatHarness({ vatMode, taxCode, sourceVat });
+          const h = await documentVatHarness({ vatMode, taxCode, sourceVat });
           const originalSource = structuredClone(h.row.vatCaptureSnapshotJson.source);
           const exemptBefore = structuredClone(h.row.lines[1]);
           const confirmed = await h.useCase.execute(h.ctx, 'expense-1', { reason: 'Checked printed VAT', vatLineNumber: 1, expectedUpdatedAt: h.updatedAt.toISOString() });
@@ -259,7 +270,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
 
   for (const failure of ['tax tolerance', 'tax rate', 'evidence', 'period', 'tax period', 'audit', 'outbox', 'CAS'] as const) {
     it(`rolls back amounts, decision and outbox on ${failure} failure`, async () => {
-      const h = documentVatHarness({ taxCode: true, tolerance: failure === 'tax tolerance' ? '0.01' : '2',
+      const h = await documentVatHarness({ taxCode: true, tolerance: failure === 'tax tolerance' ? '0.01' : '2',
         accountingStatus: failure === 'period' ? 'CLOSED' : undefined, taxStatus: failure === 'tax period' ? 'FILED' : undefined });
       if (failure === 'tax rate') h.definition.rate = '8';
       if (failure === 'evidence') h.client.tradeTaxEvidence.findMany = async () => [];
@@ -284,7 +295,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
       (row: any) => { row.vatCaptureSnapshotJson.source.vatAmount = '9.0000'; },
       (row: any) => { row.lines[0].vatRate = '0.08'; },
     ]) {
-      const h = documentVatHarness();
+      const h = await documentVatHarness();
       const input = await inputFor(h.repo, h.updatedAt);
       mutate(h.row);
       await assert.rejects(() => h.repo.finalizeAndConfirmExpenseCas({ ...input,
@@ -296,7 +307,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
 
   it('rejects an old or missing UI version even when the source changed before POST began', async () => {
     for (const expectedUpdatedAt of [undefined, 'not-a-date', '2026-07-14T10:00:00.000Z']) {
-      const h = documentVatHarness();
+      const h = await documentVatHarness();
       await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1', {
         reason: 'Reviewed an earlier snapshot', vatLineNumber: 1, expectedUpdatedAt,
       } as any), (error: any) => error.getResponse().code === 'EXPENSE_VAT_OVERRIDE_STALE');
@@ -307,6 +318,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
 });
 
 async function inputFor(repo: PrismaExpenseRepository, updatedAt: Date) {
+  await reviewFixtures.get(repo)?.();
   const source = await repo.findByIdWithRelations('company-1', 'expense-1');
   assert.ok(source);
   return {
@@ -365,5 +377,16 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
     const input = await inputFor(repo, updatedAt);
     await assert.rejects(() => repo.finalizeAndConfirmExpenseCas(input, finalize), /tax_period_locked:PP30/);
     assert.deepEqual([writes.line, writes.header, writes.outbox], [0, 0, 0]);
+  });
+});
+
+describe('evidence review at final transaction', () => {
+  it('rejects a removed human review after preflight, without final lines, header or outbox', async () => {
+    const h = harness();
+    const input = await inputFor(h.repo, h.updatedAt);
+    h.row.aiVerificationSummaryJson = null;
+    await assert.rejects(() => h.repo.finalizeAndConfirmExpenseCas(input, async () => []),
+      (error: any) => error.getResponse().code === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
+    assert.equal(h.writes.header + h.writes.line + h.writes.outbox, 0);
   });
 });

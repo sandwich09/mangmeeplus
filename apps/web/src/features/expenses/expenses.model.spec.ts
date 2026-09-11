@@ -168,7 +168,7 @@ describe('expenses.model', () => {
   });
 
   it('turns internal expense codes into meaningful Thai labels', () => {
-    assert.equal(expenseValueLabel(TAX_EVIDENCE_REASON_LABELS, 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE'), 'บิลเขียนมือหรือข้อความ ต้องจัดทำใบรับรองแทนใบเสร็จรับเงิน');
+    assert.equal(expenseValueLabel(TAX_EVIDENCE_REASON_LABELS, 'HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE'), 'หลักฐานประกอบการจ่าย ตรวจข้อมูลและเลือกหลักฐานให้ตรงกับรายการ');
     assert.equal(expenseValueLabel(AI_SUMMARY_STATUS_LABELS, 'TEXT_NOTE_SEMANTIC_CAPTURE'), 'อ่านข้อมูลจากโน้ตข้อความแล้ว รอตรวจสอบ');
     assert.equal(expenseValueLabel(AI_MISSING_FIELD_LABELS, 'receipt_evidence'), 'หลักฐานใบเสร็จหรือหลักฐานประกอบ');
     assert.equal(expenseValueLabel(ATTACHMENT_PURPOSE_LABELS, 'expense.payment.evidence'), 'หลักฐานการจ่ายเงิน');

@@ -1,3 +1,4 @@
+import { expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import type {
   ExpenseStatus, ExpenseVatMode, ExpensePaymentStatus, ExpensePostingStatus, ExpensePostingSourceType,
   AiVerificationStatus, DuplicateStatus, ExpenseCaptureSource, ExpensePaymentMethod,
@@ -27,9 +28,9 @@ import {
   isExpenseCancelled, isExpenseDeletableState, isExpensePending, isNonExpenseClassificationBlocking, isCheckBillClassification,
   effectiveVatRateLabel, vatModeRequiresRate, civilDate, civilDateToUtcDate, civilPeriodKey, isCivilDate,
   EXPENSE_LINE_CHARGE_KINDS, EXPENSE_LINE_CHARGE_KIND_LABELS, expenseChargeKindAllowsNegative,
-  expenseDocumentDateStatus, expenseDateIsReadable, isCalculatedExpenseRounding,
+  expenseDocumentDateStatus, expenseDateIsReadable, isCalculatedExpenseRounding, hasCurrentExpenseDocumentReview,
 } from '@watchdog-bms/contracts';
-export { isExpensePending } from '@watchdog-bms/contracts';
+export { isExpensePending, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import type { SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { ACCOUNTING_UI_HIDDEN } from '@/features/web-core-workspace/web-core-workspace.constants';
@@ -353,6 +354,8 @@ export function lateDocumentDays(expense: Pick<ExpenseSummary, 'expenseDate' | '
 }
 
 export type ExpenseDetail = ExpenseSummary & {
+  primaryAttachmentId?: string | null;
+  extractionId?: string | null;
   sourceDraft?: ExpenseSourceDraft | null;
   /** Suggested input Tax Code from this expense's category. A hint for the line picker only. */
   categoryDefaultInputTaxCode?: string | null;
@@ -938,7 +941,8 @@ export const TAX_EVIDENCE_REASON_LABELS: Record<TaxEvidenceReasonCode, string> =
   VALID_RECEIPT_FIELDS: 'ข้อมูลใบเสร็จรับเงินครบถ้วน',
   PAYMENT_EVIDENCE_ONLY: 'เป็นหลักฐานการจ่ายเงินเท่านั้น',
   MARKETPLACE_SCREENSHOT_ONLY: 'เป็นภาพคำสั่งซื้อจากมาร์เก็ตเพลสเท่านั้น',
-  HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE: 'บิลเขียนมือหรือข้อความ ต้องจัดทำใบรับรองแทนใบเสร็จรับเงิน',
+  HANDWRITTEN_OR_TEXT_NEEDS_SUBSTITUTE: 'หลักฐานประกอบการจ่าย ตรวจข้อมูลและเลือกหลักฐานให้ตรงกับรายการ',
+  HANDWRITTEN_RECEIPT_REVIEW: 'บิลเงินสดเขียนมือ ตรวจข้อมูลและหลักฐานของรายการ',
   MISSING_VENDOR_TAX_ID: 'ขาดเลขประจำตัวผู้เสียภาษีของผู้ขาย',
   MISSING_DOCUMENT_NUMBER: 'ขาดเลขที่เอกสาร',
   MISSING_MONETARY_AMOUNT: 'ขาดยอดเงิน',
@@ -1306,6 +1310,10 @@ export type ExpenseReviewStep = { key: ExpenseReviewStepKey; state: ExpenseRevie
 export function expenseSubstituteReceiptReady(detail: Pick<ExpenseDetail, 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType'> & {
   substituteReceiptEvidence: Pick<SubstituteReceiptEvidenceSummary, 'status' | 'artifactAttachmentId'> | null;
 }): boolean {
+  if (hasCurrentExpenseEvidenceReview(detail as ExpenseDetail)) {
+    return expenseEvidenceAssessment(detail as ExpenseDetail)?.route !== 'SUBSTITUTE_RECEIPT'
+      || (detail.substituteReceiptEvidence?.status === 'ISSUED' && Boolean(detail.substituteReceiptEvidence.artifactAttachmentId));
+  }
   const reliesOnSubstitute = Boolean(detail.missingReceiptReason || detail.substituteReceiptGeneratedAt || detail.sourceDocumentType === 'SUBSTITUTE_RECEIPT');
   return !reliesOnSubstitute || (detail.substituteReceiptEvidence?.status === 'ISSUED' && Boolean(detail.substituteReceiptEvidence.artifactAttachmentId));
 }
@@ -1320,6 +1328,7 @@ export function expenseNeedsReceiptOrSubstitute(detail: Pick<ExpenseDetail, 'mis
   attachments: ReadonlyArray<{ purpose?: string; status?: string }>;
   substituteReceiptEvidence: Pick<SubstituteReceiptEvidenceSummary, 'status'> | null;
 }): boolean {
+  if (hasCurrentExpenseEvidenceReview(detail as ExpenseDetail)) return false;
   const substitutePathStarted = Boolean(detail.missingReceiptReason || detail.substituteReceiptGeneratedAt
     || detail.sourceDocumentType === 'SUBSTITUTE_RECEIPT' || detail.substituteReceiptEvidence);
   return !substitutePathStarted && !expenseHasPrimaryReceipt(detail.attachments);
@@ -1367,7 +1376,7 @@ export function expenseSourceDraftViewState(
 
 export function deriveExpenseReviewSteps(
   detail: Pick<ExpenseDetail, 'aiVerificationSummaryJson' | 'vendorNameSnapshot' | 'expenseDate' | 'taxEvidenceStatus'
-    | 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType' | 'duplicateStatus' | 'sourceDraft'> & {
+    | 'missingReceiptReason' | 'substituteReceiptGeneratedAt' | 'sourceDocumentType' | 'duplicateStatus' | 'sourceDraft'> & Partial<Pick<ExpenseDetail, 'status' | 'expenseCategoryId' | 'primaryAttachmentId' | 'extractionId'>> & {
     attachments: ReadonlyArray<{ purpose?: string; status?: string }>;
     lines: ReadonlyArray<unknown>;
     substituteReceiptEvidence: Pick<SubstituteReceiptEvidenceSummary, 'status' | 'artifactAttachmentId'> | null;
@@ -1385,7 +1394,9 @@ export function deriveExpenseReviewSteps(
   const dateReadable = expenseDateIsReadable(detail.aiVerificationSummaryJson);
   const sourceDraftComplete = !detail.sourceDraft || detail.sourceDraft.missingFields.length === 0;
   const dataDone = (detail.vendorNameSnapshot ?? '').trim() !== '' && Boolean(detail.expenseDate) && dateReadable && detail.lines.length > 0 && sourceDraftComplete;
-  const evidenceState: ExpenseReviewStepState = detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
+  const reviewPending = canReview && ['DRAFT', 'EXTRACTING', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'].includes(detail.status ?? 'NEEDS_REVIEW')
+    && detail.substituteReceiptEvidence?.status !== 'ISSUED' && !hasCurrentExpenseDocumentReview(detail as ExpenseDetail);
+  const evidenceState: ExpenseReviewStepState = !reviewPending && detail.taxEvidenceStatus !== 'NEEDS_REVIEW' && !classificationBlocked && substituteReady && !needsReceiptOrSubstitute && aiMissingEvidence.length === 0
     ? 'done'
     : classificationBlocked || !substituteReady || needsReceiptOrSubstitute ? 'attention' : 'pending';
   return [
@@ -1652,19 +1663,22 @@ export type ExpenseEvidenceStepBlocker =
   | 'expenses.check_bill_workflow_blocked'
   | 'expenses.evidence_next_needs_classification'
   | 'expenses.evidence_next_waiting_finance'
-  | 'expenses.doc_review_unsaved_next';
+  | 'expenses.doc_review_unsaved_next'
+  | 'expenses.doc_review_required_next';
 
 export function expenseEvidenceStepBlocker(input: {
   checkBillBlocked: boolean;
   classificationBlocked: boolean;
   canReview: boolean;
   unsavedReview: boolean;
+  reviewRequired?: boolean;
 }): ExpenseEvidenceStepBlocker | null {
   if (input.checkBillBlocked) return 'expenses.check_bill_workflow_blocked';
   if (input.classificationBlocked) {
     return input.canReview ? 'expenses.evidence_next_needs_classification' : 'expenses.evidence_next_waiting_finance';
   }
   if (input.unsavedReview) return 'expenses.doc_review_unsaved_next';
+  if (input.reviewRequired) return 'expenses.doc_review_required_next';
   return null;
 }
 

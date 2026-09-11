@@ -1,6 +1,6 @@
 # Agent Memory: substitute-editable-navigation
 
-Status: Implemented, verified, and synchronized to user local; integrating main/develop.
+Status: Complete; local3000 updated; main PR534 and develop PR535 merged.
 Owner: Codex.
 Scope: Existing substitute receipt Back/Next navigation, DIGITAL and PAPER.
 Decisions:
@@ -19,4 +19,5 @@ Verification:
 - Live browser spec is opt-in for the isolated review DB/policy/personal signature fixture: `SUBSTITUTE_NAVIGATION_LIVE=1 E2E_WEB_BASE_URL=http://localhost:3010 WEB_PORT=3010 API_PORT=3011 pnpm exec playwright test e2e/substitute-editable-navigation.spec.ts e2e/substitute-cancelled-view-only.spec.ts --project=chromium --workers=1`.
 - Evidence: `/tmp/sub-editable-{all-browser,pg,focused,types-final,userlocal}.log`, screenshots under test-results. Actual user port3000 receipt SRC-202609-00040: Back opens editable certificate fields, Back again opens source fields. Only read/navigation performed on this user record.
 - User local received a three-way merge of just wizard, shared form save option and route, preserving concurrent edits. No cloud deployment.
-Next: Merge scoped changes into main/develop and record PR IDs.
+Integration: main PR534 → 8f988a16108d20adbd2b08c15acc08b2c3b88ef5; develop PR535 → 21fb6f6750447c84ff220d3234a384770e64a497. Scoped files identical across both remote branches. CI Typecheck and Test was still running at handoff; other completed checks passed. Test-owned NAV-FORM expense records cleaned from isolated local review DB; customer records preserved.
+Next: User review on local3000; no remaining implementation for this request.
