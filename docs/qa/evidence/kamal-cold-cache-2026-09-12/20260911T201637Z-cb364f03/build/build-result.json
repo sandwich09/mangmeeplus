@@ -1,0 +1,83 @@
+{
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "startedAt": "2026-09-11T20:16:50.260598+00:00",
+  "status": "passed",
+  "scope": "Build and TypeScript only; no deployment",
+  "phases": {
+    "install": {
+      "elapsedSeconds": 16.726,
+      "exitCode": 0
+    },
+    "contracts": {
+      "elapsedSeconds": 1.66,
+      "exitCode": 0
+    },
+    "prisma": {
+      "elapsedSeconds": 4.602,
+      "exitCode": 0
+    },
+    "typescript": {
+      "elapsedSeconds": 122.009,
+      "exitCode": 0
+    },
+    "di": {
+      "elapsedSeconds": 1.06,
+      "exitCode": 0
+    },
+    "agentcore": {
+      "elapsedSeconds": 5.382,
+      "exitCode": 0
+    },
+    "build-api-web": {
+      "elapsedSeconds": 235.092,
+      "exitCode": 0
+    },
+    "build-ai-gateway": {
+      "elapsedSeconds": 28.266,
+      "exitCode": 0
+    },
+    "build-workers": {
+      "elapsedSeconds": 14.783,
+      "exitCode": 0
+    },
+    "export-tools-base": {
+      "elapsedSeconds": 38.119,
+      "exitCode": 0
+    },
+    "build-tools": {
+      "elapsedSeconds": 13.841,
+      "exitCode": 0
+    }
+  },
+  "images": {
+    "api-web": {
+      "tag": "mangmee-complete-api-web:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "imageId": "sha256:77122da70fd8a58c54eb52c0a903673097ad7e4b001087ffd253075987641119",
+      "architecture": "amd64"
+    },
+    "ai-gateway": {
+      "tag": "mangmee-complete-ai-gateway:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "imageId": "sha256:6ed397cac3e4edc3b24d0be8ebddafce3917596208fd96d884333fdd3dc317e9",
+      "architecture": "amd64"
+    },
+    "workers": {
+      "tag": "mangmee-complete-workers:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "imageId": "sha256:03da4198f457ebd3ebd0a5f4be99416f768561b7dc136d7614befe5dc05f55dc",
+      "architecture": "amd64"
+    },
+    "tools": {
+      "tag": "mangmee-complete-tools:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "imageId": "sha256:6ccd7fab0565b34c5f306cc2158f67d07a5032d2d4e7e5755a6502755e7bdf7f",
+      "architecture": "amd64"
+    }
+  },
+  "sourceTreeSha256": "ef9c5e58fdd6e73257a399360ecc76a2e47b6d79de05263378ddf5ab3b6f845d",
+  "agentcore": {
+    "schemaVersion": 1,
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "artifact": "agentcore.zip",
+    "sha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+  },
+  "elapsedSeconds": 330.598,
+  "finishedAt": "2026-09-11T20:22:20.859394+00:00"
+}

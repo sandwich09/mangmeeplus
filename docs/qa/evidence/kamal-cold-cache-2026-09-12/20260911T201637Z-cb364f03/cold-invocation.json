@@ -1,0 +1,45 @@
+{
+  "phase": "cold",
+  "preparationStartedAt": "2026-09-11T20:16:19.391556+00:00",
+  "excludedProvenProviderGhost": {
+    "id": 31611733340,
+    "checkSuiteId": 85752682208,
+    "createdAt": "2026-08-12T15:20:13Z",
+    "headSha": "33ed788ccc644502e572fe2d679aac9b2b98cc6e",
+    "jobCount": 0,
+    "checkRunCount": 0,
+    "pendingDeployments": [],
+    "basis": "docs/agent-memory/release-receipt-signup-2026-09-07.md; same exact stale identity reverified; not an executable job"
+  },
+  "sourceCommitExpected": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "cacheScope": "Fresh isolated BuildKit/dependency store; same-run stages reused; existing UAT running/rollback images and registry/CDN retained",
+  "adapterSha256": "030a19ff7d5a36ef3489632167a0ad847d93082237f73025ab1847845384a005",
+  "builder": "kamal-cold-20260912-9a51c543",
+  "builderSetupSeconds": 11.123993,
+  "cacheBefore": {
+    "buildkitRecords": 0,
+    "pnpmStoreFiles": 0,
+    "pnpmStorePath": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/.env.kamal/uat/cold-cache-20260912/pnpm-store/v3"
+  },
+  "startedAt": "2026-09-11T20:16:37.518801+00:00",
+  "preparationSeconds": 18.127249,
+  "command": [
+    "infra/kamal/deploy-uat",
+    "--profile",
+    "mangmee-kamal-uat",
+    "--mode",
+    "hotfix",
+    "--apply",
+    "--uat-smoke-acceptance"
+  ],
+  "operationId": "20260911T201637Z-cb364f03",
+  "exitCode": 0,
+  "endedAt": "2026-09-11T20:27:52.219259+00:00",
+  "elapsedSeconds": 674.699101,
+  "throughDeploymentSeconds": 692.826537,
+  "deploymentStatus": "ACCEPTED_LINE_DEFERRED",
+  "builderRemoved": true,
+  "cleanupSeconds": 6.20625,
+  "completeHarnessSeconds": 699.039442,
+  "finishedAt": "2026-09-11T20:27:58.433586+00:00"
+}

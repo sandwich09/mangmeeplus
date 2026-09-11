@@ -1,0 +1,11 @@
+{
+  "workersReadinessDelaySeconds": 7,
+  "sourceLog": "kamal-workers-deploy.log",
+  "sourceLogSha256": "6a41a5abfb4abcd2dc515dca40738b9b2f349169ebbb01c08cd3a7f0292b9e47",
+  "matches": [
+    {
+      "line": 32,
+      "text": "  INFO Container is running, waiting for readiness delay of 7 seconds"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+Scope: all 8 workspace projects
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +754
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Progress: resolved 754, reused 0, downloaded 27, added 27
+Progress: resolved 754, reused 0, downloaded 74, added 73
+Progress: resolved 754, reused 0, downloaded 217, added 211
+Progress: resolved 754, reused 0, downloaded 249, added 249
+Progress: resolved 754, reused 0, downloaded 317, added 309
+Progress: resolved 754, reused 0, downloaded 375, added 374
+Progress: resolved 754, reused 0, downloaded 408, added 408
+Progress: resolved 754, reused 0, downloaded 489, added 489
+Progress: resolved 754, reused 0, downloaded 547, added 547
+Progress: resolved 754, reused 0, downloaded 602, added 602
+Progress: resolved 754, reused 0, downloaded 672, added 668
+Progress: resolved 754, reused 0, downloaded 742, added 739
+Progress: resolved 754, reused 0, downloaded 754, added 753
+Progress: resolved 754, reused 0, downloaded 754, added 754
+Progress: resolved 754, reused 0, downloaded 754, added 754, done
+.../node_modules/@prisma/engines postinstall$ node scripts/postinstall.js
+.../node_modules/@scarf/scarf postinstall$ node ./report.js
+.../node_modules/@swc/core postinstall$ node postinstall.js
+.../node_modules/msgpackr-extract install$ node-gyp-build-optional-packages
+.../esbuild@0.28.1/node_modules/esbuild postinstall$ node install.js
+.../node_modules/@scarf/scarf postinstall: Done
+.../node_modules/@swc/core postinstall: Done
+.../esbuild@0.28.1/node_modules/esbuild postinstall: Done
+.../node_modules/@prisma/engines postinstall: Done
+.../node_modules/msgpackr-extract install: Done
+.../node_modules/prisma preinstall$ node scripts/preinstall-entry.js
+.../node_modules/prisma preinstall: Done
+
+devDependencies:
++ @playwright/test 1.61.1
++ @types/node 22.20.0
++ tsx 4.22.4
++ turbo 2.9.18
++ typescript 5.9.3
+
+Done in 16.6s

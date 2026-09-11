@@ -1,0 +1,21 @@
+
+> watchdog-bms@0.1.0 typecheck /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/.env.kamal/uat/runs/20260911T201637Z-cb364f03/source
+> corepack pnpm -r --if-present typecheck
+
+Scope: 7 of 8 workspace projects
+packages/config typecheck$ tsc --noEmit
+packages/contracts typecheck$ tsc --noEmit
+packages/design-tokens typecheck$ node scripts/build-tokens.mjs --check
+packages/design-tokens typecheck: Done
+packages/config typecheck: Done
+packages/contracts typecheck: Done
+apps/ai-gateway typecheck$ tsc --noEmit
+apps/api typecheck$ NODE_OPTIONS=--max-old-space-size=8192 tsc --noEmit
+apps/web typecheck$ next typegen && tsc --noEmit
+apps/workers typecheck$ tsc --noEmit
+apps/workers typecheck: Done
+apps/web typecheck: Generating route types...
+apps/web typecheck: ✓ Types generated successfully
+apps/ai-gateway typecheck: Done
+apps/web typecheck: Done
+apps/api typecheck: Done

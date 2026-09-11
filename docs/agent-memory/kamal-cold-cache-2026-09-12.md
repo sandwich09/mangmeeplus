@@ -1,0 +1,20 @@
+# Agent Memory: unchanged-main cold-cache UAT benchmark
+
+Status: COMPLETE — one successful live cold deployment, operation `20260911T201637Z-cb364f03`, no error/retry/repair during deployment. `ACCEPTED_LINE_DEFERRED`, KMS verified, full config/readiness/public OPEN passed. The cold deployment exceeds the 10-minute goal; do not claim that goal achieved.
+Owner: release owner / Codex
+Scope: owner asks to repeat unchanged main without cache and measure the complete UAT deployment. Main remains6b95e505; no source/controller changes or merge needed. Production untouched; dev stopped; UAT smoke acceptance without login/logout remains authorized.
+Decisions:
+- Fresh isolated BuildKit0.31.2 (same version as previous desktop builder), pinned image digest2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec; empty cache at start, no cache-from/import. Keep useful stages created during the same invocation.
+- Host pnpm uses a new empty store/cache and source checkout. Existing UAT hosts keep running/rollback images; this is cold build/dependency cache, not a replacement host or an empty registry/CDN.
+- A benchmark-only Docker command adapter sends source builds/tools-stage export to the fresh builder, loads the new images into the local engine, and forces no-cache for tools/publication wrappers while accepting only bases produced in this invocation. Main controller and app files stay byte-identical to main.
+- Local adapter controls and actual isolated-builder image transfer/default-builder extension passed before live invocation. A separate probe builder was used, so the measured builder remains genuinely empty. No dependency was added and no cache belonging to another task is removed.
+- Timers must include prechecks, builder initialization, complete unchanged deployment command, every config/readiness/OPEN/KMS boundary, and separately retained cleanup. One operation only; never retry a live failure to discover the next issue. Preserve failures.
+Artifacts: private `.env.kamal/uat/cold-cache-20260912/`; public report `docs/research/kamal-uat-cold-cache-proof-2026-09-12.md`; sanitized signed payload, full timings, actual build logs, cache records and harness in `docs/qa/evidence/kamal-cold-cache-2026-09-12/20260911T201637Z-cb364f03/`. Prior warm proof `docs/research/kamal-uat-stable-hotfix-proof-2026-09-11.md` remains unchanged.
+Verification:
+- Complete clock started `2026-09-11T20:16:19.391556+00:00`; command started `20:16:37.518801`, ended `20:27:52.219259`; cleanup finished `20:27:58.433586` UTC. Deploy command 674.699101s; prechecks/setup 18.127249s; total through deployment 692.826537s (11m32.827s); all including cleanup 699.039442s (11m39.039s).
+- Zero BuildKit cache records / zero host pnpm store files verified before deployment. All build commands exited 0; no previous-run build cache imported. Same-run stages were reused. Existing host/registry layers were not purged. Fresh BuildKit builder removed successfully after evidence collection.
+- API 111 / AI 56 / workers 19 managed config values match actual containers; source/image/proxy/native metadata, API/DB/AI/workers/Redis/internal API readiness and public OPEN passed. KMS verified; accepted SHA256 `ab11ad3f1785979226f51d1acdb049ed5a16e83e1ebdf36e016a4dfe38e10ef9`.
+- Known GitHub ghost31611733340 excluded after exact timestamp/source/check-suite/zero-jobs/zero-check-runs/zero-pending verification. No new GitHub UAT/READY/Production workflows dispatched (IDs N/A).
+- AWS readback after completion: both UAT instances running, dev `i-0883f1ff88440ca07` stopped. Production unchanged. Worker readiness delay of 7 seconds confirmed in this operation's actual Kamal log.
+- Evidence extraction validated all passed phases/signature/readiness/source/cache conditions and scanned selected output against resolved sensitive config values. Main controller/build helper stayed unchanged; no package.json edits.
+Next: report measured cold/warm differences and full totals to owner. No further deployment or optimization is running. A future cold-cache optimization needs its own measured result before claiming under 10 minutes.
