@@ -1,0 +1,442 @@
+{
+  "config": {
+    "argv": [
+      "/opt/homebrew/Cellar/node@22/22.23.2/bin/node",
+      "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/@playwright/test/cli.js",
+      "test",
+      "e2e/plan-term-billing-readiness.spec.ts",
+      "--project=chromium",
+      "--workers=1",
+      "--retries=0",
+      "--timeout=90000",
+      "--grep",
+      "BC0",
+      "--output=test-results/billing-controls-2026-09-11",
+      "--reporter=list,json"
+    ],
+    "configFile": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/playwright.config.ts",
+    "rootDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [
+          "/evidence\\.spec\\.ts/"
+        ],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "critical",
+        "name": "critical",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [
+          "/evidence\\.spec\\.ts/"
+        ],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-chromium",
+        "name": "mobile-chromium",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(responsive|evidence)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "iphone13-webkit",
+        "name": "iphone13-webkit",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(responsive|evidence)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "iphone13-chromium",
+        "name": "iphone13-chromium",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(responsive|evidence)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "mobile-375",
+        "name": "mobile-375",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/(responsive|evidence)\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "desktop-1280",
+        "name": "desktop-1280",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/evidence\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "desktop-1440",
+        "name": "desktop-1440",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/evidence\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      },
+      {
+        "outputDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "desktop-1920",
+        "name": "desktop-1920",
+        "testDir": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e",
+        "testIgnore": [],
+        "testMatch": [
+          "/evidence\\.spec\\.ts/"
+        ],
+        "timeout": 90000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "plan-term-billing-readiness.spec.ts",
+      "file": "plan-term-billing-readiness.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "BC existing admin web recovery — no Stripe or new control-suite claim",
+          "file": "plan-term-billing-readiness.spec.ts",
+          "line": 406,
+          "column": 6,
+          "specs": [
+            {
+              "title": "BC01 1280px expired admin cookie preserves partner deep link through web login",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3865,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-11T07:07:09.438Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "128640c4e35ab804d048-f37e13f4c882aa63c048",
+              "file": "plan-term-billing-readiness.spec.ts",
+              "line": 408,
+              "column": 5
+            },
+            {
+              "title": "BC01 390px expired admin cookie preserves partner deep link through web login",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1334,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-11T07:07:13.546Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "128640c4e35ab804d048-a382497f7d2cedde545e",
+              "file": "plan-term-billing-readiness.spec.ts",
+              "line": 408,
+              "column": 5
+            },
+            {
+              "title": "BC02 failed plan read retries the real API without changing the term",
+              "ok": false,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "failed",
+                      "duration": 10878,
+                      "error": {
+                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\u001b[22m\n\u001b[2m    - waiting for\" http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\" navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\"\u001b[22m\n",
+                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\u001b[22m\n\u001b[2m    - waiting for\" http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\" navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\"\u001b[22m\n\n    at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts:444:27",
+                        "location": {
+                          "file": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts",
+                          "column": 27,
+                          "line": 444
+                        },
+                        "snippet": "  442 |       await submitSystemLogin(page);\n  443 |       const retry = page.getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' });\n> 444 |       await expect(retry).toBeVisible();\n      |                           ^\n  445 |       await page.screenshot({ path: info.outputPath('read-error-with-exit.png') });\n  446 |       await retry.click();\n  447 |       await expect(page.getByRole('button', { name: 'ต่ออายุ', exact: true })).toBeVisible();"
+                      },
+                      "errors": [
+                        {
+                          "location": {
+                            "file": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts",
+                            "column": 27,
+                            "line": 444
+                          },
+                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mlocator\u001b[39m\u001b[2m).\u001b[22mtoBeVisible\u001b[2m(\u001b[22m\u001b[2m)\u001b[22m failed\n\nLocator: getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n\u001b[2m  - Expect \"toBeVisible\" with timeout 10000ms\u001b[22m\n\u001b[2m  - waiting for getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' })\u001b[22m\n\u001b[2m    - waiting for\" http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\" navigation to finish...\u001b[22m\n\u001b[2m    - navigated to \"http://127.0.0.1:3020/system/partners/e2e-billing-a-f1e47fb2-7604-43b1-a3ad-795161363f93\"\u001b[22m\n\n\n  442 |       await submitSystemLogin(page);\n  443 |       const retry = page.getByRole('button', { name: 'ลองโหลดแพ็กเกจอีกครั้ง' });\n> 444 |       await expect(retry).toBeVisible();\n      |                           ^\n  445 |       await page.screenshot({ path: info.outputPath('read-error-with-exit.png') });\n  446 |       await retry.click();\n  447 |       await expect(page.getByRole('button', { name: 'ต่ออายุ', exact: true })).toBeVisible();\n    at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts:444:27"
+                        }
+                      ],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-11T07:07:14.885Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "error-context",
+                          "contentType": "text/markdown",
+                          "path": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11/plan-term-billing-readines-f9b58-I-without-changing-the-term-chromium/error-context.md"
+                        },
+                        {
+                          "name": "trace",
+                          "contentType": "application/zip",
+                          "path": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/test-results/billing-controls-2026-09-11/plan-term-billing-readines-f9b58-I-without-changing-the-term-chromium/trace.zip"
+                        }
+                      ],
+                      "errorLocation": {
+                        "file": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts",
+                        "column": 27,
+                        "line": 444
+                      }
+                    }
+                  ],
+                  "status": "unexpected"
+                }
+              ],
+              "id": "128640c4e35ab804d048-9cf3bf3eccaaaf96d82f",
+              "file": "plan-term-billing-readiness.spec.ts",
+              "line": 427,
+              "column": 3
+            },
+            {
+              "title": "BC03 admin renew through web restores customer web and LINE bridge without service restart",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 5590,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-11T07:07:26.221Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "same-service-processes.json",
+                          "contentType": "application/json",
+                          "body": "ewogICJiZWZvcmUiOiB7CiAgICAiYXBpIjogWwogICAgICAiMjgyNzQiCiAgICBdLAogICAgIndlYiI6IFsKICAgICAgIjI4NDAzIgogICAgXQogIH0sCiAgImFmdGVyIjogewogICAgImFwaSI6IFsKICAgICAgIjI4Mjc0IgogICAgXSwKICAgICJ3ZWIiOiBbCiAgICAgICIyODQwMyIKICAgIF0KICB9Cn0="
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "128640c4e35ab804d048-aa4e42dd150878fb9391",
+              "file": "plan-term-billing-readiness.spec.ts",
+              "line": 457,
+              "column": 3
+            },
+            {
+              "title": "BC04 customer OWNER cannot enter platform admin or mutate another term",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 90000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 1,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 642,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-11T07:07:31.911Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "128640c4e35ab804d048-ec065caa00b467226262",
+              "file": "plan-term-billing-readiness.spec.ts",
+              "line": 499,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-11T07:06:56.617Z",
+    "duration": 36055.543,
+    "expected": 4,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

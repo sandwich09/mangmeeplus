@@ -1,5 +1,11 @@
 # Feature: LINE Rich Menu V2 (versioned shortcuts)
 
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](../plans/mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+
+> **Controls 1–8 / no-deploy design 2026-09-11:** [C01–C08 spec](mangmee-billing-controls-spec-th.md) และ [implementation/CT01–CT32 plan](../plans/mangmee-billing-controls-plan-th.md) ครอบคลุมoverview, issue queue, safe repair, permissions, versioned policies, action gates, reconciliation และaudit/temporary overrides. Routine settingsผ่านเว็บหลังinitialimplementation; web/LINE/marketingอ่านapprovedrevisionเดียวกัน. ปิดขายใหม่ไม่หยุดpaid apply/recovery; rich menuเก่าต้องกลับไปstatus/supportได้. Target control suiteยังไม่implemented/NOT RUN; currentrepair evidenceแยกจากStripe/native acceptance.
+
+> **Billing/LINE correctness delta 2026-09-11:** [owned integration design](mangmee-owned-billing-integration-spec-th.md) and [GW evidence](../research/stripe-line-web-gap-closure-2026-09-11.md) supersede earlier PRO-free promotion/current-company fallback and auto-open handoff descriptions. Current trial is FREE_TRIAL_15; rich-menu promotion keeps paid unavailable. Expired recovery uses /renew with active membership and expiry marker; admin holds stay denied. LIFF waits for a gesture; webhook never silently routes selected expired B into active A. New Stripe billing purpose/Checkout remains unimplemented; no OA deployment in this audit.
+
 ## 1. Status
 
 - **IMPLEMENTED IN REPOSITORY — LINE Console activation and real-device UAT pending.**

@@ -1,0 +1,25 @@
+✔ RG01 legacy recovery report is read-only and never treats a later admin hold as activation approval (288.559209ms)
+✔ PG00 ordinary renewal activates once and response-loss replay has no new mutation (128.162709ms)
+✔ PG01/R01 activation exception rolls back term, lifecycle and audit; replay completes once (138.151458ms)
+✔ PG02/R05 eight concurrent requests with one key produce one renewal/audit (165.632041ms)
+✔ PG03/R03 renewal committed after sweep selection must prevent stale disable and notice (115.013667ms)
+✔ RG01 same key/different days conflicts; distinct concurrent commands do not lose days (117.46875ms)
+✔ RG02 admin disable on an already term-disabled company survives renewal and replay (121.895ms)
+✔ RG02 concurrent admin hold/renewal and duplicate sweeps preserve final hold (159.371542ms)
+✔ RG02 SUSPENDED committed after sweep SELECT is not overwritten (120.809ms)
+✔ RG02 ARCHIVED committed after sweep SELECT is not overwritten (129.697541ms)
+{"event":"plan_term_expiry_failed","companyId":"e2e-billing-proof-56a5fd3e-2f78-4bab-8d25-fb340727d670","error":"injected delivery insert outage"}
+✔ RG03/R07 expiry failure after event creation rolls back claim and retries durable deliveries (151.924125ms)
+{"event":"plan_term_warning_failed","companyId":"e2e-billing-proof-1b3a3a4d-0750-4c56-9575-434f30e41a52","error":"injected delivery insert outage"}
+✔ RG03/R07 warning failure after event creation rolls back claim and retries durable deliveries (162.244458ms)
+✔ RG03 renewed term does not receive a stale warning selected from its old period (119.877166ms)
+✔ RG03 replay repairs a missing delivery on an existing recipient during cooldown (181.066625ms)
+✔ RG01 set limits racing renewal preserves both changes and all existing days (129.978584ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 15
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2671.811625

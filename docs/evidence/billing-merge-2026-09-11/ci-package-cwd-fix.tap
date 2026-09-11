@@ -1,0 +1,692 @@
+TAP version 13
+# Subtest: GW02 actual LIFF script, provider boundary simulated
+    # Subtest: waits for a gesture and opens once, LINE=true
+    ok 1 - waits for a gesture and opens once, LINE=true
+      ---
+      duration_ms: 3.145208
+      type: 'test'
+      ...
+    # Subtest: waits for a gesture and opens once, LINE=false
+    ok 2 - waits for a gesture and opens once, LINE=false
+      ---
+      duration_ms: 1.035125
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"needsSignup":true}
+    ok 3 - clears the previous token before {"needsSignup":true}
+      ---
+      duration_ms: 1.3195
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"reason":"suspended"}
+    ok 4 - clears the previous token before {"reason":"suspended"}
+      ---
+      duration_ms: 0.765541
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"needsSelection":true,"companies":[{"id":"b","name":"<script>test</script>"}]}
+    ok 5 - clears the previous token before {"needsSelection":true,"companies":[{"id":"b","name":"<script>test</script>"}]}
+      ---
+      duration_ms: 0.691083
+      type: 'test'
+      ...
+    # Subtest: clears the old token on offline retry
+    ok 6 - clears the old token on offline retry
+      ---
+      duration_ms: 0.8205
+      type: 'test'
+      ...
+    # Subtest: keeps retry available when the client refuses the window
+    ok 7 - keeps retry available when the client refuses the window
+      ---
+      duration_ms: 0.790125
+      type: 'test'
+      ...
+    1..7
+ok 1 - GW02 actual LIFF script, provider boundary simulated
+  ---
+  duration_ms: 9.197125
+  type: 'suite'
+  ...
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 62215  - 09/11/2026, 10:05:48 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# Subtest: P10-L webhook intake (G-03/G-04)
+    # Subtest: carries a follow event into the turn lane instead of dropping it
+    ok 1 - carries a follow event into the turn lane instead of dropping it
+      ---
+      duration_ms: 1.582958
+      type: 'test'
+      ...
+    # Subtest: dispatches a known postback action and drops a forged one
+    ok 2 - dispatches a known postback action and drops a forged one
+      ---
+      duration_ms: 0.343458
+      type: 'test'
+      ...
+    # Subtest: keeps the rich-talk postback working through the same dispatcher
+    ok 3 - keeps the rich-talk postback working through the same dispatcher
+      ---
+      duration_ms: 0.127417
+      type: 'test'
+      ...
+    # Subtest: reads only the action name, never anything else the client attached (SEC-04)
+    ok 4 - reads only the action name, never anything else the client attached (SEC-04)
+      ---
+      duration_ms: 0.053958
+      type: 'test'
+      ...
+    1..4
+ok 2 - P10-L webhook intake (G-03/G-04)
+  ---
+  duration_ms: 2.524459
+  type: 'suite'
+  ...
+# Subtest: P10-L door and status cards (§3.1/§7)
+    # Subtest: offers four ways on, including one that reaches a person
+    ok 1 - offers four ways on, including one that reaches a person
+      ---
+      duration_ms: 0.344417
+      type: 'test'
+      ...
+    # Subtest: sends "I already have an account" to the P12 link login, in the external browser
+    ok 2 - sends "I already have an account" to the P12 link login, in the external browser
+      ---
+      duration_ms: 0.086084
+      type: 'test'
+      ...
+    # Subtest: drops a door it cannot build rather than sending a broken link
+    ok 3 - drops a door it cannot build rather than sending a broken link
+      ---
+      duration_ms: 0.175334
+      type: 'test'
+      ...
+    # Subtest: says the right thing inside and outside business hours
+    ok 4 - says the right thing inside and outside business hours
+      ---
+      duration_ms: 0.234458
+      type: 'test'
+      ...
+    # Subtest: names the trial only for the trial tier (G-05, §15.1)
+    ok 5 - names the trial only for the trial tier (G-05, §15.1)
+      ---
+      duration_ms: 0.122416
+      type: 'test'
+      ...
+    # Subtest: maps only the monthly-budget 429 away from the congestion reply
+    ok 6 - maps only the monthly-budget 429 away from the congestion reply
+      ---
+      duration_ms: 0.153792
+      type: 'test'
+      ...
+    1..6
+ok 3 - P10-L door and status cards (§3.1/§7)
+  ---
+  duration_ms: 1.242458
+  type: 'suite'
+  ...
+# Subtest: P10-L webhook doors
+    # Subtest: answers a follow with the three doors when nothing is pending
+    ok 1 - answers a follow with the three doors when nothing is pending
+      ---
+      duration_ms: 2.215
+      type: 'test'
+      ...
+    # Subtest: still records a DENIED attempt when an unlinked stranger MESSAGES the OA
+    ok 2 - still records a DENIED attempt when an unlinked stranger MESSAGES the OA
+      ---
+      duration_ms: 0.327833
+      type: 'test'
+      ...
+    # Subtest: answers a follow with the status card while an application is travelling
+    ok 3 - answers a follow with the status card while an application is travelling
+      ---
+      duration_ms: 0.206167
+      type: 'test'
+      ...
+    # Subtest: welcomes back a LINE account it already knows, instead of offering to open a shop
+    ok 4 - welcomes back a LINE account it already knows, instead of offering to open a shop
+      ---
+      duration_ms: 0.103292
+      type: 'test'
+      ...
+    # Subtest: fails closed on an unconfigured channel rather than matching any application
+    ok 5 - fails closed on an unconfigured channel rather than matching any application
+      ---
+      duration_ms: 0.109375
+      type: 'test'
+      ...
+    # Subtest: says so at ERROR when the LIFF id is unusable, and still sends the doors that work
+    ok 6 - says so at ERROR when the LIFF id is unusable, and still sends the doors that work
+      ---
+      duration_ms: 0.191625
+      type: 'test'
+      ...
+    # Subtest: answers an unlinked message with the same door card, not a dead-end line
+    ok 7 - answers an unlinked message with the same door card, not a dead-end line
+      ---
+      duration_ms: 0.132792
+      type: 'test'
+      ...
+    # Subtest: sends the staff door to the owner-issued link, never a self-serve signup
+    ok 8 - sends the staff door to the owner-issued link, never a self-serve signup
+      ---
+      duration_ms: 0.07025
+      type: 'test'
+      ...
+    1..8
+ok 4 - P10-L webhook doors
+  ---
+  duration_ms: 3.439791
+  type: 'suite'
+  ...
+# Subtest: P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1
+    # Subtest: opens a request against the shop the asker is in NOW, and pauses the assistant
+    ok 1 - opens a request against the shop the asker is in NOW, and pauses the assistant
+      ---
+      duration_ms: 0.603583
+      type: 'test'
+      ...
+    # Subtest: files an unlinked asker against their pending application, and pauses nothing
+    ok 2 - files an unlinked asker against their pending application, and pauses nothing
+      ---
+      duration_ms: 0.349792
+      type: 'test'
+      ...
+    # Subtest: files an unlinked asker with no application at all rather than dropping them
+    ok 3 - files an unlinked asker with no application at all rather than dropping them
+      ---
+      duration_ms: 0.160208
+      type: 'test'
+      ...
+    # Subtest: answers a repeat tap with "still in the queue" and pages nobody twice
+    ok 4 - answers a repeat tap with "still in the queue" and pages nobody twice
+      ---
+      duration_ms: 0.145042
+      type: 'test'
+      ...
+    # Subtest: lets the customer bring the assistant back without hiding their unresolved request
+    ok 5 - lets the customer bring the assistant back without hiding their unresolved request
+      ---
+      duration_ms: 0.242584
+      type: 'test'
+      ...
+    # Subtest: keeps the resume command useful without promising an assistant to an unlinked applicant
+    ok 6 - keeps the resume command useful without promising an assistant to an unlinked applicant
+      ---
+      duration_ms: 0.166708
+      type: 'test'
+      ...
+    # Subtest: stops opening new requests after three in a day, truthfully and without writing anything
+    ok 7 - stops opening new requests after three in a day, truthfully and without writing anything
+      ---
+      duration_ms: 0.146584
+      type: 'test'
+      ...
+    # Subtest: never spends a slot on a repeat tap of an already-open request
+    ok 8 - never spends a slot on a repeat tap of an already-open request
+      ---
+      duration_ms: 0.160041
+      type: 'test'
+      ...
+    # Subtest: still opens the request when Redis is down in production, instead of going silent
+    ok 9 - still opens the request when Redis is down in production, instead of going silent
+      ---
+      duration_ms: 0.262291
+      type: 'test'
+      ...
+    # Subtest: does not re-arm the 24h pause on a tap the floor refused
+    ok 10 - does not re-arm the 24h pause on a tap the floor refused
+      ---
+      duration_ms: 0.132708
+      type: 'test'
+      ...
+    # Subtest: files a DISABLED-company member as having no shop, and creates no context row
+    ok 11 - files a DISABLED-company member as having no shop, and creates no context row
+      ---
+      duration_ms: 0.152208
+      type: 'test'
+      ...
+    # Subtest: holds the assistant back while the pause runs, and lets go once it expires
+    ok 12 - holds the assistant back while the pause runs, and lets go once it expires
+      ---
+      duration_ms: 0.411625
+      type: 'test'
+      ...
+    # Subtest: still opens a package-change request while a human is handling the thread
+    ok 13 - still opens a package-change request while a human is handling the thread
+      ---
+      duration_ms: 0.178208
+      type: 'test'
+      ...
+    # Subtest: still keeps free text paused, which is what the pause is for
+    ok 14 - still keeps free text paused, which is what the pause is for
+      ---
+      duration_ms: 0.145542
+      type: 'test'
+      ...
+    1..14
+ok 5 - P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1
+  ---
+  duration_ms: 3.417458
+  type: 'suite'
+  ...
+# Subtest: a customer who writes back is still in the queue (UAT 2026-09-06)
+    # Subtest: records an unlinked applicant reply on their live support case instead of returning the door card
+    ok 1 - records an unlinked applicant reply on their live support case instead of returning the door card
+      ---
+      duration_ms: 1.576667
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED unlinked applicant case when they supply the requested information
+    ok 2 - reopens an ANSWERED unlinked applicant case when they supply the requested information
+      ---
+      duration_ms: 0.108
+      type: 'test'
+      ...
+    # Subtest: keeps explicit public commands on their public route even when an unlinked case is live
+    ok 3 - keeps explicit public commands on their public route even when an unlinked case is live
+      ---
+      duration_ms: 0.054083
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED request and stops promising what it does not do
+    ok 4 - reopens an ANSWERED request and stops promising what it does not do
+      ---
+      duration_ms: 0.099042
+      type: 'test'
+      ...
+    # Subtest: records the fact, never the words, and never the LINE id (§3)
+    ok 5 - records the fact, never the words, and never the LINE id (§3)
+      ---
+      duration_ms: 0.087417
+      type: 'test'
+      ...
+    # Subtest: appends to a request that never left รอตอบ without counting a reopen
+    ok 6 - appends to a request that never left รอตอบ without counting a reopen
+      ---
+      duration_ms: 0.074709
+      type: 'test'
+      ...
+    # Subtest: asks only for a request that is still live, for this person in any shop
+    ok 7 - asks only for a request that is still live, for this person in any shop
+      ---
+      duration_ms: 0.070083
+      type: 'test'
+      ...
+    # Subtest: says the message was not recorded when there is no request to append to
+    ok 8 - says the message was not recorded when there is no request to append to
+      ---
+      duration_ms: 0.085125
+      type: 'test'
+      ...
+    # Subtest: still answers the customer when the request cannot be written to
+    ok 9 - still answers the customer when the request cannot be written to
+      ---
+      duration_ms: 0.194458
+      type: 'test'
+      ...
+    # Subtest: never loses a receipt turn because the support table could not be written
+    ok 10 - never loses a receipt turn because the support table could not be written
+      ---
+      duration_ms: 0.789292
+      type: 'test'
+      ...
+    # Subtest: marks a photo on an ANSWERED request without reopening it or moving its clocks
+    ok 11 - marks a photo on an ANSWERED request without reopening it or moving its clocks
+      ---
+      duration_ms: 0.195917
+      type: 'test'
+      ...
+    # Subtest: marks a document on a live OPEN request the same way, and moves nothing else
+    ok 12 - marks a document on a live OPEN request the same way, and moves nothing else
+      ---
+      duration_ms: 0.104083
+      type: 'test'
+      ...
+    # Subtest: does not promise delivery when "ตอบแล้ว" won the race
+    ok 13 - does not promise delivery when "ตอบแล้ว" won the race
+      ---
+      duration_ms: 0.187917
+      type: 'test'
+      ...
+    # Subtest: guards the plain append with OPEN, so a close in the gap cannot be written over
+    ok 14 - guards the plain append with OPEN, so a close in the gap cannot be written over
+      ---
+      duration_ms: 0.07425
+      type: 'test'
+      ...
+    # Subtest: re-arms the 24h pause from the message it just recorded, and only ever extends one
+    ok 15 - re-arms the 24h pause from the message it just recorded, and only ever extends one
+      ---
+      duration_ms: 0.159167
+      type: 'test'
+      ...
+    # Subtest: leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)
+    ok 16 - leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)
+      ---
+      duration_ms: 0.060917
+      type: 'test'
+      ...
+    # Subtest: never rebuilds a context row that an unlink deleted
+    ok 17 - never rebuilds a context row that an unlink deleted
+      ---
+      duration_ms: 0.070833
+      type: 'test'
+      ...
+    # Subtest: stores at most 200 characters of a long follow-up
+    ok 18 - stores at most 200 characters of a long follow-up
+      ---
+      duration_ms: 0.061084
+      type: 'test'
+      ...
+    1..18
+ok 6 - a customer who writes back is still in the queue (UAT 2026-09-06)
+  ---
+  duration_ms: 4.197792
+  type: 'suite'
+  ...
+# Subtest: the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)
+    # Subtest: answers /companies under the pause instead of filing it as a follow-up
+    ok 1 - answers /companies under the pause instead of filing it as a follow-up
+      ---
+      duration_ms: 0.571
+      type: 'test'
+      ...
+    # Subtest: honours the number the picker asked for, under the pause
+    ok 2 - honours the number the picker asked for, under the pause
+      ---
+      duration_ms: 0.672666
+      type: 'test'
+      ...
+    # Subtest: keeps a bare number as a follow-up when nothing asked for one
+    ok 3 - keeps a bare number as a follow-up when nothing asked for one
+      ---
+      duration_ms: 0.1275
+      type: 'test'
+      ...
+    # Subtest: reads "2 คน" as a sentence for the operator even with a picker pending
+    ok 4 - reads "2 คน" as a sentence for the operator even with a picker pending
+      ---
+      duration_ms: 0.113917
+      type: 'test'
+      ...
+    # Subtest: lifts the pause from the rich-menu tile and leaves resolution to the support workflow
+    ok 5 - lifts the pause from the rich-menu tile and leaves resolution to the support workflow
+      ---
+      duration_ms: 0.066375
+      type: 'test'
+      ...
+    # Subtest: keeps the tile's greeting when nothing is paused
+    ok 6 - keeps the tile's greeting when nothing is paused
+      ---
+      duration_ms: 0.04975
+      type: 'test'
+      ...
+    # Subtest: brings the assistant back on every accepted spelling, tapped or typed
+    ok 7 - brings the assistant back on every accepted spelling, tapped or typed
+      ---
+      duration_ms: 0.254459
+      type: 'test'
+      ...
+    # Subtest: names the tile as the way out in every reply that offers one, and never a robot
+    ok 8 - names the tile as the way out in every reply that offers one, and never a robot
+      ---
+      duration_ms: 0.289084
+      type: 'test'
+      ...
+    # Subtest: brings the assistant back on the lowercase spelling its own reply advertises
+    ok 9 - brings the assistant back on the lowercase spelling its own reply advertises
+      ---
+      duration_ms: 0.056792
+      type: 'test'
+      ...
+    # Subtest: confirms in full once, then acknowledges briefly for ten minutes
+    ok 10 - confirms in full once, then acknowledges briefly for ten minutes
+      ---
+      duration_ms: 0.102375
+      type: 'test'
+      ...
+    # Subtest: keeps the draft-edit phrases under the pause while the S-4 lane is dark
+    ok 11 - keeps the draft-edit phrases under the pause while the S-4 lane is dark
+      ---
+      duration_ms: 0.050042
+      type: 'test'
+      ...
+    1..11
+ok 7 - the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)
+  ---
+  duration_ms: 2.429542
+  type: 'suite'
+  ...
+# Subtest: the original question outlives every follow-up (UAT 2026-09-06)
+    # Subtest: keeps the tap-time question in its own column
+    ok 1 - keeps the tap-time question in its own column
+      ---
+      duration_ms: 0.102125
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED request on a tap instead of opening a second one
+    ok 2 - reopens an ANSWERED request on a tap instead of opening a second one
+      ---
+      duration_ms: 0.085792
+      type: 'test'
+      ...
+    # Subtest: asks for a live request of either status before opening a new one
+    ok 3 - asks for a live request of either status before opening a new one
+      ---
+      duration_ms: 0.067917
+      type: 'test'
+      ...
+    1..3
+ok 8 - the original question outlives every follow-up (UAT 2026-09-06)
+  ---
+  duration_ms: 0.280875
+  type: 'suite'
+  ...
+# Subtest: P10-L package change from LINE (§3.7)
+    # Subtest: opens a request for an owner and says the team will call back
+    ok 1 - opens a request for an owner and says the team will call back
+      ---
+      duration_ms: 0.104667
+      type: 'test'
+      ...
+    # Subtest: works for a shop whose trial already expired — the case the button is printed on
+    ok 2 - works for a shop whose trial already expired — the case the button is printed on
+      ---
+      duration_ms: 0.055583
+      type: 'test'
+      ...
+    # Subtest: refuses a non-owner without opening anything
+    ok 3 - refuses a non-owner without opening anything
+      ---
+      duration_ms: 0.048417
+      type: 'test'
+      ...
+    # Subtest: never claims a request exists when the collaborator is not wired
+    ok 4 - never claims a request exists when the collaborator is not wired
+      ---
+      duration_ms: 0.053208
+      type: 'test'
+      ...
+    1..4
+ok 9 - P10-L package change from LINE (§3.7)
+  ---
+  duration_ms: 0.291
+  type: 'suite'
+  ...
+# Subtest: P10-L day-7 nudge answers (§3.6)
+    # Subtest: sends the settings link on "ใส่เลย"
+    ok 1 - sends the settings link on "ใส่เลย"
+      ---
+      duration_ms: 0.110083
+      type: 'test'
+      ...
+    # Subtest: acknowledges "ไว้ก่อน" and asks nothing further
+    ok 2 - acknowledges "ไว้ก่อน" and asks nothing further
+      ---
+      duration_ms: 0.041458
+      type: 'test'
+      ...
+    1..2
+ok 10 - P10-L day-7 nudge answers (§3.6)
+  ---
+  duration_ms: 0.168959
+  type: 'suite'
+  ...
+# Subtest: GW05 package request stays with the selected company
+    # Subtest: uses selected B even when A is first in the owner query
+    ok 1 - uses selected B even when A is first in the owner query
+      ---
+      duration_ms: 0.060083
+      type: 'test'
+      ...
+    # Subtest: asks to select instead of silently choosing A: null
+    ok 2 - asks to select instead of silently choosing A: null
+      ---
+      duration_ms: 0.131375
+      type: 'test'
+      ...
+    # Subtest: asks to select instead of silently choosing A: revoked-or-staff-company
+    ok 3 - asks to select instead of silently choosing A: revoked-or-staff-company
+      ---
+      duration_ms: 0.062791
+      type: 'test'
+      ...
+    # Subtest: does not fall back to sole A when the selected membership was revoked
+    ok 4 - does not fall back to sole A when the selected membership was revoked
+      ---
+      duration_ms: 0.050667
+      type: 'test'
+      ...
+    1..4
+ok 11 - GW05 package request stays with the selected company
+  ---
+  duration_ms: 0.335625
+  type: 'suite'
+  ...
+# Subtest: GW09 committed rich menu → signed webhook → deterministic reply
+    # Subtest: Promotion Package
+    ok 1 - Promotion Package
+      ---
+      duration_ms: 0.458125
+      type: 'test'
+      ...
+    # Subtest: บริษัทของฉัน
+    ok 2 - บริษัทของฉัน
+      ---
+      duration_ms: 0.422625
+      type: 'test'
+      ...
+    # Subtest: คุยกับน้องมั่งมี
+    ok 3 - คุยกับน้องมั่งมี
+      ---
+      duration_ms: 0.176792
+      type: 'test'
+      ...
+    # Subtest: สรุปค่าใช้จ่าย
+    ok 4 - สรุปค่าใช้จ่าย
+      ---
+      duration_ms: 0.156959
+      type: 'test'
+      ...
+    # Subtest: ติดต่อเรา
+    ok 5 - ติดต่อเรา
+      ---
+      duration_ms: 0.286083
+      type: 'test'
+      ...
+    1..5
+ok 12 - GW09 committed rich menu → signed webhook → deterministic reply
+  ---
+  duration_ms: 1.546625
+  type: 'suite'
+  ...
+# Subtest: GW10 LINE message context after expiry or membership revocation
+    # Subtest: does not route selected B to the only ACTIVE A
+    ok 1 - does not route selected B to the only ACTIVE A
+      ---
+      duration_ms: 0.052292
+      type: 'test'
+      ...
+    # Subtest: keeps the sole active company usable when there is no prior selection
+    ok 2 - keeps the sole active company usable when there is no prior selection
+      ---
+      duration_ms: 0.033917
+      type: 'test'
+      ...
+    # Subtest: returns picker → company switch → explicit package request for the same B
+    ok 3 - returns picker → company switch → explicit package request for the same B
+      ---
+      duration_ms: 0.202875
+      type: 'test'
+      ...
+    1..3
+ok 13 - GW10 LINE message context after expiry or membership revocation
+  ---
+  duration_ms: 0.314875
+  type: 'suite'
+  ...
+# Subtest: every spec file is wired into a package.json script
+    # Subtest: finds the scripts it is meant to police
+    ok 1 - finds the scripts it is meant to police
+      ---
+      duration_ms: 0.300416
+      type: 'test'
+      ...
+    # Subtest: leaves no spec file unreferenced
+    ok 2 - leaves no spec file unreferenced
+      ---
+      duration_ms: 9.528208
+      type: 'test'
+      ...
+    # Subtest: does not carry stale exemptions
+    ok 3 - does not carry stale exemptions
+      ---
+      duration_ms: 5.88075
+      type: 'test'
+      ...
+    1..3
+ok 14 - every spec file is wired into a package.json script
+  ---
+  duration_ms: 16.07025
+  type: 'suite'
+  ...
+1..14
+# tests 92
+# suites 14
+# pass 92
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 954.588958

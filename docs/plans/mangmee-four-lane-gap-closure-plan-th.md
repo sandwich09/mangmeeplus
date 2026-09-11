@@ -142,9 +142,9 @@ Spec: [External Signup Contract](../specs/mangmee-external-signup-contract-spec-
 
 ### P10-0A — Offer preview (spec-only; ยังไม่มี UI/payment implementation)
 
-- แสดง 4 tier ชุด 2026-08-30 (STARTER 249 / BASIC 499 / PRO 999 / ENTERPRISE 1,999) ตาม source of truth [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog); trial ผูกกับ PRO.
-- เปิดเลือกเฉพาะ `PRO_TRIAL`; tier อื่น disabled + “เร็ว ๆ นี้”; server reject key อื่นด้วย `offer_not_available` และห้าม fallback เป็น trial.
-- Slice นี้เป็น catalog/attribution เท่านั้น: ห้ามสร้าง Billing entitlement, payment attempt, EasySlip call หรือ infer quota/feature ที่ยัง TBD.
+- แสดงราคา paid STARTER 249 / BASIC 499 / PRO 999 / ENTERPRISE 1,999 ตาม [Billing §8](../specs/mangmee-billing-subscription-spec-th.md#billing-offer-catalog) แบบ disabled + “เร็ว ๆ นี้”; แยก free trial ตามมติ 2026-09-05/07 ออกจาก PRO paid.
+- ทุก self-signup ใช้ `FREE_TRIAL` → `FREE_TRIAL_15` (1 สาขา/2 คน/15 ใบต่อเดือนตั้งแต่วันแรก, default 30 วัน); `PRO_TRIAL` เป็น legacy alias. `requestedOfferKey` เป็น attribution; P10 ยกเลิก `offer_not_available` แล้วตาม spec §3A ไม่ใช่การเปิดขาย paid.
+- Slice นี้ไม่สร้าง Billing entitlement, payment attempt หรือ Stripe call; checkout ที่จะทำใน P26 ต้องตรวจราคา/availability/OWNER ของตัวเองแยกจาก signup attribution.
 
 ### P10-0B — Owner amendment v2 2026-08-30 "Flow B" (spec-only delta; แทนลำดับ 2026-08-29)
 
@@ -160,7 +160,7 @@ Exit: concurrency สร้าง request/company/user/membership อย่า�
 
 ### P10-2 — Paid activation (planned/disabled; depends on P26)
 
-เริ่มได้ต่อเมื่อ Owner เปิด paid offer และ Billing P26 ผ่าน gate เท่านั้น: System Admin approve paid → สร้าง payment attempt จาก offer snapshot → แสดง K BIZ Thai QR ล็อกยอด → EasySlip v2 verify receiver/amount/duplicate → claim `transRef` ครั้งเดียว → `PAYMENT_VERIFIED` จึง provision. Free path approve แล้ว provision โดยไม่ขึ้นกับ provider. **ไม่มี implementation/config/secret/provider call ในรอบบันทึกแผนนี้.**
+**แก้ provider 2026-09-08:** ใช้ [Stripe P26](../specs/mangmee-billing-subscription-spec-th.md#billing-stripe) หลัง approval/identity/provision ของ signup สำเร็จแล้ว: authenticated OWNER เลือกบริษัท/offer → backend snapshot + hosted Checkout subscription → signed webhook/invoice ที่ตรวจแล้ว → apply paid package/term ครั้งเดียวในบริษัทเดิม. Trial ไม่พึ่ง provider; ไม่เพิ่ม payment gate เข้า signup และ success redirect ไม่เปิดสิทธิ์. ก่อน LIVE ต้องปิด P26 §10, ทดสอบ replay/out-of-order/cross-company/test-live/renewal และเทียบราคา/ข้อความกับ [mangmee_web](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md). **ไม่มี implementation/config/secret/provider call ในรอบบันทึกแผนนี้.**
 
 <a id="p11--email-delivery--claim"></a>
 ## P11 — Email Delivery + Claim

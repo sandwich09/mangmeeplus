@@ -1,0 +1,847 @@
+apps/api/src/common/database/prisma.service.ts(3,69): error TS2307: Cannot find module '../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/common/database/serializable-transaction.ts(1,29): error TS2307: Cannot find module '../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/common/filters/all-exceptions.filter.ts(12,24): error TS2307: Cannot find module '../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/common/filters/all-exceptions.filter.ts(94,11): error TS18046: 'exception' is of type 'unknown'.
+apps/api/src/common/filters/all-exceptions.filter.ts(97,19): error TS18046: 'exception' is of type 'unknown'.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(68,50): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(69,36): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(72,30): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(73,36): error TS7006: Parameter 'rp' implicitly has an 'any' type.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(81,56): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(84,58): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(89,58): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts(96,57): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/application/services/revenue-category-bootstrap.service.ts(1,29): error TS2307: Cannot find module '../../../../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(137,53): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(157,53): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(546,83): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(551,44): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(558,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(563,56): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(564,53): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(565,63): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(573,30): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(574,36): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(590,31): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(593,5): error TS2322: Type 'unknown[]' is not assignable to type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(677,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(911,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(932,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(956,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(1341,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(1350,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(1792,16): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/accounting-documents/infrastructure/prisma-accounting.repository.ts(1793,13): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(178,69): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(278,37): error TS7006: Parameter 'c' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(279,37): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(280,51): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(281,33): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(313,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/ai-draft/infrastructure/prisma-ai-draft.repository.ts(429,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/audit/domain/ports/audit-repository.port.ts(1,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/audit/infrastructure/prisma-audit.repository.ts(91,23): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/legal-acceptance.service.ts(20,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/auth/application/legal-acceptance.service.ts(245,41): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/legal-acceptance.service.ts(399,41): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/legal-acceptance.service.ts(431,59): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/platform-access.service.ts(2,42): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/auth/application/platform-access.service.ts(79,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/account-merge.use-case.ts(91,78): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/account-merge.use-case.ts(159,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/account-merge.use-case.ts(165,80): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/account-profile.use-case.ts(45,52): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/account-profile.use-case.ts(164,52): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/change-password.use-case.ts(42,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/complete-employee-line-link.use-case.ts(181,80): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/confirm-email-verification.use-case.ts(61,66): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/confirm-password-reset.use-case.ts(71,50): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/confirm-password-reset.use-case.ts(86,52): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts(128,40): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts(139,50): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts(143,35): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/issue-token.use-case.ts(75,52): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/line-link-oauth.use-case.ts(96,97): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/link-line-identity.use-case.ts(62,72): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/link-line-identity.use-case.ts(173,36): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/notify-password-reset-request.use-case.ts(89,69): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts(96,50): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts(119,74): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/request-email-change.use-case.ts(70,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/request-password-reset.use-case.ts(59,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/resend-email-verification.use-case.ts(42,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/application/use-cases/unlink-line-identity.use-case.ts(28,78): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/auth/presentation/auth.controller.ts(996,70): error TS7031: Binding element 'role' implicitly has an 'any' type.
+apps/api/src/modules/auth/presentation/auth.controller.ts(1075,30): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/auth/presentation/auth.controller.ts(1078,29): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(63,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(140,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(150,57): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(211,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(229,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(341,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(397,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(462,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-banking.repository.ts(494,57): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-match-source.query.ts(71,32): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-match-source.query.ts(85,31): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-match-source.query.ts(99,32): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-match-source.query.ts(113,37): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/banking/infrastructure/prisma-match-source.query.ts(127,27): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-campaign.use-case.ts(43,35): error TS7006: Parameter 'i' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-campaign.use-case.ts(44,41): error TS7006: Parameter 's' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-campaign.use-case.ts(45,65): error TS7006: Parameter 's' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-campaign.use-case.ts(45,143): error TS7006: Parameter 's' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-campaign.use-case.ts(55,51): error TS7006: Parameter 'i' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/application/use-cases/crm-pdpa.use-case.ts(357,41): error TS7006: Parameter 'recipient' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/crm-ai-context.repository.ts(155,27): error TS7006: Parameter 'customer' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/crm-ai-context.repository.ts(282,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(3,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(218,42): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1224,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1365,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1381,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1695,52): error TS7006: Parameter 'l' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1696,38): error TS7006: Parameter 'l' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1702,57): error TS7006: Parameter 'c' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1703,57): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1704,66): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1705,23): error TS7006: Parameter 'l' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1711,58): error TS2345: Argument of type '{}' is not assignable to parameter of type 'string'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1740,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1826,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1855,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1909,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1918,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1939,27): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1964,71): error TS7006: Parameter 'turn' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(1986,28): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(2005,49): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(2011,29): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-inbox.repository.ts(2650,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(3,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(195,106): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(195,121): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(196,91): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(196,106): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(197,91): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(197,104): error TS18046: 'row' is of type 'unknown'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(200,7): error TS2322: Type 'unknown[]' is not assignable to type '{ id: string; channelId: string; status: string; createdAt: Date; lastMessageAt: Date | null; }[]'.
+  Type 'unknown' is not assignable to type '{ id: string; channelId: string; status: string; createdAt: Date; lastMessageAt: Date | null; }'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(201,7): error TS2322: Type 'unknown[]' is not assignable to type '{ id: string; conversationId: string; direction: string; contentText: string | null; createdAt: Date; }[]'.
+  Type 'unknown' is not assignable to type '{ id: string; conversationId: string; direction: string; contentText: string | null; createdAt: Date; }'.
+apps/api/src/modules/crm-inbox/infrastructure/prisma-crm-pdpa-self-service.repository.ts(202,7): error TS2322: Type 'unknown[]' is not assignable to type '{ id: string; serviceName: string; status: string; startAt: Date; endAt: Date; createdAt: Date; }[]'.
+  Type 'unknown' is not assignable to type '{ id: string; serviceName: string; status: string; startAt: Date; endAt: Date; createdAt: Date; }'.
+apps/api/src/modules/crm/infrastructure/prisma-crm-booking-proposal.repository.ts(327,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(155,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(348,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(751,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(821,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(1043,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(1145,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(1190,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(1301,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(1313,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(2215,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(2235,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(2244,80): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(2335,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/crm/infrastructure/prisma-crm.repository.ts(2361,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/providers/inventory-health.provider.ts(47,136): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/providers/inventory-health.provider.ts(58,60): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/notification-sweeps.use-cases.ts(87,61): error TS7006: Parameter 'company' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/notification-sweeps.use-cases.ts(102,62): error TS7006: Parameter 'company' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/notification-sweeps.use-cases.ts(120,82): error TS7006: Parameter 'rule' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/notification.use-cases.ts(16,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/dashboard-notifications/application/use-cases/notification.use-cases.ts(296,41): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/stock-low-scan.use-case.ts(37,58): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/application/use-cases/stock-low-scan.use-case.ts(59,46): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/infrastructure/prisma-notification.repository.ts(201,54): error TS7006: Parameter 'group' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/infrastructure/prisma-notification.repository.ts(203,29): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/api/src/modules/dashboard-notifications/infrastructure/prisma-notification.repository.ts(203,34): error TS7006: Parameter 'group' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(10,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(84,33): error TS7006: Parameter 'fact' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(94,45): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(148,10): error TS7006: Parameter 'fact' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(162,41): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(175,14): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(180,17): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(190,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-identity.use-case.ts(324,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-vat-registration.use-case.ts(58,8): error TS7006: Parameter 'fact' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/application/use-cases/company-vat-registration.use-case.ts(76,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-attachment.repository.ts(3,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-attachment.repository.ts(133,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-attachment.repository.ts(227,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-attachment.repository.ts(297,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-branch.repository.ts(79,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-document-sequence.repository.ts(3,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-document-sequence.repository.ts(74,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-document-sequence.repository.ts(78,45): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-document-sequence.repository.ts(250,45): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-outbox.repository.ts(2,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-outbox.repository.ts(106,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-outbox.repository.ts(134,31): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/data-model-core/infrastructure/repositories/prisma-outbox.repository.ts(135,26): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(31,29): error TS2307: Cannot find module '../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/data-rights/data-rights.service.ts(236,61): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(615,27): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(661,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(790,70): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(874,43): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/data-rights/data-rights.service.ts(893,40): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/lock-employee-profile.ts(2,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(35,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(405,31): error TS7006: Parameter 'transition' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(635,44): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(698,38): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(712,48): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(716,40): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(716,58): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(721,34): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(721,54): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(953,14): error TS7006: Parameter 'company' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(953,46): error TS7006: Parameter 'companyId' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(1157,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/normalize-entitlements.ts(1161,42): error TS2339: Property 'grantOrigin' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(91,18): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(91,108): error TS7006: Parameter 'rp' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(135,44): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(144,54): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(150,20): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(178,30): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(233,44): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(233,64): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(234,59): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(234,79): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(238,115): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(304,69): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(325,30): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(382,54): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(437,70): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(531,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-employee.use-case.ts(557,42): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-role.use-case.ts(77,63): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/create-role.use-case.ts(92,32): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/delete-employee-draft.use-case.ts(24,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/delete-employee-draft.use-case.ts(32,29): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/delete-employee-draft.use-case.ts(36,30): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/delete-employee-draft.use-case.ts(36,81): error TS7006: Parameter 'rp' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/disable-role.use-case.ts(32,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(37,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(159,42): error TS7006: Parameter 'candidate' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(274,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(310,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(337,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(344,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(350,42): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(350,55): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(354,36): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/use-cases/entitlement-exception.use-case.ts(354,51): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/employee-access/application/use-cases/issue-employee-line-link-token.use-case.ts(27,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/list-employees.use-case.ts(17,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/list-roles.use-case.ts(30,49): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/list-roles.use-case.ts(30,90): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/list-roles.use-case.ts(31,34): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/list-roles.use-case.ts(33,25): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/preview-role.use-case.ts(40,62): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/preview-role.use-case.ts(43,7): error TS2322: Type 'unknown[]' is not assignable to type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/employee-access/application/use-cases/preview-role.use-case.ts(43,63): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/employee-access/application/use-cases/regenerate-employee-credential.use-case.ts(51,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/revoke-employee-line-link-token.use-case.ts(22,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/set-employee-status.use-case.ts(35,27): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/set-employee-status.use-case.ts(41,28): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/set-employee-status.use-case.ts(41,79): error TS7006: Parameter 'rp' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/set-employee-status.use-case.ts(45,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(51,29): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(54,42): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(60,32): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(75,27): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(75,117): error TS7006: Parameter 'rp' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(84,33): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(159,59): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(198,18): error TS7006: Parameter 'mr' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(199,51): error TS7006: Parameter 'key' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-employee.use-case.ts(207,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-role.use-case.ts(41,62): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-role.use-case.ts(45,96): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/employee-access/application/use-cases/update-role.use-case.ts(64,71): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/employee-access/application/use-cases/update-role.use-case.ts(90,44): error TS7031: Binding element 'permissionId' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/services/expense-category-bootstrap.service.ts(2,29): error TS2307: Cannot find module '../../../../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/modules/expenses/application/services/expense-category-bootstrap.service.ts(138,42): error TS7006: Parameter 'account' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts(3,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts(961,74): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts(982,86): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts(1006,47): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts(1007,54): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(6,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(123,55): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(129,39): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(132,25): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(134,27): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(147,3): error TS2322: Type 'unknown[]' is not assignable to type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(173,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(250,54): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(253,15): error TS2322: Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(263,48): error TS2322: Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/delete-expense.use-case.ts(311,46): error TS7006: Parameter 'auditTx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(124,41): error TS7006: Parameter 'u' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(129,47): error TS7006: Parameter 'branch' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(137,70): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(138,83): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(143,76): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(143,150): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(146,15): error TS7006: Parameter 'file' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(146,52): error TS7006: Parameter 'cert' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(147,12): error TS7006: Parameter 'file' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(161,7): error TS2322: Type '{} | null' is not assignable to type 'string | null'.
+  Type '{}' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(175,7): error TS2322: Type '{} | null' is not assignable to type 'string | null'.
+  Type '{}' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(176,7): error TS2322: Type '{} | null' is not assignable to type 'string | null'.
+  Type '{}' is not assignable to type 'string'.
+apps/api/src/modules/expenses/application/use-cases/expense-evidence.use-case.ts(203,109): error TS7006: Parameter 'cert' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.ts(147,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.ts(265,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/remove-expense-receipt.use-case.ts(2,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/expenses/application/use-cases/remove-expense-receipt.use-case.ts(24,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/application/use-cases/substitute-receipt.use-case.ts(401,24): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/expense-number.ts(3,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(13,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(591,46): error TS7006: Parameter 'attachment' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(599,30): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(605,26): error TS7006: Parameter 'expense' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(681,59): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(682,25): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(693,45): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1121,39): error TS7006: Parameter 'userId' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1142,16): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1147,13): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1180,39): error TS7006: Parameter 'userId' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1216,23): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1414,21): error TS7006: Parameter 'asset' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1424,36): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1426,35): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1426,62): error TS7006: Parameter 'candidate' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1440,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(1465,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2077,39): error TS7006: Parameter 'payment' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2083,45): error TS7006: Parameter 'journal' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2084,30): error TS7006: Parameter 'payment' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2640,30): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2726,37): error TS2339: Property 'status' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2726,102): error TS2339: Property 'id' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2726,201): error TS2339: Property 'defaultInputTaxCode' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2726,232): error TS2339: Property 'status' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2726,260): error TS2339: Property 'sortOrder' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2761,65): error TS2339: Property 'id' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2761,164): error TS2339: Property 'defaultInputTaxCode' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2761,195): error TS2339: Property 'status' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2761,223): error TS2339: Property 'sortOrder' does not exist on type '{ companyId: string | null; name: string; accountHintKey: string; ledgerAccountReviewedByUserId: string | null; }'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2783,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2790,51): error TS7006: Parameter 'attachment' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2791,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2793,88): error TS2339: Property 'checksumSha256' does not exist on type '{}'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2794,88): error TS2339: Property 'perceptualHash' does not exist on type '{}'.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2883,42): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2884,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2898,38): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2900,49): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(2902,50): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3237,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3238,39): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3510,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3511,37): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3511,69): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3529,58): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3530,38): error TS7006: Parameter 'payment' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3542,53): error TS7006: Parameter 'journal' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3578,26): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts(3631,53): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/expenses/infrastructure/substitute-expense-edit.ts(4,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/account-claim-token.service.ts(3,70): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/account-claim-token.service.ts(33,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(3,51): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(71,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(100,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(136,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(172,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(195,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/company-signup-core.service.ts(217,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/get-line-signup-status.use-case.ts(7,43): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/get-line-signup-status.use-case.ts(71,46): error TS7006: Parameter 'membership' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/line-signup-notify.service.ts(12,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/line-signup-notify.service.ts(344,35): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/package-change-request.use-case.ts(35,68): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/package-change-request.use-case.ts(89,34): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/request-line-signup-support.use-case.ts(23,66): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-notify.service.ts(171,58): error TS7006: Parameter 'identity' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-notify.service.ts(173,28): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/external-signup/application/signup-admin-notify.service.ts(174,60): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(11,51): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(145,46): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(145,76): error TS7006: Parameter 'email' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(146,46): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(146,69): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(147,46): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(147,75): error TS7006: Parameter 'phone' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(148,45): error TS7006: Parameter 'request' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(148,104): error TS7006: Parameter 'request' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(154,38): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(169,44): error TS7006: Parameter 'u' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(170,51): error TS7006: Parameter 'c' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(171,66): error TS7006: Parameter 'evidence' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(174,28): error TS7006: Parameter 'request' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(175,36): error TS2345: Argument of type 'Set<unknown>' is not assignable to parameter of type 'Set<string | null>'.
+  Type 'unknown' is not assignable to type 'string | null'.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(177,64): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(205,16): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(206,16): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(206,21): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(246,54): error TS7006: Parameter 'i' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(248,26): error TS7006: Parameter 'i' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(309,41): error TS7006: Parameter 'candidate' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(383,28): error TS7006: Parameter 'request' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(587,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(657,66): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-admin-queue.use-case.ts(724,67): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-ops-alert.service.ts(177,36): error TS7006: Parameter 'trial' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-ops-alert.service.ts(192,18): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-ops-alert.service.ts(193,15): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/signup-ops-alert.service.ts(197,8): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts(5,51): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts(181,68): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts(261,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts(335,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/submit-line-signup.use-case.ts(454,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(15,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(124,46): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(124,77): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(125,45): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(125,82): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(126,47): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(128,16): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(143,48): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(144,46): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(145,59): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(149,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(155,24): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(155,56): error TS2322: Type '{ resolutionNote?: any; resolvedByDisplayName?: {} | undefined; closedReason?: SupportRequestClosedReason | undefined; closedAt?: any; lastReplyError?: string | undefined; ... 26 more ...; askerRef: any; }' is not assignable to type 'SupportRequestItemDto'.
+  Types of property 'requestedInformation' are incompatible.
+    Type '{} | undefined' is not assignable to type 'string | undefined'.
+      Type '{}' is not assignable to type 'string'.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(211,66): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(229,67): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(264,68): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(415,67): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(442,68): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/external-signup/application/support-request-admin.use-case.ts(530,67): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/assert-specialist-routes-closed.ts(28,28): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(18,53): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(353,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(468,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(543,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(575,31): error TS2347: Untyped function calls may not accept type arguments.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(788,37): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(789,36): error TS2322: Type '{} | null' is not assignable to type 'number | null'.
+  Type '{}' is not assignable to type 'number'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(802,38): error TS7006: Parameter 'gate' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(805,5): error TS2322: Type '{ generation: {}; gateKey: string; routeKey: string; }[]' is not assignable to type 'StampedLaunchEntry[]'.
+  Type '{ generation: {}; gateKey: string; routeKey: string; }' is not assignable to type 'StampedLaunchEntry'.
+    Types of property 'generation' are incompatible.
+      Type '{}' is not assignable to type 'number'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(826,37): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(838,122): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(839,16): error TS2339: Property 'enabled' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(840,15): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(840,76): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(852,38): error TS7006: Parameter 'gate' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(855,25): error TS2339: Property 'state' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(856,16): error TS2339: Property 'generation' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/execution-attempt.service.ts(857,76): error TS2339: Property 'generation' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/launch-gate-lock.ts(1,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/feature-launch/application/launch-shadow.probe.ts(313,38): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/launch-shadow.probe.ts(326,54): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(222,61): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(251,34): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(303,47): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(303,91): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(306,30): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(312,5): error TS2322: Type 'unknown[]' is not assignable to type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(332,44): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(347,16): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(348,13): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(349,64): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(356,22): error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'string'.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(357,88): error TS2322: Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/feature-launch/application/retire-launch-builds.ts(404,102): error TS2322: Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(29,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(378,44): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(618,48): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(629,27): error TS2339: Property 'cutoffAt' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(639,42): error TS2339: Property 'rootsJson' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(639,79): error TS2339: Property 'rootsJson' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(640,20): error TS2339: Property 'rootsJson' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(646,28): error TS2339: Property 'cutoffAt' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(647,29): error TS2339: Property 'rootsJson' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(650,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/runoff-lifecycle.ts(753,75): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/seed-launch-gates.ts(189,44): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(334,55): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(476,42): error TS7006: Parameter 'gate' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(480,34): error TS7006: Parameter 'gate' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(484,34): error TS7006: Parameter 'gate' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(507,54): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(533,23): error TS2339: Property 'state' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(534,27): error TS2339: Property 'generation' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(535,24): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(536,23): error TS2339: Property 'reason' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(537,26): error TS2339: Property 'updatedAt' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(540,29): error TS2339: Property 'seq' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(541,32): error TS2339: Property 'action' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(542,35): error TS2339: Property 'commandId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(543,37): error TS2339: Property 'actorUserId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(544,44): error TS2339: Property 'payloadFingerprint' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(545,35): error TS2339: Property 'createdAt' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(547,45): error TS2339: Property 'targetEnvironment' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(548,42): error TS2339: Property 'buildReleaseId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(549,46): error TS2339: Property 'expectedGeneration' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(550,38): error TS2339: Property 'routeClass' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(551,49): error TS2339: Property 'validationEvidenceRef' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(552,50): error TS2339: Property 'validationEvidenceHash' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(553,54): error TS2339: Property 'specialistApprovedByUserId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(554,51): error TS2339: Property 'releaseApprovedByUserId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(555,42): error TS2339: Property 'emergencyClose' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(556,52): error TS2339: Property 'emergencyAuthorityUserId' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/get-launch-health.use-case.ts(557,39): error TS2339: Property 'incidentRef' does not exist on type '{}'.
+apps/api/src/modules/feature-launch/application/use-cases/launch-gate-command.use-case.ts(45,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/feature-launch/application/use-cases/launch-gate-command.use-case.ts(182,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/inventory/infrastructure/db/inventory.prisma.mapper.ts(7,8): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/inventory/infrastructure/repositories/prisma-movement.repository.ts(40,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/inventory/infrastructure/repositories/prisma-movement.repository.ts(50,63): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-bootstrap.service.ts(2,29): error TS2307: Cannot find module '../../../../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/modules/ledger/application/services/chart-template-bootstrap.service.ts(81,42): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-bootstrap.service.ts(109,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-bootstrap.service.ts(127,53): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(1,24): error TS2307: Cannot find module '../../../../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(357,59): error TS7006: Parameter 'account' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(360,28): error TS7006: Parameter 'candidate' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(365,42): error TS2339: Property 'mappingJson' does not exist on type '{ companyId: string | null; version: number; }'.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(368,23): error TS2339: Property 'status' does not exist on type '{}'.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(368,54): error TS2339: Property 'isPosting' does not exist on type '{}'.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(368,76): error TS2339: Property 'isControlled' does not exist on type '{}'.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(373,52): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(375,46): error TS7006: Parameter 'profile' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(376,53): error TS7006: Parameter 'profile' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(390,46): error TS7006: Parameter 'rule' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(400,49): error TS7006: Parameter 'profile' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(405,55): error TS7006: Parameter 'bank' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(409,64): error TS7006: Parameter 'document' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(410,26): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(437,59): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template-query.service.ts(437,64): error TS7006: Parameter 'count' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/services/chart-template.service.ts(210,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-account-binding.use-case.ts(61,28): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-account-binding.use-case.ts(81,35): error TS7006: Parameter 'category' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-account-binding.use-case.ts(83,28): error TS7006: Parameter 'category' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-auto-post.use-case.ts(3,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/ledger/application/use-cases/expense-auto-post.use-case.ts(169,52): error TS7006: Parameter 'company' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-auto-post.use-case.ts(171,45): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-auto-post.use-case.ts(177,64): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/expense-backfill.use-case.ts(6,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/ledger/application/use-cases/expense-backfill.use-case.ts(200,32): error TS7006: Parameter 'sample' implicitly has an 'any' type.
+apps/api/src/modules/ledger/application/use-cases/journal.use-case.ts(518,46): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/ledger/infrastructure/prisma-ledger.repository.ts(146,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/ledger/infrastructure/prisma-ledger.repository.ts(303,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/ledger/infrastructure/prisma-ledger.repository.ts(351,29): error TS2339: Property 'mappingJson' does not exist on type '{ companyId: string | null; version: number; }'.
+apps/api/src/modules/ledger/infrastructure/prisma-ledger.repository.ts(367,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/company-ocr-governance.ts(180,63): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/company-ocr-governance.ts(382,54): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/line-message-buffer.service.ts(17,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts(16,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(201,37): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(262,52): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(264,33): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(283,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(328,41): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(328,76): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(329,37): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(329,63): error TS7006: Parameter 'id' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(334,50): error TS7006: Parameter 'c' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(335,46): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(336,43): error TS7006: Parameter 'total' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(336,50): error TS7006: Parameter 'group' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(337,44): error TS7006: Parameter 'total' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(337,51): error TS7006: Parameter 'group' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(351,17): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(356,18): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(356,21): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(359,17): error TS7006: Parameter 'g' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(364,18): error TS7006: Parameter 'a' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.ts(364,21): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-dashboard-tools.use-case.ts(82,33): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-dashboard-tools.use-case.ts(85,30): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-dashboard-tools.use-case.ts(85,72): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts(12,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/line-ai/application/use-cases/erp-expense-daily-closing.use-case.ts(198,67): error TS7006: Parameter 'db' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts(253,34): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts(260,46): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts(386,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/erp-tools.use-case.ts(392,46): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(13,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(1355,37): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(1568,37): error TS7031: Binding element 'name' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(1928,66): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(2256,26): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(2260,51): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts(4900,76): error TS7006: Parameter 'tool' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(16,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(114,50): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(116,16): error TS7006: Parameter 'outcome' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(142,20): error TS2339: Property 'deliveredAt' does not exist on type '{}'.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(149,64): error TS2339: Property 'messagesJson' does not exist on type '{}'.
+apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts(312,39): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/line-ai/infrastructure/line-intake-state.repository.ts(28,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/procurement/application/use-cases/wht-income-category.use-case.ts(29,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(135,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(244,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(260,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(358,40): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(358,87): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(359,47): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(404,53): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(406,34): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(407,30): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(408,31): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(410,52): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(411,48): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(412,51): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(518,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(535,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(605,54): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(615,58): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(666,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(720,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1182,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1217,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1345,58): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1420,56): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1510,55): error TS7006: Parameter 'allocation' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1514,47): error TS7006: Parameter 'journal' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1515,56): error TS7006: Parameter 'paymentId' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1529,30): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1536,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1546,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1554,128): error TS7006: Parameter 'allocation' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1571,27): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1599,26): error TS7006: Parameter 'journal' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1600,26): error TS7006: Parameter 'journal' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1611,47): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1619,74): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1620,62): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1623,176): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1623,226): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1649,99): error TS7006: Parameter 'allocation' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1678,23): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1689,32): error TS7006: Parameter 'b' implicitly has an 'any' type.
+apps/api/src/modules/procurement/infrastructure/prisma-procurement.repository.ts(1689,199): error TS7006: Parameter 'p' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(253,7): error TS2345: Argument of type 'unknown[]' is not assignable to parameter of type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(253,47): error TS7031: Binding element 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(253,82): error TS7031: Binding element 'permission' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(258,41): error TS7031: Binding element 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(261,47): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(300,49): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(300,92): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(303,18): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(304,15): error TS7006: Parameter 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(308,80): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(309,44): error TS7031: Binding element 'membership' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(311,50): error TS7031: Binding element 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(311,94): error TS7031: Binding element 'role' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/application/use-cases/reimbursement-policy.use-case.ts(314,53): error TS7006: Parameter 'scope' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(11,24): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(160,30): error TS7031: Binding element 'id' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(161,27): error TS7031: Binding element 'targetId' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(201,41): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(224,30): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(1837,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(1917,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(1961,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(2506,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(2565,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/prisma-reimbursement.repository.ts(2660,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(5,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(36,79): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(40,107): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(40,178): error TS7006: Parameter 'link' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(41,24): error TS7006: Parameter 'attachment' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(42,40): error TS7006: Parameter 'attachment' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(45,31): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(45,36): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/reimbursements/infrastructure/reimbursement-source.ts(48,31): error TS7006: Parameter 'line' implicitly has an 'any' type.
+apps/api/src/modules/reports/application/report-entitlement.service.ts(2,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/reports/application/report-entitlement.service.ts(57,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/reports/infrastructure/prisma-report.repository.ts(3,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/reports/infrastructure/prisma-report.repository.ts(109,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reports/infrastructure/prisma-report.repository.ts(121,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/reports/infrastructure/prisma-report.repository.ts(281,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(2,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(64,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(75,43): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(97,22): error TS2339: Property 'sourceFingerprint' does not exist on type '{}'.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(99,35): error TS2339: Property 'id' does not exist on type '{}'.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/generate-identity-reconciliation.use-case.ts(114,37): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(52,54): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(52,90): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(59,47): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(62,24): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(92,26): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(98,37): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(98,79): error TS7006: Parameter 'sum' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/read-identity-reconciliation.use-case.ts(98,84): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/resolve-identity-reconciliation.use-case.ts(72,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/resolve-identity-reconciliation.use-case.ts(166,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/resolve-identity-reconciliation.use-case.ts(205,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-identity-reconciliation/application/use-cases/resolve-identity-reconciliation.use-case.ts(270,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-onboarding/application/use-cases/create-company-onboarding.use-case.ts(266,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/lock-plan-term-company.ts(1,29): error TS2307: Cannot find module '../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts(91,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts(216,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts(340,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(5,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(46,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(102,80): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(105,34): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(109,33): error TS7006: Parameter 'item' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts(122,31): error TS7006: Parameter 'group' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(80,17): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(80,54): error TS7006: Parameter 'e' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(87,51): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(91,55): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(92,50): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/get-partner-detail.use-case.ts(113,55): error TS7006: Parameter 'feature' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/list-partner-members.use-case.ts(43,31): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/list-partner-members.use-case.ts(50,29): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/list-partners.use-case.ts(65,62): error TS7006: Parameter 'c' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/list-partners.use-case.ts(66,49): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/list-partners.use-case.ts(80,56): error TS7006: Parameter 'f' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(83,32): error TS7006: Parameter 'u' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(98,57): error TS7006: Parameter 'u' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(105,39): error TS7006: Parameter 'm' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(110,32): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(113,15): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/lookup-users.use-case.ts(114,18): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(65,48): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(68,50): error TS7006: Parameter 'user' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(71,24): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(71,60): error TS2322: Type '{ decidedAt?: any; createdAt: any; note?: any; status: PackageChangeRequestStatus; requestedByDisplayName?: {} | undefined; currentTierKey?: any; id: any; companyId: any; companyName: any; requestedTierKey: any; }' is not assignable to type 'AdminPackageChangeItemDto'.
+  Type '{ decidedAt?: any; createdAt: any; note?: any; status: PackageChangeRequestStatus; requestedByDisplayName?: {} | undefined; currentTierKey?: any; id: any; companyId: any; companyName: any; requestedTierKey: any; }' is not assignable to type '{ companyName: string; currentTierKey?: string | undefined; requestedByDisplayName?: string | undefined; }'.
+    Types of property 'requestedByDisplayName' are incompatible.
+      Type '{} | undefined' is not assignable to type 'string | undefined'.
+        Type '{}' is not assignable to type 'string'.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(215,40): error TS7006: Parameter 'owner' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(219,3): error TS2322: Type 'unknown[]' is not assignable to type 'string[]'.
+  Type 'unknown' is not assignable to type 'string'.
+apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts(219,38): error TS7006: Parameter 'identity' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.ts(3,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.ts(36,62): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/partner-member-line-unlink.use-case.ts(31,50): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts(3,29): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts(68,70): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts(110,70): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts(180,87): error TS7006: Parameter 'owner' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts(193,39): error TS7006: Parameter 'owner' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/send-partner-line-message.use-case.ts(99,52): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.ts(82,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(3,24): error TS2307: Cannot find module '../../../../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(247,65): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(285,47): error TS7006: Parameter 'e' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(286,52): error TS7006: Parameter 'e' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(287,46): error TS7006: Parameter 'e' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(424,77): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(424,95): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(425,27): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(513,27): error TS2339: Property 'lastSeq' does not exist on type '{}'.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(526,26): error TS2339: Property 'epoch' does not exist on type '{}'.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts(546,30): error TS7006: Parameter 'f' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-line-credential.use-case.ts(45,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ocr-config.use-case.ts(35,51): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-platform-ai-budget.use-case.ts(57,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.ts(37,64): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/modules/tax/application/services/tax-config-bootstrap.service.ts(3,29): error TS2307: Cannot find module '../../../../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/modules/tax/application/services/tax-config-bootstrap.service.ts(147,49): error TS7006: Parameter 'account' implicitly has an 'any' type.
+apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.ts(39,30): error TS7006: Parameter 'issue' implicitly has an 'any' type.
+apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.ts(40,49): error TS7006: Parameter 'latest' implicitly has an 'any' type.
+apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.ts(40,57): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/tax/application/use-cases/generate-tax-filing-package.use-case.ts(43,30): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/adapters/accounting-document-source.adapter.ts(23,21): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/adapters/expense-source.adapter.ts(43,21): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/adapters/expense-source.adapter.ts(74,21): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/adapters/supplier-payment-source.adapter.ts(32,22): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/repositories/prisma-tax.repository.ts(39,31): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/repositories/prisma-tax.repository.ts(95,21): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/infrastructure/repositories/prisma-tax.repository.ts(216,21): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/tax/presentation/http/tax.controller.ts(149,26): error TS7006: Parameter 'issue' implicitly has an 'any' type.
+apps/api/src/modules/tax/presentation/http/tax.controller.ts(153,44): error TS7006: Parameter 'latest' implicitly has an 'any' type.
+apps/api/src/modules/tax/presentation/http/tax.controller.ts(153,52): error TS7006: Parameter 'event' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(61,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(130,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(138,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(146,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(155,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(164,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(308,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(359,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(412,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(449,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/modules/workflow/infrastructure/prisma-workflow.repository.ts(461,22): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/scripts/a5-readonly-evidence.logic.ts(4,43): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/a5-readonly-evidence.logic.ts(729,43): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/scripts/a5-readonly-evidence.logic.ts(733,33): error TS2347: Untyped function calls may not accept type arguments.
+apps/api/src/scripts/a5-readonly-evidence.logic.ts(743,78): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/backfill-dashboard-entitlement.ts(2,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/backfill-revenue-categories.ts(10,30): error TS2307: Cannot find module '../generated/prisma/client.js' or its corresponding type declarations.
+apps/api/src/scripts/backfill-revenue-categories.ts(22,49): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/scripts/chart-of-accounts-audit.ts(4,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/chart-of-accounts-audit.ts(65,57): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(5,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(56,55): error TS7006: Parameter 'tx' implicitly has an 'any' type.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(105,62): error TS7006: Parameter 'account' implicitly has an 'any' type.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(110,20): error TS2339: Property 'status' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(110,51): error TS2339: Property 'isPosting' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(110,73): error TS2339: Property 'isControlled' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(182,38): error TS2339: Property 'id' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(183,38): error TS2339: Property 'id' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(223,36): error TS2339: Property 'code' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(224,36): error TS2339: Property 'code' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(228,43): error TS2339: Property 'id' does not exist on type '{}'.
+apps/api/src/scripts/chart-of-accounts-tax-smoke.ts(229,43): error TS2339: Property 'id' does not exist on type '{}'.
+apps/api/src/scripts/line-ai-reconciliation-report.ts(2,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/line-identity-inventory.ts(12,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/line-identity-inventory.ts(56,53): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/scripts/line-identity-inventory.ts(71,61): error TS7006: Parameter 'r' implicitly has an 'any' type.
+apps/api/src/scripts/m01-actor-delegation-live-smoke.ts(4,30): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/production-a5-evidence.pg.ts(2,29): error TS2307: Cannot find module '../generated/prisma/client' or its corresponding type declarations.
+apps/api/src/scripts/production-a5-evidence.pg.ts(359,23): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(363,21): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(374,21): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(378,25): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(382,19): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(406,18): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(409,18): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(413,14): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(414,13): error TS7031: Binding element 'name' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(414,19): error TS7031: Binding element 'checksum' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(414,31): error TS7006: Parameter 'index' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(418,29): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(454,36): error TS7006: Parameter 'company' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(541,47): error TS7006: Parameter 'row' implicitly has an 'any' type.
+apps/api/src/scripts/production-a5-evidence.pg.ts(543,40): error TS2339: Property 'grantOrigin' does not exist on type '{}'.

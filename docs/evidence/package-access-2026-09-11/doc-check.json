@@ -1,0 +1,44 @@
+{
+  "status": "PASS",
+  "documents": 10,
+  "localLinks": 106,
+  "APScenarioGroups": 24,
+  "findings": 7,
+  "focusedTests": 1165,
+  "suites": {
+    "api": {
+      "tests": 543,
+      "pass": 543,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "gateway": {
+      "tests": 294,
+      "pass": 294,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "web": {
+      "tests": 75,
+      "pass": 75,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    },
+    "user-features": {
+      "tests": 253,
+      "pass": 253,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
+  },
+  "fullCrossLayerE2E": "NOT RUN",
+  "openRuntimeGaps": [
+    "AX03",
+    "AX04"
+  ],
+  "errors": []
+}

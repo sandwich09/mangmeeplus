@@ -1,5 +1,7 @@
 # Implementation Plan — LINE-first Signup (P10-L)
 
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](../specs/mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+
 สถานะ: **v2 2026-09-04 (หลัง Review รอบ 1)** — คู่กับ spec v4 [mangmee-line-first-signup-spec-th.md](../specs/mangmee-line-first-signup-spec-th.md) §15 และ [review round 1](mangmee-line-first-signup-review-round-1-th.md); Owner สั่งเริ่ม implement หลังรีวิว (2026-09-04) — ลำดับ **L-A (pre-flight B-01) → L-A2 → L-B → L-C → L-E → UAT → L-D**
 
 ## 0a. Pre-flight ใน L-A (ต้องทำก่อนเขียนของใหม่ — หลักฐานจาก review B-01)

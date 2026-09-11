@@ -1,0 +1,117 @@
+{
+  "classification": "PRE_INTEGRATION_SIMULATION; NOT STRIPE PAYMENT E2E",
+  "runtime": "Real freshly built Next.js/NestJS, PostgreSQL and existing auth/permission/plan-term/lifecycle; payment-outcome driver invokes admin manual renewal",
+  "ports": {
+    "web": 3020,
+    "api": 3021,
+    "postgres": 15432,
+    "redis": 6379
+  },
+  "head": {
+    "mangmeeplus": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "mangmee_web": "9cc2ae6e916f53395eaf8542739d2182298d6110"
+  },
+  "workingTree": "dirty; this task did not change runtime source",
+  "stats": {
+    "startTime": "2026-09-11T02:56:48.966Z",
+    "duration": 28776.187,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 2,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "title": "BR01 expiry + decline stays blocked; success permits a real browser mutation",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 3541,
+      "errors": []
+    },
+    {
+      "title": "BR02 term-disabled company activates; sequential replay does not extend again",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 791,
+      "errors": []
+    },
+    {
+      "title": "BR03 DISABLED hold is preserved after simulated payment",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 326,
+      "errors": []
+    },
+    {
+      "title": "BR03 SUSPENDED hold is preserved after simulated payment",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 444,
+      "errors": []
+    },
+    {
+      "title": "BR03 ARCHIVED hold is preserved after simulated payment",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 322,
+      "errors": []
+    },
+    {
+      "title": "BR04 company OWNER cannot invoke the admin renewal driver",
+      "project": "chromium",
+      "status": "passed",
+      "durationMs": 341,
+      "errors": []
+    },
+    {
+      "title": "BR05 @readiness-gap expired OWNER can read recovery notice after sweep disables company",
+      "project": "chromium",
+      "status": "failed",
+      "durationMs": 328,
+      "errors": [
+        "Error: R02 recovery route: {\"message\":\"Company is not active.\",\"error\":\"Forbidden\",\"statusCode\":403}\n\nexpect(received).toBe(expected) // Object.is equality\n\nExpected: 200\nReceived: 403\n\n  203 |     const res = await rig.notice();\n  204 |     // Intentionally assert the required recovery behavior, not the known 403 defect.\n> 205 |     expect(res.status(), `R02 recovery route: ${await res.text()}`).toBe(200);\n      |                                                                     ^\n  206 |     expect(await res.json()).toMatchObject({ derivedState: 'EXPIRED', isOwner: true });\n  207 |   });\n  208 |\n    at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts:205:69"
+      ]
+    },
+    {
+      "title": "BR06 @readiness-gap multi-company OWNER sees the selected expired company recovery screen",
+      "project": "chromium",
+      "status": "failed",
+      "durationMs": 11108,
+      "errors": [
+        "Error: expect(locator).toBeVisible() failed\n\nLocator: getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })\nExpected: visible\nTimeout: 10000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"toBeVisible\" with timeout 10000ms\n  - waiting for getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })\n\n\n  213 |     expect(await notice.json()).toMatchObject({ derivedState: 'EXPIRED', isOwner: true });\n  214 |     await authedPage.goto(`/companies/${rig.companyId}/renew`);\n> 215 |     await expect(authedPage.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true })).toBeVisible();\n      |                                                                                                ^\n  216 |   });\n  217 | });\n  218 |\n    at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/e2e/plan-term-billing-readiness.spec.ts:215:96"
+      ]
+    }
+  ],
+  "postgresProbes": {
+    "passed": 1,
+    "failed": 3,
+    "skipped": 0,
+    "exitCode": 1,
+    "rawOutput": "recovery-output.txt"
+  },
+  "cleanup": {
+    "remainingDisposableCompanies": 0,
+    "remainingFixtureAudits": 0
+  },
+  "notExercised": [
+    "Stripe Checkout",
+    "signed webhook validation",
+    "invoice/company/Price binding",
+    "paid-tier entitlement application",
+    "Stripe service periods",
+    "Test Clocks",
+    "LINE",
+    "mobile",
+    "UAT",
+    "LIVE"
+  ],
+  "sha256": {
+    "e2e/plan-term-billing-readiness.spec.ts": "93a2cf6cb0e1ac8479aa8929325d2e98618eeb82774ea75d58830c0840852d44",
+    "docs/evidence/stripe-readiness-2026-09-11/recovery.pg.spec.ts": "5b1dfce23888727a6529bb9f49e65c88d45ca4fb547a475da7281a0519b2bea7",
+    "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts": "3e7182b179211efa898545b84d3b0954f5daf9f2fc5e4e628a496ab4127de8fb",
+    "apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.ts": "15e0bdfa999cc7576292c1ff153258a81d1f41f172e2ab7a2a79b19dbd90dd77",
+    "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts": "5fb0eb8c7d0cb1fc21d021e97a306cdd357286f4579015cc3ae2660f4d6d9fa8",
+    "apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts": "da35e6f97668bdfe081dc9da798b19f0b195314407541b51fd2dfb4969b2f887",
+    "apps/web/src/features/plan-term/CompanyTermExpiredPage.tsx": "cee8306276c0567a43de32bb9d1f891e9d81fb538e644e82383923c252b5c4dc"
+  }
+}

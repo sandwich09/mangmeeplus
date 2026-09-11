@@ -79,3 +79,8 @@ UAT and Production both run `LINE_AI_AGENT_RUNTIME=agentcore`, so this is the li
 - Additive optional contract field; no migration, no data change, no permission change. Rollback is a revert of the composer change alone — the field can stay unread.
 - The only user-visible regression risk is a reply that is too SHORT (a group hidden that should show). Every AC that pins a rendered line uses the real registry, so a wrong feature-key mapping fails a test rather than silently shrinking the reply in production.
 - Fail-open is preserved end to end: unconfigured company, absent field, and older payload all keep today's text.
+
+
+## Package access acceptance extension 2026-09-11
+
+Use [package spec§9/§9.5](../specs/mangmee-package-entitlements-spec-th.md), [AP17–AP24 and AP-S0–S3](mangmee-package-entitlements-plan-th.md) and [access audit](../research/package-access-admin-web-line-audit-2026-09-11.md). Scoped help-copy tests do not prove record-scope history safety or revocation during slow model/queued delivery. Preserve current company-service help when the AI lane is shut, but do not state every employee can execute every company entitlement. Local/AgentCore parity and real native acceptance remain separate.

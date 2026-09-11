@@ -1,0 +1,432 @@
+TAP version 13
+# Subtest: PrismaPermissionResolverRepository branch scopes
+    # Subtest: AX02 excludes disabled roles and their grants after a membership is reactivated
+    not ok 1 - AX02 excludes disabled roles and their grants after a membership is reactivated
+      ---
+      duration_ms: 2.56825
+      type: 'test'
+      location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts:2:4517'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+        
+          [
+            'STAFF',
+        +   'OLD_MANAGER'
+          ]
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 'STAFF'
+      actual:
+        0: 'STAFF'
+        1: 'OLD_MANAGER'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts:115:12)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Promise.all (index 1)
+        async Suite.run (node:internal/test_runner/test:1442:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: AX02 an active membership with only a disabled role gains no effective authority
+    not ok 2 - AX02 an active membership with only a disabled role gains no effective authority
+      ---
+      duration_ms: 0.242083
+      type: 'test'
+      location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts:2:5224'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+        
+        + [
+        +   'STALE_OWNER'
+        + ]
+        - []
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+      actual:
+        0: 'STALE_OWNER'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts:125:12)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:744:7)
+      ...
+    1..2
+not ok 1 - PrismaPermissionResolverRepository branch scopes
+  ---
+  duration_ms: 3.25175
+  type: 'suite'
+  location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/access-control/permission-resolver.spec.ts:2:3721'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   stage: 'intake_route',
+#   durationMs: 1
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   stage: 'gateway_turn',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   stage: 'persistence',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   stage: 'render',
+#   durationMs: 2
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(19) {
+#   msg: 'line.ai.turn_summary',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   requestId: '22770495-a2a6-41a1-8155-b35822d6027c',
+#   preparedPlanVersion: null,
+#   lane: null,
+#   intent: 'read_summary',
+#   refused: false,
+#   refusalReason: null,
+#   errorCode: null,
+#   fallbackReason: null,
+#   modelProvider: null,
+#   modelIds: null,
+#   modelCallCount: null,
+#   toolCallCount: 0,
+#   deliveryResult: 'ok',
+#   usageInputTokens: null,
+#   usageOutputTokens: null,
+#   costSatang: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(7) {
+#   msg: 'line.ai.terminal',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-false',
+#   companyId: 'company-1',
+#   status: 'completed',
+#   terminalClass: 'delivered',
+#   errorCode: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   stage: 'intake_route',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   stage: 'gateway_turn',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   stage: 'persistence',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   stage: 'render',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(19) {
+#   msg: 'line.ai.turn_summary',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   requestId: '625cf7b6-8295-47f2-9022-206bd556280b',
+#   preparedPlanVersion: null,
+#   lane: null,
+#   intent: 'read_summary',
+#   refused: false,
+#   refusalReason: null,
+#   errorCode: null,
+#   fallbackReason: null,
+#   modelProvider: null,
+#   modelIds: null,
+#   modelCallCount: null,
+#   toolCallCount: 0,
+#   deliveryResult: 'ok',
+#   usageInputTokens: null,
+#   usageOutputTokens: null,
+#   costSatang: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(7) {
+#   msg: 'line.ai.terminal',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-true',
+#   companyId: 'company-1',
+#   status: 'completed',
+#   terminalClass: 'delivered',
+#   errorCode: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   stage: 'intake_route',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   stage: 'gateway_turn',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   stage: 'persistence',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   stage: 'render',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(19) {
+#   msg: 'line.ai.turn_summary',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   requestId: '1c5a896c-30c6-44ea-9f6a-1f6d0952edf2',
+#   preparedPlanVersion: null,
+#   lane: null,
+#   intent: 'read_summary',
+#   refused: false,
+#   refusalReason: null,
+#   errorCode: null,
+#   fallbackReason: null,
+#   modelProvider: null,
+#   modelIds: null,
+#   modelCallCount: null,
+#   toolCallCount: 0,
+#   deliveryResult: 'ok',
+#   usageInputTokens: null,
+#   usageOutputTokens: null,
+#   costSatang: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(7) {
+#   msg: 'line.ai.terminal',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-text-null',
+#   companyId: 'company-1',
+#   status: 'completed',
+#   terminalClass: 'delivered',
+#   errorCode: null
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-false',
+#   stage: 'receipt_download',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(4) {
+#   msg: 'line_receipt_stage_failed',
+#   webhookEventId: 'evt-AX01-media-false',
+#   stage: 'receipt_before_capture',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(3) {
+#   msg: 'LINE receipt upload error',
+#   webhookEventId: 'evt-AX01-media-false',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-false',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-true',
+#   stage: 'receipt_download',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(4) {
+#   msg: 'line_receipt_stage_failed',
+#   webhookEventId: 'evt-AX01-media-true',
+#   stage: 'receipt_before_capture',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(3) {
+#   msg: 'LINE receipt upload error',
+#   webhookEventId: 'evt-AX01-media-true',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-true',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-null',
+#   stage: 'receipt_download',
+#   durationMs: 0
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(4) {
+#   msg: 'line_receipt_stage_failed',
+#   webhookEventId: 'evt-AX01-media-null',
+#   stage: 'receipt_before_capture',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM   ERROR [ProcessLineWebhookUseCase] Object(3) {
+#   msg: 'LINE receipt upload error',
+#   webhookEventId: 'evt-AX01-media-null',
+#   errorClass: 'Error'
+# }
+# [Nest] 53917  - 09/11/2026, 9:10:45 PM     LOG [ProcessLineWebhookUseCase] Object(5) {
+#   msg: 'line.ai.stage',
+#   surface: 'employee_oa',
+#   webhookEventId: 'evt-AX01-media-null',
+#   stage: 'line_delivery',
+#   durationMs: 0
+# }
+# Subtest: ProcessLineWebhookUseCase
+    # Subtest: AX01 text history checks tool feature as well as permission (sales=false)
+    not ok 1 - AX01 text history checks tool feature as well as permission (sales=false)
+      ---
+      duration_ms: 12.942791
+      type: 'test'
+      location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:2:78373'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+        
+        + 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท'
+        - undefined
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      actual: 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท'
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:1738:14)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Promise.all (index 53)
+        async Suite.run (node:internal/test_runner/test:1442:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: AX01 text history checks tool feature as well as permission (sales=true)
+    ok 2 - AX01 text history checks tool feature as well as permission (sales=true)
+      ---
+      duration_ms: 2.427667
+      type: 'test'
+      ...
+    # Subtest: AX01 text history checks tool feature as well as permission (sales=null)
+    ok 3 - AX01 text history checks tool feature as well as permission (sales=null)
+      ---
+      duration_ms: 0.431667
+      type: 'test'
+      ...
+    # Subtest: AX01 media history checks tool feature as well as permission (sales=false)
+    not ok 4 - AX01 media history checks tool feature as well as permission (sales=false)
+      ---
+      duration_ms: 1.758041
+      type: 'test'
+      location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:2:78373'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly equal:
+        + actual - expected
+        
+        + 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท'
+        - undefined
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      actual: 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท'
+      operator: 'strictEqual'
+      stack: |-
+        TestContext.<anonymous> (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:1738:14)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:744:7)
+      ...
+    # Subtest: AX01 media history checks tool feature as well as permission (sales=true)
+    ok 5 - AX01 media history checks tool feature as well as permission (sales=true)
+      ---
+      duration_ms: 0.482458
+      type: 'test'
+      ...
+    # Subtest: AX01 media history checks tool feature as well as permission (sales=null)
+    ok 6 - AX01 media history checks tool feature as well as permission (sales=null)
+      ---
+      duration_ms: 0.474125
+      type: 'test'
+      ...
+    1..6
+not ok 2 - ProcessLineWebhookUseCase
+  ---
+  duration_ms: 19.291833
+  type: 'suite'
+  location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:2:23996'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..2
+# tests 8
+# suites 2
+# pass 4
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 622.89925

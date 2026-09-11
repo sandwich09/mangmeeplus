@@ -1,10 +1,16 @@
 # Auto-register จากเว็บไซต์ทางการ (External Signup Contract) — Spec P10
 
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](../plans/mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+
+> **Owner direction 2026-09-11:** ลูกค้าไม่ใช้ LINE ต้องสมัครและใช้เว็บได้ครบ และสมัครง่ายเหมือน LINE. [Unified easy signup](unified-easy-signup-spec-th.md) / [แผนร่าง](../plans/unified-easy-signup-plan-th.md) เสนอ email proof → eligible auto/manual review → provision พร้อม returning login/recovery; รายละเอียดเป็น brainstorm ยังไม่เปลี่ยน Flow B runtime/legacy claims หรือเปิด email provider.
+
+> **Billing amendment 2026-09-08:** Owner เปลี่ยน provider เป็น Stripe สำหรับ card auto-renew ตาม [P26 F-BILL-3](mangmee-billing-subscription-spec-th.md#billing-stripe); paid billing ยัง planned/disabled และแยกจาก signup/approval/identity proof. Trial ยังใช้ `FREE_TRIAL` → `FREE_TRIAL_15`; การเปลี่ยน provider ไม่เพิ่มขั้นผูกบัตรหรือรับเงินในฟอร์มสมัครปัจจุบัน.
+
 > **Owner amendment 2026-09-07:** trial `FREE_TRIAL_15` uses its stored monthly allowance from day one, including existing normal trial rows with warmup10. LINE signup collects syntax-only owner email for shop contact and an available unverified owner-account login identifier, preserving existing accounts and immediate password-free LINE access. It does not acquire Flow B's verified mailbox identity semantics. See [onboarding/trial fixes](onboarding-trial-receipt-fixes-spec.md) for the scoped current policy and acceptance evidence.
 
 > **Repeated LINE signup email:** accept into PENDING_REVIEW before any AUTO_FREE slot or provisioning when the normalized address occurs in an account, shop or earlier application. Email reuse is review evidence, never identity proof. Fresh eligible LINE applicants retain immediate password-free access; Flow B keeps its existing manual approval and verified claim flow.
 
-สถานะ: **IMPLEMENTATION IN PROGRESS 2026-08-30 (Owner สั่งลุยทุก slice; Opus implements / Fable supervises); Flow B locked** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, admin queue, claim และ provision จริงยังไม่ implement; ตัวปลดล็อกที่เหลือคือ SES operations (P11 §5 ข้อ 1–2) และตัวเลข trial (แสดงผลเท่านั้น ไม่ block โค้ด); offer preview/EasySlip paid branch เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [แผน P10](../plans/mangmee-external-signup-plan-th.md) และ [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
+สถานะ: **IMPLEMENTATION IN PROGRESS 2026-08-30 (Owner สั่งลุยทุก slice; Opus implements / Fable supervises); Flow B locked** — durable state/idempotency/audit/outbox/provisioning fence พร้อม; public ingress, admin queue, claim และ provision จริงยังไม่ implement; ตัวปลดล็อกที่เหลือคือ SES operations (P11 §5 ข้อ 1–2) และตัวเลข trial (แสดงผลเท่านั้น ไม่ block โค้ด); offer preview/Stripe paid subscription เป็น **spec-only และยังไม่มี payment implementation**; แผนส่งมอบอยู่ใน [แผน P10](../plans/mangmee-external-signup-plan-th.md) และ [Four-lane Gap Closure Plan](../plans/mangmee-four-lane-gap-closure-plan-th.md#p10--external-signup)
 
 > **Owner amendment v2 2026-08-30 ("Flow B" — ยืนยันในแชต, แทนลำดับของ amendment 2026-08-29):**
 > ① **อนุมัติก่อน แล้วค่อยยืนยันอีเมล**: ฟอร์ม → ระบบตรวจอัตโนมัติ (schema + MX + rate limit + dedupe hints) → เข้าคิว System Admin ทันที → อนุมัติแล้วจึงส่งอีเมล **ฉบับเดียว** "อนุมัติแล้ว กดตั้งรหัสเพื่อเริ่มใช้งาน" → การกดลิงก์ = พิสูจน์ความเป็นเจ้าของอีเมล + ตั้งรหัส (หรือ login บัญชีเดิม) → provision ตอนนั้น (§4, §4A)
@@ -68,7 +74,7 @@
 
 ### 3A. Offer preview สำหรับหน้า auto-register — **spec-only 2026-08-29**
 
-> **แก้ไข Owner 2026-09-05 (review R02/F1):** ไม่มีการเลือกแพ็กเกจตอนสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial ชุดเดียวกัน** (`FREE_TRIAL_15`: 1 สาขา / 2 คน / 15 สลิปต่อเดือน, 30 วัน, พร้อม warm-up สัปดาห์แรกและ AI budget cap เท่ากับเส้น LINE) ย่อหน้าด้านล่างแทนที่ข้อความ 2026-08-29 ทั้งหมด
+> **แก้ไข Owner 2026-09-05 (review R02/F1):** ไม่มีการเลือกแพ็กเกจตอนสมัครอีกต่อไป ทุก self-signup — ทั้งฟอร์มเว็บและ LINE — ได้ **free trial ชุดเดียวกัน** (`FREE_TRIAL_15`: 1 สาขา / 2 คน / 15 สลิปต่อเดือน, 30 วัน; มติ 2026-09-07 ให้ใช้ monthly allowance ตั้งแต่วันแรกโดยไม่มี warm-up ลดเหลือ 10 ใบ และคง AI budget cap แยกต่างหาก) ย่อหน้าด้านล่างแทนที่ข้อความ 2026-08-29 ทั้งหมด
 
 - Source of truth ของราคาและ enable state ยังเป็น [Billing §8](mangmee-billing-subscription-spec-th.md#billing-offer-catalog) ชุด 2026-08-30 แต่ **ไม่มี tier ใดขายผ่านหน้า auto-register**; tier ที่เสียเงินแสดงเป็น preview ที่กดไม่ได้ พร้อมข้อความ “เร็ว ๆ นี้” และเหตุผลที่อ่านได้ด้วย assistive technology
 - การ์ดที่เลือกได้มีใบเดียวคือ free trial และ **ตัวเลขบนการ์ดต้องมาจาก `PLAN_TIER_PRESETS[SIGNUP_TRIAL_TIER_KEY]`** ไม่ใช่เขียนซ้ำด้วยมือ (F1: หน้าเว็บเคยโฆษณา PRO 5 สาขา / 10 คน / 100 ใบ ที่ ฿999 ขณะที่ provisioning เขียน 1/2/15) ห้ามมีคำว่า PRO/มืออาชีพ หรือราคาบนการ์ดนี้
@@ -124,12 +130,13 @@ Enum เดิมใช้ซ้ำได้ทั้งชุด (`EMAIL_PENDIN
 - ผู้สมัครใช้รหัสที่ตั้งเอง ไม่ส่ง temporary password ทุกกรณี.
 - **กรณีไม่มา claim (Owner 2026-08-30):** ① ก่อนลิงก์หมดอายุ 24 ชั่วโมง ส่งเมลเตือน 1 ฉบับ exactly-once (ออก token ใหม่ revoke เก่า ตามกติกา mint-at-send) ② ลิงก์หมดอายุแล้วการอนุมัติ**ยังคงอยู่**: ผู้สมัครกด "ขอลิงก์ใหม่" จากหน้าเช็คสถานะ หรือแอดมิน resend จากคิว → กลับ `EMAIL_PENDING` พร้อม token ใหม่ ไม่ต้องยื่น/อนุมัติซ้ำ ③ คิวแสดงธง "อนุมัติแล้ว ยังไม่เริ่มใช้งาน N วัน" ให้โทรตามด้วยเบอร์จากฟอร์ม ④ เกิน **30 วันหลังอนุมัติ** (config ได้) โดยไม่มี claim → คำขอย้ายไปมุมมองพัก (พ้นคิวหลัก) แต่ **แอดมิน reissue ลิงก์ได้เสมอ ไม่มีทางตันให้สมัครใหม่** (Owner 2026-08-30: เขาสมัครแล้ว มีข้อมูลแล้ว — และในอนาคต paid tier อาจจ่ายเงินแล้ว); self-serve resend ของผู้สมัครจำกัดที่ 30 วันแรก หลังจากนั้นผ่านแอดมิน ⑤ นาฬิกา trial 30 วันเริ่มนับตอน **provision (หลัง claim)** ไม่ใช่ตอนอนุมัติ — มา claim ช้าไม่เสียวันใช้งาน (สอดคล้อง P29 T3).
 
-### 4E. Paid branch ในอนาคต — **planned/disabled**
+### 4E. Stripe paid subscription ในอนาคต — **planned/disabled, 2026-09-08**
 
-- Free เดิน `PENDING_REVIEW --approve--> PROVISIONING` และต้องไม่เรียก EasySlip.
-- เมื่อ Owner เปิด paid offer และ P26 ผ่าน gate จึงเดิน `PENDING_REVIEW --approve paid--> PAYMENT_PENDING → PAYMENT_VERIFIED → PROVISIONING`; วางการชำระหลังอนุมัติเพื่อไม่รับเงินจากคำขอที่อาจถูก Reject.
-- Backend snapshot offer version + ราคาเป็น satang แล้วแสดง K BIZ Thai QR ที่ล็อกยอด; EasySlip v2 ตรวจ receiver/amount/duplicate ตาม [Billing F-BILL-3](mangmee-billing-subscription-spec-th.md#billing-easyslip-v2). `transRef` claim ได้ครั้งเดียว และผล verify อย่างเดียวห้ามข้าม admin approval.
-- รอบปัจจุบันไม่มี payment state/table/API/UI/config/secret/provider call; ส่วนนี้เป็น migration ของ P26 ไม่ใช่การรื้อ signup/email/idempotency core.
+- Signup/trial ไม่เรียก Stripe: Flow B คง approve → verified claim → provision; LINE คง LINE identity/approval rules ของเส้นตัวเอง. ห้าม payment webhook ข้ามการอนุมัติ/พิสูจน์ตัวตนหรือสร้างบริษัทซ้ำ.
+- เมื่อ P26 พร้อมและ Owner เปิด paid offer: OWNER ที่ยืนยันตัวตนเลือกบริษัทที่ provision แล้ว → เลือก offer → backend สร้าง Stripe hosted Checkout `mode=subscription` → signed webhook ยืนยัน subscription invoice → apply paid package/term ผ่าน application logic เดิมตาม [Billing F-BILL-3](mangmee-billing-subscription-spec-th.md#billing-stripe).
+- ราคา/Stripe Price/company mapping และสิทธิ์ซื้อถูกตรวจ backend; `requestedOfferKey` ของ signup ยังคง attribution เท่านั้น. Success redirect ไม่เป็นหลักฐาน paid และไม่ทำให้ signup ผ่าน identity/approval gate.
+- เก็บบริษัท trial เดิมเมื่อ convert; trial/card collection, first-charge timing และ grace ยังรอมติใน P26 §10. ไม่เพิ่ม `PAYMENT_PENDING/PAYMENT_VERIFIED` ใน signup state machine จากการเปลี่ยน provider ครั้งนี้.
+- เว็บไซต์ official แสดงราคา/availability และ handoff เข้าแอปตาม [mangmee_web spec](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md); ไม่ฝัง secret/รับเลขบัตร/ตรวจสลิป. รอบนี้เป็น spec-only ไม่มี payment runtime/config/provider call.
 
 ### 4F. ขั้น LINE บนหน้าสำเร็จ + กติกา merge (ใช้ P12 ที่ production แล้ว)
 
@@ -162,5 +169,5 @@ invalid/expired/replayed signature ถูกปฏิเสธ; same-request con
 2. ~~Claim TTL/resend~~ → **ตอบแล้ว 2026-08-30 (§4B):** 72 ชั่วโมง (Owner ยืนยันรอบสอง — เท่าแนวเดิมของจดหมาย Gmail); ผู้สมัคร resend เองจากหน้าเช็คสถานะแบบจำกัดความถี่; System Admin revoke/resend ได้จากคิว
 3. ~~นโยบาย duplicate~~ → **ตอบแล้ว 2026-08-29 + ขยาย 2026-08-30 (§4C):** email ซ้ำได้ = คนเดิมหลายบริษัท attach ตอน claim; taxId ชนแล้ว review; ชื่อบริษัทซ้ำได้
 4. ~~ลำดับ approve/claim + ข้อความ reject~~ → **ตอบแล้ว 2026-08-30 (§4, §4D):** Flow B; reject ค่าเริ่มต้นเงียบ + แอดมินเลือกแจ้งเป็นรายกรณี; SLA เตือนคิวเริ่มที่ 24 ชม.
-5. **อัปเดต 2026-08-30 รอบสอง:** โควตา trial = PRO (5 สาขา · 10 คน · 100 ใบ/เดือน); ระยะเวลา = default 30 วันชั่วโมงจริง + ไม่ต่อ = disable บริษัท → กลไกทั้งหมดอยู่ [P29 Company Plan Term](mangmee-company-plan-term-spec-th.md) (provision ตอน approve ตั้ง preset PRO+30 วัน — P29 plan T3); ยังเปิด: นโยบาย "100 ร้านแรก", งบ AI ต่อเดือน
+5. **อัปเดตตามมติ 2026-09-05/07:** trial = `FREE_TRIAL_15` (1 สาขา · 2 คน · 15 ใบ/เดือนตั้งแต่วันแรก); default 30 วันชั่วโมงจริงจาก provision ตาม [P29](mangmee-company-plan-term-spec-th.md). การเปลี่ยนเป็น paid/ผูกบัตร/grace ใช้คำถามชุดเดียวใน P26 §10; ไม่ใช่ PRO trial แล้ว
 6. **ยังเปิด (block เฉพาะ email จริง):** SES operations ตาม P11 §5 ข้อ 1–2 — โดเมนผู้ส่ง (แนะนำ `no-reply@mangmeeplus.com`; DNS อยู่ Cloudflare ต้องให้ Owner วาง records หรือเปิดสิทธิ์), region (แนะนำ ap-southeast-1), สิทธิ์ IAM ให้ตั้งค่า SES + ขอออกจาก SES sandbox (AWS ใช้เวลา ~1 วัน)
