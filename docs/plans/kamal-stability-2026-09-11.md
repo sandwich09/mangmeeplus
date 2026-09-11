@@ -35,3 +35,10 @@ rollback and final current-source restoration pass without repairs. Report exact
 human/automation stages, config coverage and the bounded scope of stability proof. Under10minutes
 is a measured per-run outcome, not an unconditional guarantee against future application or provider
 failures. Three clean operations are bounded regression evidence, not proof of every future release.
+
+Owner steering after the failed rollback (2026-09-11):
+- Complete one consolidated rehearsal of every known step, collect all independently checkable failures, fix them together, and only then deploy once successfully and deploy latest main again to measure repeatability. Do not use live retries to discover errors. The earlier three-live-operation sequence is superseded.
+- Owner explicitly removes login/logout acceptance for these UAT proof runs. Require complete exact config/source/image, all service readiness, public OPEN and signed result. Add an explicit UAT-only smoke mode; Production and the ordinary browser/credential modes retain their boundaries.
+- Confirmed rollback failure was before runtime mutation: runtime PATH was forwarded to the controller, and render(fake=True) replaced it with synthetic-PATH. The native Kamal image also needs its own /usr/local/bundle/bin PATH. Fix the shared environment transport using prefixed variables and the existing secrets-file expansion; preserve the entire restored app environment. Exercise the actual CLI, not only mocked method calls.
+- Exclude locally generated Prisma client from Docker context; the API Dockerfile generates it itself. This removes the observed 98.112s second compilation and the concurrent host-generation/cache race.
+- Retain and reconcile failed operation20260911T162022Z-09c1f20e read-only before releasing its locks; never change its failure into success. Current UAT remains accepted mainca50f0a6.

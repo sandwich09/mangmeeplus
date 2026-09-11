@@ -13,16 +13,27 @@ infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, app
 passing `--environment` cannot turn the UAT command into Production. There is no implicit bootstrap,
 infrastructure creation, gate opening, DNS change or fallback to another environment.
 
-**Current deployment status:** Production remains on ECS Express. Real UAT completed a recovered
-initial Kamal deployment on2026-09-11 at15:05:54Z: source12025691, operation20260911T143807Z-9ac5610f,
-`ACCEPTED_LINE_DEFERRED`, KMS signature verified. All3services/config/provider/migrations/deephealth,
-customer OPEN and operator browser admin/read/logout/rejected navigation passed. Dev is stopped.
-Full first-invocation→accepted time was37m12.597s; merge→accepted40m33.635s, including errors/recovery
-and operator time. This is not a clean no-error10minute hotfix proof. See the
-[actual result and full timing](../../docs/research/kamal-uat-real-deploy-result-2026-09-11-th.md) and
-[task state](../../docs/agent-memory/kamal-uat-real-2026-09-11.md). The command is still local/unmerged;
-[V2 protocol](../../docs/runbooks/uat-production-v2-deployment.md) remains the Production release
-protocol. LINE acceptance is deferred by owner and recorded in the signed evidence.
+**Current deployment status:** Production remains on ECS Express and dev is stopped. The controller
+was merged in PR551. Real UAT update `20260911T160653Z-45db64e5` accepted main `ca50f0a6` with full
+configuration, provider/readiness, public OPEN, owner browser acceptance and a verified KMS signature.
+Merge to command exit was13m3.966s, including290.870s of browser wait/operator work; no deployment
+repair or retry occurred in that update. A subsequent rollback stopped before runtime mutation because
+application PATH contaminated native CLI validation. Its failure is retained and is not a successful
+rollback proof. See [stability task state](../../docs/agent-memory/kamal-stability-2026-09-11.md).
+
+The owner subsequently authorized consolidated rehearsal followed by two real UAT deployments,
+without login/logout. The explicit `--uat-smoke-acceptance` option is for this real UAT scope:
+
+```sh
+infra/kamal/deploy-uat --profile mangmee-kamal-uat --mode hotfix --apply --uat-smoke-acceptance
+```
+
+It requires complete image/source/environment readback, all3HTTP health endpoints, API database
+readiness, workers' actual Redis PING and internal API connectivity, public OPEN and frontend
+availability, observed build retirement and a verified KMS result. The receipt explicitly records
+`owner_authorized_uat_config_readiness_smoke` and `loginLogout: NOT_REQUIRED_BY_OWNER`; it does not
+claim authenticated or LINE journeys were exercised. This mode rejects Production, dev and combination
+with browser acceptance. Production still follows the [V2 protocol](../../docs/runbooks/uat-production-v2-deployment.md).
 
 ## Once per environment
 

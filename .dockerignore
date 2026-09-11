@@ -7,6 +7,8 @@
 **/.env.*
 node_modules
 **/node_modules
+# Generated inside the API Dockerfile; local TypeScript generation must not invalidate COPY/cache.
+apps/api/src/generated/prisma
 dist
 **/dist
 .next
