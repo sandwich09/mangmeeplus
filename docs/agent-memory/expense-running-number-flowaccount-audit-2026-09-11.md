@@ -1,6 +1,6 @@
 # Agent Memory: Expense running number implementation
 
-Status: IMPLEMENTED; local verification complete 2026-09-11. Merge to develop/main explicitly authorized; integration pending. No deployment. Draft issuance defaults OFF pending compatibility activation.
+Status: IMPLEMENTED; local verification complete 2026-09-11. Merge to develop/main explicitly authorized via [main PR #538](https://github.com/MangmeeDev/mangmeeplus/pull/538) and [develop PR #539](https://github.com/MangmeeDev/mangmeeplus/pull/539); GitHub records the current merge state. No deployment. Draft issuance defaults OFF pending compatibility activation.
 Owner: Codex with thawatchai
 Scope: EXP first manual/date-reviewed draft save, preserved numbering, atomic/retry safety, legacy snapshots, linked SRC/RB, PDF identity and related UI gaps.
 
@@ -32,7 +32,7 @@ Verification:
 - API/web typechecks and API build passed. Final diff review and evidence checksum scan recorded in report/manifest.
 
 Next:
-- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Commit the responsive follow-up, push and merge the verified branch into develop and main as authorized; record PR/head evidence. If deployment/activation is later requested, follow mandatory runbooks and pending release acceptance.
+- Task-owned local API 3011/web 3012 stopped, generated next-env restored; cloned DBs/evidence retained. Complete the authorized integration through the linked PRs after CI; preserve the reviewed feature commit as an ancestor of both remote branches. Deployment/activation requires the mandatory runbooks and pending release acceptance.
 
 ### UI follow-up: explicit EXP table column, 2026-09-11
 
@@ -46,6 +46,12 @@ Next:
 - Shared StatCard now scales amount by available width, stacks icon on narrow cards and wraps very long numbers without truncation. Five-column expense grid begins at 1536px.
 - Web typecheck passed; 24 real-API browser page/viewport observations plus 2 DOM-only long-amount cases passed, zero clipped values and zero business mutations. Evidence: `docs/qa/evidence/expense-kpi-responsive-2026-09-11/README.md`.
 - Read the deployment freeze protocol before branch integration. The queued Readiness run `31611733340` is historical (2026-08-12, no jobs); newer Readiness `34447655824` and Production `34448486175` completed successfully on 2026-09-10. No current release run was found. No release workflow dispatched or cloud service changed.
+
+### PR integration follow-up: Thai error coverage
+
+- First PR CI runs: main `34574478497`, develop `34574481829`. Independently reproduced the existing error-translation coverage test: three new expense codes were missing from the web dictionary (17/18 checks passed). Added actionable Thai messages for deleted draft replay, changed draft command and number ownership conflict. Kept backend guards unchanged.
+- Reran `pnpm --filter @watchdog-bms/web exec tsx --test src/common/api/api-error-coverage.spec.ts src/features/expenses/substitute-receipt-preview.spec.ts`: 18 passed, zero failed/skipped. Log retained locally at `/tmp/expense-number-error-coverage-pass.log`. CI on the subsequent PR heads is authoritative for full-suite acceptance.
+- Develop merge resolves only historical conflicts; application and test trees match the verified feature branch. Preserve develop's two unrelated historical substitute receipt memory documents.
 
 ## Historical investigation and progress log (superseded by current state above)
 
