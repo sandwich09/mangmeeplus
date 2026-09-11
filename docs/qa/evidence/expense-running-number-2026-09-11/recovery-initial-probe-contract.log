@@ -1,0 +1,30 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium] › e2e/expense-number-proof.spec.ts:84:5 › Recovery proof: refresh after already-voided response then cancel the same request (233ms)
+
+
+  1) [chromium] › e2e/expense-number-proof.spec.ts:84:5 › Recovery proof: refresh after already-voided response then cancel the same request
+
+    TypeError: Cannot read properties of undefined (reading '0')
+
+      106 |   expect(after.expenseNumber).toBe(before.expenseNumber);
+      107 |   expect(after.vendorNameSnapshot).toBe(before.vendorNameSnapshot);
+    > 108 |   expect(cancelled.lines[0].linkedExpenseId).toBe(after.id);
+          |                         ^
+      109 | });
+      110 |
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/expense-number-proof.spec.ts:108:25
+
+    Error Context: ../../../tmp/expense-number-proof-recovery-results/expense-number-proof-Recov-e9237-hen-cancel-the-same-request-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-recovery-results/expense-number-proof-Recov-e9237-hen-cancel-the-same-request-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-recovery-results/expense-number-proof-Recov-e9237-hen-cancel-the-same-request-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/expense-number-proof.spec.ts:84:5 › Recovery proof: refresh after already-voided response then cancel the same request

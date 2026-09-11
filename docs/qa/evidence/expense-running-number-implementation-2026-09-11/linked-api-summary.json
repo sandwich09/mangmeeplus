@@ -1,0 +1,315 @@
+[
+  {
+    "stage": "original policy",
+    "http": 200,
+    "facts": {
+      "id": "cmtwjz6hl002fqtk1vjk4vnom",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "stage": "test policy",
+    "http": 200,
+    "facts": {
+      "id": "cmtwjz6hl002fqtk1vjk4vnom",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "stage": "source before",
+    "http": 200,
+    "facts": {
+      "id": "qa-exp-number-impl-linked4",
+      "status": "NEEDS_REVIEW",
+      "expenseNumber": null,
+      "expenseDate": "2026-08-22T00:00:00.000Z",
+      "paidAmount": "0",
+      "outstandingAmount": "100",
+      "paymentStatus": "UNPAID",
+      "vendorNameSnapshot": "LOCAL QA ร้านทดสอบใบเบิก"
+    }
+  },
+  {
+    "stage": "source eligibility",
+    "http": 200,
+    "facts": {}
+  },
+  {
+    "stage": "create linked draft",
+    "http": 201,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "DRAFT",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "submit",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "source edit locked",
+    "http": 409,
+    "facts": {}
+  },
+  {
+    "stage": "reject",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "REJECTED",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "reopen",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "correct reason",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "resubmit",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "approve",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "FINANCE_REVIEW",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "PENDING",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "finance return",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NEEDS_INFO",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "resubmit after finance",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "NOT_REQUIRED",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "approve again",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "FINANCE_REVIEW",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "PENDING",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "finance approve materialization",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "projection numbers",
+    "http": 200,
+    "facts": {}
+  },
+  {
+    "stage": "pay",
+    "http": 201,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PAID",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "0",
+      "paymentTotalAmount": "100",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "PAID"
+    }
+  },
+  {
+    "stage": "retry pay",
+    "http": 201,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PAID",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "0",
+      "paymentTotalAmount": "100",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "PAID"
+    }
+  },
+  {
+    "stage": "paid detail",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "PAID",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "0",
+      "paymentTotalAmount": "100",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "PAID"
+    }
+  },
+  {
+    "stage": "void payment",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "retry void",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "unpaid detail",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "UNPAID"
+    }
+  },
+  {
+    "stage": "cancel projections",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "CANCELLED",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "source after",
+    "http": 200,
+    "facts": {
+      "id": "qa-exp-number-impl-linked4",
+      "status": "NEEDS_REVIEW",
+      "expenseNumber": null,
+      "expenseDate": "2026-08-22T00:00:00.000Z",
+      "paidAmount": "0",
+      "outstandingAmount": "100",
+      "paymentStatus": "UNPAID",
+      "vendorNameSnapshot": "LOCAL QA ร้านทดสอบใบเบิก"
+    }
+  },
+  {
+    "stage": "cancelled detail",
+    "http": 200,
+    "facts": {
+      "id": "cmtwl174a000pnik1smtngoxt",
+      "status": "CANCELLED",
+      "requestNo": "RB-202609-00007",
+      "outstandingAmount": "100",
+      "paymentTotalAmount": "0",
+      "financeReviewStatus": "APPROVED_FOR_PAYMENT",
+      "paymentStatus": "NOT_PAYABLE"
+    }
+  },
+  {
+    "stage": "restore policy",
+    "http": 200,
+    "facts": {
+      "id": "cmtwjz6hl002fqtk1vjk4vnom",
+      "status": "ACTIVE"
+    }
+  }
+]

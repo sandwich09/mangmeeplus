@@ -184,6 +184,7 @@ export class CaptureLineExpenseNoteUseCase {
 
     const expense = await this.createDraft.execute(ctx, {
       captureSource: 'LINE_UPLOAD',
+      idempotencyKey: `line-draft:${cmd.lineEventId ?? cmd.lineMessageId}`,
       // The LINE branch default the dispatcher resolved (Owner 2026-08-27). Absent — no caller, or
       // a company where the rule found nothing to pick — leaves the create resolver's own rule in
       // charge exactly as before.

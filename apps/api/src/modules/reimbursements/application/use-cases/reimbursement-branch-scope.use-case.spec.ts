@@ -91,7 +91,7 @@ const WRITES = [
     name: 'void a payment and its ledger reversal',
     permissions: ['reimbursement.payment.void'],
     claim: otherBranchClaim(),
-    run: (repo: any, ctx: any) => new VoidReimbursementPaymentUseCase(repo, audit, outbox, sequence, sequence, sequence, fakeDetailEvidence as any)
+    run: (repo: any, ctx: any) => new VoidReimbursementPaymentUseCase(repo, fakeDetailEvidence as any)
       .execute(ctx, 'rb-1', 'pay-1', { reason: 'จ่ายผิด' } as any),
   },
   {

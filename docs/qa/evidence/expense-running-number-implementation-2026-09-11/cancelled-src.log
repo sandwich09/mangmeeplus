@@ -1,0 +1,7 @@
+
+Running 2 tests using 1 worker
+
+  ✓  1 [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › DIGITAL: view and cancelled navigation show disabled forms and preserve file previews (7.5s)
+  ✓  2 [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › PAPER: view and cancelled navigation show disabled forms and preserve file previews (6.6s)
+
+  2 passed (15.8s)

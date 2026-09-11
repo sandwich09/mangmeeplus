@@ -43,7 +43,14 @@ describe('substitute receipt evidence', () => {
     ).toString('utf8');
 
     assert.match(artifact, /ใบรับรองแทนใบเสร็จรับเงิน/);
-    assert.match(artifact, /เลขอ้างอิงรายการ: SRC-EXP-1-V1/);
+    assert.match(artifact, /เลขใบแทน: SRC-EXP-1-V1/);
+    assert.match(artifact, /เลขรายจ่าย: -/);
+    const withExpense = { ...snapshot, expense: { ...snapshot.expense, expenseNumber: 'EXP-202607-00001' } };
+    for (const paperForm of [false, true]) {
+      const printed = renderSubstituteReceiptSvg(withExpense, undefined, undefined, undefined, { paperForm }).toString('utf8');
+      assert.match(printed, /เลขใบแทน: SRC-EXP-1-V1/);
+      assert.match(printed, /เลขรายจ่าย: EXP-202607-00001/);
+    }
     assert.match(artifact, /หกสิบห้าบาทถ้วน/);
     assert.match(artifact, /13 ก\.\u0e04\. 2569/);
     assert.match(artifact, /ผู้อนุมัติ · 14 ก\.\u0e04\. 2569/);

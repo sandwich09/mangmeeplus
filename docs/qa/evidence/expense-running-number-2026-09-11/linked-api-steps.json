@@ -1,0 +1,297 @@
+[
+  {
+    "stage": "original policy",
+    "http": 200,
+    "result": {
+      "id": "cmtwi5vx9000qdnk1nedj99oz",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "stage": "test policy",
+    "http": 200,
+    "result": {
+      "id": "cmtwi5vx9000qdnk1nedj99oz",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "stage": "source before",
+    "http": 200,
+    "result": {
+      "id": "qa-exp-number-proof-reversal3",
+      "status": "NEEDS_REVIEW",
+      "expenseNumber": null,
+      "expenseDate": "2026-08-22T00:00:00.000Z",
+      "paymentStatus": "UNPAID",
+      "postingStatus": "not_required",
+      "paidAmount": "0",
+      "outstandingAmount": "100",
+      "netPayableAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "source eligibility",
+    "http": 200,
+    "result": {}
+  },
+  {
+    "stage": "create linked draft",
+    "http": 201,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "DRAFT",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    }
+  },
+  {
+    "stage": "submit",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "source edit locked",
+    "http": 409,
+    "result": {
+      "message": "หลักฐานนี้อยู่ในคำขอเบิกแล้ว กรุณาดำเนินการผ่านคำขอเบิกเดิม",
+      "code": "substitute_source_has_live_claim"
+    }
+  },
+  {
+    "stage": "reject",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "REJECTED",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "reopen",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    }
+  },
+  {
+    "stage": "correct reason",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    }
+  },
+  {
+    "stage": "resubmit",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "approve",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "FINANCE_REVIEW",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "UNPAID",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "finance return",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "DRAFT",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "resubmit after finance",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PENDING_APPROVAL",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "NOT_PAYABLE",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "approve again",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "FINANCE_REVIEW",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "UNPAID",
+      "postingStatus": "not_required",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "finance approve materialization",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "UNPAID",
+      "postingStatus": "pending",
+      "outstandingAmount": "100"
+    },
+    "payments": []
+  },
+  {
+    "stage": "pay",
+    "http": 201,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PAID",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "PAID",
+      "postingStatus": "pending",
+      "outstandingAmount": "0"
+    },
+    "payments": [
+      {
+        "id": "cmtwiabd6003ndnk1mqrgedjp",
+        "status": "RECORDED",
+        "paidAmount": "100",
+        "postingStatus": "pending"
+      }
+    ]
+  },
+  {
+    "stage": "retry pay",
+    "http": 201,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PAID",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "PAID",
+      "postingStatus": "pending",
+      "outstandingAmount": "0"
+    },
+    "payments": [
+      {
+        "id": "cmtwiabd6003ndnk1mqrgedjp",
+        "status": "RECORDED",
+        "paidAmount": "100",
+        "postingStatus": "pending"
+      }
+    ]
+  },
+  {
+    "stage": "paid detail",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "PAID",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "PAID",
+      "postingStatus": "pending",
+      "outstandingAmount": "0"
+    },
+    "payments": [
+      {
+        "id": "cmtwiabd6003ndnk1mqrgedjp",
+        "status": "RECORDED",
+        "paidAmount": "100",
+        "postingStatus": "pending"
+      }
+    ]
+  },
+  {
+    "stage": "void payment",
+    "http": 200,
+    "result": {
+      "id": "cmtwiaazu002cdnk1fxbgpsxf",
+      "status": "READY_FOR_PAYMENT",
+      "requestNo": "RB-202609-00003",
+      "paymentStatus": "UNPAID",
+      "postingStatus": "pending",
+      "outstandingAmount": "100"
+    },
+    "payments": [
+      {
+        "id": "cmtwiabd6003ndnk1mqrgedjp",
+        "status": "VOIDED",
+        "paidAmount": "100",
+        "postingStatus": "not_required"
+      }
+    ]
+  },
+  {
+    "stage": "retry void",
+    "http": 422,
+    "result": {
+      "message": "Payment is already voided"
+    }
+  },
+  {
+    "stage": "restore policy",
+    "http": 200,
+    "result": {
+      "id": "cmtwi5vx9000qdnk1nedj99oz",
+      "status": "ACTIVE"
+    }
+  },
+  {
+    "stage": "recovery refresh (first recovery run)",
+    "http": 200,
+    "result": {
+      "status": "READY_FOR_PAYMENT"
+    },
+    "evidence": "/tmp/expense-number-proof-linked-api-recovery.json first run; final DB inspection"
+  },
+  {
+    "stage": "recovery cancel (first recovery run)",
+    "http": 200,
+    "result": {
+      "status": "CANCELLED"
+    },
+    "evidence": "first recovery run; confirmed by subsequent GET/DB"
+  }
+]
