@@ -174,6 +174,7 @@ class Release:
         require(target_path.exists(), 'Target is not enrolled: ' + str(target_path) + '; see infra/kamal/README.md')
         self.target = validate_target(read(target_path), args.environment)
         self.manual_browser = bool(args.uat_browser_acceptance)
+        self.smoke_acceptance = bool(getattr(args, 'uat_smoke_acceptance', False))
         self.validate_acceptance_target()
         self.work = self.state / 'runs' / self.id
         self.work.mkdir(parents=True, mode=0o700)
@@ -383,17 +384,19 @@ class Release:
             (d/'ssh_config').write_text(ssh)
             write(d/'config/deploy.yml',native_config(self.target,service,self.envs[service],self.build['sourceCommit'],d))
             (d/'.kamal').mkdir()
-            (d/'.kamal/secrets').write_text('\n'.join(k+'=$'+k for k in ('KAMAL_REGISTRY_PASSWORD',*sorted(self.envs[service])))+'\n')
+            # Application PATH/HOME must never replace the controller or Kamal process environment.
+            (d/'.kamal/secrets').write_text('KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD\n'+
+                '\n'.join(k+'=$KAMAL_APP_'+k for k in sorted(self.envs[service]))+'\n')
             self.kamal(service,['config'],fake=True)
 
     def kamal(self, service, command, version=None, fake=False):
         d=self.work/'native'/service
-        env=dict(os.environ,**self.envs[service],KAMAL_REGISTRY_PASSWORD='synthetic' if fake else self.token)
-        if fake: env.update({k:'synthetic-'+k for k in self.envs[service]})
+        env=dict(os.environ,KAMAL_REGISTRY_PASSWORD='synthetic' if fake else self.token)
+        env.update({'KAMAL_APP_'+k:'synthetic-'+k if fake else v for k,v in self.envs[service].items()})
         args=['docker','run','--rm','-i','-v',str(d)+':/workdir']
         if fake: args+=['--network','none']
         else: args+=['-v','/var/run/docker.sock:/var/run/docker.sock']
-        for k in ('KAMAL_REGISTRY_PASSWORD',*self.envs[service]): args+=['--env',k]
+        for k in ('KAMAL_REGISTRY_PASSWORD',*('KAMAL_APP_'+k for k in self.envs[service])): args+=['--env',k]
         args += [KAMAL,*command,'--version',version or self.version(service)]
         return self.command(args,env=env,timeout=420,log=None if fake else 'kamal-'+service+'-'+command[0])
 
@@ -721,15 +724,25 @@ class Release:
                 and endpoint[1]==('3000' if service=='api-web' else '3002'), 'Native proxy is serving a different container')
 
     def deep_health(self, service, name=None, hosts=None):
-        if service=='workers': return
-        port=3000 if service=='api-web' else 3002
+        port=3002 if service=='ai-gateway' else int(self.envs[service].get('PORT','3000'))
         path='/v1/internal/health/readiness' if service=='api-web' else '/v1/health'
-        script="const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));fetch(p.url,{headers:p.headers,signal:AbortSignal.timeout(15000)}).then(async r=>{const d=await r.json();if(!r.ok||d.status!=='ok'||(p.db&&d.db!=='ok'))throw Error('readiness');console.log(JSON.stringify({passed:true,status:d.status,db:d.db}));}).catch(()=>process.exit(1))"
+        script="""const fs=require('fs');const p=JSON.parse(fs.readFileSync(0,'utf8'));
+async function check(url,headers,db){const r=await fetch(url,{headers,signal:AbortSignal.timeout(15000)});const d=await r.json();if(!r.ok||d.status!=='ok'||(db&&d.db!=='ok'))throw Error('readiness');return d;}
+(async()=>{const d=await check(p.url,p.headers,p.db);const proof={passed:true,status:d.status,db:d.db};
+if(p.worker&&process.env.QUEUE_ENABLED!=='false'){
+ const Redis=require(require.resolve('ioredis',{paths:[require.resolve('bullmq')]}));
+ const redis=new Redis(process.env.REDIS_URL,{lazyConnect:true,connectTimeout:10000,maxRetriesPerRequest:0,retryStrategy:()=>null});redis.on('error',()=>{});
+ try{await redis.connect();if(await redis.ping()!=='PONG')throw Error('redis');proof.redis='ok';}finally{redis.disconnect();}
+ await check(process.env.INTERNAL_API_URL.replace(/\\/$/,'')+'/internal/health/readiness',{'x-worker-token':process.env.WORKER_INTERNAL_TOKEN},true);proof.internalApi='ok';
+}console.log(JSON.stringify(proof));})().catch(()=>process.exit(1));"""
         token=self.envs['api-web']['WORKER_INTERNAL_TOKEN']
         name=name or self.target['servicePrefix']+('' if service=='api-web' else '-'+service)+'-web-'+self.version(service)
         for h in hosts or self.target['hosts'][service]:
-            self.remote(h,['docker','exec','-i',name,'node','-e',script],stdin=json.dumps({
-                'url':f'http://127.0.0.1:{port}'+path,'headers':{'x-worker-token':token} if service=='api-web' else {},'db':service=='api-web'}))
+            proof=json.loads(self.remote(h,['docker','exec','-i',name,'node','-e',script],stdin=json.dumps({
+                'url':f'http://127.0.0.1:{port}'+path,'headers':{'x-worker-token':token} if service=='api-web' else {},
+                'db':service=='api-web','worker':service=='workers'})))
+            require(proof.get('passed') is True,'Service readiness did not pass')
+            self.receipt.setdefault('readiness',{}).setdefault(service,{})[h['instanceId']]=proof
 
     def deploy(self):
         self.previous={}
@@ -768,6 +781,10 @@ class Release:
         self.receipt['launchRetirement']=result
 
     def validate_acceptance_target(self):
+        if getattr(self, 'smoke_acceptance', False):
+            require(self.args.environment=='uat' and self.target['kind']=='uat' and not self.manual_browser,
+                    'Smoke acceptance is an explicit real-UAT-only mode; cannot combine with browser acceptance')
+            return
         if self.manual_browser:
             require(self.args.environment=='uat' and self.target['kind']=='uat',
                     'Browser acceptance is only supported for a real UAT deployment or rollback')
@@ -845,6 +862,16 @@ class Release:
             require(public.get('effectiveState',public.get('state'))=='OPEN','Customer platform access is not OPEN')
             html=call('/login',json_response=False)
             require(b'data-platform-access="open"' in html,'Customer login is not open')
+            if getattr(self, 'smoke_acceptance', False):
+                observed={}
+                for service in SERVICES:
+                    observed[service]=self.inspect_service(service)
+                    self.deep_health(service)
+                self.receipt['runtimeReadback']=observed
+                self.receipt['customerAcceptance']={'passed':True,'kind':'owner_authorized_uat_config_readiness_smoke',
+                    'checks':checks,'allServiceConfigAndReadinessPassed':True,
+                    'loginLogout':'NOT_REQUIRED_BY_OWNER','line':'DEFERRED_BY_OWNER'}
+                return
             if self.manual_browser:
                 browser=self.browser_acceptance()
                 public=call('/api/v1/auth/platform-access')
@@ -883,7 +910,7 @@ class Release:
             'controllerSha256':self.receipt.get('controllerSha256'),
             'controllerConfigSha256':self.receipt.get('controllerConfigSha256'),
             'rollbackOf':self.receipt.get('rollbackOf'),
-            'runtimeReadback':self.receipt['runtimeReadback'],'agentcore':self.receipt['agentcore'],
+            'runtimeReadback':self.receipt['runtimeReadback'],'readiness':self.receipt.get('readiness',{}),'agentcore':self.receipt['agentcore'],
             'launchRetirement':self.receipt['launchRetirement'],
             'customerAcceptance':self.receipt['customerAcceptance'],'elapsedThroughAcceptanceSeconds':round(time.monotonic()-self.clock,3)}
         if self.manual_browser:
@@ -918,6 +945,7 @@ def main():
     p.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
     p.add_argument('--uat-controller-sha256', help='Explicit hash-bound test of the new local controller on real UAT only')
     p.add_argument('--uat-browser-acceptance', action='store_true', help='Wait for owner login and retained operator browser evidence on real UAT; no stored login password')
+    p.add_argument('--uat-smoke-acceptance', action='store_true', help='Owner-authorized real UAT config/readiness and public OPEN smoke, without login/logout')
     p.add_argument('--rollback',help='Restore the complete previous deployment captured by this terminal hotfix operation ID')
     args=p.parse_args()
     release=None
@@ -927,7 +955,7 @@ def main():
         if isinstance(error,KeyboardInterrupt): message='Interrupted; inspect the retained operation before retrying'
         else: message=str(error)
         if release:
-            if release.receipt['status']=='RUNNING':
+            if release.receipt['status'] in ('RUNNING','AWAITING_BROWSER_ACCEPTANCE'):
                 release.receipt['status']='FAILED_RECONCILIATION_REQUIRED' if release.changed else 'FAILED'
             release.receipt['error']=release.redact(message)
         print('Release stopped: '+(release.redact(message) if release else message),file=sys.stderr)

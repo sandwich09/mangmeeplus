@@ -5,7 +5,9 @@ import base64
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 import unittest
@@ -20,6 +22,68 @@ bootstrap = importlib.util.module_from_spec(spec); spec.loader.exec_module(boots
 
 
 class Stability(unittest.TestCase):
+    def test_actual_process_keeps_host_path_and_maps_every_application_value(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r, _ = contracts.Contracts().runner(tmp)
+            del r.render
+            r.build={'sourceCommit':'a'*40}; r.token='synthetic-registry-token'
+            r.envs={s:{'PATH':'/application/bin','HOME':'/application','TOKEN':'synthetic-token'} for s in m.SERVICES}
+            key=Path(tmp)/'id_ed25519'; key.write_text('synthetic-key'); key.chmod(0o600)
+            r.target['sshKey']=str(key); (r.work/'known_hosts').write_text('synthetic-host-key')
+            binary=Path(tmp)/'docker'
+            binary.write_text('#!'+sys.executable+'\nimport json,os,sys\nprint(json.dumps({"path":os.environ["PATH"],"home":os.environ.get("HOME"),"app":{k:os.environ[k] for k in ("KAMAL_APP_PATH","KAMAL_APP_HOME","KAMAL_APP_TOKEN")},"argv":sys.argv[1:]}))\n')
+            binary.chmod(0o700)
+            host_path=tmp+':'+os.environ['PATH']
+            with patch.dict(os.environ,PATH=host_path):
+                r.render()
+                for service in m.SERVICES:
+                    secrets=(r.work/'native'/service/'.kamal/secrets').read_text()
+                    self.assertIn('PATH=$KAMAL_APP_PATH\n',secrets)
+                    for fake in (True,False):
+                        result=json.loads(r.kamal(service,['config'],fake=fake))
+                        self.assertEqual(result['path'],host_path)
+                        self.assertEqual(result['home'],os.environ.get('HOME'))
+                        for key,value in r.envs[service].items():
+                            self.assertEqual(result['app']['KAMAL_APP_'+key],'synthetic-'+key if fake else value)
+                        self.assertNotIn('PATH',result['argv'])
+
+    def test_uat_smoke_requires_all_service_config_health_and_open_without_login(self):
+        for failure in (None,'config','health','closed'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                r,_=contracts.Contracts().runner(tmp); del r.acceptance
+                r.target=contracts.target('uat'); r.smoke_acceptance=True; r.manual_browser=False
+                r.validate_acceptance_target()
+                observed=[]; healthy=[]
+                def inspect(service):
+                    if failure=='config' and service=='workers': raise ValueError('config mismatch')
+                    observed.append(service);return [{'configValidationPassed':True}]
+                def health(service):
+                    if failure=='health' and service=='workers': raise ValueError('workers not ready')
+                    healthy.append(service)
+                r.inspect_service=inspect;r.deep_health=health
+                class Response:
+                    status=200
+                    def __init__(self,body):self.body=body
+                    def __enter__(self):return self
+                    def __exit__(self,*args):pass
+                    def read(self):return self.body
+                class Opener:
+                    def open(self,request,timeout):
+                        assert request.method=='GET' and not request.full_url.endswith('/logout')
+                        return Response(b'<main data-platform-access="open">' if request.full_url.endswith('/login')
+                            else (b'{"state":"CLOSED"}' if failure=='closed' else b'{"state":"OPEN"}'))
+                with patch.object(m.urllib.request,'build_opener',return_value=Opener()):
+                    if failure:
+                        with self.assertRaises(ValueError):r.acceptance()
+                        self.assertNotIn('customerAcceptance',r.receipt)
+                    else:
+                        r.acceptance()
+                        self.assertEqual(observed,list(m.SERVICES));self.assertEqual(healthy,list(m.SERVICES))
+                        self.assertEqual(r.receipt['customerAcceptance']['loginLogout'],'NOT_REQUIRED_BY_OWNER')
+                for kind in ('dev','production'):
+                    r.target=contracts.target(kind);r.args.environment=r.target['environment']
+                    with self.assertRaises(ValueError):r.validate_acceptance_target()
+
     def test_bootstrap_only_userdata_changes_and_refuses_foreign_target(self):
         resource = {'Type': 'AWS::EC2::Instance', 'Properties': {
             'Tags': [{'Key': 'Environment', 'Value': 'uat'}], 'BlockDeviceMappings': [{'Ebs': {'VolumeSize': 40}}],

@@ -32,6 +32,18 @@ proof. Operator และ agent ทุกคนต้องใช้ runbook น
 Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
 Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
 
+## Owner-authorized UAT Kamal stability proof — 2026-09-11
+
+The owner explicitly requires consolidated rehearsal and fixes before the next live run, followed by
+one successful deployment and another latest-main deployment for timing. For these UAT proof runs,
+login/logout is no longer required; complete config and system readiness are the acceptance boundary.
+Use the reviewed main controller with `infra/kamal/deploy-uat --profile mangmee-kamal-uat --mode hotfix
+--apply --uat-smoke-acceptance`. Keep one operation and its complete clock, exact source/config/image,
+API/DB/AI/workers/Redis/internal-API readiness, public OPEN and signed smoke result. Retain every
+failure and reconcile it before another operation; rehearsal evidence is never called a live deploy.
+This explicit UAT exception does not change Production V2, its gate decisions, or its acceptance.
+Track local Kamal operation IDs separately from UAT/READY/Production workflow run IDs.
+
 ## เส้นทางปกติ ฉบับคน deploy
 
 จำ flow เดียวนี้: **UAT → READY → Production**. จด ID สามตัวไว้เสมอ:
