@@ -2351,6 +2351,8 @@ export class PrismaExpenseRepository {
     /** Claim-born confirm under reimbursement authority: the signed ใบเบิก covers the missing
      *  receipt, so no expense-side substitute artifact is demanded (mirrors the use-case gate). */
     substituteCoveredByClaimForm?: boolean;
+    /** Internal claim-review authority, rechecked against the exact persisted projection. */
+    reimbursementReview?: { requestId: string; lineId: string };
     vatSourceOverride?: ExpenseVatSourceOverrideInput;
     confirmationAudit?: { requestId: string; authority?: Record<string, unknown> };
     outboxEvent: { eventKey: string; payloadJson: Record<string, unknown> };
@@ -2412,7 +2414,13 @@ export class PrismaExpenseRepository {
 
       const coveredByClaimForm = Boolean(input.substituteCoveredByClaimForm)
         && !current.substituteReceiptGeneratedAt && current.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-      const evidenceError = expenseEvidenceConfirmationError(currentRecord, coveredByClaimForm);
+      if (input.reimbursementReview && (input.reimbursementReview.requestId !== current.sourceReimbursementRequestId
+        || input.reimbursementReview.lineId !== current.sourceReimbursementLineId)) {
+        throw new ForbiddenException('reimbursement_projection_authority_mismatch');
+      }
+      const reviewedByClaim = Boolean(input.reimbursementReview)
+        && !current.substituteReceiptGeneratedAt && current.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
+      const evidenceError = expenseEvidenceConfirmationError(currentRecord, coveredByClaimForm || reviewedByClaim);
       if (evidenceError) throw new ConflictException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
       let acceptedVat: ReturnType<typeof acceptExpenseVatSource> | undefined;
       if (input.vatSourceOverride) {

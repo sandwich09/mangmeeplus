@@ -411,3 +411,9 @@ Definition of done: กฎร่วมถูกเรียกครบทุก
 - ไม่มี migration, package.json/dependency, accounting handoff หรือ deployment ในรอบนี้
 
 รายละเอียดคำสั่ง ผลแต่ละ Txx และข้อจำกัดอยู่ใน [รายงานหลังแก้](../research/expense-evidence-implementation-verification-2026-09-11.md) การเก็บรายละเอียดใบแทนก่อน prepare ยังคงเป็น session storage ตาม wizard เดิม ไม่อ้างว่าเป็นข้อมูล server ที่เก็บถาวร การทดลองกับผู้ใช้สูงอายุ T34 ยังไม่ได้ทำ
+
+### T30 integration clarification — approved claim projections
+
+Expense evidence review does not replace the existing reimbursement approval/finance review. A claim projection confirmed through the internal reimbursement authority uses that review whether the claim has a receipt or a policy-approved missing-receipt reason. The latter permission remains separate: recognizing the claim review must not allow missing receipts automatically. Both request and line IDs must match the persisted projection inside the final transaction; source snapshots, amounts, branch, financial locks and any actual SRC artifact requirements still apply. Ordinary expense confirmation cannot infer this authority merely from linked-claim fields.
+
+Verification: the real PostgreSQL linked-source confirmation/payout test now checks ordinary confirmation, direct repository confirmation without authority, and a wrong claim line all fail without a confirmation event; the exact reviewed claim succeeds and pays the employee once.

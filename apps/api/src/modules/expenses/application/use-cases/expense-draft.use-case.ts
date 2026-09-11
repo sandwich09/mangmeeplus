@@ -1201,7 +1201,8 @@ export class ConfirmExpenseUseCase {
     ({ expense: updated, finalized } = await this.repo.finalizeAndConfirmExpenseCas({
       id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
       expectedSourceChecksum: expenseTaxSourceChecksum(r),
-      substituteCoveredByClaimForm: evidenceCoveredByClaimForm,
+      substituteCoveredByClaimForm: Boolean(authority?.allowMissingReceiptWithReason) && evidenceCoveredByClaimForm,
+      reimbursementReview: authority ? { requestId: authority.reimbursementRequestId, lineId: authority.reimbursementLineId } : undefined,
       vatSourceOverride,
       postingStatus, vendorSnapshotJson,
       confirmationAudit: { requestId: ctx.requestId ?? eventRequestId, ...(authority && { authority: {
