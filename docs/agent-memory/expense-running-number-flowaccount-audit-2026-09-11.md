@@ -55,6 +55,15 @@ Next:
 - Final local `pnpm test` passed across all workspace packages, including 1,690 web tests, 1,103 AI Gateway, 246 contracts, 142 config, 43 workers and the API suite (dot reporter does not print a test count). Counts overlap focused suites and must not be added to earlier totals. Log: `/tmp/expense-number-final-workspace-tests-pass.log`. No external/live channel acceptance is implied.
 - Develop merge resolves only historical conflicts; application and test trees match the verified feature branch. Preserve develop's two unrelated historical substitute receipt memory documents.
 
+### Current develop integration, 2026-09-11
+
+- Main PR #538 merged as `e5baef9bf5d5f6937adcb564372e6719a19d210c` after exact-head CI `34575426975` passed. Feature head `ef0bedeba7e316f4aef3446dcde84d9c9f3abb67` is retained in history. Develop candidate `868ceff28c8eb0ad7aee89709b9e9e06972077ea` also passed CI `34575442526`.
+- While waiting, PR #537 advanced develop to `97ae64527d8abeb1f7730a6065ef3ccc4e0f6bb7`, adding the current evidence-review contract. Integrated that target in `1ab6e107`, preserving both idempotency exclusions and nullable category input, and combining reviewed fixtures with the four-argument atomic confirmation constructor.
+- Integration exposed a real gap: source-backed claim projections failed expense evidence review after finance approval. The exact internal company/request/line/branch authority now uses the approved claim evidence for projections. Normal expense confirmation still requires current evidence review; missing-receipt policy, source validation inside the transaction, VAT, period and payment guards remain intact. Added rejection assertions for wrong authority and normal unreviewed confirmation to the existing real PG flow; no guard bypass through client input.
+- Refreshed only the numbering PG fixture with an actual linked receipt and current evidence fingerprint. Rebuilt contracts after checkout; an initial stale-dist export failure and default-heap tsc OOM were local setup issues, resolved by rebuilding contracts and using the documented 10 GB typecheck heap.
+- Combined source validation: full `pnpm test` passed; API/web tsc passed; API build passed; 70 real PG tests passed with zero skips; two real API/browser save/date-review E2Es passed. Logs `/tmp/expense-number-develop-{final-tests,final-pg,final-api-types,combined-web-types,combined-build,combined-browser}.log`. Counts overlap earlier evidence, not additional independent cases.
+- Complete PR #539 and synchronize the same verified integration into main; no deployment, flag activation or customer gate change.
+
 ## Historical investigation and progress log (superseded by current state above)
 
 Status: Proof investigation completed 2026-09-11; spec recorded, WAITING FOR IMPLEMENTATION. New EXP policy, migration and full browser/ledger acceptance are not implemented or proven.

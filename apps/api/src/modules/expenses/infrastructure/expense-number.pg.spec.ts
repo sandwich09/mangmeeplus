@@ -11,6 +11,7 @@ import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.r
 import { CreateExpenseDraftUseCase } from '../application/use-cases/expense-draft.use-case';
 import { expenseTaxSourceChecksum } from '../domain/logic/expense-status.logic';
 import { canNumberReviewedDraft } from './expense-number';
+import { expenseEvidenceFingerprint } from '@watchdog-bms/contracts';
 
 // Opt-in local PostgreSQL; every row is test-owned. Launch/tax services are isolated here;
 // allocation, transactions, audit, lines, source constraints and uniqueness are real PostgreSQL.
@@ -53,7 +54,17 @@ describe('expense running identity (PostgreSQL)', { skip: !enabled }, () => {
     await client.$disconnect();
   });
   async function ready(id: string) {
-    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT', taxEvidenceStatus: 'SUPPORTING_ONLY' } });
+    const file = await client.attachmentObject.create({ data: { companyId, branchId, storageProvider: 'LOCAL', bucket: 'local',
+      objectKey: `number-test/${id}`, originalFileName: 'receipt.png', mimeType: 'image/png', byteSize: 1,
+      checksumSha256: 'a'.repeat(64), uploadedByUserId: userId, status: 'ACTIVE' } });
+    await client.attachmentLink.create({ data: { companyId, attachmentId: file.id, targetType: 'expense.record', targetId: id,
+      purpose: 'expense.receipt', linkedByUserId: userId } });
+    await client.expenseRecord.update({ where: { id }, data: { status: 'READY_FOR_CONFIRMATION', sourceDocumentType: 'RECEIPT',
+      taxEvidenceStatus: 'SUPPORTING_ONLY', primaryAttachmentId: file.id } });
+    const reviewed = (await repo.findByIdWithRelations(companyId, id))!;
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [file.id], reason: '' };
+    await client.expenseRecord.update({ where: { id }, data: { aiVerificationSummaryJson: { documentReview: { version: 2,
+      reviewedAt: reviewed.updatedAt.toISOString(), reviewedByUserId: userId, assessment, fingerprint: expenseEvidenceFingerprint(reviewed, assessment) } } } });
     const source = (await repo.findByIdWithRelations(companyId, id))!;
     return { companyId, id, actorUserId: userId, confirmationAudit: { requestId: randomUUID() }, expectedUpdatedAt: source.updatedAt,
       expectedSourceChecksum: expenseTaxSourceChecksum(source), postingStatus: 'pending' as const, vendorSnapshotJson: null,
