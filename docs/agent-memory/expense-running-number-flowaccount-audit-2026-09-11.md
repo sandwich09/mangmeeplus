@@ -51,6 +51,8 @@ Next:
 
 - First PR CI runs: main `34574478497`, develop `34574481829`. Independently reproduced the existing error-translation coverage test: three new expense codes were missing from the web dictionary (17/18 checks passed). Added actionable Thai messages for deleted draft replay, changed draft command and number ownership conflict. Kept backend guards unchanged.
 - Reran `pnpm --filter @watchdog-bms/web exec tsx --test src/common/api/api-error-coverage.spec.ts src/features/expenses/substitute-receipt-preview.spec.ts`: 18 passed, zero failed/skipped. Log retained locally at `/tmp/expense-number-error-coverage-pass.log`. CI on the subsequent PR heads is authoritative for full-suite acceptance.
+- Full `pnpm test` exposed remaining legacy fixtures: create mocks did not invoke the new transaction callback, confirm constructor arity was still seven, and display assertions expected the old date/reference labels. Updated those fixtures without weakening the amount/launch-gate assertions; paper tests now require both EXP and SRC references.
+- Final local `pnpm test` passed across all workspace packages, including 1,690 web tests, 1,103 AI Gateway, 246 contracts, 142 config, 43 workers and the API suite (dot reporter does not print a test count). Counts overlap focused suites and must not be added to earlier totals. Log: `/tmp/expense-number-final-workspace-tests-pass.log`. No external/live channel acceptance is implied.
 - Develop merge resolves only historical conflicts; application and test trees match the verified feature branch. Preserve develop's two unrelated historical substitute receipt memory documents.
 
 ## Historical investigation and progress log (superseded by current state above)
