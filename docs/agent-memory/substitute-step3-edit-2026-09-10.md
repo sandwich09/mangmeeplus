@@ -1,6 +1,6 @@
 # Agent Memory: Substitute receipt step 3 editing
 
-Status: main merged through PR515; remaining develop PR514 integration incorporates the latest upstream preview changes and awaits its final CI.
+Status: complete. Payment-date editing and CI repair merged into main PR515 and develop PR514; remote ancestry and immutable-number repository/contract parity verified. No deployment in this task.
 Current follow-up: payment-date confirmation, shared editor, cancellation-first financial safeguards, CI fixture repair and browser verification complete. Latest evidence is at the end of this chronological log. No deployment in scope.
 Owner: /root
 Scope: allow editing incomplete certificate details/evidence from step 3 without manual cancellation or consuming another number.
@@ -158,3 +158,12 @@ Develop received PR524 (7b689880, featurea5ede2f2) during CI; GitHub rejected PR
 
 Final develop combined source: full web1690 passed; API/PDF/download/immutable-number and actual PostgreSQL121 passed, no skips; web typecheck passed. Logs /tmp/step3-develop-{web-suite,api,web-types}.log. Final API typecheck /tmp/step3-develop-api-types.log. Push this merge on the same branch and finish PR514 after its new CI passes. Keep main's already merged evidence distinct from this develop-only integration candidate.
 Final develop API typecheck passed (exit0). All scoped local integration checks are green.
+
+## Integration complete
+- Main PR515 merged 2026-09-10T13:38:18Z: 0b5cb2da8120c7f03f8bf6c1920d60f92f06d57f. Exact candidate9ac6eb88916d2023aa25dead864b2c832ec81f96 passed CI34481772687 and34481775762 before the authorized admin merge.
+- Develop PR514 merged 2026-09-10T13:59:10Z: 458283508fe10687bc6adc95947ff8bff1abf62e. Exact candidate d6abe87e51aa9e87ed08acb702dc9f2f8812cc0d passed CI34484147563, all checks green, before normal merge.
+- Concurrent hub-menu PR526 changed different files; verified clean merge-tree without restarting CI or overwriting it. Final fetched main98fe8d72dfdf073f90d0609d925bd2d617f4b7c8 contains the verified payment-date candidate; develop458283508fe10687bc6adc95947ff8bff1abf62e contains the final integration candidate. Both PRs are MERGED. Core immutable-number repository/contracts are identical between the fetched branches. Main additionally received independent signing-navigation PR528, which moves the wizard navigation controls below the content; the payment-date/number rules are unchanged.
+- No package manifests/dependency symlinks committed. Test-owned local data cleaned. No cloud operations or deployments in this implementation/integration task. This final merge-evidence entry is recorded locally after the merges; implementation/spec and preceding validation evidence were committed with the candidates.
+Next: task complete; any deployment is a separate authorized operation with the repository deployment protocol.
+
+Post-merge status observation: unrelated concurrent UI edits appeared in SubstitutePaperSigningPanel.tsx and SubstituteReceiptWizardPage.tsx, matching the separate signing-navigation work. Left these untouched and uncommitted; they are not part of this completed merge. Final task-memory evidence is the only local edit made here after merging.

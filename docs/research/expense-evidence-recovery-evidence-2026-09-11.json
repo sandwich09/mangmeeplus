@@ -1,0 +1,626 @@
+{
+  "date": "2026-09-11",
+  "branch": "codex/substitute-step3-edit-20260910",
+  "head": "d6abe87e51aa9e87ed08acb702dc9f2f8812cc0d",
+  "environment": "Isolated local app 127.0.0.1:3000/3001; isolated test database on 15432",
+  "sourceIncludesEarlierUncommittedChanges": true,
+  "trackedApplicationFilesUnchangedDuringAudit": 2595,
+  "sourceSha256": {
+    "apps/web/src/features/expenses/ExpenseReviewPage.tsx": "0e3a29d77a2634df66817f21eb023135c5ea3d5fa59aff887fa9ef98c7cab537",
+    "apps/web/src/features/expenses/ExpensesPages.tsx": "af7660f489229f0d9f0d98a416b210a147d444406cace5789fe742168bae4b11",
+    "apps/web/src/features/expenses/expenses.model.ts": "42577c5e0f749ae09ee019033a3bcb1d5aae105f2c23b03bb71572c33207c6f1",
+    "apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.ts": "34aeea1b5a01a2db24d5624eb4b556956aebefb963715ac59b0951040aed258e",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "52ec0258ce22bd2d2d5ea6e77480e63a86fdd7c1a4fbfc124b90e8ef27561968",
+    "packages/contracts/src/expenses.ts": "4b49a28db10cc5cb7a6dd3eb3acb3b33332cf3f63c3cce3a7b34495e69ff3e86",
+    "apps/api/dist/substitute-review/apps/api/src/modules/expenses/application/use-cases/expense-draft.use-case.js": "092680c861171bc637eee3ab0cc55f3949e5048a108bd93145d6df368704f714"
+  },
+  "existingFocusedTests": {
+    "api": {
+      "tests": 180,
+      "suites": 33,
+      "pass": 180,
+      "fail": 0
+    },
+    "web": {
+      "tests": 37,
+      "suites": 7,
+      "pass": 37,
+      "fail": 0
+    }
+  },
+  "browser": {
+    "environment": "isolated-local",
+    "fixture": {
+      "companyId": "seed-local-company",
+      "expenseId": "cmtwi63l7000048k18q5pmgi8"
+    },
+    "interceptionUsed": false,
+    "finalConfirmationAttempted": false,
+    "findings": [
+      {
+        "id": "B01",
+        "layer": "real local UI/API",
+        "outcome": "GAP",
+        "nextDisabled": true,
+        "saveReviewDisabled": true,
+        "saveDraftButtonsOnStep2": 0,
+        "submitButtonsOnStep2": 0,
+        "backEnabled": true
+      },
+      {
+        "id": "B02",
+        "layer": "real local UI/API",
+        "outcome": "PRESERVED",
+        "beforeBack": "ใบเสร็จรับเงิน",
+        "afterBack": "ใบเสร็จรับเงิน",
+        "persistedDocument": "NEEDS_REVIEW",
+        "reviewAcknowledged": false,
+        "saveDraftButtonsOnStep1": 0
+      },
+      {
+        "id": "B08",
+        "layer": "real local UI reload + persistence",
+        "outcome": "GAP",
+        "beforeReload": "ใบเสร็จรับเงิน",
+        "afterReload": "รอตรวจประเภทเอกสาร",
+        "detail": "In-memory values surviving Back are not a persisted draft"
+      },
+      {
+        "id": "B03",
+        "layer": "real local API + persistence",
+        "outcome": "PASS",
+        "detail": "review-fields without acknowledgement saves unresolved classifications without marking reviewed"
+      },
+      {
+        "id": "B04",
+        "layer": "real local API + persistence",
+        "outcome": "PASS",
+        "detail": "Reviewer submission accepts complete business draft with tax review pending; READY does not create review acknowledgement"
+      },
+      {
+        "id": "B05",
+        "layer": "real local concurrency conflict",
+        "outcome": "PASS",
+        "status": 409,
+        "detail": "Stale save retains selected values and does not unlock Next; no network interception used"
+      },
+      {
+        "id": "B06",
+        "layer": "real local UI/API + reload",
+        "outcome": "PASS",
+        "detail": "Successful current review persists through reload and step3/back; this is not final expense confirmation"
+      },
+      {
+        "id": "B07",
+        "layer": "real local mobile UI",
+        "outcome": "GAP",
+        "width": 390,
+        "saveDraftButtonsOnStep2": 0,
+        "submitButtonsOnStep2": 0,
+        "backEnabled": true,
+        "horizontalOverflow": false
+      }
+    ]
+  },
+  "currentHelpers": {
+    "kind": "current-helper-evidence",
+    "assertionGroups": 17,
+    "gapsReproduced": 8,
+    "limits": "Synthetic helper inputs. No DB, final API confirmation, tax entitlement or new implementation is proven.",
+    "results": [
+      {
+        "id": "P01",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "A usable RECEIPT is routed to the normal path by the current prepare helper"
+      },
+      {
+        "id": "P02",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "ABBREVIATED_TAX_INVOICE lacks that same valid-receipt guard"
+      },
+      {
+        "id": "P03",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "Complete handwritten facts still receive a needs-substitute reason"
+      },
+      {
+        "id": "P04",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "Lost receipt exception is distinguished from having a usable receipt"
+      },
+      {
+        "id": "P05",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "Unreviewed source, unknown tax and zero amount remain genuine prerequisites"
+      },
+      {
+        "id": "P06",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "The current certificate flow is THB only: do not promise completion for unsupported currency"
+      },
+      {
+        "id": "P07",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "Unchanged saved review is current and replaced source identity invalidates it"
+      },
+      {
+        "id": "P08",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "v1 review does not bind vendor or amount changes; broader v2 source binding is required"
+      },
+      {
+        "id": "P09",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "A supporting-slot evidence set cannot satisfy current receipt-or-substitute routing"
+      },
+      {
+        "id": "P10",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "File purpose alone changes that answer even though the source remains TRANSFER_SLIP"
+      },
+      {
+        "id": "P11",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "A missing-receipt reason forces an issued certificate without an alternative-evidence route"
+      },
+      {
+        "id": "P12",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "An issued certificate requires an artifact; the label ISSUED alone is insufficient"
+      },
+      {
+        "id": "P13",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "The no-primary domain guard demands finance permission again; it cannot consume a prior alternative-evidence acceptance"
+      },
+      {
+        "id": "P14",
+        "outcome": "GAP_REPRODUCED",
+        "detail": "The domain confirm validator itself does not require a review marker (not a claim that the complete confirm API succeeded)"
+      },
+      {
+        "id": "P15",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "Unsaved/current review uses one Next predicate; back/draft recovery must be supplied by the page"
+      },
+      {
+        "id": "P16",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "A final-page subtitle may be clear while its blocker needs a separate actionable recovery target"
+      },
+      {
+        "id": "P17",
+        "outcome": "EXISTING_RULE_VERIFIED",
+        "detail": "Existing VAT-difference recovery preserves confirmer permission and a route to set VAT first"
+      }
+    ]
+  },
+  "specModel": {
+    "kind": "conditional-spec-reachability",
+    "operationalRecoveryStates": 28,
+    "completionRoutes": 3,
+    "faultInjectionsDetected": 3,
+    "pendingDraftResumeWithoutHandoff": true,
+    "claim": "The declared spec graph has reachable save/wait/action-required checkpoints and conditional completion for three supported routes without accounting handoff. This is NOT browser/API E2E proof, durable offline storage, or a guarantee that external facts/permissions will arrive.",
+    "recoveries": [
+      {
+        "state": "PENDING_REVIEW",
+        "trace": [
+          {
+            "action": "save partial review without acknowledgement",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "REVIEW_DIRTY",
+        "trace": [
+          {
+            "action": "save current draft without asserting reviewed",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "CERT_DETAILS",
+        "trace": [
+          {
+            "action": "save certificate working data without issuing",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "PREPARED",
+        "trace": [
+          {
+            "action": "keep existing form and pending signing state",
+            "to": "WAIT_APPROVER",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "SIGNED",
+        "trace": [
+          {
+            "action": "keep signed revision awaiting approval",
+            "to": "WAIT_APPROVER",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "MISSING_PROOF",
+        "trace": [
+          {
+            "action": "save and request specific missing proof",
+            "to": "WAIT_EVIDENCE",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "UNKNOWN_AMOUNT",
+        "trace": [
+          {
+            "action": "save draft with unknown amount, not a fabricated zero",
+            "to": "WAIT_FACTS",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "CASH_STRICT",
+        "trace": [
+          {
+            "action": "save and obtain the policy-required payment proof",
+            "to": "WAIT_EVIDENCE",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "CHECK_BILL_UNPAID",
+        "trace": [
+          {
+            "action": "keep unpaid business draft",
+            "to": "WAIT_PAYMENT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "NO_REVIEW_PERMISSION",
+        "trace": [
+          {
+            "action": "preserve existing draft and explain review permission; only save fields already writable",
+            "to": "ACCESS_NOTICE",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "NO_CONFIRM_PERMISSION",
+        "trace": [
+          {
+            "action": "preserve reviewed expense and explain required confirmation permission",
+            "to": "ACCESS_NOTICE",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "ACCESS_REVOKED",
+        "trace": [
+          {
+            "action": "show permission recovery without exposing inaccessible records or claiming save",
+            "to": "ACCESS_NOTICE",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "NETWORK_FAILED",
+        "trace": [
+          {
+            "action": "retain unsent form in current session and expose retry",
+            "to": "WAIT_NETWORK",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "SESSION_EXPIRED",
+        "trace": [
+          {
+            "action": "retain current-session form and request sign-in",
+            "to": "WAIT_AUTH",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "CAS_CONFLICT",
+        "trace": [
+          {
+            "action": "compare current server version and retained input",
+            "to": "REVIEW_DIRTY",
+            "requires": null
+          },
+          {
+            "action": "save current draft without asserting reviewed",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "READ_ONLY",
+        "trace": [
+          {
+            "action": "view/history/download according to scope",
+            "to": "VIEW_ONLY",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "ISSUED_CHANGE",
+        "trace": [
+          {
+            "action": "preserve issued facts and show existing correction/cancellation requirements",
+            "to": "ACTION_REQUIRED",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "CLOSED_PERIOD",
+        "trace": [
+          {
+            "action": "preserve facts for authorized period correction",
+            "to": "WAIT_PERIOD",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "UNSUPPORTED_CURRENCY",
+        "trace": [
+          {
+            "action": "save expense and state unsupported certificate currency",
+            "to": "ACTION_REQUIRED",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "RENDER_LIMIT",
+        "trace": [
+          {
+            "action": "preserve complete lines and explain format limit",
+            "to": "ACTION_REQUIRED",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "PARTIAL_FUNDING",
+        "trace": [
+          {
+            "action": "preserve actual payments and explain unsupported flow; no fake full-payment acknowledgement",
+            "to": "ACTION_REQUIRED",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "NO_APPROVER",
+        "trace": [
+          {
+            "action": "keep document and request permitted policy/member setup",
+            "to": "WAIT_APPROVER",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "POSSIBLE_DUPLICATE",
+        "trace": [
+          {
+            "action": "compare and resolve duplicate with scoped permission",
+            "to": "REVIEW_DIRTY",
+            "requires": null
+          },
+          {
+            "action": "save current draft without asserting reviewed",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "KNOWN_DUPLICATE",
+        "trace": [
+          {
+            "action": "open existing expense; no extra posting",
+            "to": "VIEW_EXISTING",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "VAT_DIFFERENCE",
+        "trace": [
+          {
+            "action": "use existing authorized source-VAT decision or correct VAT-bearing line",
+            "to": "REVIEW_DIRTY",
+            "requires": null
+          },
+          {
+            "action": "save current draft without asserting reviewed",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "WHT_CLASS_MISSING",
+        "trace": [
+          {
+            "action": "save and request actual payee taxpayer class",
+            "to": "WAIT_FACTS",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "SOURCE_CHANGED_AFTER_SIGN",
+        "trace": [
+          {
+            "action": "amend same mutable document and require fresh signature",
+            "to": "CERT_DETAILS",
+            "requires": null
+          },
+          {
+            "action": "save certificate working data without issuing",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      },
+      {
+        "state": "REJECTED",
+        "trace": [
+          {
+            "action": "reopen existing record within permission and status rules",
+            "to": "REVIEW_DIRTY",
+            "requires": null
+          },
+          {
+            "action": "save current draft without asserting reviewed",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          }
+        ]
+      }
+    ],
+    "completion": [
+      {
+        "start": "SOURCE_REVIEWED",
+        "trace": [
+          {
+            "action": "next with current source review",
+            "to": "FINAL_SOURCE",
+            "requires": null
+          },
+          {
+            "action": "submit current source expense",
+            "to": "READY_SOURCE",
+            "requires": "minimum submission facts are complete"
+          },
+          {
+            "action": "confirm existing expense",
+            "to": "CONFIRMED",
+            "requires": "authorized confirmer and current finance/tax validations pass"
+          }
+        ],
+        "conditional": true
+      },
+      {
+        "start": "ALT_REVIEWED",
+        "trace": [
+          {
+            "action": "next with referenced accepted alternative evidence",
+            "to": "FINAL_ALT",
+            "requires": null
+          },
+          {
+            "action": "submit current alternative-evidence expense",
+            "to": "READY_ALT",
+            "requires": "minimum submission facts are complete"
+          },
+          {
+            "action": "confirm accepted alternative evidence in repository transaction",
+            "to": "CONFIRMED",
+            "requires": "authorized confirmer and current finance/tax validations pass"
+          }
+        ],
+        "conditional": true
+      },
+      {
+        "start": "CERT_REVIEWED",
+        "trace": [
+          {
+            "action": "open existing certificate workflow",
+            "to": "CERT_DETAILS",
+            "requires": null
+          },
+          {
+            "action": "save certificate working data without issuing",
+            "to": "SAVED_DRAFT",
+            "requires": null
+          },
+          {
+            "action": "reopen same expense and retrieve saved fields",
+            "to": "REVIEW_DIRTY",
+            "requires": "the user returns with existing access; unresolved facts still need completion"
+          },
+          {
+            "action": "explicitly review resolved source document",
+            "to": "SOURCE_REVIEWED",
+            "requires": "authorized reviewer and valid source facts"
+          },
+          {
+            "action": "next with current source review",
+            "to": "FINAL_SOURCE",
+            "requires": null
+          },
+          {
+            "action": "submit current source expense",
+            "to": "READY_SOURCE",
+            "requires": "minimum submission facts are complete"
+          },
+          {
+            "action": "confirm existing expense",
+            "to": "CONFIRMED",
+            "requires": "authorized confirmer and current finance/tax validations pass"
+          }
+        ],
+        "conditional": true
+      }
+    ]
+  },
+  "fixtureBeforeCleanup": {
+    "phase": "before-cleanup",
+    "counts": {
+      "expenses": 1,
+      "payments": 0,
+      "certificates": 0,
+      "journals": 0,
+      "outboxEvents": 0
+    }
+  },
+  "fixtureAfterCleanup": {
+    "phase": "after-cleanup",
+    "counts": {
+      "expenses": 0,
+      "payments": 0,
+      "certificates": 0,
+      "journals": 0,
+      "outboxEvents": 0
+    }
+  },
+  "limitations": [
+    "New specification not implemented",
+    "No final expense confirmation or new tax posting performed",
+    "No production/UAT/customer data accessed",
+    "Browser checks use one synthetic local record, not legal verification of a receipt",
+    "Model checks a declared graph, not UI/API implementation"
+  ],
+  "scopeRevision": "User removed accounting handoff; pending work uses Save draft/reopen. Earlier browser/helper observations are preserved and were not rerun for this documentation-only change."
+}

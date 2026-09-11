@@ -1,5 +1,7 @@
 'use client';
 
+import { expenseEvidenceAssessment } from '@watchdog-bms/contracts';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -28,7 +30,7 @@ import {
   AI_MISSING_FIELD_LABELS, AI_SUMMARY_STATUS_LABELS, ATTACHMENT_PURPOSE_LABELS, isWetSignedScanAttachment,
   CAPTURE_SOURCE_LABELS, EXPENSE_VAT_MODE_LABELS, PAYMENT_METHOD_LABELS, POSTING_STATUS_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, deriveExpenseAuditChecks,
-  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker,
+  deriveExpenseClassificationReviewState, deriveExpenseReviewSteps, expenseAiMissingFields, expenseCapabilities, expenseEvidenceStepBlocker, hasCurrentExpenseDocumentReview,
   expenseNeedsReceiptOrSubstitute, expenseSourceDraftViewState, expenseSubstituteReceiptReady, expenseSubstituteReceiptAction, expenseValueLabel,
   canRunExpenseDuplicateCheck, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning, initialExpenseReviewStep, needsAiTotalAcknowledgement,
   MIME_TYPE_LABELS, canDeleteExpense, effectiveVatRateLabel, expenseDeleteErrorMessage, firstFilled, shouldRereadReplacedReceipt, isBlockedCheckBillClassification,
@@ -150,6 +152,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // therefore renders on every step: an invalid draft (ถัดไป disabled by validation) must
   // stay rejectable without faking data first.
   const goToStep = async (key: ExpenseReviewStepKey) => {
+    if (step === 'evidence' && key === 'review' && evidenceStepBlocker) return;
     // An issued substitute certificate locks material fields server-side
     // (409 substitute_evidence_locks_expense); saving on navigate would fail
     // silently and trap the user on step 1, and there is nothing to save.
@@ -605,7 +608,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // One truth for step 2: what disables ถัดไป is what is printed under it. See expenses.model.
   const evidenceStepBlocker = expenseEvidenceStepBlocker({
     checkBillBlocked, classificationBlocked, canReview, unsavedReview: evidenceDirty && !substituteLocked,
+    reviewRequired: isMutable && canReview && !substituteLocked && !hasCurrentExpenseDocumentReview(detail),
   });
+  const documentReviewSaveRequired = evidenceStepBlocker === 'expenses.doc_review_required_next'
+    || evidenceStepBlocker === 'expenses.doc_review_unsaved_next';
   // Owner 2026-09-01: while the AI read is in flight (a fresh read or the replace-file re-read),
   // the on-screen values are about to be overwritten — editing them or pressing ถัดไป races the
   // result. One flag covers both lanes and drives the field cover AND the footer buttons.
@@ -613,8 +619,15 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const substituteReady = expenseSubstituteReceiptReady(detail);
   const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, detail.substituteReceiptEvidence);
+  const canStartSubstitute = isMutable && canReview && hasCurrentExpenseDocumentReview(detail) && expenseEvidenceAssessment(detail)?.route === 'SUBSTITUTE_RECEIPT' && !evidenceDirty && !aiReading && !stepSaving;
+  const canEditLinkedSubstitute = Boolean(canReview && detail.substituteReceiptEvidence && canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence));
   const openSubstituteReceipt = async (editPayment = false) => {
     if (aiReading || stepSaving || evidenceDirty) return;
+    if (!detail.substituteReceiptEvidence && !canStartSubstitute) return;
+    if (detail.substituteReceiptEvidence?.status === 'SUPERSEDED') {
+      router.push(`/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/${encodeURIComponent(detail.substituteReceiptEvidence.id)}`);
+      return;
+    }
     if (step === 'data' && reviewSaveRef.current && !substituteLocked) {
       setStepSaving(true);
       const saved = await reviewSaveRef.current().finally(() => setStepSaving(false));
@@ -739,7 +752,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         )}
         {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
       </div>
-      <div className="flex flex-col gap-2 sm:ml-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+      <div className={cx('flex gap-2 sm:ml-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end', canEditLinkedSubstitute ? 'flex-row flex-wrap items-center' : 'flex-col')}>
+        {canEditLinkedSubstitute && (
+          <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt(true)}>
+            {stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบแทนใบเสร็จ'}
+          </button>
+        )}
         {guided && (
           <>
             {step === 'data' && validationBlockMessage && (
@@ -771,15 +789,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
-            {/* Owner 2026-08-29: ถัดไป used to stay live and refuse the move with a toast at the top
-                of the screen while the button sits in the bottom bar. Same condition, said in place. */}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {/* Save-review guidance lives beside that form; do not repeat it in the footer. */}
             {aiReading ? (
               <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t('expenses.ai_reading', locale)}
               </p>
-            ) : step === 'evidence' && evidenceStepBlocker && (
-              <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
+            ) : step === 'evidence' && evidenceStepBlocker && !documentReviewSaveRequired && (
+              <p id={`expense-review-evidence-block-${detail.id}`} role="status" className="max-w-lg rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700 sm:w-full sm:text-right">
                 {t(evidenceStepBlocker, locale)}
               </p>
             )}
@@ -1304,14 +1321,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-brand-100 bg-brand-25 px-4 py-3 text-sm">
             <div>
               <p className="font-bold text-brand-800">ผูกกับใบแทน {detail.substituteReceiptEvidence.documentNumber}</p>
-              <p className="text-gray-600">วันที่จ่ายตามใบแทน: {detail.substituteReceiptEvidence.paymentDate ? dateShort(detail.substituteReceiptEvidence.paymentDate) : 'ยังไม่ระบุ'} · เลขเอกสารคงเดิม</p>
               <p className="text-gray-600">{canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence) ? 'แก้ข้อมูลแล้วใช้ฟอร์มล่าสุด หากลงนามแล้วต้องลงนามอีกครั้ง' : 'หากต้องการแก้ข้อมูลในใบแทน ให้ตรวจขั้นตอนยกเลิกและรายการจ่ายที่เกี่ยวข้องก่อน'}</p>
-              {canReview && canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence) && <button type="button" className="mt-2 font-semibold text-brand-700 underline" disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt(true)}>แก้วันที่จ่ายในใบแทน</button>}
               {evidenceDirty && <p className="text-warning-700">บันทึกการตรวจเอกสารก่อนกลับไปใบแทน</p>}
             </div>
-            <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt()}>
-              {step === 'data' && isMutable && canReview && !substituteLocked ? 'บันทึกและกลับไปใบแทน' : 'กลับไปใบแทน'}
-            </button>
+            {!canEditLinkedSubstitute && <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt()}>
+              เปิดใบแทนใบเสร็จ
+            </button>}
           </div>
         )}
         <div className="grid min-h-0 lg:grid-cols-[minmax(0,4fr)_minmax(0,5fr)]">
@@ -1325,7 +1340,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                   <span className="flex h-14 w-14 items-center justify-center rounded-[14px] bg-gray-100 text-2xl">🧾</span>
                   <p className="text-sm text-gray-500">{t('expenses.viewer_empty', locale)}</p>
                   {attachReceiptControl}
-                  {isMutable && canReview && needsReceiptOrSubstitute && (
+                  {canStartSubstitute && needsReceiptOrSubstitute && (
                     <>
                       <Link className={ghostClass} href={substituteAction.href} aria-disabled={aiReading || stepSaving || evidenceDirty} onClick={(event) => { event.preventDefault(); void openSubstituteReceipt(); }}>{t(substituteAction.labelKey, locale)}</Link>
                       {evidenceDirty && <p className="text-xs text-warning-700">บันทึกการตรวจเอกสารก่อนดำเนินการใบรับรองแทนใบเสร็จ</p>}

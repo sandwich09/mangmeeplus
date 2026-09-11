@@ -241,10 +241,11 @@ export type CreateExpenseRecordInput = {
   outstandingAmount: string;
 };
 
-export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason'>> & {
+export type UpdateExpenseRecordInput = Partial<Omit<CreateExpenseRecordInput, 'companyId' | 'captureSource' | 'createdByUserId' | 'missingReceiptReason' | 'expenseCategoryId'>> & {
   id: string;
   companyId: string;
   updatedByUserId: string;
+  expenseCategoryId?: string | null;
   /** Internal permission-checked reviewer save; never accepted from an HTTP body. */
   refreshSubstituteEvidence?: { requestId: string };
   expectedUpdatedAt?: Date;

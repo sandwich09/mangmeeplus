@@ -1,3 +1,4 @@
+import { EXPENSE_RECEIPT_SOURCE_TYPES, expenseEvidenceAssessment, hasCurrentExpenseEvidenceReview } from '@watchdog-bms/contracts';
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import {
   hasCheckBillSubstituteRoutingResolution,
@@ -183,7 +184,7 @@ export function collectSubstituteReceiptEligibilityIssues(
   if (ALWAYS_INELIGIBLE_SOURCE_TYPES.has(expense.sourceDocumentType) && !checkBillRoute) {
     issues.push({ code: 'source_type_ineligible', message: 'ประเภทเอกสารต้นทางยังไม่ผ่านการตรวจ หรือไม่รองรับใบรับรองแทนใบเสร็จรับเงิน ตรวจและเลือกประเภทเอกสารในเว็บก่อนค่ะ' });
   }
-  if (['RECEIPT', 'TAX_INVOICE'].includes(expense.sourceDocumentType)
+  if (EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === expense.sourceDocumentType)
     && !['RECEIPT_UNAVAILABLE', 'RECEIPT_MATERIALLY_INCOMPLETE'].includes(reasonCode ?? '')) {
     issues.push({ code: 'valid_receipt_normal_path', message: 'รายการนี้มีใบเสร็จหรือใบกำกับภาษีที่ใช้ได้อยู่แล้ว ให้ทำตามขั้นตอนปกติ ใบรับรองแทนใบเสร็จรับเงินใช้ได้เมื่อต้นฉบับหายหรือข้อมูลสำคัญไม่ครบเท่านั้น' });
   }
@@ -526,6 +527,9 @@ export class PrepareSubstituteReceiptUseCase {
     if (!expense) throw new NotFoundException(`Expense ${expenseId} not found.`);
     assertBranch(ctx, expense.branchId);
     validateEligibility(expense, input.reasonCode, { routeCheckBill: input.routeCheckBill === true });
+    if (!amendment && (!hasCurrentExpenseEvidenceReview(expense) || expenseEvidenceAssessment(expense)?.route !== 'SUBSTITUTE_RECEIPT')) {
+      throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: 'ระบุปัญหาเอกสารและบันทึกการตรวจล่าสุดก่อนจัดทำใบรับรอง' });
+    }
     const payeeName = optionalText(input.payeeName, 'payeeName', 200)
       ?? optionalText(expense.vendorNameSnapshot, 'payeeName', 200);
     if (!payeeName) throw new BadRequestException('payeeName is required when the expense has no vendor name.');
