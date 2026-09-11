@@ -1,6 +1,6 @@
 # Agent Memory: expense-evidence-and-substitute-routing-2026-09-11
 
-Status: RESOLVING MAIN CONFLICT — develop PR537 merged as 97ae6452. Latest user authorized conflict resolution, push, waiting for CI, and admin merge of main PR536. No deployment requested.
+Status: FINAL INTEGRATION — latest user authorized resolving conflicts, pushing, waiting for CI and admin merge. Concurrent PR539/540 have already delivered the base evidence review and numbering to develop/main. Reconcile their claim fix with the extra transaction-bound authority checks and integration tests on this same branch. No deployment requested.
 Owner: Codex primary agent
 Scope: Latest user authorized implementation of the evidence/SRC routing spec and bug/gap/impact checks. Work in existing `/tmp/mangmee-substitute-step3-edit-20260910`, branch `codex/substitute-step3-edit-20260910`, base `d6abe87e`. Preserve earlier uncommitted changes; pre-implementation patch is `/tmp/expense-evidence-pre-implementation-20260911.patch`.
 
@@ -66,3 +66,10 @@ Post-merge linked-flow check found a real T30 compatibility gap: an approved rei
 - Keep missing-receipt permission separate from evidence-review authority. Only executeForReimbursement supplies request/line-bound review authority; the repository matches both IDs to the persisted projection after the existing source/hash checks. Normal expense confirm and a wrong claim-line authority still fail without writes. An actual SRC still requires its artifact.
 - Final linked PG checks: 47 passed, zero failures/skips, including the real claim confirmation/payout and ordinary/direct/wrong-line negative controls. Focused 872 and API typecheck passed again after this fix. Logs: /tmp/evidence-conflict-linked-pg-final.log, /tmp/evidence-conflict-authority-focused.log, /tmp/evidence-conflict-authority-types.log.
 - Push this correction and use CI for the resulting head; CI34577820066 on58a7a308 is superseded. Existing develop numbering PR539 belongs to the concurrent numbering work; do not alter that branch.
+
+## Concurrent main/develop integration
+
+While CI34578313483 ran on035cef7a, PR539 merged develop asfccf06c2 and PR540 merged main as725207a1. Both target trees are identical and include the original evidence implementation plus an independent claim-compatibility fix.
+- Resolve the overlap once: retain incoming claim wording/behavior, keep the explicit request/line check in the final transaction, retain both incoming preflight and new repository negative tests, and use real evidence review in numbering tests. No unrelated incoming docs discarded.
+- Combined PostgreSQL suite after reconciliation: 61 passed (14 numbering + 31 SRC/source edit + 16 reimbursement), zero failures/skips; /tmp/evidence-main540-integrated-pg.log. Production-code delta against both current targets is three use-case lines and the transaction authority check; remaining changes are tests and task/spec documentation.
+- Include both current target ancestries before push, then run CI on that exact final head. Main PR536 and a small develop follow-up carry the same scoped correction so both branches retain it.

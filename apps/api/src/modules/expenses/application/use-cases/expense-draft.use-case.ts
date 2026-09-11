@@ -1126,18 +1126,13 @@ export class ConfirmExpenseUseCase {
         });
       }
     }
-    // A claim-born projection carries the CLAIM's missing-receipt reason, and its legal instrument
-    // is the signed ใบเบิกค่าใช้จ่าย — that is what `allowMissingReceiptWithReason` on the authority
-    // means. Demanding an expense-side substitute receipt here dead-ends the claim: this confirm
-    // runs inside the finance-review projection, where no substitute artifact can be issued. An
-    // expense that actually entered the substitute-receipt flow still needs its artifact.
-    const reasonCoveredByClaimForm = Boolean(authority?.allowMissingReceiptWithReason)
+    // Claim projections use the approved claim's evidence through the exact authority checked above.
+    // Finance materialization has no separate expense-review screen. Source snapshots are checked
+    // again inside the transaction; missing-receipt permission remains a separate validation below.
+    // An expense that entered the substitute-receipt flow still needs its own artifact.
+    const evidenceCoveredByClaimForm = Boolean(authority)
       && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-    // Approved claim projections have their own review workflow, including claims with receipts.
-    // Keep missing-receipt permission separate; normal expense confirmation cannot use this path.
-    const reviewCoveredByClaimForm = Boolean(authority)
-      && !r.substituteReceiptGeneratedAt && r.sourceDocumentType !== 'SUBSTITUTE_RECEIPT';
-    const evidenceError = expenseEvidenceConfirmationError(r, reviewCoveredByClaimForm);
+    const evidenceError = expenseEvidenceConfirmationError(r, evidenceCoveredByClaimForm);
     if (evidenceError) throw new BadRequestException({ code: 'EXPENSE_EVIDENCE_REVIEW_REQUIRED', message: evidenceError });
     const reviewedEvidence = hasCurrentExpenseEvidenceReview(r);
     const reviewedAttachmentId = reviewedEvidence ? expenseEvidenceAssessment(r)?.attachmentIds[0] ?? r.primaryAttachmentId : r.primaryAttachmentId;
@@ -1206,7 +1201,7 @@ export class ConfirmExpenseUseCase {
     ({ expense: updated, finalized } = await this.repo.finalizeAndConfirmExpenseCas({
       id: expenseId, companyId: ctx.companyId, expectedUpdatedAt: r.updatedAt, actorUserId: ctx.userId,
       expectedSourceChecksum: expenseTaxSourceChecksum(r),
-      substituteCoveredByClaimForm: reasonCoveredByClaimForm,
+      substituteCoveredByClaimForm: Boolean(authority?.allowMissingReceiptWithReason) && evidenceCoveredByClaimForm,
       reimbursementReview: authority ? { requestId: authority.reimbursementRequestId, lineId: authority.reimbursementLineId } : undefined,
       vatSourceOverride,
       postingStatus, vendorSnapshotJson,

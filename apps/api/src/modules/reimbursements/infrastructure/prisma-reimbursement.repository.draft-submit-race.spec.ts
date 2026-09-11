@@ -779,6 +779,10 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     const expenses = new PrismaExpenseRepository({ client: source.db } as any);
     const confirm = new ConfirmExpenseUseCase(expenses, { log: async () => undefined } as any, { resolveLines: async () => [] } as any,
       {} as any);
+    const confirmationCtx = { companyId, userId: `${TAG}-finance`, permissions: [], scopes: {}, roles: [], authProvider: 'dev' } as any;
+    await assert.rejects(() => confirm.executeForReimbursement(confirmationCtx, projection!.expenseId,
+      { reimbursementRequestId: request.id, reimbursementLineId: 'wrong-line', branchId, allowMissingReceiptWithReason: false }),
+      /reimbursement_projection_authority_mismatch/);
     const projectionSource = (await expenses.findByIdWithRelations(companyId, projection!.expenseId))!;
     const confirmInput = {
       companyId, id: projection!.expenseId, actorUserId: `${TAG}-finance`, expectedUpdatedAt: projectionSource.updatedAt,
