@@ -1,8 +1,8 @@
 # Agent Memory: Kamal stability closure
 
-Status: IN_PROGRESS implementation/preflight; no new deployment invoked.
+Status: COMPLETE for the latest owner scope: consolidated proof plus two successful UAT smoke deployments.
 Owner: release owner / Codex
-Scope: close repeatability gaps, commit corrected controller/bootstrap, prove real UAT update/rollback/restore. Production untouched; dev stopped.
+Scope: close repeatability gaps and prove two complete latest-main UAT deployments without login/logout. Production untouched; dev stopped. The former live rollback/restore sequence was superseded.
 Decisions:
 - Owner explicitly says close all three gaps, wants stable deploy without37minute repair overhead. Admin merge authorized earlier; no repeat approval request for scoped PR after checks.
 - Isolated worktree .env.kamal/uat/stability-source, branch codex/kamal-stability-20260911, base main863e0d02. Main contains PR545 changes since deployed12025691; migration/config catalog diff is empty.
@@ -11,7 +11,19 @@ Decisions:
 - Real rollback defects found by code inspection before live action: manual browser rejected rollback; default inspection names invented a new version rather than restored version; restore manifest/env files incomplete for common readback. Fix and positively exercise the entire rollback method locally first.
 Artifacts: docs/plans/kamal-stability-2026-09-11.md; prior evidence under docs/qa/evidence/kamal-uat-real-2026-09-11/ in original workspace.
 Verification: nonroot mangmee-kamal-uat identity passes; no queued/running release found; target real UAT, no active lock file, owner manual browser ID enrolled, no stored admin credentials.
-Next: finish consolidated controller/bootstrap corrections and local tests, actual private CFN update review/readback, PR/CI/main, then bounded live update/rollback/restore with exact ledger.
+Next: no remaining work for the authorized two-run UAT proof. No Production deployment or further live rollback is authorized by this proof.
+
+
+## Final outcome (authoritative; checkpoints below are historical)
+
+- PR552 merged main `6b95e50555c9905aa32d17d1372241bb4889cc1b`; exact PR-head CI34623709238 passed.
+- `20260911T170623Z-c8d84820`: all phases passed, KMS verified, no repair/retry; merge-to-exit254.835608s =4m14.836s.
+- `20260911T171058Z-8c83ebfc`: all phases passed, KMS verified, no repair/retry; repeat command261.190664s plus prechecks4.595408s, complete clock265.786046s =4m25.786s.
+- Both serve exact main6b95e505, with all managed env111/56/19 plus image/native env validated, API/DB/AI/workers/Redis/internal-API readiness and public OPEN passed. Login/logout explicitly not required; LINE journeys deferred. AgentCore qualifier `kamal_uat_b`, version4, exact source/artifact; second run reuses the exact provider.
+- No active operation locks remain. Dev `i-0883f1ff88440ca07` freshly verified stopped; Production cloud/runtime unchanged. No UAT/READY/Production workflow was dispatched (Kamal operation IDs above).
+- Report: `docs/research/kamal-uat-stable-hotfix-proof-2026-09-11.md`; sanitized summaries and original KMS-signed payloads/signatures: `docs/qa/evidence/kamal-stability-2026-09-11/`.
+- Accepted SHA256: first `62ab943c84c5daa98abe36fae50a5403d7724ec1936b26892c9a31b465d42314`, repeat `53df8c813aa4fd90713b6df8c5a390d642d868c4ee31fa90648ce8ae4a9b01ab`.
+- Fixed worker readiness delay7s is included. Other durations vary; both use warm cache. No guarantee of identical future timings, cold-cache behavior, full business journeys, fresh-OS bootstrap or new live rollback is implied.
 
 Consolidated local checkpoint:
 - Controller tests15pass; rollback/bootstrap tests2pass (normal restore plus stale-image and incomplete-browser rejection); inventory3positive/28negative controls pass; actual supervisor2checks pass. Existing required production-image-security suite passes; maintenance pins synchronized only for scoped shutdown source and validated45files. New CI step runs these offline contracts.
@@ -62,3 +74,18 @@ LATEST OWNER STEERING / failure closure:
 - Candidate probe `97755012` passed TypeScript and all image build commands, but the tools-base export still took114.776s: excluding only the Prisma leaf leaves its newly created parent directory in Docker context. Exclude the whole untracked `apps/api/src/generated` directory; the Dockerfile creates the client itself and no tracked application file is removed. The probe checkout was then modified for cache diagnosis; it is not the final clean-source evidence and is not eligible for deployment.
 - Exact failed rollback reconciliation `20260911T164232Z-d7577358` verified the original accepted KMS signature and unchanged live container IDs/full config/readiness/provider/public OPEN, then released only the local and remote locks owned by `20260911T162022Z-09c1f20e`. Original failure artifacts remain unchanged. An earlier read-only reconciliation helper lacked host metadata and stopped before lock release; the corrected helper completed. No runtime mutation occurred.
 - PR552 CI34623365363 checks head97755012. The final generated-directory correction requires its own exact-head CI and clean build before merging or deploying.
+
+## Final pre-merge proof checkpoint
+
+- Final reviewed head: `7b799784d9eaad222c5515c8d6d7ffa4ee886f7c`, PR552, exact-head CI `34623709238` still running. Superseded head97755012 CI34623365363 was automatically cancelled when the final cache correction was pushed; no duplicate deployment was dispatched.
+- Clean-source full build passed76.406s: TypeScript52.387s and every image/AgentCore/tool artifact succeeded; export-tools-base is now cached0.861s. This is a warm build rehearsal, not deployment time.
+- Actual artifact rehearsal `20260911T164559Z-dbe02852` passed all5 checks: target, fresh AWS secrets/full candidate config, actual native config, freshness, real ECR publication/digest/RootFS verification and host pulls. It performed no live provider/DB/route/container rollout.
+- Config inventory covers4838 tracked source files,189 migration files,35 sync/catalog files, and API111/AI56/workers19 environment keys. Values remain private.
+- Consolidated matrix `.env.kamal/uat/stability-audit/consolidated-proof.json` combines actual20-boundary runtime rehearsal, fresh full build, actual5-boundary artifact rehearsal, local positive/negative contracts, and eight AST-extracted mutation methods proven byte-identical to signed successful operation20260911T160653Z-45db64e5. Prior successful live mutations are retained evidence, not mislabeled as replayed.
+- New one-shot harness `.env.kamal/uat/stability-audit/run-smoke-proof.py` will admin merge only after exact CI passes, then run `smoke-first`; `smoke-repeat` requires that first signed acceptance. Both use `--uat-smoke-acceptance`, count through process exit, and never retry automatically.
+
+## Live smoke proof execution
+
+- CI34623709238 passed every executed required job for exact head7b799784. PR552 admin merged17:06:21Z to main`6b95e50555c9905aa32d17d1372241bb4889cc1b`.
+- Before merge the one-shot queue precheck encountered the exact historical GitHub metadata ghost31611733340 (created/updated2026-08-12, source33ed788c, checkSuite85752682208). Cancel reports completed; jobs/check-runs/pending-deployments are all zero. The documented classification in release-receipt-signup-2026-09-07.md was reverified; only that exact identity is excluded, without deleting or rerunning it. Preparation failure is retained in `smoke-first-preparation-blocked.json`; there was no merge or deployment before reconciliation.
+- First actual deployment operation`20260911T170623Z-c8d84820`, invocation17:06:23.045251Z, source exactmain6b95e505. Capture full merge-to-process-exit time. UAT/READY/Production workflow run IDs are N/A for this local Kamal UAT release; no new GitHub deployment workflow or Production cloud mutation.

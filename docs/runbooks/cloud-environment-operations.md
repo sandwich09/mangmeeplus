@@ -10,7 +10,7 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
-## UAT Kamal update — 2026-09-11 15:56 UTC
+## UAT Kamal update — 2026-09-11 17:15 UTC
 
 Owner-authorized UAT Kamal proof is separate from the ECS V2 Production protocol. Production remains
 on ECS and was not changed. Dev instance `i-0883f1ff88440ca07` remains stopped. Existing UAT ECS
@@ -19,6 +19,9 @@ services are parked at0/0; UAT traffic uses stack `mangmee-kamal-uat` (VPC `vpc-
 - API: `i-0eb581c5ac3b3d7ba`, public `52.77.223.9`, private `10.92.0.10`.
 - AI/workers: `i-011918b0d49534d1c`, public `47.129.248.19`, private `10.92.0.42`.
 - UAT origin: `https://uat.mangmeeplus.com`; existing ALB private targets unchanged.
+- Current serving main `6b95e505` passed two complete smoke deployments `20260911T170623Z-c8d84820`
+  and `20260911T171058Z-8c83ebfc`, verified KMS signatures and full config/readiness/OPEN. Full times
+  4m14.836s and4m25.786s; AgentCore `kamal_uat_b` version4. See the linked task memory/report.
 - UserData-only bootstrap correction completed15:48:07.379Z after49.251476s. EBS instances restarted
   in place; public IPs changed. Enrollment was updated only after AWS identity and original SSH host
   keys matched. Existing containers preserve old `KAMAL_HOST` metadata; do not rewrite it for rollback.

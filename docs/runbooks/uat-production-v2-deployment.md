@@ -43,6 +43,8 @@ API/DB/AI/workers/Redis/internal-API readiness, public OPEN and signed smoke res
 failure and reconcile it before another operation; rehearsal evidence is never called a live deploy.
 This explicit UAT exception does not change Production V2, its gate decisions, or its acceptance.
 Track local Kamal operation IDs separately from UAT/READY/Production workflow run IDs.
+Completed proof: `20260911T170623Z-c8d84820` and `20260911T171058Z-8c83ebfc`, signed and OPEN;
+[full phase totals and scope](../research/kamal-uat-stable-hotfix-proof-2026-09-11.md).
 
 ## เส้นทางปกติ ฉบับคน deploy
 

@@ -1,6 +1,6 @@
 # Repeatable UAT Kamal release and rollback
 
-Status: implementation and consolidated proof in progress; no stable/ten-minute claim yet.
+Status: latest owner scope completed: two warm-cache UAT smoke deployments passed in4m14.836s and4m25.786s, including complete acceptance. See docs/research/kamal-uat-stable-hotfix-proof-2026-09-11.md. Earlier rollback/restore plan below is historical and superseded by the final owner steering.
 Owner: release owner / Codex
 
 Owner explicitly requests closing the known setup/controller/rolling-update gaps, using real UAT,

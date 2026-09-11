@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "operationId": "20260911T170623Z-c8d84820",
+  "environment": "uat",
+  "kind": "uat",
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "releaseId": "43dff509ca4d009260ae44898751c4f2701c8e1e3cfd9a4e2b1675739ee1cb5d",
+  "state": "ACCEPTED_LINE_DEFERRED",
+  "completedAt": "2026-09-11T17:10:34.019970+00:00",
+  "controllerSha256": "33a8f088ca6c7d4f1c3aee1da96e4b13a8fb6555ea0741ed0815fd74432f8475",
+  "controllerConfigSha256": "5b1853730bb96bc33b4ee962add22d01b47a181dd3a7b233b7c2096966553d1b",
+  "rollbackOf": null,
+  "runtimeReadback": {
+    "api-web": [
+      {
+        "running": true,
+        "imageId": "sha256:4d9a044360bbeeeda7fe4d64318f93353595eb05344716a1a3e9c41f2a570794",
+        "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "environmentSha256": "cfbee1c29188c2eaaaebe5110042c45bad5523f142f8baad73aac50a73316ba6",
+        "configValidationPassed": true,
+        "instanceId": "i-0eb581c5ac3b3d7ba",
+        "containerId": "d219e061806bc5ec059747570261bc7608b25b1c7d98d00fc8a9273b1bb59ad4",
+        "containerName": "mangmee-kamal-uat-web-6b95e50555c9905aa32d17d1372241bb4889cc1b-20260911T170623Z-c8d84820-api-web"
+      }
+    ],
+    "ai-gateway": [
+      {
+        "running": true,
+        "imageId": "sha256:64d32e74659a27575d5a4327d6fecf3248dccf62f21a1213b3a30c3d875ba8fc",
+        "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "environmentSha256": "f1dead6ddaa2ea697e0fe2f3af954c8218473e6255657c09e02f52452b3bd03b",
+        "configValidationPassed": true,
+        "instanceId": "i-011918b0d49534d1c",
+        "containerId": "690f81fafbfc7b3aaeb64ed6f269bece5e852c88a660a819ea75ce559fe5b09f",
+        "containerName": "mangmee-kamal-uat-ai-gateway-web-6b95e50555c9905aa32d17d1372241bb4889cc1b-20260911T170623Z-c8d84820-ai-gateway"
+      }
+    ],
+    "workers": [
+      {
+        "running": true,
+        "imageId": "sha256:7eb2ba09764c258d84a184fdc1f17353ca4623dcec508a3afb9ab965d2c3b839",
+        "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "environmentSha256": "4a67892f9dae549e913e77733a9736236ad6382c9ffaab1a29fb657854309055",
+        "configValidationPassed": true,
+        "instanceId": "i-011918b0d49534d1c",
+        "containerId": "76a7361ae046ef9cd12927e9924ead9793e89f907ea771f17d9415c39cb19966",
+        "containerName": "mangmee-kamal-uat-workers-web-6b95e50555c9905aa32d17d1372241bb4889cc1b-20260911T170623Z-c8d84820-workers"
+      }
+    ]
+  },
+  "readiness": {
+    "ai-gateway": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok"
+      }
+    },
+    "api-web": {
+      "i-0eb581c5ac3b3d7ba": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      }
+    },
+    "workers": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok",
+        "redis": "ok",
+        "internalApi": "ok"
+      }
+    }
+  },
+  "agentcore": {
+    "status": "UPDATED_PINNED",
+    "runtimeArn": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_kamal-48umEu5ZDq",
+    "qualifier": "kamal_uat_b",
+    "version": "4",
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "artifactSha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0",
+    "previousQualifier": "kamal_uat_a"
+  },
+  "launchRetirement": {
+    "passed": true,
+    "retiredCount": 16,
+    "surveyed": 16
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "elapsedThroughAcceptanceSeconds": 250.83
+}
