@@ -808,6 +808,7 @@ function PackageMenuSection({
                 {turningOffItems.map((item) => (
                   <li key={item.featureKey} className="text-sm text-red-800">
                     <span className="block font-bold">{item.labelTh}</span>
+                    <span className="text-xs">เปิด → ปิด</span>
                     {cascadeItems.some(({ featureKey }) => featureKey === item.featureKey) && (
                       <span className="text-xs text-red-600">ปิดตามฟีเจอร์ที่เกี่ยวข้อง</span>
                     )}
@@ -825,6 +826,7 @@ function PackageMenuSection({
                 {diff.turningOn.map((item) => (
                   <li key={item.featureKey} className="text-sm text-green-800">
                     <span className="block font-bold">{item.labelTh}</span>
+                    <span className="text-xs">ปิด → เปิด</span>
                   </li>
                 ))}
               </ul>
@@ -848,7 +850,7 @@ function PackageMenuSection({
           <div>
             <h2 className="font-bold text-gray-900">แพ็กเกจการใช้งาน</h2>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">
-              เลือกจากเมนูเดียวกับแถบข้างของบริษัท แล้วตรวจสอบผลรวมก่อนบันทึก
+              ชุดเริ่มต้นมี 7 เมนู แยกจากแพ็กเกจที่ซื้อ ปรับแต่ละเมนูแล้วตรวจค่าก่อน–หลังบันทึกได้
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1481,6 +1483,7 @@ function AiUsageBudgetSection({
               {budgetLoading ? 'Saving…' : 'Save'}
             </button>
           </div>
+          <p className="text-xs text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
             Leave empty to inherit the platform default {satangToBaht(usage.budget.defaultSatang)}.
             Platform ceiling {satangToBaht(usage.budget.ceilingSatang)}.
@@ -1595,6 +1598,9 @@ function AiUsageBudgetSection({
                   disabled={ocrLoading || fieldsLocked}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
+                  เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน
+                </p>
+                <p className="mt-1 text-xs leading-5 text-gray-500">
                   นับทุกครั้งที่ระบบเริ่มส่งเอกสารให้ OCR แม้อ่านไม่สำเร็จ เพราะผู้ให้บริการอาจคิดต้นทุนแล้ว
                 </p>
               </div>
@@ -1702,7 +1708,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
     const warn = parseLimitInput(warningDays);
     const days = parseDaysInput(termDays);
     if (branch === null || employee === null || slips === null || warn === null) {
-      showToast('จำนวนสาขา พนักงาน สลิป และวันแจ้งเตือน ต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป', 'error');
+      showToast('จำนวนสาขา พนักงาน สลิป และวันแจ้งเตือน ต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป', 'error');
       return;
     }
     if (!term && days === null) {
@@ -1856,30 +1862,30 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                   ))}
                 </ThemedSelect>
                 <p className="mt-1 text-xs text-gray-500">
-                  เลือกแพ็กเกจแล้วระบบจะเติมตัวเลขให้ ปรับรายช่องต่อได้ตามที่ตกลงกับลูกค้า
+                  เลือกแพ็กเกจแล้วระบบจะเติมโควตาให้ ปรับรายช่องได้ โดยไม่เปลี่ยนเมนูที่บริษัทใช้งาน
                 </p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">จำนวนสาขา</label>
-                  <input className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving}
+                  <label htmlFor="plan-branchLimit" className="mb-1 block text-xs text-gray-500">จำนวนสาขา</label>
+                  <input id="plan-branchLimit" className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving}
                     onChange={(e) => setBranchLimit(e.target.value)} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">จำนวนพนักงาน</label>
-                  <input className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving}
+                  <label htmlFor="plan-employeeLimit" className="mb-1 block text-xs text-gray-500">จำนวนพนักงาน</label>
+                  <input id="plan-employeeLimit" className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving}
                     onChange={(e) => setEmployeeLimit(e.target.value)} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">สลิปต่อเดือน</label>
-                  <input className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving}
+                  <label htmlFor="plan-monthlySlipLimit" className="mb-1 block text-xs text-gray-500">สลิปต่อเดือน</label>
+                  <input id="plan-monthlySlipLimit" className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving}
                     onChange={(e) => setMonthlySlipLimit(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">แจ้งเตือนล่วงหน้า (วัน)</label>
-                  <input className={inputClass} inputMode="numeric" value={warningDays} disabled={saving}
+                  <label htmlFor="plan-warningDays" className="mb-1 block text-xs text-gray-500">แจ้งเตือนล่วงหน้า (วัน)</label>
+                  <input id="plan-warningDays" className={inputClass} inputMode="numeric" value={warningDays} disabled={saving}
                     onChange={(e) => setWarningDays(e.target.value)} />
                 </div>
                 {!term && (
@@ -1890,6 +1896,19 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                     <p className="mt-1 text-xs text-gray-500">นับจากเวลาที่บันทึก แก้ไขวันหมดอายุภายหลังได้ด้วยการต่ออายุ</p>
                   </div>
                 )}
+              </div>
+              <div className="rounded border border-blue-200 bg-white p-3 text-sm" aria-live="polite">
+                <p className="font-medium">การเปลี่ยนแปลง: ค่าเดิม → ค่าใหม่</p>
+                {[
+                  ['แพ็กเกจโควตา', term ? PLAN_TIER_PRESETS[term.tierKey].labelTh : 'ยังไม่กำหนด', PLAN_TIER_PRESETS[tierKey].labelTh],
+                  ['สาขา', term?.branchLimit ?? 'ไม่จำกัด', branchLimit],
+                  ['พนักงาน', term?.employeeLimit ?? 'ไม่จำกัด', employeeLimit],
+                  ['สลิปต่อเดือน', term?.monthlySlipLimit ?? 'ไม่จำกัด', monthlySlipLimit],
+                  ['แจ้งเตือนล่วงหน้า (วัน)', term?.warningDays ?? 'ยังไม่กำหนด', warningDays],
+                ].filter(([, before, after]) => String(before) !== String(after)).map(([label, before, after]) => (
+                  <p key={label}>{label}: {before} → {after || 'ยังไม่ได้กรอก'}</p>
+                ))}
+                <p className="mt-1 text-xs text-gray-500">สิทธิ์เมนูของบริษัทคงเดิม</p>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
@@ -1930,7 +1949,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
             <p className="text-sm text-gray-600">
               {previewDays === null
                 ? 'กรุณากรอกจำนวนวันเป็นจำนวนเต็มมากกว่า 0'
-                : `ครบกำหนดใหม่ ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
+                : `ครบกำหนด: ${formatDate(term.termEndsAt)} → ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
             </p>
             {adminDisabled && (
               <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
@@ -2430,7 +2449,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
 
         {/* Plan limits & usage term (P29) */}
         <PlanTermSection
-          key={companyId}
+          key={`term-${companyId}`}
           companyId={companyId}
           companyStatus={currentStatus}
           fieldsLocked={fieldsLocked}
@@ -2487,7 +2506,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         </SectionCard>
 
         {/* AI spend meter + monthly budget override */}
-        <AiUsageBudgetSection key={companyId} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
+        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
 
         {/* LINE context health */}
         <SectionCard title="LINE Context">

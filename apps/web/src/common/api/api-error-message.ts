@@ -732,6 +732,13 @@ export function translateApiError(raw: string): string | null {
   // Conflicts carry their detail inline, e.g. `..._accounting_period_locked:2026-07`.
   const prefix = Object.keys(CODE_LABELS).find((code) => text.startsWith(`${code}:`));
   if (prefix) return CODE_LABELS[prefix]!;
+  // Only these customer-authored quota sentences are safe to pass through; unknown diagnostics stay hidden.
+  if (/^แพ็กเกจปัจจุบัน(?:สร้างได้สูงสุด \d+ สาขา|เพิ่มพนักงานได้สูงสุด \d+ คน) — ติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ$/.test(text)) return text;
+  const planField = /^(branchLimit|employeeLimit|monthlySlipLimit|warningDays|termDays) must be a whole number of at least 1\.$/.exec(text);
+  if (planField) {
+    const labels: Record<string, string> = { branchLimit: 'จำนวนสาขา', employeeLimit: 'จำนวนพนักงาน', monthlySlipLimit: 'สลิปต่อเดือน', warningDays: 'วันแจ้งเตือนล่วงหน้า', termDays: 'จำนวนวันที่ใช้งาน' };
+    return `${labels[planField[1]!]}ต้องเป็นจำนวนเต็มตั้งแต่ 1 ขึ้นไป`;
+  }
   for (const [pattern, render] of MESSAGE_PATTERNS) {
     const match = text.match(pattern);
     if (match) return render(match);

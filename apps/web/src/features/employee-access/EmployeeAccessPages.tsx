@@ -9,7 +9,7 @@ import { formatThaiTime } from '@/common/i18n/thai-date';
 import type { DictionaryKey, SupportedLocale } from '@/common/i18n/workspace-dictionary';
 import { employeeFullName } from '@watchdog-bms/contracts';
 import type {
-  CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate,
+  CapabilityPackView, RiskLevel, RolePreviewResult, RoleTemplate, PermissionCatalogItem,
   CompanyAccessMatrixRow, EffectiveAccessView,
 } from '@watchdog-bms/contracts';
 import {
@@ -836,7 +836,7 @@ function RolesView({ companyId }: { companyId: string }) {
       {showCreate && canEditRoles && (
         <div ref={revealedRolePanel}>
         <RoleBuilder
-          companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
+          companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable} permissionCatalog={catalog}
           onCancel={() => setShowCreate(false)}
           onSubmit={async (body) => { await createRole(companyId, body); toast.success('สร้างบทบาทแล้ว'); setShowCreate(false); void reload(); }}
         />
@@ -883,7 +883,7 @@ function RolesView({ companyId }: { companyId: string }) {
               )}
               {editingRoleId === role.id && canEditRoles && (
                 <RoleBuilder
-                  companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable}
+                  companyId={companyId} packModules={packModules} allPacks={allPacks} templates={templates} roleOptionsAvailable={roleOptionsAvailable} permissionCatalog={catalog}
                   initial={role}
                   onCancel={() => setEditingRoleId(null)}
                   onSubmit={async (body) => { await updateRole(companyId, role.id, body); toast.success('บันทึกบทบาทแล้ว'); setEditingRoleId(null); void reload(); }}
@@ -898,12 +898,13 @@ function RolesView({ companyId }: { companyId: string }) {
 }
 
 // Guided role builder: job template → plain-language work options → live preview.
-export function RoleBuilder({ companyId, packModules, allPacks, templates, roleOptionsAvailable, initial, onCancel, onSubmit }: {
+export function RoleBuilder({ companyId, packModules, allPacks, templates, roleOptionsAvailable, permissionCatalog = [], initial, onCancel, onSubmit }: {
   companyId: string;
   packModules: Array<{ module: string; packs: CapabilityPackView[] }>;
   allPacks: CapabilityPackView[];
   templates: RoleTemplate[];
   roleOptionsAvailable: boolean;
+  permissionCatalog?: PermissionCatalogItem[];
   initial?: any;
   onCancel: () => void;
   onSubmit: (body: any) => Promise<void>;
@@ -1061,6 +1062,15 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-4 text-sm text-gray-500">
                   บริษัทนี้ยังไม่มีงานเพิ่มเติมที่เปิดให้กำหนด
                 </div>
+              )}
+              {preservedKeys.length > 0 && (
+                <details className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs" open>
+                  <summary className="cursor-pointer font-semibold">สิทธิ์เดิมที่คงไว้ ({preservedKeys.length} รายการ)</summary>
+                  <p className="mt-2 text-gray-600">สิทธิ์เหล่านี้ไม่ได้เป็นงานครบทั้งชุด จึงไม่ติ๊กช่องงานด้านบน การบันทึกจะคงสิทธิ์เดิมไว้ การเลือกบทบาทตั้งต้นใหม่จะใช้สิทธิ์ของชุดที่เลือกแทน</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-4">
+                    {preservedKeys.map((key) => <li key={key}>{permissionCatalog.find((p) => p.key === key)?.description ?? key}</li>)}
+                  </ul>
+                </details>
               )}
               <p className="mt-1 text-[11px] text-gray-400">ทุกบทบาทเข้าสู่ระบบ ดูหน้าหลัก และรับการแจ้งเตือนได้โดยอัตโนมัติ</p>
             </div>

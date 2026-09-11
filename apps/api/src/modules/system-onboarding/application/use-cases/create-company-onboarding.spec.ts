@@ -393,11 +393,10 @@ describe('CreateCompanyOnboardingUseCase', () => {
       .map((r) => r.featureKey)
       .sort();
     assert.deepEqual(enabledParents, [
-      'ai_line_assistant', 'company_settings', 'crm', 'dashboard_notifications', 'double_entry_ledger',
-      'employee_access', 'expenses', 'line_oa', 'product_catalog', 'reimbursement', 'thai_tax',
-      'workflow_automation',
+      'ai_line_assistant', 'company_settings', 'dashboard_notifications',
+      'employee_access', 'expenses', 'reimbursement',
     ]);
-    assert.equal(rows.find((row) => row.featureKey === 'crm.bookings')?.enabled, true, 'submenu inherits its parent');
+    assert.equal(rows.find((row) => row.featureKey === 'crm.bookings')?.enabled, false, 'starter does not grant CRM submenus');
     assert.equal(rows.find((row) => row.featureKey === 'procurement.vendor_bills')?.enabled, false);
     assert.equal(rows.find((row) => row.featureKey === 'expense_auto_post')?.enabled, false);
     assert.ok(rows.every((r) => (r as any).companyId === 'co-1'));
@@ -557,9 +556,9 @@ describe('CreateCompanyOnboardingUseCase', () => {
     assert.ok(vatStateData.companyId);
   });
 
-  // Owner decision (UAT round 1): self-signup shops start on the "เริ่มต้น" preset — the same rows
-  // the admin console's preset button submits — so a trial shop opens without the CRM group.
-  it("modulePackage 'starter' seeds exactly the admin console starter preset", async () => {
+  // Admin and self-signup both start on starter, regardless of commercial tier.
+  for (const modulePackage of [undefined, 'starter']) for (const planTier of ['STARTER_249', 'PRO_999'] as const) {
+  it(`onboarding ${modulePackage ?? 'default'}/${planTier} seeds exactly starter`, async () => {
     const prisma = makePrisma({});
     let entitlementRows: Array<{ featureKey: string; enabled: boolean }> | undefined;
     const inner = prisma.client.$transaction;
@@ -571,7 +570,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
         };
         return fn(tx);
       }, opts);
-    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute({ ...makeCmd(), modulePackage: 'starter' } as any);
+    await new CreateCompanyOnboardingUseCase(prisma, configMock, legalMock).execute({ ...makeCmd(), modulePackage, planTier } as any);
 
     assert.ok(entitlementRows, 'entitlement rows are still seeded');
     assert.equal(entitlementRows.length, ALL_FEATURE_ENTITLEMENT_KEYS.length, 'still one explicit row per canonical key');
@@ -582,6 +581,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
     assert.equal(entitlementRows.find((row) => row.featureKey === 'crm')?.enabled, false, 'CRM stays off on starter');
     assert.equal(entitlementRows.find((row) => row.featureKey === 'expenses')?.enabled, true, 'expenses stays on');
   });
+  }
 
   // The VAT question is asked once, where the company is created. An admin who does not know
   // leaves it out — and "unknown" must never be recorded as "not registered".
@@ -635,7 +635,7 @@ describe('CreateCompanyOnboardingUseCase', () => {
   // Owner decision 2026-08-04 + RA-16: Thai tax accounting is ON out of the box, and the tax config
   // a claimable input-VAT line needs is seeded ACTIVE against the chart bootstrapped in the same
   // transaction. `expense_auto_post` stays OFF — postings accumulate pending until it is enabled.
-  it('enables Thai tax accounting and seeds a resolvable tax-code profile for a fresh company', async () => {
+  it('prepares tax configuration without enabling modules outside starter', async () => {
     const prisma = makePrisma({});
     const entitlement: { entitlements?: any } = {};
     const taxConfig: { profile?: any; definitions?: any[]; accountRules?: any; reportRules?: any } = {};
@@ -667,13 +667,13 @@ describe('CreateCompanyOnboardingUseCase', () => {
     const enabled = new Map((entitlement.entitlements.data as Array<{ featureKey: string; enabled: boolean }>)
       .map((row) => [row.featureKey, row.enabled]));
     for (const key of ['thai_tax', 'double_entry_ledger', 'workflow_automation']) {
-      assert.equal(enabled.get(key), true, `${key} must be on for a new company`);
+      assert.equal(enabled.get(key), false, `${key} must stay off on starter`);
     }
     // expense_auto_post declares double_entry_ledger as a prerequisite; enabling the prerequisite
     // must not drag the child on, because enable-later runs a guarded backfill.
     assert.equal(enabled.get('expense_auto_post'), false);
     assert.deepEqual(
-      [...enabled.keys()].filter((key) => key.startsWith('workflow_automation.') && !enabled.get(key)),
+      [...enabled.keys()].filter((key) => key.startsWith('workflow_automation.') && enabled.get(key)),
       [],
       'submenus follow their parent',
     );

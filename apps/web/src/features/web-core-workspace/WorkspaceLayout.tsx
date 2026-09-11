@@ -36,6 +36,7 @@ type Props = {
 // Only implemented entry points; permissions still decide which enabled features are visible.
 const DESIGN_HANDOFF_NAV_ORDER = [
   'dashboard',
+  'ai-suggestions',
   'inbox',
   'customers',
   'booking',

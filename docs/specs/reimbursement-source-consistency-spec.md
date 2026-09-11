@@ -53,6 +53,6 @@ The create/edit page offers existing expenses as a source, preloads supported fi
 8. Existing manual receipts and old claims still work with original permissions, signature and payout idempotency. No package.json/dependency change.
 9. Focused unit/PostgreSQL checks and browser new/edit/detail paths demonstrate success, denied/stale/error behavior. Keep evidence in task memory.
 
-## Open beneficiary boundary
+## Beneficiary boundary — owner decision 2026-09-11
 
-Paper substitute receipts currently retain handwritten names without an authoritative payer account link. They return `reimbursement_source_payer_unlinked`; the UI must explain the missing verified link. This implementation does not create an external payee, match by name, or treat the uploader as the recipient. Owner decision is pending between requiring company membership plus a verified identity link and adding an external-payee reimbursement journey. Creating an account alone does not retrospectively prove handwritten payer identity.
+Paper substitute receipts currently retain handwritten names without an authoritative payer account link. They return `reimbursement_source_payer_unlinked`; the UI must explain the missing verified link. This implementation does not create an external payee, match by name, or treat the uploader as the recipient. The owner chose to handle external/no-account payee reimbursements outside the system; keep only facts the existing flow can record. Do not add an external-payee journey or invent an identity link. Creating an account alone does not retrospectively prove handwritten payer identity.

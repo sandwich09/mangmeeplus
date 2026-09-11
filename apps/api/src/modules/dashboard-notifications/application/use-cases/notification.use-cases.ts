@@ -805,6 +805,7 @@ function toSummary(event: any): NotificationSummaryDto {
     companyId: event.companyId,
     triggerKey: event.triggerKey,
     severity: event.severity,
+    status: event.status,
     title: event.title,
     body: event.body,
     sourceRefs: refs,

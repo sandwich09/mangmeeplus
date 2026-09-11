@@ -1,0 +1,76 @@
+Starter fixes local verification — 2026-09-11
+Baseline main: 07824efc9dd6c53c926b7f275a16581f97b8266e
+Branch: codex/starter-qa-fixes-20260911
+All execution stayed in the isolated main QA worktree and local QA database.
+
+expense-regressions
+ℹ tests 1251
+ℹ suites 172
+ℹ pass 1245
+ℹ fail 0
+ℹ skipped 6
+ℹ duration_ms 24017.47625
+
+adjacent-tests
+ℹ tests 253
+ℹ suites 62
+ℹ pass 253
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 4413.196667
+
+web-regressions
+ℹ tests 648
+ℹ suites 122
+ℹ pass 648
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 4259.347792
+
+payment-postgres
+ℹ tests 25
+ℹ suites 2
+ℹ pass 25
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 1523.689334
+
+guide-tests
+ℹ tests 7
+ℹ suites 1
+ℹ pass 7
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 250.202667
+
+document-tests
+ℹ tests 39
+ℹ suites 6
+ℹ pass 39
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 1478.803791
+
+final-evidence-tests
+ℹ tests 12
+ℹ suites 2
+ℹ pass 12
+ℹ fail 0
+ℹ skipped 0
+ℹ duration_ms 240.41175
+
+Commands and selection:
+API/Web: pnpm exec tsx --test --test-concurrency=2 --test-reporter=spec <selected *.spec.ts>
+Expense: all 53 src/modules/expenses/**/*.spec.ts excluding filenames containing .pg.
+Adjacent API: all ai-draft and non-.pg. dashboard-notifications specs, plus create-company-onboarding.spec.ts.
+Web: all top-level *.spec.ts in expenses/dashboard-notifications/employee-access/ai-suggestions/system-partners/reimbursements, plus common/api/api-error-message.spec.ts.
+PostgreSQL: prisma-expense.repository.payment.spec.ts with DATABASE_URL pointing only to watchdog_starter_qa_20260911 and EXPENSE_PAYMENT_REQUIRE_POSTGRES=true. This rerun executes all 6 originally skipped PostgreSQL tests (25 including repeated unit cases).
+Guide: src/features/user-guide/user-guide.content.spec.ts.
+Final expense checks: expense-document.use-case.spec.ts and expense-evidence-sources.spec.ts + expense-export.logic.spec.ts.
+Numbers overlap across focused reruns; do not sum them as unique cases.
+
+Build/type checks: pnpm build in packages/contracts and apps/api; pnpm exec tsc --noEmit in apps/web; API production-source tsc with 8 GiB NODE_OPTIONS and specs excluded.
+Full API typecheck including historical specs exceeded the default 4 GiB Node heap earlier; production-source check passed. Runtime specs run separately through tsx.
+No package.json or dependency changes. git diff --check passed.
+
+Browser export checks: claim-index-full.xlsx = 48 columns/1 data row; cost 125 paid 125 outstanding 0; original seller reference QA1109-001 verified against source UI. Claim manifest 2 source files. Cancelled manifest 3 historical/SUPERSEDED files; current-evidence index references blank.

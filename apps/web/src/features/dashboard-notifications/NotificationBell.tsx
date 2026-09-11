@@ -117,7 +117,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
                 const body = (
                   <>
                     <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${severityColor(item.severity)}`}>{severityLabel(item.severity)}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[10.5px] font-bold ${severityColor(item.severity)}`}>{item.status === 'resolved' ? 'ดำเนินการแล้ว' : severityLabel(item.severity)}</span>
                       <span className="text-[11px] text-gray-400">{formatRelativeTime(item.createdAt)}</span>
                       {!item.read && <span aria-hidden className="ml-auto h-2 w-2 shrink-0 rounded-full bg-brand-500" />}
                     </div>

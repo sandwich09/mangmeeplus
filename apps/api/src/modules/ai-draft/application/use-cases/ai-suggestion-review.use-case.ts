@@ -30,9 +30,16 @@ import {
 } from '../../domain/logic/ai-draft-safety.logic';
 import { isSuggestionActionable, isSuggestionExpired } from '../../domain/logic/ai-draft-status.logic';
 import { toCandidateAction, toReview } from '../dto/ai-draft.mapper';
+import { canAccessTemplateSources } from '../../domain/ai-draft-template-catalog';
 import type { AiCandidateActionRecord, AiSuggestionRecord } from '../../domain/models/ai-draft.model';
 
 type ValidationResult = { ok: boolean; errors: string[]; warnings: string[]; editableFields: string[] };
+
+async function assertCurrentSourceAccess(ctx: RequestContext, suggestion: AiSuggestionRecord, sourceState: SourceStateService): Promise<void> {
+  if (!canAccessTemplateSources(suggestion.templateKey, ctx.permissions) || !await sourceState.canRead(ctx, suggestion)) {
+    throw new ForbiddenException('Source is no longer readable');
+  }
+}
 
 function assertSuggestionHasDraftableEvidence(suggestion: AiSuggestionRecord, action: AiCandidateActionRecord): void {
   if (suggestion.needsDataReasonsJson.length > 0) {
@@ -59,7 +66,7 @@ function validateActionPayload(action: AiCandidateActionRecord, editedPayload?: 
 
 @Injectable()
 export class ValidateCandidateActionUseCase {
-  constructor(private readonly repo: PrismaAiDraftRepository, private readonly audit: AuditService) {}
+  constructor(private readonly repo: PrismaAiDraftRepository, private readonly audit: AuditService, private readonly sourceState: SourceStateService) {}
 
   async execute(ctx: RequestContext, suggestionId: string, actionId: string): Promise<AiCandidateAction> {
     if (!canReviewSuggestions(ctx.permissions)) throw new ForbiddenException('Missing permission: ai.draft.review');
@@ -72,6 +79,7 @@ export class ValidateCandidateActionUseCase {
     if (!canValidateCandidateAction(ctx.permissions, action.actionType)) {
       throw new ForbiddenException(`Missing source permission to validate ${action.actionType}`);
     }
+    await assertCurrentSourceAccess(ctx, found.suggestion, this.sourceState);
     const result = validateActionPayload(action);
     const updated = await this.repo.updateCandidateAction(action.id, {
       status: result.ok ? 'VALIDATED' : 'VALIDATION_FAILED',
@@ -128,6 +136,8 @@ export class CreateSourceDraftUseCase {
       throw new ForbiddenException(`Missing permission(s): ${permission.missing.join(', ')}`);
     }
 
+    await assertCurrentSourceAccess(ctx, suggestion, this.sourceState);
+
     // Source-state guard: block unless the reviewer acknowledges a detected change.
     const changed = await this.sourceState.isChanged(ctx, suggestion);
     if (changed && !dto.acknowledgeSourceStateChanged) {
@@ -180,6 +190,7 @@ export class ReviewSuggestionUseCase {
     private readonly repo: PrismaAiDraftRepository,
     private readonly audit: AuditService,
     private readonly createRequest: CreateDraftRequestUseCase,
+    private readonly sourceState: SourceStateService,
   ) {}
 
   async execute(ctx: RequestContext, suggestionId: string, dto: ReviewAiSuggestionDto): Promise<AiSuggestionReview> {
@@ -187,6 +198,7 @@ export class ReviewSuggestionUseCase {
     const found = await this.repo.findSuggestionById(ctx.companyId, suggestionId);
     if (!found) throw new NotFoundException('Suggestion not found');
     const suggestion = found.suggestion;
+    await assertCurrentSourceAccess(ctx, suggestion, this.sourceState);
     if (!isSuggestionActionable(suggestion.status)) {
       throw new UnprocessableEntityException(`Suggestion is not actionable (status ${suggestion.status})`);
     }

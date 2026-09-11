@@ -1,3 +1,4 @@
+import { completedDocumentNotificationIds, localizeReimbursementDecision } from './document-notification-state';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type {
@@ -53,6 +54,7 @@ function toEvent(r: any): NotificationEvent {
     ...r,
     severity: r.severity.toLowerCase(),
     status: r.status.toLowerCase(),
+    body: r.triggerKey === 'workflow.reimbursement_decision_requester' ? localizeReimbursementDecision(r.body) : r.body,
     payloadJson: r.payloadJson as Record<string, unknown>,
     sourceRefsJson: r.sourceRefsJson as Record<string, unknown>,
     readAt: recipient?.readAt,
@@ -115,12 +117,15 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
   async findByDedupKey(companyId: string, dedupKey: string) { const r = await this.prisma.client.notificationEvent.findFirst({ where: { companyId, dedupKey } }); return r ? toEvent(r) : null; }
   async findById(companyId: string, id: string) { const r = await this.prisma.client.notificationEvent.findFirst({ where: { id, companyId } }); return r ? toEvent(r) : null; }
   async list(companyId: string, userId: string, filter: ListEventsFilter) {
+    const completed = await completedDocumentNotificationIds(this.prisma.client, companyId, userId);
     const pageSize = filter.pageSize ?? 25;
     const recipientWhere: any = { userId, dismissedAt: null };
     if (filter.read === false) recipientWhere.readAt = null;
     if (filter.read === true) recipientWhere.readAt = { not: null };
     const where: any = { companyId, recipients: { some: recipientWhere } };
-    if (filter.status) where.status = filter.status.toUpperCase();
+    if (filter.status === 'resolved') where.OR = [{ status: 'RESOLVED' }, { id: { in: completed } }];
+    else if (filter.status) where.status = filter.status.toUpperCase();
+    if (filter.read === false || filter.status === 'open') where.AND = [{ status: { not: 'RESOLVED' } }, { id: { notIn: completed } }];
     if (filter.severity) where.severity = filter.severity.toUpperCase();
     if (filter.triggerKey) where.triggerKey = filter.triggerKey;
     const rows = await this.prisma.client.notificationEvent.findMany({
@@ -130,7 +135,7 @@ export class PrismaNotificationEventRepository implements NotificationEventRepos
     });
     const hasMore = rows.length > pageSize;
     const items = hasMore ? rows.slice(0, pageSize) : rows;
-    return { items: items.map(toEvent), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };
+    return { items: items.map(row => toEvent(completed.includes(row.id) ? { ...row, status: 'RESOLVED' } : row)), nextCursor: hasMore ? items[items.length - 1]?.id : undefined };
   }
   async create(data: Omit<NotificationEvent, 'id' | 'createdAt' | 'updatedAt'>) {
     const r = await this.prisma.client.notificationEvent.create({
@@ -193,9 +198,10 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
    * numbers instead of the whole backlog.
    */
   async countUnread(companyId: string, userId: string) {
+    const completed = await completedDocumentNotificationIds(this.prisma.client, companyId, userId);
     const groups = await this.prisma.client.notificationEvent.groupBy({
       by: ['severity'],
-      where: { companyId, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
+      where: { companyId, status: { not: 'RESOLVED' }, id: { notIn: completed }, recipients: { some: { userId, readAt: null, dismissedAt: null } } },
       _count: { _all: true },
     });
     const count = (severity: string) => groups.find((group) => group.severity === severity)?._count._all ?? 0;

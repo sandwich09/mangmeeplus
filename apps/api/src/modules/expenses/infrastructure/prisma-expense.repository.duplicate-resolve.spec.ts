@@ -334,7 +334,7 @@ describe('PrismaExpenseRepository duplicate-candidate resolution', () => {
         }) },
         journalEntry: { findMany: async () => [] },
         attachmentLink: { findMany: async () => [] },
-        expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+        expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
       },
     } as any);
 

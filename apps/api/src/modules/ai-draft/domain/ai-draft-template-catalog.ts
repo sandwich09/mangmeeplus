@@ -97,7 +97,7 @@ export const AI_SUGGESTION_TEMPLATES: AiSuggestionTemplateDef[] = [
     description: 'Fallback review checklist created when a workflow requests an AI draft but no safe source draft API is available.',
     triggerModes: ['manual', 'workflow'],
     requiredSourceModules: ['workflow'],
-    requiredPermissions: ['ai.suggestion.request'],
+    requiredPermissions: ['ai.suggestion.request', 'workflow.task.read'],
     riskLevel: 'LOW',
     defaultTtlMinutes: TTL_NORMAL,
   },
@@ -124,4 +124,12 @@ export function isTemplateAvailable(key: string): boolean {
   const def = getTemplate(key);
   if (!def) return false;
   return computeTemplateAvailability(def).status === 'AVAILABLE';
+}
+
+/** Discovery and retained suggestions must respect the caller's current source permissions. */
+export function canAccessTemplateSources(templateKey: string, permissions: readonly string[]): boolean {
+  const template = getTemplate(templateKey);
+  return Boolean(template && template.requiredPermissions
+    .filter((key) => !key.startsWith('ai.'))
+    .every((key) => permissions.includes(key)));
 }

@@ -28,7 +28,7 @@ import {
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
   calculateManualExpenseTotals, buildManualExpenseLines, canAccessExpenseTab, canDeleteExpense, expenseDeleteErrorMessage,
-  expenseDeleteTargetLabel, firstFilled, isExpensePending, summarizeExpenseKpis,
+  expenseDeleteTargetLabel, firstFilled, isExpensePendingReview, expenseReimbursementProgressLabel, summarizeExpenseKpis,
   isBlockedCheckBillClassification, lateDocumentDays, EXPENSE_DATE_STATUS_LABELS, expenseClassificationConfirmBlocker,
   POSTING_STATUS_LABELS, aiGrandTotalValue, expenseAiFieldProvenance, expenseRatePercent, expenseDocumentWhtRate,
   vatRatePreset, vatRatePresetValue, vatTreatmentForPreset, expensePercentToRate, expenseRateToPercent,
@@ -787,7 +787,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             {detail.attachments.filter(file => isExpenseEvidenceFile(file)).map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 break-all">
               <input type="checkbox" checked={assessment.attachmentIds.includes(file.id)} onChange={event => setAssessment(value => ({ ...value, attachmentIds: event.target.checked ? [...value.attachmentIds, file.id] : value.attachmentIds.filter(id => id !== file.id) }))} />{file.originalFileName}
             </label>)}
-            {!detail.attachments.some(file => isExpenseEvidenceFile(file)) && <p className="text-gray-600">ยังไม่มีไฟล์แนบ เก็บร่างแล้วเพิ่มหลักฐานภายหลังได้</p>}
+            {!detail.attachments.some(file => isExpenseEvidenceFile(file)) && <p className="text-gray-600">{detail.attachments.length ? "เอกสารที่ระบบออกและประวัติหลักฐานดูได้จากรายการเอกสารแนบ" : isMutable ? "ยังไม่มีไฟล์แนบ เก็บร่างแล้วเพิ่มหลักฐานภายหลังได้" : "ไม่มีไฟล์หลักฐานแนบกับรายการนี้"}</p>}
           </fieldset>
           {assessment.receiptProblem !== 'NONE' && <label className="block">เหตุผลที่ใช้หลักฐานนี้
             <textarea aria-label="เหตุผลที่ใช้หลักฐานนี้" className={inputClass} rows={2} maxLength={assessment.route === 'SUBSTITUTE_RECEIPT' ? 500 : 2000} disabled={busy || !isMutable || !canReview} value={assessment.reason} onChange={event => setAssessment(value => ({ ...value, reason: event.target.value }))} />
@@ -826,7 +826,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             : expenseValueLabel(SUBSTITUTE_RECEIPT_STATUS_LABELS, evidence.status)}</p>
           <p>{evidence.fundingSource === 'COMPANY' ? 'บริษัทจ่ายเต็มจำนวน' : evidence.fundingSource === 'PERSONAL_ADVANCE' ? 'พนักงานสำรองจ่ายเต็มจำนวน' : 'เอกสารเดิมยังไม่ระบุเงินที่ใช้ชำระ'}</p>
           <p>{t('expenses.substitute_wizard.payer', locale)}: {certifierName || (paperAwaiting ? 'รอกรอกชื่อบนกระดาษ' : '—')}</p>
-          {evidence.fundingSource === 'PERSONAL_ADVANCE' && <p className="text-xs text-gray-600">ใบรับรองนี้ยังไม่ใช่การจ่ายคืนเงินให้พนักงาน</p>}
+          {evidence.fundingSource === 'PERSONAL_ADVANCE' && <p className="text-xs text-gray-600">{detail.reimbursementProgress?.requestId ? `สถานะใบเบิก: ${expenseReimbursementProgressLabel(detail.reimbursementProgress)}` : "ใบรับรองนี้ยังไม่ใช่การจ่ายคืนเงินให้พนักงาน"}</p>}
           <Link className={btnClass} href={evidence.status === 'SUPERSEDED'
             ? `/companies/${encodeURIComponent(companyId)}/expenses/substitute-receipts/${encodeURIComponent(evidence.id)}`
             : substituteAction.href} aria-disabled={busy || dirty} onClick={(event) => { if (busy || dirty) event.preventDefault(); }}>
@@ -1213,7 +1213,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
           <ThemedDate aria-label={t('expenses.expense_date', locale)} className={validationInputClass(expenseDateIssue)} aria-invalid={expenseDateIssue?.severity === 'error' || undefined} value={values.expenseDate} onChange={(e) => setValues((v) => ({ ...v, expenseDate: e.target.value }))} disabled={!isMutable || busy} />
           <FieldIssueNote issue={expenseDateIssue} />
           <AiFieldMissingHint field="expenseDate" summary={detail.aiVerificationSummaryJson} />
-          <p className="mt-1 text-sm text-gray-500">{detail.expenseNumber ? `แก้วันที่ได้ เลขรายจ่าย ${detail.expenseNumber} จะคงเดิม` : 'ตรวจวันที่เอกสารให้ตรงกับหลักฐานก่อนบันทึก วันที่จ่ายบันทึกแยกในขั้นตอนชำระเงิน'}</p>
+          <p className="mt-1 text-sm text-gray-500">{!isMutable ? "ข้อมูลวันที่ตามเอกสารที่บันทึกไว้" : detail.expenseNumber ? `แก้วันที่ได้ เลขรายจ่าย ${detail.expenseNumber} จะคงเดิม` : 'ตรวจวันที่เอกสารให้ตรงกับหลักฐานก่อนบันทึก วันที่จ่ายบันทึกแยกในขั้นตอนชำระเงิน'}</p>
           {!expenseDateIssue && sourceMissingNote('expenseDate')}
         </label>
         {values.businessPurpose !== undefined && (
@@ -1896,14 +1896,14 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       .finally(() => setCategoryNamesLoading(false));
   }, [companyId]);
 
-  const sourceRows = useMemo(() => rows.filter((row) => sourceView === 'pending' ? isExpensePending(row.status)
+  const sourceRows = useMemo(() => rows.filter((row) => sourceView === 'pending' ? isExpensePendingReview(row)
     : sourceView === 'unpaid' ? row.status === 'CONFIRMED' && ['UNPAID', 'PARTIALLY_PAID'].includes(row.paymentStatus) : true), [rows, sourceView]);
   const kpi = useMemo(() => summarizeExpenseKpis(sourceRows, todayCivilDate()), [sourceRows]);
 
   const chipCounts = useMemo(() => ({
     all: sourceRows.length,
     draft: sourceRows.filter((r) => r.status === 'DRAFT').length,
-    pending: sourceRows.filter((r) => isExpensePending(r.status)).length,
+    pending: sourceRows.filter((r) => isExpensePendingReview(r)).length,
     confirmed: sourceRows.filter((r) => r.status === 'CONFIRMED').length,
     rejected: sourceRows.filter((r) => r.status === 'REJECTED').length,
   }), [sourceRows]);
@@ -1912,7 +1912,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
     const q = query.trim().toLowerCase();
     return sourceRows.filter((r) => {
       if (chip === 'draft' && r.status !== 'DRAFT') return false;
-      if (chip === 'pending' && !isExpensePending(r.status)) return false;
+      if (chip === 'pending' && !isExpensePendingReview(r)) return false;
       if (chip === 'confirmed' && r.status !== 'CONFIRMED') return false;
       if (chip === 'rejected' && r.status !== 'REJECTED') return false;
       if (!q) return true;
@@ -2113,7 +2113,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                           </div>
                         </div>
                         <div className="tabular-nums text-right text-[15px] font-bold text-gray-900">{baht(e.grandTotalAmount)}</div>
-                        <div className="flex flex-col items-end gap-1"><StatusBadge status={e.status} /><StatusBadge status={e.paymentStatus} /></div>
+                        <div className="flex flex-col items-end gap-1">{e.reimbursementProgress ? <span className="text-xs text-success-700">{expenseReimbursementProgressLabel(e.reimbursementProgress)}</span> : <><StatusBadge status={e.status} /><StatusBadge status={e.paymentStatus} /></>}</div>
                         <div className="flex items-center justify-end gap-1.5">
                           <IconBtn title="ดูรายละเอียด" onClick={(event) => { event.stopPropagation(); onSelect(e.id); }}>{ICON.eye}</IconBtn>
                           {canDeleteExpense(e, userId, caps) && (

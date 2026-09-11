@@ -47,7 +47,7 @@ export class ExpenseSummaryProvider {
         // metric stays current-state rather than period-scoped — period-scoping it would hide
         // stale unreviewed receipts, which is what this number exists to surface.
         this.prisma.client.expenseRecord.count({
-          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: { in: [...EXPENSE_PENDING_STATUSES] } },
+          where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: { in: [...EXPENSE_PENDING_STATUSES] }, substituteReceiptEvidences: { none: { status: 'ISSUED', fundingSource: 'PERSONAL_ADVANCE' } } },
         }),
         this.prisma.client.expenseRecord.aggregate({
           where: { companyId, ...(branchIds && { branchId: { in: branchIds } }), status: 'CONFIRMED', paymentStatus: { in: ['UNPAID', 'PARTIALLY_PAID'] } },

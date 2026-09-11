@@ -1,6 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { CreateDraftRequestUseCase } from './create-draft-request.use-case';
+import { ListTemplatesUseCase } from './ai-suggestion-query.use-case';
 
 const noopAudit = { log: async () => undefined } as any;
 
@@ -63,4 +64,15 @@ describe('CreateDraftRequestUseCase', () => {
     assert.equal(out.id, 'req_existing');
     assert.equal(repo.createRequest.mock.calls.length, 0);
   });
+});
+
+
+it('discovers only templates backed by current source access, including workflow', async () => {
+  const list = new ListTemplatesUseCase();
+  const starter = ctx({ permissions: ['ai.suggestion.request', 'expense.read', 'reimbursement.request.read'] });
+  assert.deepEqual(list.execute(starter), []);
+  assert.deepEqual(list.execute(ctx()).map((t) => t.key), ['crm_followup_next_action']);
+  const repo = makeRepo();
+  await assert.rejects(() => new CreateDraftRequestUseCase(repo, noopAudit).execute(starter, { templateKey: 'workflow_review_checklist' }), /workflow.task.read/);
+  assert.equal(repo.createRequest.mock.calls.length, 0);
 });
