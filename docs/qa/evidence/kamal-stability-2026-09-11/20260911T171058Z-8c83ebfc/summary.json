@@ -1,0 +1,275 @@
+{
+  "phase": "smoke-repeat",
+  "clock": {
+    "phase": "smoke-repeat",
+    "preparationStartedAt": "2026-09-11T17:10:53.390723+00:00",
+    "excludedProvenProviderGhost": {
+      "id": 31611733340,
+      "checkSuiteId": 85752682208,
+      "createdAt": "2026-08-12T15:20:13Z",
+      "headSha": "33ed788ccc644502e572fe2d679aac9b2b98cc6e",
+      "jobCount": 0,
+      "checkRunCount": 0,
+      "pendingDeployments": [],
+      "basis": "docs/agent-memory/release-receipt-signup-2026-09-07.md; same exact stale identity reverified; not an executable job"
+    },
+    "repeatOf": "20260911T170623Z-c8d84820",
+    "startedAt": "2026-09-11T17:10:57.986107+00:00",
+    "preparationSeconds": 4.595408,
+    "command": [
+      "infra/kamal/deploy-uat",
+      "--profile",
+      "mangmee-kamal-uat",
+      "--mode",
+      "hotfix",
+      "--apply",
+      "--uat-smoke-acceptance"
+    ],
+    "operationId": "20260911T171058Z-8c83ebfc",
+    "exitCode": 0,
+    "endedAt": "2026-09-11T17:15:19.193168+00:00",
+    "elapsedSeconds": 261.190664,
+    "completeHarnessSeconds": 265.786046
+  },
+  "operationId": "20260911T171058Z-8c83ebfc",
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "totalSeconds": 265.786046,
+  "totalBasis": "Start operator queue/main checks through process exit",
+  "phases": [
+    {
+      "name": "target-preflight",
+      "startedSeconds": 0.002,
+      "status": "PASSED",
+      "elapsedSeconds": 9.855,
+      "endedSeconds": 9.857
+    },
+    {
+      "name": "main-typescript-build",
+      "startedSeconds": 10.454,
+      "status": "PASSED",
+      "elapsedSeconds": 65.142,
+      "endedSeconds": 75.599
+    },
+    {
+      "name": "fresh-config-and-image-validation",
+      "startedSeconds": 75.6,
+      "status": "PASSED",
+      "elapsedSeconds": 6.624,
+      "endedSeconds": 82.225
+    },
+    {
+      "name": "publish-and-pull",
+      "startedSeconds": 82.226,
+      "status": "PASSED",
+      "elapsedSeconds": 15.354,
+      "endedSeconds": 97.581
+    },
+    {
+      "name": "config-freshness-before-mutation",
+      "startedSeconds": 97.582,
+      "status": "PASSED",
+      "elapsedSeconds": 2.238,
+      "endedSeconds": 99.822
+    },
+    {
+      "name": "provider-preparation",
+      "startedSeconds": 99.822,
+      "status": "PASSED",
+      "elapsedSeconds": 2.828,
+      "endedSeconds": 102.65
+    },
+    {
+      "name": "database-and-feature-authority",
+      "startedSeconds": 102.65,
+      "status": "PASSED",
+      "elapsedSeconds": 50.177,
+      "endedSeconds": 152.828
+    },
+    {
+      "name": "native-rollout-and-readback",
+      "startedSeconds": 152.829,
+      "status": "PASSED",
+      "elapsedSeconds": 89.917,
+      "endedSeconds": 242.746
+    },
+    {
+      "name": "customer-acceptance",
+      "startedSeconds": 242.748,
+      "status": "PASSED",
+      "elapsedSeconds": 7.695,
+      "endedSeconds": 250.443
+    },
+    {
+      "name": "retire-observed-builds",
+      "startedSeconds": 250.445,
+      "status": "PASSED",
+      "elapsedSeconds": 8.784,
+      "endedSeconds": 259.23
+    },
+    {
+      "name": "receipt-signature",
+      "startedSeconds": 259.232,
+      "status": "PASSED",
+      "elapsedSeconds": 1.226,
+      "endedSeconds": 260.46
+    }
+  ],
+  "overheadSeconds": 5.946046,
+  "controllerElapsedSeconds": 261.07,
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "acceptedSha256": "53df8c813aa4fd90713b6df8c5a390d642d868c4ee31fa90648ce8ae4a9b01ab",
+  "coverage": {
+    "managedEnvironmentKeys": {
+      "api-web": 111,
+      "ai-gateway": 56,
+      "workers": 19
+    },
+    "trackedFileCount": 4838,
+    "migrationFileCount": 189,
+    "syncFileCount": 35,
+    "artifactValidationPassed": true
+  },
+  "build": {
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "startedAt": "2026-09-11T17:11:09.547975+00:00",
+    "status": "passed",
+    "scope": "Build and TypeScript only; no deployment",
+    "phases": {
+      "build-api-web": {
+        "elapsedSeconds": 4.911,
+        "exitCode": 0
+      },
+      "install": {
+        "elapsedSeconds": 5.354,
+        "exitCode": 0
+      },
+      "contracts": {
+        "elapsedSeconds": 1.695,
+        "exitCode": 0
+      },
+      "prisma": {
+        "elapsedSeconds": 3.668,
+        "exitCode": 0
+      },
+      "typescript": {
+        "elapsedSeconds": 41.842,
+        "exitCode": 0
+      },
+      "di": {
+        "elapsedSeconds": 1.27,
+        "exitCode": 0
+      },
+      "agentcore": {
+        "elapsedSeconds": 4.486,
+        "exitCode": 0
+      },
+      "build-ai-gateway": {
+        "elapsedSeconds": 0.648,
+        "exitCode": 0
+      },
+      "build-workers": {
+        "elapsedSeconds": 0.375,
+        "exitCode": 0
+      },
+      "export-tools-base": {
+        "elapsedSeconds": 0.802,
+        "exitCode": 0
+      },
+      "build-tools": {
+        "elapsedSeconds": 3.598,
+        "exitCode": 0
+      }
+    },
+    "images": {
+      "api-web": {
+        "tag": "mangmee-complete-api-web:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:b6d097091c0f7d017af5ea97e19673e494c5f7e85ee1e737bbb7290f7bafb3ff",
+        "architecture": "amd64"
+      },
+      "ai-gateway": {
+        "tag": "mangmee-complete-ai-gateway:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:37f0886aca2f12f1c951e11f49e8b865ce3c01ff554644b08526c50ddffb1197",
+        "architecture": "amd64"
+      },
+      "workers": {
+        "tag": "mangmee-complete-workers:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:de7b321ffb7e0a06441b235d7731e44edb337de91cdbf325211604457f3e149e",
+        "architecture": "amd64"
+      },
+      "tools": {
+        "tag": "mangmee-complete-tools:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:28f06d7f5ec1582097d3f59d88290d261cc424782f8f877f2a975aa4b40c4035",
+        "architecture": "amd64"
+      }
+    },
+    "sourceTreeSha256": "ef9c5e58fdd6e73257a399360ecc76a2e47b6d79de05263378ddf5ab3b6f845d",
+    "agentcore": {
+      "schemaVersion": 1,
+      "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "artifact": "agentcore.zip",
+      "sha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+    },
+    "elapsedSeconds": 64.123,
+    "finishedAt": "2026-09-11T17:12:13.684406+00:00"
+  },
+  "readiness": {
+    "ai-gateway": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok"
+      }
+    },
+    "api-web": {
+      "i-0eb581c5ac3b3d7ba": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      }
+    },
+    "workers": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok",
+        "redis": "ok",
+        "internalApi": "ok"
+      }
+    }
+  },
+  "agentcore": {
+    "status": "REUSED_EXACT",
+    "runtimeArn": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_kamal-48umEu5ZDq",
+    "qualifier": "kamal_uat_b",
+    "version": "4",
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "artifactSha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "launchRetirement": {
+    "passed": true,
+    "retiredCount": 0,
+    "surveyed": 16
+  }
+}

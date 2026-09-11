@@ -1,0 +1,7 @@
+# Build DEV_BUILD_IMAGE from the committed app Dockerfile's build stage first.
+ARG DEV_BUILD_IMAGE=mangmee-kamal-dev-build:required-source-sha
+FROM ${DEV_BUILD_IMAGE}
+COPY apps/api/prisma /app/apps/api/prisma
+COPY apps/api/prisma.config.ts /app/apps/api/prisma.config.ts
+WORKDIR /app/apps/api
+CMD ["pnpm", "exec", "prisma", "migrate", "deploy"]

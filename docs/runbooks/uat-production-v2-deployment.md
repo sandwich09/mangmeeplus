@@ -32,6 +32,24 @@ proof. Operator และ agent ทุกคนต้องใช้ runbook น
 Release ledger ขั้นต่ำต้องมี `candidate`, `controller`, `UAT_RUN_ID`, `READY_RUN_ID`, `PROD_RUN_ID`,
 Passport/READY/Result artifact digest, serving mode, legal evidence/owner reference และผล final acceptance.
 
+## Owner-authorized UAT Kamal stability proof — 2026-09-11
+
+The owner explicitly requires consolidated rehearsal and fixes before the next live run, followed by
+one successful deployment and another latest-main deployment for timing. For these UAT proof runs,
+login/logout is no longer required; complete config and system readiness are the acceptance boundary.
+Use the reviewed main controller with `infra/kamal/deploy-uat --profile mangmee-kamal-uat --mode hotfix
+--apply --uat-smoke-acceptance`. Keep one operation and its complete clock, exact source/config/image,
+API/DB/AI/workers/Redis/internal-API readiness, public OPEN and signed smoke result. Retain every
+failure and reconcile it before another operation; rehearsal evidence is never called a live deploy.
+This explicit UAT exception does not change Production V2, its gate decisions, or its acceptance.
+Track local Kamal operation IDs separately from UAT/READY/Production workflow run IDs.
+Completed proof: `20260911T170623Z-c8d84820` and `20260911T171058Z-8c83ebfc`, signed and OPEN;
+[full phase totals and scope](../research/kamal-uat-stable-hotfix-proof-2026-09-11.md).
+Unchanged-main cold-build-cache proof `20260911T201637Z-cb364f03` also passed once, signed and OPEN:
+11m14.699s deploy command; 11m32.827s including queue/main checks and fresh-builder setup;
+11m39.039s including isolated-builder cleanup. No error/retry; this cold run exceeds the 10-minute
+goal. [Complete timings, zero-cache evidence and boundaries](../research/kamal-uat-cold-cache-proof-2026-09-12.md).
+
 ## เส้นทางปกติ ฉบับคน deploy
 
 จำ flow เดียวนี้: **UAT → READY → Production**. จด ID สามตัวไว้เสมอ:

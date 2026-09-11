@@ -1,0 +1,186 @@
+#0 building with "kamal-cold-20260912-9a51c543" instance using docker-container driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.49kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 1.06kB done
+#3 DONE 0.0s
+
+#4 [system 1/3] FROM docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+#4 resolve docker.io/library/node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 done
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 77.65kB 0.0s done
+#5 DONE 0.0s
+
+#6 [system 2/3] RUN apt-get update -y   && apt-get upgrade -y --no-install-recommends   && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [system 3/3] WORKDIR /app
+#7 CACHED
+
+#8 [build-base 1/1] RUN corepack enable
+#8 CACHED
+
+#9 [manifests 1/3] COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+#9 CACHED
+
+#10 [manifests 2/3] COPY apps/workers/package.json apps/workers/package.json
+#10 DONE 0.0s
+
+#11 [manifests 3/3] COPY packages/config/package.json packages/config/package.json
+#11 DONE 0.0s
+
+#12 [prod-deps 1/1] RUN pnpm install --frozen-lockfile --prod --no-optional --filter @watchdog-bms/workers...
+#12 0.425 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#12 2.041 Scope: 2 of 3 workspace projects
+#12 2.127 Lockfile is up to date, resolution step is skipped
+#12 2.150 Progress: resolved 1, reused 0, downloaded 0, added 0
+#12 2.238 .                                        |  +55 ++++++
+#12 2.622 
+#12 2.622    ╭──────────────────────────────────────────────────────────────────╮
+#12 2.622    │                                                                  │
+#12 2.622    │                Update available! 9.15.0 → 12.4.1.                │
+#12 2.622    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#12 2.622    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#12 2.622    │                                                                  │
+#12 2.622    ╰──────────────────────────────────────────────────────────────────╯
+#12 2.622 
+#12 3.155 Progress: resolved 55, reused 0, downloaded 5, added 0
+#12 4.147 Progress: resolved 55, reused 0, downloaded 55, added 55, done
+#12 4.227 Done in 2.5s
+#12 DONE 4.6s
+
+#13 [deps 1/1] RUN pnpm install --frozen-lockfile
+#13 0.423 ! Corepack is about to download https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz
+#13 2.034 Scope: all 3 workspace projects
+#13 2.123 Lockfile is up to date, resolution step is skipped
+#13 2.165 Progress: resolved 1, reused 0, downloaded 0, added 0
+#13 2.240 Packages: +70
+#13 2.240 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#13 2.667 
+#13 2.667    ╭──────────────────────────────────────────────────────────────────╮
+#13 2.667    │                                                                  │
+#13 2.667    │                Update available! 9.15.0 → 12.4.1.                │
+#13 2.667    │   Changelog: https://github.com/pnpm/pnpm/releases/tag/v12.4.1   │
+#13 2.667    │         Run "corepack install -g pnpm@12.4.1" to update.         │
+#13 2.667    │                                                                  │
+#13 2.667    ╰──────────────────────────────────────────────────────────────────╯
+#13 2.667 
+#13 3.177 Progress: resolved 70, reused 0, downloaded 3, added 2
+#13 4.179 Progress: resolved 70, reused 0, downloaded 67, added 67
+#13 4.443 Progress: resolved 70, reused 0, downloaded 70, added 70, done
+#13 4.612 .../node_modules/msgpackr-extract install$ node-gyp-build-optional-packages
+#13 4.632 .../esbuild@0.28.1/node_modules/esbuild postinstall$ node install.js
+#13 ...
+
+#14 [runner  1/10] RUN apt-get purge -y --allow-remove-essential   util-linux util-linux-extra bsdutils mount libblkid1 libmount1 libsmartcols1 libuuid1 e2fsprogs   && apt-get purge -y --allow-remove-essential perl-base
+#14 CACHED
+
+#15 [runner  2/10] WORKDIR /app
+#15 CACHED
+
+#13 [deps 1/1] RUN pnpm install --frozen-lockfile
+#13 5.051 .../esbuild@0.28.1/node_modules/esbuild postinstall: Done
+#13 5.286 .../node_modules/msgpackr-extract install: Done
+#13 ...
+
+#16 [runner  3/10] COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+#16 DONE 0.4s
+
+#17 [runner  4/10] COPY --from=prod-deps --chown=node:node /app/apps/workers/node_modules ./apps/workers/node_modules
+#17 DONE 0.0s
+
+#13 [deps 1/1] RUN pnpm install --frozen-lockfile
+#13 5.355 
+#13 5.355 devDependencies:
+#13 5.355 + @playwright/test 1.61.1
+#13 5.355 + @types/node 22.20.0
+#13 5.355 + tsx 4.22.4
+#13 5.355 + turbo 2.9.18
+#13 5.355 + typescript 5.9.3
+#13 5.355 
+#13 5.364 Done in 3.6s
+#13 DONE 5.5s
+
+#18 [runner  5/10] COPY --from=prod-deps --chown=node:node /app/packages/config/node_modules ./packages/config/node_modules
+#18 DONE 0.0s
+
+#19 [build 1/5] COPY apps/workers/src apps/workers/src
+#19 DONE 0.0s
+
+#20 [build 2/5] COPY apps/workers/tsconfig.json apps/workers/tsconfig.json
+#20 DONE 0.0s
+
+#21 [build 3/5] COPY packages/config/src packages/config/src
+#21 DONE 0.0s
+
+#22 [build 4/5] COPY packages/config/tsconfig.json packages/config/tsconfig.json
+#22 DONE 0.0s
+
+#23 [build 5/5] RUN pnpm exec turbo run build --filter=@watchdog-bms/workers
+#23 0.815 
+#23 0.815 Attention:
+#23 0.815 Turborepo now collects completely anonymous telemetry regarding usage.
+#23 0.815 This information is used to shape the Turborepo roadmap and prioritize features.
+#23 0.815 You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+#23 0.815 https://turborepo.dev/docs/telemetry
+#23 0.815 
+#23 0.819 • turbo 2.9.18
+#23 0.912 
+#23 0.912    • Packages in scope: @watchdog-bms/workers
+#23 0.912    • Running build in 1 packages
+#23 0.912    • Remote caching disabled
+#23 0.912 
+#23 0.952 @watchdog-bms/config:build: cache miss, executing 91c4337583ce7339
+#23 1.423 @watchdog-bms/config:build: 
+#23 1.423 @watchdog-bms/config:build: > @watchdog-bms/config@0.1.0 build /app/packages/config
+#23 1.423 @watchdog-bms/config:build: > tsc -p tsconfig.json
+#23 1.423 @watchdog-bms/config:build: 
+#23 3.522 @watchdog-bms/workers:build: cache miss, executing df1db7c81230416d
+#23 4.005 @watchdog-bms/workers:build: 
+#23 4.005 @watchdog-bms/workers:build: > @watchdog-bms/workers@0.1.0 build /app/apps/workers
+#23 4.005 @watchdog-bms/workers:build: > tsc -p tsconfig.json
+#23 4.005 @watchdog-bms/workers:build: 
+#23 6.985 
+#23 6.985  Tasks:    2 successful, 2 total
+#23 6.985 Cached:    0 cached, 2 total
+#23 6.985   Time:    6.15s 
+#23 6.985 
+#23 DONE 7.0s
+
+#24 [runtime-artifacts 1/1] RUN find apps/workers/dist packages/config/dist -type f   ( -name '*.map' -o -name '*.d.ts' -o -name '*.spec.js' -o -name '*-smoke.js' -o -name '*.md' ) -delete
+#24 DONE 0.1s
+
+#25 [runner  6/10] COPY --from=runtime-artifacts --chown=node:node /app/apps/workers/package.json ./apps/workers/package.json
+#25 DONE 0.0s
+
+#26 [runner  7/10] COPY --from=runtime-artifacts --chown=node:node /app/apps/workers/dist ./apps/workers/dist
+#26 DONE 0.0s
+
+#27 [runner  8/10] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/package.json ./packages/config/package.json
+#27 DONE 0.0s
+
+#28 [runner  9/10] COPY --from=runtime-artifacts --chown=node:node /app/packages/config/dist ./packages/config/dist
+#28 DONE 0.0s
+
+#29 [runner 10/10] WORKDIR /app/apps/workers
+#29 DONE 0.0s
+
+#30 exporting to oci image format
+#30 exporting layers
+#30 exporting layers 0.5s done
+#30 exporting manifest sha256:03da4198f457ebd3ebd0a5f4be99416f768561b7dc136d7614befe5dc05f55dc done
+#30 exporting config sha256:34e94109e14537ab4ceae25ae1ece13e8f1f7292509b64b323e5c30834d7b556 done
+#30 sending tarball
+#30 sending tarball 1.0s done
+#30 DONE 1.5s
+
+#31 importing to docker
+#31 DONE 0.0s

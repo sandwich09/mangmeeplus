@@ -1,0 +1,283 @@
+{
+  "phase": "smoke-first",
+  "clock": {
+    "phase": "smoke-first",
+    "preparationStartedAt": "2026-09-11T17:06:11.929425+00:00",
+    "excludedProvenProviderGhost": {
+      "id": 31611733340,
+      "checkSuiteId": 85752682208,
+      "createdAt": "2026-08-12T15:20:13Z",
+      "headSha": "33ed788ccc644502e572fe2d679aac9b2b98cc6e",
+      "jobCount": 0,
+      "checkRunCount": 0,
+      "pendingDeployments": [],
+      "basis": "docs/agent-memory/release-receipt-signup-2026-09-07.md; same exact stale identity reverified; not an executable job"
+    },
+    "merge": {
+      "mergeCommit": {
+        "oid": "6b95e50555c9905aa32d17d1372241bb4889cc1b"
+      },
+      "mergedAt": "2026-09-11T17:06:21Z",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/pull/552"
+    },
+    "startedAt": "2026-09-11T17:06:23.045251+00:00",
+    "preparationSeconds": 11.115809,
+    "command": [
+      "infra/kamal/deploy-uat",
+      "--profile",
+      "mangmee-kamal-uat",
+      "--mode",
+      "hotfix",
+      "--apply",
+      "--uat-smoke-acceptance"
+    ],
+    "operationId": "20260911T170623Z-c8d84820",
+    "exitCode": 0,
+    "endedAt": "2026-09-11T17:10:35.835608+00:00",
+    "elapsedSeconds": 252.789266,
+    "mergeToExitSeconds": 254.835608,
+    "completeHarnessSeconds": 263.905092
+  },
+  "operationId": "20260911T170623Z-c8d84820",
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "totalSeconds": 254.835608,
+  "totalBasis": "GitHub merge timestamp through process exit",
+  "phases": [
+    {
+      "name": "target-preflight",
+      "startedSeconds": 0.002,
+      "status": "PASSED",
+      "elapsedSeconds": 11.035,
+      "endedSeconds": 11.037
+    },
+    {
+      "name": "main-typescript-build",
+      "startedSeconds": 11.675,
+      "status": "PASSED",
+      "elapsedSeconds": 60.681,
+      "endedSeconds": 72.356
+    },
+    {
+      "name": "fresh-config-and-image-validation",
+      "startedSeconds": 72.357,
+      "status": "PASSED",
+      "elapsedSeconds": 6.88,
+      "endedSeconds": 79.237
+    },
+    {
+      "name": "publish-and-pull",
+      "startedSeconds": 79.238,
+      "status": "PASSED",
+      "elapsedSeconds": 15.78,
+      "endedSeconds": 95.018
+    },
+    {
+      "name": "config-freshness-before-mutation",
+      "startedSeconds": 95.019,
+      "status": "PASSED",
+      "elapsedSeconds": 2.249,
+      "endedSeconds": 97.269
+    },
+    {
+      "name": "provider-preparation",
+      "startedSeconds": 97.269,
+      "status": "PASSED",
+      "elapsedSeconds": 17.529,
+      "endedSeconds": 114.798
+    },
+    {
+      "name": "database-and-feature-authority",
+      "startedSeconds": 114.799,
+      "status": "PASSED",
+      "elapsedSeconds": 49.753,
+      "endedSeconds": 164.552
+    },
+    {
+      "name": "native-rollout-and-readback",
+      "startedSeconds": 164.553,
+      "status": "PASSED",
+      "elapsedSeconds": 69.631,
+      "endedSeconds": 234.184
+    },
+    {
+      "name": "customer-acceptance",
+      "startedSeconds": 234.186,
+      "status": "PASSED",
+      "elapsedSeconds": 7.519,
+      "endedSeconds": 241.705
+    },
+    {
+      "name": "retire-observed-builds",
+      "startedSeconds": 241.708,
+      "status": "PASSED",
+      "elapsedSeconds": 9.119,
+      "endedSeconds": 250.829
+    },
+    {
+      "name": "receipt-signature",
+      "startedSeconds": 250.83,
+      "status": "PASSED",
+      "elapsedSeconds": 1.183,
+      "endedSeconds": 252.013
+    }
+  ],
+  "overheadSeconds": 3.476608,
+  "controllerElapsedSeconds": 252.629,
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "acceptedSha256": "62ab943c84c5daa98abe36fae50a5403d7724ec1936b26892c9a31b465d42314",
+  "coverage": {
+    "managedEnvironmentKeys": {
+      "api-web": 111,
+      "ai-gateway": 56,
+      "workers": 19
+    },
+    "trackedFileCount": 4838,
+    "migrationFileCount": 189,
+    "syncFileCount": 35,
+    "artifactValidationPassed": true
+  },
+  "build": {
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "startedAt": "2026-09-11T17:06:35.986877+00:00",
+    "status": "passed",
+    "scope": "Build and TypeScript only; no deployment",
+    "phases": {
+      "build-api-web": {
+        "elapsedSeconds": 5.855,
+        "exitCode": 0
+      },
+      "install": {
+        "elapsedSeconds": 5.932,
+        "exitCode": 0
+      },
+      "contracts": {
+        "elapsedSeconds": 1.643,
+        "exitCode": 0
+      },
+      "prisma": {
+        "elapsedSeconds": 3.596,
+        "exitCode": 0
+      },
+      "typescript": {
+        "elapsedSeconds": 39.582,
+        "exitCode": 0
+      },
+      "di": {
+        "elapsedSeconds": 1.319,
+        "exitCode": 0
+      },
+      "agentcore": {
+        "elapsedSeconds": 4.591,
+        "exitCode": 0
+      },
+      "build-ai-gateway": {
+        "elapsedSeconds": 0.697,
+        "exitCode": 0
+      },
+      "build-workers": {
+        "elapsedSeconds": 0.411,
+        "exitCode": 0
+      },
+      "export-tools-base": {
+        "elapsedSeconds": 0.931,
+        "exitCode": 0
+      },
+      "build-tools": {
+        "elapsedSeconds": 0.495,
+        "exitCode": 0
+      }
+    },
+    "images": {
+      "api-web": {
+        "tag": "mangmee-complete-api-web:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:5a3f5071b5deaf1fe4fefa6292490902c3f0e52a6ed90b48359f4fae1f35c109",
+        "architecture": "amd64"
+      },
+      "ai-gateway": {
+        "tag": "mangmee-complete-ai-gateway:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:fe30770a37ca82af17f5e379eefe9c81754f8eeaa9285fe48953570c31f71c54",
+        "architecture": "amd64"
+      },
+      "workers": {
+        "tag": "mangmee-complete-workers:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:a94a1d53e098129ea928313ee6a92745bd5d30f6cfa67b3ea6da5549cb93aea7",
+        "architecture": "amd64"
+      },
+      "tools": {
+        "tag": "mangmee-complete-tools:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:ad0e8a8d6a4ef946ac883b3f0ca2fc860c14cda9bc4b4ed1df095a6d544c58d7",
+        "architecture": "amd64"
+      }
+    },
+    "sourceTreeSha256": "ef9c5e58fdd6e73257a399360ecc76a2e47b6d79de05263378ddf5ab3b6f845d",
+    "agentcore": {
+      "schemaVersion": 1,
+      "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "artifact": "agentcore.zip",
+      "sha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+    },
+    "elapsedSeconds": 59.551,
+    "finishedAt": "2026-09-11T17:07:35.538455+00:00"
+  },
+  "readiness": {
+    "ai-gateway": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok"
+      }
+    },
+    "api-web": {
+      "i-0eb581c5ac3b3d7ba": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      }
+    },
+    "workers": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok",
+        "redis": "ok",
+        "internalApi": "ok"
+      }
+    }
+  },
+  "agentcore": {
+    "status": "UPDATED_PINNED",
+    "runtimeArn": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_kamal-48umEu5ZDq",
+    "qualifier": "kamal_uat_b",
+    "version": "4",
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "artifactSha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0",
+    "previousQualifier": "kamal_uat_a"
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "launchRetirement": {
+    "passed": true,
+    "retiredCount": 16,
+    "surveyed": 16
+  }
+}

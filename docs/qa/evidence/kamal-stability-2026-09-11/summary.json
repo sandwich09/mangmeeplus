@@ -1,0 +1,33 @@
+{
+  "status": "TWO_CONSECUTIVE_UAT_SMOKE_DEPLOYMENTS_PASSED",
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "pr": "https://github.com/MangmeeDev/mangmeeplus/pull/552",
+  "ciRunId": 34623709238,
+  "uatWorkflowRunId": null,
+  "readyWorkflowRunId": null,
+  "productionWorkflowRunId": null,
+  "productionDeployed": false,
+  "loginLogoutRequired": false,
+  "cacheCondition": "Warm existing dependency/image cache; clean source checkout and TypeScript rerun on both invocations. Not a cold-cache benchmark.",
+  "fixedWaitSeconds": {
+    "workersReadinessDelay": 7
+  },
+  "runs": [
+    {
+      "operationId": "20260911T170623Z-c8d84820",
+      "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "status": "ACCEPTED_LINE_DEFERRED",
+      "totalSeconds": 254.835608,
+      "totalBasis": "GitHub merge timestamp through process exit",
+      "acceptedSha256": "62ab943c84c5daa98abe36fae50a5403d7724ec1936b26892c9a31b465d42314"
+    },
+    {
+      "operationId": "20260911T171058Z-8c83ebfc",
+      "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "status": "ACCEPTED_LINE_DEFERRED",
+      "totalSeconds": 265.786046,
+      "totalBasis": "Start operator queue/main checks through process exit",
+      "acceptedSha256": "53df8c813aa4fd90713b6df8c5a390d642d868c4ee31fa90648ce8ae4a9b01ab"
+    }
+  ]
+}

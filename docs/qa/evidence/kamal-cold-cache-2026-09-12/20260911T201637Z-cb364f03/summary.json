@@ -1,0 +1,294 @@
+{
+  "phase": "unchanged-main-cold-build-cache",
+  "clock": {
+    "phase": "cold",
+    "preparationStartedAt": "2026-09-11T20:16:19.391556+00:00",
+    "excludedProvenProviderGhost": {
+      "id": 31611733340,
+      "checkSuiteId": 85752682208,
+      "createdAt": "2026-08-12T15:20:13Z",
+      "headSha": "33ed788ccc644502e572fe2d679aac9b2b98cc6e",
+      "jobCount": 0,
+      "checkRunCount": 0,
+      "pendingDeployments": [],
+      "basis": "docs/agent-memory/release-receipt-signup-2026-09-07.md; same exact stale identity reverified; not an executable job"
+    },
+    "sourceCommitExpected": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "cacheScope": "Fresh isolated BuildKit/dependency store; same-run stages reused; existing UAT running/rollback images and registry/CDN retained",
+    "adapterSha256": "030a19ff7d5a36ef3489632167a0ad847d93082237f73025ab1847845384a005",
+    "builder": "kamal-cold-20260912-9a51c543",
+    "builderSetupSeconds": 11.123993,
+    "cacheBefore": {
+      "buildkitRecords": 0,
+      "pnpmStoreFiles": 0,
+      "pnpmStorePath": "/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/.env.kamal/uat/cold-cache-20260912/pnpm-store/v3"
+    },
+    "startedAt": "2026-09-11T20:16:37.518801+00:00",
+    "preparationSeconds": 18.127249,
+    "command": [
+      "infra/kamal/deploy-uat",
+      "--profile",
+      "mangmee-kamal-uat",
+      "--mode",
+      "hotfix",
+      "--apply",
+      "--uat-smoke-acceptance"
+    ],
+    "operationId": "20260911T201637Z-cb364f03",
+    "exitCode": 0,
+    "endedAt": "2026-09-11T20:27:52.219259+00:00",
+    "elapsedSeconds": 674.699101,
+    "throughDeploymentSeconds": 692.826537,
+    "deploymentStatus": "ACCEPTED_LINE_DEFERRED",
+    "builderRemoved": true,
+    "cleanupSeconds": 6.20625,
+    "completeHarnessSeconds": 699.039442,
+    "finishedAt": "2026-09-11T20:27:58.433586+00:00"
+  },
+  "operationId": "20260911T201637Z-cb364f03",
+  "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "totalSeconds": 692.826537,
+  "totalIncludingCleanupSeconds": 699.039442,
+  "totalBasis": "Operator queue/main checks and cold-builder setup through complete deployment process exit; owned builder cleanup shown separately",
+  "phases": [
+    {
+      "name": "target-preflight",
+      "startedSeconds": 0.002,
+      "status": "PASSED",
+      "elapsedSeconds": 10.741,
+      "endedSeconds": 10.743
+    },
+    {
+      "name": "main-typescript-build",
+      "startedSeconds": 11.379,
+      "status": "PASSED",
+      "elapsedSeconds": 331.891,
+      "endedSeconds": 343.27
+    },
+    {
+      "name": "fresh-config-and-image-validation",
+      "startedSeconds": 343.272,
+      "status": "PASSED",
+      "elapsedSeconds": 13.326,
+      "endedSeconds": 356.598
+    },
+    {
+      "name": "publish-and-pull",
+      "startedSeconds": 356.6,
+      "status": "PASSED",
+      "elapsedSeconds": 130.802,
+      "endedSeconds": 487.403
+    },
+    {
+      "name": "config-freshness-before-mutation",
+      "startedSeconds": 487.408,
+      "status": "PASSED",
+      "elapsedSeconds": 2.368,
+      "endedSeconds": 489.777
+    },
+    {
+      "name": "provider-preparation",
+      "startedSeconds": 489.777,
+      "status": "PASSED",
+      "elapsedSeconds": 3.246,
+      "endedSeconds": 493.024
+    },
+    {
+      "name": "database-and-feature-authority",
+      "startedSeconds": 493.024,
+      "status": "PASSED",
+      "elapsedSeconds": 58.142,
+      "endedSeconds": 551.166
+    },
+    {
+      "name": "native-rollout-and-readback",
+      "startedSeconds": 551.168,
+      "status": "PASSED",
+      "elapsedSeconds": 105.198,
+      "endedSeconds": 656.368
+    },
+    {
+      "name": "customer-acceptance",
+      "startedSeconds": 656.37,
+      "status": "PASSED",
+      "elapsedSeconds": 7.466,
+      "endedSeconds": 663.836
+    },
+    {
+      "name": "retire-observed-builds",
+      "startedSeconds": 663.838,
+      "status": "PASSED",
+      "elapsedSeconds": 8.775,
+      "endedSeconds": 672.614
+    },
+    {
+      "name": "receipt-signature",
+      "startedSeconds": 672.616,
+      "status": "PASSED",
+      "elapsedSeconds": 1.219,
+      "endedSeconds": 673.835
+    }
+  ],
+  "inCommandOverheadSeconds": 1.525101,
+  "controllerElapsedSeconds": 674.55,
+  "signature": {
+    "verified": true,
+    "keyArn": "arn:aws:kms:ap-southeast-1:311414082667:key/cb315bdc-b5ab-42fb-be32-fe9cee2a2d44",
+    "algorithm": "ECDSA_SHA_256"
+  },
+  "acceptedSha256": "ab11ad3f1785979226f51d1acdb049ed5a16e83e1ebdf36e016a4dfe38e10ef9",
+  "coverage": {
+    "managedEnvironmentKeys": {
+      "api-web": 111,
+      "ai-gateway": 56,
+      "workers": 19
+    },
+    "trackedFileCount": 4838,
+    "migrationFileCount": 189,
+    "syncFileCount": 35,
+    "artifactValidationPassed": true
+  },
+  "build": {
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "startedAt": "2026-09-11T20:16:50.260598+00:00",
+    "status": "passed",
+    "scope": "Build and TypeScript only; no deployment",
+    "phases": {
+      "install": {
+        "elapsedSeconds": 16.726,
+        "exitCode": 0
+      },
+      "contracts": {
+        "elapsedSeconds": 1.66,
+        "exitCode": 0
+      },
+      "prisma": {
+        "elapsedSeconds": 4.602,
+        "exitCode": 0
+      },
+      "typescript": {
+        "elapsedSeconds": 122.009,
+        "exitCode": 0
+      },
+      "di": {
+        "elapsedSeconds": 1.06,
+        "exitCode": 0
+      },
+      "agentcore": {
+        "elapsedSeconds": 5.382,
+        "exitCode": 0
+      },
+      "build-api-web": {
+        "elapsedSeconds": 235.092,
+        "exitCode": 0
+      },
+      "build-ai-gateway": {
+        "elapsedSeconds": 28.266,
+        "exitCode": 0
+      },
+      "build-workers": {
+        "elapsedSeconds": 14.783,
+        "exitCode": 0
+      },
+      "export-tools-base": {
+        "elapsedSeconds": 38.119,
+        "exitCode": 0
+      },
+      "build-tools": {
+        "elapsedSeconds": 13.841,
+        "exitCode": 0
+      }
+    },
+    "images": {
+      "api-web": {
+        "tag": "mangmee-complete-api-web:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:77122da70fd8a58c54eb52c0a903673097ad7e4b001087ffd253075987641119",
+        "architecture": "amd64"
+      },
+      "ai-gateway": {
+        "tag": "mangmee-complete-ai-gateway:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:6ed397cac3e4edc3b24d0be8ebddafce3917596208fd96d884333fdd3dc317e9",
+        "architecture": "amd64"
+      },
+      "workers": {
+        "tag": "mangmee-complete-workers:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:03da4198f457ebd3ebd0a5f4be99416f768561b7dc136d7614befe5dc05f55dc",
+        "architecture": "amd64"
+      },
+      "tools": {
+        "tag": "mangmee-complete-tools:6b95e50555c9905aa32d17d1372241bb4889cc1b",
+        "imageId": "sha256:6ccd7fab0565b34c5f306cc2158f67d07a5032d2d4e7e5755a6502755e7bdf7f",
+        "architecture": "amd64"
+      }
+    },
+    "sourceTreeSha256": "ef9c5e58fdd6e73257a399360ecc76a2e47b6d79de05263378ddf5ab3b6f845d",
+    "agentcore": {
+      "schemaVersion": 1,
+      "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+      "artifact": "agentcore.zip",
+      "sha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+    },
+    "elapsedSeconds": 330.598,
+    "finishedAt": "2026-09-11T20:22:20.859394+00:00"
+  },
+  "readiness": {
+    "ai-gateway": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok"
+      }
+    },
+    "api-web": {
+      "i-0eb581c5ac3b3d7ba": {
+        "passed": true,
+        "status": "ok",
+        "db": "ok"
+      }
+    },
+    "workers": {
+      "i-011918b0d49534d1c": {
+        "passed": true,
+        "status": "ok",
+        "redis": "ok",
+        "internalApi": "ok"
+      }
+    }
+  },
+  "agentcore": {
+    "status": "REUSED_EXACT",
+    "runtimeArn": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_kamal-48umEu5ZDq",
+    "qualifier": "kamal_uat_b",
+    "version": "4",
+    "sourceCommit": "6b95e50555c9905aa32d17d1372241bb4889cc1b",
+    "artifactSha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+  },
+  "customerAcceptance": {
+    "passed": true,
+    "kind": "owner_authorized_uat_config_readiness_smoke",
+    "checks": [
+      {
+        "path": "/api/v1/auth/platform-access",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/login",
+        "method": "GET",
+        "status": 200
+      }
+    ],
+    "allServiceConfigAndReadinessPassed": true,
+    "loginLogout": "NOT_REQUIRED_BY_OWNER",
+    "line": "DEFERRED_BY_OWNER"
+  },
+  "launchRetirement": {
+    "passed": true,
+    "retiredCount": 0,
+    "surveyed": 16
+  },
+  "uatWorkflowRunId": null,
+  "readyWorkflowRunId": null,
+  "productionWorkflowRunId": null,
+  "productionDeployed": false
+}

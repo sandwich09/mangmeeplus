@@ -69,7 +69,13 @@ PIDS="$API_PID $WEB_PID $PROXY_PID"
 [ -z "$FRESHCLAM_PID" ] || PIDS="$PIDS $FRESHCLAM_PID"
 
 shutdown() {
+  # Finish API cleanup before PID 1 exits; repeated signals must not interrupt wait.
+  trap '' INT TERM
+  trap - EXIT
   kill $PIDS 2>/dev/null || true
+  for pid in $PIDS; do
+    wait "$pid" 2>/dev/null || true
+  done
 }
 
 all_alive() {
@@ -78,7 +84,8 @@ all_alive() {
   done
 }
 
-trap shutdown INT TERM EXIT
+trap 'shutdown; exit 0' INT TERM
+trap shutdown EXIT
 
 while all_alive; do
   sleep 2
