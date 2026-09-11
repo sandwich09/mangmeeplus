@@ -1,0 +1,2522 @@
+TAP version 13
+# Subtest: GW02 actual LIFF script, provider boundary simulated
+    # Subtest: waits for a gesture and opens once, LINE=true
+    ok 1 - waits for a gesture and opens once, LINE=true
+      ---
+      duration_ms: 4.0075
+      type: 'test'
+      ...
+    # Subtest: waits for a gesture and opens once, LINE=false
+    ok 2 - waits for a gesture and opens once, LINE=false
+      ---
+      duration_ms: 2.661375
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"needsSignup":true}
+    ok 3 - clears the previous token before {"needsSignup":true}
+      ---
+      duration_ms: 2.400083
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"reason":"suspended"}
+    ok 4 - clears the previous token before {"reason":"suspended"}
+      ---
+      duration_ms: 1.775083
+      type: 'test'
+      ...
+    # Subtest: clears the previous token before {"needsSelection":true,"companies":[{"id":"b","name":"<script>test</script>"}]}
+    ok 5 - clears the previous token before {"needsSelection":true,"companies":[{"id":"b","name":"<script>test</script>"}]}
+      ---
+      duration_ms: 1.60525
+      type: 'test'
+      ...
+    # Subtest: clears the old token on offline retry
+    ok 6 - clears the old token on offline retry
+      ---
+      duration_ms: 2.361375
+      type: 'test'
+      ...
+    # Subtest: keeps retry available when the client refuses the window
+    ok 7 - keeps retry available when the client refuses the window
+      ---
+      duration_ms: 1.536709
+      type: 'test'
+      ...
+    1..7
+ok 1 - GW02 actual LIFF script, provider boundary simulated
+  ---
+  duration_ms: 17.214125
+  type: 'suite'
+  ...
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_found',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_expired',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'user_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'user_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'membership_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'company_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'company_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_expired',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'user_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'user_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'membership_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'company_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'company_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'line_identity_severed',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_found',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'membership_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'token_not_pending',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 59304  - 09/11/2026, 9:43:07 PM    WARN [ExchangeLineHandoffTokenUseCase] Object(3) {
+#   reason: 'company_inactive',
+#   msg: 'auth.line_handoff.denied',
+#   riskLevel: 'HIGH'
+# }
+# Subtest: MintLineHandoffTokenUseCase
+    # Subtest: stores only the hash and returns the raw token to the caller
+    ok 1 - stores only the hash and returns the raw token to the caller
+      ---
+      duration_ms: 1.430833
+      type: 'test'
+      ...
+    # Subtest: throws on a path outside the company tenant root, and writes no row
+    ok 2 - throws on a path outside the company tenant root, and writes no row
+      ---
+      duration_ms: 0.315625
+      type: 'test'
+      ...
+    # Subtest: throws on an off-origin destination rather than minting a link to it
+    ok 3 - throws on an off-origin destination rather than minting a link to it
+      ---
+      duration_ms: 0.060917
+      type: 'test'
+      ...
+    1..3
+ok 2 - MintLineHandoffTokenUseCase
+  ---
+  duration_ms: 2.17175
+  type: 'suite'
+  ...
+# Subtest: ExchangeLineHandoffTokenUseCase success
+    # Subtest: issues a line-provider session and returns the row-stored destination
+    ok 1 - issues a line-provider session and returns the row-stored destination
+      ---
+      duration_ms: 1.417291
+      type: 'test'
+      ...
+    # Subtest: carries mustChangePassword and legalAcceptanceRequired through, as password login does
+    ok 2 - carries mustChangePassword and legalAcceptanceRequired through, as password login does
+      ---
+      duration_ms: 0.244792
+      type: 'test'
+      ...
+    # Subtest: reports mustChangePassword false for a LINE-only user with no credential row
+    ok 3 - reports mustChangePassword false for a LINE-only user with no credential row
+      ---
+      duration_ms: 0.158375
+      type: 'test'
+      ...
+    # Subtest: returns the company and path from the row, never from the request
+    ok 4 - returns the company and path from the row, never from the request
+      ---
+      duration_ms: 0.22875
+      type: 'test'
+      ...
+    1..4
+ok 3 - ExchangeLineHandoffTokenUseCase success
+  ---
+  duration_ms: 2.486834
+  type: 'suite'
+  ...
+# Subtest: ExchangeLineHandoffTokenUseCase company-picker surface
+    # Subtest: switches the LINE chat to the token’s company and audits it
+    ok 1 - switches the LINE chat to the token’s company and audits it
+      ---
+      duration_ms: 0.573625
+      type: 'test'
+      ...
+    # Subtest: switches only AFTER the single-use claim, so a spent link cannot move the chat
+    ok 2 - switches only AFTER the single-use claim, so a spent link cannot move the chat
+      ---
+      duration_ms: 1.838208
+      type: 'test'
+      ...
+    # Subtest: leaves every other surface’s chat exactly where it was
+    ok 3 - leaves every other surface’s chat exactly where it was
+      ---
+      duration_ms: 0.557917
+      type: 'test'
+      ...
+    # Subtest: still issues the session when the context write fails — the web half must not die with it
+    ok 4 - still issues the session when the context write fails — the web half must not die with it
+      ---
+      duration_ms: 0.139209
+      type: 'test'
+      ...
+    1..4
+ok 4 - ExchangeLineHandoffTokenUseCase company-picker surface
+  ---
+  duration_ms: 3.267708
+  type: 'suite'
+  ...
+# Subtest: ExchangeLineHandoffTokenUseCase refusals
+    # Subtest: refuses an unknown token with no destination to leak
+    ok 1 - refuses an unknown token with no destination to leak
+      ---
+      duration_ms: 0.233625
+      type: 'test'
+      ...
+    # Subtest: refuses an expired token with reason token_expired, keeping the destination for the login bounce
+    ok 2 - refuses an expired token with reason token_expired, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.178333
+      type: 'test'
+      ...
+    # Subtest: refuses an already-used token with reason token_not_pending, keeping the destination for the login bounce
+    ok 3 - refuses an already-used token with reason token_not_pending, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.112959
+      type: 'test'
+      ...
+    # Subtest: refuses a revoked token with reason token_not_pending, keeping the destination for the login bounce
+    ok 4 - refuses a revoked token with reason token_not_pending, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.065666
+      type: 'test'
+      ...
+    # Subtest: refuses an inactive user with reason user_inactive, keeping the destination for the login bounce
+    ok 5 - refuses an inactive user with reason user_inactive, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.091584
+      type: 'test'
+      ...
+    # Subtest: refuses a deleted user with reason user_inactive, keeping the destination for the login bounce
+    ok 6 - refuses a deleted user with reason user_inactive, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.17375
+      type: 'test'
+      ...
+    # Subtest: refuses a revoked membership with reason membership_inactive, keeping the destination for the login bounce
+    ok 7 - refuses a revoked membership with reason membership_inactive, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.295209
+      type: 'test'
+      ...
+    # Subtest: refuses a suspended company with reason company_inactive, keeping the destination for the login bounce
+    ok 8 - refuses a suspended company with reason company_inactive, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.334833
+      type: 'test'
+      ...
+    # Subtest: refuses a missing company with reason company_inactive, keeping the destination for the login bounce
+    ok 9 - refuses a missing company with reason company_inactive, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.137542
+      type: 'test'
+      ...
+    # Subtest: refuses a severed LINE identity with reason line_identity_severed, keeping the destination for the login bounce
+    ok 10 - refuses a severed LINE identity with reason line_identity_severed, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.113209
+      type: 'test'
+      ...
+    # Subtest: refuses a LINE account re-pointed at another user with reason line_identity_severed, keeping the destination for the login bounce
+    ok 11 - refuses a LINE account re-pointed at another user with reason line_identity_severed, keeping the destination for the login bounce
+      ---
+      duration_ms: 0.063209
+      type: 'test'
+      ...
+    # Subtest: gives every refusal the identical caller-visible message and code
+    ok 12 - gives every refusal the identical caller-visible message and code
+      ---
+      duration_ms: 3.314
+      type: 'test'
+      ...
+    # Subtest: refuses a token an unlink revoked without writing anything or issuing a session
+    ok 13 - refuses a token an unlink revoked without writing anything or issuing a session
+      ---
+      duration_ms: 0.083916
+      type: 'test'
+      ...
+    # Subtest: refuses a severed or re-pointed LINE identity BEFORE the claim, writing nothing
+    ok 14 - refuses a severed or re-pointed LINE identity BEFORE the claim, writing nothing
+      ---
+      duration_ms: 0.103375
+      type: 'test'
+      ...
+    # Subtest: matches a 1:1 chat on provider + LINE userId + ACTIVE + the token’s own user
+    ok 15 - matches a 1:1 chat on provider + LINE userId + ACTIVE + the token’s own user
+      ---
+      duration_ms: 0.065792
+      type: 'test'
+      ...
+    # Subtest: group and room chats
+        # Subtest: exchanges a group-minted link while the user’s LINE identity is ACTIVE
+        ok 1 - exchanges a group-minted link while the user’s LINE identity is ACTIVE
+          ---
+          duration_ms: 0.094333
+          type: 'test'
+          ...
+        # Subtest: treats a room-minted link exactly as a group one
+        ok 2 - treats a room-minted link exactly as a group one
+          ---
+          duration_ms: 0.043042
+          type: 'test'
+          ...
+        # Subtest: refuses a group-minted link once the user has no ACTIVE LINE identity, writing nothing
+        ok 3 - refuses a group-minted link once the user has no ACTIVE LINE identity, writing nothing
+          ---
+          duration_ms: 0.64425
+          type: 'test'
+          ...
+        1..3
+    ok 16 - group and room chats
+      ---
+      duration_ms: 0.829708
+      type: 'suite'
+      ...
+    # Subtest: checks the token before the account, so a lookup miss cannot probe user state
+    ok 17 - checks the token before the account, so a lookup miss cannot probe user state
+      ---
+      duration_ms: 0.128541
+      type: 'test'
+      ...
+    # Subtest: re-checks membership BEFORE claiming, so a refused token stays usable to nobody but stays PENDING
+    ok 18 - re-checks membership BEFORE claiming, so a refused token stays usable to nobody but stays PENDING
+      ---
+      duration_ms: 0.163416
+      type: 'test'
+      ...
+    # Subtest: loses the concurrent-claim race without issuing a second session
+    ok 19 - loses the concurrent-claim race without issuing a second session
+      ---
+      duration_ms: 0.141792
+      type: 'test'
+      ...
+    # Subtest: gives exactly one session when two taps race on one PENDING row
+    ok 20 - gives exactly one session when two taps race on one PENDING row
+      ---
+      duration_ms: 0.270209
+      type: 'test'
+      ...
+    1..20
+ok 5 - ExchangeLineHandoffTokenUseCase refusals
+  ---
+  duration_ms: 7.090042
+  type: 'suite'
+  ...
+# Subtest: GW04 exchange rechecks current term without widening business access
+    # Subtest: preserves a safe renewal reference instead of dropping its query
+    ok 1 - preserves a safe renewal reference instead of dropping its query
+      ---
+      duration_ms: 0.085666
+      type: 'test'
+      ...
+    # Subtest: lands an expired ACTIVE company on renewal in the destination browser
+    ok 2 - lands an expired ACTIVE company on renewal in the destination browser
+      ---
+      duration_ms: 0.059
+      type: 'test'
+      ...
+    # Subtest: lands an expired DISABLED company on renewal in the destination browser
+    ok 3 - lands an expired DISABLED company on renewal in the destination browser
+      ---
+      duration_ms: 0.034542
+      type: 'test'
+      ...
+    # Subtest: still refuses an admin DISABLED company without an expiry marker
+    ok 4 - still refuses an admin DISABLED company without an expiry marker
+      ---
+      duration_ms: 0.114584
+      type: 'test'
+      ...
+    1..4
+ok 6 - GW04 exchange rechecks current term without widening business access
+  ---
+  duration_ms: 0.331208
+  type: 'suite'
+  ...
+# Subtest: P10-L LIFF signup page
+    # Subtest: serves the legal release it is currently serving, and nothing executable inline
+    ok 1 - serves the legal release it is currently serving, and nothing executable inline
+      ---
+      duration_ms: 0.978417
+      type: 'test'
+      ...
+    # Subtest: asks for a shop name and a REQUIRED phone, and promises the trial in the Owner wording
+    ok 2 - asks for a shop name and a REQUIRED phone, and promises the trial in the Owner wording
+      ---
+      duration_ms: 0.202625
+      type: 'test'
+      ...
+    # Subtest: carries the 64-hex challenge only in the data attribute, never on screen
+    ok 3 - carries the 64-hex challenge only in the data attribute, never on screen
+      ---
+      duration_ms: 0.0925
+      type: 'test'
+      ...
+    # Subtest: never paints an empty message container on any page it serves
+    ok 4 - never paints an empty message container on any page it serves
+      ---
+      duration_ms: 0.164542
+      type: 'test'
+      ...
+    # Subtest: serves the four message tones, at reading size, on every page
+    ok 5 - serves the four message tones, at reading size, on every page
+      ---
+      duration_ms: 0.24075
+      type: 'test'
+      ...
+    # Subtest: wears the มั่งมี header and palette on every page it serves
+    ok 6 - wears the มั่งมี header and palette on every page it serves
+      ---
+      duration_ms: 0.109334
+      type: 'test'
+      ...
+    # Subtest: keeps the LIFF CSP and writes no plus sign into customer copy
+    ok 7 - keeps the LIFF CSP and writes no plus sign into customer copy
+      ---
+      duration_ms: 0.3225
+      type: 'test'
+      ...
+    # Subtest: refuses to render rather than pointing the legal links at the API origin
+    ok 8 - refuses to render rather than pointing the legal links at the API origin
+      ---
+      duration_ms: 0.964875
+      type: 'test'
+      ...
+    # Subtest: renders the start page with an external-browser fallback link
+    ok 9 - renders the start page with an external-browser fallback link
+      ---
+      duration_ms: 0.127833
+      type: 'test'
+      ...
+    1..9
+ok 7 - P10-L LIFF signup page
+  ---
+  duration_ms: 3.927917
+  type: 'suite'
+  ...
+# Subtest: POST /v1/auth/line/liff/session (the surface)
+    # Subtest: passes the token through and omits companyId until the picker answers
+    ok 1 - passes the token through and omits companyId until the picker answers
+      ---
+      duration_ms: 0.703625
+      type: 'test'
+      ...
+    # Subtest: is reachable with no session, at the path spec §4 names
+    ok 2 - is reachable with no session, at the path spec §4 names
+      ---
+      duration_ms: 0.047959
+      type: 'test'
+      ...
+    1..2
+ok 8 - POST /v1/auth/line/liff/session (the surface)
+  ---
+  duration_ms: 0.818
+  type: 'suite'
+  ...
+# Subtest: P10-L LIFF client script
+    # Subtest: an empty message container is hidden, a real message is not
+        # Subtest: hides both containers once the form is up and there is nothing to say
+        ok 1 - hides both containers once the form is up and there is nothing to say
+          ---
+          duration_ms: 13.731333
+          type: 'test'
+          ...
+        # Subtest: shows the natural error and keeps technical detail hidden
+        ok 2 - shows the natural error and keeps technical detail hidden
+          ---
+          duration_ms: 1.68125
+          type: 'test'
+          ...
+        # Subtest: hides a message that is present but blank
+        ok 3 - hides a message that is present but blank
+          ---
+          duration_ms: 0.991291
+          type: 'test'
+          ...
+        1..3
+    ok 1 - an empty message container is hidden, a real message is not
+      ---
+      duration_ms: 16.574042
+      type: 'suite'
+      ...
+    # Subtest: reads status exactly once on open and then shows the form
+    ok 2 - reads status exactly once on open and then shows the form
+      ---
+      duration_ms: 1.815416
+      type: 'test'
+      ...
+    # Subtest: one truthful renderer for open, submit and conflict recovery
+        # Subtest: renders POST COMPLETED as ready, with entry and a separate add-shop choice
+        ok 1 - renders POST COMPLETED as ready, with entry and a separate add-shop choice
+          ---
+          duration_ms: 1.084083
+          type: 'test'
+          ...
+        # Subtest: never reopens a completed request as a form until เปิดร้านเพิ่ม is chosen
+        ok 2 - never reopens a completed request as a form until เปิดร้านเพิ่ม is chosen
+          ---
+          duration_ms: 0.584041
+          type: 'test'
+          ...
+        # Subtest: shows a provisioning failure as saved work needing recovery
+        ok 3 - shows a provisioning failure as saved work needing recovery
+          ---
+          duration_ms: 0.621459
+          type: 'test'
+          ...
+        # Subtest: renders 409 then GET COMPLETED as ready instead of pending
+        ok 4 - renders 409 then GET COMPLETED as ready instead of pending
+          ---
+          duration_ms: 6.45625
+          type: 'test'
+          ...
+        # Subtest: does not claim a completed shop is usable after current access was removed
+        ok 5 - does not claim a completed shop is usable after current access was removed
+          ---
+          duration_ms: 9.76075
+          type: 'test'
+          ...
+        # Subtest: uses the persisted company-created fact in terminal-state guidance
+        ok 6 - uses the persisted company-created fact in terminal-state guidance
+          ---
+          duration_ms: 2.585333
+          type: 'test'
+          ...
+        # Subtest: shows requested information together and exposes email correction from server capability
+        ok 7 - shows requested information together and exposes email correction from server capability
+          ---
+          duration_ms: 2.651708
+          type: 'test'
+          ...
+        1..7
+    ok 3 - one truthful renderer for open, submit and conflict recovery
+      ---
+      duration_ms: 24.216292
+      type: 'suite'
+      ...
+    # Subtest: marks every missing field together instead of asking one question per submit
+    ok 4 - marks every missing field together instead of asking one question per submit
+      ---
+      duration_ms: 1.915125
+      type: 'test'
+      ...
+    # Subtest: persists the exact submission before POST and reuses it after a lost response
+    ok 5 - persists the exact submission before POST and reuses it after a lost response
+      ---
+      duration_ms: 2.672959
+      type: 'test'
+      ...
+    # Subtest: resumes persisted intake from another device without needing the original form body
+    ok 6 - resumes persisted intake from another device without needing the original form body
+      ---
+      duration_ms: 1.272084
+      type: 'test'
+      ...
+    # Subtest: re-reads status when a proof-bound retry races a newer terminal result
+    ok 7 - re-reads status when a proof-bound retry races a newer terminal result
+      ---
+      duration_ms: 1.265292
+      type: 'test'
+      ...
+    # Subtest: patches the same request and version when the applicant corrects contact email
+    ok 8 - patches the same request and version when the applicant corrects contact email
+      ---
+      duration_ms: 1.85975
+      type: 'test'
+      ...
+    # Subtest: creates a fresh ADD_SHOP submission only after the explicit add-shop choice
+    ok 9 - creates a fresh ADD_SHOP submission only after the explicit add-shop choice
+      ---
+      duration_ms: 3.07225
+      type: 'test'
+      ...
+    # Subtest: files help directly with verified identity even when LIFF sendMessages is unavailable and keeps a phone fallback
+    ok 10 - files help directly with verified identity even when LIFF sendMessages is unavailable and keeps a phone fallback
+      ---
+      duration_ms: 5.564208
+      type: 'test'
+      ...
+    # Subtest: posts the challenge ATTRIBUTE the page was rendered with, not a value from anywhere else
+    ok 11 - posts the challenge ATTRIBUTE the page was rendered with, not a value from anywhere else
+      ---
+      duration_ms: 1.345458
+      type: 'test'
+      ...
+    # Subtest: tells a second-shop applicant where the new shop will show up once it is approved
+    ok 12 - tells a second-shop applicant where the new shop will show up once it is approved
+      ---
+      duration_ms: 1.238042
+      type: 'test'
+      ...
+    # Subtest: owner email is syntax-only and retained on refusal
+        # Subtest: does not submit blank, malformed or overlong email and keeps all typed fields
+        ok 1 - does not submit blank, malformed or overlong email and keeps all typed fields
+          ---
+          duration_ms: 7.089125
+          type: 'test'
+          ...
+        # Subtest: maps domain and DTO refusals to the same field without clearing the address
+        ok 2 - maps domain and DTO refusals to the same field without clearing the address
+          ---
+          duration_ms: 7.398291
+          type: 'test'
+          ...
+        1..2
+    ok 13 - owner email is syntax-only and retained on refusal
+      ---
+      duration_ms: 14.675667
+      type: 'suite'
+      ...
+    # Subtest: the phone is required, and says so next to the field (Owner 2026-09-05)
+        # Subtest: refuses to send, marks the input, moves focus and warns — never "failed to submit"
+        ok 1 - refuses to send, marks the input, moves focus and warns — never "failed to submit"
+          ---
+          duration_ms: 5.926667
+          type: 'test'
+          ...
+        # Subtest: does the same for the server codes, and never shows the raw code
+        ok 2 - does the same for the server codes, and never shows the raw code
+          ---
+          duration_ms: 5.972792
+          type: 'test'
+          ...
+        # Subtest: marks the shop name instead when that is the empty one
+        ok 3 - marks the shop name instead when that is the empty one
+          ---
+          duration_ms: 2.531875
+          type: 'test'
+          ...
+        1..3
+    ok 14 - the phone is required, and says so next to the field (Owner 2026-09-05)
+      ---
+      duration_ms: 14.666333
+      type: 'suite'
+      ...
+    # Subtest: every refusal says what went wrong and what to do next, in the right tone
+        # Subtest: turns a known code into error tone plus guidance, and re-enables the button
+        ok 1 - turns a known code into error tone plus guidance, and re-enables the button
+          ---
+          duration_ms: 2.461083
+          type: 'test'
+          ...
+        # Subtest: treats a rate limit as a warning and repeats the wait the server named
+        ok 2 - treats a rate limit as a warning and repeats the wait the server named
+          ---
+          duration_ms: 4.318125
+          type: 'test'
+          ...
+        # Subtest: offers a reload — not a blind resubmit — when the release moved under the page
+        ok 3 - offers a reload — not a blind resubmit — when the release moved under the page
+          ---
+          duration_ms: 3.507458
+          type: 'test'
+          ...
+        # Subtest: tells the customer not to re-send when the application row is corrupt
+        ok 4 - tells the customer not to re-send when the application row is corrupt
+          ---
+          duration_ms: 2.182084
+          type: 'test'
+          ...
+        # Subtest: reads a ValidationPipe 400 as a stale page, not a system fault
+        ok 5 - reads a ValidationPipe 400 as a stale page, not a system fault
+          ---
+          duration_ms: 1.044208
+          type: 'test'
+          ...
+        # Subtest: falls back to the generic error for a code it has never heard of
+        ok 6 - falls back to the generic error for a code it has never heard of
+          ---
+          duration_ms: 1.46825
+          type: 'test'
+          ...
+        # Subtest: reads a dropped connection as a warning worth retrying, not a refusal
+        ok 7 - reads a dropped connection as a warning worth retrying, not a refusal
+          ---
+          duration_ms: 2.03925
+          type: 'test'
+          ...
+        # Subtest: keeps the reason when a 202 body will not parse
+        ok 8 - keeps the reason when a 202 body will not parse
+          ---
+          duration_ms: 1.037667
+          type: 'test'
+          ...
+        # Subtest: shows success in the success tone
+        ok 9 - shows success in the success tone
+          ---
+          duration_ms: 0.999167
+          type: 'test'
+          ...
+        1..9
+    ok 15 - every refusal says what went wrong and what to do next, in the right tone
+      ---
+      duration_ms: 19.659042
+      type: 'suite'
+      ...
+    # Subtest: reads status once more on a 409, so the waiting card names the shop (L-10)
+    ok 16 - reads status once more on a 409, so the waiting card names the shop (L-10)
+      ---
+      duration_ms: 2.007208
+      type: 'test'
+      ...
+    # Subtest: answers line_signup_account_blocked with the support phone and email
+    ok 17 - answers line_signup_account_blocked with the support phone and email
+      ---
+      duration_ms: 3.283542
+      type: 'test'
+      ...
+    # Subtest: answers line_signup_identity_disabled with the support phone and email
+    ok 18 - answers line_signup_identity_disabled with the support phone and email
+      ---
+      duration_ms: 1.2815
+      type: 'test'
+      ...
+    # Subtest: closes the LIFF window from the ปิด button (L-9)
+    ok 19 - closes the LIFF window from the ปิด button (L-9)
+      ---
+      duration_ms: 1.27575
+      type: 'test'
+      ...
+    # Subtest: shows the waiting card instead of the form when an application is already open
+    ok 20 - shows the waiting card instead of the form when an application is already open
+      ---
+      duration_ms: 2.276333
+      type: 'test'
+      ...
+    # Subtest: the page never opened at all
+        # Subtest: offers a retry and names the likely cause instead of reporting a failed submit
+        ok 1 - offers a retry and names the likely cause instead of reporting a failed submit
+          ---
+          duration_ms: 1.589625
+          type: 'test'
+          ...
+        # Subtest: keeps the submit-failure wording for a submit that really did fail
+        ok 2 - keeps the submit-failure wording for a submit that really did fail
+          ---
+          duration_ms: 2.46725
+          type: 'test'
+          ...
+        1..2
+    ok 21 - the page never opened at all
+      ---
+      duration_ms: 4.187417
+      type: 'suite'
+      ...
+    1..21
+ok 9 - P10-L LIFF client script
+  ---
+  duration_ms: 126.932542
+  type: 'suite'
+  ...
+# Subtest: ExchangeLiffSessionUseCase
+    # Subtest: mints a handoff into the single active company, under that company root
+    ok 1 - mints a handoff into the single active company, under that company root
+      ---
+      duration_ms: 0.562
+      type: 'test'
+      ...
+    # Subtest: answers needsSignup when this LINE account has no active user
+    ok 2 - answers needsSignup when this LINE account has no active user
+      ---
+      duration_ms: 0.067292
+      type: 'test'
+      ...
+    # Subtest: asks which shop when there are several and no usable context
+    ok 3 - asks which shop when there are several and no usable context
+      ---
+      duration_ms: 0.065
+      type: 'test'
+      ...
+    # Subtest: follows a LineCompanyContext that still matches a live membership
+    ok 4 - follows a LineCompanyContext that still matches a live membership
+      ---
+      duration_ms: 0.386541
+      type: 'test'
+      ...
+    # Subtest: ignores a context pointing at a company the user no longer belongs to
+    ok 5 - ignores a context pointing at a company the user no longer belongs to
+      ---
+      duration_ms: 0.150083
+      type: 'test'
+      ...
+    # Subtest: refuses a companyId that is not on this token owner's membership list
+    ok 6 - refuses a companyId that is not on this token owner's membership list
+      ---
+      duration_ms: 0.114792
+      type: 'test'
+      ...
+    # Subtest: separates an expired trial from an admin suspension
+    ok 7 - separates an expired trial from an admin suspension
+      ---
+      duration_ms: 0.631
+      type: 'test'
+      ...
+    # Subtest: refuses before verifying anything when the handoff route is off
+    ok 8 - refuses before verifying anything when the handoff route is off
+      ---
+      duration_ms: 0.256584
+      type: 'test'
+      ...
+    # Subtest: refuses rather than building a URL against an unconfigured web origin
+    ok 9 - refuses rather than building a URL against an unconfigured web origin
+      ---
+      duration_ms: 0.11275
+      type: 'test'
+      ...
+    1..9
+ok 10 - ExchangeLiffSessionUseCase
+  ---
+  duration_ms: 2.511542
+  type: 'suite'
+  ...
+# Subtest: GW04 LINE renewal round-trip regression
+    # Subtest: targets renewal for an explicitly selected expired company, retaining that company
+    ok 1 - targets renewal for an explicitly selected expired company, retaining that company
+      ---
+      duration_ms: 0.199583
+      type: 'test'
+      ...
+    # Subtest: uses renewal before the sweep disables an ACTIVE company past its deadline
+    ok 2 - uses renewal before the sweep disables an ACTIVE company past its deadline
+      ---
+      duration_ms: 0.113167
+      type: 'test'
+      ...
+    1..2
+ok 11 - GW04 LINE renewal round-trip regression
+  ---
+  duration_ms: 0.367334
+  type: 'suite'
+  ...
+# Subtest: GW03 revoked LINE identity does not invite a replacement trial
+ok 12 - GW03 revoked LINE identity does not invite a replacement trial
+  ---
+  duration_ms: 0.084042
+  type: 'test'
+  ...
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: undefined
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM   ERROR [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook enqueue error',
+#   error: 'db down'
+# }
+# [Nest] 59314  - 09/11/2026, 9:43:08 PM    WARN [LineWebhookController] Object(2) {
+#   msg: 'line.webhook.signature_invalid',
+#   riskLevel: 'HIGH'
+# }
+# Subtest: LineWebhookController
+    # Subtest: verifies signature against raw body and enqueues with canonical server channel id
+    ok 1 - verifies signature against raw body and enqueues with canonical server channel id
+      ---
+      duration_ms: 5.415541
+      type: 'test'
+      ...
+    # Subtest: acks 200 without waiting for turn processing (enqueue is the only await)
+    ok 2 - acks 200 without waiting for turn processing (enqueue is the only await)
+      ---
+      duration_ms: 0.270958
+      type: 'test'
+      ...
+    # Subtest: maps group chats to a group-scoped chat id
+    ok 3 - maps group chats to a group-scoped chat id
+      ---
+      duration_ms: 0.162666
+      type: 'test'
+      ...
+    # Subtest: maps only the rich-menu talk postback to the deterministic greeting command
+    ok 4 - maps only the rich-menu talk postback to the deterministic greeting command
+      ---
+      duration_ms: 0.593208
+      type: 'test'
+      ...
+    # Subtest: enqueues image and file messages as media items
+    ok 5 - enqueues image and file messages as media items
+      ---
+      duration_ms: 0.727708
+      type: 'test'
+      ...
+    # Subtest: skips non-message events and keeps processing the rest
+    ok 6 - skips non-message events and keeps processing the rest
+      ---
+      duration_ms: 0.234709
+      type: 'test'
+      ...
+    # Subtest: rejects the webhook when enqueue fails so LINE can redeliver it
+    ok 7 - rejects the webhook when enqueue fails so LINE can redeliver it
+      ---
+      duration_ms: 0.567958
+      type: 'test'
+      ...
+    # Subtest: rejects invalid signature before enqueueing
+    ok 8 - rejects invalid signature before enqueueing
+      ---
+      duration_ms: 0.469417
+      type: 'test'
+      ...
+    # Subtest: rejects when raw body is unavailable
+    ok 9 - rejects when raw body is unavailable
+      ---
+      duration_ms: 0.133125
+      type: 'test'
+      ...
+    1..9
+ok 13 - LineWebhookController
+  ---
+  duration_ms: 10.478417
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – legal acceptance pre-storage gate
+    # Subtest: terminalizes pending employee text without persisting or dispatching its raw envelope
+    ok 1 - terminalizes pending employee text without persisting or dispatching its raw envelope
+      ---
+      duration_ms: 3.666708
+      type: 'test'
+      ...
+    # Subtest: terminalizes pending employee media before any media id or filename is durable
+    ok 2 - terminalizes pending employee media before any media id or filename is durable
+      ---
+      duration_ms: 0.634375
+      type: 'test'
+      ...
+    # Subtest: deduplicates a pending event and sends the neutral reply only once
+    ok 3 - deduplicates a pending event and sends the neutral reply only once
+      ---
+      duration_ms: 0.435625
+      type: 'test'
+      ...
+    # Subtest: falls back to a chat-scoped push without reopening the terminal event
+    ok 4 - falls back to a chat-scoped push without reopening the terminal event
+      ---
+      duration_ms: 1.5655
+      type: 'test'
+      ...
+    # Subtest: returns the claim to received and rejects the webhook when legal guidance cannot be delivered
+    ok 5 - returns the claim to received and rejects the webhook when legal guidance cannot be delivered
+      ---
+      duration_ms: 0.928166
+      type: 'test'
+      ...
+    # Subtest: keeps a concurrent legal reply claim retryable and reclaims it only after the orphan bound
+    ok 6 - keeps a concurrent legal reply claim retryable and reclaims it only after the orphan bound
+      ---
+      duration_ms: 0.881292
+      type: 'test'
+      ...
+    # Subtest: keeps company-context controls usable but memory-only while acceptance is pending
+    ok 7 - keeps company-context controls usable but memory-only while acceptance is pending
+      ---
+      duration_ms: 22.719625
+      type: 'test'
+      ...
+    # Subtest: dispatches public contact and talk without identity/legal preflight while other staff commands stay gated
+    ok 8 - dispatches public contact and talk without identity/legal preflight while other staff commands stay gated
+      ---
+      duration_ms: 43.73625
+      type: 'test'
+      ...
+    # Subtest: preserves the existing unlinked/unresolved path when preflight says continue
+    ok 9 - preserves the existing unlinked/unresolved path when preflight says continue
+      ---
+      duration_ms: 22.15475
+      type: 'test'
+      ...
+    # Subtest: fails closed before persistence when preflight infrastructure is unavailable
+    ok 10 - fails closed before persistence when preflight infrastructure is unavailable
+      ---
+      duration_ms: 0.69275
+      type: 'test'
+      ...
+    1..10
+ok 14 - LineMessageBufferService – legal acceptance pre-storage gate
+  ---
+  duration_ms: 101.474083
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – batching
+    # Subtest: coalesces rapid fragments into one turn keyed by the last bubble
+    ok 1 - coalesces rapid fragments into one turn keyed by the last bubble
+      ---
+      duration_ms: 81.424
+      type: 'test'
+      ...
+    # Subtest: debounce 0 keeps per-event turns but still serializes them
+    ok 2 - debounce 0 keeps per-event turns but still serializes them
+      ---
+      duration_ms: 43.339875
+      type: 'test'
+      ...
+# (node:59318) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    # Subtest: messages arriving during processing form the next batch (merge-into-pending)
+    ok 3 - messages arriving during processing form the next batch (merge-into-pending)
+      ---
+      duration_ms: 124.689625
+      type: 'test'
+      ...
+    # Subtest: max wait flushes anchored to the first bubble under continuous typing
+    ok 4 - max wait flushes anchored to the first bubble under continuous typing
+      ---
+      duration_ms: 4.097458
+      type: 'test'
+      ...
+    # Subtest: buffers different chats independently
+    ok 5 - buffers different chats independently
+      ---
+      duration_ms: 80.793916
+      type: 'test'
+      ...
+    1..5
+ok 15 - LineMessageBufferService – batching
+  ---
+  duration_ms: 335.178209
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – commands
+    # Subtest: command on an idle chat dispatches immediately without debounce wait
+    ok 1 - command on an idle chat dispatches immediately without debounce wait
+      ---
+      duration_ms: 22.885042
+      type: 'test'
+      ...
+    # Subtest: command after buffered fragments flushes and preserves send order
+    ok 2 - command after buffered fragments flushes and preserves send order
+      ---
+      duration_ms: 32.052167
+      type: 'test'
+      ...
+    # Subtest: dispatches deterministic rich-menu message commands without debounce or fragment merging
+    ok 3 - dispatches deterministic rich-menu message commands without debounce or fragment merging
+      ---
+      duration_ms: 108.878333
+      type: 'test'
+      ...
+    1..3
+ok 16 - LineMessageBufferService – commands
+  ---
+  duration_ms: 164.053209
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – media and captions
+    # Subtest: keeps normal chat responsive while an uncaptioned receipt is still in OCR
+    ok 1 - keeps normal chat responsive while an uncaptioned receipt is still in OCR
+      ---
+      duration_ms: 63.270208
+      type: 'test'
+      ...
+    # Subtest: keeps uncaptioned receipts serial with each other
+    ok 2 - keeps uncaptioned receipts serial with each other
+      ---
+      duration_ms: 74.846875
+      type: 'test'
+      ...
+    # Subtest: keeps captioned media on the ordered main lane
+    ok 3 - keeps captioned media on the ordered main lane
+      ---
+      duration_ms: 92.516916
+      type: 'test'
+      ...
+    # Subtest: text buffered with media rides along as caption and gets no standalone turn
+    ok 4 - text buffered with media rides along as caption and gets no standalone turn
+      ---
+      duration_ms: 82.035333
+      type: 'test'
+      ...
+    # Subtest: defer_text runs the caption as its own text turn afterwards
+    ok 5 - defer_text runs the caption as its own text turn afterwards
+      ---
+      duration_ms: 80.972166
+      type: 'test'
+      ...
+    # Subtest: multiple media in one batch share the caption
+    ok 6 - multiple media in one batch share the caption
+      ---
+      duration_ms: 82.012
+      type: 'test'
+      ...
+    1..6
+ok 17 - LineMessageBufferService – media and captions
+  ---
+  duration_ms: 476.092084
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – dedup and redelivery
+    # Subtest: rejects enqueue when the durable event store is unavailable
+    ok 1 - rejects enqueue when the durable event store is unavailable
+      ---
+      duration_ms: 0.617292
+      type: 'test'
+      ...
+    # Subtest: marks a row retryable if the in-memory append fails after persistence
+    ok 2 - marks a row retryable if the in-memory append fails after persistence
+      ---
+      duration_ms: 0.2995
+      type: 'test'
+      ...
+    # Subtest: drops a redelivered event whose row is young and still received
+    ok 3 - drops a redelivered event whose row is young and still received
+      ---
+      duration_ms: 41.562042
+      type: 'test'
+      ...
+    # Subtest: drops a redelivered event whose row is terminal
+    ok 4 - drops a redelivered event whose row is terminal
+      ---
+      duration_ms: 41.646875
+      type: 'test'
+      ...
+    # Subtest: reprocesses an orphaned received row older than the orphan window
+    ok 5 - reprocesses an orphaned received row older than the orphan window
+      ---
+      duration_ms: 42.108042
+      type: 'test'
+      ...
+    # Subtest: atomically re-enqueues a retryable received row without waiting for the orphan window
+    ok 6 - atomically re-enqueues a retryable received row without waiting for the orphan window
+      ---
+      duration_ms: 43.033208
+      type: 'test'
+      ...
+    1..6
+ok 18 - LineMessageBufferService – dedup and redelivery
+  ---
+  duration_ms: 169.66775
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – dispatch failure
+    # Subtest: delivers an explicit unavailable reply and records the visible outcome
+    ok 1 - delivers an explicit unavailable reply and records the visible outcome
+      ---
+      duration_ms: 42.694083
+      type: 'test'
+      ...
+    # Subtest: keeps the event delivery_pending when the fallback cannot reach LINE
+    ok 2 - keeps the event delivery_pending when the fallback cannot reach LINE
+      ---
+      duration_ms: 42.026167
+      type: 'test'
+      ...
+    1..2
+ok 19 - LineMessageBufferService – dispatch failure
+  ---
+  duration_ms: 84.94775
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – overflow guard
+    # Subtest: drops beyond the pending cap with one rate-limit reply and audit trail
+    ok 1 - drops beyond the pending cap with one rate-limit reply and audit trail
+      ---
+      duration_ms: 42.247541
+      type: 'test'
+      ...
+    1..1
+ok 20 - LineMessageBufferService – overflow guard
+  ---
+  duration_ms: 42.41075
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – shutdown and loading animation
+    # Subtest: onModuleDestroy flushes open buffers and drains the turn
+    ok 1 - onModuleDestroy flushes open buffers and drains the turn
+      ---
+      duration_ms: 0.610375
+      type: 'test'
+      ...
+    # Subtest: onModuleDestroy also drains media handed off after shutdown begins
+    ok 2 - onModuleDestroy also drains media handed off after shutdown begins
+      ---
+      duration_ms: 21.947541
+      type: 'test'
+      ...
+    # Subtest: starts the loading animation for 1:1 chats only
+    ok 3 - starts the loading animation for 1:1 chats only
+      ---
+      duration_ms: 61.353708
+      type: 'test'
+      ...
+    # Subtest: keeps the spinner as the only feedback until ONE slow-turn status just before it expires (Owner 2026-08-27 + 2026-08-29)
+    ok 4 - keeps the spinner as the only feedback until ONE slow-turn status just before it expires (Owner 2026-08-27 + 2026-08-29)
+      ---
+      duration_ms: 1.838667
+      type: 'test'
+      ...
+    # Subtest: cancels waiting feedback when the real answer is ready within 5 seconds
+    ok 5 - cancels waiting feedback when the real answer is ready within 5 seconds
+      ---
+      duration_ms: 0.567209
+      type: 'test'
+      ...
+    # Subtest: runs no loading restarts now that no status bubble dismisses the spinner
+    ok 6 - runs no loading restarts now that no status bubble dismisses the spinner
+      ---
+      duration_ms: 1.462
+      type: 'test'
+      ...
+    # Subtest: keeps reordered-batch joining intact with no status bubble at any tick
+    ok 7 - keeps reordered-batch joining intact with no status bubble at any tick
+      ---
+      duration_ms: 1.631833
+      type: 'test'
+      ...
+    # Subtest: with the animation disabled, the 5 s topic status returns as the fallback feedback (spec §10)
+    ok 8 - with the animation disabled, the 5 s topic status returns as the fallback feedback (spec §10)
+      ---
+      duration_ms: 1.014709
+      type: 'test'
+      ...
+    1..8
+ok 21 - LineMessageBufferService – shutdown and loading animation
+  ---
+  duration_ms: 90.8495
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – loading on accept (latency/autonomy §10, default off)
+    # Subtest: requests one coalesced 1:1 loading after acceptance, before the debounce wait
+    ok 1 - requests one coalesced 1:1 loading after acceptance, before the debounce wait
+      ---
+      duration_ms: 0.367666
+      type: 'test'
+      ...
+    # Subtest: requires the MASTER animation flag: the accept flag alone shows NO loading (P2-A)
+    ok 2 - requires the MASTER animation flag: the accept flag alone shows NO loading (P2-A)
+      ---
+      duration_ms: 0.137708
+      type: 'test'
+      ...
+    # Subtest: does not request accept-time loading for group chats
+    ok 3 - does not request accept-time loading for group chats
+      ---
+      duration_ms: 0.0805
+      type: 'test'
+      ...
+    # Subtest: does not request accept-time loading for an idle command
+    ok 4 - does not request accept-time loading for an idle command
+      ---
+      duration_ms: 0.086959
+      type: 'test'
+      ...
+    # Subtest: leaves loading at processing start when the accept flag is off (unchanged path)
+    ok 5 - leaves loading at processing start when the accept flag is off (unchanged path)
+      ---
+      duration_ms: 60.515667
+      type: 'test'
+      ...
+    1..5
+ok 22 - LineMessageBufferService – loading on accept (latency/autonomy §10, default off)
+  ---
+  duration_ms: 61.365583
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – debounce experiment cohort (latency/autonomy §10, default off)
+    # Subtest: applies a stable cohort only when on with a secret and a resolved company
+    ok 1 - applies a stable cohort only when on with a secret and a resolved company
+      ---
+      duration_ms: 42.98925
+      type: 'test'
+      ...
+    # Subtest: keeps the configured debounce for everyone when the experiment is off
+    ok 2 - keeps the configured debounce for everyone when the experiment is off
+      ---
+      duration_ms: 21.678792
+      type: 'test'
+      ...
+    # Subtest: preserves the configured debounce path when the experiment is on but the secret is missing
+    ok 3 - preserves the configured debounce path when the experiment is on but the secret is missing
+      ---
+      duration_ms: 22.087375
+      type: 'test'
+      ...
+    # Subtest: freezes the batch cohort at open; a later bubble resolving a DIFFERENT company does not re-assign it
+    ok 4 - freezes the batch cohort at open; a later bubble resolving a DIFFERENT company does not re-assign it
+      ---
+      duration_ms: 0.552667
+      type: 'test'
+      ...
+    # Subtest: unresolved company stays on the configured debounce even with the experiment on
+    ok 5 - unresolved company stays on the configured debounce even with the experiment on
+      ---
+      duration_ms: 20.673
+      type: 'test'
+      ...
+    # Subtest: assigns the SAME cohort to two users in one group (cluster is company+chat, not per user), buffers stay isolated
+    ok 6 - assigns the SAME cohort to two users in one group (cluster is company+chat, not per user), buffers stay isolated
+      ---
+      duration_ms: 0.538083
+      type: 'test'
+      ...
+    1..6
+ok 23 - LineMessageBufferService – debounce experiment cohort (latency/autonomy §10, default off)
+  ---
+  duration_ms: 108.896875
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – deterministic debounce boundary (latency/autonomy §10)
+    # Subtest: joins at exactly gap == debounce when the backstop timer is one ms past the boundary
+    ok 1 - joins at exactly gap == debounce when the backstop timer is one ms past the boundary
+      ---
+      duration_ms: 0.902041
+      type: 'test'
+      ...
+    # Subtest: splits at gap == debounce + 1 when the backstop timer fires
+    ok 2 - splits at gap == debounce + 1 when the backstop timer fires
+      ---
+      duration_ms: 0.572167
+      type: 'test'
+      ...
+    # Subtest: a stale (superseded/cleared-but-queued) backstop callback cannot clear or disable the current schedule
+    ok 3 - a stale (superseded/cleared-but-queued) backstop callback cannot clear or disable the current schedule
+      ---
+      duration_ms: 0.206333
+      type: 'test'
+      ...
+    1..3
+ok 24 - LineMessageBufferService – deterministic debounce boundary (latency/autonomy §10)
+  ---
+  duration_ms: 1.812666
+  type: 'suite'
+  ...
+# Subtest: LineMessageBufferService – API end-to-end trace (latency/autonomy §12)
+    # Subtest: emits one privacy-safe api_trace per dispatched turn, correlated by webhookEventId
+    ok 1 - emits one privacy-safe api_trace per dispatched turn, correlated by webhookEventId
+      ---
+      duration_ms: 63.678833
+      type: 'test'
+      ...
+    # Subtest: marks a group chat trace as group
+    ok 2 - marks a group chat trace as group
+      ---
+      duration_ms: 20.899
+      type: 'test'
+      ...
+    # Subtest: emits loading_started at acceptance and loading_accepted at the ordered consumption
+    ok 3 - emits loading_started at acceptance and loading_accepted at the ordered consumption
+      ---
+      duration_ms: 60.011417
+      type: 'test'
+      ...
+    # Subtest: does not emit loading_accepted when LINE rejects the loading request
+    ok 4 - does not emit loading_accepted when LINE rejects the loading request
+      ---
+      duration_ms: 60.6705
+      type: 'test'
+      ...
+    # Subtest: orders the accept-loading request and loading_accepted strictly before the final reply (fast/debounce-0 turn)
+    ok 5 - orders the accept-loading request and loading_accepted strictly before the final reply (fast/debounce-0 turn)
+      ---
+      duration_ms: 42.4795
+      type: 'test'
+      ...
+    # Subtest: does not fire a duplicate processing-start loading when accept-loading covers the turn
+    ok 6 - does not fire a duplicate processing-start loading when accept-loading covers the turn
+      ---
+      duration_ms: 60.460584
+      type: 'test'
+      ...
+    # Subtest: binds each batch’s loading to its own batch — no overwrite or cross-consumption while a first batch is blocked with multiple groups
+    ok 7 - binds each batch’s loading to its own batch — no overwrite or cross-consumption while a first batch is blocked with multiple groups
+      ---
+      duration_ms: 163.740333
+      type: 'test'
+      ...
+    # Subtest: api_trace.loadingRequested is false for a COMMAND segment even in a batch that bound loading
+    ok 8 - api_trace.loadingRequested is false for a COMMAND segment even in a batch that bound loading
+      ---
+      duration_ms: 41.624166
+      type: 'test'
+      ...
+    # Subtest: api_trace.loadingRequested reflects the batch actual bound accept-loading, not a config guess
+    ok 9 - api_trace.loadingRequested reflects the batch actual bound accept-loading, not a config guess
+      ---
+      duration_ms: 68.040375
+      type: 'test'
+      ...
+    # Subtest: api_trace.loadingRequested is false for a TEXT turn whose batch bound no loading (command-opened, merged while busy)
+    ok 10 - api_trace.loadingRequested is false for a TEXT turn whose batch bound no loading (command-opened, merged while busy)
+      ---
+      duration_ms: 104.290042
+      type: 'test'
+      ...
+    # Subtest: re-shows processing-start loading for a batch whose accept-loading spinner was dismissed by a prior batch final (overlap)
+    ok 11 - re-shows processing-start loading for a batch whose accept-loading spinner was dismissed by a prior batch final (overlap)
+      ---
+      duration_ms: 105.627042
+      type: 'test'
+      ...
+    1..11
+ok 25 - LineMessageBufferService – API end-to-end trace (latency/autonomy §12)
+  ---
+  duration_ms: 792.183875
+  type: 'suite'
+  ...
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# [Nest] 59321  - 09/11/2026, 9:43:09 PM     LOG [LineWebhookController] Object(2) {
+#   msg: 'LINE webhook received',
+#   destination: 'bot'
+# }
+# Subtest: P10-L webhook intake (G-03/G-04)
+    # Subtest: carries a follow event into the turn lane instead of dropping it
+    ok 1 - carries a follow event into the turn lane instead of dropping it
+      ---
+      duration_ms: 2.445708
+      type: 'test'
+      ...
+    # Subtest: dispatches a known postback action and drops a forged one
+    ok 2 - dispatches a known postback action and drops a forged one
+      ---
+      duration_ms: 0.324416
+      type: 'test'
+      ...
+    # Subtest: keeps the rich-talk postback working through the same dispatcher
+    ok 3 - keeps the rich-talk postback working through the same dispatcher
+      ---
+      duration_ms: 0.109167
+      type: 'test'
+      ...
+    # Subtest: reads only the action name, never anything else the client attached (SEC-04)
+    ok 4 - reads only the action name, never anything else the client attached (SEC-04)
+      ---
+      duration_ms: 0.052917
+      type: 'test'
+      ...
+    1..4
+ok 26 - P10-L webhook intake (G-03/G-04)
+  ---
+  duration_ms: 3.447084
+  type: 'suite'
+  ...
+# Subtest: P10-L door and status cards (§3.1/§7)
+    # Subtest: offers four ways on, including one that reaches a person
+    ok 1 - offers four ways on, including one that reaches a person
+      ---
+      duration_ms: 0.279167
+      type: 'test'
+      ...
+    # Subtest: sends "I already have an account" to the P12 link login, in the external browser
+    ok 2 - sends "I already have an account" to the P12 link login, in the external browser
+      ---
+      duration_ms: 0.084958
+      type: 'test'
+      ...
+    # Subtest: drops a door it cannot build rather than sending a broken link
+    ok 3 - drops a door it cannot build rather than sending a broken link
+      ---
+      duration_ms: 0.173166
+      type: 'test'
+      ...
+    # Subtest: says the right thing inside and outside business hours
+    ok 4 - says the right thing inside and outside business hours
+      ---
+      duration_ms: 0.373083
+      type: 'test'
+      ...
+    # Subtest: names the trial only for the trial tier (G-05, §15.1)
+    ok 5 - names the trial only for the trial tier (G-05, §15.1)
+      ---
+      duration_ms: 0.328125
+      type: 'test'
+      ...
+    # Subtest: maps only the monthly-budget 429 away from the congestion reply
+    ok 6 - maps only the monthly-budget 429 away from the congestion reply
+      ---
+      duration_ms: 0.388416
+      type: 'test'
+      ...
+    1..6
+ok 27 - P10-L door and status cards (§3.1/§7)
+  ---
+  duration_ms: 1.890083
+  type: 'suite'
+  ...
+# Subtest: P10-L webhook doors
+    # Subtest: answers a follow with the three doors when nothing is pending
+    ok 1 - answers a follow with the three doors when nothing is pending
+      ---
+      duration_ms: 2.891791
+      type: 'test'
+      ...
+    # Subtest: still records a DENIED attempt when an unlinked stranger MESSAGES the OA
+    ok 2 - still records a DENIED attempt when an unlinked stranger MESSAGES the OA
+      ---
+      duration_ms: 0.316667
+      type: 'test'
+      ...
+    # Subtest: answers a follow with the status card while an application is travelling
+    ok 3 - answers a follow with the status card while an application is travelling
+      ---
+      duration_ms: 0.206542
+      type: 'test'
+      ...
+    # Subtest: welcomes back a LINE account it already knows, instead of offering to open a shop
+    ok 4 - welcomes back a LINE account it already knows, instead of offering to open a shop
+      ---
+      duration_ms: 0.104209
+      type: 'test'
+      ...
+    # Subtest: fails closed on an unconfigured channel rather than matching any application
+    ok 5 - fails closed on an unconfigured channel rather than matching any application
+      ---
+      duration_ms: 0.113666
+      type: 'test'
+      ...
+    # Subtest: says so at ERROR when the LIFF id is unusable, and still sends the doors that work
+    ok 6 - says so at ERROR when the LIFF id is unusable, and still sends the doors that work
+      ---
+      duration_ms: 0.2015
+      type: 'test'
+      ...
+    # Subtest: answers an unlinked message with the same door card, not a dead-end line
+    ok 7 - answers an unlinked message with the same door card, not a dead-end line
+      ---
+      duration_ms: 0.139625
+      type: 'test'
+      ...
+    # Subtest: sends the staff door to the owner-issued link, never a self-serve signup
+    ok 8 - sends the staff door to the owner-issued link, never a self-serve signup
+      ---
+      duration_ms: 0.071334
+      type: 'test'
+      ...
+    1..8
+ok 28 - P10-L webhook doors
+  ---
+  duration_ms: 4.144791
+  type: 'suite'
+  ...
+# Subtest: P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1
+    # Subtest: opens a request against the shop the asker is in NOW, and pauses the assistant
+    ok 1 - opens a request against the shop the asker is in NOW, and pauses the assistant
+      ---
+      duration_ms: 0.603292
+      type: 'test'
+      ...
+    # Subtest: files an unlinked asker against their pending application, and pauses nothing
+    ok 2 - files an unlinked asker against their pending application, and pauses nothing
+      ---
+      duration_ms: 0.170333
+      type: 'test'
+      ...
+    # Subtest: files an unlinked asker with no application at all rather than dropping them
+    ok 3 - files an unlinked asker with no application at all rather than dropping them
+      ---
+      duration_ms: 0.276333
+      type: 'test'
+      ...
+    # Subtest: answers a repeat tap with "still in the queue" and pages nobody twice
+    ok 4 - answers a repeat tap with "still in the queue" and pages nobody twice
+      ---
+      duration_ms: 0.216375
+      type: 'test'
+      ...
+    # Subtest: lets the customer bring the assistant back without hiding their unresolved request
+    ok 5 - lets the customer bring the assistant back without hiding their unresolved request
+      ---
+      duration_ms: 0.177792
+      type: 'test'
+      ...
+    # Subtest: keeps the resume command useful without promising an assistant to an unlinked applicant
+    ok 6 - keeps the resume command useful without promising an assistant to an unlinked applicant
+      ---
+      duration_ms: 0.123792
+      type: 'test'
+      ...
+    # Subtest: stops opening new requests after three in a day, truthfully and without writing anything
+    ok 7 - stops opening new requests after three in a day, truthfully and without writing anything
+      ---
+      duration_ms: 0.209125
+      type: 'test'
+      ...
+    # Subtest: never spends a slot on a repeat tap of an already-open request
+    ok 8 - never spends a slot on a repeat tap of an already-open request
+      ---
+      duration_ms: 0.418416
+      type: 'test'
+      ...
+    # Subtest: still opens the request when Redis is down in production, instead of going silent
+    ok 9 - still opens the request when Redis is down in production, instead of going silent
+      ---
+      duration_ms: 2.3945
+      type: 'test'
+      ...
+    # Subtest: does not re-arm the 24h pause on a tap the floor refused
+    ok 10 - does not re-arm the 24h pause on a tap the floor refused
+      ---
+      duration_ms: 0.533
+      type: 'test'
+      ...
+    # Subtest: files a DISABLED-company member as having no shop, and creates no context row
+    ok 11 - files a DISABLED-company member as having no shop, and creates no context row
+      ---
+      duration_ms: 0.220208
+      type: 'test'
+      ...
+    # Subtest: holds the assistant back while the pause runs, and lets go once it expires
+    ok 12 - holds the assistant back while the pause runs, and lets go once it expires
+      ---
+      duration_ms: 0.414333
+      type: 'test'
+      ...
+    # Subtest: still opens a package-change request while a human is handling the thread
+    ok 13 - still opens a package-change request while a human is handling the thread
+      ---
+      duration_ms: 0.175792
+      type: 'test'
+      ...
+    # Subtest: still keeps free text paused, which is what the pause is for
+    ok 14 - still keeps free text paused, which is what the pause is for
+      ---
+      duration_ms: 0.136625
+      type: 'test'
+      ...
+    1..14
+ok 29 - P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1
+  ---
+  duration_ms: 6.290875
+  type: 'suite'
+  ...
+# Subtest: a customer who writes back is still in the queue (UAT 2026-09-06)
+    # Subtest: records an unlinked applicant reply on their live support case instead of returning the door card
+    ok 1 - records an unlinked applicant reply on their live support case instead of returning the door card
+      ---
+      duration_ms: 0.204791
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED unlinked applicant case when they supply the requested information
+    ok 2 - reopens an ANSWERED unlinked applicant case when they supply the requested information
+      ---
+      duration_ms: 0.145708
+      type: 'test'
+      ...
+    # Subtest: keeps explicit public commands on their public route even when an unlinked case is live
+    ok 3 - keeps explicit public commands on their public route even when an unlinked case is live
+      ---
+      duration_ms: 0.074959
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED request and stops promising what it does not do
+    ok 4 - reopens an ANSWERED request and stops promising what it does not do
+      ---
+      duration_ms: 0.1235
+      type: 'test'
+      ...
+    # Subtest: records the fact, never the words, and never the LINE id (§3)
+    ok 5 - records the fact, never the words, and never the LINE id (§3)
+      ---
+      duration_ms: 0.099083
+      type: 'test'
+      ...
+    # Subtest: appends to a request that never left รอตอบ without counting a reopen
+    ok 6 - appends to a request that never left รอตอบ without counting a reopen
+      ---
+      duration_ms: 0.084958
+      type: 'test'
+      ...
+    # Subtest: asks only for a request that is still live, for this person in any shop
+    ok 7 - asks only for a request that is still live, for this person in any shop
+      ---
+      duration_ms: 0.081292
+      type: 'test'
+      ...
+    # Subtest: says the message was not recorded when there is no request to append to
+    ok 8 - says the message was not recorded when there is no request to append to
+      ---
+      duration_ms: 0.088792
+      type: 'test'
+      ...
+    # Subtest: still answers the customer when the request cannot be written to
+    ok 9 - still answers the customer when the request cannot be written to
+      ---
+      duration_ms: 0.208333
+      type: 'test'
+      ...
+    # Subtest: never loses a receipt turn because the support table could not be written
+    ok 10 - never loses a receipt turn because the support table could not be written
+      ---
+      duration_ms: 0.714209
+      type: 'test'
+      ...
+    # Subtest: marks a photo on an ANSWERED request without reopening it or moving its clocks
+    ok 11 - marks a photo on an ANSWERED request without reopening it or moving its clocks
+      ---
+      duration_ms: 0.177709
+      type: 'test'
+      ...
+    # Subtest: marks a document on a live OPEN request the same way, and moves nothing else
+    ok 12 - marks a document on a live OPEN request the same way, and moves nothing else
+      ---
+      duration_ms: 0.245042
+      type: 'test'
+      ...
+    # Subtest: does not promise delivery when "ตอบแล้ว" won the race
+    ok 13 - does not promise delivery when "ตอบแล้ว" won the race
+      ---
+      duration_ms: 0.700834
+      type: 'test'
+      ...
+    # Subtest: guards the plain append with OPEN, so a close in the gap cannot be written over
+    ok 14 - guards the plain append with OPEN, so a close in the gap cannot be written over
+      ---
+      duration_ms: 0.241542
+      type: 'test'
+      ...
+    # Subtest: re-arms the 24h pause from the message it just recorded, and only ever extends one
+    ok 15 - re-arms the 24h pause from the message it just recorded, and only ever extends one
+      ---
+      duration_ms: 0.577125
+      type: 'test'
+      ...
+    # Subtest: leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)
+    ok 16 - leaves an unlinked asker unpaused, because there is no assistant to silence (§2.1.2)
+      ---
+      duration_ms: 0.22325
+      type: 'test'
+      ...
+    # Subtest: never rebuilds a context row that an unlink deleted
+    ok 17 - never rebuilds a context row that an unlink deleted
+      ---
+      duration_ms: 0.445833
+      type: 'test'
+      ...
+    # Subtest: stores at most 200 characters of a long follow-up
+    ok 18 - stores at most 200 characters of a long follow-up
+      ---
+      duration_ms: 0.443916
+      type: 'test'
+      ...
+    1..18
+ok 30 - a customer who writes back is still in the queue (UAT 2026-09-06)
+  ---
+  duration_ms: 5.13675
+  type: 'suite'
+  ...
+# Subtest: the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)
+    # Subtest: answers /companies under the pause instead of filing it as a follow-up
+    ok 1 - answers /companies under the pause instead of filing it as a follow-up
+      ---
+      duration_ms: 1.126542
+      type: 'test'
+      ...
+    # Subtest: honours the number the picker asked for, under the pause
+    ok 2 - honours the number the picker asked for, under the pause
+      ---
+      duration_ms: 0.895125
+      type: 'test'
+      ...
+    # Subtest: keeps a bare number as a follow-up when nothing asked for one
+    ok 3 - keeps a bare number as a follow-up when nothing asked for one
+      ---
+      duration_ms: 0.165125
+      type: 'test'
+      ...
+    # Subtest: reads "2 คน" as a sentence for the operator even with a picker pending
+    ok 4 - reads "2 คน" as a sentence for the operator even with a picker pending
+      ---
+      duration_ms: 0.421792
+      type: 'test'
+      ...
+    # Subtest: lifts the pause from the rich-menu tile and leaves resolution to the support workflow
+    ok 5 - lifts the pause from the rich-menu tile and leaves resolution to the support workflow
+      ---
+      duration_ms: 0.327958
+      type: 'test'
+      ...
+    # Subtest: keeps the tile's greeting when nothing is paused
+    ok 6 - keeps the tile's greeting when nothing is paused
+      ---
+      duration_ms: 0.103333
+      type: 'test'
+      ...
+    # Subtest: brings the assistant back on every accepted spelling, tapped or typed
+    ok 7 - brings the assistant back on every accepted spelling, tapped or typed
+      ---
+      duration_ms: 0.346666
+      type: 'test'
+      ...
+    # Subtest: names the tile as the way out in every reply that offers one, and never a robot
+    ok 8 - names the tile as the way out in every reply that offers one, and never a robot
+      ---
+      duration_ms: 0.316333
+      type: 'test'
+      ...
+    # Subtest: brings the assistant back on the lowercase spelling its own reply advertises
+    ok 9 - brings the assistant back on the lowercase spelling its own reply advertises
+      ---
+      duration_ms: 0.073459
+      type: 'test'
+      ...
+    # Subtest: confirms in full once, then acknowledges briefly for ten minutes
+    ok 10 - confirms in full once, then acknowledges briefly for ten minutes
+      ---
+      duration_ms: 2.435833
+      type: 'test'
+      ...
+    # Subtest: keeps the draft-edit phrases under the pause while the S-4 lane is dark
+    ok 11 - keeps the draft-edit phrases under the pause while the S-4 lane is dark
+      ---
+      duration_ms: 0.196375
+      type: 'test'
+      ...
+    1..11
+ok 31 - the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)
+  ---
+  duration_ms: 6.604334
+  type: 'suite'
+  ...
+# Subtest: the original question outlives every follow-up (UAT 2026-09-06)
+    # Subtest: keeps the tap-time question in its own column
+    ok 1 - keeps the tap-time question in its own column
+      ---
+      duration_ms: 0.137125
+      type: 'test'
+      ...
+    # Subtest: reopens an ANSWERED request on a tap instead of opening a second one
+    ok 2 - reopens an ANSWERED request on a tap instead of opening a second one
+      ---
+      duration_ms: 0.125166
+      type: 'test'
+      ...
+    # Subtest: asks for a live request of either status before opening a new one
+    ok 3 - asks for a live request of either status before opening a new one
+      ---
+      duration_ms: 0.082458
+      type: 'test'
+      ...
+    1..3
+ok 32 - the original question outlives every follow-up (UAT 2026-09-06)
+  ---
+  duration_ms: 0.378792
+  type: 'suite'
+  ...
+# Subtest: P10-L package change from LINE (§3.7)
+    # Subtest: opens a request for an owner and says the team will call back
+    ok 1 - opens a request for an owner and says the team will call back
+      ---
+      duration_ms: 0.098792
+      type: 'test'
+      ...
+    # Subtest: works for a shop whose trial already expired — the case the button is printed on
+    ok 2 - works for a shop whose trial already expired — the case the button is printed on
+      ---
+      duration_ms: 0.063
+      type: 'test'
+      ...
+    # Subtest: refuses a non-owner without opening anything
+    ok 3 - refuses a non-owner without opening anything
+      ---
+      duration_ms: 0.058583
+      type: 'test'
+      ...
+    # Subtest: never claims a request exists when the collaborator is not wired
+    ok 4 - never claims a request exists when the collaborator is not wired
+      ---
+      duration_ms: 0.058208
+      type: 'test'
+      ...
+    1..4
+ok 33 - P10-L package change from LINE (§3.7)
+  ---
+  duration_ms: 0.309375
+  type: 'suite'
+  ...
+# Subtest: P10-L day-7 nudge answers (§3.6)
+    # Subtest: sends the settings link on "ใส่เลย"
+    ok 1 - sends the settings link on "ใส่เลย"
+      ---
+      duration_ms: 0.14
+      type: 'test'
+      ...
+    # Subtest: acknowledges "ไว้ก่อน" and asks nothing further
+    ok 2 - acknowledges "ไว้ก่อน" and asks nothing further
+      ---
+      duration_ms: 1.316209
+      type: 'test'
+      ...
+    1..2
+ok 34 - P10-L day-7 nudge answers (§3.6)
+  ---
+  duration_ms: 1.492209
+  type: 'suite'
+  ...
+# Subtest: GW05 package request stays with the selected company
+    # Subtest: uses selected B even when A is first in the owner query
+    ok 1 - uses selected B even when A is first in the owner query
+      ---
+      duration_ms: 0.151667
+      type: 'test'
+      ...
+    # Subtest: asks to select instead of silently choosing A: null
+    ok 2 - asks to select instead of silently choosing A: null
+      ---
+      duration_ms: 0.219375
+      type: 'test'
+      ...
+    # Subtest: asks to select instead of silently choosing A: revoked-or-staff-company
+    ok 3 - asks to select instead of silently choosing A: revoked-or-staff-company
+      ---
+      duration_ms: 0.084959
+      type: 'test'
+      ...
+    # Subtest: does not fall back to sole A when the selected membership was revoked
+    ok 4 - does not fall back to sole A when the selected membership was revoked
+      ---
+      duration_ms: 0.2115
+      type: 'test'
+      ...
+    1..4
+ok 35 - GW05 package request stays with the selected company
+  ---
+  duration_ms: 0.725417
+  type: 'suite'
+  ...
+# Subtest: GW09 committed rich menu → signed webhook → deterministic reply
+    # Subtest: Promotion Package
+    ok 1 - Promotion Package
+      ---
+      duration_ms: 1.20125
+      type: 'test'
+      ...
+    # Subtest: บริษัทของฉัน
+    ok 2 - บริษัทของฉัน
+      ---
+      duration_ms: 1.513417
+      type: 'test'
+      ...
+    # Subtest: คุยกับน้องมั่งมี
+    ok 3 - คุยกับน้องมั่งมี
+      ---
+      duration_ms: 0.345167
+      type: 'test'
+      ...
+    # Subtest: สรุปค่าใช้จ่าย
+    ok 4 - สรุปค่าใช้จ่าย
+      ---
+      duration_ms: 0.225166
+      type: 'test'
+      ...
+    # Subtest: ติดต่อเรา
+    ok 5 - ติดต่อเรา
+      ---
+      duration_ms: 0.326334
+      type: 'test'
+      ...
+    1..5
+ok 36 - GW09 committed rich menu → signed webhook → deterministic reply
+  ---
+  duration_ms: 3.697084
+  type: 'suite'
+  ...
+# Subtest: GW10 LINE message context after expiry or membership revocation
+    # Subtest: does not route selected B to the only ACTIVE A
+    ok 1 - does not route selected B to the only ACTIVE A
+      ---
+      duration_ms: 0.280292
+      type: 'test'
+      ...
+    # Subtest: keeps the sole active company usable when there is no prior selection
+    ok 2 - keeps the sole active company usable when there is no prior selection
+      ---
+      duration_ms: 0.1805
+      type: 'test'
+      ...
+    # Subtest: returns picker → company switch → explicit package request for the same B
+    ok 3 - returns picker → company switch → explicit package request for the same B
+      ---
+      duration_ms: 3.315208
+      type: 'test'
+      ...
+    1..3
+ok 37 - GW10 LINE message context after expiry or membership revocation
+  ---
+  duration_ms: 3.930542
+  type: 'suite'
+  ...
+# Subtest: GetCompanyPlanTermUseCase
+    # Subtest: returns { term: null } for a grandfathered company instead of 404
+    ok 1 - returns { term: null } for a grandfathered company instead of 404
+      ---
+      duration_ms: 0.891917
+      type: 'test'
+      ...
+    # Subtest: computes derivedState and daysLeft on read
+    ok 2 - computes derivedState and daysLeft on read
+      ---
+      duration_ms: 0.234541
+      type: 'test'
+      ...
+    1..2
+ok 38 - GetCompanyPlanTermUseCase
+  ---
+  duration_ms: 1.4635
+  type: 'suite'
+  ...
+# Subtest: SetCompanyPlanTermUseCase
+    # Subtest: 404s on an unknown company
+    ok 1 - 404s on an unknown company
+      ---
+      duration_ms: 0.400125
+      type: 'test'
+      ...
+    # Subtest: rejects an unknown tierKey
+    ok 2 - rejects an unknown tierKey
+      ---
+      duration_ms: 0.084375
+      type: 'test'
+      ...
+    # Subtest: rejects non-positive and fractional limits
+    ok 3 - rejects non-positive and fractional limits
+      ---
+      duration_ms: 0.369666
+      type: 'test'
+      ...
+    # Subtest: creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+    ok 4 - creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+      ---
+      duration_ms: 0.323166
+      type: 'test'
+      ...
+    # Subtest: creating defaults to 30 days from now when no dates are given
+    ok 5 - creating defaults to 30 days from now when no dates are given
+      ---
+      duration_ms: 0.324375
+      type: 'test'
+      ...
+    # Subtest: updating limits NEVER moves the dates
+    ok 6 - updating limits NEVER moves the dates
+      ---
+      duration_ms: 0.399458
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with before/after values
+    ok 7 - audits CRITICAL with before/after values
+      ---
+      duration_ms: 0.591125
+      type: 'test'
+      ...
+    # Subtest: records `from: null` when the row is created
+    ok 8 - records `from: null` when the row is created
+      ---
+      duration_ms: 0.580375
+      type: 'test'
+      ...
+    1..8
+ok 39 - SetCompanyPlanTermUseCase
+  ---
+  duration_ms: 3.518458
+  type: 'suite'
+  ...
+# Subtest: applyPlanTermPreset
+    # Subtest: fills the row from the frozen catalog and is a no-op on an existing row
+    ok 1 - fills the row from the frozen catalog and is a no-op on an existing row
+      ---
+      duration_ms: 0.925291
+      type: 'test'
+      ...
+    # Subtest: carries the LINE-first trial preset without opening it to the public form
+    ok 2 - carries the LINE-first trial preset without opening it to the public form
+      ---
+      duration_ms: 0.148709
+      type: 'test'
+      ...
+    1..2
+ok 40 - applyPlanTermPreset
+  ---
+  duration_ms: 1.167417
+  type: 'suite'
+  ...
+# Subtest: RenewCompanyPlanTermUseCase
+    # Subtest: 404s when there is no term to renew
+    ok 1 - 404s when there is no term to renew
+      ---
+      duration_ms: 0.380666
+      type: 'test'
+      ...
+    # Subtest: BEFORE expiry: extends from the existing end date, not from now
+    ok 2 - BEFORE expiry: extends from the existing end date, not from now
+      ---
+      duration_ms: 0.269
+      type: 'test'
+      ...
+    # Subtest: AFTER expiry: extends from now, never back-dated into the past
+    ok 3 - AFTER expiry: extends from now, never back-dated into the past
+      ---
+      duration_ms: 0.139334
+      type: 'test'
+      ...
+    # Subtest: re-activates a company the SWEEP disabled and clears termDisabledAt
+    ok 4 - re-activates a company the SWEEP disabled and clears termDisabledAt
+      ---
+      duration_ms: 0.287417
+      type: 'test'
+      ...
+    # Subtest: an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+    ok 5 - an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+      ---
+      duration_ms: 0.138167
+      type: 'test'
+      ...
+    # Subtest: never touches a SUSPENDED company status
+    ok 6 - never touches a SUSPENDED company status
+      ---
+      duration_ms: 0.121792
+      type: 'test'
+      ...
+    # Subtest: resets the whole ladder so the next term can warn again
+    ok 7 - resets the whole ladder so the next term can warn again
+      ---
+      duration_ms: 0.129583
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with the date move and the renew count
+    ok 8 - audits CRITICAL with the date move and the renew count
+      ---
+      duration_ms: 0.257959
+      type: 'test'
+      ...
+    # Subtest: is idempotent on requestId: a replayed renew writes nothing
+    ok 9 - is idempotent on requestId: a replayed renew writes nothing
+      ---
+      duration_ms: 0.306375
+      type: 'test'
+      ...
+    # Subtest: rejects a non-positive day count
+    ok 10 - rejects a non-positive day count
+      ---
+      duration_ms: 0.217083
+      type: 'test'
+      ...
+    1..10
+ok 41 - RenewCompanyPlanTermUseCase
+  ---
+  duration_ms: 2.429166
+  type: 'suite'
+  ...
+# Subtest: GetPlanTermNoticeUseCase
+    # Subtest: returns null for a company with no term row
+    ok 1 - returns null for a company with no term row
+      ---
+      duration_ms: 0.166833
+      type: 'test'
+      ...
+    # Subtest: marks the OWNER, and only the OWNER
+    ok 2 - marks the OWNER, and only the OWNER
+      ---
+      duration_ms: 0.12375
+      type: 'test'
+      ...
+    # Subtest: carries state and deadline but never limits or tier
+    ok 3 - carries state and deadline but never limits or tier
+      ---
+      duration_ms: 0.107458
+      type: 'test'
+      ...
+    1..3
+ok 42 - GetPlanTermNoticeUseCase
+  ---
+  duration_ms: 0.510084
+  type: 'suite'
+  ...
+# Subtest: PartnerLifecycleTransitionUseCase
+    # Subtest: throws NotFoundException when company not found
+    ok 1 - throws NotFoundException when company not found
+      ---
+      duration_ms: 0.693791
+      type: 'test'
+      ...
+    # Subtest: throws UnprocessableEntityException for SUSPENDED targetStatus
+    ok 2 - throws UnprocessableEntityException for SUSPENDED targetStatus
+      ---
+      duration_ms: 0.123042
+      type: 'test'
+      ...
+    # Subtest: allows transition ACTIVE → DISABLED
+    ok 3 - allows transition ACTIVE → DISABLED
+      ---
+      duration_ms: 0.240709
+      type: 'test'
+      ...
+    # Subtest: allows transition ACTIVE → ARCHIVED
+    ok 4 - allows transition ACTIVE → ARCHIVED
+      ---
+      duration_ms: 0.053834
+      type: 'test'
+      ...
+    # Subtest: allows transition DISABLED → ACTIVE
+    ok 5 - allows transition DISABLED → ACTIVE
+      ---
+      duration_ms: 0.044125
+      type: 'test'
+      ...
+    # Subtest: allows transition DISABLED → ARCHIVED
+    ok 6 - allows transition DISABLED → ARCHIVED
+      ---
+      duration_ms: 0.078666
+      type: 'test'
+      ...
+    # Subtest: allows transition ARCHIVED → DISABLED
+    ok 7 - allows transition ARCHIVED → DISABLED
+      ---
+      duration_ms: 0.04575
+      type: 'test'
+      ...
+    # Subtest: allows transition ARCHIVED → ACTIVE
+    ok 8 - allows transition ARCHIVED → ACTIVE
+      ---
+      duration_ms: 0.136959
+      type: 'test'
+      ...
+    # Subtest: writes audit event on every transition
+    ok 9 - writes audit event on every transition
+      ---
+      duration_ms: 0.143792
+      type: 'test'
+      ...
+    # Subtest: → ACTIVE clears disabledAt and archivedAt
+    ok 10 - → ACTIVE clears disabledAt and archivedAt
+      ---
+      duration_ms: 0.214917
+      type: 'test'
+      ...
+    # Subtest: → DISABLED sets disabledAt and clears archivedAt
+    ok 11 - → DISABLED sets disabledAt and clears archivedAt
+      ---
+      duration_ms: 0.055041
+      type: 'test'
+      ...
+    # Subtest: → ARCHIVED sets archivedAt
+    ok 12 - → ARCHIVED sets archivedAt
+      ---
+      duration_ms: 0.053833
+      type: 'test'
+      ...
+    1..12
+ok 43 - PartnerLifecycleTransitionUseCase
+  ---
+  duration_ms: 2.352167
+  type: 'suite'
+  ...
+# {"event":"plan_term_expiry_failed","companyId":"co-bad","error":"boom"}
+# Subtest: PlanTermSweepUseCase — expiry
+    # Subtest: disables an ACTIVE company past its deadline through the lifecycle use-case
+    ok 1 - disables an ACTIVE company past its deadline through the lifecycle use-case
+      ---
+      duration_ms: 1.070667
+      type: 'test'
+      ...
+    # Subtest: is idempotent: a second pass finds nothing and notifies nobody again
+    ok 2 - is idempotent: a second pass finds nothing and notifies nobody again
+      ---
+      duration_ms: 0.152292
+      type: 'test'
+      ...
+    # Subtest: SKIPS a company that is not ACTIVE — admin-disabled, suspended and archived are untouched
+    ok 3 - SKIPS a company that is not ACTIVE — admin-disabled, suspended and archived are untouched
+      ---
+      duration_ms: 0.5765
+      type: 'test'
+      ...
+    # Subtest: finishes a legacy half-done expiry and reconciles its durable notice
+    ok 4 - finishes a legacy half-done expiry and reconciles its durable notice
+      ---
+      duration_ms: 0.153875
+      type: 'test'
+      ...
+    # Subtest: one company failing never aborts the batch
+    ok 5 - one company failing never aborts the batch
+      ---
+      duration_ms: 0.454375
+      type: 'test'
+      ...
+    # Subtest: notifies the OWNER on WEB and LINE plus the System Admin dashboard, with the Thai copy
+    ok 6 - notifies the OWNER on WEB and LINE plus the System Admin dashboard, with the Thai copy
+      ---
+      duration_ms: 0.40075
+      type: 'test'
+      ...
+    1..6
+ok 44 - PlanTermSweepUseCase — expiry
+  ---
+  duration_ms: 3.288666
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep
+    # Subtest: omits it for a web-only company and includes it for a LINE-linked one
+    ok 1 - omits it for a web-only company and includes it for a LINE-linked one
+      ---
+      duration_ms: 0.499917
+      type: 'test'
+      ...
+    # Subtest: applies the same rule to the 7/3/1 warnings
+    ok 2 - applies the same rule to the 7/3/1 warnings
+      ---
+      duration_ms: 0.440834
+      type: 'test'
+      ...
+    1..2
+ok 45 - PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep
+  ---
+  duration_ms: 1.089125
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — warning ladder
+    # Subtest: fires 7, then 3, then 1 — each exactly once
+    ok 1 - fires 7, then 3, then 1 — each exactly once
+      ---
+      duration_ms: 0.343166
+      type: 'test'
+      ...
+    # Subtest: a renew that clears the flags lets the next term warn again
+    ok 2 - a renew that clears the flags lets the next term warn again
+      ---
+      duration_ms: 0.197417
+      type: 'test'
+      ...
+    # Subtest: does not warn outside the 7-day window, and never warns a non-ACTIVE company
+    ok 3 - does not warn outside the 7-day window, and never warns a non-ACTIVE company
+      ---
+      duration_ms: 0.182166
+      type: 'test'
+      ...
+    # Subtest: warning copy carries the deadline and the days left
+    ok 4 - warning copy carries the deadline and the days left
+      ---
+      duration_ms: 0.952125
+      type: 'test'
+      ...
+    # Subtest: a company with an owner-less membership set still stamps, and only tells the admin
+    ok 5 - a company with an owner-less membership set still stamps, and only tells the admin
+      ---
+      duration_ms: 0.307292
+      type: 'test'
+      ...
+    1..5
+ok 46 - PlanTermSweepUseCase — warning ladder
+  ---
+  duration_ms: 2.1125
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — grandfathered companies
+    # Subtest: a company with no CompanyPlanTerm row is never selected by either pass
+    ok 1 - a company with no CompanyPlanTerm row is never selected by either pass
+      ---
+      duration_ms: 0.0885
+      type: 'test'
+      ...
+    1..1
+ok 47 - PlanTermSweepUseCase — grandfathered companies
+  ---
+  duration_ms: 0.116708
+  type: 'suite'
+  ...
+# Subtest: LINE Rich Menu V2 Ver2 manifest
+    # Subtest: binds the opaque 2500x1686 PNG once the bitmap is committed
+    ok 1 - binds the opaque 2500x1686 PNG once the bitmap is committed
+      ---
+      duration_ms: 3.623125
+      type: 'test'
+      ...
+    # Subtest: covers the canvas exactly once with the six approved ver2 actions
+    ok 2 - covers the canvas exactly once with the six approved ver2 actions
+      ---
+      duration_ms: 0.183583
+      type: 'test'
+      ...
+    1..2
+ok 48 - LINE Rich Menu V2 Ver2 manifest
+  ---
+  duration_ms: 4.295792
+  type: 'suite'
+  ...
+1..48
+# tests 318
+# suites 54
+# pass 318
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4461.198542

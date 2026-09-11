@@ -1,0 +1,189 @@
+{
+  "runId": "2026-09-11T04:16:04.681Z",
+  "scope": "S-pre existing access repair + pre-LIVE marketing; payment outcome simulated by ADMIN manual renewal",
+  "stripePaymentE2E": "NOT_RUN",
+  "commits": {
+    "mangmeeplus": "a6608e170f8cffb7edd7ae1ae9388d1e4575dabb",
+    "mangmee_web": "9cc2ae6e916f53395eaf8542739d2182298d6110"
+  },
+  "dirtyWorktrees": true,
+  "browser": {
+    "passed": 20,
+    "failed": 0,
+    "skipped": 0,
+    "flaky": 0,
+    "tests": [
+      {
+        "title": "BR01 expiry + decline stays blocked; success permits a real browser mutation",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 3438
+      },
+      {
+        "title": "BR02 term-disabled company activates; sequential replay does not extend again",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 753
+      },
+      {
+        "title": "BR03 DISABLED hold is preserved after simulated payment",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 308
+      },
+      {
+        "title": "BR03 SUSPENDED hold is preserved after simulated payment",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 312
+      },
+      {
+        "title": "BR03 ARCHIVED hold is preserved after simulated payment",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 306
+      },
+      {
+        "title": "BR04 company OWNER cannot invoke the admin renewal driver",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 298
+      },
+      {
+        "title": "BR05 expired OWNER can read recovery notice after sweep disables company",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 646
+      },
+      {
+        "title": "BR06 multi-company OWNER sees the selected expired company recovery screen",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 804
+      },
+      {
+        "title": "BR07/RG04 password login with only a term-disabled company reaches recovery and then real access",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 1404
+      },
+      {
+        "title": "BR08/RG04 staff recovery stays non-owner and cannot cross tenant, renew or use business routes",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 870
+      },
+      {
+        "title": "BR09/RG04 DISABLED admin/security hold denies recovery and single-company login",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 412
+      },
+      {
+        "title": "BR09/RG04 SUSPENDED admin/security hold denies recovery and single-company login",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 425
+      },
+      {
+        "title": "BR09/RG04 ARCHIVED admin/security hold denies recovery and single-company login",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 407
+      },
+      {
+        "title": "BR10/RG05 notice 401 is an explicit error, never employee/no-term",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 694
+      },
+      {
+        "title": "BR10/RG05 notice 403 is an explicit error, never employee/no-term",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 743
+      },
+      {
+        "title": "BR10/RG05 notice 500 is an explicit error, never employee/no-term",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 709
+      },
+      {
+        "title": "BR11/RG05 offline notice can retry; mobile OWNER controls are visible and keyboard accessible",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 683
+      },
+      {
+        "title": "BR12/RG05 no term is a real usable-company state, not an error or employee suspension",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 675
+      },
+      {
+        "title": "BR13/RG04 expired company can accept current legal documents without opening business access",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 472
+      },
+      {
+        "title": "BR14/RG05 switch A to B while A notice is delayed; back and refresh retain selected company",
+        "status": "passed",
+        "project": "chromium",
+        "durationMs": 2388
+      }
+    ]
+  },
+  "postgres": {
+    "passed": 15,
+    "failed": 0
+  },
+  "focused": {
+    "passed": 198,
+    "failed": 0
+  },
+  "marketing": {
+    "mode": "REAL_LOCAL_MARKETING_BUNDLE",
+    "results": [
+      {
+        "width": 1440,
+        "status": "PASS",
+        "catalog": 5,
+        "paidDisabled": 4,
+        "trialKeyboard": "PASS",
+        "externalPostCount": 0
+      },
+      {
+        "width": 390,
+        "status": "PASS",
+        "catalog": 5,
+        "paidDisabled": 4,
+        "trialKeyboard": "PASS",
+        "externalPostCount": 0
+      }
+    ],
+    "stripePayment": "NOT_RUN",
+    "leadSubmission": "NOT_RUN"
+  },
+  "cleanup": {
+    "companies": 0,
+    "users": 0,
+    "notifications": 0,
+    "audit": 0,
+    "retainedImmutableLegalEvidence": 44,
+    "reason": "LegalDocumentActionRecord intentionally append-only; no trigger bypass or evidence deletion"
+  },
+  "typecheck": {
+    "apiProductionSource": "PASS",
+    "webProductionSource": "PASS",
+    "fullApi": "BLOCKED_BY_2_PREEXISTING_EXPENSE_SPEC_BUFFER_ERRORS"
+  },
+  "externalActions": {
+    "stripe": false,
+    "cloud": false,
+    "deployment": false,
+    "notificationNetwork": false,
+    "leadSubmission": false
+  }
+}

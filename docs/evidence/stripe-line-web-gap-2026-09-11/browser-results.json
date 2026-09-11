@@ -1,0 +1,263 @@
+{
+  "mode": "REAL_WEB_API_POSTGRES; LINE_PROOF_AND_PAYMENT_SIMULATED",
+  "stats": {
+    "startTime": "2026-09-11T06:39:58.543Z",
+    "duration": 73877.779,
+    "expected": 25,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "cases": [
+    {
+      "title": "BR01 expiry + decline stays blocked; success permits a real browser mutation",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 5060
+        }
+      ]
+    },
+    {
+      "title": "BR02 term-disabled company activates; sequential replay does not extend again",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1235
+        }
+      ]
+    },
+    {
+      "title": "BR03 DISABLED hold is preserved after simulated payment",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 409
+        }
+      ]
+    },
+    {
+      "title": "BR03 SUSPENDED hold is preserved after simulated payment",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 409
+        }
+      ]
+    },
+    {
+      "title": "BR03 ARCHIVED hold is preserved after simulated payment",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 395
+        }
+      ]
+    },
+    {
+      "title": "BR04 company OWNER cannot invoke the admin renewal driver",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 663
+        }
+      ]
+    },
+    {
+      "title": "BR05 expired OWNER can read recovery notice after sweep disables company",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 566
+        }
+      ]
+    },
+    {
+      "title": "BR06 multi-company OWNER sees the selected expired company recovery screen",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1025
+        }
+      ]
+    },
+    {
+      "title": "BR07/RG04 password login with only a term-disabled company reaches recovery and then real access",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1747
+        }
+      ]
+    },
+    {
+      "title": "BR08/RG04 staff recovery stays non-owner and cannot cross tenant, renew or use business routes",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1119
+        }
+      ]
+    },
+    {
+      "title": "BR09/RG04 DISABLED admin/security hold denies recovery and single-company login",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 563
+        }
+      ]
+    },
+    {
+      "title": "BR09/RG04 SUSPENDED admin/security hold denies recovery and single-company login",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 552
+        }
+      ]
+    },
+    {
+      "title": "BR09/RG04 ARCHIVED admin/security hold denies recovery and single-company login",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 582
+        }
+      ]
+    },
+    {
+      "title": "BR10/RG05 notice 401 is an explicit error, never employee/no-term",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1093
+        }
+      ]
+    },
+    {
+      "title": "BR10/RG05 notice 403 is an explicit error, never employee/no-term",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1056
+        }
+      ]
+    },
+    {
+      "title": "BR10/RG05 notice 500 is an explicit error, never employee/no-term",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 930
+        }
+      ]
+    },
+    {
+      "title": "BR11/RG05 offline notice can retry; mobile OWNER controls are visible and keyboard accessible",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1190
+        }
+      ]
+    },
+    {
+      "title": "BR12/RG05 no term is a real usable-company state, not an error or employee suspension",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1967
+        }
+      ]
+    },
+    {
+      "title": "BR13/RG04 expired company can accept current legal documents without opening business access",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 2820
+        }
+      ]
+    },
+    {
+      "title": "BR14/RG05 switch A to B while A notice is delayed; back and refresh retain selected company",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 10479
+        }
+      ]
+    },
+    {
+      "title": "GW01 signed-out return preserves company and query through password login",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 9316
+        }
+      ]
+    },
+    {
+      "title": "GW02/GW04 LIFF gesture → separate browser → expired LINE-only owner → renewed access → fresh LINE entry",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 10457
+        }
+      ]
+    },
+    {
+      "title": "GW04 handoff rechecks admin-hold after mint",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 3200
+        }
+      ]
+    },
+    {
+      "title": "GW04 handoff rechecks revoked-membership after mint",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1365
+        }
+      ]
+    },
+    {
+      "title": "GW04 handoff rechecks unlinked after mint",
+      "expectedStatus": "passed",
+      "results": [
+        {
+          "status": "passed",
+          "duration": 1830
+        }
+      ]
+    }
+  ]
+}

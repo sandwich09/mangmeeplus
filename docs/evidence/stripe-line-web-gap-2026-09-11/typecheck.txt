@@ -1,0 +1,4 @@
+API production-source tsc --noEmit: exit 0
+Web production-source tsc --noEmit: exit 0
+Configs: ../stripe-repair-2026-09-11/{api,web}-production.tsconfig.json
+Full repository typecheck not claimed.

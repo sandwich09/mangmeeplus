@@ -1,0 +1,1825 @@
+TAP version 13
+# Subtest: PermissionSet
+    # Subtest: has() returns true for known key
+    ok 1 - has() returns true for known key
+      ---
+      duration_ms: 0.825875
+      type: 'test'
+      ...
+    # Subtest: has() returns false for unknown key
+    ok 2 - has() returns false for unknown key
+      ---
+      duration_ms: 0.103
+      type: 'test'
+      ...
+    # Subtest: hasAll() returns false when one key is missing
+    ok 3 - hasAll() returns false when one key is missing
+      ---
+      duration_ms: 0.081292
+      type: 'test'
+      ...
+    # Subtest: hasAll() returns true when all keys present
+    ok 4 - hasAll() returns true when all keys present
+      ---
+      duration_ms: 0.0615
+      type: 'test'
+      ...
+    # Subtest: toArray() returns deduped list
+    ok 5 - toArray() returns deduped list
+      ---
+      duration_ms: 1.008625
+      type: 'test'
+      ...
+    1..5
+ok 1 - PermissionSet
+  ---
+  duration_ms: 2.8585
+  type: 'suite'
+  ...
+# Subtest: PermissionResolverService
+    # Subtest: delegates to port and returns resolved access with correct shape
+    ok 1 - delegates to port and returns resolved access with correct shape
+      ---
+      duration_ms: 0.108708
+      type: 'test'
+      ...
+    1..1
+ok 2 - PermissionResolverService
+  ---
+  duration_ms: 0.148667
+  type: 'suite'
+  ...
+# Subtest: PrismaPermissionResolverRepository branch scopes
+    # Subtest: does not turn a platform role or an inactive/missing company membership into company access
+    ok 1 - does not turn a platform role or an inactive/missing company membership into company access
+      ---
+      duration_ms: 1.154958
+      type: 'test'
+      ...
+    # Subtest: AX02 excludes disabled roles and their grants after a membership is reactivated
+    ok 2 - AX02 excludes disabled roles and their grants after a membership is reactivated
+      ---
+      duration_ms: 0.262417
+      type: 'test'
+      ...
+    # Subtest: AX02 an active membership with only a disabled role gains no effective authority
+    ok 3 - AX02 an active membership with only a disabled role gains no effective authority
+      ---
+      duration_ms: 0.178041
+      type: 'test'
+      ...
+    # Subtest: leaves branchIds undefined for ALL_BRANCHES
+    ok 4 - leaves branchIds undefined for ALL_BRANCHES
+      ---
+      duration_ms: 0.196291
+      type: 'test'
+      ...
+    # Subtest: prefers SYSTEM_ADMIN membership when companyId is absent
+    ok 5 - prefers SYSTEM_ADMIN membership when companyId is absent
+      ---
+      duration_ms: 0.265334
+      type: 'test'
+      ...
+    # Subtest: only considers memberships in active companies when companyId is absent
+    ok 6 - only considers memberships in active companies when companyId is absent
+      ---
+      duration_ms: 0.358833
+      type: 'test'
+      ...
+    # Subtest: returns active selected branch ids for SELECTED_BRANCHES
+    ok 7 - returns active selected branch ids for SELECTED_BRANCHES
+      ---
+      duration_ms: 0.097833
+      type: 'test'
+      ...
+    # Subtest: returns default branch id for DEFAULT_BRANCH_ONLY
+    ok 8 - returns default branch id for DEFAULT_BRANCH_ONLY
+      ---
+      duration_ms: 0.381042
+      type: 'test'
+      ...
+    1..8
+ok 3 - PrismaPermissionResolverRepository branch scopes
+  ---
+  duration_ms: 3.408875
+  type: 'suite'
+  ...
+# Subtest: PrismaPermissionResolverRepository feature entitlement gating (item 10A AC-FE-2)
+    # Subtest: keeps all permissions when the company has no entitlement rows (legacy fail-open)
+    ok 1 - keeps all permissions when the company has no entitlement rows (legacy fail-open)
+      ---
+      duration_ms: 0.192167
+      type: 'test'
+      ...
+    # Subtest: strips disabled-feature permissions (including OWNER grants) once entitlements are configured
+    ok 2 - strips disabled-feature permissions (including OWNER grants) once entitlements are configured
+      ---
+      duration_ms: 0.299583
+      type: 'test'
+      ...
+    # Subtest: restores permissions when the feature is toggled back on
+    ok 3 - restores permissions when the feature is toggled back on
+      ---
+      duration_ms: 0.116709
+      type: 'test'
+      ...
+    1..3
+ok 4 - PrismaPermissionResolverRepository feature entitlement gating (item 10A AC-FE-2)
+  ---
+  duration_ms: 0.681792
+  type: 'suite'
+  ...
+# Subtest: assertFeatureEnabled — error contract (spec:333)
+    # Subtest: passes when the feature is entitled
+    ok 1 - passes when the feature is entitled
+      ---
+      duration_ms: 1.084917
+      type: 'test'
+      ...
+    # Subtest: passes on the legacy fail-open sentinel
+    ok 2 - passes on the legacy fail-open sentinel
+      ---
+      duration_ms: 0.073958
+      type: 'test'
+      ...
+    # Subtest: throws 403 feature_not_enabled with the featureKey — never a 400
+    ok 3 - throws 403 feature_not_enabled with the featureKey — never a 400
+      ---
+      duration_ms: 0.275875
+      type: 'test'
+      ...
+    # Subtest: throws for an empty entitlement set — empty is not the fail-open sentinel
+    ok 4 - throws for an empty entitlement set — empty is not the fail-open sentinel
+      ---
+      duration_ms: 0.212959
+      type: 'test'
+      ...
+    1..4
+ok 5 - assertFeatureEnabled — error contract (spec:333)
+  ---
+  duration_ms: 2.46025
+  type: 'suite'
+  ...
+# Subtest: featureTemporarilyUnavailable — DISTINCT purchased-but-closed state (spec:65)
+    # Subtest: is 403 with its own code, never reusing feature_not_enabled
+    ok 1 - is 403 with its own code, never reusing feature_not_enabled
+      ---
+      duration_ms: 0.216667
+      type: 'test'
+      ...
+    1..1
+ok 6 - featureTemporarilyUnavailable — DISTINCT purchased-but-closed state (spec:65)
+  ---
+  duration_ms: 0.280958
+  type: 'suite'
+  ...
+# Subtest: loadEntitledFeatureKeys — platform invariants (spec:262)
+    # Subtest: keeps the legacy fail-open null for a company with no rows at all
+    ok 1 - keeps the legacy fail-open null for a company with no rows at all
+      ---
+      duration_ms: 0.165833
+      type: 'test'
+      ...
+    # Subtest: keeps the platform baseline on when its row is absent
+    ok 2 - keeps the platform baseline on when its row is absent
+      ---
+      duration_ms: 0.378167
+      type: 'test'
+      ...
+    # Subtest: still honours a pre-existing explicit false on a platform key at read time
+    ok 3 - still honours a pre-existing explicit false on a platform key at read time
+      ---
+      duration_ms: 0.123167
+      type: 'test'
+      ...
+    # Subtest: still honours an explicit false on a sellable feature
+    ok 4 - still honours an explicit false on a sellable feature
+      ---
+      duration_ms: 0.152542
+      type: 'test'
+      ...
+    # Subtest: auto-enables submenus with their parent and still allows an explicit submenu false
+    ok 5 - auto-enables submenus with their parent and still allows an explicit submenu false
+      ---
+      duration_ms: 0.316959
+      type: 'test'
+      ...
+    1..5
+ok 7 - loadEntitledFeatureKeys — platform invariants (spec:262)
+  ---
+  duration_ms: 1.397417
+  type: 'suite'
+  ...
+# Subtest: filterPermissionsByEntitlement
+    # Subtest: assigns each permission to at most one submenu entitlement
+    ok 1 - assigns each permission to at most one submenu entitlement
+      ---
+      duration_ms: 1.462042
+      type: 'test'
+      ...
+    # Subtest: returns permissions unchanged when the company has no entitlement rows (legacy fail-open)
+    ok 2 - returns permissions unchanged when the company has no entitlement rows (legacy fail-open)
+      ---
+      duration_ms: 1.010042
+      type: 'test'
+      ...
+    # Subtest: strips permissions of disabled features and keeps enabled ones
+    ok 3 - strips permissions of disabled features and keeps enabled ones
+      ---
+      duration_ms: 0.642291
+      type: 'test'
+      ...
+    # Subtest: keeps universal related-record view gated by sales documents
+    ok 4 - keeps universal related-record view gated by sales documents
+      ---
+      duration_ms: 0.096209
+      type: 'test'
+      ...
+    # Subtest: keeps expense related-view authority only while expenses are enabled
+    ok 5 - keeps expense related-view authority only while expenses are enabled
+      ---
+      duration_ms: 0.050084
+      type: 'test'
+      ...
+    # Subtest: keeps procurement related-view authority only while procurement is enabled
+    ok 6 - keeps procurement related-view authority only while procurement is enabled
+      ---
+      duration_ms: 0.089
+      type: 'test'
+      ...
+    # Subtest: does not retain a child permission when only the child entitlement is enabled
+    ok 7 - does not retain a child permission when only the child entitlement is enabled
+      ---
+      duration_ms: 0.030208
+      type: 'test'
+      ...
+    # Subtest: strips disabled Phase 2 children without taking down their parent modules
+    ok 8 - strips disabled Phase 2 children without taking down their parent modules
+      ---
+      duration_ms: 0.097083
+      type: 'test'
+      ...
+    # Subtest: registers every safe Phase 2 tab as a child entitlement
+    ok 9 - registers every safe Phase 2 tab as a child entitlement
+      ---
+      duration_ms: 0.222041
+      type: 'test'
+      ...
+    # Subtest: registers the foundation feature children with their exact permissions
+    ok 10 - registers the foundation feature children with their exact permissions
+      ---
+      duration_ms: 0.550584
+      type: 'test'
+      ...
+    # Subtest: never strips ungated foundation permissions even when every feature is off
+    ok 11 - never strips ungated foundation permissions even when every feature is off
+      ---
+      duration_ms: 0.385417
+      type: 'test'
+      ...
+    # Subtest: gates dashboard and notification keys behind dashboard_notifications, overriding the core pack
+    ok 12 - gates dashboard and notification keys behind dashboard_notifications, overriding the core pack
+      ---
+      duration_ms: 0.212042
+      type: 'test'
+      ...
+    # Subtest: gates report catalog/BI keys by prefix under the reports feature (no pack exists)
+    ok 13 - gates report catalog/BI keys by prefix under the reports feature (no pack exists)
+      ---
+      duration_ms: 0.588625
+      type: 'test'
+      ...
+    # Subtest: retains only the narrow report history reads while reports is off
+    ok 14 - retains only the narrow report history reads while reports is off
+      ---
+      duration_ms: 0.123334
+      type: 'test'
+      ...
+    # Subtest: gates new reimbursement roots behind its entitlement while runoff work keeps flowing
+    ok 15 - gates new reimbursement roots behind its entitlement while runoff work keeps flowing
+      ---
+      duration_ms: 0.08475
+      type: 'test'
+      ...
+    # Subtest: gates the CRM domain (including ungated inbox/template keys) behind the crm feature
+    ok 16 - gates the CRM domain (including ungated inbox/template keys) behind the crm feature
+      ---
+      duration_ms: 0.039916
+      type: 'test'
+      ...
+    # Subtest: gates product-catalog permissions independently from Inventory and CRM
+    ok 17 - gates product-catalog permissions independently from Inventory and CRM
+      ---
+      duration_ms: 0.049583
+      type: 'test'
+      ...
+    # Subtest: gates crm.channel.* behind line_oa rather than crm
+    ok 18 - gates crm.channel.* behind line_oa rather than crm
+      ---
+      duration_ms: 0.358
+      type: 'test'
+      ...
+    # Subtest: gates crm.ai.* (inbox AI assist) behind ai_line_assistant, not the crm toggle
+    ok 19 - gates crm.ai.* (inbox AI assist) behind ai_line_assistant, not the crm toggle
+      ---
+      duration_ms: 0.149334
+      type: 'test'
+      ...
+    # Subtest: gates AI suggestions/drafts (AI แนะนำ) behind ai_line_assistant, but keeps core AI plumbing
+    ok 20 - gates AI suggestions/drafts (AI แนะนำ) behind ai_line_assistant, but keeps core AI plumbing
+      ---
+      duration_ms: 0.0905
+      type: 'test'
+      ...
+    # Subtest: keeps permissions mapped to no feature (system/admin plumbing is not feature-gated)
+    ok 21 - keeps permissions mapped to no feature (system/admin plumbing is not feature-gated)
+      ---
+      duration_ms: 0.335916
+      type: 'test'
+      ...
+    # Subtest: keeps the 50 ทวิ external-handoff keys for a company without thai_tax
+    ok 22 - keeps the 50 ทวิ external-handoff keys for a company without thai_tax
+      ---
+      duration_ms: 0.048625
+      type: 'test'
+      ...
+    # Subtest: still strips the thai_tax-owned certificate keys from that same company
+    ok 23 - still strips the thai_tax-owned certificate keys from that same company
+      ---
+      duration_ms: 0.033458
+      type: 'test'
+      ...
+    1..23
+ok 8 - filterPermissionsByEntitlement
+  ---
+  duration_ms: 8.459125
+  type: 'suite'
+  ...
+# Subtest: loadEntitledFeatureKeys submenu inheritance
+    # Subtest: keeps legacy permissions when a new menu entitlement has no row, while explicit false still wins
+    ok 1 - keeps legacy permissions when a new menu entitlement has no row, while explicit false still wins
+      ---
+      duration_ms: 0.37475
+      type: 'test'
+      ...
+    # Subtest: materializes every registered child so parent-only companies keep all pre-submenu permissions
+    ok 2 - materializes every registered child so parent-only companies keep all pre-submenu permissions
+      ---
+      duration_ms: 0.175334
+      type: 'test'
+      ...
+    # Subtest: materializes inherited expenses children so a parent-only company keeps the byte-identical pre-submenu permission set
+    ok 3 - materializes inherited expenses children so a parent-only company keeps the byte-identical pre-submenu permission set
+      ---
+      duration_ms: 0.057375
+      type: 'test'
+      ...
+    # Subtest: keeps inherited children except an explicitly disabled child and strips only that child permissions
+    ok 4 - keeps inherited children except an explicitly disabled child and strips only that child permissions
+      ---
+      duration_ms: 0.364375
+      type: 'test'
+      ...
+    # Subtest: strips every child permission when its parent is off, including an explicitly enabled child row
+    ok 5 - strips every child permission when its parent is off, including an explicitly enabled child row
+      ---
+      duration_ms: 0.045334
+      type: 'test'
+      ...
+    # Subtest: returns null when the company has no rows so legacy fail-open remains unchanged
+    ok 6 - returns null when the company has no rows so legacy fail-open remains unchanged
+      ---
+      duration_ms: 0.028417
+      type: 'test'
+      ...
+    1..6
+ok 9 - loadEntitledFeatureKeys submenu inheritance
+  ---
+  duration_ms: 1.106959
+  type: 'suite'
+  ...
+# Subtest: loadEntitledFeatureKeys default-on foundation features
+    # Subtest: keeps existing tenants' access permissions when all original 12 feature rows exist and employee_access has no row
+    ok 1 - keeps existing tenants' access permissions when all original 12 feature rows exist and employee_access has no row
+      ---
+      duration_ms: 0.276541
+      type: 'test'
+      ...
+    # Subtest: strips access permissions when employee_access is explicitly disabled
+    ok 2 - strips access permissions when employee_access is explicitly disabled
+      ---
+      duration_ms: 0.13025
+      type: 'test'
+      ...
+    # Subtest: keeps existing tenants' company settings permissions when all original 12 feature rows exist and company_settings has no row
+    ok 3 - keeps existing tenants' company settings permissions when all original 12 feature rows exist and company_settings has no row
+      ---
+      duration_ms: 0.097042
+      type: 'test'
+      ...
+    # Subtest: strips only the branch and security menus when company_settings is explicitly disabled
+    ok 4 - strips only the branch and security menus when company_settings is explicitly disabled
+      ---
+      duration_ms: 0.097416
+      type: 'test'
+      ...
+    # Subtest: keeps attachments and expense setup working when company_settings is disabled
+    ok 5 - keeps attachments and expense setup working when company_settings is disabled
+      ---
+      duration_ms: 0.090958
+      type: 'test'
+      ...
+    # Subtest: keeps original feature keys deny-by-default when crm has no row
+    ok 6 - keeps original feature keys deny-by-default when crm has no row
+      ---
+      duration_ms: 0.190917
+      type: 'test'
+      ...
+    # Subtest: keeps account.session.read when company_settings is explicitly disabled
+    ok 7 - keeps account.session.read when company_settings is explicitly disabled
+      ---
+      duration_ms: 0.086875
+      type: 'test'
+      ...
+    # Subtest: defaults on only the two new compatibility features
+    ok 8 - defaults on only the two new compatibility features
+      ---
+      duration_ms: 0.109
+      type: 'test'
+      ...
+    1..8
+ok 10 - loadEntitledFeatureKeys default-on foundation features
+  ---
+  duration_ms: 1.237625
+  type: 'suite'
+  ...
+# Subtest: Step 0 company tax identity permissions vs entitlements
+    # Subtest: survives thai_tax being off
+    ok 1 - survives thai_tax being off
+      ---
+      duration_ms: 0.090208
+      type: 'test'
+      ...
+    # Subtest: survives every sellable feature being off
+    ok 2 - survives every sellable feature being off
+      ---
+      duration_ms: 0.051417
+      type: 'test'
+      ...
+    # Subtest: still gates buyer-evidence remediation behind sales_documents
+    ok 3 - still gates buyer-evidence remediation behind sales_documents
+      ---
+      duration_ms: 0.067166
+      type: 'test'
+      ...
+    1..3
+ok 11 - Step 0 company tax identity permissions vs entitlements
+  ---
+  duration_ms: 0.272916
+  type: 'suite'
+  ...
+# Subtest: MENU_ENTITLEMENT_BINDINGS
+    # Subtest: contains unique, complete bindings that reference only registered entitlement keys
+    ok 1 - contains unique, complete bindings that reference only registered entitlement keys
+      ---
+      duration_ms: 6.262375
+      type: 'test'
+      ...
+    # Subtest: strips every gate permission when a sellable binding is disabled and restores its menu when re-enabled
+    ok 2 - strips every gate permission when a sellable binding is disabled and restores its menu when re-enabled
+      ---
+      duration_ms: 16.136417
+      type: 'test'
+      ...
+    # Subtest: keeps at least one gate permission for foundation bindings when every entitlement is disabled
+    ok 3 - keeps at least one gate permission for foundation bindings when every entitlement is disabled
+      ---
+      duration_ms: 0.499208
+      type: 'test'
+      ...
+    # Subtest: keeps only the explicit Reports history gate after the commercial entitlement is disabled
+    ok 4 - keeps only the explicit Reports history gate after the commercial entitlement is disabled
+      ---
+      duration_ms: 0.281917
+      type: 'test'
+      ...
+    1..4
+ok 12 - MENU_ENTITLEMENT_BINDINGS
+  ---
+  duration_ms: 24.710875
+  type: 'suite'
+  ...
+# Subtest: FEATURE_PACKAGE_PRESETS menu parity
+    # Subtest: starter exposes exactly the seven menus in the approved baseline
+    ok 1 - starter exposes exactly the seven menus in the approved baseline
+      ---
+      duration_ms: 0.48725
+      type: 'test'
+      ...
+    # Subtest: starter keeps package cards aligned with permission-gated menus
+    ok 2 - starter keeps package cards aligned with permission-gated menus
+      ---
+      duration_ms: 0.214417
+      type: 'test'
+      ...
+    # Subtest: standard keeps package cards aligned with permission-gated menus
+    ok 3 - standard keeps package cards aligned with permission-gated menus
+      ---
+      duration_ms: 4.0635
+      type: 'test'
+      ...
+    # Subtest: full keeps package cards aligned with permission-gated menus
+    ok 4 - full keeps package cards aligned with permission-gated menus
+      ---
+      duration_ms: 1.670833
+      type: 'test'
+      ...
+    1..4
+ok 13 - FEATURE_PACKAGE_PRESETS menu parity
+  ---
+  duration_ms: 6.663208
+  type: 'suite'
+  ...
+# node:internal/modules/cjs/loader:1430
+#   const err = new Error(message);
+#               ^
+# Error: Cannot find module '../../../../generated/prisma/client'
+# Require stack:
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts
+#     at Module._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+#     at nextResolveSimple (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1017)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:4388
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3818
+#     at resolveTsPaths (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:770)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1155
+#     at T._resolveFilename (file:///Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-CqMfTiWi.mjs:2:14889)
+#     at defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+#     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+#     at Module._load (node:internal/modules/cjs/loader:1216:25) {
+#   code: 'MODULE_NOT_FOUND',
+#   requireStack: [
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts',
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts'
+#   ]
+# }
+# Node.js v22.23.2
+# Subtest: apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts
+not ok 5 - apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts
+  ---
+  duration_ms: 560.498083
+  type: 'test'
+  location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# node:internal/modules/cjs/loader:1430
+#   const err = new Error(message);
+#               ^
+# Error: Cannot find module '../../../../generated/prisma/client'
+# Require stack:
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts
+#     at Module._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+#     at nextResolveSimple (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1017)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:4388
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3818
+#     at resolveTsPaths (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:770)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1155
+#     at T._resolveFilename (file:///Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-CqMfTiWi.mjs:2:14889)
+#     at defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+#     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+#     at Module._load (node:internal/modules/cjs/loader:1216:25) {
+#   code: 'MODULE_NOT_FOUND',
+#   requireStack: [
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts',
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts'
+#   ]
+# }
+# Node.js v22.23.2
+# Subtest: apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts
+not ok 6 - apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts
+  ---
+  duration_ms: 582.672291
+  type: 'test'
+  location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: LINE staff menu
+    # Subtest: shows only actions allowed by resolved backend permissions
+    ok 1 - shows only actions allowed by resolved backend permissions
+      ---
+      duration_ms: 2.361208
+      type: 'test'
+      ...
+    # Subtest: reuses the permission-filtered main menu after a completed turn within the LINE limit
+    ok 2 - reuses the permission-filtered main menu after a completed turn within the LINE limit
+      ---
+      duration_ms: 0.385333
+      type: 'test'
+      ...
+    # Subtest: renders honest greeting values and derives the menu count from Quick Reply items
+    ok 3 - renders honest greeting values and derives the menu count from Quick Reply items
+      ---
+      duration_ms: 0.232209
+      type: 'test'
+      ...
+    # Subtest: bounds display names before placing them in the greeting bubble
+    ok 4 - bounds display names before placing them in the greeting bubble
+      ---
+      duration_ms: 0.116333
+      type: 'test'
+      ...
+    # Subtest: filters query shortcuts and retains a safe way back
+    ok 5 - filters query shortcuts and retains a safe way back
+      ---
+      duration_ms: 0.264292
+      type: 'test'
+      ...
+    # Subtest: shows บริษัทของฉัน only to owners and sends the existing deterministic command
+    ok 6 - shows บริษัทของฉัน only to owners and sends the existing deterministic command
+      ---
+      duration_ms: 0.124875
+      type: 'test'
+      ...
+    # Subtest: builds a single current-company bubble without a redundant switch action
+    ok 7 - builds a single current-company bubble without a redundant switch action
+      ---
+      duration_ms: 0.36525
+      type: 'test'
+      ...
+    # Subtest: shows only current company, user, and human role labels in the context card
+    ok 8 - shows only current company, user, and human role labels in the context card
+      ---
+      duration_ms: 0.39475
+      type: 'test'
+      ...
+    # Subtest: offers เปิดร้านใหม่ on the context card using the signup URL the environment supplied
+    ok 9 - offers เปิดร้านใหม่ on the context card using the signup URL the environment supplied
+      ---
+      duration_ms: 0.22625
+      type: 'test'
+      ...
+    # Subtest: opens the web on the current company, above เปิดร้านใหม่ when the card carries both
+    ok 10 - opens the web on the current company, above เปิดร้านใหม่ when the card carries both
+      ---
+      duration_ms: 0.561208
+      type: 'test'
+      ...
+    # Subtest: gives an employee the web button, and only that one
+    ok 11 - gives an employee the web button, and only that one
+      ---
+      duration_ms: 0.14175
+      type: 'test'
+      ...
+    # Subtest: withholds เปิดร้านใหม่ from the employee view and names the โปรโมชั่น route instead
+    ok 12 - withholds เปิดร้านใหม่ from the employee view and names the โปรโมชั่น route instead
+      ---
+      duration_ms: 0.106209
+      type: 'test'
+      ...
+    # Subtest: says nothing about opening a shop to an employee whose environment has no signup door
+    ok 13 - says nothing about opening a shop to an employee whose environment has no signup door
+      ---
+      duration_ms: 0.069292
+      type: 'test'
+      ...
+    # Subtest: leaves the pending request as the only answer, employee or owner
+    ok 14 - leaves the pending request as the only answer, employee or owner
+      ---
+      duration_ms: 6.533708
+      type: 'test'
+      ...
+    # Subtest: keeps the context card byte-identical when this environment has no signup URL
+    ok 15 - keeps the context card byte-identical when this environment has no signup URL
+      ---
+      duration_ms: 0.248292
+      type: 'test'
+      ...
+    # Subtest: answers the pending shop request on the context card instead of offering the door again
+    ok 16 - answers the pending shop request on the context card instead of offering the door again
+      ---
+      duration_ms: 0.129166
+      type: 'test'
+      ...
+    # Subtest: scrubs the pending shop name the same way every other card scrubs record text
+    ok 17 - scrubs the pending shop name the same way every other card scrubs record text
+      ---
+      duration_ms: 0.102666
+      type: 'test'
+      ...
+    # Subtest: still names the request when the shop name scrubs away to nothing
+    ok 18 - still names the request when the shop name scrubs away to nothing
+      ---
+      duration_ms: 2.19975
+      type: 'test'
+      ...
+    # Subtest: builds tappable company cards using immutable company ids
+    ok 19 - builds tappable company cards using immutable company ids
+      ---
+      duration_ms: 0.151583
+      type: 'test'
+      ...
+    # Subtest: gives a company with a web link both buttons, select first and open-web below it
+    ok 20 - gives a company with a web link both buttons, select first and open-web below it
+      ---
+      duration_ms: 0.154208
+      type: 'test'
+      ...
+    # Subtest: gives the current company only the web button — there is nothing to select
+    ok 21 - gives the current company only the web button — there is nothing to select
+      ---
+      duration_ms: 0.333458
+      type: 'test'
+      ...
+    # Subtest: is byte-identical to the old picker when no company carries a web link
+    ok 22 - is byte-identical to the old picker when no company carries a web link
+      ---
+      duration_ms: 0.16625
+      type: 'test'
+      ...
+    # Subtest: keeps every picker button short enough not to truncate at LINE sm size
+    ok 23 - keeps every picker button short enough not to truncate at LINE sm size
+      ---
+      duration_ms: 1.953042
+      type: 'test'
+      ...
+    # Subtest: exposes the visible page so a caller can mint exactly one link per bubble
+    ok 24 - exposes the visible page so a caller can mint exactly one link per bubble
+      ---
+      duration_ms: 0.20525
+      type: 'test'
+      ...
+    # Subtest: puts the current company first and paginates every owner company without dropping names
+    ok 25 - puts the current company first and paginates every owner company without dropping names
+      ---
+      duration_ms: 0.168916
+      type: 'test'
+      ...
+    # Subtest: returns a safe text result for an empty company list
+    ok 26 - returns a safe text result for an empty company list
+      ---
+      duration_ms: 0.029167
+      type: 'test'
+      ...
+    # Subtest: builds a safe receipt card whose only upload affordances are native camera actions
+    ok 27 - builds a safe receipt card whose only upload affordances are native camera actions
+      ---
+      duration_ms: 0.232583
+      type: 'test'
+      ...
+    # Subtest: builds the exact public contact card and safe actions
+    ok 28 - builds the exact public contact card and safe actions
+      ---
+      duration_ms: 0.340291
+      type: 'test'
+      ...
+    # Subtest: resumes the assistant on the exact words only, never on text that merely contains them
+    ok 29 - resumes the assistant on the exact words only, never on text that merely contains them
+      ---
+      duration_ms: 0.473291
+      type: 'test'
+      ...
+    # Subtest: lists every and only enabled sellable top-level service in catalog order
+    ok 30 - lists every and only enabled sellable top-level service in catalog order
+      ---
+      duration_ms: 0.506
+      type: 'test'
+      ...
+    # Subtest: offers one tenant-scoped button per approval queue the member can act on
+    ok 31 - offers one tenant-scoped button per approval queue the member can act on
+      ---
+      duration_ms: 0.305166
+      type: 'test'
+      ...
+    # Subtest: sends a reimbursement approver straight to the approvals tab only
+    ok 32 - sends a reimbursement approver straight to the approvals tab only
+      ---
+      duration_ms: 0.086875
+      type: 'test'
+      ...
+    # Subtest: sends a purchase-request approver to procurement only
+    ok 33 - sends a purchase-request approver to procurement only
+      ---
+      duration_ms: 0.06525
+      type: 'test'
+      ...
+    # Subtest: never links to the demo settings page and drops the footer without a web base url
+    ok 34 - never links to the demo settings page and drops the footer without a web base url
+      ---
+      duration_ms: 0.072583
+      type: 'test'
+      ...
+    # Subtest: pending approval counts
+        # Subtest: states the total, names the queue, and lists at most five rows
+        ok 1 - states the total, names the queue, and lists at most five rows
+          ---
+          duration_ms: 0.180458
+          type: 'test'
+          ...
+        # Subtest: splits the five rows across the queues the member can act on
+        ok 2 - splits the five rows across the queues the member can act on
+          ---
+          duration_ms: 0.257875
+          type: 'test'
+          ...
+        # Subtest: says the queue is empty when it was read, and stays silent about counts when it was not
+        ok 3 - says the queue is empty when it was read, and stays silent about counts when it was not
+          ---
+          duration_ms: 0.077375
+          type: 'test'
+          ...
+        # Subtest: ignores a count for a queue this member cannot act on
+        ok 4 - ignores a count for a queue this member cannot act on
+          ---
+          duration_ms: 0.036167
+          type: 'test'
+          ...
+        # Subtest: names only the queues the caller should query
+        ok 5 - names only the queues the caller should query
+          ---
+          duration_ms: 0.050708
+          type: 'test'
+          ...
+        1..5
+    ok 35 - pending approval counts
+      ---
+      duration_ms: 0.710667
+      type: 'suite'
+      ...
+    # Subtest: parses only explicit menu commands
+    ok 36 - parses only explicit menu commands
+      ---
+      duration_ms: 0.041292
+      type: 'test'
+      ...
+    # Subtest: matches every command it publishes, exactly as written
+    ok 37 - matches every command it publishes, exactly as written
+      ---
+      duration_ms: 0.081208
+      type: 'test'
+      ...
+    # Subtest: feature entitlement gate
+        # Subtest: hides every action whose owning feature the company has switched off
+        ok 1 - hides every action whose owning feature the company has switched off
+          ---
+          duration_ms: 0.103708
+          type: 'test'
+          ...
+        # Subtest: keeps every allowed action for a legacy company with no entitlement rows
+        ok 2 - keeps every allowed action for a legacy company with no entitlement rows
+          ---
+          duration_ms: 0.035292
+          type: 'test'
+          ...
+        # Subtest: drops the approval button when no approval queue survives, and keeps it when one does
+        ok 3 - drops the approval button when no approval queue survives, and keeps it when one does
+          ---
+          duration_ms: 0.058542
+          type: 'test'
+          ...
+        # Subtest: hides the receipt camera when the expenses upload submenu is off
+        ok 4 - hides the receipt camera when the expenses upload submenu is off
+          ---
+          duration_ms: 0.060291
+          type: 'test'
+          ...
+        # Subtest: tells the user the menu reflects what the company enabled, not only their role
+        ok 5 - tells the user the menu reflects what the company enabled, not only their role
+          ---
+          duration_ms: 0.044833
+          type: 'test'
+          ...
+        1..5
+    ok 38 - feature entitlement gate
+      ---
+      duration_ms: 0.348583
+      type: 'suite'
+      ...
+    1..38
+ok 16 - LINE staff menu
+  ---
+  duration_ms: 22.814167
+  type: 'suite'
+  ...
+# Subtest: promotion menu (rich menu v2 ver2)
+    # Subtest: matches the promotion command, emoji-prefixed and synonym forms included
+    ok 1 - matches the promotion command, emoji-prefixed and synonym forms included
+      ---
+      duration_ms: 0.046
+      type: 'test'
+      ...
+    # Subtest: routes the quota card's package-change command to the real request, not the poster
+    ok 2 - routes the quota card's package-change command to the real request, not the poster
+      ---
+      duration_ms: 0.029083
+      type: 'test'
+      ...
+    # Subtest: shows the real trial and sales availability without the obsolete PRO-free poster
+    ok 3 - shows the real trial and sales availability without the obsolete PRO-free poster
+      ---
+      duration_ms: 0.083333
+      type: 'test'
+      ...
+    1..3
+ok 17 - promotion menu (rich menu v2 ver2)
+  ---
+  duration_ms: 0.193416
+  type: 'suite'
+  ...
+# Subtest: capability question (Owner 2026-08-27: only real features)
+    # Subtest: catches short standalone capability questions
+    ok 1 - catches short standalone capability questions
+      ---
+      duration_ms: 0.115417
+      type: 'test'
+      ...
+    # Subtest: catches the "teach me" request forms, with particles and with or without the subject
+    ok 2 - catches the "teach me" request forms, with particles and with or without the subject
+      ---
+      duration_ms: 0.143625
+      type: 'test'
+      ...
+    # Subtest: leaves tutoring-expense text alone
+    ok 3 - leaves tutoring-expense text alone
+      ---
+      duration_ms: 0.043666
+      type: 'test'
+      ...
+    # Subtest: never swallows a real business question that contains a stem
+    ok 4 - never swallows a real business question that contains a stem
+      ---
+      duration_ms: 0.02675
+      type: 'test'
+      ...
+    # Subtest: leaves ordinary business text, captions and number replies alone
+    ok 5 - leaves ordinary business text, captions and number replies alone
+      ---
+      duration_ms: 0.027166
+      type: 'test'
+      ...
+    # Subtest: the curated card lists only the six real functions
+    ok 6 - the curated card lists only the six real functions
+      ---
+      duration_ms: 0.058958
+      type: 'test'
+      ...
+    1..6
+ok 18 - capability question (Owner 2026-08-27: only real features)
+  ---
+  duration_ms: 0.466791
+  type: 'suite'
+  ...
+# [Nest] 58839  - 09/11/2026, 9:40:50 PM    WARN [ActorDelegationService] Object(2) {
+#   msg: 'AI actor delegation replay store unavailable',
+#   error: 'redis unavailable'
+# }
+# Subtest: ActorDelegationService
+    # Subtest: binds actor, company, membership, request, and tool claims
+    ok 1 - binds actor, company, membership, request, and tool claims
+      ---
+      duration_ms: 1.017292
+      type: 'test'
+      ...
+    # Subtest: atomically rejects replay of a consumed delegation
+    ok 2 - atomically rejects replay of a consumed delegation
+      ---
+      duration_ms: 0.140625
+      type: 'test'
+      ...
+    # Subtest: rejects wrong audience and expired delegations
+    ok 3 - rejects wrong audience and expired delegations
+      ---
+      duration_ms: 0.21675
+      type: 'test'
+      ...
+    # Subtest: rejects a token whose signature was changed
+    ok 4 - rejects a token whose signature was changed
+      ---
+      duration_ms: 0.145958
+      type: 'test'
+      ...
+    # Subtest: fails closed when shared replay protection is unavailable
+    ok 5 - fails closed when shared replay protection is unavailable
+      ---
+      duration_ms: 0.964084
+      type: 'test'
+      ...
+    1..5
+ok 19 - ActorDelegationService
+  ---
+  duration_ms: 2.898875
+  type: 'suite'
+  ...
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM   ERROR [AiGatewayClient] Object(3) {
+#   msg: 'AI Gateway request failed',
+#   errorClass: 'TimeoutError',
+#   requestId: 'request-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM   ERROR [AiGatewayClient] Object(3) {
+#   msg: 'AI Gateway request failed',
+#   errorClass: 'TypeError',
+#   requestId: 'request-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM   ERROR [AiGatewayClient] Object(3) {
+#   msg: 'AI Gateway error response',
+#   status: 503,
+#   requestId: 'request-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-turn',
+#   requestId: 'request-1',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-turn',
+#   requestId: 'request-1',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'attempt-2',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'webhook-request-no-typhoon',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'webhook-route-admitted',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'webhook-ocr-admitted',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-pre_provider_refusal',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'ocr-pre_provider_refusal',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-empty',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-json_failure',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-transport',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM   ERROR [AiGatewayClient] Object(3) {
+#   msg: 'AI Gateway request failed',
+#   errorClass: 'Error',
+#   requestId: 'ocr-transport'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-generic_success',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:50 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'ocr-generic_success',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'webhook-route-pdf',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'webhook-ocr-pdf',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-disabled',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'receipt-after-route-disabled',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'line-intake-route',
+#   requestId: 'route-timeout',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM   ERROR [AiGatewayClient] Object(3) {
+#   msg: 'AI Gateway error response',
+#   status: 401,
+#   requestId: 'webhook-http-401'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'webhook-contradictory',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(4) {
+#   msg: 'ai.usage.absent',
+#   sourceRoute: 'receipt-ocr',
+#   requestId: 'webhook-synthetic-http-code',
+#   companyId: 'company-1'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(6) {
+#   companyId: 'company-1',
+#   spendSatang: 200000,
+#   budgetSatang: 200000,
+#   override: false,
+#   msg: 'ai.company_budget.exceeded',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(3) {
+#   msg: 'ai.budget.read_failed',
+#   companyId: 'company-1',
+#   error: 'DB_DOWN'
+# }
+# [Nest] 58844  - 09/11/2026, 9:40:51 PM    WARN [CompanyAiUsageMeter] Object(6) {
+#   companyId: 'company-1',
+#   spendSatang: 250000,
+#   budgetSatang: 200000,
+#   override: false,
+#   msg: 'ai.company_budget.exceeded',
+#   riskLevel: 'HIGH'
+# }
+# Subtest: AiGatewayClient failure classification
+    # Subtest: classifies aborts and platform timeouts as retryable gateway timeouts
+    ok 1 - classifies aborts and platform timeouts as retryable gateway timeouts
+      ---
+      duration_ms: 3.934917
+      type: 'test'
+      ...
+    # Subtest: classifies network failures as provider unavailable rather than timeout
+    ok 2 - classifies network failures as provider unavailable rather than timeout
+      ---
+      duration_ms: 0.701541
+      type: 'test'
+      ...
+    # Subtest: classifies non-success HTTP responses as provider unavailable
+    ok 3 - classifies non-success HTTP responses as provider unavailable
+      ---
+      duration_ms: 0.825584
+      type: 'test'
+      ...
+    1..3
+ok 20 - AiGatewayClient failure classification
+  ---
+  duration_ms: 6.075792
+  type: 'suite'
+  ...
+# Subtest: AiGatewayClient actor delegation
+    # Subtest: issues and forwards a bounded API-signed delegation pool per permitted tool
+    ok 1 - issues and forwards a bounded API-signed delegation pool per permitted tool
+      ---
+      duration_ms: 1.868792
+      type: 'test'
+      ...
+    # Subtest: does not issue a delegation for a cross-feature tool the company has not enabled
+    ok 2 - does not issue a delegation for a cross-feature tool the company has not enabled
+      ---
+      duration_ms: 0.665042
+      type: 'test'
+      ...
+    1..2
+ok 21 - AiGatewayClient actor delegation
+  ---
+  duration_ms: 2.697583
+  type: 'suite'
+  ...
+# Subtest: AiGatewayClient OCR governance
+    # Subtest: credits one unusable system attempt exactly once while retaining actual provider spend and admitting its retry once
+    ok 1 - credits one unusable system attempt exactly once while retaining actual provider spend and admitting its retry once
+      ---
+      duration_ms: 49.29225
+      type: 'test'
+      ...
+    # Subtest: refuses both the LINE image router and receipt OCR before fetch when the company switch is off
+    ok 2 - refuses both the LINE image router and receipt OCR before fetch when the company switch is off
+      ---
+      duration_ms: 2.798541
+      type: 'test'
+      ...
+    # Subtest: does not count a LINE read when the provider credential is missing
+    ok 3 - does not count a LINE read when the provider credential is missing
+      ---
+      duration_ms: 0.738333
+      type: 'test'
+      ...
+    # Subtest: releases the LINE OCR event and aggregate when Typhoon is missing downstream
+    ok 4 - releases the LINE OCR event and aggregate when Typhoon is missing downstream
+      ---
+      duration_ms: 1.615459
+      type: 'test'
+      ...
+    # Subtest: admits one LINE document before the image router and reuses it for receipt OCR
+    ok 5 - admits one LINE document before the image router and reuses it for receipt OCR
+      ---
+      duration_ms: 3.645959
+      type: 'test'
+      ...
+    # Subtest: settles the original route admission for second-stage pre_provider_refusal
+    ok 6 - settles the original route admission for second-stage pre_provider_refusal
+      ---
+      duration_ms: 3.034209
+      type: 'test'
+      ...
+    # Subtest: settles the original route admission for second-stage empty
+    ok 7 - settles the original route admission for second-stage empty
+      ---
+      duration_ms: 0.834833
+      type: 'test'
+      ...
+    # Subtest: settles the original route admission for second-stage json_failure
+    ok 8 - settles the original route admission for second-stage json_failure
+      ---
+      duration_ms: 2.883625
+      type: 'test'
+      ...
+    # Subtest: settles the original route admission for second-stage transport
+    ok 9 - settles the original route admission for second-stage transport
+      ---
+      duration_ms: 2.119625
+      type: 'test'
+      ...
+    # Subtest: settles the original route admission for second-stage generic_success
+    ok 10 - settles the original route admission for second-stage generic_success
+      ---
+      duration_ms: 2.77525
+      type: 'test'
+      ...
+    # Subtest: does not pre-admit a PDF that the intake router receives as metadata only
+    ok 11 - does not pre-admit a PDF that the intake router receives as metadata only
+      ---
+      duration_ms: 0.690958
+      type: 'test'
+      ...
+    # Subtest: releases a disabled 200 router plan for receipt OCR, but blocks a second image call after an uncertain plan
+    ok 12 - releases a disabled 200 router plan for receipt OCR, but blocks a second image call after an uncertain plan
+      ---
+      duration_ms: 3.544958
+      type: 'test'
+      ...
+    # Subtest: releases an authenticated LINE OCR fence on a pre-provider 401 but not on contradictory success JSON
+    ok 13 - releases an authenticated LINE OCR fence on a pre-provider 401 but not on contradictory success JSON
+      ---
+      duration_ms: 1.52725
+      type: 'test'
+      ...
+    1..13
+ok 22 - AiGatewayClient OCR governance
+  ---
+  duration_ms: 76.160667
+  type: 'suite'
+  ...
+# Subtest: AiGatewayClient monthly budget
+    # Subtest: refuses at/over budget with AI_MONTHLY_BUDGET_EXCEEDED and no retryAfterSeconds
+    ok 1 - refuses at/over budget with AI_MONTHLY_BUDGET_EXCEEDED and no retryAfterSeconds
+      ---
+      duration_ms: 0.760625
+      type: 'test'
+      ...
+    # Subtest: uses AI_BUDGET_UNAVAILABLE when the meter itself cannot be read
+    ok 2 - uses AI_BUDGET_UNAVAILABLE when the meter itself cannot be read
+      ---
+      duration_ms: 0.413292
+      type: 'test'
+      ...
+    # Subtest: never aborts an action already in flight when spend crosses the cap mid-call (§6.6)
+    ok 3 - never aborts an action already in flight when spend crosses the cap mid-call (§6.6)
+      ---
+      duration_ms: 1.390583
+      type: 'test'
+      ...
+    1..3
+ok 23 - AiGatewayClient monthly budget
+  ---
+  duration_ms: 2.712875
+  type: 'suite'
+  ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'AI_TOOL_GATE_MISSING',
+#   toolName: 'sales.get_sales_summary',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'NO_AUTHORITATIVE_ACCESS',
+#   toolName: 'company.get_current_context',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'SOURCE_MODULE_NOT_READY',
+#   toolName: 'crm.suggest_sales_followups',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'ERP_PERMISSION_DENIED',
+#   toolName: 'tax.get_tax_code_profile',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(4) {
+#   reasonCode: 'INVALID_ACTOR_DELEGATION',
+#   toolName: 'company.get_current_context',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'AI_TOOL_GATE_MISSING',
+#   toolName: 'sales.get_sales_summary',
+#   requestId: 'r-deny-unrecordable',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'STALE_ACTOR_DELEGATION',
+#   toolName: 'company.get_current_context',
+#   requestId: 'r-stale',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# Subtest: InternalToolsController
+    # Subtest: fails closed when internal secret is not configured
+    ok 1 - fails closed when internal secret is not configured
+      ---
+      duration_ms: 1.857083
+      type: 'test'
+      ...
+    # Subtest: denies at the execution boundary when the resolved access lacks ai.tool.invoke
+    ok 2 - denies at the execution boundary when the resolved access lacks ai.tool.invoke
+      ---
+      duration_ms: 3.719166
+      type: 'test'
+      ...
+    # Subtest: fails closed when the caller has no active company membership
+    ok 3 - fails closed when the caller has no active company membership
+      ---
+      duration_ms: 0.756833
+      type: 'test'
+      ...
+    # Subtest: returns unsupported_module for known tools whose source module is not wired yet
+    ok 4 - returns unsupported_module for known tools whose source module is not wired yet
+      ---
+      duration_ms: 0.775958
+      type: 'test'
+      ...
+    # Subtest: requires every registry permission before dispatching a tax tool
+    ok 5 - requires every registry permission before dispatching a tax tool
+      ---
+      duration_ms: 0.885666
+      type: 'test'
+      ...
+    # Subtest: dispatches the wired tax-code profile tool with DB-resolved scope
+    ok 6 - dispatches the wired tax-code profile tool with DB-resolved scope
+      ---
+      duration_ms: 0.225042
+      type: 'test'
+      ...
+    # Subtest: dispatches with DB-resolved context, not caller-supplied permissions
+    ok 7 - dispatches with DB-resolved context, not caller-supplied permissions
+      ---
+      duration_ms: 0.16725
+      type: 'test'
+      ...
+    # Subtest: writes no durable audit row when the actor delegation itself is invalid
+    ok 8 - writes no durable audit row when the actor delegation itself is invalid
+      ---
+      duration_ms: 0.259709
+      type: 'test'
+      ...
+    # Subtest: does NOT execute the tool when the audit write fails (M-02 fail-closed)
+    ok 9 - does NOT execute the tool when the audit write fails (M-02 fail-closed)
+      ---
+      duration_ms: 0.290625
+      type: 'test'
+      ...
+    # Subtest: does NOT return a quiet forbidden when the denial row cannot be written
+    ok 10 - does NOT return a quiet forbidden when the denial row cannot be written
+      ---
+      duration_ms: 0.56975
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'NO_AUTHORITATIVE_ACCESS',
+#   toolName: 'company.get_current_context',
+#   requestId: 'r-no-access',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+    # Subtest: audits a stale actor delegation as DENIED before rejecting the request
+    ok 11 - audits a stale actor delegation as DENIED before rejecting the request
+      ---
+      duration_ms: 3.797875
+      type: 'test'
+      ...
+    # Subtest: audits the deny when the caller has no authoritative access, without a caller-claimed companyId
+    ok 12 - audits the deny when the caller has no authoritative access, without a caller-claimed companyId
+      ---
+      duration_ms: 3.791333
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'AI_TOOL_GATE_MISSING',
+#   toolName: 'sales.get_sales_summary',
+#   requestId: 'r-gate',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+    # Subtest: audits the deny when the resolved access lacks the ai.tool.invoke gate
+    ok 13 - audits the deny when the resolved access lacks the ai.tool.invoke gate
+      ---
+      duration_ms: 2.3045
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'ERP_PERMISSION_DENIED',
+#   toolName: 'tax.get_tax_code_profile',
+#   requestId: 'r-erp',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+    # Subtest: audits the deny when an ERP registry permission is missing
+    ok 14 - audits the deny when an ERP registry permission is missing
+      ---
+      duration_ms: 4.751916
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'SOURCE_MODULE_NOT_READY',
+#   toolName: 'crm.suggest_sales_followups',
+#   requestId: 'r-unknown',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'TOOL_NOT_FOUND',
+#   toolName: 'not.a.real.tool',
+#   requestId: 'r-unknown',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+    # Subtest: audits unknown and not-yet-wired tools at LOW risk with distinct reason codes
+    ok 15 - audits unknown and not-yet-wired tools at LOW risk with distinct reason codes
+      ---
+      duration_ms: 7.503709
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM   ERROR [InternalToolsController] Object(6) {
+#   reasonCode: 'TOOL_EXECUTION_ERROR',
+#   toolName: 'sales.get_sales_summary',
+#   requestId: 'r-error',
+#   error: 'boom',
+#   msg: 'ai.tool.invoke.failed',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: audits a sensitive tool execution error as FAILED at HIGH risk
+    ok 16 - audits a sensitive tool execution error as FAILED at HIGH risk
+      ---
+      duration_ms: 2.379417
+      type: 'test'
+      ...
+    1..16
+ok 24 - InternalToolsController
+  ---
+  duration_ms: 38.951333
+  type: 'suite'
+  ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'TOOL_NOT_FOUND',
+#   toolName: 'not.a.real.tool',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+# Subtest: InternalToolsController — L-08 mutation classification at the ERP executor
+    # Subtest: denies a tool name with no registry entry before any permission or dispatch decision
+    ok 1 - denies a tool name with no registry entry before any permission or dispatch decision
+      ---
+      duration_ms: 3.5765
+      type: 'test'
+      ...
+    # Subtest: keeps an unregistered name structurally undispatchable (every wired tool has a registry entry)
+    ok 2 - keeps an unregistered name structurally undispatchable (every wired tool has a registry entry)
+      ---
+      duration_ms: 0.140125
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'TOOL_CATEGORY_NOT_ALLOWED',
+#   toolName: 'test.draft_create',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: denies a registry-known tool whose category is not in the LINE-allowed set
+    ok 3 - denies a registry-known tool whose category is not in the LINE-allowed set
+      ---
+      duration_ms: 6.13475
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'TOOL_CATEGORY_UNKNOWN',
+#   toolName: 'test.nonsense',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: denies an unrecognised category value
+    ok 4 - denies an unrecognised category value
+      ---
+      duration_ms: 4.066625
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'AI_FINAL_MUTATION_DISABLED',
+#   toolName: 'test.final_mutation',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: denies the mutation category "final_mutation" while the ERP final-mutation switch is off
+    ok 5 - denies the mutation category "final_mutation" while the ERP final-mutation switch is off
+      ---
+      duration_ms: 2.874
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'AI_FINAL_MUTATION_DISABLED',
+#   toolName: 'test.approval_request',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: denies the mutation category "approval_request" while the ERP final-mutation switch is off
+    ok 6 - denies the mutation category "approval_request" while the ERP final-mutation switch is off
+      ---
+      duration_ms: 3.23625
+      type: 'test'
+      ...
+    # Subtest: a kill-switch trip is alarmed, not just audited (L-14)
+    ok 7 - a kill-switch trip is alarmed, not just audited (L-14)
+      ---
+      duration_ms: 2.414917
+      type: 'test'
+      ...
+    # Subtest: keeps the log event name and the audit action the same literal
+    ok 8 - keeps the log event name and the audit action the same literal
+      ---
+      duration_ms: 0.127333
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'TOOL_CATEGORY_NOT_ALLOWED',
+#   toolName: 'test.final_mutation',
+#   requestId: 'r-cat',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: still denies a mutation category with the switch on — the switch is necessary, not sufficient
+    ok 9 - still denies a mutation category with the switch on — the switch is necessary, not sufficient
+      ---
+      duration_ms: 3.670125
+      type: 'test'
+      ...
+    # Subtest: every wired read tool keeps working — walked from the registry, not a hardcoded list
+    ok 10 - every wired read tool keeps working — walked from the registry, not a hardcoded list
+      ---
+      duration_ms: 113.737167
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.set_header',
+#   requestId: 'r-off',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.set_line',
+#   requestId: 'r-off',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.add_charge',
+#   requestId: 'r-off',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.remove_line',
+#   requestId: 'r-off',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.set_vat_mode',
+#   requestId: 'r-off',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off
+    ok 11 - refuses every draft_update tool while LINE_AI_DRAFT_EDIT_ENABLED is off
+      ---
+      duration_ms: 12.22075
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'LINE_DRAFT_EDIT_DISABLED',
+#   toolName: 'expense.draft.add_charge',
+#   requestId: 'r-mut',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'HIGH'
+# }
+    # Subtest: admits a draft_update tool with the flag on, and NOT via the final-mutation switch
+    ok 12 - admits a draft_update tool with the flag on, and NOT via the final-mutation switch
+      ---
+      duration_ms: 5.499209
+      type: 'test'
+      ...
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'ERP_PERMISSION_DENIED',
+#   toolName: 'expense.draft.add_charge',
+#   requestId: 'r-perm',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'FEATURE_NOT_ENABLED',
+#   toolName: 'tax.get_tax_code_profile',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'FEATURE_NOT_ENABLED',
+#   toolName: 'tax.get_tax_code_profile',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'LOW'
+# }
+# [Nest] 58845  - 09/11/2026, 9:40:51 PM    WARN [InternalToolsController] Object(5) {
+#   reasonCode: 'ERP_PERMISSION_DENIED',
+#   toolName: 'tax.get_tax_code_profile',
+#   requestId: 'r1',
+#   msg: 'ai.tool.invoke.denied',
+#   riskLevel: 'MEDIUM'
+# }
+    # Subtest: still requires expense.update — the same permission the web draft PATCH takes
+    ok 13 - still requires expense.update — the same permission the web draft PATCH takes
+      ---
+      duration_ms: 2.885125
+      type: 'test'
+      ...
+    1..13
+ok 25 - InternalToolsController — L-08 mutation classification at the ERP executor
+  ---
+  duration_ms: 161.303
+  type: 'suite'
+  ...
+# Subtest: InternalToolsController — company feature entitlement
+    # Subtest: refuses a tool whose owning feature the company switched off
+    ok 1 - refuses a tool whose owning feature the company switched off
+      ---
+      duration_ms: 0.711583
+      type: 'test'
+      ...
+    # Subtest: runs the same tool once the feature is on
+    ok 2 - runs the same tool once the feature is on
+      ---
+      duration_ms: 0.230541
+      type: 'test'
+      ...
+    # Subtest: leaves a legacy company with no entitlement rows untouched
+    ok 3 - leaves a legacy company with no entitlement rows untouched
+      ---
+      duration_ms: 0.123875
+      type: 'test'
+      ...
+    # Subtest: reports a permission the feature switch removed as FEATURE_NOT_ENABLED, not a permission gap
+    ok 4 - reports a permission the feature switch removed as FEATURE_NOT_ENABLED, not a permission gap
+      ---
+      duration_ms: 0.142417
+      type: 'test'
+      ...
+    # Subtest: still reports a real permission gap as ERP_PERMISSION_DENIED even beside an unrelated feature switch
+    ok 5 - still reports a real permission gap as ERP_PERMISSION_DENIED even beside an unrelated feature switch
+      ---
+      duration_ms: 0.086417
+      type: 'test'
+      ...
+    # Subtest: gates the reported sales tool, whose permission belongs to a different feature than its data
+    ok 6 - gates the reported sales tool, whose permission belongs to a different feature than its data
+      ---
+      duration_ms: 0.076125
+      type: 'test'
+      ...
+    # Subtest: never gates reimbursement reads, which outlive their feature switch by owner decision
+    ok 7 - never gates reimbursement reads, which outlive their feature switch by owner decision
+      ---
+      duration_ms: 0.049208
+      type: 'test'
+      ...
+    1..7
+ok 26 - InternalToolsController — company feature entitlement
+  ---
+  duration_ms: 1.530667
+  type: 'suite'
+  ...
+# node:internal/modules/cjs/loader:1430
+#   const err = new Error(message);
+#               ^
+# Error: Cannot find module '../../../generated/prisma/client'
+# Require stack:
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/employee-access/application/normalize-entitlements.ts
+# - /Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts
+#     at Module._resolveFilename (node:internal/modules/cjs/loader:1430:15)
+#     at nextResolveSimple (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1017)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:4388
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:9:3818
+#     at resolveTsPaths (/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:770)
+#     at /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-BOkp8V6j.cjs:10:1155
+#     at T._resolveFilename (file:///Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus/node_modules/.pnpm/tsx@4.22.4/node_modules/tsx/dist/register-CqMfTiWi.mjs:2:14889)
+#     at defaultResolveImpl (node:internal/modules/cjs/loader:1040:19)
+#     at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1045:22)
+#     at Module._load (node:internal/modules/cjs/loader:1216:25) {
+#   code: 'MODULE_NOT_FOUND',
+#   requireStack: [
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/employee-access/application/normalize-entitlements.ts',
+#     '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts'
+#   ]
+# }
+# Node.js v22.23.2
+# Subtest: apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts
+not ok 11 - apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts
+  ---
+  duration_ms: 512.350334
+  type: 'test'
+  location: '/Users/thawatchai/Project/MangmeeYungYuen/mangmee-billing-merge-20260911/mangmeeplus/apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.spec.ts:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  signal: ~
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..27
+# tests 195
+# suites 26
+# pass 192
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3831.818583

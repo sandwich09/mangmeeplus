@@ -1,0 +1,2174 @@
+TAP version 13
+# [Nest] 65206  - 09/11/2026, 8:44:47 PM     LOG [ReceiptOcrApplyService] Object(6) {
+#   msg: 'expense_category_suggested',
+#   companyId: 'company-1',
+#   expenseId: 'expense-1',
+#   expenseCategoryId: 'cat-meals',
+#   autoFilled: true,
+#   confidenceBand: 'high'
+# }
+# [Nest] 65206  - 09/11/2026, 8:44:47 PM     LOG [ReceiptOcrApplyService] Object(6) {
+#   msg: 'expense_category_suggested',
+#   companyId: 'company-1',
+#   expenseId: 'expense-1',
+#   expenseCategoryId: 'cat-meals',
+#   autoFilled: false,
+#   confidenceBand: 'low'
+# }
+# [Nest] 65206  - 09/11/2026, 8:44:47 PM     LOG [ReceiptOcrApplyService] Object(6) {
+#   msg: 'expense_category_suggested',
+#   companyId: 'company-1',
+#   expenseId: 'expense-1',
+#   expenseCategoryId: 'cat-meals',
+#   autoFilled: false,
+#   confidenceBand: 'low'
+# }
+# [Nest] 65206  - 09/11/2026, 8:44:47 PM     LOG [ReceiptOcrApplyService] Object(6) {
+#   msg: 'expense_category_suggested',
+#   companyId: 'company-1',
+#   expenseId: 'expense-1',
+#   expenseCategoryId: 'cat-fuel',
+#   autoFilled: true,
+#   confidenceBand: 'high'
+# }
+# Subtest: completeVatFields (spec §19c decision 4)
+    # Subtest: resolves the printed rate and VAT_EXCLUDED from a complete BENLAI tax block
+    ok 1 - resolves the printed rate and VAT_EXCLUDED from a complete BENLAI tax block
+      ---
+      duration_ms: 1.259833
+      type: 'test'
+      ...
+    # Subtest: completes the missing VAT amount from base and total
+    ok 2 - completes the missing VAT amount from base and total
+      ---
+      duration_ms: 0.203958
+      type: 'test'
+      ...
+    # Subtest: completes the missing taxable base from VAT and total
+    ok 3 - completes the missing taxable base from VAT and total
+      ---
+      duration_ms: 0.162917
+      type: 'test'
+      ...
+    # Subtest: completes the missing grand total from base and VAT
+    ok 4 - completes the missing grand total from base and VAT
+      ---
+      duration_ms: 0.162375
+      type: 'test'
+      ...
+    # Subtest: keeps a consistent extracted rate but lets the printed arithmetic win over a contradicting one
+    ok 5 - keeps a consistent extracted rate but lets the printed arithmetic win over a contradicting one
+      ---
+      duration_ms: 0.092375
+      type: 'test'
+      ...
+    # Subtest: invents nothing for a no-VAT cash bill
+    ok 6 - invents nothing for a no-VAT cash bill
+      ---
+      duration_ms: 1.155292
+      type: 'test'
+      ...
+    # Subtest: overrides only NO_VAT/missing modes when the VAT arithmetic is proven
+    ok 7 - overrides only NO_VAT/missing modes when the VAT arithmetic is proven
+      ---
+      duration_ms: 0.167083
+      type: 'test'
+      ...
+    # Subtest: completes nothing for an inconsistent triple – existing mismatch warnings decide
+    ok 8 - completes nothing for an inconsistent triple – existing mismatch warnings decide
+      ---
+      duration_ms: 0.132917
+      type: 'test'
+      ...
+    # Subtest: refuses completion when the implied rate is insane
+    ok 9 - refuses completion when the implied rate is insane
+      ---
+      duration_ms: 0.403292
+      type: 'test'
+      ...
+    # Subtest: refuses to invent a total from an insanely rated base/VAT pair
+    ok 10 - refuses to invent a total from an insanely rated base/VAT pair
+      ---
+      duration_ms: 0.593583
+      type: 'test'
+      ...
+    # Subtest: never mutates the caller input (aiVerifiedFieldsJson provenance)
+    ok 11 - never mutates the caller input (aiVerifiedFieldsJson provenance)
+      ---
+      duration_ms: 0.098292
+      type: 'test'
+      ...
+    1..11
+ok 1 - completeVatFields (spec §19c decision 4)
+  ---
+  duration_ms: 5.767
+  type: 'suite'
+  ...
+# Subtest: ocrLineVatRateUnknown (spec §19g decision 1)
+    # Subtest: reports unknown when a VAT mode carries no rate and no VAT amount to derive one from
+    ok 1 - reports unknown when a VAT mode carries no rate and no VAT amount to derive one from
+      ---
+      duration_ms: 0.210958
+      type: 'test'
+      ...
+    # Subtest: is not unknown once the document proves or prints a rate
+    ok 2 - is not unknown once the document proves or prints a rate
+      ---
+      duration_ms: 0.064459
+      type: 'test'
+      ...
+    # Subtest: is not unknown for modes that do not assert VAT
+    ok 3 - is not unknown for modes that do not assert VAT
+      ---
+      duration_ms: 0.115792
+      type: 'test'
+      ...
+    1..3
+ok 2 - ocrLineVatRateUnknown (spec §19g decision 1)
+  ---
+  duration_ms: 0.451167
+  type: 'suite'
+  ...
+# Subtest: verifyDiscountAmount (spec §19i decision 2)
+    # Subtest: drops a discount no printed subtotal can prove
+    ok 1 - drops a discount no printed subtotal can prove
+      ---
+      duration_ms: 0.378666
+      type: 'test'
+      ...
+    # Subtest: corrects a discount the printed subtotal and total contradict
+    ok 2 - corrects a discount the printed subtotal and total contradict
+      ---
+      duration_ms: 0.046542
+      type: 'test'
+      ...
+    # Subtest: keeps a discount the printed figures prove, including across additional charges
+    ok 3 - keeps a discount the printed figures prove, including across additional charges
+      ---
+      duration_ms: 0.211167
+      type: 'test'
+      ...
+    # Subtest: proves a VAT_EXCLUDED discount against the ex-VAT base, not the gross
+    ok 4 - proves a VAT_EXCLUDED discount against the ex-VAT base, not the gross
+      ---
+      duration_ms: 0.108708
+      type: 'test'
+      ...
+    # Subtest: stores a discount the document prints negative as a magnitude
+    ok 5 - stores a discount the document prints negative as a magnitude
+      ---
+      duration_ms: 0.056583
+      type: 'test'
+      ...
+    # Subtest: leaves a document that prints no discount untouched
+    ok 6 - leaves a document that prints no discount untouched
+      ---
+      duration_ms: 0.183584
+      type: 'test'
+      ...
+    1..6
+ok 3 - verifyDiscountAmount (spec §19i decision 2)
+  ---
+  duration_ms: 1.229917
+  type: 'suite'
+  ...
+# Subtest: ocrVatSource
+    # Subtest: keeps rate and amount independent and does not turn missing text into zero
+    ok 1 - keeps rate and amount independent and does not turn missing text into zero
+      ---
+      duration_ms: 0.340791
+      type: 'test'
+      ...
+    1..1
+ok 4 - ocrVatSource
+  ---
+  duration_ms: 0.426459
+  type: 'suite'
+  ...
+# Subtest: ReceiptOcrApplyService.apply staleness guard
+    # Subtest: writes nothing when the record moved while the model was thinking
+    ok 1 - writes nothing when the record moved while the model was thinking
+      ---
+      duration_ms: 3.948166
+      type: 'test'
+      ...
+    # Subtest: applies normally when the record is untouched
+    ok 2 - applies normally when the record is untouched
+      ---
+      duration_ms: 1.998542
+      type: 'test'
+      ...
+    # Subtest: stays backwards compatible for callers that pass no version
+    ok 3 - stays backwards compatible for callers that pass no version
+      ---
+      duration_ms: 0.945833
+      type: 'test'
+      ...
+    1..3
+ok 5 - ReceiptOcrApplyService.apply staleness guard
+  ---
+  duration_ms: 7.102875
+  type: 'suite'
+  ...
+# Subtest: ReceiptOcrApplyService.apply
+    # Subtest: does not overwrite reviewer VAT source when re-extracted arithmetic disagrees
+    ok 1 - does not overwrite reviewer VAT source when re-extracted arithmetic disagrees
+      ---
+      duration_ms: 2.221291
+      type: 'test'
+      ...
+    # Subtest: keeps reviewer line evidence reviewable when re-extraction changes the line layout
+    ok 2 - keeps reviewer line evidence reviewable when re-extraction changes the line layout
+      ---
+      duration_ms: 0.965208
+      type: 'test'
+      ...
+    # Subtest: writes the paid total, the derived line rate, and keeps the raw AI fields for provenance
+    ok 3 - writes the paid total, the derived line rate, and keeps the raw AI fields for provenance
+      ---
+      duration_ms: 0.693083
+      type: 'test'
+      ...
+    # Subtest: keeps the unit price explaining the paid total when the VAT arithmetic is not proven
+    ok 4 - keeps the unit price explaining the paid total when the VAT arithmetic is not proven
+      ---
+      duration_ms: 0.511834
+      type: 'test'
+      ...
+    # Subtest: never turns an unproven discount into a unit price the document does not print (spec §19i)
+    ok 5 - never turns an unproven discount into a unit price the document does not print (spec §19i)
+      ---
+      duration_ms: 0.832625
+      type: 'test'
+      ...
+    # Subtest: records the printed pre-discount price and discount once the subtotal proves them (spec §19i)
+    ok 6 - records the printed pre-discount price and discount once the subtotal proves them (spec §19i)
+      ---
+      duration_ms: 1.173709
+      type: 'test'
+      ...
+    # Subtest: preserves a printed service charge when the review form recomputes VAT and no-VAT receipts
+    ok 7 - preserves a printed service charge when the review form recomputes VAT and no-VAT receipts
+      ---
+      duration_ms: 1.688959
+      type: 'test'
+      ...
+    # Subtest: splits a printed service charge into a reconciled line without changing the receipt total
+    ok 8 - splits a printed service charge into a reconciled line without changing the receipt total
+      ---
+      duration_ms: 1.481583
+      type: 'test'
+      ...
+    # Subtest: splits every printed item row into its own draft line (spec §5)
+    ok 9 - splits every printed item row into its own draft line (spec §5)
+      ---
+      duration_ms: 1.593667
+      type: 'test'
+      ...
+    # Subtest: persists a printed zero-priced item through the shared LINE/web OCR apply without NaN
+    ok 10 - persists a printed zero-priced item through the shared LINE/web OCR apply without NaN
+      ---
+      duration_ms: 1.517125
+      type: 'test'
+      ...
+    # Subtest: does not manufacture a zero-priced item from an unreadable amount
+    ok 11 - does not manufacture a zero-priced item from an unreadable amount
+      ---
+      duration_ms: 1.29225
+      type: 'test'
+      ...
+    # Subtest: keeps a printed per-unit price when it explains the row amount, and adds charges after the items
+    ok 12 - keeps a printed per-unit price when it explains the row amount, and adds charges after the items
+      ---
+      duration_ms: 0.740417
+      type: 'test'
+      ...
+    # Subtest: rebuilds the total from goods, discount and charges when the page printed no grand total
+    ok 13 - rebuilds the total from goods, discount and charges when the page printed no grand total
+      ---
+      duration_ms: 0.545667
+      type: 'test'
+      ...
+    # Subtest: adds the printed VAT to the rebuilt total, and never twice on a VAT-included page
+    ok 14 - adds the printed VAT to the rebuilt total, and never twice on a VAT-included page
+      ---
+      duration_ms: 0.140292
+      type: 'test'
+      ...
+    # Subtest: names every charge kind in Thai and keeps a ROUNDING deduction out of the goods subtotal
+    ok 15 - names every charge kind in Thai and keeps a ROUNDING deduction out of the goods subtotal
+      ---
+      duration_ms: 0.668791
+      type: 'test'
+      ...
+    # Subtest: falls back to the summary line when the item rows contradict the printed total, and says so
+    ok 16 - falls back to the summary line when the item rows contradict the printed total, and says so
+      ---
+      duration_ms: 0.5525
+      type: 'test'
+      ...
+    # Subtest: ignores a half-readable item block rather than recording part of a bill
+    ok 17 - ignores a half-readable item block rather than recording part of a bill
+      ---
+      duration_ms: 1.024667
+      type: 'test'
+      ...
+    # Subtest: splits VAT-included item rows so each line carries its own share of the printed VAT
+    ok 18 - splits VAT-included item rows so each line carries its own share of the printed VAT
+      ---
+      duration_ms: 0.747584
+      type: 'test'
+      ...
+    # Subtest: supports no-VAT delivery and a VAT-free tip on an otherwise VAT-bearing receipt
+    ok 19 - supports no-VAT delivery and a VAT-free tip on an otherwise VAT-bearing receipt
+      ---
+      duration_ms: 1.113167
+      type: 'test'
+      ...
+    # Subtest: stores printed withholding tax as a net-payable reduction, not a gross-total reduction
+    ok 20 - stores printed withholding tax as a net-payable reduction, not a gross-total reduction
+      ---
+      duration_ms: 0.727167
+      type: 'test'
+      ...
+    # Subtest: keeps a non-round-ratio printed WHT amount exact and accepts a rate-only document
+    ok 21 - keeps a non-round-ratio printed WHT amount exact and accepts a rate-only document
+      ---
+      duration_ms: 1.101709
+      type: 'test'
+      ...
+    # Subtest: does not replace reviewed WHT, explicit zero-treatment lines or historical mixed rates on OCR retry
+    ok 22 - does not replace reviewed WHT, explicit zero-treatment lines or historical mixed rates on OCR retry
+      ---
+      duration_ms: 0.610208
+      type: 'test'
+      ...
+    # Subtest: folds unbalanced charges into the safe summary line and requires review
+    ok 23 - folds unbalanced charges into the safe summary line and requires review
+      ---
+      duration_ms: 1.081167
+      type: 'test'
+      ...
+    # Subtest: says nothing about charges on a bill that printed none
+    ok 24 - says nothing about charges on a bill that printed none
+      ---
+      duration_ms: 0.318041
+      type: 'test'
+      ...
+    # Subtest: never asserts a 7% line rate for a document that printed no VAT
+    ok 25 - never asserts a 7% line rate for a document that printed no VAT
+      ---
+      duration_ms: 0.645
+      type: 'test'
+      ...
+    # Subtest: leaves the line rate unknown when a VAT mode document had no readable VAT
+    ok 26 - leaves the line rate unknown when a VAT mode document had no readable VAT
+      ---
+      duration_ms: 2.994042
+      type: 'test'
+      ...
+    # Subtest: records the full Starbucks arithmetic once the printed VAT is read
+    ok 27 - records the full Starbucks arithmetic once the printed VAT is read
+      ---
+      duration_ms: 0.7665
+      type: 'test'
+      ...
+    # Subtest: keeps an explicitly printed zero rate on a zero-rated document
+    ok 28 - keeps an explicitly printed zero rate on a zero-rated document
+      ---
+      duration_ms: 0.455208
+      type: 'test'
+      ...
+    # Subtest: auto-fills one active tenant category on both the header and derived line
+    ok 29 - auto-fills one active tenant category on both the header and derived line
+      ---
+      duration_ms: 2.293416
+      type: 'test'
+      ...
+    # Subtest: ignores low-confidence or unavailable categories and preserves a reviewed category
+    ok 30 - ignores low-confidence or unavailable categories and preserves a reviewed category
+      ---
+      duration_ms: 1.60325
+      type: 'test'
+      ...
+    # Subtest: exposes a below-threshold suggestion, rejects a cross-company one, and stays silent without one
+    ok 31 - exposes a below-threshold suggestion, rejects a cross-company one, and stays silent without one
+      ---
+      duration_ms: 2.94625
+      type: 'test'
+      ...
+    # Subtest: automatically flags normalized OCR document fields after applying them
+    ok 32 - automatically flags normalized OCR document fields after applying them
+      ---
+      duration_ms: 1.780458
+      type: 'test'
+      ...
+    # Subtest: flags the same bill photographed from another angle by normalized vendor, date, and amount
+    ok 33 - flags the same bill photographed from another angle by normalized vendor, date, and amount
+      ---
+      duration_ms: 1.003291
+      type: 'test'
+      ...
+    1..33
+ok 6 - ReceiptOcrApplyService.apply
+  ---
+  duration_ms: 39.077709
+  type: 'suite'
+  ...
+# Subtest: usableItemLines per-row VAT
+    # Subtest: accepts a mixed bill: a taxed row beside an exempt row
+    ok 1 - accepts a mixed bill: a taxed row beside an exempt row
+      ---
+      duration_ms: 0.207
+      type: 'test'
+      ...
+    # Subtest: accepts the ordinary bill unchanged — no per-row fields at all
+    ok 2 - accepts the ordinary bill unchanged — no per-row fields at all
+      ---
+      duration_ms: 0.094833
+      type: 'test'
+      ...
+    # Subtest: refuses the whole block when a rate is not a 0..1 fraction (7 is not 7%)
+    ok 3 - refuses the whole block when a rate is not a 0..1 fraction (7 is not 7%)
+      ---
+      duration_ms: 0.032125
+      type: 'test'
+      ...
+    # Subtest: refuses a treatment that is not backed by a zero rate
+    ok 4 - refuses a treatment that is not backed by a zero rate
+      ---
+      duration_ms: 0.030125
+      type: 'test'
+      ...
+    # Subtest: refuses an unknown treatment code
+    ok 5 - refuses an unknown treatment code
+      ---
+      duration_ms: 0.020083
+      type: 'test'
+      ...
+    1..5
+ok 7 - usableItemLines per-row VAT
+  ---
+  duration_ms: 0.462459
+  type: 'suite'
+  ...
+# Subtest: usableItemLines keeps a bill whose till prints free rows at 0.00
+    # Subtest: keeps every row, including the ones the till printed at zero
+    ok 1 - keeps every row, including the ones the till printed at zero
+      ---
+      duration_ms: 0.029166
+      type: 'test'
+      ...
+    # Subtest: keeps a zero unit price too — the expense model already allows free-of-charge lines
+    ok 2 - keeps a zero unit price too — the expense model already allows free-of-charge lines
+      ---
+      duration_ms: 0.026042
+      type: 'test'
+      ...
+    # Subtest: still refuses an amount that is not a number at all
+    ok 3 - still refuses an amount that is not a number at all
+      ---
+      duration_ms: 0.022292
+      type: 'test'
+      ...
+    # Subtest: still refuses a negative amount, which no till prints as an item row
+    ok 4 - still refuses a negative amount, which no till prints as an item row
+      ---
+      duration_ms: 0.018791
+      type: 'test'
+      ...
+    1..4
+ok 8 - usableItemLines keeps a bill whose till prints free rows at 0.00
+  ---
+  duration_ms: 0.128375
+  type: 'suite'
+  ...
+# Subtest: reviewReceiptDate (spec §5.2)
+    # Subtest: calls an unread date what it is, so the placeholder cannot pass as a reading
+    ok 1 - calls an unread date what it is, so the placeholder cannot pass as a reading
+      ---
+      duration_ms: 0.03825
+      type: 'test'
+      ...
+    # Subtest: accepts a date the document proved
+    ok 2 - accepts a date the document proved
+      ---
+      duration_ms: 0.03425
+      type: 'test'
+      ...
+    # Subtest: flags a date too far from today to be this receipt
+    ok 3 - flags a date too far from today to be this receipt
+      ---
+      duration_ms: 0.024375
+      type: 'test'
+      ...
+    1..3
+ok 9 - reviewReceiptDate (spec §5.2)
+  ---
+  duration_ms: 0.1195
+  type: 'suite'
+  ...
+# Subtest: apply: an unverified date forces review instead of passing silently (spec §5.2)
+    # Subtest: leaves expenseDate unwritten and marks the draft NEEDS_REVIEW when no date was read
+    ok 1 - leaves expenseDate unwritten and marks the draft NEEDS_REVIEW when no date was read
+      ---
+      duration_ms: 0.550875
+      type: 'test'
+      ...
+    # Subtest: writes a read date and stays PARTIAL
+    ok 2 - writes a read date and stays PARTIAL
+      ---
+      duration_ms: 0.962
+      type: 'test'
+      ...
+    # Subtest: keeps an assumed reading, flags it, and does not force review
+    ok 3 - keeps an assumed reading, flags it, and does not force review
+      ---
+      duration_ms: 0.536917
+      type: 'test'
+      ...
+    # Subtest: does not call a plainly printed date assumed
+    ok 4 - does not call a plainly printed date assumed
+      ---
+      duration_ms: 0.339542
+      type: 'test'
+      ...
+    # Subtest: still stores an out-of-range date, but never as a fact
+    ok 5 - still stores an out-of-range date, but never as a fact
+      ---
+      duration_ms: 0.307541
+      type: 'test'
+      ...
+    1..5
+ok 10 - apply: an unverified date forces review instead of passing silently (spec §5.2)
+  ---
+  duration_ms: 2.856875
+  type: 'suite'
+  ...
+# Subtest: apply: additional-charge tax rules (spec §5.1)
+    # Subtest: keeps the rate the document printed and asks for nothing
+    ok 1 - keeps the rate the document printed and asks for nothing
+      ---
+      duration_ms: 0.921333
+      type: 'test'
+      ...
+    # Subtest: never invents 7% for a charge the page priced but never rated
+    ok 2 - never invents 7% for a charge the page priced but never rated
+      ---
+      duration_ms: 0.68975
+      type: 'test'
+      ...
+    # Subtest: never spreads withholding onto a charge row, and says the base needs checking
+    ok 3 - never spreads withholding onto a charge row, and says the base needs checking
+      ---
+      duration_ms: 0.803917
+      type: 'test'
+      ...
+    # Subtest: keeps the charge and the total when the printed VAT proves base + charges
+    ok 4 - keeps the charge and the total when the printed VAT proves base + charges
+      ---
+      duration_ms: 0.458459
+      type: 'test'
+      ...
+    # Subtest: keeps an unexplained charge as a reviewable line rather than deleting it
+    ok 5 - keeps an unexplained charge as a reviewable line rather than deleting it
+      ---
+      duration_ms: 0.291333
+      type: 'test'
+      ...
+    # Subtest: keeps every kind other than ROUNDING positive
+    ok 6 - keeps every kind other than ROUNDING positive
+      ---
+      duration_ms: 0.219542
+      type: 'test'
+      ...
+    1..6
+ok 11 - apply: additional-charge tax rules (spec §5.1)
+  ---
+  duration_ms: 3.514625
+  type: 'suite'
+  ...
+# Subtest: apply: the printed arithmetic decides the VAT mode, not the extractor (UAT 2026-09-06)
+    # Subtest: reads 130 + 13 + VAT 10.01 = 153.01 as VAT added on top, whatever the extractor called it
+    ok 1 - reads 130 + 13 + VAT 10.01 = 153.01 as VAT added on top, whatever the extractor called it
+      ---
+      duration_ms: 0.187042
+      type: 'test'
+      ...
+    # Subtest: still believes a document whose own figures say the VAT is inside
+    ok 2 - still believes a document whose own figures say the VAT is inside
+      ---
+      duration_ms: 0.22325
+      type: 'test'
+      ...
+    # Subtest: keeps the extractor word when neither reading explains the printed total
+    ok 3 - keeps the extractor word when neither reading explains the printed total
+      ---
+      duration_ms: 0.056083
+      type: 'test'
+      ...
+    # Subtest: splits HOUSE TANGO into its base and its printed service charge
+    ok 4 - splits HOUSE TANGO into its base and its printed service charge
+      ---
+      duration_ms: 0.429709
+      type: 'test'
+      ...
+    # Subtest: splits the 4,331.36 bill into its base and its printed service charge
+    ok 5 - splits the 4,331.36 bill into its base and its printed service charge
+      ---
+      duration_ms: 0.494334
+      type: 'test'
+      ...
+    # Subtest: hands the persisted charge rows back for the LINE card to print
+    ok 6 - hands the persisted charge rows back for the LINE card to print
+      ---
+      duration_ms: 0.486792
+      type: 'test'
+      ...
+    # Subtest: keeps the gratuity and the printed rows when the bill made its VAT a whole baht
+    ok 7 - keeps the gratuity and the printed rows when the bill made its VAT a whole baht
+      ---
+      duration_ms: 1.073083
+      type: 'test'
+      ...
+    # Subtest: holds the §5.1 totals identity on the reconciled record
+    ok 8 - holds the §5.1 totals identity on the reconciled record
+      ---
+      duration_ms: 1.49275
+      type: 'test'
+      ...
+    # Subtest: lands on the printed 797 / 56 / 853 once the reviewer accepts the document amounts
+    ok 9 - lands on the printed 797 / 56 / 853 once the reviewer accepts the document amounts
+      ---
+      duration_ms: 4.233209
+      type: 'test'
+      ...
+    # Subtest: keeps the rows and invents no negative line when the bill truncated its VAT down
+    ok 10 - keeps the rows and invents no negative line when the bill truncated its VAT down
+      ---
+      duration_ms: 0.94025
+      type: 'test'
+      ...
+    # Subtest: widens nothing for a satang-precise VAT box: that is a misread, not a rounding
+    ok 11 - widens nothing for a satang-precise VAT box: that is a misread, not a rounding
+      ---
+      duration_ms: 0.765167
+      type: 'test'
+      ...
+    # Subtest: folds when a whole-baht VAT box misses the computed VAT by +1.00
+    ok 12 - folds when a whole-baht VAT box misses the computed VAT by +1.00
+      ---
+      duration_ms: 0.56525
+      type: 'test'
+      ...
+    # Subtest: folds when a whole-baht VAT box misses the computed VAT by -1.00
+    ok 13 - folds when a whole-baht VAT box misses the computed VAT by -1.00
+      ---
+      duration_ms: 0.629166
+      type: 'test'
+      ...
+    # Subtest: folds when a whole-baht VAT box misses the computed VAT by +1.01
+    ok 14 - folds when a whole-baht VAT box misses the computed VAT by +1.01
+      ---
+      duration_ms: 0.869375
+      type: 'test'
+      ...
+    # Subtest: folds when a whole-baht VAT box misses the computed VAT by -1.01
+    ok 15 - folds when a whole-baht VAT box misses the computed VAT by -1.01
+      ---
+      duration_ms: 0.75925
+      type: 'test'
+      ...
+    # Subtest: keeps the rows when a whole-baht VAT box misses the computed VAT by +0.99
+    ok 16 - keeps the rows when a whole-baht VAT box misses the computed VAT by +0.99
+      ---
+      duration_ms: 0.673042
+      type: 'test'
+      ...
+    # Subtest: keeps the rows when a whole-baht VAT box misses the computed VAT by -0.99
+    ok 17 - keeps the rows when a whole-baht VAT box misses the computed VAT by -0.99
+      ---
+      duration_ms: 0.615792
+      type: 'test'
+      ...
+    # Subtest: stops at one baht: a zero-rated tip leaves 5.25 of the printed VAT unexplained
+    ok 18 - stops at one baht: a zero-rated tip leaves 5.25 of the printed VAT unexplained
+      ---
+      duration_ms: 0.561875
+      type: 'test'
+      ...
+    # Subtest: never widens the taxable comparison, even with a whole-baht VAT box
+    ok 19 - never widens the taxable comparison, even with a whole-baht VAT box
+      ---
+      duration_ms: 0.532333
+      type: 'test'
+      ...
+    # Subtest: never widens the subtotal comparison: item rows that miss the printed subtotal still fail
+    ok 20 - never widens the subtotal comparison: item rows that miss the printed subtotal still fail
+      ---
+      duration_ms: 0.496333
+      type: 'test'
+      ...
+    1..20
+ok 12 - apply: the printed arithmetic decides the VAT mode, not the extractor (UAT 2026-09-06)
+  ---
+  duration_ms: 16.611625
+  type: 'suite'
+  ...
+# Subtest: apply: what the printed-arithmetic mode may and may not overwrite
+    # Subtest: leaves a deliberate EXEMPT mode alone even when the arithmetic proves VAT was added
+    ok 1 - leaves a deliberate EXEMPT mode alone even when the arithmetic proves VAT was added
+      ---
+      duration_ms: 0.147833
+      type: 'test'
+      ...
+    # Subtest: leaves NEEDS_REVIEW alone
+    ok 2 - leaves NEEDS_REVIEW alone
+      ---
+      duration_ms: 0.084042
+      type: 'test'
+      ...
+    # Subtest: still corrects the modes the extractor only guessed
+    ok 3 - still corrects the modes the extractor only guessed
+      ---
+      duration_ms: 0.084375
+      type: 'test'
+      ...
+    # Subtest: treats a non-array additionalCharges as no charges instead of throwing
+    ok 4 - treats a non-array additionalCharges as no charges instead of throwing
+      ---
+      duration_ms: 0.082708
+      type: 'test'
+      ...
+    # Subtest: survives a non-array additionalCharges through the whole apply
+    ok 5 - survives a non-array additionalCharges through the whole apply
+      ---
+      duration_ms: 0.179042
+      type: 'test'
+      ...
+    1..5
+ok 13 - apply: what the printed-arithmetic mode may and may not overwrite
+  ---
+  duration_ms: 0.646792
+  type: 'suite'
+  ...
+# Subtest: apply: outcomes that write no lines still report the charges the record carries
+    # Subtest: returns the persisted charge rows when a reviewed line layout is preserved
+    ok 1 - returns the persisted charge rows when a reviewed line layout is preserved
+      ---
+      duration_ms: 0.237
+      type: 'test'
+      ...
+    # Subtest: returns the persisted charge rows when the apply is skipped as stale
+    ok 2 - returns the persisted charge rows when the apply is skipped as stale
+      ---
+      duration_ms: 0.302291
+      type: 'test'
+      ...
+    1..2
+ok 14 - apply: outcomes that write no lines still report the charges the record carries
+  ---
+  duration_ms: 0.565625
+  type: 'suite'
+  ...
+# Subtest: receipt tax integrity regressions
+    # Subtest: keeps a mixed-tax net summary without inventing a blended rate or discount allocation
+    ok 1 - keeps a mixed-tax net summary without inventing a blended rate or discount allocation
+      ---
+      duration_ms: 0.345375
+      type: 'test'
+      ...
+    # Subtest: keeps printed litres and inclusive unit price, with a named one-satang calculated adjustment
+    ok 2 - keeps printed litres and inclusive unit price, with a named one-satang calculated adjustment
+      ---
+      duration_ms: 0.453042
+      type: 'test'
+      ...
+    # Subtest: does not turn rows on an incomplete page into a final transaction total
+    ok 3 - does not turn rows on an incomplete page into a final transaction total
+      ---
+      duration_ms: 0.08
+      type: 'test'
+      ...
+    # Subtest: keeps six mixed-tax grocery rows and printed VAT instead of a blended rate
+    ok 4 - keeps six mixed-tax grocery rows and printed VAT instead of a blended rate
+      ---
+      duration_ms: 0.703958
+      type: 'test'
+      ...
+    # Subtest: keeps service and negative rounding as separate rows with the exact receipt total
+    ok 5 - keeps service and negative rounding as separate rows with the exact receipt total
+      ---
+      duration_ms: 0.928
+      type: 'test'
+      ...
+    # Subtest: prefills only an evidenced issuer kind and preserves a reviewer identity on reread
+    ok 6 - prefills only an evidenced issuer kind and preserves a reviewer identity on reread
+      ---
+      duration_ms: 1.674833
+      type: 'test'
+      ...
+    # Subtest: does not persist rejected withholding through legacy prepared rates
+    ok 7 - does not persist rejected withholding through legacy prepared rates
+      ---
+      duration_ms: 0.357917
+      type: 'test'
+      ...
+    1..7
+ok 15 - receipt tax integrity regressions
+  ---
+  duration_ms: 4.716125
+  type: 'suite'
+  ...
+# [Nest] 65207  - 09/11/2026, 8:44:47 PM   ERROR [ProvisionSignupUseCase] Fence release failed for signup signup-1: provisioning_attempt_mismatch
+# [Nest] 65207  - 09/11/2026, 8:44:47 PM   ERROR [ProvisionSignupUseCase] Fence release failed for signup signup-1: provisioning_attempt_mismatch
+# Subtest: AUTO_FREE end to end (review HIGH-1)
+    # Subtest: names a real SYSTEM_ADMIN as the operator, so the onboarding foreign keys hold
+    ok 1 - names a real SYSTEM_ADMIN as the operator, so the onboarding foreign keys hold
+      ---
+      duration_ms: 10.031
+      type: 'test'
+      ...
+    # Subtest: opens the shop with no credential and the clickwrap already recorded
+    ok 2 - opens the shop with no credential and the clickwrap already recorded
+      ---
+      duration_ms: 1.736625
+      type: 'test'
+      ...
+    # Subtest: falls back to the admin queue when no SYSTEM_ADMIN exists to act as operator
+    ok 3 - falls back to the admin queue when no SYSTEM_ADMIN exists to act as operator
+      ---
+      duration_ms: 1.637084
+      type: 'test'
+      ...
+    # Subtest: falls back to the admin queue once the daily cap is reached
+    ok 4 - falls back to the admin queue once the daily cap is reached
+      ---
+      duration_ms: 1.355292
+      type: 'test'
+      ...
+    # Subtest: tells nobody about a cap that was never reached
+    ok 5 - tells nobody about a cap that was never reached
+      ---
+      duration_ms: 2.40775
+      type: 'test'
+      ...
+    1..5
+ok 16 - AUTO_FREE end to end (review HIGH-1)
+  ---
+  duration_ms: 17.883333
+  type: 'suite'
+  ...
+# Subtest: a provisioning that dies in its tail is recoverable (review HIGH-A / HIGH-C)
+    # Subtest: retries to COMPLETED with one company and one identity after completeProvisioning dies
+    ok 1 - retries to COMPLETED with one company and one identity after completeProvisioning dies
+      ---
+      duration_ms: 2.054667
+      type: 'test'
+      ...
+    # Subtest: finishes a row stranded at READY instead of parking it there forever
+    ok 2 - finishes a row stranded at READY instead of parking it there forever
+      ---
+      duration_ms: 3.387209
+      type: 'test'
+      ...
+    # Subtest: reports the real failure rather than the fence release that could not run
+    ok 3 - reports the real failure rather than the fence release that could not run
+      ---
+      duration_ms: 2.201416
+      type: 'test'
+      ...
+    1..3
+ok 17 - a provisioning that dies in its tail is recoverable (review HIGH-A / HIGH-C)
+  ---
+  duration_ms: 7.8325
+  type: 'suite'
+  ...
+# Subtest: the company link is written inside the company transaction
+    # Subtest: has already linked the request by the time the rest of the transaction runs
+    ok 1 - has already linked the request by the time the rest of the transaction runs
+      ---
+      duration_ms: 4.168792
+      type: 'test'
+      ...
+    # Subtest: leaves no company and no link when onboarding rolls back after the stamp
+    ok 2 - leaves no company and no link when onboarding rolls back after the stamp
+      ---
+      duration_ms: 3.317334
+      type: 'test'
+      ...
+    1..2
+ok 18 - the company link is written inside the company transaction
+  ---
+  duration_ms: 7.660375
+  type: 'suite'
+  ...
+# Subtest: two overlapping provisioning runs still produce one company (review MEDIUM-1)
+    # Subtest: lets only one run keep its company when A stamps first
+    ok 1 - lets only one run keep its company when A stamps first
+      ---
+      duration_ms: 1.68125
+      type: 'test'
+      ...
+    # Subtest: lets only one run keep its company when B stamps first
+    ok 2 - lets only one run keep its company when B stamps first
+      ---
+      duration_ms: 0.973459
+      type: 'test'
+      ...
+    1..2
+ok 19 - two overlapping provisioning runs still produce one company (review MEDIUM-1)
+  ---
+  duration_ms: 2.72275
+  type: 'suite'
+  ...
+# Subtest: a fence nobody is holding can be taken (review MEDIUM-3)
+    # Subtest: refuses while an attempt is plausibly still running
+    ok 1 - refuses while an attempt is plausibly still running
+      ---
+      duration_ms: 1.497666
+      type: 'test'
+      ...
+    # Subtest: re-claims a row whose holder disappeared, and records that it did
+    ok 2 - re-claims a row whose holder disappeared, and records that it did
+      ---
+      duration_ms: 3.070125
+      type: 'test'
+      ...
+    # Subtest: adopts the company the dead attempt had already committed
+    ok 3 - adopts the company the dead attempt had already committed
+      ---
+      duration_ms: 3.054625
+      type: 'test'
+      ...
+    1..3
+ok 20 - a fence nobody is holding can be taken (review MEDIUM-3)
+  ---
+  duration_ms: 7.766583
+  type: 'suite'
+  ...
+# Subtest: a LINE account that was unlinked can open a new shop
+    # Subtest: re-points the stale identity instead of dying on the unique slot
+    ok 1 - re-points the stale identity instead of dying on the unique slot
+      ---
+      duration_ms: 3.109417
+      type: 'test'
+      ...
+    # Subtest: touches nothing but the identity row on the way past
+    ok 2 - touches nothing but the identity row on the way past
+      ---
+      duration_ms: 2.395625
+      type: 'test'
+      ...
+    # Subtest: refuses at submit, before any row exists, when the identity is disabled
+    ok 3 - refuses at submit, before any row exists, when the identity is disabled
+      ---
+      duration_ms: 1.41625
+      type: 'test'
+      ...
+    # Subtest: refuses at submit when the account behind an ACTIVE identity is suspended
+    ok 4 - refuses at submit when the account behind an ACTIVE identity is suspended
+      ---
+      duration_ms: 0.187959
+      type: 'test'
+      ...
+    1..4
+ok 21 - a LINE account that was unlinked can open a new shop
+  ---
+  duration_ms: 7.278084
+  type: 'suite'
+  ...
+# Subtest: trial guards survive a missing plan term (review HIGH-3)
+    # Subtest: still completes and writes the term when onboarding left none behind
+    ok 1 - still completes and writes the term when onboarding left none behind
+      ---
+      duration_ms: 1.281917
+      type: 'test'
+      ...
+    # Subtest: never turns a finished shop into a failure when a guard write dies
+    ok 2 - never turns a finished shop into a failure when a guard write dies
+      ---
+      duration_ms: 1.067292
+      type: 'test'
+      ...
+    1..2
+ok 22 - trial guards survive a missing plan term (review HIGH-3)
+  ---
+  duration_ms: 2.390666
+  type: 'suite'
+  ...
+# Subtest: B-01 pre-flight: the tier a signup provisioning actually writes
+    # Subtest: gives the Flow B applicant the tier provisioning asked for, not the onboarding default
+    ok 1 - gives the Flow B applicant the tier provisioning asked for, not the onboarding default
+      ---
+      duration_ms: 17.06925
+      type: 'test'
+      ...
+    # Subtest: ignores what the applicant asked for — a PRO request still provisions the free trial
+    ok 2 - ignores what the applicant asked for — a PRO request still provisions the free trial
+      ---
+      duration_ms: 10.2545
+      type: 'test'
+      ...
+    # Subtest: never overwrites a term an admin already set, and a retry never shortens it
+    ok 3 - never overwrites a term an admin already set, and a retry never shortens it
+      ---
+      duration_ms: 4.459334
+      type: 'test'
+      ...
+    1..3
+ok 23 - B-01 pre-flight: the tier a signup provisioning actually writes
+  ---
+  duration_ms: 32.367584
+  type: 'suite'
+  ...
+# Subtest: provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)
+    # Subtest: names the free-trial 30-day term on the onboarding command, not by a second upsert
+    ok 1 - names the free-trial 30-day term on the onboarding command, not by a second upsert
+      ---
+      duration_ms: 3.036375
+      type: 'test'
+      ...
+    1..1
+ok 24 - provisioning applies the free-trial term (P29 T3; Owner 2026-09-05)
+  ---
+  duration_ms: 4.289208
+  type: 'suite'
+  ...
+# Subtest: the trial guards are the same for both sources (Owner 2026-09-05)
+    # Subtest: caps a web-form trial shop the way a LINE trial shop is capped
+    ok 1 - caps a web-form trial shop the way a LINE trial shop is capped
+      ---
+      duration_ms: 0.736417
+      type: 'test'
+      ...
+    # Subtest: writes identical guard rows whichever form the shop came in through
+    ok 2 - writes identical guard rows whichever form the shop came in through
+      ---
+      duration_ms: 0.958625
+      type: 'test'
+      ...
+    # Subtest: never re-stamps the warm-up or the budget over a shop that already has them
+    ok 3 - never re-stamps the warm-up or the budget over a shop that already has them
+      ---
+      duration_ms: 0.288083
+      type: 'test'
+      ...
+    # Subtest: keeps the genuinely LINE-only guard off a web-form shop
+    ok 4 - keeps the genuinely LINE-only guard off a web-form shop
+      ---
+      duration_ms: 0.200959
+      type: 'test'
+      ...
+    1..4
+ok 25 - the trial guards are the same for both sources (Owner 2026-09-05)
+  ---
+  duration_ms: 2.571375
+  type: 'suite'
+  ...
+# Subtest: mapBusinessCategory
+    # Subtest: honours an exact enum match and never guesses free text
+    ok 1 - honours an exact enum match and never guesses free text
+      ---
+      duration_ms: 0.296625
+      type: 'test'
+      ...
+    1..1
+ok 26 - mapBusinessCategory
+  ---
+  duration_ms: 0.563792
+  type: 'suite'
+  ...
+# Subtest: the business category chosen at review
+    # Subtest: reaches onboarding instead of the free-text mapping
+    ok 1 - reaches onboarding instead of the free-text mapping
+      ---
+      duration_ms: 0.3625
+      type: 'test'
+      ...
+    # Subtest: falls back to the mapping when review left it alone
+    ok 2 - falls back to the mapping when review left it alone
+      ---
+      duration_ms: 0.846334
+      type: 'test'
+      ...
+    # Subtest: ignores a stored value that is not in the enum
+    ok 3 - ignores a stored value that is not in the enum
+      ---
+      duration_ms: 0.520459
+      type: 'test'
+      ...
+    1..3
+ok 27 - the business category chosen at review
+  ---
+  duration_ms: 2.137416
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — new-user path
+    # Subtest: provisions through the onboarding service with the self-chosen password
+    ok 1 - provisions through the onboarding service with the self-chosen password
+      ---
+      duration_ms: 0.566875
+      type: 'test'
+      ...
+    # Subtest: falls back to the email local part when no username survives a retry
+    ok 2 - falls back to the email local part when no username survives a retry
+      ---
+      duration_ms: 0.26375
+      type: 'test'
+      ...
+    # Subtest: completes the fence, wipes the hash, and parks at the LINE step
+    ok 3 - completes the fence, wipes the hash, and parks at the LINE step
+      ---
+      duration_ms: 0.422708
+      type: 'test'
+      ...
+    # Subtest: records HIGH evidence with no applicant PII
+    ok 4 - records HIGH evidence with no applicant PII
+      ---
+      duration_ms: 0.358083
+      type: 'test'
+      ...
+    1..4
+ok 28 - ProvisionSignupUseCase — new-user path
+  ---
+  duration_ms: 1.761
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — attach path
+    # Subtest: attaches by id and sends no password hash
+    ok 1 - attaches by id and sends no password hash
+      ---
+      duration_ms: 0.3635
+      type: 'test'
+      ...
+    # Subtest: records that an existing different address was kept
+    ok 2 - records that an existing different address was kept
+      ---
+      duration_ms: 0.819791
+      type: 'test'
+      ...
+    # Subtest: does not flag a keep when the existing address is the same one
+    ok 3 - does not flag a keep when the existing address is the same one
+      ---
+      duration_ms: 0.223541
+      type: 'test'
+      ...
+    1..3
+ok 29 - ProvisionSignupUseCase — attach path
+  ---
+  duration_ms: 1.649333
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — contactEmail is nullable now (review B-03)
+    # Subtest: refuses the email-owner shape rather than provisioning a company with a null address
+    ok 1 - refuses the email-owner shape rather than provisioning a company with a null address
+      ---
+      duration_ms: 1.03125
+      type: 'test'
+      ...
+    1..1
+ok 30 - ProvisionSignupUseCase — contactEmail is nullable now (review B-03)
+  ---
+  duration_ms: 1.126875
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — LINE-first source
+    # Subtest: carries shop contact separately for both new and attached LINE owners, while allowing legacy null
+    ok 1 - carries shop contact separately for both new and attached LINE owners, while allowing legacy null
+      ---
+      duration_ms: 0.7595
+      type: 'test'
+      ...
+    # Subtest: hands onboarding the LINE owner shape and the free trial preset
+    ok 2 - hands onboarding the LINE owner shape and the free trial preset
+      ---
+      duration_ms: 0.4895
+      type: 'test'
+      ...
+    # Subtest: caps the first week, the AI spend and the LINE company context
+    ok 3 - caps the first week, the AI spend and the LINE company context
+      ---
+      duration_ms: 0.248875
+      type: 'test'
+      ...
+    # Subtest: finishes at COMPLETED instead of parking at the LINE link step
+    ok 4 - finishes at COMPLETED instead of parking at the LINE link step
+      ---
+      duration_ms: 0.211
+      type: 'test'
+      ...
+    # Subtest: opens a second shop on the same account when the LINE user already owns one
+    ok 5 - opens a second shop on the same account when the LINE user already owns one
+      ---
+      duration_ms: 0.187625
+      type: 'test'
+      ...
+    # Subtest: fails the fence rather than creating half an account from a corrupt row
+    ok 6 - fails the fence rather than creating half an account from a corrupt row
+      ---
+      duration_ms: 0.5665
+      type: 'test'
+      ...
+    1..6
+ok 31 - ProvisionSignupUseCase — LINE-first source
+  ---
+  duration_ms: 2.6115
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — who counts as the operator
+    # Subtest: prefers an explicit caller, then the approving admin, then any platform operator
+    ok 1 - prefers an explicit caller, then the approving admin, then any platform operator
+      ---
+      duration_ms: 0.457875
+      type: 'test'
+      ...
+    # Subtest: refuses by name instead of letting a foreign key reject the request id
+    ok 2 - refuses by name instead of letting a foreign key reject the request id
+      ---
+      duration_ms: 0.2015
+      type: 'test'
+      ...
+    # Subtest: records what actually decided the shop should exist
+    ok 3 - records what actually decided the shop should exist
+      ---
+      duration_ms: 0.448958
+      type: 'test'
+      ...
+    1..3
+ok 32 - ProvisionSignupUseCase — who counts as the operator
+  ---
+  duration_ms: 1.247458
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — recovering an already-created company
+    # Subtest: gives a recovered web shop the term onboarding would have written
+    ok 1 - gives a recovered web shop the term onboarding would have written
+      ---
+      duration_ms: 0.214666
+      type: 'test'
+      ...
+    # Subtest: leaves a recovered LINE shop to its own trial guards
+    ok 2 - leaves a recovered LINE shop to its own trial guards
+      ---
+      duration_ms: 0.257209
+      type: 'test'
+      ...
+    1..2
+ok 33 - ProvisionSignupUseCase — recovering an already-created company
+  ---
+  duration_ms: 0.582708
+  type: 'suite'
+  ...
+# Subtest: P10-L: the one push a new shop is owed (§3.4/§7)
+    # Subtest: queues it on the normal finish, and names the attach case correctly
+    ok 1 - queues it on the normal finish, and names the attach case correctly
+      ---
+      duration_ms: 0.510583
+      type: 'test'
+      ...
+    # Subtest: queues it from the stranded-row close-out too, so a dead process costs nobody their message
+    ok 2 - queues it from the stranded-row close-out too, so a dead process costs nobody their message
+      ---
+      duration_ms: 0.127208
+      type: 'test'
+      ...
+    # Subtest: stays silent for a web application, which has an email rail of its own
+    ok 3 - stays silent for a web application, which has an email rail of its own
+      ---
+      duration_ms: 0.216834
+      type: 'test'
+      ...
+    1..3
+ok 34 - P10-L: the one push a new shop is owed (§3.4/§7)
+  ---
+  duration_ms: 0.973917
+  type: 'suite'
+  ...
+# Subtest: ProvisionSignupUseCase — fencing
+    # Subtest: reads back the winner instead of provisioning twice
+    ok 1 - reads back the winner instead of provisioning twice
+      ---
+      duration_ms: 0.141958
+      type: 'test'
+      ...
+    # Subtest: releases the fence with a bounded code when onboarding fails
+    ok 2 - releases the fence with a bounded code when onboarding fails
+      ---
+      duration_ms: 0.301541
+      type: 'test'
+      ...
+    # Subtest: carries line_identity_already_linked into failureCode unchanged
+    ok 3 - carries line_identity_already_linked into failureCode unchanged
+      ---
+      duration_ms: 0.161875
+      type: 'test'
+      ...
+    # Subtest: carries line_identity_disabled into failureCode unchanged
+    ok 4 - carries line_identity_disabled into failureCode unchanged
+      ---
+      duration_ms: 0.111667
+      type: 'test'
+      ...
+    # Subtest: raises the ops alert when the fence is taken from an abandoned attempt
+    ok 5 - raises the ops alert when the fence is taken from an abandoned attempt
+      ---
+      duration_ms: 0.150709
+      type: 'test'
+      ...
+    # Subtest: gives the new LINE owner the phone number they typed at signup
+    ok 6 - gives the new LINE owner the phone number they typed at signup
+      ---
+      duration_ms: 0.186958
+      type: 'test'
+      ...
+    # Subtest: sends no owner payload at all when the optional phone was left blank
+    ok 7 - sends no owner payload at all when the optional phone was left blank
+      ---
+      duration_ms: 0.178917
+      type: 'test'
+      ...
+    # Subtest: raises nothing on a provisioning that simply works
+    ok 8 - raises nothing on a provisioning that simply works
+      ---
+      duration_ms: 0.191208
+      type: 'test'
+      ...
+    1..8
+ok 35 - ProvisionSignupUseCase — fencing
+  ---
+  duration_ms: 1.585334
+  type: 'suite'
+  ...
+# Subtest: CreateCompanyOnboardingUseCase
+    # Subtest: throws ConflictException when username already exists
+    ok 1 - throws ConflictException when username already exists
+      ---
+      duration_ms: 0.936416
+      type: 'test'
+      ...
+    # Subtest: throws ConflictException when company name already exists
+    ok 2 - throws ConflictException when company name already exists
+      ---
+      duration_ms: 0.182667
+      type: 'test'
+      ...
+    # Subtest: throws NotFoundException when OWNER role is not seeded
+    ok 3 - throws NotFoundException when OWNER role is not seeded
+      ---
+      duration_ms: 0.147625
+      type: 'test'
+      ...
+    # Subtest: returns result with temporaryPassword and correct structure
+    ok 4 - returns result with temporaryPassword and correct structure
+      ---
+      duration_ms: 80.226542
+      type: 'test'
+      ...
+    # Subtest: rolls the whole seed back when one of the three entitlement writes fails
+    ok 5 - rolls the whole seed back when one of the three entitlement writes fails
+      ---
+      duration_ms: 83.655708
+      type: 'test'
+      ...
+    # Subtest: audit log metadataJson does NOT contain temporaryPassword
+    ok 6 - audit log metadataJson does NOT contain temporaryPassword
+      ---
+      duration_ms: 34.71525
+      type: 'test'
+      ...
+    # Subtest: does not create a completed run or success audit when chart bootstrap fails
+    ok 7 - does not create a completed run or success audit when chart bootstrap fails
+      ---
+      duration_ms: 27.954917
+      type: 'test'
+      ...
+    # Subtest: creates the head office as a VAT establishment and a version-0 VAT state
+    ok 8 - creates the head office as a VAT establishment and a version-0 VAT state
+      ---
+      duration_ms: 30.937959
+      type: 'test'
+      ...
+    # Subtest: modulePackage 'starter' seeds exactly the admin console starter preset
+    ok 9 - modulePackage 'starter' seeds exactly the admin console starter preset
+      ---
+      duration_ms: 31.020791
+      type: 'test'
+      ...
+    # Subtest: records the admin answer as the first VAT fact, and records nothing when unanswered
+    ok 10 - records the admin answer as the first VAT fact, and records nothing when unanswered
+      ---
+      duration_ms: 90.0265
+      type: 'test'
+      ...
+    # Subtest: refuses an effective date that is not a civil date
+    ok 11 - refuses an effective date that is not a civil date
+      ---
+      duration_ms: 0.16125
+      type: 'test'
+      ...
+    # Subtest: enables Thai tax accounting and seeds a resolvable tax-code profile for a fresh company
+    ok 12 - enables Thai tax accounting and seeds a resolvable tax-code profile for a fresh company
+      ---
+      duration_ms: 30.560542
+      type: 'test'
+      ...
+    1..12
+ok 36 - CreateCompanyOnboardingUseCase
+  ---
+  duration_ms: 411.271541
+  type: 'suite'
+  ...
+# Subtest: P10-0 external signup core
+    # Subtest: normalizes identity fields before a stable payload hash and pins recovery transitions
+    ok 1 - normalizes identity fields before a stable payload hash and pins recovery transitions
+      ---
+      duration_ms: 0.417417
+      type: 'test'
+      ...
+    # Subtest: replays the same external id/payload and rejects a conflicting payload
+    ok 2 - replays the same external id/payload and rejects a conflicting payload
+      ---
+      duration_ms: 0.632333
+      type: 'test'
+      ...
+    # Subtest: serializes concurrent same-request retries into exactly one durable request
+    ok 3 - serializes concurrent same-request retries into exactly one durable request
+      ---
+      duration_ms: 0.726167
+      type: 'test'
+      ...
+    # Subtest: records state evidence without copying signup PII into audit or outbox
+    ok 4 - records state evidence without copying signup PII into audit or outbox
+      ---
+      duration_ms: 0.337917
+      type: 'test'
+      ...
+    # Subtest: elects one provisioning caller and makes successful completion idempotent
+    ok 5 - elects one provisioning caller and makes successful completion idempotent
+      ---
+      duration_ms: 0.742125
+      type: 'test'
+      ...
+    # Subtest: recovers EMAIL_FAILED and PROVISIONING_FAILED with a fresh fenced attempt
+    ok 6 - recovers EMAIL_FAILED and PROVISIONING_FAILED with a fresh fenced attempt
+      ---
+      duration_ms: 0.48875
+      type: 'test'
+      ...
+    1..6
+ok 37 - P10-0 external signup core
+  ---
+  duration_ms: 3.505792
+  type: 'suite'
+  ...
+# Subtest: CreateCompanyOnboardingUseCase attachExistingOwner
+    # Subtest: rejects when the username does not exist
+    ok 1 - rejects when the username does not exist
+      ---
+      duration_ms: 0.188
+      type: 'test'
+      ...
+    # Subtest: rejects when the existing user is not ACTIVE
+    ok 2 - rejects when the existing user is not ACTIVE
+      ---
+      duration_ms: 0.121
+      type: 'test'
+      ...
+    # Subtest: creates membership only — no new user, credential, or temporary password
+    ok 3 - creates membership only — no new user, credential, or temporary password
+      ---
+      duration_ms: 2.595375
+      type: 'test'
+      ...
+    # Subtest: adopts the phone from the application when the account has none
+    ok 4 - adopts the phone from the application when the account has none
+      ---
+      duration_ms: 3.141333
+      type: 'test'
+      ...
+    # Subtest: never overwrites a phone the account already carries
+    ok 5 - never overwrites a phone the account already carries
+      ---
+      duration_ms: 2.401167
+      type: 'test'
+      ...
+    # Subtest: writes nothing when the optional phone was left blank
+    ok 6 - writes nothing when the optional phone was left blank
+      ---
+      duration_ms: 2.128584
+      type: 'test'
+      ...
+    # Subtest: skips the LINE link QR when the owner already has an ACTIVE LINE identity
+    ok 7 - skips the LINE link QR when the owner already has an ACTIVE LINE identity
+      ---
+      duration_ms: 3.014875
+      type: 'test'
+      ...
+    # Subtest: still issues the LINE link QR when the owner has no LINE identity yet
+    ok 8 - still issues the LINE link QR when the owner has no LINE identity yet
+      ---
+      duration_ms: 2.579708
+      type: 'test'
+      ...
+    1..8
+ok 38 - CreateCompanyOnboardingUseCase attachExistingOwner
+  ---
+  duration_ms: 16.32975
+  type: 'suite'
+  ...
+# Subtest: CreateCompanyOnboardingUseCase tax identity capture
+    # Subtest: stores the tax id as a versioned initial capture, not a bare column
+    ok 1 - stores the tax id as a versioned initial capture, not a bare column
+      ---
+      duration_ms: 28.52025
+      type: 'test'
+      ...
+    # Subtest: accepts the printed form and stores digits, so both entry points agree on the value
+    ok 2 - accepts the printed form and stores digits, so both entry points agree on the value
+      ---
+      duration_ms: 28.332791
+      type: 'test'
+      ...
+    # Subtest: leaves the company untouched when the admin does not have the number
+    ok 3 - leaves the company untouched when the admin does not have the number
+      ---
+      duration_ms: 28.371666
+      type: 'test'
+      ...
+    # Subtest: refuses a number that is not 13 digits rather than storing a partial one
+    ok 4 - refuses a number that is not 13 digits rather than storing a partial one
+      ---
+      duration_ms: 0.169667
+      type: 'test'
+      ...
+    1..4
+ok 39 - CreateCompanyOnboardingUseCase tax identity capture
+  ---
+  duration_ms: 85.494958
+  type: 'suite'
+  ...
+# Subtest: CreateCompanyOnboardingUseCase PDPA tenant tripwire
+    # Subtest: alerts the dev team when a CLINIC tenant onboards
+    ok 1 - alerts the dev team when a CLINIC tenant onboards
+      ---
+      duration_ms: 28.011875
+      type: 'test'
+      ...
+    # Subtest: alerts the dev team when a WELLNESS_SPA tenant onboards
+    ok 2 - alerts the dev team when a WELLNESS_SPA tenant onboards
+      ---
+      duration_ms: 28.755042
+      type: 'test'
+      ...
+    # Subtest: alerts the dev team when a MEDICAL_RETAIL tenant onboards
+    ok 3 - alerts the dev team when a MEDICAL_RETAIL tenant onboards
+      ---
+      duration_ms: 29.736708
+      type: 'test'
+      ...
+    # Subtest: stays silent for a RETAIL tenant
+    ok 4 - stays silent for a RETAIL tenant
+      ---
+      duration_ms: 28.2705
+      type: 'test'
+      ...
+    # Subtest: stays silent for a TRADING tenant
+    ok 5 - stays silent for a TRADING tenant
+      ---
+      duration_ms: 29.567459
+      type: 'test'
+      ...
+    # Subtest: stays silent for a SERVICE tenant
+    ok 6 - stays silent for a SERVICE tenant
+      ---
+      duration_ms: 28.627958
+      type: 'test'
+      ...
+    # Subtest: stays silent for a OTHER tenant
+    ok 7 - stays silent for a OTHER tenant
+      ---
+      duration_ms: 28.085291
+      type: 'test'
+      ...
+    # Subtest: persists the declared category on the company and the audit row
+    ok 8 - persists the declared category on the company and the audit row
+      ---
+      duration_ms: 28.960291
+      type: 'test'
+      ...
+    1..8
+ok 40 - CreateCompanyOnboardingUseCase PDPA tenant tripwire
+  ---
+  duration_ms: 230.337875
+  type: 'suite'
+  ...
+# Subtest: CreateCompanyOnboardingUseCase P29 default term
+    # Subtest: gives every admin-created company STARTER for exactly 30 days
+    ok 1 - gives every admin-created company STARTER for exactly 30 days
+      ---
+      duration_ms: 28.160542
+      type: 'test'
+      ...
+    # Subtest: creates a LINE-first owner with no username, no credential and no temporary password
+    ok 2 - creates a LINE-first owner with no username, no credential and no temporary password
+      ---
+      duration_ms: 2.006083
+      type: 'test'
+      ...
+    # Subtest: re-points a stale UNLINKED identity instead of creating a second one
+    ok 3 - re-points a stale UNLINKED identity instead of creating a second one
+      ---
+      duration_ms: 0.822834
+      type: 'test'
+      ...
+    # Subtest: refuses BY NAME when the identity still belongs to somebody
+    ok 4 - refuses BY NAME when the identity still belongs to somebody
+      ---
+      duration_ms: 0.220542
+      type: 'test'
+      ...
+    # Subtest: names the conflict when a concurrent approval takes the slot mid-transaction
+    ok 5 - names the conflict when a concurrent approval takes the slot mid-transaction
+      ---
+      duration_ms: 0.088875
+      type: 'test'
+      ...
+    # Subtest: creates a LINE-only owner the admin console opens, with the QR as the whole handover
+    ok 6 - creates a LINE-only owner the admin console opens, with the QR as the whole handover
+      ---
+      duration_ms: 2.069042
+      type: 'test'
+      ...
+    # Subtest: leaves the password owner shape untouched in every byte
+    ok 7 - leaves the password owner shape untouched in every byte
+      ---
+      duration_ms: 28.974916
+      type: 'test'
+      ...
+    # Subtest: writes the preset a provisioning caller named instead of the console default
+    ok 8 - writes the preset a provisioning caller named instead of the console default
+      ---
+      duration_ms: 28.291875
+      type: 'test'
+      ...
+    # Subtest: a failed term write NEVER fails the onboarding
+    ok 9 - a failed term write NEVER fails the onboarding
+      ---
+      duration_ms: 28.891333
+      type: 'test'
+      ...
+    1..9
+ok 41 - CreateCompanyOnboardingUseCase P29 default term
+  ---
+  duration_ms: 119.746167
+  type: 'suite'
+  ...
+# Subtest: GetCompanyPlanTermUseCase
+    # Subtest: returns { term: null } for a grandfathered company instead of 404
+    ok 1 - returns { term: null } for a grandfathered company instead of 404
+      ---
+      duration_ms: 1.707833
+      type: 'test'
+      ...
+    # Subtest: computes derivedState and daysLeft on read
+    ok 2 - computes derivedState and daysLeft on read
+      ---
+      duration_ms: 0.593875
+      type: 'test'
+      ...
+    1..2
+ok 42 - GetCompanyPlanTermUseCase
+  ---
+  duration_ms: 2.986709
+  type: 'suite'
+  ...
+# Subtest: SetCompanyPlanTermUseCase
+    # Subtest: 404s on an unknown company
+    ok 1 - 404s on an unknown company
+      ---
+      duration_ms: 1.017167
+      type: 'test'
+      ...
+    # Subtest: rejects an unknown tierKey
+    ok 2 - rejects an unknown tierKey
+      ---
+      duration_ms: 0.316833
+      type: 'test'
+      ...
+    # Subtest: rejects non-positive and fractional limits
+    ok 3 - rejects non-positive and fractional limits
+      ---
+      duration_ms: 0.768333
+      type: 'test'
+      ...
+    # Subtest: creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+    ok 4 - creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+      ---
+      duration_ms: 0.427375
+      type: 'test'
+      ...
+    # Subtest: creating defaults to 30 days from now when no dates are given
+    ok 5 - creating defaults to 30 days from now when no dates are given
+      ---
+      duration_ms: 0.342084
+      type: 'test'
+      ...
+    # Subtest: updating limits NEVER moves the dates
+    ok 6 - updating limits NEVER moves the dates
+      ---
+      duration_ms: 0.447458
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with before/after values
+    ok 7 - audits CRITICAL with before/after values
+      ---
+      duration_ms: 0.541834
+      type: 'test'
+      ...
+    # Subtest: records `from: null` when the row is created
+    ok 8 - records `from: null` when the row is created
+      ---
+      duration_ms: 0.540583
+      type: 'test'
+      ...
+    1..8
+ok 43 - SetCompanyPlanTermUseCase
+  ---
+  duration_ms: 5.056125
+  type: 'suite'
+  ...
+# Subtest: applyPlanTermPreset
+    # Subtest: fills the row from the frozen catalog and is a no-op on an existing row
+    ok 1 - fills the row from the frozen catalog and is a no-op on an existing row
+      ---
+      duration_ms: 0.387541
+      type: 'test'
+      ...
+    # Subtest: carries the LINE-first trial preset without opening it to the public form
+    ok 2 - carries the LINE-first trial preset without opening it to the public form
+      ---
+      duration_ms: 0.289084
+      type: 'test'
+      ...
+    1..2
+ok 44 - applyPlanTermPreset
+  ---
+  duration_ms: 0.789333
+  type: 'suite'
+  ...
+# Subtest: RenewCompanyPlanTermUseCase
+    # Subtest: 404s when there is no term to renew
+    ok 1 - 404s when there is no term to renew
+      ---
+      duration_ms: 0.493333
+      type: 'test'
+      ...
+    # Subtest: BEFORE expiry: extends from the existing end date, not from now
+    ok 2 - BEFORE expiry: extends from the existing end date, not from now
+      ---
+      duration_ms: 0.307792
+      type: 'test'
+      ...
+    # Subtest: AFTER expiry: extends from now, never back-dated into the past
+    ok 3 - AFTER expiry: extends from now, never back-dated into the past
+      ---
+      duration_ms: 0.179792
+      type: 'test'
+      ...
+    # Subtest: re-activates a company the SWEEP disabled and clears termDisabledAt
+    ok 4 - re-activates a company the SWEEP disabled and clears termDisabledAt
+      ---
+      duration_ms: 0.232
+      type: 'test'
+      ...
+    # Subtest: an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+    ok 5 - an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+      ---
+      duration_ms: 0.139666
+      type: 'test'
+      ...
+    # Subtest: never touches a SUSPENDED company status
+    ok 6 - never touches a SUSPENDED company status
+      ---
+      duration_ms: 0.128333
+      type: 'test'
+      ...
+    # Subtest: resets the whole ladder so the next term can warn again
+    ok 7 - resets the whole ladder so the next term can warn again
+      ---
+      duration_ms: 0.133417
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with the date move and the renew count
+    ok 8 - audits CRITICAL with the date move and the renew count
+      ---
+      duration_ms: 0.233459
+      type: 'test'
+      ...
+    # Subtest: is idempotent on requestId: a replayed renew writes nothing
+    ok 9 - is idempotent on requestId: a replayed renew writes nothing
+      ---
+      duration_ms: 0.213166
+      type: 'test'
+      ...
+    # Subtest: rejects a non-positive day count
+    ok 10 - rejects a non-positive day count
+      ---
+      duration_ms: 0.139042
+      type: 'test'
+      ...
+    1..10
+ok 45 - RenewCompanyPlanTermUseCase
+  ---
+  duration_ms: 2.382708
+  type: 'suite'
+  ...
+# Subtest: GetPlanTermNoticeUseCase
+    # Subtest: returns null for a company with no term row
+    ok 1 - returns null for a company with no term row
+      ---
+      duration_ms: 0.1575
+      type: 'test'
+      ...
+    # Subtest: marks the OWNER, and only the OWNER
+    ok 2 - marks the OWNER, and only the OWNER
+      ---
+      duration_ms: 0.121708
+      type: 'test'
+      ...
+    # Subtest: carries state and deadline but never limits or tier
+    ok 3 - carries state and deadline but never limits or tier
+      ---
+      duration_ms: 0.104792
+      type: 'test'
+      ...
+    1..3
+ok 46 - GetPlanTermNoticeUseCase
+  ---
+  duration_ms: 0.487708
+  type: 'suite'
+  ...
+# Subtest: effective monthly slip limit (P10-L §15.1)
+    # Subtest: grandfathers a company with no plan term row — unlimited, never blocked
+    ok 1 - grandfathers a company with no plan term row — unlimited, never blocked
+      ---
+      duration_ms: 0.854
+      type: 'test'
+      ...
+    # Subtest: is the tier ceiling when the term carries no warm-up
+    ok 2 - is the tier ceiling when the term carries no warm-up
+      ---
+      duration_ms: 0.178166
+      type: 'test'
+      ...
+    # Subtest: grants the stored trial allowance immediately despite a legacy ten-read warmup
+    ok 3 - grants the stored trial allowance immediately despite a legacy ten-read warmup
+      ---
+      duration_ms: 0.239375
+      type: 'test'
+      ...
+    # Subtest: never RAISES the tier ceiling: a warm-up limit above the tier is ignored
+    ok 4 - never RAISES the tier ceiling: a warm-up limit above the tier is ignored
+      ---
+      duration_ms: 0.078958
+      type: 'test'
+      ...
+    # Subtest: preserves the non-trial warmup and its half-open boundary
+    ok 5 - preserves the non-trial warmup and its half-open boundary
+      ---
+      duration_ms: 0.082542
+      type: 'test'
+      ...
+    # Subtest: honors an explicit admin monthly limit even below the legacy warmup
+    ok 6 - honors an explicit admin monthly limit even below the legacy warmup
+      ---
+      duration_ms: 0.063583
+      type: 'test'
+      ...
+    # Subtest: ignores a half-configured warm-up rather than guessing the missing half
+    ok 7 - ignores a half-configured warm-up rather than guessing the missing half
+      ---
+      duration_ms: 0.072334
+      type: 'test'
+      ...
+    1..7
+ok 47 - effective monthly slip limit (P10-L §15.1)
+  ---
+  duration_ms: 2.606459
+  type: 'suite'
+  ...
+# Subtest: receipt quota copy (spec §7)
+    # Subtest: carries the ACTUAL ceiling, not a hard-coded 15
+    ok 1 - carries the ACTUAL ceiling, not a hard-coded 15
+      ---
+      duration_ms: 0.621666
+      type: 'test'
+      ...
+    # Subtest: says the §7 sentence for the trial, and the follow-up points at the package-change command
+    ok 2 - says the §7 sentence for the trial, and the follow-up points at the package-change command
+      ---
+      duration_ms: 0.179958
+      type: 'test'
+      ...
+    # Subtest: says "ช่วงทดลอง" for the free trial and for nobody else
+    ok 3 - says "ช่วงทดลอง" for the free trial and for nobody else
+      ---
+      duration_ms: 0.429333
+      type: 'test'
+      ...
+    # Subtest: numbers the trial counter line n of limit
+    ok 4 - numbers the trial counter line n of limit
+      ---
+      duration_ms: 0.120542
+      type: 'test'
+      ...
+    # Subtest: counts AI IMAGE READS, never receipts — the ceiling charges both
+    ok 5 - counts AI IMAGE READS, never receipts — the ceiling charges both
+      ---
+      duration_ms: 0.1775
+      type: 'test'
+      ...
+    1..5
+ok 48 - receipt quota copy (spec §7)
+  ---
+  duration_ms: 1.9615
+  type: 'suite'
+  ...
+# Subtest: printed ceiling fallback
+    # Subtest: prefers the live plan limit
+    ok 1 - prefers the live plan limit
+      ---
+      duration_ms: 0.112917
+      type: 'test'
+      ...
+    # Subtest: falls back to the tier preset when the term row is gone or zeroed
+    ok 2 - falls back to the tier preset when the term row is gone or zeroed
+      ---
+      duration_ms: 0.086334
+      type: 'test'
+      ...
+    # Subtest: gives up on the number rather than inventing one
+    ok 3 - gives up on the number rather than inventing one
+      ---
+      duration_ms: 0.044
+      type: 'test'
+      ...
+    # Subtest: drops the number from the copy instead of printing zero
+    ok 4 - drops the number from the copy instead of printing zero
+      ---
+      duration_ms: 0.163667
+      type: 'test'
+      ...
+    1..4
+ok 49 - printed ceiling fallback
+  ---
+  duration_ms: 0.497292
+  type: 'suite'
+  ...
+# Subtest: both repo catalogs match the owner poster and actual monthly tier limits
+ok 50 - both repo catalogs match the owner poster and actual monthly tier limits
+  ---
+  duration_ms: 2.087792
+  type: 'test'
+  ...
+# Subtest: existing starter grants the documented seven menu entries and exact child permissions
+ok 51 - existing starter grants the documented seven menu entries and exact child permissions
+  ---
+  duration_ms: 0.171375
+  type: 'test'
+  ...
+# Subtest: self-signup uses the existing trial tier and fifteen from day one
+ok 52 - self-signup uses the existing trial tier and fifteen from day one
+  ---
+  duration_ms: 0.077791
+  type: 'test'
+  ...
+# Subtest: feature catalog shape (spec §6.1)
+    # Subtest: freezes 18 top-level keys, 16 of them sellable
+    ok 1 - freezes 18 top-level keys, 16 of them sellable
+      ---
+      duration_ms: 1.652041
+      type: 'test'
+      ...
+    # Subtest: marks exactly the platform-invariant keys non-sellable
+    ok 2 - marks exactly the platform-invariant keys non-sellable
+      ---
+      duration_ms: 0.664459
+      type: 'test'
+      ...
+    1..2
+ok 53 - feature catalog shape (spec §6.1)
+  ---
+  duration_ms: 3.015791
+  type: 'suite'
+  ...
+# Subtest: FEATURE_DEPENDENCIES (spec:264)
+    # Subtest: declares exactly one top-level dependency plus the two structural procurement children
+    ok 1 - declares exactly one top-level dependency plus the two structural procurement children
+      ---
+      duration_ms: 0.339375
+      type: 'test'
+      ...
+    # Subtest: contains no reimbursement ⇒ expenses and no thai_tax ⇒ double_entry_ledger
+    ok 2 - contains no reimbursement ⇒ expenses and no thai_tax ⇒ double_entry_ledger
+      ---
+      duration_ms: 0.192792
+      type: 'test'
+      ...
+    # Subtest: references only keys that exist in the catalog
+    ok 3 - references only keys that exist in the catalog
+      ---
+      duration_ms: 0.194417
+      type: 'test'
+      ...
+    # Subtest: never makes a platform-invariant key a prerequisite or a dependent
+    ok 4 - never makes a platform-invariant key a prerequisite or a dependent
+      ---
+      duration_ms: 0.096208
+      type: 'test'
+      ...
+    # Subtest: has no dependency cycle
+    ok 5 - has no dependency cycle
+      ---
+      duration_ms: 0.163833
+      type: 'test'
+      ...
+    # Subtest: lists dependents for a cascade preview in canonical order
+    ok 6 - lists dependents for a cascade preview in canonical order
+      ---
+      duration_ms: 0.433916
+      type: 'test'
+      ...
+    1..6
+ok 54 - FEATURE_DEPENDENCIES (spec:264)
+  ---
+  duration_ms: 1.68725
+  type: 'suite'
+  ...
+# Subtest: unmetFeatureDependencies — both directions
+    # Subtest: flags a child enabled without its prerequisite
+    ok 1 - flags a child enabled without its prerequisite
+      ---
+      duration_ms: 0.145042
+      type: 'test'
+      ...
+    # Subtest: flags the same pair when the parent is being turned off under an active child
+    ok 2 - flags the same pair when the parent is being turned off under an active child
+      ---
+      duration_ms: 0.639416
+      type: 'test'
+      ...
+    # Subtest: accepts a consistent set and an all-off set
+    ok 3 - accepts a consistent set and an all-off set
+      ---
+      duration_ms: 0.044333
+      type: 'test'
+      ...
+    # Subtest: reports every violation, sorted, not just the first
+    ok 4 - reports every violation, sorted, not just the first
+      ---
+      duration_ms: 0.294833
+      type: 'test'
+      ...
+    1..4
+ok 55 - unmetFeatureDependencies — both directions
+  ---
+  duration_ms: 1.197333
+  type: 'suite'
+  ...
+# Subtest: LINE capability groups
+    # Subtest: advertises every group when features and permissions are complete (AC-4)
+    ok 1 - advertises every group when features and permissions are complete (AC-4)
+      ---
+      duration_ms: 0.710958
+      type: 'test'
+      ...
+    # Subtest: hides every switched-off capability on an expenses-only company (AC-1)
+    ok 2 - hides every switched-off capability on an expenses-only company (AC-1)
+      ---
+      duration_ms: 0.303625
+      type: 'test'
+      ...
+    # Subtest: treats a legacy company (entitled === null) as fully entitled (AC-5)
+    ok 3 - treats a legacy company (entitled === null) as fully entitled (AC-5)
+      ---
+      duration_ms: 0.13975
+      type: 'test'
+      ...
+    # Subtest: hides the sales line when sales is off and crm is on (AC-6)
+    ok 4 - hides the sales line when sales is off and crm is on (AC-6)
+      ---
+      duration_ms: 0.079792
+      type: 'test'
+      ...
+    # Subtest: advertises nothing to a caller with no permissions (AC-7)
+    ok 5 - advertises nothing to a caller with no permissions (AC-7)
+      ---
+      duration_ms: 0.048167
+      type: 'test'
+      ...
+    # Subtest: groups a tool by its feature keys, never by a secondary business subject
+    ok 6 - groups a tool by its feature keys, never by a secondary business subject
+      ---
+      duration_ms: 0.031833
+      type: 'test'
+      ...
+    # Subtest: keeps every group backed by a real tool (AC-11)
+    ok 7 - keeps every group backed by a real tool (AC-11)
+      ---
+      duration_ms: 0.100083
+      type: 'test'
+      ...
+    # Subtest: describes a caller whose only reach is reimbursements or workflow tasks
+    ok 8 - describes a caller whose only reach is reimbursements or workflow tasks
+      ---
+      duration_ms: 0.045625
+      type: 'test'
+      ...
+    # Subtest: advertises no capability for a tool no group owns, rather than widening a neighbour
+    ok 9 - advertises no capability for a tool no group owns, rather than widening a neighbour
+      ---
+      duration_ms: 0.030209
+      type: 'test'
+      ...
+    1..9
+ok 56 - LINE capability groups
+  ---
+  duration_ms: 1.569333
+  type: 'suite'
+  ...
+# Subtest: LINE receipt-capture claim
+    # Subtest: follows the intake path permissions, not the capture tool (AC-3)
+    ok 1 - follows the intake path permissions, not the capture tool (AC-3)
+      ---
+      duration_ms: 0.038292
+      type: 'test'
+      ...
+    # Subtest: disappears when the expenses.upload submenu is off, with expenses still on (AC-2)
+    ok 2 - disappears when the expenses.upload submenu is off, with expenses still on (AC-2)
+      ---
+      duration_ms: 0.045667
+      type: 'test'
+      ...
+    # Subtest: stays fail-open for a legacy company
+    ok 3 - stays fail-open for a legacy company
+      ---
+      duration_ms: 0.017625
+      type: 'test'
+      ...
+    1..3
+ok 57 - LINE receipt-capture claim
+  ---
+  duration_ms: 0.192791
+  type: 'suite'
+  ...
+1..57
+# tests 292
+# suites 54
+# pass 292
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2272.728958

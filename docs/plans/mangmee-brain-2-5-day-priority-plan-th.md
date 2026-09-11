@@ -664,7 +664,7 @@ Quality ต้องไม่ตกหมายถึง “ลดจำนว�
 | P23 | สมองมั่งมีเต็ม + คลังความรู้ | `mangmee-accounting-tax-knowledge-spec-th` + ชุด brain specs ปัจจุบัน | READY product-help P23-0/1; tax publish blocked |
 | P24 | Growth/UX รอบเต็ม | `mangmee-growth-ux-full-pass-spec-th` (+`mobile-first-launch-features-spec`, `mangmee-system-ui-alignment-spec`) | READY baseline/UX; ไม่พึ่ง Billing |
 | P25 | Scale/load/DR | `production-a5-v2-spec` (+readiness matrix), `uat-environment-spec` | execution-ready เมื่อมี cohort workload/SLO |
-| P26 | Billing/Subscription (จำกัดใบเสร็จ) | `mangmee-billing-subscription-spec-th` | ✅ กลไกครบ 2026-08-26 — **ตารางราคา §8 รอ Owner อนุมัติก่อน implement** |
+| P26 | Billing/Subscription (จำกัดใบเสร็จ) | `mangmee-billing-subscription-spec-th` | **Spec updated 2026-09-08: Stripe card auto-renew; ราคา/trial ตาม §8, policy ที่เหลือ §10; ยังไม่ implement/เปิดขาย** |
 | P27 | สมุดรายรับ–รายจ่าย | `mangmee-income-expense-ledger-spec-th` v1.2 | Phase 0–2 merged integration; Phase 3 branch-only ณ audit |
 | P28 | ซื้อ-จ่ายเงิน MVP + ใบลดหนี้ฝั่งซื้อ | `procurement-supplier-ap-spec` (engine) + `mangmee-purchase-to-pay-mvp-spec-th` (MVP/UX/CN) | BLOCKED Owner spec §10 ข้อ 2–5 |
 
@@ -809,8 +809,8 @@ P14 คือรากของโมเดล subscribe ตามการต�
 1. **Spec + pricing ที่ Owner อนุมัติ:** นิยาม package (ฟรีได้กี่ใบ/เดือน, จ่ายแล้วได้อะไร), นิยาม “1 ใบ” = document-work-unit ที่ไม่นับ retry ซ้ำ (หัวข้อ 13.8 ข้อ 3), นโยบายลูกค้าเดิม/grandfathered
 2. **Meter จริงจาก P14:** durable per-company meter + แสดงยอดใช้/เพดาน/วัน reset + เตือน 80%/100% แก่ Owner
 3. **Package → entitlement จริง:** ปิด `PLATFORM-01` — เลือกแพ็กเกจแล้วสิทธิ์ต้องตรงตาม snapshot ที่ versioned/audit ได้
-4. **ชำระเงินและต่ออายุ:** เลือก payment provider, subscribe/upgrade/renewal flow บนเว็บ, ใบเสร็จ/ใบกำกับภาษีของค่าบริการฝั่ง Mangmee เอง, การติดตามเมื่อจ่ายไม่สำเร็จ
-5. **Enforcement อ่อนโยน (ตาม 13.8 ข้อ 4):** โควตาเต็ม = AI หยุดอ่านใบใหม่จนต่ออายุ แต่ผู้ใช้ยังอัปโหลด/กรอกเองได้ และข้อมูลเดิมอ่านได้เสมอ — **ห้ามล็อกหรือลบเอกสารเดิมของลูกค้าเพราะไม่จ่าย**
+4. **ชำระเงินและต่ออายุ:** Owner เลือก **Stripe Payments + Billing + hosted Checkout / Customer Portal (2026-09-08)** ตาม [P26 F-BILL-3](../specs/mangmee-billing-subscription-spec-th.md#billing-stripe); signed webhook/invoice เป็นหลักฐานต่อสิทธิ์ต่อบริษัท, trial แยกจาก paid และยังไม่เปิดขาย. ตรวจราคา/availability/ข้อความใน `mangmee_web` พร้อมแอปก่อน LIVE; trial conversion/grace/cancellation/upgrade/refund/ภาษียังรอมติ §10
+5. **Enforcement อ่อนโยน (ตาม 13.8 ข้อ 4):** โควตา AI เต็มขณะที่บริษัทยังมีสิทธิ์ = หยุด AI อ่านใบใหม่ แต่ยังอัปโหลด/กรอกเอง/อ่านข้อมูลเดิมได้; ข้อมูลไม่ถูกลบ. การหมดอายุ term เป็นคนละเหตุ ใช้ P29; ไม่สมมติ free fallback หรือ grace ของ Stripe ก่อน Owner ตัดสินใจ
 6. **ควบคุมและถอยกลับ:** override รายบริษัท (audit ทุกครั้ง), kill switch ปิด enforcement ได้ภายใน 15 นาทีตามกติกา P3, product events: `quota_warning/quota_exhausted/subscribe_started/subscribe_succeeded`
 
 ห้ามทำ:

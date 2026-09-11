@@ -1,0 +1,9 @@
+{
+  "extends": "../../../apps/api/tsconfig.json",
+  "include": [
+    "../../../apps/api/src/**/*.ts"
+  ],
+  "exclude": [
+    "../../../apps/api/src/**/*.spec.ts"
+  ]
+}

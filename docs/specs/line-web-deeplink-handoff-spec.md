@@ -1,5 +1,9 @@
 # Feature: LINE → Web Deep-Link Session Handoff
 
+> **Billing/LINE correctness delta 2026-09-11:** [owned integration design](mangmee-owned-billing-integration-spec-th.md) and [GW evidence](../research/stripe-line-web-gap-closure-2026-09-11.md) supersede earlier PRO-free promotion/current-company fallback and auto-open handoff descriptions. Current trial is FREE_TRIAL_15; rich-menu promotion keeps paid unavailable. Expired recovery uses /renew with active membership and expiry marker; admin holds stay denied. LIFF waits for a gesture; webhook never silently routes selected expired B into active A. New Stripe billing purpose/Checkout remains unimplemented; no OA deployment in this audit.
+
+> **Billing recovery extension 2026-09-11 — DESIGN ONLY:** [LINE + web billing UI §2.2](mangmee-line-web-billing-ui-spec-th.md) reuse /l/<token>, hash-only/15-minute/single-use และ server-owned target. Billing link ในแชตเป็น generic LIFF entry; mint หลังพิสูจน์คนกด แล้ว consume ใน external browser. ปัจจุบัน exchange ยังปฏิเสธ non-ACTIVE ทั้งหมด: งานถัดไปเพิ่มเฉพาะ term-expiry recovery สำหรับ current OWNER และ target billing/renew ที่ allowlist โดยไม่ยก admin/security hold หรือขยาย business routes. Default handoff/start ยังใช้กติกาเดิม. พิสูจน์ตาม [LB02/LB05/LB09–LB11](../plans/mangmee-line-web-billing-ui-plan-th.md); ยัง NOT RUN.
+
 ## 1. Status
 
 - Roadmap/checklist item: closes the unimplemented half of `line-ai-channel-auth-spec.md` §5 "Alert to Web Detail" step 4 ("LINE opens web or LIFF-authenticated deep link").

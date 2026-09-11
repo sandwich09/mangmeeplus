@@ -1,0 +1,47 @@
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9776987Z apps/api test: Failed tests:
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9798941Z apps/api test: ✖ GW09 committed rich menu → signed webhook → deterministic reply (0.044463ms)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9818563Z apps/api test:   Error: ENOENT: no such file or directory, open 'scripts/line-oa/rich-menu-v2-ver2.manifest.json'
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9822250Z apps/api test:       at readFileSync (node:fs:440:20)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9823760Z apps/api test:       at SuiteContext.<anonymous> (/home/runner/work/mangmeeplus/mangmeeplus/apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts:1318:31)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9825321Z apps/api test:       at Suite.runInAsyncScope (node:async_hooks:214:14)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9826372Z apps/api test:       at Suite.createBuild (node:internal/test_runner/test:1402:13)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9827450Z apps/api test:       at new Suite (node:internal/test_runner/test:1393:28)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9828495Z apps/api test:       at Test.createSubtest (node:internal/test_runner/test:808:18)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9829679Z apps/api test:       at run (node:internal/test_runner/harness:302:28)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9830520Z apps/api test:       at test (node:internal/test_runner/harness:316:12)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9831989Z apps/api test:       at assert (/home/runner/work/mangmeeplus/mangmeeplus/apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts:1317:1)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9833865Z apps/api test:       at Object.<anonymous> (/home/runner/work/mangmeeplus/mangmeeplus/apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts:1370:2) {
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9835337Z apps/api test:     errno: -2,
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9835956Z apps/api test:     code: 'ENOENT',
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9836591Z apps/api test:     syscall: 'open',
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9837463Z apps/api test:     path: 'scripts/line-oa/rich-menu-v2-ver2.manifest.json'
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9838205Z apps/api test:   }
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9839187Z apps/api test: ✖ leaves no spec file unreferenced (29.298475ms)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9841226Z apps/api test:   AssertionError [ERR_ASSERTION]: these spec files never run — add them to an owned test runner (apps/api/package.json or the whole-chain catalog):
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9842623Z apps/api test:   common/security/liff-start-handoff.spec.ts
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9843392Z apps/api test:   + actual - expected
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9843917Z apps/api test:   
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9844414Z apps/api test:   + [
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9845118Z apps/api test:   +   'common/security/liff-start-handoff.spec.ts'
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9845805Z apps/api test:   + ]
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9846432Z apps/api test:   - []
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9846930Z apps/api test:   
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9848209Z apps/api test:       at TestContext.<anonymous> (/home/runner/work/mangmeeplus/mangmeeplus/apps/api/src/spec-suite-coverage.spec.ts:67:12)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9849890Z apps/api test:       at Test.runInAsyncScope (node:async_hooks:214:14)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9850934Z apps/api test:       at Test.run (node:internal/test_runner/test:1047:25)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9852131Z apps/api test:       at Suite.processPendingSubtests (node:internal/test_runner/test:744:18)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9853276Z apps/api test:       at Test.postRun (node:internal/test_runner/test:1173:19)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9854211Z apps/api test:       at Test.run (node:internal/test_runner/test:1101:12)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9855029Z apps/api test:       at async Promise.all (index 0)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9855913Z apps/api test:       at async Suite.run (node:internal/test_runner/test:1442:7)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9857115Z apps/api test:       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3) {
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9858283Z apps/api test:     generatedMessage: false,
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9858959Z apps/api test:     code: 'ERR_ASSERTION',
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9859931Z apps/api test:     actual: [ 'common/security/liff-start-handoff.spec.ts' ],
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9860750Z apps/api test:     expected: [],
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9861405Z apps/api test:     operator: 'deepStrictEqual',
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9862053Z apps/api test:     diff: 'simple'
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9862559Z apps/api test:   }
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9863588Z apps/api test: ✖ every spec file is wired into a package.json script (44.019295ms)
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9864422Z apps/api test:   '1 subtest failed'
+Typecheck and Test	Run pnpm test	2026-09-11T15:03:31.9952794Z apps/api test: Failed
