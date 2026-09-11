@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import { GetCrmCustomerUseCase } from '../../crm/application/use-cases/crm-customer.use-case';
 import type { AiSuggestionRecord } from '../domain/models/ai-draft.model';
@@ -12,6 +12,17 @@ import { buildSourceStateHash } from '../domain/logic/ai-draft-idempotency.logic
 export class SourceStateService {
   constructor(private readonly getCustomer: GetCrmCustomerUseCase) {}
 
+  async canRead(ctx: RequestContext, suggestion: AiSuggestionRecord): Promise<boolean> {
+    // A narrower current scope cannot read a historical aggregate from a wider/unknown scope.
+    if (ctx.scopes?.branchIds && (!Array.isArray(suggestion.sourceBranchIds)
+      || !suggestion.sourceBranchIds.every(id => ctx.scopes!.branchIds!.includes(id)))) return false;
+    if (suggestion.sourceModule === 'crm' && suggestion.sourceRecordId) {
+      try { return (await this.getCustomer.execute(ctx, suggestion.sourceRecordId)).projection === 'OPERATIONAL'; }
+      catch { return false; }
+    }
+    return true;
+  }
+
   async currentHash(ctx: RequestContext, suggestion: AiSuggestionRecord): Promise<string | undefined> {
     if (suggestion.sourceModule === 'crm' && suggestion.sourceRecordType === 'customer' && suggestion.sourceRecordId) {
       try {
@@ -20,7 +31,7 @@ export class SourceStateService {
         const c = result.customer;
         return buildSourceStateHash(['crm-customer', c.id, c.status, c.nextFollowUpAt ?? '']);
       } catch {
-        return undefined; // cannot read now — do not claim a change
+        throw new ForbiddenException('Source is no longer readable');
       }
     }
     return undefined;

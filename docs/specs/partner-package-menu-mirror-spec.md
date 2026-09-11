@@ -165,6 +165,8 @@ toggleMenu(state, binding, next) -> changes: Array<{featureKey, enabled}>
 
 กด preset = เตรียมค่าลงสถานะที่ยังไม่บันทึก (ไม่ยิง API ทันที) แล้วผู้ใช้ปรับต่อได้
 
+คำตัดสินเจ้าของ 2026-09-11: “เริ่มต้น” หมายถึง preset 7 เมนูนี้เสมอ แยกจากแพ็กเกจราคา บริษัทใหม่ที่ไม่ได้ระบุ preset ใช้ starter; การเปลี่ยนราคา/อายุไม่เปลี่ยนสิทธิ์ และบริษัทเดิมเก็บสิทธิ์เดิมไว้ ดู [Starter QA fixes](starter-web-qa-fixes-spec.md)
+
 Preset เป็น data contract แบบ explicit: `applyPreset` เขียนแถวให้ทุก entitlement key และเขียน key ที่ไม่อยู่ใน preset เป็น `false` จึงต้องระบุ child key ทุกตัวที่ตั้งใจเปิด ห้ามพึ่ง inheritance
 
 API regression guard สร้างแถวแบบเดียวกับ `applyPreset`, derive entitled set ด้วยกติกาเดียวกับ `loadEntitledFeatureKeys` (parent เปิดและ child ไม่ได้ถูกปิดชัดเจน) แล้วตรวจทุก binding ของทุก preset ว่า `card-enabled === menu-visible` โดย foundation คือ `entitlementKeys.length === 0`, การ์ดทั่วไปคือ parent เปิดและมี entitlement key อย่างน้อยหนึ่งตัวเปิด, และ menu-visible คือ `filterPermissionsByEntitlement(gatePermissions, entitled).length > 0`

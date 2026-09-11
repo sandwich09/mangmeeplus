@@ -366,6 +366,10 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/data-model-core/application/services/transaction-branch.spec.ts',
       'src/modules/expenses/infrastructure/prisma-expense.repository.branch.spec.ts',
       'src/modules/reimbursements/application/services/reimbursement-evidence.service.spec.ts',
+      // Shared permission, source-evidence and task-state guards also cover captured expenses.
+      'src/modules/ai-draft/application/source-state.service.spec.ts',
+      'src/modules/expenses/infrastructure/expense-evidence-sources.spec.ts',
+      'src/modules/dashboard-notifications/infrastructure/document-notification-state.spec.ts',
     ],
   },
   {

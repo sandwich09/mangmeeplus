@@ -306,7 +306,7 @@ export class PrismaAiDraftRepository {
         riskLevel: where.riskLevel,
         sourceModule: where.sourceModule,
       },
-      include: { _count: { select: { citations: true } } },
+      include: { _count: { select: { citations: true } }, artifacts: { orderBy: { version: 'desc' }, take: 1, select: { structuredContentJson: true } } },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
@@ -465,6 +465,7 @@ export class PrismaAiDraftRepository {
   }
 
   private toSuggestion(row: {
+    artifacts?: Array<{ structuredContentJson: unknown }>;
     id: string; companyId: string; draftRequestId: string; templateKey: string; agent: string; domain: string;
     title: string; summary: string; recommendation: string; riskLevel: string; confidence: number; status: string;
     needsDataReasonsJson: unknown; blockedReasonsJson: unknown; sourceStateHash: string | null;
@@ -473,6 +474,7 @@ export class PrismaAiDraftRepository {
     expiresAt: Date | null; createdAt: Date; updatedAt: Date;
   }): AiSuggestionRecord {
     return {
+      sourceBranchIds: asObject(row.artifacts?.[0]?.structuredContentJson)['sourceBranchIds'] as string[] | null | undefined,
       id: row.id,
       companyId: row.companyId,
       draftRequestId: row.draftRequestId,

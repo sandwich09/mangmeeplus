@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
 import { ReimbursementSourceFacts } from './ReimbursementSourceFacts';
@@ -321,6 +321,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
 }) {
   const toast = useToast();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const permissionTabs = useMemo(() => visibleHubTabs(permissions, roles), [permissions, roles]);
   const hasApprovalPermission = permissionTabs.includes('approvals');
   const [assignedApprovalCompanyId, setAssignedApprovalCompanyId] = useState<string | null>(null);
@@ -332,8 +333,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     [permissionTabs, hasAssignedApprovalTask],
   );
   const requestedTab = searchParams.get('tab');
-  // Initial tab only: deep links (LINE approvals card, notifications) land on the right queue,
-  // and later tab clicks are not fought by the URL.
+  // Deep-link changes also select the queue when this hub is already mounted.
   const [tab, setTab] = useState<HubTab>(() => parseHubTab(requestedTab, tabs));
   // ?focus=<requestId> from a notification/LINE deep link: opens that claim's drawer.
   const focusId = searchParams.get('focus') ?? undefined;
@@ -376,11 +376,8 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   }, [companyId, hasApprovalPermission]);
 
   useEffect(() => {
-    setTab((current) => {
-      if (requestedTab === 'approvals' && tabs.includes('approvals')) return 'approvals';
-      return tabs.includes(current) ? current : parseHubTab(requestedTab, tabs);
-    });
-  }, [companyId, requestedTab, tabs]);
+    setTab(parseHubTab(requestedTab, tabs));
+  }, [companyId, requestedTab, focusId, tabs]);
 
   const releaseAttachmentPreviewUrl = useCallback(() => {
     const url = previewUrlRef.current;
@@ -421,7 +418,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
     finally { setDrawerBusy(false); }
   }, [closeDocumentPreview, companyId]);
 
-  useEffect(() => { if (focusId) void openDetail(focusId); }, [focusId, openDetail]);
+  useEffect(() => { if (focusId) void openDetail(focusId); }, [focusId, requestedTab, openDetail]);
 
   const loadDocumentPreview = async (target: ReimbursementDocumentPreviewTarget) => {
     const requestId = ++previewRequestRef.current;
@@ -626,7 +623,14 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
         permissions={permissions}
         busy={drawerBusy || previewLoadingKey !== null}
         error={drawerError}
-        onClose={() => { closeDocumentPreview(); setDetail(null); setDrawerError(null); }}
+        onClose={() => {
+          closeDocumentPreview(); setDetail(null); setDrawerError(null);
+          if (focusId) {
+            const next = new URLSearchParams(searchParams.toString());
+            next.delete('focus'); next.set('tab', tab);
+            router.replace(`/companies/${companyId}/reimbursements?${next}`, { scroll: false });
+          }
+        }}
         onPrintClaimForm={openClaimForm}
         onSign={role => void signWithSavedSignature(role)}
         onUploadSignedCopy={(file) => drawerAction(() => uploadSignedClaimFormCopy(companyId, detail.id, file, detail.branchId), 'แนบสำเนาใบเบิกที่ลงนามเรียบร้อยแล้ว')}

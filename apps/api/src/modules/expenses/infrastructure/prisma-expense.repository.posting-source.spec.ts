@@ -35,6 +35,7 @@ function makeRepo(
       },
       expenseSubstituteReceiptEvidence: {
         findFirst: async () => null,
+        findMany: async () => [],
       },
     },
   };
@@ -125,6 +126,7 @@ describe('PrismaExpenseRepository shared evidence posting state', () => {
     const repo = new PrismaExpenseRepository({ client: {
       expenseRecord: { findMany: async () => [record], count: async () => 1 },
       attachmentLink: { findMany: async () => [] },
+      expenseSubstituteReceiptEvidence: { findMany: async () => [] },
       // §5.1: the export sums the charge rows so its row stays additive now that subtotal is goods only.
       expenseLine: { groupBy: async () => [] },
       expensePayment: { findMany: async () => [{ id: 'payment-1', expenseId: 'expense-1', postingStatus: 'posting_error', postingError: 'payment failed' }] },

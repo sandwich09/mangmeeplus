@@ -1,0 +1,34 @@
+[
+  {
+    "evidence_ref": "EXP-202609-00002-f2if51ta",
+    "expense_id": "cmtwvy9a1005sbuk1tqead05q",
+    "attachment_id": "cmtwvrvof002cbuk1f2if51ta",
+    "file_name": "SRC-202609-00001-certified.svg",
+    "mime_type": "image/svg+xml",
+    "file_size_bytes": 14600,
+    "source_expense_id": "cmtwvf0bl00catek1rhn50dj5",
+    "evidence_role": "expense.review.evidence",
+    "source_document_type": "OTHER_EXPENSE_DOCUMENT",
+    "tax_evidence_status": "SUPPORTING_ONLY",
+    "download_url": "http://127.0.0.1:19000/watchdog-bms-local/cmtwv2xtb0003tek1mpgwuwwc/generated/expense-substitute/cmtwvf0bl00catek1rhn50dj5/v1-certified-11ccd0eff8ff50d3007afa8e50f6aacf66811efc85849577f1d150601aee154d-87286567-a6d3-4165-9895-295b1a5d9245.svg",
+    "download_url_expires_at": "2026-09-11T14:31:24.729Z",
+    "web_url": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwvy9a1005sbuk1tqead05q"
+  },
+  {
+    "evidence_ref": "EXP-202609-00002-f1q5pc49",
+    "expense_id": "cmtwvy9a1005sbuk1tqead05q",
+    "attachment_id": "cmtwvsfdb002qbuk1f1q5pc49",
+    "file_name": "SRC-202609-00001.svg",
+    "mime_type": "image/svg+xml",
+    "file_size_bytes": 23598,
+    "source_expense_id": "cmtwvf0bl00catek1rhn50dj5",
+    "is_historical": false,
+    "substitute_receipt_status": "ISSUED",
+    "evidence_role": "expense.review.evidence",
+    "source_document_type": "OTHER_EXPENSE_DOCUMENT",
+    "tax_evidence_status": "SUPPORTING_ONLY",
+    "download_url": "http://127.0.0.1:19000/watchdog-bms-local/cmtwv2xtb0003tek1mpgwuwwc/generated/expense-substitute/cmtwvf0bl00catek1rhn50dj5/v1-issued-d505908bfded82e3a7bc75c6c4fe3fc0738c8ab7e088318a0924bf2af5e78960-40f6a427-e886-4ca9-a635-6469e13fd615.svg",
+    "download_url_expires_at": "2026-09-11T14:31:24.739Z",
+    "web_url": "/companies/cmtwv2xtb0003tek1mpgwuwwc/expenses/cmtwvy9a1005sbuk1tqead05q"
+  }
+]

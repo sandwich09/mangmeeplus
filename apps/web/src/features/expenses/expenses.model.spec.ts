@@ -1165,3 +1165,15 @@ describe('expenseAiCategorySuggestion', () => {
     }
   });
 });
+
+it('counts a personal source and its claim projection once, including either side alone', () => {
+  const source: any = { id: 'source', status: 'READY_FOR_CONFIRMATION', grandTotalAmount: '125', vatAmount: '0', outstandingAmount: '125', paymentStatus: 'UNPAID', reimbursementProgress: { status: 'PAID' } };
+  const projection: any = { id: 'projection', costSourceExpenseId: 'source', status: 'CONFIRMED', grandTotalAmount: '125', vatAmount: '0', outstandingAmount: '0', paymentStatus: 'PAID' };
+  for (const rows of [[source, projection], [projection, source], [source], [projection]]) {
+    const kpi = summarizeExpenseKpis(rows, '2026-09-11');
+    assert.equal(kpi.total, 125);
+    assert.equal(kpi.pending, 0);
+    assert.equal(kpi.outstanding, 0);
+    assert.equal(kpi.counted, 1);
+  }
+});

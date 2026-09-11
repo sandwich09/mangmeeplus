@@ -83,13 +83,13 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
       if (!line) return { count: 0 };
       writes.line++; Object.assign(line, data); return { count: 1 };
     } },
-    expenseSubstituteReceiptEvidence: { findFirst: async () => null },
+    expenseSubstituteReceiptEvidence: { findFirst: async () => null, findMany: async () => [] },
     reimbursementLine: { findFirst: async () => null },
     attachmentLink: {
       findMany: async () => options.withAttachment !== false ? [{
-        attachmentId: 'attachment-1', purpose: 'RECEIPT',
+        targetId: 'expense-1', attachmentId: 'attachment-1', purpose: 'RECEIPT',
         attachment: {
-          originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1024,
+          id: 'attachment-1', branchId: row.branchId, originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: 1024,
           checksumSha256: 'sha256-receipt', status: 'ACTIVE', createdAt: new Date('2026-07-15T09:00:00.000Z'),
         },
       }] : [],
@@ -389,4 +389,20 @@ describe('evidence review at final transaction', () => {
       (error: any) => error.getResponse().code === 'EXPENSE_EVIDENCE_REVIEW_REQUIRED');
     assert.equal(h.writes.header + h.writes.line + h.writes.outbox, 0);
   });
+});
+
+
+it('uses the same generated certificate history in preflight and final confirmation checksums', async () => {
+  const h = harness();
+  h.client.expenseSubstituteReceiptEvidence.findMany = async ({ where }: any) => where.status === 'ISSUED' ? [] : [{
+    id: 'cancelled-cert', expenseId: 'expense-1', version: 1, status: 'SUPERSEDED', artifactAttachmentId: 'cancelled-file', wetSignedScanAttachmentId: null,
+  }];
+  h.client.attachmentObject.findMany = async () => [{
+    id: 'cancelled-file', branchId: h.row.branchId, originalFileName: 'old.svg', mimeType: 'image/svg+xml', byteSize: 30n,
+    checksumSha256: 'old', status: 'ACTIVE', createdAt: h.updatedAt,
+  }];
+  const input = await inputFor(h.repo, h.updatedAt);
+  const result = await h.repo.finalizeAndConfirmExpenseCas(input, finalize);
+  assert.equal(result.expense.status, 'CONFIRMED');
+  assert.equal(h.writes.outbox, 1);
 });

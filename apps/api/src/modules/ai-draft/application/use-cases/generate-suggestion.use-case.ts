@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, ForbiddenException } from '@nestjs/common';
 import type { RequestContext, AiDraftGenerationResult, AiRiskLevel, AiSuggestionAgent } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -13,13 +13,15 @@ import type { EvidencePack } from '../generators/suggestion-generator.service';
 import { LLM_DRAFT_PORT } from '../../infrastructure/provider/llm-draft.port';
 import type { LlmDraftPort } from '../../infrastructure/provider/llm-draft.port';
 import { evaluateCitationRequirement, assertSafeCandidateAction, defaultRiskForAction } from '../../domain/logic/ai-draft-safety.logic';
-import { requiredSourcePermissionsForAction } from '../../domain/logic/ai-draft-permission.logic';
+import { canRequestSuggestions, requiredSourcePermissionsForAction } from '../../domain/logic/ai-draft-permission.logic';
 import {
   buildSourceStateHash,
   buildCandidateActionIdempotencyKey,
   previewText,
   hashText,
 } from '../../domain/logic/ai-draft-idempotency.logic';
+
+import { canAccessTemplateSources } from '../../domain/ai-draft-template-catalog';
 
 export type GenerateResult = {
   requestId: string;
@@ -60,21 +62,24 @@ export class GenerateSuggestionUseCase {
 
     await this.repo.updateRequestStatus(request.id, 'GENERATING');
 
-    // Reconstruct the requester's permission context so source reads are re-checked.
-    const access = await this.resolver.resolveAccess(request.requesterUserId, companyId);
-    const ctx: RequestContext = {
-      requestId: `ai-generate:${request.id}`,
-      authSubject: request.requesterUserId,
-      userId: request.requesterUserId,
-      companyId,
-      membershipId: access.membershipId,
-      roles: access.roles,
-      permissions: access.permissions,
-      scopes: access.scopes,
-      authProvider: 'watchdog',
-    };
-
     try {
+      // Reconstruct the requester's permission context so source reads are re-checked.
+      const access = await this.resolver.resolveAccess(request.requesterUserId, companyId);
+      const ctx: RequestContext = {
+        requestId: `ai-generate:${request.id}`,
+        authSubject: request.requesterUserId,
+        userId: request.requesterUserId,
+        companyId,
+        membershipId: access.membershipId,
+        roles: access.roles,
+        permissions: access.permissions,
+        scopes: access.scopes,
+        authProvider: 'watchdog',
+      };
+
+      if (!canRequestSuggestions(ctx.permissions) || !canAccessTemplateSources(request.templateKey, ctx.permissions)) {
+        throw new ForbiddenException('Missing current AI or source permission');
+      }
       const evidence = await this.generator.collectEvidence(request.templateKey, ctx, request);
 
       // Not enough source evidence: persist a visible needs-data record; no model call.
@@ -210,7 +215,7 @@ export class GenerateSuggestionUseCase {
           language: request.language,
           contentPreview: previewText(recommendation || summary),
           contentHash: hashText(recommendation || summary),
-          structuredContentJson: { facts: evidence.facts, checklistItems: result.checklistItems },
+          structuredContentJson: { sourceBranchIds: ctx.scopes?.branchIds ?? null, facts: evidence.facts, checklistItems: result.checklistItems },
           modelProvider: result.provider,
           modelName: result.model,
         },
@@ -241,7 +246,7 @@ export class GenerateSuggestionUseCase {
       await this.repo.updateRequestStatus(request.id, 'FAILED', { errorCode: 'GENERATION_FAILED', errorMessage: message });
       void this.audit.log({
         companyId, actorUserId: request.requesterUserId, action: 'ai.suggestion.generate',
-        targetType: 'ai_draft_request', targetId: request.id, requestId: ctx.requestId,
+        targetType: 'ai_draft_request', targetId: request.id, requestId: `ai-generate:${request.id}`,
         result: 'FAILED', riskLevel: 'MEDIUM', metadataJson: { error: message },
       });
       return { requestId, status: 'FAILED' };
@@ -270,7 +275,7 @@ export class GenerateSuggestionUseCase {
       reviewOwnerUserId: request.requesterUserId,
       assignedRole: evidence.agent,
       expiresAt: request.expiresAt,
-      artifact: { artifactType: 'CHECKLIST', language: request.language, structuredContentJson: { needsData: evidence.needsDataReasons } },
+      artifact: { artifactType: 'CHECKLIST', language: request.language, structuredContentJson: { sourceBranchIds: ctx.scopes?.branchIds ?? null, needsData: evidence.needsDataReasons } },
       citations: [],
       candidateActions: [{
         actionType: 'NO_SOURCE_DRAFT_AVAILABLE',

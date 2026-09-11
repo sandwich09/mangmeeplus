@@ -11,6 +11,8 @@ import type {
 } from '@watchdog-bms/contracts';
 
 export type ExpenseRecord = {
+  costSourceExpenseId?: string;
+  reimbursementProgress?: import('@watchdog-bms/contracts').ExpenseReimbursementProgress;
   id: string;
   companyId: string;
   branchId: string | null;

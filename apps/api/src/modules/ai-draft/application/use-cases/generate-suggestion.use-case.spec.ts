@@ -34,7 +34,7 @@ function makeRepo(request: any) {
 }
 
 const resolver = {
-  resolveAccess: async () => ({ membershipId: 'm', companyId: 'co-1', roles: ['SALES'], permissions: ['crm.customer.read'], scopes: {} }),
+  resolveAccess: async () => ({ membershipId: 'm', companyId: 'co-1', roles: ['SALES'], permissions: ['ai.suggestion.request', 'crm.customer.read'], scopes: {} }),
 } as any;
 
 function makeGenerator() {
@@ -174,4 +174,18 @@ describe('GenerateSuggestionUseCase (AI-authored)', () => {
     assert.equal(out.suggestionId, 'existing');
     assert.equal(persisted.length, 0);
   });
+});
+
+
+it('does not read evidence or call the provider after source access is revoked', async () => {
+  const { repo, persisted, statusUpdates } = makeRepo(makeRequest());
+  const read = mock.fn(async () => { throw new Error('must not read'); });
+  const generate = mock.fn(async () => { throw new Error('must not generate'); });
+  const revoked = { resolveAccess: async () => ({ membershipId: 'm', roles: [], permissions: ['ai.suggestion.request'], scopes: {} }) } as any;
+  const uc = new GenerateSuggestionUseCase(repo, revoked, { collectEvidence: read } as any, noopAudit, { available: true, mode: 'fake', generate } as any);
+  assert.equal((await uc.execute('co-1', 'req1')).status, 'FAILED');
+  assert.equal(read.mock.calls.length, 0);
+  assert.equal(generate.mock.calls.length, 0);
+  assert.equal(persisted.length, 0);
+  assert.match(statusUpdates.at(-1)!.options.errorMessage, /permission/);
 });

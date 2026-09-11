@@ -222,7 +222,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
               />
             )}
             <span className={`pointer-events-none relative mt-0.5 rounded px-1.5 py-0.5 text-xs font-semibold ${severityColor(item.severity as NotificationSeverity)}`}>
-              {severityLabel(item.severity as NotificationSeverity)}
+              {item.status === 'resolved' ? 'ดำเนินการแล้ว' : severityLabel(item.severity as NotificationSeverity)}
             </span>
             <div className="pointer-events-none relative min-w-0 flex-1">
               {/* Two lines instead of `truncate`: the title had ~180px of room and was cut
