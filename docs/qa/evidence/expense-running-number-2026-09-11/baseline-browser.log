@@ -1,0 +1,266 @@
+
+Running 10 tests using 1 worker
+
+  ✘   1 [chromium] › e2e/reimbursements.spec.ts:55:7 › REIMB — reimbursements › REIMB-06 @p1 incurred-date picker permits today but disables tomorrow (1.0m)
+  ✓   2 [chromium] › e2e/reimbursements.spec.ts:70:7 › REIMB — reimbursements › REIMB-01 @smoke reimbursements list renders (2.0s)
+  ✘   3 [chromium] › e2e/reimbursements.spec.ts:78:7 › REIMB — reimbursements › REIMB-02 @p1 creates and submits a reimbursement request (199ms)
+  ✘   4 [chromium] › e2e/reimbursements.spec.ts:89:7 › REIMB — reimbursements › REIMB-04 @p1 rolls a multi-line claim up into the header total (92ms)
+  ✓   5 [chromium] › e2e/reimbursements.spec.ts:108:7 › REIMB — reimbursements › REIMB-05 @p2 rejects a claim with no lines (56ms)
+  ✘   6 [chromium] › e2e/reimbursements.spec.ts:115:7 › REIMB — reimbursements › REIMB-03 @p1 owner approves, finance-reviews, and pays throwaway request (58ms)
+  ✘   7 [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › DIGITAL: view and cancelled navigation show disabled forms and preserve file previews (1.0m)
+  ✘   8 [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › PAPER: view and cancelled navigation show disabled forms and preserve file previews (1.0m)
+  ✘   9 [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › DIGITAL: Back opens forms, saves source and certificate facts with the same number (286ms)
+  ✘  10 [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › PAPER: Back opens forms, saves source and certificate facts with the same number (212ms)
+
+
+  1) [chromium] › e2e/reimbursements.spec.ts:55:7 › REIMB — reimbursements › REIMB-06 @p1 incurred-date picker permits today but disables tomorrow
+
+    Test timeout of 60000ms exceeded.
+
+    Error: locator.click: Target page, context or browser has been closed
+    Call log:
+      - waiting for getByRole('button', { name: 'วันนี้', exact: true })
+
+
+      58 |     await gotoCompany(authedPage, companyId, '/reimbursements/new');
+      59 |     await authedPage.getByRole('combobox', { name: 'วันที่', exact: true }).click();
+    > 60 |     await authedPage.getByRole('button', { name: 'วันนี้', exact: true }).click();
+         |                                                                           ^
+      61 |     await authedPage.getByRole('combobox', { name: 'วันที่', exact: true }).click();
+      62 |     const calendar = authedPage.getByRole('button', { name: 'วันนี้', exact: true }).locator('..').locator('..');
+      63 |     await expect(calendar.getByRole('button', { name: String(Number(today.slice(-2))), exact: true })).toBeEnabled();
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:60:75
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-56c46-today-but-disables-tomorrow-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-56c46-today-but-disables-tomorrow-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-56c46-today-but-disables-tomorrow-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  2) [chromium] › e2e/reimbursements.spec.ts:78:7 › REIMB — reimbursements › REIMB-02 @p1 creates and submits a reimbursement request
+
+    Error: http://127.0.0.1:3011/v1/companies/seed-local-company/reimbursement-policy -> 400: {"message":["property id should not exist","property companyId should not exist","property currency should not exist","property approvalThresholdAmount should not exist","property approverMode should not exist","property createdAt should not exist","property updatedAt should not exist"],"error":"Bad Request","statusCode":400}
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+       at harness/e2e-utils.ts:34
+
+      32 | export async function expectOk(res: APIResponse) {
+      33 |   if (!res.ok()) {
+    > 34 |     expect(res.ok(), `${res.url()} -> ${res.status()}: ${await res.text()}`).toBe(true);
+         |                                                                              ^
+      35 |   }
+      36 | }
+      37 |
+        at expectOk (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:34:78)
+        at json (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:39:3)
+        at withPolicy (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:46:3)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:79:5
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-c8072-its-a-reimbursement-request-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-c8072-its-a-reimbursement-request-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-c8072-its-a-reimbursement-request-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  3) [chromium] › e2e/reimbursements.spec.ts:89:7 › REIMB — reimbursements › REIMB-04 @p1 rolls a multi-line claim up into the header total
+
+    Error: http://127.0.0.1:3011/v1/companies/seed-local-company/reimbursement-policy -> 400: {"message":["property id should not exist","property companyId should not exist","property currency should not exist","property approvalThresholdAmount should not exist","property approverMode should not exist","property createdAt should not exist","property updatedAt should not exist"],"error":"Bad Request","statusCode":400}
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+       at harness/e2e-utils.ts:34
+
+      32 | export async function expectOk(res: APIResponse) {
+      33 |   if (!res.ok()) {
+    > 34 |     expect(res.ok(), `${res.url()} -> ${res.status()}: ${await res.text()}`).toBe(true);
+         |                                                                              ^
+      35 |   }
+      36 | }
+      37 |
+        at expectOk (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:34:78)
+        at json (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:39:3)
+        at withPolicy (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:46:3)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:90:5
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-1647e-im-up-into-the-header-total-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-1647e-im-up-into-the-header-total-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-1647e-im-up-into-the-header-total-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  4) [chromium] › e2e/reimbursements.spec.ts:115:7 › REIMB — reimbursements › REIMB-03 @p1 owner approves, finance-reviews, and pays throwaway request
+
+    Error: http://127.0.0.1:3011/v1/companies/seed-local-company/reimbursement-policy -> 400: {"message":["property id should not exist","property companyId should not exist","property currency should not exist","property approvalThresholdAmount should not exist","property approverMode should not exist","property createdAt should not exist","property updatedAt should not exist"],"error":"Bad Request","statusCode":400}
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+       at harness/e2e-utils.ts:34
+
+      32 | export async function expectOk(res: APIResponse) {
+      33 |   if (!res.ok()) {
+    > 34 |     expect(res.ok(), `${res.url()} -> ${res.status()}: ${await res.text()}`).toBe(true);
+         |                                                                              ^
+      35 |   }
+      36 | }
+      37 |
+        at expectOk (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:34:78)
+        at json (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/harness/e2e-utils.ts:39:3)
+        at withPolicy (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:46:3)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/reimbursements.spec.ts:116:5
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-6fde7--and-pays-throwaway-request-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-6fde7--and-pays-throwaway-request-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/reimbursements-REIMB-—-rei-6fde7--and-pays-throwaway-request-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › DIGITAL: view and cancelled navigation show disabled forms and preserve file previews
+
+    Test timeout of 60000ms exceeded.
+
+    Error: locator.click: Target page, context or browser has been closed
+    Call log:
+      - waiting for getByRole('navigation', { name: 'เส้นทางการจัดทำเอกสาร' }).getByRole('button', { name: /ข้อมูลและหลักฐาน/ })
+
+
+      61 |         // Explicit view also disables edits for the seeded OWNER. Cancelled is locked without the hint.
+      62 |         await page.goto(`${url}${cancelled ? '' : '?mode=view'}`);
+    > 63 |         await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
+         |                                                                         ^
+      64 |         await expect(page.getByRole('button', { name: 'แก้ไขข้อมูลใบแทน', exact: true })).toHaveCount(0);
+      65 |         const inputs = page.locator('input:visible, textarea:visible');
+      66 |         await expect(inputs.first()).toBeVisible();
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-cancelled-view-only.spec.ts:63:73
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--08967--and-preserve-file-previews-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--08967--and-preserve-file-previews-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--08967--and-preserve-file-previews-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  6) [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › PAPER: view and cancelled navigation show disabled forms and preserve file previews
+
+    Test timeout of 60000ms exceeded.
+
+    Error: locator.click: Target page, context or browser has been closed
+    Call log:
+      - waiting for getByRole('navigation', { name: 'เส้นทางการจัดทำเอกสาร' }).getByRole('button', { name: /ข้อมูลและหลักฐาน/ })
+        - waiting for" http://127.0.0.1:3012/companies/seed-local-company/expenses/substitute-receipts/cancelled-view-only?mode=view" navigation to finish...
+        - navigated to "http://127.0.0.1:3012/companies/seed-local-company/expenses/substitute-receipts/cancelled-view-only?mode=view"
+
+
+      61 |         // Explicit view also disables edits for the seeded OWNER. Cancelled is locked without the hint.
+      62 |         await page.goto(`${url}${cancelled ? '' : '?mode=view'}`);
+    > 63 |         await journey.getByRole('button', { name: /ข้อมูลและหลักฐาน/ }).click();
+         |                                                                         ^
+      64 |         await expect(page.getByRole('button', { name: 'แก้ไขข้อมูลใบแทน', exact: true })).toHaveCount(0);
+      65 |         const inputs = page.locator('input:visible, textarea:visible');
+      66 |         await expect(inputs.first()).toBeVisible();
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-cancelled-view-only.spec.ts:63:73
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--bc39e--and-preserve-file-previews-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--bc39e--and-preserve-file-previews-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/substitute-cancelled-view--bc39e--and-preserve-file-previews-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  7) [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › DIGITAL: Back opens forms, saves source and certificate facts with the same number
+
+    Error: {"code":"feature_temporarily_unavailable","message":"ระบบบันทึกค่าใช้จ่ายปิดปรับปรุงชั่วคราว รายการเดิมยังเปิดดูได้ตามปกติ"}
+
+    expect(received).toBeTruthy()
+
+    Received: false
+
+      3 |
+      4 | async function json(response: APIResponse) {
+    > 5 |   expect(response.ok(), await response.text()).toBeTruthy();
+        |                                                ^
+      6 |   return response.json();
+      7 | }
+      8 |
+        at json (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-editable-navigation.spec.ts:5:48)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-editable-navigation.spec.ts:16:19
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-cc36e--facts-with-the-same-number-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-cc36e--facts-with-the-same-number-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-cc36e--facts-with-the-same-number-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8) [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › PAPER: Back opens forms, saves source and certificate facts with the same number
+
+    Error: {"code":"feature_temporarily_unavailable","message":"ระบบบันทึกค่าใช้จ่ายปิดปรับปรุงชั่วคราว รายการเดิมยังเปิดดูได้ตามปกติ"}
+
+    expect(received).toBeTruthy()
+
+    Received: false
+
+      3 |
+      4 | async function json(response: APIResponse) {
+    > 5 |   expect(response.ok(), await response.text()).toBeTruthy();
+        |                                                ^
+      6 |   return response.json();
+      7 | }
+      8 |
+        at json (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-editable-navigation.spec.ts:5:48)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/substitute-editable-navigation.spec.ts:16:19
+
+    Error Context: ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-81e71--facts-with-the-same-number-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-81e71--facts-with-the-same-number-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-playwright-results/substitute-editable-naviga-81e71--facts-with-the-same-number-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  8 failed
+    [chromium] › e2e/reimbursements.spec.ts:55:7 › REIMB — reimbursements › REIMB-06 @p1 incurred-date picker permits today but disables tomorrow
+    [chromium] › e2e/reimbursements.spec.ts:78:7 › REIMB — reimbursements › REIMB-02 @p1 creates and submits a reimbursement request
+    [chromium] › e2e/reimbursements.spec.ts:89:7 › REIMB — reimbursements › REIMB-04 @p1 rolls a multi-line claim up into the header total
+    [chromium] › e2e/reimbursements.spec.ts:115:7 › REIMB — reimbursements › REIMB-03 @p1 owner approves, finance-reviews, and pays throwaway request
+    [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › DIGITAL: view and cancelled navigation show disabled forms and preserve file previews
+    [chromium] › e2e/substitute-cancelled-view-only.spec.ts:4:7 › PAPER: view and cancelled navigation show disabled forms and preserve file previews
+    [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › DIGITAL: Back opens forms, saves source and certificate facts with the same number
+    [chromium] › e2e/substitute-editable-navigation.spec.ts:10:7 › PAPER: Back opens forms, saves source and certificate facts with the same number
+  2 passed (3.1m)

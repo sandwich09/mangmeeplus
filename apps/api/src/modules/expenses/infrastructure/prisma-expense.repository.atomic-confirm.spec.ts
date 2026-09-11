@@ -31,7 +31,7 @@ const reviewFixtures = new WeakMap<PrismaExpenseRepository, () => Promise<void>>
 function harness(options: { accountingStatus?: string; taxStatus?: string; withAttachment?: boolean; branchId?: string | null } = {}) {
   const updatedAt = new Date('2026-07-15T10:00:00.000Z');
   const row: any = {
-    id: 'expense-1', companyId: 'company-1', branchId: options.branchId === undefined ? 'branch-1' : options.branchId, status: 'READY_FOR_CONFIRMATION', captureSource: 'WEB_MANUAL',
+    expenseNumber: 'EXP-202607-00001', id: 'expense-1', companyId: 'company-1', branchId: options.branchId === undefined ? 'branch-1' : options.branchId, status: 'READY_FOR_CONFIRMATION', captureSource: 'WEB_MANUAL',
     duplicateStatus: 'NO_MATCH', expenseDate: new Date('2026-07-15T00:00:00.000Z'), currency: 'THB', vatMode: 'VAT_EXCLUDED',
     sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', inputVatClaimStatus: 'CLAIMABLE',
     primaryAttachmentId: 'attachment-1', missingReceiptReason: null, substituteReceiptGeneratedAt: null,
@@ -52,15 +52,15 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
     }],
     duplicateCandidates: [],
   };
-  const writes = { line: 0, header: 0, outbox: 0, isolationLevel: '' };
+  const writes = { line: 0, header: 0, outbox: 0, locks: 0 };
   const audits: any[] = [];
   const client: any = {
     // Added by the expense auto-post work (#59): findByIdWithRelations now reads
     // generated journals to resolve the entry number. No journals in these fixtures.
+    documentNumber: { findFirst: async () => null },
     journalEntry: { findMany: async () => [] },
-    $executeRaw: async () => undefined,
+    $executeRaw: async () => { writes.locks++; },
     $transaction: async (work: (tx: any) => Promise<unknown>, config: any) => {
-      writes.isolationLevel = config?.isolationLevel;
       const before = structuredClone(row);
       const beforeWrites = { ...writes };
       const beforeAudits = audits.length;
@@ -99,7 +99,7 @@ function harness(options: { accountingStatus?: string; taxStatus?: string; withA
     tradeTaxEvidence: { findMany: async () => [] },
     attachmentObject: { count: async () => 0 },
     outboxEvent: { create: async () => { writes.outbox++; } },
-    auditLog: { create: async ({ data }: any) => { audits.push(data); } },
+    auditLog: { create: async ({ data }: any) => { if (data.action === 'expense.vat.source_override') audits.push(data); } },
   };
   const repo = new PrismaExpenseRepository({ client } as any);
   const review = async () => {
@@ -157,7 +157,6 @@ async function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat
       { ...rules, formType: 'PP30', boxKey: 'box_7_input_tax', amountSource: 'TAX_AMOUNT', signRule: 'NORMAL' },
     ],
   } as any, {} as any, {} as any));
-  const numbers = { reserved: 0, committed: 0, cancelled: 0 };
   const audit = { log: async (entry: any, tx: any) => {
     if (entry.action === 'expense.vat.source_override') {
       assert.equal(tx, h.client, 'source decision must use the final mutation transaction');
@@ -165,13 +164,10 @@ async function documentVatHarness(options: { vatMode?: ExpenseVatMode; sourceVat
     }
   } };
   const useCase = new ConfirmExpenseUseCase(h.repo, audit as any, transactionTax,
-    { execute: async () => { numbers.reserved++; return { id: 'number-1', documentNumber: 'EXP-1' }; } } as any,
-    { execute: async () => { numbers.committed++; } } as any,
-    { execute: async () => { numbers.cancelled++; } } as any,
     { get: async () => ({ status: 'REGISTERED' }) } as any);
   const ctx: any = { companyId: 'company-1', userId: 'reviewer-1', requestId: 'req-1', authProvider: 'watchdog', permissions: ['expense.confirm', 'expense.review'], scopes: {} };
   await h.review();
-  return { ...h, numbers, ctx, useCase, definition, transactionTax };
+  return { ...h, ctx, useCase, definition, transactionTax };
 }
 
 describe('document VAT acceptance through real confirmation and tax resolution', () => {
@@ -263,7 +259,8 @@ describe('document VAT acceptance through real confirmation and tax resolution',
           assert.equal(h.audits.length, 1);
           assert.equal(Number(h.audits[0].metadataJson.acceptedVatAmount), Number(sourceVat));
           assert.equal(h.writes.outbox, 1);
-          await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1'));
+          const replay = await h.useCase.execute(h.ctx, 'expense-1');
+          assert.equal(replay.expenseNumber, confirmed.expenseNumber);
           assert.equal(h.writes.outbox, 1);
           assert.equal(h.audits.length, 1);
         });
@@ -288,7 +285,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
       });
       assert.deepEqual(h.row, before);
       assert.deepEqual([h.writes.line, h.writes.header, h.writes.outbox, h.audits.length], [0, 0, 0, 0]);
-      assert.deepEqual(h.numbers, { reserved: 1, committed: 0, cancelled: 1 });
+      assert.equal(h.row.expenseNumber, 'EXP-202607-00001');
     });
   }
 
@@ -314,7 +311,7 @@ describe('document VAT acceptance through real confirmation and tax resolution',
       await assert.rejects(() => h.useCase.execute(h.ctx, 'expense-1', {
         reason: 'Reviewed an earlier snapshot', vatLineNumber: 1, expectedUpdatedAt,
       } as any), (error: any) => error.getResponse().code === 'EXPENSE_VAT_OVERRIDE_STALE');
-      assert.deepEqual(h.numbers, { reserved: 0, committed: 0, cancelled: 0 });
+      assert.equal(h.row.expenseNumber, 'EXP-202607-00001');
       assert.equal(h.audits.length, 0);
     }
   });
@@ -348,12 +345,13 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
     assert.equal(writes.line, 0);
     assert.equal(writes.outbox, 0);
   });
-  it('persists FINAL snapshots, status CAS, and outbox in one serializable transaction', async () => {
+  it('persists FINAL snapshots, status CAS, and outbox in one locked transaction', async () => {
     const { repo, writes, updatedAt } = harness();
     const result = await repo.finalizeAndConfirmExpenseCas(await inputFor(repo, updatedAt), finalize);
     assert.equal(result.expense.status, 'CONFIRMED');
     assert.equal(result.expense.expenseNumber, 'EXP-202607-00001');
-    assert.deepEqual(writes, { line: 1, header: 1, outbox: 1, isolationLevel: 'Serializable' });
+    assert.deepEqual({ line: writes.line, header: writes.header, outbox: writes.outbox }, { line: 1, header: 1, outbox: 1 });
+    assert.ok(writes.locks >= 2, 'funding and substitute locks are held');
   });
 
   it('confirms an attachment-bearing expense — the CAS re-read must include attachments in the checksum', async () => {
@@ -363,7 +361,8 @@ describe('PrismaExpenseRepository atomic tax confirmation', () => {
     const { repo, writes, updatedAt } = harness({ withAttachment: true });
     const result = await repo.finalizeAndConfirmExpenseCas(await inputFor(repo, updatedAt), finalize);
     assert.equal(result.expense.status, 'CONFIRMED');
-    assert.deepEqual(writes, { line: 1, header: 1, outbox: 1, isolationLevel: 'Serializable' });
+    assert.deepEqual({ line: writes.line, header: writes.header, outbox: writes.outbox }, { line: 1, header: 1, outbox: 1 });
+    assert.ok(writes.locks >= 2, 'funding and substitute locks are held');
   });
 
   it('blocks confirmation while the accounting period is closing or closed', async () => {

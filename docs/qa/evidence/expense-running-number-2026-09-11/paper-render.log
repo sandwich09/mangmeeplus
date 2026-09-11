@@ -1,0 +1,1 @@
+{"probe":"paper form contains SRC before EXP exists but loses SRC when EXP exists","reproduced":true,"beforeContainsSRC":true,"afterContainsSRC":false,"afterContainsEXP":true,"databaseWrites":0}

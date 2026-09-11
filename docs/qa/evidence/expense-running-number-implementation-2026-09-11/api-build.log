@@ -1,0 +1,3 @@
+
+> @watchdog-bms/api@0.1.0 build /private/tmp/mangmee-expense-running-number-20260911/apps/api
+> swc src -d ${API_DIST_DIR:-dist}/apps/api/src --strip-leading-paths --copy-files -q

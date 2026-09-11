@@ -50,6 +50,9 @@ function repoOver(rows: any[]) {
     && (where.NOT?.branchScopeKey === undefined || row.branchScopeKey !== where.NOT.branchScopeKey);
 
   const tx = {
+    $executeRaw: async () => undefined,
+    $queryRaw: async () => [{ maximum: null }],
+    expenseRecord: { findFirst: async () => null },
     documentNumber: {
       findFirst: mock.fn(async () => null),
       create: mock.fn(async ({ data }: any) => { reserved.push(data); return { ...data, id: `num-${reserved.length}`, reservedAt: now }; }),

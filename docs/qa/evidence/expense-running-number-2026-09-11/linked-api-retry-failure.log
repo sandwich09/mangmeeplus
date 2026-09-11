@@ -1,0 +1,37 @@
+
+Running 1 test using 1 worker
+
+  ✘  1 [chromium] › e2e/expense-number-proof.spec.ts:4:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API (1.1s)
+
+
+  1) [chromium] › e2e/expense-number-proof.spec.ts:4:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API
+
+    Error: retry void: {"message":"Payment is already voided","error":"Unprocessable Entity","statusCode":422}
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+      12 |     evidence.push({stage, http: response.status(), body});
+      13 |     writeFileSync('/tmp/expense-number-proof-linked-api.json', JSON.stringify(evidence,null,2));
+    > 14 |     expect(response.ok(), `${stage}: ${JSON.stringify(body)}`).toBe(true);
+         |                                                                ^
+      15 |     return body;
+      16 |   };
+      17 |   const original = await read(await api.get(`${base}/reimbursement-policy`), 'original policy');
+        at read (/private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/expense-number-proof.spec.ts:14:64)
+        at /private/tmp/mangmee-substitute-editable-navigation-20260910/e2e/expense-number-proof.spec.ts:66:5
+
+    Error Context: ../../../tmp/expense-number-proof-linked-api-results/expense-number-proof-Proof-94f09-and-cancel-through-real-API-chromium/error-context.md
+
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    ../../../tmp/expense-number-proof-linked-api-results/expense-number-proof-Proof-94f09-and-cancel-through-real-API-chromium/trace.zip
+    Usage:
+
+        pnpm exec playwright show-trace ../../../tmp/expense-number-proof-linked-api-results/expense-number-proof-Proof-94f09-and-cancel-through-real-API-chromium/trace.zip
+
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  1 failed
+    [chromium] › e2e/expense-number-proof.spec.ts:4:5 › Proof: linked source reject/reopen, finance return, payout retry/void and cancel through real API

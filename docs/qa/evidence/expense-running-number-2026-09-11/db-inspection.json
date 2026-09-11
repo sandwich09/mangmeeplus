@@ -1,0 +1,43 @@
+{
+  "baseline": "a3bfed76309a207d242b9aa27bc6b11b4f9077e4",
+  "database": "expense_number_proof_20260911",
+  "request": {
+    "id": "cmtwiaazu002cdnk1fxbgpsxf",
+    "requestNo": "RB-202609-00003",
+    "status": "CANCELLED",
+    "paymentStatus": "NOT_PAYABLE",
+    "postingStatus": "not_required"
+  },
+  "source": {
+    "id": "qa-exp-number-proof-reversal3",
+    "expenseNumber": null,
+    "status": "NEEDS_REVIEW",
+    "paidAmount": "0"
+  },
+  "projections": [
+    {
+      "id": "cmtwiaba90037dnk1xl36t8xh",
+      "expenseNumber": "EXP-202609-00001",
+      "status": "VOIDED",
+      "paidAmount": "0",
+      "postingStatus": "not_required",
+      "sourceReimbursementLineId": "cmtwiab05002ddnk1u97iay9y"
+    }
+  ],
+  "payments": [
+    {
+      "id": "cmtwiabd6003ndnk1mqrgedjp",
+      "status": "VOIDED",
+      "paidAmount": "100",
+      "postingStatus": "not_required"
+    }
+  ],
+  "duplicateExpensePayments": 0,
+  "snapshotMutationProbe": {
+    "oldHash": "8e19ad98e7d01e739bd7c66d2115ba93",
+    "newHash": "ce2924e0889d8324351729b6aea8b7d8",
+    "changesApprovalHash": true,
+    "retainedSnapshotSha256": "ac20e3192c8d68150ab0bd14a1e9d1c62a1208d3ba34b010d45a447a62406edc",
+    "databaseWrites": 0
+  }
+}
