@@ -7,7 +7,7 @@ export default async function ExistingSubstituteReceiptPage({
   searchParams,
 }: {
   params: Promise<{ companyId: string; evidenceId: string }>;
-  searchParams: Promise<{ edit?: string }>;
+  searchParams: Promise<{ edit?: string; mode?: string }>;
 }) {
   const { companyId, evidenceId } = await params;
   const session = await fetchServerSession(companyId);
@@ -15,6 +15,7 @@ export default async function ExistingSubstituteReceiptPage({
     <SubstituteReceiptWizardPage
       companyId={companyId}
       evidenceId={evidenceId}
+      viewOnly={(await searchParams).mode === 'view'}
       initialEditPayment={(await searchParams).edit === 'payment'}
       userId={session?.userId ?? ''}
       permissions={session?.permissions ?? []}

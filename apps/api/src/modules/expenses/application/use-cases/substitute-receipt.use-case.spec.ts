@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
+import { expenseEvidenceFingerprint, SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { describe, it } from 'node:test';
 import { createHash } from 'node:crypto';
 import {
@@ -34,7 +34,7 @@ function ctx(userId = 'payer-1', permissions = ['expense.review'], roles: string
 }
 
 function expense(overrides: Record<string, unknown> = {}) {
-  return {
+  const result = {
     id: 'exp-1', companyId: 'co-1', branchId: null, expenseNumber: 'EXP-1', status: 'NEEDS_REVIEW',
     captureSource: 'WEB_UPLOAD', sourceDocumentType: 'EXPENSE_NOTE_TEXT', taxEvidenceStatus: 'SUPPORTING_ONLY',
     inputVatClaimStatus: 'NON_CLAIMABLE', grandTotalAmount: '65.00', currency: 'THB', expenseDate: now,
@@ -45,6 +45,14 @@ function expense(overrides: Record<string, unknown> = {}) {
     attachments: [{ id: 'att-source', purpose: 'expense.receipt.primary', originalFileName: 'bill.jpg', mimeType: 'image/jpeg', checksumSha256: 'src' }],
     ...overrides,
   } as any;
+  const assessment = { route: 'SUBSTITUTE_RECEIPT' as const, receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: [], reason: 'ผู้ขายไม่ออกใบเสร็จ' };
+  // These lifecycle fixtures have completed the human evidence review. Negative review cases below
+  // remove or stale this marker explicitly; prepare/signature/numbering tests retain their focus.
+  result.aiVerificationSummaryJson = { ...result.aiVerificationSummaryJson, documentReview: {
+    version: 2, reviewedByUserId: 'finance-1', reviewedAt: now.toISOString(), assessment,
+    fingerprint: expenseEvidenceFingerprint(result, assessment),
+  } };
+  return result;
 }
 
 function prepared(overrides: Record<string, unknown> = {}) {
@@ -72,7 +80,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     const current = prepared();
     const repo = {
       findSubstituteEvidence: async (companyId: string, expenseId: string, evidenceId: string) => companyId === 'co-1' && expenseId === 'exp-1' && evidenceId === 'sub-1' ? current : null,
-      findByIdWithRelations: async () => expense(),
+      findByIdWithRelations: async () => ({ ...expense(), aiVerificationSummaryJson: null }),
       findActiveMemberIdentity: async () => ({ userId: 'payer-1', displayName: 'สมชาย' }),
       getSubstituteReceiptPolicy: async () => ({ approvalMode: 'OWNER_SELF', cashEvidencePolicy: 'ALLOW_SUPPORTING_EVIDENCE_ONLY' }),
       listEligibleSubstituteReceiptApprovers: async () => [{ userId: 'approver-1' }],
@@ -199,8 +207,8 @@ describe('PrepareSubstituteReceiptUseCase', () => {
     let captured: any;
     const repo = {
       findByIdWithRelations: async () => expense({
-        sourceDocumentType: 'NEEDS_REVIEW',
-        taxEvidenceStatus: 'NEEDS_REVIEW',
+        sourceDocumentType: 'OTHER_EXPENSE_DOCUMENT',
+        taxEvidenceStatus: 'SUPPORTING_ONLY',
         aiVerificationSummaryJson: {
           status: 'NOT_EXPENSE_DOCUMENT',
           classification: { documentKind: 'ORDER_OR_CHECK_BILL' },
@@ -226,7 +234,7 @@ describe('PrepareSubstituteReceiptUseCase', () => {
 
     await new PrepareSubstituteReceiptUseCase(repo, audit, notification).execute(ctx('finance-1'), 'exp-1', input);
     assert.equal(captured.routeCheckBill, true);
-    assert.equal(captured.originalSourceDocumentType, 'NEEDS_REVIEW');
+    assert.equal(captured.originalSourceDocumentType, 'OTHER_EXPENSE_DOCUMENT');
 
     await assert.rejects(
       () => new PrepareSubstituteReceiptUseCase({ ...repo, findByIdWithRelations: async () => expense() } as any, audit, notification)

@@ -849,3 +849,19 @@ describe('ReceiptOcrClient failure boundary', () => {
     }
   });
 });
+
+
+it('keeps human evidence choices/history on OCR reread without acknowledging the new extraction', async () => {
+  const assessment = { route: 'ALTERNATIVE_EVIDENCE', receiptProblem: 'LOST', attachmentIds: ['attachment-1'], reason: 'User reason' };
+  const review = { version: 2, reviewedByUserId: 'reviewer', reviewedAt: '2026-08-14', fingerprint: 'old' };
+  for (const documentKind of ['RECEIPT', 'ORDER_OR_CHECK_BILL']) {
+    const h = makeUseCase({
+      expense: { ...baseExpense, aiVerificationSummaryJson: { documentEvidenceDraft: assessment, documentReview: review, extractionRequestId: 'old-request' } },
+      gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00', vendorName: 'ร้านทดสอบ', missingFields: [] }, classification: classification(documentKind) },
+    });
+    await h.useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.deepEqual(h.updates[0].aiVerificationSummaryJson.documentEvidenceDraft, assessment);
+    assert.deepEqual(h.updates[0].aiVerificationSummaryJson.documentReview, review);
+    assert.equal(h.updates[0].aiVerificationSummaryJson.extractionRequestId, 'request-1');
+  }
+});

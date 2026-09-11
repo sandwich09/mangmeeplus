@@ -139,9 +139,11 @@ Blockers are reported together, never one at a time, with the conversational one
 already holds in `preflight`; R2 extends it to the states that bypass it today.
 
 **R5 — Evidence is required only when evidence exists.** *(D5)*
-Prepare accepts zero attachments. There is no amount ceiling and no per-payer monthly cap: a
-`ใบรับรองแทนใบเสร็จรับเงิน` is valid without any attachment under Thai practice, and the product must
-not be stricter than the rule it implements.
+Prepare accepts zero attachments under the permissive cash policy. There is no amount ceiling and
+no per-payer monthly cap. This preserves owner decision D5; issuance under product/company policy
+does not by itself establish income-tax deductibility or input VAT credit. Tax clarification and
+proposed evidence-routing follow-up (2026-09-11):
+[expense evidence and substitute routing](expense-evidence-and-substitute-routing-spec.md).
 
 What still gates a no-attachment document: `businessPurpose` and a place/route detail are mandatory;
 the payer must resolve to an active in-scope member; both signatures are still required; and the

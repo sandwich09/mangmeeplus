@@ -10,10 +10,26 @@ import {
   MarkExpenseReadyUseCase,
   UpdateExpenseDraftUseCase,
 } from './expense-draft.use-case';
-import type { RequestContext } from '@watchdog-bms/contracts';
+import { expenseEvidenceFingerprint, hasCurrentExpenseEvidenceReview, type RequestContext } from '@watchdog-bms/contracts';
 import { ExpenseController } from '../../presentation/http/expense.controller';
 import { REQUIRED_PERMISSIONS_KEY } from '../../../../common/security/permissions.decorator';
 import { requireExpenseBranchId } from '../../infrastructure/prisma-expense.repository';
+
+// Existing confirmation cases start after a successful human review of the fixture's current facts.
+// Dedicated review tests exercise missing/stale approval instead of hiding those cases here.
+function reviewedRepo(repo: any) {
+  return { ...repo, findByIdWithRelations: async (...args: any[]) => {
+    const row = await repo.findByIdWithRelations(...args);
+    if (!row) return row;
+    const result = { ...row, attachments: row.attachments ?? [{ id: row.primaryAttachmentId ?? 'receipt-1', status: 'ACTIVE' }] };
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: [result.attachments[0].id], reason: '' };
+    result.aiVerificationSummaryJson = { ...row.aiVerificationSummaryJson, documentReview: {
+      version: 2, reviewedAt: '2026-09-11T00:00:00Z', reviewedByUserId: 'reviewer', assessment,
+      fingerprint: expenseEvidenceFingerprint(result, assessment),
+    } };
+    return result;
+  } };
+}
 
 const audit = { log: async () => undefined } as any;
 const transactionTax = { resolveLines: async (_ctx: unknown, _header: unknown, lines: unknown[]) => lines } as any;
@@ -294,7 +310,7 @@ describe('expense Tax Code confirmation guard', () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       (error: any) => {
         const body = error?.getResponse?.();
         assert.equal(body.code, 'EXPENSE_VAT_RECONCILIATION_REQUIRED');
@@ -316,7 +332,7 @@ describe('expense Tax Code confirmation guard', () => {
     const repo = { findByIdWithRelations: async () => mismatchedVatRecord } as any;
     let permissionError: unknown = null;
 
-    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+    await new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices)
       .execute(ctx(undefined, ['expense.confirm']), 'exp-1', { reason: 'ใบเสร็จพิมพ์ VAT รวมทั้งใบ', vatLineNumber: 1, expectedUpdatedAt: readyRecord.updatedAt.toISOString() })
       .catch((error: unknown) => { permissionError = error; });
 
@@ -334,7 +350,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices)
         .execute(ctx(undefined, ['expense.confirm', 'expense.review']), 'exp-1', { reason: 'ตามเอกสาร', vatLineNumber: 2, expectedUpdatedAt: readyRecord.updatedAt.toISOString() }),
       (error: any) => error?.getResponse?.().code === 'EXPENSE_VAT_OVERRIDE_INVALID',
     );
@@ -355,7 +371,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     const confirmed = await new ConfirmExpenseUseCase(
-      repo, { log: async (entry: any, tx: any) => {
+      reviewedRepo(repo), { log: async (entry: any, tx: any) => {
         if (entry.action === 'expense.vat.source_override') assert.equal(tx.transaction, true);
         auditEntries.push(entry);
       } } as any, transactionTax, ...numberServices,
@@ -390,7 +406,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /cannot retain a Tax Code/,
     );
   });
@@ -409,7 +425,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
     const recordingAudit = { log: async (entry: any) => { auditEntries.push(entry); } } as any;
 
-    await new ConfirmExpenseUseCase(repo, recordingAudit, transactionTax, ...numberServices)
+    await new ConfirmExpenseUseCase(reviewedRepo(repo), recordingAudit, transactionTax, ...numberServices)
       .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
 
     const finalized = auditEntries.find((entry) => entry.action === 'tax.document_tax.finalize');
@@ -439,7 +455,7 @@ describe('expense Tax Code confirmation guard', () => {
           return { expense: { ...input, status: 'CONFIRMED' }, finalized };
         },
       } as any;
-      await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      await new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices)
         .execute(ctx(undefined, ['expense.confirm']), 'exp-1');
       assert.equal(finalizedTreatment, vatTreatment);
     }
@@ -462,7 +478,7 @@ describe('expense Tax Code confirmation guard', () => {
           return { expense: { ...input, expenseNumber: 'EXP-1' }, finalized };
         },
       } as any;
-      const useCase = new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices);
+      const useCase = new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices);
       (useCase as any).logger = { log: (entry: any) => events.push(entry) };
       await useCase.execute(ctx(undefined, ['expense.confirm']), 'exp-1');
       return events.filter((entry) => entry.msg === 'expense_category_overridden');
@@ -498,7 +514,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /requires verified Tax Code evidence/,
     );
   });
@@ -523,7 +539,7 @@ describe('expense Tax Code confirmation guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...tracked).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...tracked).execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /expense_confirmation_source_checksum_changed/,
     );
     assert.deepEqual(numberCalls, [['cancel', { id: 'number-1', companyId: 'company-1' }]]);
@@ -585,7 +601,7 @@ describe('manual web upload non-expense workflow guard', () => {
     } as any;
 
     await assert.rejects(
-      () => new ConfirmExpenseUseCase(repo, audit, transactionTax, ...numberServices)
+      () => new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...numberServices)
         .execute(ctx(undefined, ['expense.confirm']), 'exp-1'),
       /classified as non-expense/,
     );
@@ -770,7 +786,7 @@ describe('manual web upload non-expense workflow guard', () => {
         };
       },
     } as any;
-    await new ConfirmExpenseUseCase(repo, audit, transactionTax, ...trackedNumberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1');
+    await new ConfirmExpenseUseCase(reviewedRepo(repo), audit, transactionTax, ...trackedNumberServices).execute(ctx(undefined, ['expense.confirm']), 'exp-1');
 
     assert.equal(updates[0].status, 'CONFIRMED');
     assert.equal(updates[0].expenseNumber, 'EXP-202607-00001');
@@ -778,5 +794,90 @@ describe('manual web upload non-expense workflow guard', () => {
     assert.deepEqual(numberCalls[1], ['commit', { id: 'number-1', companyId: 'company-1', ownerType: 'expense_record', ownerId: 'exp-1' }]);
     assert.equal(updates[0].outboxEvent.payloadJson.data.expenseId, 'exp-1');
     assert.match(updates[0].outboxEvent.eventKey, /^expense\.confirmed:expense_record:exp-1:/);
+  });
+});
+
+describe('explicit document review acknowledgement', () => {
+  function setup(overrides: Record<string, unknown> = {}) {
+    let record: any = {
+      id: 'exp-1', companyId: 'company-1', branchId: 'b1', createdByUserId: 'user-1',
+      status: 'NEEDS_REVIEW', captureSource: 'WEB_MANUAL', vatMode: 'NO_VAT',
+      sourceDocumentType: 'TAX_INVOICE', taxEvidenceStatus: 'USABLE_FOR_TAX', expenseCategoryId: 'category-1',
+      attachments: [{ id: 'receipt-1', status: 'ACTIVE', checksumSha256: 'v1' }], lines: [],
+      primaryAttachmentId: 'receipt-1', extractionId: 'ocr-1', updatedAt: new Date('2026-09-11T00:00:00Z'),
+      aiVerificationSummaryJson: { missingFields: [], status: 'OCR_EXTRACTED_NEEDS_REVIEW' }, ...overrides,
+    };
+    const audits: any[] = [];
+    const updates: any[] = [];
+    const repo = {
+      findById: async () => record,
+      findByIdWithRelations: async () => record,
+      updateExpense: async (input: any, withinTx?: any) => {
+        if (input.expectedUpdatedAt && input.expectedUpdatedAt.getTime() !== record.updatedAt.getTime()) throw new Error('stale revision');
+        updates.push(input);
+        record = { ...record, ...input, updatedAt: input.updatedAt ?? new Date(record.updatedAt.getTime() + 1) };
+        if (typeof withinTx === 'function') await withinTx({ transaction: true });
+        return record;
+      },
+    } as any;
+    return { updates, audits, get: () => record,
+      usecase: new UpdateExpenseDraftUseCase(repo, { log: async (entry: any) => { audits.push(entry); } } as any, transactionTax) };
+  }
+
+  it('persists an unchanged explicit review with source identity and audit; ordinary saves cannot create it', async () => {
+    const { usecase, get, audits } = setup();
+    const version = () => ({ expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['receipt-1'], reason: '' } });
+    await usecase.execute(ctx(), 'exp-1', { ...version(), note: 'step 1 save' });
+    assert.equal(get().aiVerificationSummaryJson.documentReview, undefined);
+    await usecase.execute(ctx(), 'exp-1', { ...version(), documentReviewAcknowledged: true });
+    const review = get().aiVerificationSummaryJson.documentReview;
+    assert.equal(review.reviewedByUserId, 'user-1');
+    assert.equal(review.version, 2);
+    assert.deepEqual(review.assessment.attachmentIds, ['receipt-1']);
+    assert(hasCurrentExpenseEvidenceReview(get()));
+    assert.equal(get().aiVerificationSummaryJson.status, 'OCR_EXTRACTED_NEEDS_REVIEW');
+    assert.deepEqual(audits.at(-1).metadataJson.documentReview, review);
+    await usecase.execute(ctx(), 'exp-1', { ...version(), expenseCategoryId: null, documentReviewAcknowledged: true });
+    assert.equal(get().expenseCategoryId, null);
+    assert(hasCurrentExpenseEvidenceReview(get()));
+  });
+
+  it('persists a pending draft without approving it, and permits review after completing its facts', async () => {
+    const { usecase, get } = setup({ sourceDocumentType: 'NEEDS_REVIEW', taxEvidenceStatus: 'NEEDS_REVIEW' });
+    const assessment = { route: 'ALTERNATIVE_EVIDENCE' as const, receiptProblem: 'NOT_AVAILABLE' as const, attachmentIds: ['receipt-1'], reason: '' };
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: assessment });
+    assert.deepEqual(get().aiVerificationSummaryJson.documentEvidenceDraft, assessment);
+    assert(!hasCurrentExpenseEvidenceReview(get()));
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), sourceDocumentType: 'TRANSFER_SLIP', taxEvidenceStatus: 'SUPPORTING_ONLY',
+      evidenceAssessment: { ...assessment, reason: 'หลักฐานโอนให้ผู้ขายสำหรับรายการนี้' }, documentReviewAcknowledged: true });
+    assert(hasCurrentExpenseEvidenceReview(get()));
+  });
+
+  it('rejects foreign or removed selected files, and invalidates review only after meaningful source edits', async () => {
+    const { usecase, get, updates } = setup();
+    const assessment = { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['receipt-1'], reason: '' };
+    await assert.rejects(() => usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: { ...assessment, attachmentIds: ['foreign-file'] }, documentReviewAcknowledged: true }), /หลักฐานที่เลือกใช้ไม่ได้/);
+    assert.equal(updates.length, 0);
+    const result = await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), evidenceAssessment: assessment, documentReviewAcknowledged: true });
+    assert(hasCurrentExpenseEvidenceReview({ ...get(), aiVerificationSummaryJson: result.aiVerificationSummaryJson }), 'response includes committed approval');
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), vendorNameSnapshot: 'ร้านแก้ไข' });
+    assert(!hasCurrentExpenseEvidenceReview(get()));
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), documentReviewAcknowledged: true });
+    await usecase.execute(ctx(), 'exp-1', { expectedUpdatedAt: get().updatedAt.toISOString(), vendorNameSnapshot: 'ร้านแก้ไข' });
+    assert(hasCurrentExpenseEvidenceReview(get()));
+  });
+
+  it('rejects unresolved/invalid classifications, missing revision, non-reviewers and stale saves without acknowledging', async () => {
+    const { usecase, get, updates } = setup();
+    const input = { expectedUpdatedAt: get().updatedAt.toISOString(), documentReviewAcknowledged: true as const, evidenceAssessment: { route: 'SOURCE_DOCUMENT' as const, receiptProblem: 'NONE' as const, attachmentIds: ['receipt-1'], reason: '' } };
+    for (const patch of [{ sourceDocumentType: 'NEEDS_REVIEW' }, { taxEvidenceStatus: 'NEEDS_REVIEW' }, { sourceDocumentType: 'invalid' }, { documentReviewAcknowledged: 'true' }]) {
+      await assert.rejects(() => usecase.execute(ctx(), 'exp-1', { ...input, ...patch } as any), /เลือกประเภทเอกสาร/);
+    }
+    await assert.rejects(() => usecase.execute(ctx(), 'exp-1', { ...input, expectedUpdatedAt: undefined }), /expectedUpdatedAt/);
+    await assert.rejects(() => usecase.execute(ctx(['b1'], ['expense.update']), 'exp-1', input), /expense.review/);
+    await assert.rejects(() => usecase.execute(ctx(['b2']), 'exp-1', input), /branch scope/);
+    await assert.rejects(() => usecase.execute(ctx(), 'exp-1', { ...input, expectedUpdatedAt: '2026-09-10T00:00:00Z' }), /stale revision/);
+    assert.equal(updates.length, 0);
+    assert.equal(get().aiVerificationSummaryJson.documentReview, undefined);
   });
 });

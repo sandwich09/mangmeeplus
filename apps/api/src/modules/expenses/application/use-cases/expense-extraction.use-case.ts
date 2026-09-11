@@ -157,6 +157,14 @@ export class RequestReceiptExtractionUseCase {
 
       if (!response.classification) return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
 
+      // Keep the user's evidence choice/history recoverable. The new extraction request
+      // changes its fingerprint, so this does not approve the newly read facts.
+      const priorSummary = expense.aiVerificationSummaryJson ?? {};
+      const evidenceReviewMetadata = {
+        ...(priorSummary['documentEvidenceDraft'] ? { documentEvidenceDraft: priorSummary['documentEvidenceDraft'] } : {}),
+        ...(priorSummary['documentReview'] ? { documentReview: priorSummary['documentReview'] } : {}),
+      };
+
       if (!isExpenseExtractionEligible(response.classification, response.fields?.grandTotalAmount, true)) {
         const nonReceipt = isSuccessfulNonReceiptClassification(response.classification);
         await this.repo.updateExpense({
@@ -166,6 +174,7 @@ export class RequestReceiptExtractionUseCase {
           expectedUpdatedAt: expense.updatedAt,
           aiVerificationStatus: 'NEEDS_REVIEW',
           aiVerificationSummaryJson: {
+            ...evidenceReviewMetadata,
             status: nonReceipt ? 'NOT_EXPENSE_DOCUMENT' : 'OCR_FAILED',
             ...(!nonReceipt ? { recognizedFields: response.fields ?? {}, missingFields: response.fields?.missingFields ?? DEFAULT_MISSING_FIELDS } : {}),
             extractionRequestId: ctx.requestId, extractionAttachmentId: attachment.id,
@@ -228,6 +237,7 @@ export class RequestReceiptExtractionUseCase {
           taxEvidenceReasonCode: taxEvidence.taxEvidenceReasonCode,
         } : {}),
         aiVerificationSummaryJson: {
+          ...evidenceReviewMetadata,
           status: 'OCR_EXTRACTED_NEEDS_REVIEW',
           extractionRequestId: ctx.requestId, extractionAttachmentId: attachment.id,
           recognizedFields: response.fields,

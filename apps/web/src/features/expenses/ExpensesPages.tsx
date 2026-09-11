@@ -1,5 +1,7 @@
 'use client';
 
+import { isExpenseEvidenceFile, expenseEvidenceAssessment, expenseEvidenceInputError, EXPENSE_RECEIPT_SOURCE_TYPES, type ExpenseEvidenceAssessment } from '@watchdog-bms/contracts';
+
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef, type ChangeEvent, type DragEvent, type FormEvent, type MutableRefObject, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -20,7 +22,7 @@ import {
   EXPENSE_VAT_MODE_LABELS, CAPTURE_SOURCE_LABELS,
   SOURCE_DOCUMENT_TYPE_LABELS, TAX_EVIDENCE_STATUS_LABELS, buildExpenseDraftReviewPayload,
   expenseSubstituteReceiptAction, deriveExpenseClassificationReviewState, hasAiGrandTotalMismatch, hasUnresolvedDuplicateWarning,
-  allowsDomesticInputTaxCode, clearExpenseTaxSelections,
+  allowsDomesticInputTaxCode, clearExpenseTaxSelections, expenseDocumentReviewFieldsComplete, hasCurrentExpenseDocumentReview,
   TAX_EVIDENCE_REASON_LABELS, AI_SUMMARY_STATUS_LABELS, AI_MISSING_FIELD_LABELS,
   ATTACHMENT_PURPOSE_LABELS, MIME_TYPE_LABELS, SUBSTITUTE_RECEIPT_STATUS_LABELS, expenseValueLabel,
   deriveExpenseAuditChecks, deriveExpenseReviewSteps, initialExpenseReviewStep, expenseSubstituteReceiptReady, expenseNeedsReceiptOrSubstitute, expenseCapabilities,
@@ -478,10 +480,12 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 }
 
 // ── Document type / tax evidence review + substitute + signature fill ─────────
-function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploading, onAttachPrimaryReceipt }: {
+function CheckBillGuidanceCard({ companyId, expenseId, canReview, canStartSubstitute, onReviewDocument, receiptUploading, onAttachPrimaryReceipt }: {
   companyId: string;
   expenseId: string;
   canReview: boolean;
+  canStartSubstitute: boolean;
+  onReviewDocument: () => void;
   receiptUploading: boolean;
   onAttachPrimaryReceipt?: (file: File) => Promise<void>;
 }) {
@@ -535,7 +539,8 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploadi
                 }} />
               </label>
             )}
-            {canReview && <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&route=check-bill`}>{t('expenses.check_bill_start_new_substitute', locale)}</Link>}
+            {canStartSubstitute && <Link className={ghostClass} href={`/companies/${companyId}/expenses/substitute-receipts/new?expenseId=${encodeURIComponent(expenseId)}&route=check-bill`}>{t('expenses.check_bill_start_new_substitute', locale)}</Link>}
+            {canReview && !canStartSubstitute && <button type="button" className={ghostClass} onClick={onReviewDocument}>{t('expenses.doc_review_before_substitute', locale)}</button>}
             <button type="button" className={ghostClass} onClick={() => setAnswer(null)}>{t('expenses.check_bill_back', locale)}</button>
           </div>
           {canReview
@@ -558,7 +563,7 @@ function CheckBillGuidanceCard({ companyId, expenseId, canReview, receiptUploadi
   );
 }
 
-export function DocumentReviewSection({ companyId, detail, isMutable, canReview, onSaved, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; onSaved: () => Promise<void>; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void }) {
+export function DocumentReviewSection({ companyId, detail, isMutable, canReview, onSaved, onAttachPrimaryReceipt, receiptUploading = false, onDirtyChange, showSubstituteAction = true }: { companyId: string; detail: ExpenseDetail; isMutable: boolean; canReview: boolean; onSaved: () => Promise<void>; onAttachPrimaryReceipt?: (file: File) => Promise<void>; receiptUploading?: boolean; onDirtyChange?: (dirty: boolean) => void; showSubstituteAction?: boolean }) {
   const locale = useWorkspaceLocale();
   const toast = useToast();
   const [docType, setDocType] = useState(detail.sourceDocumentType);
@@ -576,7 +581,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
   useEffect(() => {
     setDocType(detail.sourceDocumentType); setTaxStatus(detail.taxEvidenceStatus); setCategoryId(detail.expenseCategoryId ?? '');
-  }, [detail.sourceDocumentType, detail.taxEvidenceStatus, detail.expenseCategoryId]);
+  }, [detail.id, detail.primaryAttachmentId, detail.extractionId, detail.sourceDocumentType, detail.taxEvidenceStatus, detail.expenseCategoryId]);
   useEffect(() => {
     void listExpenseCategories(companyId).then(setCategories).catch(() => setCategories([]));
   }, [companyId]);
@@ -586,30 +591,65 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     try {
       const result = await fn();
       if (result === false) return;
-      if (refresh) await onSaved();
+      if (refresh) {
+        try { await onSaved(); } catch {
+          setError('บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณาโหลดหน้าอีกครั้ง');
+          return;
+        }
+      }
       if (inline) setInfo(doneText); else toast.success(doneText);
     } catch (e) { setError(err(e, locale)); } finally { setBusy(false); }
   };
-  const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '');
+  const defaultAssessment = (source: ExpenseDetail): ExpenseEvidenceAssessment => expenseEvidenceAssessment(source) ?? {
+    route: EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE',
+    receiptProblem: EXPENSE_RECEIPT_SOURCE_TYPES.some(type => type === source.sourceDocumentType) || source.sourceDocumentType === 'NEEDS_REVIEW' ? 'NONE' : 'NOT_AVAILABLE',
+    attachmentIds: source.attachments.filter(file => isExpenseEvidenceFile(file) && file.id === source.primaryAttachmentId).map(file => file.id), reason: '',
+  };
+  const [assessment, setAssessment] = useState<ExpenseEvidenceAssessment>(() => defaultAssessment(detail));
+  const [showEvidenceOptions, setShowEvidenceOptions] = useState(() => defaultAssessment(detail).receiptProblem !== 'NONE');
+  const persistedAssessment = JSON.stringify(defaultAssessment(detail));
+  useEffect(() => { setAssessment(JSON.parse(persistedAssessment)); }, [detail.id, persistedAssessment]);
+  const dirty = docType !== detail.sourceDocumentType || taxStatus !== detail.taxEvidenceStatus || categoryId !== (detail.expenseCategoryId ?? '')
+    || JSON.stringify(assessment) !== persistedAssessment;
+  useEffect(() => {
+    if (!dirty || !isMutable || !canReview) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty, isMutable, canReview]);
+  const reviewSaved = hasCurrentExpenseDocumentReview(detail);
+  const assessmentError = expenseEvidenceInputError(assessment, { ...detail, sourceDocumentType: docType, taxEvidenceStatus: taxStatus,
+    inputVatClaimStatus: assessment.route !== 'SOURCE_DOCUMENT' ? 'NON_CLAIMABLE' : detail.inputVatClaimStatus }, true);
+  const reviewComplete = expenseDocumentReviewFieldsComplete({ sourceDocumentType: docType, taxEvidenceStatus: taxStatus }) && !assessmentError;
+  const canStartSubstitute = isMutable && canReview && reviewSaved && assessment.route === 'SUBSTITUTE_RECEIPT' && !dirty && !busy && !receiptUploading;
+  const documentFieldsRef = useRef<HTMLDivElement>(null);
+  const openDocumentReview = () => {
+    const fields = documentFieldsRef.current;
+    const section = fields?.closest('details');
+    if (section) section.open = true;
+    fields?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    fields?.querySelector<HTMLElement>('[role="combobox"]')?.focus({ preventScroll: true });
+  };
   const aiCategorySuggestion = expenseAiCategorySuggestion(detail.aiVerificationSummaryJson);
   // Live dirtiness for the parent's ถัดไป gate — only while the บันทึกการตรวจ button exists
   // (a read-only viewer has nothing to save and must never be blocked). State, not a ref: the
   // parent has to re-render to disable ถัดไป, which a ref cannot make it do (Owner report
   // 2026-08-29 — the button stayed live and the click was refused in silence).
   useEffect(() => {
-    onDirtyChange?.(isMutable && canReview && dirty);
-  }, [onDirtyChange, isMutable, canReview, dirty]);
+    onDirtyChange?.(isMutable && canReview && (dirty || busy));
+  }, [onDirtyChange, isMutable, canReview, dirty, busy]);
   const classificationReviewState = deriveExpenseClassificationReviewState(detail.aiVerificationSummaryJson, canReview);
   const classificationBlocked = classificationReviewState.blocked;
   const checkBillBlocked = isBlockedCheckBillClassification(detail.aiVerificationSummaryJson);
   const classificationConfirmBlocker = expenseClassificationConfirmBlocker({ sourceDocumentType: docType, reason: classificationOverrideReason });
   const canResolveClassification = classificationReviewState.showFinanceOverride && classificationConfirmBlocker === null;
-  const saveDocumentReview = (next?: { docType: ExpenseDetail['sourceDocumentType']; taxStatus: ExpenseDetail['taxEvidenceStatus'] }) => {
+  const saveDocumentReview = (next?: { docType: ExpenseDetail['sourceDocumentType']; taxStatus: ExpenseDetail['taxEvidenceStatus'] }, acknowledge = true) => {
     const nextDocType = next?.docType ?? docType;
     const nextTaxStatus = next?.taxStatus ?? taxStatus;
-    const disallowsTaxCode = !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus);
+    const disallowsTaxCode = expenseDocumentReviewFieldsComplete({ sourceDocumentType: nextDocType, taxEvidenceStatus: nextTaxStatus })
+      && (assessment.route !== 'SOURCE_DOCUMENT' || !allowsDomesticInputTaxCode(nextDocType, nextTaxStatus));
     const currentReview = reviewValues(detail);
-    const sanitizedReview = disallowsTaxCode
+    const sanitizedReview = disallowsTaxCode && currentReview.lines.some((line) => line.taxCodeDefinitionId || line.externalTaxCode)
       ? buildExpenseDraftReviewPayload({
         ...currentReview,
         lines: clearExpenseTaxSelections(currentReview.lines),
@@ -620,8 +660,10 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       ...sanitizedReview,
       sourceDocumentType: nextDocType,
       taxEvidenceStatus: nextTaxStatus,
+      ...(acknowledge && { documentReviewAcknowledged: true as const }),
+      evidenceAssessment: assessment,
       ...(disallowsTaxCode && { inputVatClaimStatus: 'NON_CLAIMABLE' as const }),
-      ...(categoryId ? { expenseCategoryId: categoryId } : {}),
+      expenseCategoryId: categoryId || null,
     });
   };
   const overrideClassification = () => {
@@ -634,7 +676,6 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
     });
   };
   const evidence = detail.substituteReceiptEvidence;
-  const needsReceiptOrSubstitute = expenseNeedsReceiptOrSubstitute(detail);
   const substituteAction = expenseSubstituteReceiptAction(companyId, detail.id, detail.aiVerificationSummaryJson, evidence);
   const paperAwaiting = evidence?.status === 'PREPARED' && evidence.signatureMode === 'PAPER' && !evidence.payerUserId;
   const certifierName = evidence?.paperSubmission?.payer.name || evidence?.payerName;
@@ -646,13 +687,8 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       {error && <ErrorBanner message={error} />}
       {info && <InfoBanner message={info} />}
       {checkBillBlocked
-        ? <CheckBillGuidanceCard key={detail.id} companyId={companyId} expenseId={detail.id} canReview={canReview} receiptUploading={receiptUploading} onAttachPrimaryReceipt={onAttachPrimaryReceipt} />
+        ? <CheckBillGuidanceCard key={detail.id} companyId={companyId} expenseId={detail.id} canReview={canReview} canStartSubstitute={canStartSubstitute} onReviewDocument={openDocumentReview} receiptUploading={receiptUploading} onAttachPrimaryReceipt={onAttachPrimaryReceipt} />
         : classificationBlocked && <InfoBanner message={t(classificationReviewState.showFinanceOverride ? 'expenses.non_expense_override_hint' : 'expenses.non_expense_waiting_finance', locale)} />}
-      {!evidence && needsReceiptOrSubstitute && isMutable && canReview && !classificationBlocked && (
-        <div className="space-y-2 rounded-xl border border-warning-100 bg-warning-50 p-3">
-          <p className="text-xs font-semibold text-warning-700">{t('expenses.no_receipt_banner', locale)}</p>
-        </div>
-      )}
       {classificationReviewState.showFinanceOverride && (
         checkBillBlocked ? (
           <details className="rounded-xl border border-gray-200 bg-white p-3">
@@ -678,31 +714,31 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           </summary>
         )}
         <div className={checkBillBlocked ? 'mt-3 space-y-3 border-t border-gray-100 pt-3' : 'space-y-3'}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div ref={documentFieldsRef} className="grid scroll-mt-24 grid-cols-1 gap-3 sm:grid-cols-3">
         <div>
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+          <div className="mb-1 flex min-h-6 items-center gap-1.5 text-xs font-medium text-gray-600">
             {t('expenses.doc_type', locale)}
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_doc_type', locale)} />
           </div>
-          <ThemedSelect className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as ExpenseDetail['sourceDocumentType'])} disabled={!isMutable || !canReview}>
+          <ThemedSelect aria-label={t('expenses.doc_type', locale)} className={inputClass} value={docType} onChange={(e) => setDocType(e.target.value as ExpenseDetail['sourceDocumentType'])} disabled={busy || !isMutable || !canReview}>
             {Object.entries(SOURCE_DOCUMENT_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
         </div>
         <div>
-          <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-gray-600">
+          <div className="mb-1 flex min-h-6 items-center gap-1.5 text-xs font-medium text-gray-600">
             {t('expenses.tax_evidence_status', locale)}
             <InfoTip label={t('expenses.tip_open', locale)} text={t('expenses.tip_tax_status', locale)} />
           </div>
-          <ThemedSelect className={inputClass} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={!isMutable || !canReview}>
+          <ThemedSelect aria-label={t('expenses.tax_evidence_status', locale)} className={inputClass} value={taxStatus} onChange={(e) => setTaxStatus(e.target.value as ExpenseDetail['taxEvidenceStatus'])} disabled={busy || !isMutable || !canReview}>
             {Object.entries(TAX_EVIDENCE_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </ThemedSelect>
           {detail.taxEvidenceReasonCode && <p className="mt-1 text-xs text-gray-400">{t('expenses.reason_label', locale)}: {expenseValueLabel(TAX_EVIDENCE_REASON_LABELS, detail.taxEvidenceReasonCode)}</p>}
         </div>
         <div>
-          <div className="mb-1 text-xs font-medium text-gray-600">
+          <div className="mb-1 flex min-h-6 items-center text-xs font-medium text-gray-600">
             <AiFieldLabel label={t('expenses.category', locale)} field="category" summary={detail.aiVerificationSummaryJson} />
           </div>
-          <ThemedSelect className={inputClass} value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={!isMutable || !canReview}>
+          <ThemedSelect aria-label={t('expenses.category', locale)} className={inputClass} value={categoryId} onChange={(e) => setCategoryId(e.target.value)} disabled={busy || !isMutable || !canReview}>
             <option value="">{t('expenses.category_unspecified', locale)}</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </ThemedSelect>
@@ -722,16 +758,53 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           <AiFieldMissingHint field="category" summary={detail.aiVerificationSummaryJson} />
         </div>
       </div>
+      <div className="space-y-3">
+        <button type="button" className={ghostClass} onClick={() => setShowEvidenceOptions(value => !value)}>{showEvidenceOptions ? 'ซ่อนตัวเลือกหลักฐาน' : 'เอกสารมีปัญหา / เลือกหลักฐาน'}</button>
+        {showEvidenceOptions && <div className="space-y-3 rounded-xl border border-gray-200 p-3">
+          <label className="block">เอกสารนี้มีปัญหาอะไร?
+            <ThemedSelect className={inputClass} aria-label="ปัญหาของเอกสาร" disabled={busy || !isMutable || !canReview} value={assessment.receiptProblem} onChange={event => {
+              const receiptProblem = event.target.value as ExpenseEvidenceAssessment['receiptProblem'];
+              setAssessment(value => ({ ...value, receiptProblem, route: receiptProblem === 'NONE' ? 'SOURCE_DOCUMENT' : 'ALTERNATIVE_EVIDENCE' }));
+              if (receiptProblem !== 'NONE') setTaxStatus('SUPPORTING_ONLY');
+            }}>
+              <option value="NONE">มีเอกสารใช้ประกอบรายการ</option><option value="NOT_AVAILABLE">ไม่มีใบเสร็จ</option>
+              <option value="LOST">ใบเสร็จสูญหาย</option><option value="MATERIAL_INCOMPLETE">ข้อมูลสำคัญไม่ครบ</option>
+            </ThemedSelect>
+          </label>
+          {assessment.receiptProblem === 'LOST' && <p className="text-gray-600">ขอสำเนาหรือเอกสารแทนจากผู้ขายได้ ระหว่างรอเก็บรายการนี้เป็นแบบร่างไว้ก่อน</p>}
+          {assessment.receiptProblem === 'MATERIAL_INCOMPLETE' && <p className="text-gray-600">ถ้าเพียงรูปไม่ชัด ให้เปลี่ยนไฟล์หรืออ่านเอกสารอีกครั้งก่อน</p>}
+          {assessment.receiptProblem !== 'NONE' && <label className="block">ต้องการใช้หลักฐานแบบใด
+            <ThemedSelect className={inputClass} aria-label="ทางใช้หลักฐาน" disabled={busy || !isMutable || !canReview} value={assessment.route} onChange={event => setAssessment(value => ({ ...value, route: event.target.value as ExpenseEvidenceAssessment['route'] }))}>
+              <option value="ALTERNATIVE_EVIDENCE">ใช้หลักฐานอื่นที่มี</option><option value="SUBSTITUTE_RECEIPT">จัดทำใบรับรองแทนใบเสร็จ</option>
+            </ThemedSelect>
+          </label>}
+          {assessment.attachmentIds.some(id => !detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) && <div className="rounded-xl bg-warning-50 p-3 text-warning-700">
+            <p>ไฟล์ที่เคยเลือกบางไฟล์ใช้ไม่ได้แล้ว กรุณาเลือกหลักฐานใหม่</p>
+            <button type="button" className={ghostClass} disabled={busy || !isMutable || !canReview} onClick={() => setAssessment(value => ({ ...value, attachmentIds: value.attachmentIds.filter(id => detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) }))}>เอาไฟล์ที่ใช้ไม่ได้ออก</button>
+          </div>}
+          <fieldset disabled={busy || !isMutable || !canReview} className="space-y-1"><legend>เลือกไฟล์ที่ใช้ประกอบรายการ</legend>
+            {detail.attachments.filter(file => isExpenseEvidenceFile(file)).map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 break-all">
+              <input type="checkbox" checked={assessment.attachmentIds.includes(file.id)} onChange={event => setAssessment(value => ({ ...value, attachmentIds: event.target.checked ? [...value.attachmentIds, file.id] : value.attachmentIds.filter(id => id !== file.id) }))} />{file.originalFileName}
+            </label>)}
+            {!detail.attachments.some(file => isExpenseEvidenceFile(file)) && <p className="text-gray-600">ยังไม่มีไฟล์แนบ เก็บร่างแล้วเพิ่มหลักฐานภายหลังได้</p>}
+          </fieldset>
+          {assessment.receiptProblem !== 'NONE' && <label className="block">เหตุผลที่ใช้หลักฐานนี้
+            <textarea aria-label="เหตุผลที่ใช้หลักฐานนี้" className={inputClass} rows={2} maxLength={assessment.route === 'SUBSTITUTE_RECEIPT' ? 500 : 2000} disabled={busy || !isMutable || !canReview} value={assessment.reason} onChange={event => setAssessment(value => ({ ...value, reason: event.target.value }))} />
+          </label>}
+        </div>}
+      </div>
       {isMutable && canReview && (
         <div className="flex flex-wrap items-center gap-2">
-          <button className={btnClass} disabled={busy || !dirty} onClick={() => run(saveDocumentReview, 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t('expenses.doc_review_save', locale)}</button>
+          <button type="button" className={ghostClass} disabled={busy} onClick={() => run(() => saveDocumentReview(undefined, false), 'บันทึกแบบร่างแล้ว กลับมาแก้รายการนี้ต่อได้')}>บันทึกแบบร่าง</button>
+          <button className={btnClass} disabled={busy || !reviewComplete || (!dirty && reviewSaved)} onClick={() => run(() => saveDocumentReview(), 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t(busy ? 'expenses.saving' : !dirty && reviewSaved ? 'expenses.doc_review_saved' : 'expenses.doc_review_save', locale)}</button>
+          {(!reviewComplete || dirty || !reviewSaved || busy) && <p id={`expense-document-review-hint-${detail.id}`} role="status" className="w-full rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700">{busy ? t('expenses.saving', locale) : assessmentError ?? t(!reviewComplete ? 'expenses.doc_review_choose_required' : 'expenses.doc_review_required_next', locale)}</p>}
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
           {/* `w-full` puts the reason on its own line of the wrapping row, under the buttons —
               a disabled button on a phone has no tooltip to fall back on. */}
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && classificationConfirmBlocker && (
             <p className="w-full text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>
           )}
-          {!classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
+          {showSubstituteAction && canStartSubstitute && !classificationBlocked && (!evidence || evidence.status === 'SUPERSEDED') && (
             <>
               <Link className={ghostClass} href={substituteAction.href} aria-disabled={busy || dirty} onClick={(event) => { if (busy || dirty) event.preventDefault(); }}>
                 {t(substituteAction.labelKey, locale)}
@@ -744,7 +817,6 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       )}
         </div>
       </DocumentReviewContainer>
-      {dirty && isMutable && canReview && <p className="text-xs text-warning-700">บันทึกการตรวจเอกสารก่อนดำเนินการใบรับรองแทนใบเสร็จ</p>}
       {evidence && (
         <div className="space-y-3 rounded-xl border border-warning-100 bg-warning-50 p-4 text-sm" aria-label="ใบรับรองแทนใบเสร็จของรายการนี้">
           <p className="font-semibold text-gray-800">ใบรับรองแทนใบเสร็จรับเงิน {evidence.documentNumber}</p>
@@ -767,7 +839,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
 
 type EditableReviewLineField = 'description' | 'quantity' | 'unitPrice' | 'discountAmount' | 'vatRate';
 
-export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0 }: {
+export function ExpenseReviewEditSection({ companyId, detail, isMutable, canReview, canConfirm, showSaveDraft = false, onSaved, saveRef, onValidationChange, vatOverrideRef, onTotalsChange, totalsRetry = 0, skipUnchangedSave = false }: {
   companyId: string;
   detail: ExpenseDetail;
   isMutable: boolean;
@@ -779,6 +851,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   canConfirm: boolean;
   /** Explicit save is available only on the first review step; later steps use navigation saves. */
   showSaveDraft?: boolean;
+  /** Back/Next in an existing certificate must preserve signed no-op revisions. */
+  skipUnchangedSave?: boolean;
   onSaved: () => Promise<void>;
   /** The ถัดไป/chip navigation and the first-step draft button use the same save. */
   saveRef?: MutableRefObject<(() => Promise<boolean>) | null>;
@@ -1006,7 +1080,8 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
   };
 
   const save = async (explicitDraftSave = false): Promise<boolean> => {
-    if (busy) return false;
+    if (busy || !isMutable) return false;
+    if (skipUnchangedSave && JSON.stringify(values) === JSON.stringify(reviewValues(detail))) return true;
     setError(null); setInfo(null);
     const partialSourceSave = explicitDraftSave && Boolean(detail.sourceDraft);
     const partialHasFinancialLines = values.lines.some((line) => line.id
@@ -1083,8 +1158,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <h3 className="font-semibold text-gray-800">{t('expenses.vendor_and_lines', locale)}</h3>
         {!isMutable && <span className="text-xs text-gray-400">{t('expenses.read_only', locale)}</span>}
       </div>
-      {showSaveDraft && isMutable && (detail.status === 'DRAFT'
-        || (detail.status === 'NEEDS_REVIEW' && Boolean(detail.sourceDraft?.missingFields.length))) && <button type="button" className={ghostClass} disabled={busy} onClick={() => void save(true)}>
+      {showSaveDraft && isMutable && <button type="button" className={ghostClass} disabled={busy} onClick={() => void save(true)}>
         {busy ? t('expenses.source_draft_saving', locale)
           : t(detail.status === 'DRAFT' ? 'expenses.review_save_draft' : 'expenses.source_draft_save', locale)}
       </button>}
