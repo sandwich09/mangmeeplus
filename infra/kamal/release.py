@@ -701,6 +701,9 @@ class Release:
             info=infos[0]
             base=read(self.envdir/(service+'.base-image-env.json'))
             native={'KAMAL_CONTAINER_NAME':name,'KAMAL_VERSION':self.version(service),'KAMAL_HOST':h['address']}
+            if hasattr(self, 'restoring'):
+                prior=next(row for row in self.restoring[service] if row['host']['instanceId']==h['instanceId'])
+                native={key:prior['environment'][key] for key in native}
             observed=inspect_container(expected,service,self.envs[service],info,{**base,**native})
             self.verify_proxy(service,h,info)
             observed.update(instanceId=h['instanceId'],containerId=info['Id'],containerName=name)

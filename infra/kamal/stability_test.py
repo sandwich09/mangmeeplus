@@ -55,7 +55,7 @@ class Stability(unittest.TestCase):
                     name = r.target['servicePrefix'] + ('' if service == 'api-web' else '-'+service) + '-web-' + version
                     env = {'GIT_SHA':old_source, 'SERVICE_VERSION':old_source, 'WORKER_INTERNAL_TOKEN':'synthetic-token',
                            'AGENTCORE_EXPECTED_ARTIFACT_SHA256':'b'*64, 'AGENTCORE_RUNTIME_QUALIFIER':'old_slot',
-                           'KAMAL_CONTAINER_NAME':name, 'KAMAL_VERSION':version, 'KAMAL_HOST':r.target['hosts'][service][0]['address']}
+                           'KAMAL_CONTAINER_NAME':name, 'KAMAL_VERSION':version, 'KAMAL_HOST':'10.91.0.99'}
                     previous[service] = [{'host':r.target['hosts'][service][0], 'version':version, 'sourceCommit':old_source,
                                           'imageId':'sha256:'+str(i)*64, 'containerName':name, 'environment':env}]
                     infos[name] = {'Id':str(i)*64, 'Image':previous[service][0]['imageId'], 'State':{'Running':True},
