@@ -135,5 +135,18 @@
   "ciCheckpoint": {
     "initialRunId": 34676972716,
     "result": "Failed before fan-out: reviewed source hashes stale; updated with existing generator and verified locally. Final CI pending."
+  },
+  "finalIntegration": {
+    "status": "COMPLETE",
+    "codePr": 554,
+    "codeMergeCommit": "1f9e405b5fd0400a8f3b56664cea796eb173ad09",
+    "acceptedCandidate": "3a99c3f9da2874753573ee0c73f14f65d591b810",
+    "ciRunId": 34677091200,
+    "ciConclusion": "success",
+    "bothBranchesSameCommit": true,
+    "workspaceClean": true,
+    "uniqueMaterialRetained": 528,
+    "extraGeneratedCachesBackedUpAndRemoved": 9,
+    "deploymentPerformed": false
   }
 }
