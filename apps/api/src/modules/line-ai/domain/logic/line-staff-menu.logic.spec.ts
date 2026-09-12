@@ -651,13 +651,13 @@ describe('promotion menu (rich menu v2 ver2)', () => {
     assert.equal(staffMenuCommand('โปรโมชั่น'), 'promotion', 'the poster keeps its own pull command');
   });
 
-  it('builds the poster card from the web asset base and survives a missing base URL', () => {
-    const withBase = JSON.stringify(buildPromotionCard('https://app.example.com/'));
-    assert.match(withBase, /https:\/\/app\.example\.com\/assets\/line\/mangmeeplus-package-promo-1080x1350\.png/);
-    assert.match(withBase, /ทดลองใช้ฟรี/);
-    const withoutBase = JSON.stringify(buildPromotionCard(undefined));
-    assert.ok(!withoutBase.includes('"hero"'), 'no hero image without a base URL');
-    assert.match(withoutBase, /249/);
+  it('shows the real trial and sales availability without the obsolete PRO-free poster', () => {
+    for (const base of ['https://app.example.com/', undefined]) {
+      const card = JSON.stringify(buildPromotionCard(base));
+      assert.ok(!card.includes('"hero"'));
+      assert.ok(!card.includes('PRO'));
+      for (const text of ['30 วัน', '15 ครั้ง', '249', 'กำลังเตรียมเปิดรับชำระเงิน', 'ขอเปลี่ยนแพ็กเกจ']) assert.ok(card.includes(text));
+    }
   });
 });
 

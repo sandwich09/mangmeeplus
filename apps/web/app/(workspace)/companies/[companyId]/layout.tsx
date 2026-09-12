@@ -15,12 +15,13 @@ export default async function CompanyWorkspaceLayout({
   params: Promise<{ companyId: string }>;
 }) {
   const { companyId } = await params;
+  const returnTo = companyGateReturnPath((await headers()).get(REQUEST_PATH_HEADER), companyId);
 
   // Middleware already bounces cookie-less visits; this covers expired/revoked tokens
   // that still carry a cookie. The login page silently refreshes and returns here.
   const sessionResult = await fetchServerSessionResult(companyId);
   if (sessionResult.status === 'signed_out') {
-    redirect(`/login?next=${encodeURIComponent(`/companies/${companyId}/dashboard`)}`);
+    redirect(`/login?next=${encodeURIComponent(returnTo)}`);
   }
   if (sessionResult.status === 'platform_closed') redirect('/maintenance');
   // An unreachable/erroring auth service is an outage: say so honestly. Sending it to /login would
@@ -42,7 +43,6 @@ export default async function CompanyWorkspaceLayout({
   }
   // Return to the page that was actually opened, not the dashboard: a LINE deep link tapped by a
   // user with a pending password change or an unaccepted legal release used to lose its destination.
-  const returnTo = companyGateReturnPath((await headers()).get(REQUEST_PATH_HEADER), companyId);
   if (sessionResult.session.mustChangePassword) {
     redirect(`/change-password?next=${encodeURIComponent(returnTo)}`);
   }

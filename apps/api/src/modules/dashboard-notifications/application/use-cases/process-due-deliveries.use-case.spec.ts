@@ -90,6 +90,7 @@ describe('CreateOrUpdateNotificationEventUseCase recipients', () => {
       { findByTriggerKey: async () => null } as any,
       {
         client: {
+          notificationDelivery: { findFirst: async () => null },
           companyMembership: {
             findMany: async (query: any) => {
               assert.deepEqual(query.where.userId.in, ['active-user', 'inactive-user']);

@@ -11,20 +11,33 @@ export type PlanTermNotice = {
   isOwner: boolean;
 };
 
+export class PlanTermNoticeError extends Error {
+  constructor(public readonly status: number) { super(`Plan term notice unavailable (${status})`); }
+}
+
+/** Recovery pages must distinguish no term from auth/server/network failures. */
+export async function readPlanTermNotice(companyId?: string): Promise<PlanTermNotice | null> {
+  const response = await fetch('/api/v1/plan-term/notice', {
+    credentials: 'include', cache: 'no-store',
+    headers: companyId ? { 'X-Company-Id': companyId } : undefined,
+  });
+  if (!response.ok) throw new PlanTermNoticeError(response.status);
+  const body = await response.json();
+  if (body === null) return null;
+  if (!['ACTIVE', 'WARNING', 'EXPIRED'].includes(body?.derivedState) ||
+      typeof body.isOwner !== 'boolean' || typeof body.termEndsAt !== 'string') {
+    throw new PlanTermNoticeError(502);
+  }
+  return body as PlanTermNotice;
+}
+
 /**
  * Deliberately not `authedApiFetch`: a banner is decoration, and that helper bounces the browser to
  * /login on a hard 401. Every failure here simply means "no notice to show".
  */
 export async function fetchPlanTermNotice(companyId?: string): Promise<PlanTermNotice | null> {
   try {
-    const response = await fetch('/api/v1/plan-term/notice', {
-      credentials: 'include',
-      cache: 'no-store',
-      headers: companyId ? { 'X-Company-Id': companyId } : undefined,
-    });
-    if (!response.ok) return null;
-    const body = (await response.json()) as PlanTermNotice | null;
-    return body && typeof body.derivedState === 'string' ? body : null;
+    return await readPlanTermNotice(companyId);
   } catch {
     return null;
   }

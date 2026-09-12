@@ -21,14 +21,15 @@ const storageKey = (companyId: string) => `watchdog.planTermCard.${companyId}`;
  * its own when the 3-day and 1-day windows begin.
  */
 export function PlanTermSidebarCard({ companyId }: { companyId: string }) {
-  const [notice, setNotice] = useState<PlanTermNotice | null>(null);
+  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
+  const notice = loaded?.companyId === companyId ? loaded.notice : null;
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     let active = true;
     void fetchPlanTermNotice(companyId).then((result) => {
       if (!active) return;
-      setNotice(result);
+      setLoaded({ companyId, notice: result });
       if (result && planTermView(result) === 'warning-banner') {
         try {
           setCollapsed(cardCollapsed(window.localStorage.getItem(storageKey(companyId)), warningBucket(result.daysLeft)));

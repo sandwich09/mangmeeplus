@@ -1,6 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { LineWebhookController } from '../auth/presentation/line-webhook.controller';
 import {
   LINE_FOLLOW_EVENT_TEXT, PACKAGE_CHANGE_COMMAND, PROFILE_GUARD_COMMAND, PROFILE_GUARD_LATER_COMMAND,
@@ -9,7 +11,7 @@ import {
 } from './domain/logic/line-staff-menu.logic';
 import { buildSignupDoorCard, buildSignupStatusCard, buildAiBudgetExceededMessage } from './domain/logic/line-business-card.logic';
 import { classifyLineAiGatewayFailure } from './domain/logic/line-ai-terminal-outcome.logic';
-import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, resolveCompanyForLineUser } from './application/use-cases/process-line-webhook.use-case';
 import { DRAFT_UPDATE_CONFIRM_COMMAND } from './domain/logic/line-draft-update-card.logic';
 import { AuthRateLimitService } from '../auth/application/auth-rate-limit.service';
 import { RedisRateLimitService } from '../../common/security/redis-rate-limit.service';
@@ -181,6 +183,7 @@ function harness(options: {
   pendingSignup?: { id?: string; companyName: string } | null;
   identity?: { userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
   ownerMembership?: any;
+  ownerMemberships?: any[];
   /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
   memberships?: Array<{ companyId: string; roles: unknown[]; company?: { name: string } }>;
   context?: { companyId: string; aiPausedUntil: Date | null } | null;
@@ -264,7 +267,11 @@ function harness(options: {
           if (args?.where?.roles) return options.ownerMembership ?? null;
           return options.memberships?.[0] ?? options.ownerMembership ?? null;
         },
-        findMany: async (args: any) => { membershipQueries.push(args); return options.memberships ?? []; },
+        findMany: async (args: any) => {
+          membershipQueries.push(args);
+          if (args?.where?.roles) return options.ownerMemberships ?? (options.ownerMembership ? [options.ownerMembership] : []);
+          return options.memberships ?? [];
+        },
       },
       companyPlanTerm: { findUnique: async () => null },
       lineWebhookEventLog: {
@@ -1240,7 +1247,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
     await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
     assert.equal(h.packageChanges.length, 1);
     // DISABLED is in the accepted set precisely because an expired trial IS the caller here.
-    assert.deepEqual(h.membershipQueries[0].where.company, { status: { in: ['ACTIVE', 'DISABLED'] } });
+    assert.deepEqual(h.membershipQueries[0].where.company, { OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }] });
   });
 
   it('refuses a non-owner without opening anything', async () => {
@@ -1283,5 +1290,82 @@ describe('P10-L day-7 nudge answers (§3.6)', () => {
 
     assert.match(rendered(h), /ได้ค่ะ/);
     assert.equal(outcome(h), 'profile_guard_declined');
+  });
+});
+
+describe('GW05 package request stays with the selected company', () => {
+  const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const rows = ['a', 'b'].map(id => ({ companyId: `co-${id}`, company: { name: `Shop ${id}`, planTerm: { tierKey: 'BASIC_499' } } }));
+  it('uses selected B even when A is first in the owner query', async () => {
+    const h = harness({ identity, ownerMemberships: rows, context: { companyId: 'co-b', aiPausedUntil: null } });
+    await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(h.packageChanges.length, 1); assert.equal(h.packageChanges[0].companyId, 'co-b');
+  });
+  for (const companyId of [null, 'revoked-or-staff-company']) it(`asks to select instead of silently choosing A: ${companyId}`, async () => {
+    const h = harness({ identity, ownerMemberships: rows, context: companyId ? { companyId, aiPausedUntil: null } : null });
+    await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(h.packageChanges.length, 0); assert.equal(outcome(h), 'needs_company_selection');
+    assert.match(rendered(h), /Shop a/); assert.match(rendered(h), /Shop b/);
+  });
+  it('does not fall back to sole A when the selected membership was revoked', async () => {
+    const h = harness({ identity, ownerMemberships: rows.slice(0, 1), context: { companyId: 'revoked', aiPausedUntil: null } });
+    await h.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(h.packageChanges.length, 0); assert.equal(outcome(h), 'needs_company_selection');
+  });
+});
+
+
+describe('GW09 committed rich menu → signed webhook → deterministic reply', () => {
+  const manifest = JSON.parse(readFileSync(join(__dirname, '../../../../../scripts/line-oa/rich-menu-v2-ver2.manifest.json'), 'utf8'));
+  for (const { action } of manifest.lineRichMenu.areas) {
+    if (action.type === 'uri') continue; // LINE camera is a native action, not a webhook.
+    it(action.label, async () => {
+      const { controller, enqueued } = makeWebhookController();
+      await controller.lineWebhook(webhookRequest([{
+        type: action.type, webhookEventId: `menu-${action.label}`, replyToken: 'local-reply',
+        source: { type: 'user', userId: 'Uline-1' },
+        ...(action.type === 'message' ? { message: { type: 'text', id: 'm1', text: action.text } } : { postback: { data: action.data } }),
+      }]));
+      assert.equal(enqueued.length, 1);
+      const h = harness({ identity: null });
+      await h.useCase.execute(event(enqueued[0].item.text));
+      assert.ok(h.replies.length > 0, 'every webhook tile has an actual reply path');
+      assert.equal(h.packageChanges.length, 0, 'no payment or subscription mutation from a menu tap');
+      if (action.text === 'โปรโมชั่น') {
+        assert.match(rendered(h), /30 วัน/);
+        assert.match(rendered(h), /กำลังเตรียมเปิดรับชำระเงิน/);
+        assert.ok(!rendered(h).includes('PRO'));
+      }
+    });
+  }
+});
+
+
+describe('GW10 LINE message context after expiry or membership revocation', () => {
+  it('does not route selected B to the only ACTIVE A', async () => {
+    const prisma = { client: {
+      companyMembership: { findMany: async () => [{ companyId: 'co-a' }] },
+      lineCompanyContext: { findUnique: async () => ({ companyId: 'co-b' }) },
+    } } as any;
+    assert.equal(await resolveCompanyForLineUser(prisma, 'user-1', 'Uline-1'), null);
+  });
+  it('keeps the sole active company usable when there is no prior selection', async () => {
+    const prisma = { client: {
+      companyMembership: { findMany: async () => [{ companyId: 'co-a' }] },
+      lineCompanyContext: { findUnique: async () => null },
+    } } as any;
+    assert.deepEqual(await resolveCompanyForLineUser(prisma, 'user-1', 'Uline-1'), { companyId: 'co-a' });
+  });
+  it('returns picker → company switch → explicit package request for the same B', async () => {
+    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const rows = ['a','b'].map(id => ({ companyId: `co-${id}`, roles: [], company: { name: `Shop ${id}`, planTerm: { tierKey: 'BASIC_499' } } }));
+    const before = harness({ identity, ownerMemberships: rows, memberships: rows });
+    await before.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(before.packageChanges.length, 0);
+    await before.useCase.execute(event('/company co-b'));
+    assert.equal(before.contextUpserts[0].update.companyId, 'co-b');
+    const after = harness({ identity, ownerMemberships: rows, memberships: rows, context: { companyId: before.contextUpserts[0].update.companyId, aiPausedUntil: null } });
+    await after.useCase.execute(event(PACKAGE_CHANGE_COMMAND));
+    assert.equal(after.packageChanges.length, 1); assert.equal(after.packageChanges[0].companyId, 'co-b');
   });
 });

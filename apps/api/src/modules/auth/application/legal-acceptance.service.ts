@@ -607,7 +607,11 @@ export class LegalAcceptanceService {
         userId: locator.userId,
         companyId: locator.companyId,
         status: 'ACTIVE',
-        company: { status: 'ACTIVE' },
+        OR: [
+          { company: { status: 'ACTIVE' } },
+          // Legal acceptance is part of authenticated recovery, not business access.
+          { company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
+        ],
       },
       select: {
         id: true,

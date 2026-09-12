@@ -35,6 +35,8 @@ function makePrisma(opts: { companyFound?: boolean; currentStatus?: string } = {
       },
       $transaction: async (fn: (tx: any) => Promise<any>) => {
         const tx = {
+          $queryRaw: async () => [],
+          companyPlanTerm: { updateMany: async () => ({ count: 0 }) },
           company: prisma.client.company,
           auditLog: prisma.client.auditLog,
         };

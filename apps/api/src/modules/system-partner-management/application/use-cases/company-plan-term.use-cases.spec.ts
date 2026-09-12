@@ -46,6 +46,7 @@ function makePrisma(opts: {
   let stored = opts.term === undefined ? null : opts.term;
 
   const client = {
+    $queryRaw: async () => [],
     company: {
       findUnique: async () => (opts.companyStatus === null ? null : { id: COMPANY, status: opts.companyStatus ?? 'ACTIVE' }),
     },
@@ -68,7 +69,7 @@ function makePrisma(opts: {
     },
     auditLog: {
       create: async (args: any) => { audits.push(args.data); return args.data; },
-      findFirst: async () => (opts.replayAudit ? { id: 'audit-1' } : null),
+      findFirst: async () => (opts.replayAudit ? { id: 'audit-1', metadataJson: { days: 30 } } : null),
     },
     $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(client),
   };

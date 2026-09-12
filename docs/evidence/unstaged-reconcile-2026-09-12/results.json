@@ -1,0 +1,139 @@
+{
+  "date": "2026-09-12",
+  "baseMain": "e5df1709cc11e235dc4a17f0d0fced32860161d5",
+  "scope": "Reconcile uncommitted billing recovery and LINE entry repairs onto current main; no deployment.",
+  "dispositionCounts": {
+    "integrate_verified_code": 43,
+    "discard_identical": 155,
+    "discard_superseded_source": 20,
+    "discard_incorporated": 9,
+    "archive_unique_material": 528,
+    "discard_superseded_controller": 4
+  },
+  "verification": {
+    "workspaceTypecheck": {
+      "exitCode": 0,
+      "elapsedSeconds": 45.92459275003057
+    },
+    "focused": {
+      "passed": 727,
+      "failed": 0,
+      "skipped": 0,
+      "files": [
+        "apps/api/src/modules/access-control/permission-resolver.spec.ts",
+        "apps/api/src/modules/auth/line-handoff.spec.ts",
+        "apps/api/src/modules/auth/line-liff-signup.spec.ts",
+        "apps/api/src/modules/dashboard-notifications/application/use-cases/process-due-deliveries.use-case.spec.ts",
+        "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts",
+        "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts",
+        "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts",
+        "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.spec.ts",
+        "apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.spec.ts",
+        "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.spec.ts",
+        "apps/web/src/common/auth/session-gate.logic.spec.ts",
+        "apps/api/src/common/security/liff-start-handoff.spec.ts",
+        "apps/api/src/modules/auth/auth.guard.spec.ts",
+        "apps/api/src/modules/auth/auth-endpoints.spec.ts",
+        "apps/api/src/modules/auth/application/legal-acceptance.service.spec.ts"
+      ]
+    },
+    "realPostgres": {
+      "passed": 15,
+      "failed": 0,
+      "suite": "docs/evidence/stripe-repair-2026-09-11/recovery.pg.spec.ts"
+    },
+    "browser": {
+      "passed": 30,
+      "failed": 0,
+      "flaky": 0,
+      "skipped": 0,
+      "suite": "e2e/plan-term-billing-readiness.spec.ts"
+    },
+    "siblingMarketing": {
+      "passed": 22,
+      "failed": 0,
+      "externalDeliveries": 0,
+      "sourceChanged": false
+    },
+    "fullWorkspaceUnit": {
+      "exitCode": 0,
+      "elapsedSeconds": 45.21
+    },
+    "maintenancePins": "pin-sync and validator regression suites passed; exact hashes only, no policy change",
+    "diMetadata": {
+      "files": 813,
+      "decoratedClasses": 874,
+      "withConstructorDependencies": 824,
+      "passed": true
+    }
+  },
+  "limits": [
+    "LINE identity/SDK proof and payment outcome are simulated test boundaries; BFF/API/DB/cookies/guards are real.",
+    "No Stripe provider integration, native LINE acceptance or deployed-runtime claim.",
+    "Initial missing-LINE-flags and later stopped-local-Docker attempts remain retained; no application assertions were removed."
+  ],
+  "privateEvidenceDirectory": ".env.kamal/uat/unstaged-audit-20260912",
+  "archiveSha256": "9ca15be4372925df2b5449687c2daf1f2f6a151d47be1df6168e1e913f33d129",
+  "sourceSha256": {
+    "apps/api/src/common/security/liff-page.security.ts": "cd416f1ae38c24292436bcd8fae130acb749d0260f9d2d4ee5686c01a7f52098",
+    "apps/api/src/common/security/liff-start-handoff.spec.ts": "1d17a3e925cb5f0ab6da41909de624dab1b7504e2436a9d29215c5067d2876ba",
+    "apps/api/src/modules/access-control/application/permission-resolver.service.ts": "690922836753a4a09220357523907037ab4a14f4e53c7a3c6ee83120e1687a72",
+    "apps/api/src/modules/access-control/domain/ports/permission-resolver.port.ts": "0820db01ea428aa8a1955268abbea00133312cb69b202c83fd51317e8827c429",
+    "apps/api/src/modules/access-control/infrastructure/prisma-permission-resolver.repository.ts": "c2e3b0c852b22baa69336cb715beb5a6795e75258ccdefa00f0de9d4bb37023f",
+    "apps/api/src/modules/access-control/permission-resolver.spec.ts": "3d677915beffd2ccbd04680eed7ae2aab011c0696cc5d78f37f8195d3b42cbb8",
+    "apps/api/src/modules/auth/application/legal-acceptance.service.ts": "f05fcdba0c4e4204915642aa23eeb069f17c3e1e6b32cfe6cb86ae5227961189",
+    "apps/api/src/modules/auth/application/use-cases/exchange-liff-session.use-case.ts": "77f0e2c720449c3ef2ff72422dff63e8080285f3d9876ec2ebaff9b2e67e187c",
+    "apps/api/src/modules/auth/application/use-cases/exchange-line-handoff-token.use-case.ts": "ac4cf7abeaa4858d9db809b8ef9fc3f1c5a3d355719a0fd9082428b8073cbedb",
+    "apps/api/src/modules/auth/application/use-cases/password-login.use-case.ts": "0deb1baa2149e6711bac3e02a1524fc5627cf73e811f559305e3004f2c9d5182",
+    "apps/api/src/modules/auth/application/use-cases/resolve-request-context.use-case.ts": "d4564e7280cc5eab2e49d35d9db6a9b1c39bff317d41fd9a5e7f2ca3a51e8560",
+    "apps/api/src/modules/auth/domain/logic/line-handoff.logic.ts": "945cb3786cae2de9858116c2b506e24146f28945fc7d039531754cec887a5f90",
+    "apps/api/src/modules/auth/line-handoff.spec.ts": "17e40b5d685b7577b0804ff03ad685eed41bcf005d0d2aeffb0a1c38974f532d",
+    "apps/api/src/modules/auth/line-liff-signup.spec.ts": "21256ae82c7aa41d8942cef756a277baa70b009d83574f6f3e056d1eb34a4133",
+    "apps/api/src/modules/auth/presentation/auth.controller.ts": "1fc2542eeac67beb420193bc69911951b1c4c7034fa51ad784f11032664e2da1",
+    "apps/api/src/modules/auth/presentation/auth.guard.ts": "42887a6cdda8e1cfc25f7b4e145906db882ddc25ddbe6c6c05b0cac0a1b0f3ff",
+    "apps/api/src/modules/dashboard-notifications/application/use-cases/notification.use-cases.ts": "a0c3683c244d4bf954f3e11b966d65bc3605596f91eb6fd2a3aa6d4a806b5058",
+    "apps/api/src/modules/dashboard-notifications/application/use-cases/process-due-deliveries.use-case.spec.ts": "60a931613d61f7ce4aef39f365390e1a28a2d527b92c6c646bb870829398887d",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "2d6772ea55ce894fd8fb7ad8b66511cb2d628222df1f7cfd4fed6b6269a77c28",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "13fdd0cff2255bb8d5f8eaf46046f07c3283897dc62abacda91e70b5057a9fbf",
+    "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts": "60bbbe69b4d95aa2f8359c77df85935202954b82502c83eaee72ccd41f9b6a75",
+    "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.ts": "4aab1f8d55278a94258cc4c539e5a371f85f16f2a42965d49477d94b4213ce2b",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "a351259bb171391a08ba60d5fae4a9a7a58c36d01ad076f9e5190dbccadcde52",
+    "apps/api/src/modules/system-partner-management/application/lock-plan-term-company.ts": "38e6d2eb8bf34261820478a199201e5382e592b54eaba8f974fe1de2ce118783",
+    "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.spec.ts": "cecf10791ff5c3c956c2fa1beefa3dc80feb8649a6c723577d2db4f31adc8b46",
+    "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts": "65c2ca8cc095f322b8c58fcad4f3e902c986055da707237bb18fd59e4d16309a",
+    "apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.spec.ts": "72703639ab7d36ae8f47fcd8022d381561464fcce51843d0a94380b538332445",
+    "apps/api/src/modules/system-partner-management/application/use-cases/partner-lifecycle-transition.use-case.ts": "f52f582890a723681d6028f3df59e94066c6580d9443ec0a871c169c9dafaaf7",
+    "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.spec.ts": "7fdcb948a5d10f2fad6f133ab3d76af81415320f23af162ba43dd207df6c91e6",
+    "apps/api/src/modules/system-partner-management/application/use-cases/plan-term-sweep.use-case.ts": "46d728bc60716992b55cc01bbc3ca6f995862813f7c7c2fb2ae420da0b992eda",
+    "apps/api/src/modules/system-partner-management/presentation/http/plan-term.controller.ts": "2dbdb6c58abf89304fc63e92b2ee293f8eac9c0f58894a3df2980f0a906f29f6",
+    "apps/web/app/(workspace)/companies/[companyId]/layout.tsx": "918be9e08d83e5fa9a55205985e5c06a052c6390fbb24996307e38233cbc9502",
+    "apps/web/app/(workspace)/companies/[companyId]/renew/page.tsx": "3f6a5595cc3d1ba24ea1dea0ae318dc5310d8661ca9d453fbed77765a03d84ee",
+    "apps/web/app/system/layout.tsx": "ebc14658b49fb70129fa8aaa74581874070bf762f4367aec9647f9ec9ccaa1dc",
+    "apps/web/src/common/auth/session-gate.logic.spec.ts": "1e36a59c04946c3c301b953085f1a2467ab3be63c755889cd5b068f0bfbe82f4",
+    "apps/web/src/common/auth/session-gate.logic.ts": "6f086b235c47e337495e2da052bdbb27a847c0179e9d8bf2c408f68d451d36fd",
+    "apps/web/src/features/plan-term/CompanyTermExpiredPage.tsx": "dff992c35c22c0890c176f9f27cc8ebb60b7891bbd9727527d70abc38fcdbc82",
+    "apps/web/src/features/plan-term/PlanTermBanner.tsx": "7e06a3431b09b20ffdcd93ad7ce4d9f979796aad58b9541b2df5b98c0b6bf1c4",
+    "apps/web/src/features/plan-term/PlanTermSidebarCard.tsx": "c65961afccaa73f2ffa7a23427b2f25748e37001a3f9a5350797fec50c1cd883",
+    "apps/web/src/features/plan-term/plan-term.api.ts": "a87af953e27cf04c41c47b1801794810fc5808785c948fdcd422af440181ee79",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "5059915f845238b05adfde156780bb222deea7bdecb34a310ec9634d9d02f2a1",
+    "e2e/plan-term-billing-readiness.spec.ts": "c1bedbfe86c9022bb9c1540f91c8937806eec930bf7196a46dee535f69f3fe68",
+    "e2e/stripe-marketing-readiness.mjs": "67552eff2e1498261853157d32d07f7ad793ba00076867ffb13e5284058f608e",
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "d908639101c101fbcdb275557ff60b9158e96deac7785f375a2a503e2c05ccfc",
+    ".github/workflows/deploy-production.yml": "29362718db9267dcd270e39fa07a0ebced0a16645c01f21ce22ad49f7b1f5810",
+    "infra/security/validate-production-maintenance-release.sh": "37a25da85561bfeacc4e52c6e459c3ac092fe500c130c7f0c6f72ac9194e7d34"
+  },
+  "logSha256": {
+    "focused.log": "d053b97c8dc848ca037d1c4ed6eea97d624c8122364d884a8a7a732adff7bec3",
+    "typecheck.log": "2dffca05a37bff34536a1a3552846c8a3303939c5c881abb9d64d8cd68eb89bd",
+    "postgres.log": "10ac71ff188b4399f3cf92357852284a0a4ae0bd5e2c6190a2954698edd8244f",
+    "browser.log": "13adbc92282e677035676edd9167de695547f52fee135f68cbebb28f0ceba7db",
+    "browser-final.log": "ecefa974277090bb5074eabd465cc396d4f2f5468149ac22c7268a0c660e40ff",
+    "browser-ready.log": "b55b9441ac08c57daf0ab92262e2c40098a6d5bbe7a970a7cfbaa950a3f39498",
+    "marketing-final.log": "578850f9fae610447d93aa7b1c5a43614b4cd418418d9b0ea555f28f798366d3",
+    "full-unit.log": "16a21c1bee2ccc71d3c76c8d9f02b2a02ce6503504570efb8a287fa607a14c9d"
+  },
+  "ciCheckpoint": {
+    "initialRunId": 34676972716,
+    "result": "Failed before fan-out: reviewed source hashes stale; updated with existing generator and verified locally. Final CI pending."
+  }
+}

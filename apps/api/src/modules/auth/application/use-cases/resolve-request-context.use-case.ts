@@ -15,6 +15,7 @@ export class ResolveRequestContextUseCase {
     requestId: string,
     authProvider: AuthProvider,
     companyId?: string,
+    allowTermRecovery = false,
   ): Promise<RequestContext> {
     // ponytail: watchdog/dev tokens use sub=userId directly; line tokens use sub=providerUserId
     let userId: string;
@@ -36,7 +37,7 @@ export class ResolveRequestContextUseCase {
       userId = identity.userId;
     }
 
-    const resolved = await this.permissionResolver.resolveAccess(userId, companyId);
+    const resolved = await this.permissionResolver.resolveAccess(userId, companyId, allowTermRecovery);
 
     return {
       requestId,

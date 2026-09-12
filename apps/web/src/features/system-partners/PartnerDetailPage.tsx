@@ -1664,6 +1664,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const [termDays, setTermDays] = useState('30');
 
   const load = async () => {
+    setError(null);
+    setTerm(undefined);
     try {
       setTerm((await getPartnerPlanTerm(companyId)).term);
       setError(null);
@@ -1777,7 +1779,12 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   return (
     <SectionCard title="แพ็กเกจและอายุการใช้งาน">
       {error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <div className="space-y-3" role="alert">
+          <p className="text-sm text-red-600">{error}</p>
+          <button type="button" className={btnSecondary} onClick={() => void load()}>
+            ลองโหลดแพ็กเกจอีกครั้ง
+          </button>
+        </div>
       ) : term === undefined ? (
         <div className="h-16 animate-pulse rounded border border-gray-100" />
       ) : (

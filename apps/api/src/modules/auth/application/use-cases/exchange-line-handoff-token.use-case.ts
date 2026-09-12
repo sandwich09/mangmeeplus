@@ -4,7 +4,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { emitSecurityEvent, SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { hashLineHandoffToken, isLineGroupChatKey, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
+import { hashLineHandoffToken, isLineGroupChatKey, resolveLineHandoffTarget, LINE_HANDOFF_SURFACE_COMPANY_PICKER_OPEN } from '../../domain/logic/line-handoff.logic';
 import { LegalAcceptanceService } from '../legal-acceptance.service';
 import { IssueTokenUseCase, type AuthTokensResult } from './issue-token.use-case';
 
@@ -101,12 +101,13 @@ export class ExchangeLineHandoffTokenUseCase {
         where: { userId: record.userId, companyId: record.companyId, status: 'ACTIVE' },
         select: { id: true },
       }),
-      this.prisma.client.company.findUnique({ where: { id: record.companyId }, select: { status: true } }),
+      this.prisma.client.company.findUnique({ where: { id: record.companyId }, select: { status: true, planTerm: { select: { termEndsAt: true, termDisabledAt: true } } } }),
     ]);
     if (!lineIdentity) throw this.refuse('line_identity_severed', record);
     if (!user || user.status !== 'ACTIVE') throw this.refuse('user_inactive', record);
     if (!membership) throw this.refuse('membership_inactive', record);
-    if (!company || company.status !== 'ACTIVE') throw this.refuse('company_inactive', record);
+    const targetPath = company && resolveLineHandoffTarget(record.companyId, record.targetPath, company, now);
+    if (!targetPath) throw this.refuse('company_inactive', record);
 
     // 4. Claim before issuing, exactly as complete-employee-line-link does. The loser of a race
     //    matches zero rows and falls through to normal login rather than getting a second session.
@@ -154,7 +155,7 @@ export class ExchangeLineHandoffTokenUseCase {
     return {
       ...tokens,
       companyId: record.companyId,
-      targetPath: record.targetPath,
+      targetPath,
       mustChangePassword: user.credential?.mustChangePassword ?? false,
       legalAcceptanceRequired: legal.required,
     };

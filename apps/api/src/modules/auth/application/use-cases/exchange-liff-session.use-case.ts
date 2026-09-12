@@ -7,7 +7,7 @@ import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { AuthRateLimitService } from '../auth-rate-limit.service';
 import { LineIdTokenService } from '../line-id-token.service';
-import { lineHandoffUrl } from '../../domain/logic/line-handoff.logic';
+import { lineHandoffUrl, resolveLineHandoffTarget } from '../../domain/logic/line-handoff.logic';
 import { MintLineHandoffTokenUseCase } from './mint-line-handoff-token.use-case';
 
 /**
@@ -21,7 +21,7 @@ export type LiffSessionBlockedReason = 'suspended' | 'expired' | 'no_membership'
 
 export type ExchangeLiffSessionResult =
   | { handoffUrl: string }
-  /** This LINE account has no active user — the page offers the signup form instead. */
+  /** No linked identity exists — the page may offer signup. A revoked identity is refused. */
   | { needsSignup: true }
   | { needsSelection: true; companies: Array<{ id: string; name: string }> }
   | { reason: LiffSessionBlockedReason };
@@ -69,17 +69,15 @@ export class ExchangeLiffSessionUseCase {
         provider: 'LINE',
         providerChannelId: verified.channelId,
         providerUserId: verified.providerUserId,
-        status: 'ACTIVE',
       },
-      select: { userId: true, user: { select: { status: true } } },
+      select: { userId: true, status: true, user: { select: { status: true } } },
     });
-    // No identity, or one pointing at a disabled account: from the page's side both mean "you do
-    // not have a shop here yet", and the honest next step is the signup form.
-    if (!identity || identity.user.status !== 'ACTIVE') return { needsSignup: true };
+    if (!identity) return { needsSignup: true };
+    if (identity.status !== 'ACTIVE' || identity.user.status !== 'ACTIVE') return { reason: 'suspended' };
 
     const decision = await this.resolveCompany(identity.userId, verified.providerUserId, cmd.companyId);
     if ('companyId' in decision) {
-      const targetPath = `/companies/${decision.companyId}/${LIFF_START_TARGET_PATH}`;
+      const targetPath = decision.targetPath;
       const { rawToken } = await this.mint.execute({
         userId: identity.userId,
         companyId: decision.companyId,
@@ -111,27 +109,35 @@ export class ExchangeLiffSessionUseCase {
     userId: string,
     lineUserId: string,
     requestedCompanyId: string | undefined,
-  ): Promise<{ companyId: string } | Exclude<ExchangeLiffSessionResult, { handoffUrl: string }>> {
+  ): Promise<{ companyId: string; targetPath: string } | Exclude<ExchangeLiffSessionResult, { handoffUrl: string }>> {
     const memberships = await this.prisma.client.companyMembership.findMany({
-      where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      where: { userId, status: 'ACTIVE', OR: [
+        { company: { status: 'ACTIVE' } },
+        { company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
+      ] },
       orderBy: { createdAt: 'asc' },
-      select: { companyId: true, company: { select: { name: true } } },
+      select: { companyId: true, company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true, termDisabledAt: true } } } } },
     });
+
+    const destination = (membership: typeof memberships[number]) => {
+      const targetPath = resolveLineHandoffTarget(membership.companyId, `/companies/${membership.companyId}/${LIFF_START_TARGET_PATH}`, membership.company);
+      return targetPath ? { companyId: membership.companyId, targetPath } : { reason: 'suspended' as const };
+    };
 
     if (requestedCompanyId) {
       const chosen = memberships.find((membership) => membership.companyId === requestedCompanyId);
       // A company id that is not on this token's own list is not a bad request to explain — it is
       // an answer to a question the server did not ask.
       if (!chosen) return { reason: 'no_membership' };
-      return { companyId: chosen.companyId };
+      return destination(chosen);
     }
 
     if (memberships.length === 0) return { reason: await this.blockedReason(userId) };
-    if (memberships.length === 1) return { companyId: memberships[0]!.companyId };
+    if (memberships.length === 1) return destination(memberships[0]!);
 
     const context = await this.prisma.client.lineCompanyContext.findUnique({ where: { lineUserId } });
     const current = context && memberships.find((membership) => membership.companyId === context.companyId);
-    if (current) return { companyId: current.companyId };
+    if (current) return destination(current);
     return {
       needsSelection: true,
       companies: memberships.map((membership) => ({ id: membership.companyId, name: membership.company.name })),

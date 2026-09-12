@@ -133,7 +133,8 @@ function makeExchangePrisma(options: {
   mustChangePassword?: boolean;
   hasCredential?: boolean;
   membership?: { id: string } | null;
-  companyStatus?: 'ACTIVE' | 'SUSPENDED' | null;
+  companyStatus?: 'ACTIVE' | 'DISABLED' | 'SUSPENDED' | null;
+  planTerm?: { termDisabledAt: Date | null; termEndsAt: Date } | null;
   updatedCount?: number;
   /** The LINE context write is best-effort: the web half must survive the LINE half failing. */
   contextUpsertThrows?: boolean;
@@ -188,7 +189,7 @@ function makeExchangePrisma(options: {
         findFirst: async () => (options.membership === undefined ? { id: 'mem-1' } : options.membership),
       },
       company: {
-        findUnique: async () => (options.companyStatus === null ? null : { status: options.companyStatus ?? 'ACTIVE' }),
+        findUnique: async () => (options.companyStatus === null ? null : { status: options.companyStatus ?? 'ACTIVE', planTerm: options.planTerm ?? null }),
       },
     },
   } as any;
@@ -606,5 +607,34 @@ describe('ExchangeLineHandoffTokenUseCase refusals', () => {
     assert.equal(results.filter((r) => r.status === 'rejected').length, 1);
     assert.equal(calls.length, 1, 'exactly one session for two concurrent taps');
     assert.equal(claims, 2, 'both taps attempted the claim; only one matched');
+  });
+});
+
+
+describe('GW04 exchange rechecks current term without widening business access', () => {
+  it('preserves a safe renewal reference instead of dropping its query', async () => {
+    const targetPath = '/companies/co-1/renew?attemptId=local-reference';
+    const h = makeExchangePrisma({ row: row({ targetPath }), userStatus: 'ACTIVE', companyStatus: 'DISABLED',
+      planTerm: { termDisabledAt: new Date(), termEndsAt: past() } });
+    const result = await new ExchangeLineHandoffTokenUseCase(h.prisma, issueToken([]), legalAcceptance()).execute({ token: RAW_TOKEN });
+    assert.equal(result.targetPath, targetPath);
+  });
+  for (const status of ['ACTIVE', 'DISABLED'] as const) {
+    it('lands an expired ' + status + ' company on renewal in the destination browser', async () => {
+      const h = makeExchangePrisma({ row: row(), userStatus: 'ACTIVE', hasCredential: false, companyStatus: status,
+        planTerm: { termDisabledAt: status === 'DISABLED' ? new Date() : null, termEndsAt: new Date(Date.now() - 1000) } });
+      const calls: unknown[][] = [];
+      const result = await new ExchangeLineHandoffTokenUseCase(h.prisma, issueToken(calls), legalAcceptance()).execute({ token: RAW_TOKEN });
+      assert.equal(result.targetPath, '/companies/co-1/renew');
+      assert.equal(result.mustChangePassword, false);
+      assert.equal(calls.length, 1);
+    });
+  }
+  it('still refuses an admin DISABLED company without an expiry marker', async () => {
+    const h = makeExchangePrisma({ row: row({ targetPath: '/companies/co-1/renew' }), userStatus: 'ACTIVE', companyStatus: 'DISABLED',
+      planTerm: { termDisabledAt: null, termEndsAt: new Date(Date.now() - 1000) } });
+    const calls: unknown[][] = [];
+    await assert.rejects(new ExchangeLineHandoffTokenUseCase(h.prisma, issueToken(calls), legalAcceptance()).execute({ token: RAW_TOKEN }), ForbiddenException);
+    assert.equal(calls.length, 0);
   });
 });

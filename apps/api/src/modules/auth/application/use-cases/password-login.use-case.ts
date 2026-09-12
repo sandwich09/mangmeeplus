@@ -70,9 +70,8 @@ export class PasswordLoginUseCase {
       throw new ForbiddenException('Temporary password has expired.');
     }
 
-    // An ACTIVE membership in a suspended/disabled/archived company grants no access:
-    // PrismaPermissionResolverRepository rejects it on the next request. Select only
-    // usable memberships so a token is never issued for access that cannot resolve.
+    // Prefer usable companies, then allow a term-only hold into authenticated recovery.
+    // Admin/security holds remain excluded; a recovery login grants no business access.
     const membership = await this.prisma.client.companyMembership.findFirst({
       where: { userId: user.id, status: 'ACTIVE', company: { status: 'ACTIVE' } },
       select: {
@@ -80,6 +79,10 @@ export class PasswordLoginUseCase {
         companyId: true,
         roles: { select: { role: { select: { key: true } } } },
       },
+      orderBy: { createdAt: 'asc' },
+    }) ?? await this.prisma.client.companyMembership.findFirst({
+      where: { userId: user.id, status: 'ACTIVE', company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
+      select: { id: true, companyId: true, roles: { select: { role: { select: { key: true } } } } },
       orderBy: { createdAt: 'asc' },
     });
 

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   CompanyPlanTermViewDto,
   PlanTierKey,
@@ -17,6 +17,7 @@ import {
   type PlanTermRow,
 } from '../../domain/logic/plan-term.logic';
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
 
 export const PLAN_TERM_SET_ACTION = 'system.company_plan_term.set';
 export const PLAN_TERM_RENEW_ACTION = 'system.company_plan_term.renew';
@@ -87,31 +88,32 @@ export class SetCompanyPlanTermUseCase {
    * deliberately is what renew is for.
    */
   async execute(cmd: SetCompanyPlanTermCommand): Promise<CompanyPlanTermViewDto> {
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: cmd.companyId },
-      select: { id: true },
-    });
-    if (!company) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
+    return this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, cmd.companyId);
+      const company = await tx.company.findUnique({
+        where: { id: cmd.companyId },
+        select: { id: true },
+      });
+      if (!company) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
 
-    if (!isPlanTierKey(cmd.tierKey)) {
-      throw new UnprocessableEntityException(`tierKey "${String(cmd.tierKey)}" is not a known plan tier.`);
-    }
-    const branchLimit = positiveInt(cmd.branchLimit, 'branchLimit');
-    const employeeLimit = positiveInt(cmd.employeeLimit, 'employeeLimit');
-    const monthlySlipLimit = positiveInt(cmd.monthlySlipLimit, 'monthlySlipLimit');
-    const warningDays = cmd.warningDays === undefined ? DEFAULT_WARNING_DAYS : positiveInt(cmd.warningDays, 'warningDays');
+      if (!isPlanTierKey(cmd.tierKey)) {
+        throw new UnprocessableEntityException(`tierKey "${String(cmd.tierKey)}" is not a known plan tier.`);
+      }
+      const branchLimit = positiveInt(cmd.branchLimit, 'branchLimit');
+      const employeeLimit = positiveInt(cmd.employeeLimit, 'employeeLimit');
+      const monthlySlipLimit = positiveInt(cmd.monthlySlipLimit, 'monthlySlipLimit');
+      const warningDays = cmd.warningDays === undefined ? DEFAULT_WARNING_DAYS : positiveInt(cmd.warningDays, 'warningDays');
 
-    const now = new Date();
-    const existing = await this.prisma.client.companyPlanTerm.findUnique({
-      where: { companyId: cmd.companyId },
-      select: TERM_SELECT,
-    });
+      const now = new Date();
+      const existing = await tx.companyPlanTerm.findUnique({
+        where: { companyId: cmd.companyId },
+        select: TERM_SELECT,
+      });
 
-    const termStartAt = parseDate(cmd.termStartAt, 'termStartAt', now);
-    const termDays = cmd.termDays === undefined ? DEFAULT_TERM_DAYS : positiveInt(cmd.termDays, 'termDays');
+      const termStartAt = parseDate(cmd.termStartAt, 'termStartAt', now);
+      const termDays = cmd.termDays === undefined ? DEFAULT_TERM_DAYS : positiveInt(cmd.termDays, 'termDays');
 
-    const saved = await this.prisma.client.$transaction(async (tx) => {
-      const row = await tx.companyPlanTerm.upsert({
+      const saved = await tx.companyPlanTerm.upsert({
         where: { companyId: cmd.companyId },
         create: {
           companyId: cmd.companyId,
@@ -151,15 +153,13 @@ export class SetCompanyPlanTermUseCase {
           metadataJson: {
             created: existing === null,
             from: existing ? auditValues(existing as PlanTermRow) : null,
-            to: auditValues(row as PlanTermRow),
+            to: auditValues(saved as PlanTermRow),
           },
         },
       });
 
-      return row;
+      return { term: toPlanTermDto(saved as PlanTermRow, now) };
     });
-
-    return { term: toPlanTermDto(saved as PlanTermRow, now) };
   }
 }
 
@@ -213,42 +213,47 @@ export class RenewCompanyPlanTermUseCase {
 
   async execute(cmd: RenewCompanyPlanTermCommand): Promise<CompanyPlanTermViewDto> {
     const days = cmd.days === undefined ? DEFAULT_TERM_DAYS : positiveInt(cmd.days, 'days');
-    const now = new Date();
+    return this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, cmd.companyId);
+      const now = new Date();
 
-    const existing = await this.prisma.client.companyPlanTerm.findUnique({
-      where: { companyId: cmd.companyId },
-      select: TERM_SELECT,
-    });
-    if (!existing) throw new NotFoundException(`Company "${cmd.companyId}" has no plan term to renew.`);
+      const existing = await tx.companyPlanTerm.findUnique({
+        where: { companyId: cmd.companyId },
+        select: TERM_SELECT,
+      });
+      if (!existing) throw new NotFoundException(`Company "${cmd.companyId}" has no plan term to renew.`);
 
-    // Idempotency on requestId, read from the audit trail the renew itself writes — a lost
-    // response retried with the same requestId must not buy a second month.
-    const replay = await this.prisma.client.auditLog.findFirst({
-      where: {
-        requestId: cmd.requestId,
-        action: PLAN_TERM_RENEW_ACTION,
-        targetId: cmd.companyId,
-        result: 'SUCCESS',
-      },
-      select: { id: true },
-    });
-    if (replay) return { term: toPlanTermDto(existing as PlanTermRow, now) };
+      // Idempotency on requestId, read from the audit trail the renew itself writes — a lost
+      // response retried with the same requestId must not buy a second month.
+      const replay = await tx.auditLog.findFirst({
+        where: {
+          requestId: cmd.requestId,
+          action: PLAN_TERM_RENEW_ACTION,
+          targetId: cmd.companyId,
+          result: 'SUCCESS',
+        },
+        select: { id: true, metadataJson: true },
+      });
+      if (replay) {
+        const metadata = replay.metadataJson as { days?: number } | null;
+        if (metadata?.days !== days) throw new ConflictException('Renewal requestId was already used with different days.');
+        return { term: toPlanTermDto(existing as PlanTermRow, now) };
+      }
 
-    const company = await this.prisma.client.company.findUnique({
-      where: { id: cmd.companyId },
-      select: { status: true },
-    });
-    if (!company) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
+      const company = await tx.company.findUnique({
+        where: { id: cmd.companyId },
+        select: { status: true },
+      });
+      if (!company) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
 
-    // Extend from whichever is later: renewing early keeps the days already paid for; renewing
-    // after expiry starts the new term now rather than back-dating it into the past.
-    const base = existing.termEndsAt.getTime() > now.getTime() ? existing.termEndsAt : now;
-    // Re-enable ONLY what the term system disabled. A company an admin disabled by hand stays
-    // disabled until an admin activates it through the lifecycle route (spec §2 rule 3).
-    const reactivate = company.status === 'DISABLED' && existing.termDisabledAt !== null;
+      // Extend from whichever is later: renewing early keeps the days already paid for; renewing
+      // after expiry starts the new term now rather than back-dating it into the past.
+      const base = existing.termEndsAt.getTime() > now.getTime() ? existing.termEndsAt : now;
+      // Re-enable ONLY what the term system disabled. A company an admin disabled by hand stays
+      // disabled until an admin activates it through the lifecycle route (spec §2 rule 3).
+      const reactivate = company.status === 'DISABLED' && existing.termDisabledAt !== null;
 
-    const saved = await this.prisma.client.$transaction(async (tx) => {
-      const row = await tx.companyPlanTerm.update({
+      const saved = await tx.companyPlanTerm.update({
         where: { companyId: cmd.companyId },
         data: {
           termEndsAt: addDays(base, days),
@@ -278,31 +283,28 @@ export class RenewCompanyPlanTermUseCase {
           metadataJson: {
             days,
             fromTermEndsAt: existing.termEndsAt.toISOString(),
-            toTermEndsAt: row.termEndsAt.toISOString(),
+            toTermEndsAt: saved.termEndsAt.toISOString(),
             fromRenewCount: existing.renewCount,
-            toRenewCount: row.renewCount,
+            toRenewCount: saved.renewCount,
             companyStatusBefore: company.status,
             reactivated: reactivate,
           },
         },
       });
 
-      return row;
+      // Same transaction: activation failure rolls back the term AND its success audit.
+      if (reactivate) {
+        await this.lifecycle.execute({
+          companyId: cmd.companyId,
+          targetStatus: 'ACTIVE',
+          reason: 'term_renewed',
+          requestingAdminUserId: cmd.requestingAdminUserId,
+          requestId: cmd.requestId,
+        }, tx);
+      }
+
+      return { term: toPlanTermDto(saved as PlanTermRow, now) };
     });
-
-    // After the dates commit, never before: a re-activation that outlived a rolled-back renew
-    // would hand back a company whose term is still expired.
-    if (reactivate) {
-      await this.lifecycle.execute({
-        companyId: cmd.companyId,
-        targetStatus: 'ACTIVE',
-        reason: 'term_renewed',
-        requestingAdminUserId: cmd.requestingAdminUserId,
-        requestId: cmd.requestId,
-      });
-    }
-
-    return { term: toPlanTermDto(saved as PlanTermRow, now) };
   }
 }
 

@@ -289,28 +289,16 @@ export function buildServiceEntitlementMessage(entitled: ReadonlySet<string> | n
   };
 }
 
-/** Owner design 2026-08-27 (rich menu v2 ver2): the Promotion tile shows the package poster.
- *  The poster is a committed web asset so LINE fetches it over existing HTTPS hosting; when the
- *  base URL is unset (misconfigured env) the card still delivers its text body, never a broken
- *  image reference. */
-export function buildPromotionCard(assetBaseUrl: string | undefined): LineReplyMessage {
-  const imageUrl = assetBaseUrl
-    ? `${assetBaseUrl.replace(/\/+$/, '')}/assets/line/mangmeeplus-package-promo-1080x1350.png`
-    : undefined;
+/** Public pre-sales card. Keep the obsolete PRO-free poster out of the live reply. */
+export function buildPromotionCard(_assetBaseUrl: string | undefined): LineReplyMessage {
   return {
     type: 'flex',
-    altText: 'แพ็กเกจมั่งมี Plus — เริ่มต้น 249.-/เดือน ทดลองใช้ PRO ฟรี',
+    altText: 'แพ็กเกจมั่งมี Plus — ทดลองฟรี 30 วัน',
     contents: {
       type: 'bubble', size: 'mega',
-      ...(imageUrl ? {
-        hero: {
-          type: 'image', url: imageUrl, size: 'full', aspectRatio: '4:5', aspectMode: 'cover',
-          action: { type: 'uri', label: 'ดูแพ็กเกจ', uri: 'https://official.mangmeeplus.com/' },
-        },
-      } : {}),
       body: { type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
         { type: 'text', text: '🎁 Package ที่เหมาะกับร้านคุณ', weight: 'bold', size: 'md', color: '#101828', wrap: true },
-        { type: 'text', text: 'เริ่มต้น 249.-/เดือน และเริ่มด้วยแพ็กเกจ PRO “ทดลองใช้ฟรี” ได้เลยค่ะ', size: 'sm', color: '#475467', wrap: true },
+        { type: 'text', text: 'ทดลองฟรี 30 วัน ให้ AI อ่านรูป 15 ครั้ง แพ็กเกจรายเดือนเริ่มต้น 249 บาท กำลังเตรียมเปิดรับชำระเงินค่ะ', size: 'sm', color: '#475467', wrap: true },
       ] },
       footer: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
         { type: 'button', style: 'primary', color: '#22C55E', action: { type: 'uri', label: 'ทดลองใช้ฟรี', uri: 'https://official.mangmeeplus.com/' } },
