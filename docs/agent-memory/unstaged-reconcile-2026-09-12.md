@@ -1,6 +1,6 @@
 # Agent Memory: Unstaged reconciliation 2026-09-12
 
-Status: Local application acceptance passed; PR554 awaiting CI and integration. No deployment authorized in this task.
+Status: COMPLETE. Verified runtime integrated into main/develop and original workspace cleaned with complete private backup. No deployment performed.
 Owner: Codex, at owner request to discard incorporated work and validate missing changes before merging develop/main.
 Scope: 759 original dirty paths (95 tracked, 664 untracked), compared with main e5df1709cc11e235dc4a17f0d0fced32860161d5 and develop 325454714e33e2761dce7576b86a509c9c28519b, whose trees match.
 
@@ -28,7 +28,7 @@ Scope: 759 original dirty paths (95 tracked, 664 untracked), compared with main 
 Private audit directory: .env.kamal/uat/unstaged-audit-20260912/ (ignored). Includes inventory.json, verified initial-files.tar.gz, three-way comparison results and actual check logs. Original workspace remains untouched until final verification and merge. Sanitized results and tested source hashes: docs/evidence/unstaged-reconcile-2026-09-12/results.json.
 
 Open questions: None.
-Next: Finish database/browser checks and per-path disposition; merge verified code, then clean original workspace using exact-path/hash checks while retaining unique artifacts privately.
+Next: No remaining code review, integration or cleanup work for this audit. Retained historical/local material is available privately; it is not current release authority.
 
 ## Per-path disposition
 
@@ -51,3 +51,13 @@ Use the existing seeded loopback PostgreSQL URL in DATABASE_URL (never reset a s
 - Full workspace `pnpm test` passed, exit 0 in 45.210s (API/web/AI/workers/config/contracts). This overlaps the focused counts and is not counted as extra unique cases.
 - A merge-tree rehearsal of origin/develop into the candidate produces exactly the candidate tree. Include that existing develop ancestry so develop can fast-forward to the eventual accepted main merge without duplicate code validation.
 - Original dirty workspace is still untouched. 528 historical/local-material files are additionally copied into the private retained-local-material directory with per-file hash verification.
+
+## Final outcome (authoritative; earlier checkpoints are historical)
+
+- Code PR554 merged at 2026-09-12T06:21:16Z: main/develop both `1f9e405b5fd0400a8f3b56664cea796eb173ad09`. Develop fast-forwarded to the same commit; no second code CI or deployment dispatched.
+- Exact tested candidate `3a99c3f9da2874753573ee0c73f14f65d591b810`; [CI34677091200](https://github.com/MangmeeDev/mangmeeplus/actions/runs/34677091200) SUCCESS. Resolve Source, Typecheck/Test (including real PG, full unit, LINE whole-chain, API boot and release/image-security contracts), Migration Review, Security Audit, Secret Scan and Config Validation passed. Full Production Image build/publication jobs are not part of this PR check and were skipped.
+- Original audit scope759 paths: 43 missing runtime/test paths integrated; 155 exact duplicates + 9 fully incorporated + 20 superseded source + 4 superseded controller paths removed from the dirty workspace; 528 historical/prototype/generated/export files retained privately by original path and SHA-256.
+- Original workspace is clean on `codex/workspace-clean-20260912`, based on accepted main. The old branch `codex/substitute-receipt-local-20260910` and its commit history remain retained.
+- Removing the old local infra .gitignore exposed nine previously ignored Python bytecode files. The cleanup guard stopped on those extra paths; only these generated caches were backed up and removed before switching branches. No additional source was discarded.
+- Full archive SHA-256: `9ca15be4372925df2b5449687c2daf1f2f6a151d47be1df6168e1e913f33d129`. All759 source bytes and all528 retained copies were verified before cleanup. Private archive, browsable retained-local-material, per-path inventory/disposition and final-state.json remain in `.env.kamal/uat/unstaged-audit-20260912/`.
+- This final documentation closure changes no tested application or deployment source. No UAT/READY/Production workflow or cloud operation was performed. Local PostgreSQL/Redis were restarted for the resumed local test only.
