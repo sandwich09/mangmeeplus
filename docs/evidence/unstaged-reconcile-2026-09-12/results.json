@@ -54,6 +54,17 @@
       "failed": 0,
       "externalDeliveries": 0,
       "sourceChanged": false
+    },
+    "fullWorkspaceUnit": {
+      "exitCode": 0,
+      "elapsedSeconds": 45.21
+    },
+    "maintenancePins": "pin-sync and validator regression suites passed; exact hashes only, no policy change",
+    "diMetadata": {
+      "files": 813,
+      "decoratedClasses": 874,
+      "withConstructorDependencies": 824,
+      "passed": true
     }
   },
   "limits": [
@@ -107,7 +118,9 @@
     "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "5059915f845238b05adfde156780bb222deea7bdecb34a310ec9634d9d02f2a1",
     "e2e/plan-term-billing-readiness.spec.ts": "c1bedbfe86c9022bb9c1540f91c8937806eec930bf7196a46dee535f69f3fe68",
     "e2e/stripe-marketing-readiness.mjs": "67552eff2e1498261853157d32d07f7ad793ba00076867ffb13e5284058f608e",
-    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "d908639101c101fbcdb275557ff60b9158e96deac7785f375a2a503e2c05ccfc"
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "d908639101c101fbcdb275557ff60b9158e96deac7785f375a2a503e2c05ccfc",
+    ".github/workflows/deploy-production.yml": "29362718db9267dcd270e39fa07a0ebced0a16645c01f21ce22ad49f7b1f5810",
+    "infra/security/validate-production-maintenance-release.sh": "37a25da85561bfeacc4e52c6e459c3ac092fe500c130c7f0c6f72ac9194e7d34"
   },
   "logSha256": {
     "focused.log": "d053b97c8dc848ca037d1c4ed6eea97d624c8122364d884a8a7a732adff7bec3",
@@ -116,6 +129,11 @@
     "browser.log": "13adbc92282e677035676edd9167de695547f52fee135f68cbebb28f0ceba7db",
     "browser-final.log": "ecefa974277090bb5074eabd465cc396d4f2f5468149ac22c7268a0c660e40ff",
     "browser-ready.log": "b55b9441ac08c57daf0ab92262e2c40098a6d5bbe7a970a7cfbaa950a3f39498",
-    "marketing-final.log": "578850f9fae610447d93aa7b1c5a43614b4cd418418d9b0ea555f28f798366d3"
+    "marketing-final.log": "578850f9fae610447d93aa7b1c5a43614b4cd418418d9b0ea555f28f798366d3",
+    "full-unit.log": "16a21c1bee2ccc71d3c76c8d9f02b2a02ce6503504570efb8a287fa607a14c9d"
+  },
+  "ciCheckpoint": {
+    "initialRunId": 34676972716,
+    "result": "Failed before fan-out: reviewed source hashes stale; updated with existing generator and verified locally. Final CI pending."
   }
 }
