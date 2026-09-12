@@ -11,6 +11,7 @@ import {
   resolvePostLegalAcceptanceTarget,
   resolvePasswordChangeTarget,
   shouldAttemptSessionRecovery,
+  systemGateReturnPath,
 } from './session-gate.logic';
 import type { WebSession } from '../models/web-session.model';
 
@@ -227,5 +228,20 @@ describe('companyGateReturnPath', () => {
     assert.equal(companyGateReturnPath('//evil.example', 'c1'), dashboard, 'protocol-relative');
     assert.equal(companyGateReturnPath('/legal-acceptance?next=/companies/c1/x', 'c1'), dashboard, 'the gate itself');
     assert.equal(companyGateReturnPath('/change-password', 'c1'), dashboard, 'the other gate');
+  });
+});
+
+describe('systemGateReturnPath', () => {
+  it('preserves the system company and query through authentication recovery', () => {
+    const target = '/system/partners/c1?tab=billing&reference=invoice-1';
+    assert.equal(systemGateReturnPath(target), target);
+  });
+
+  it('falls back for missing, external, gate and out-of-scope paths', () => {
+    for (const path of [null, undefined, '/', '/system', '/systematic/c1', '/companies/c1/dashboard',
+      '//evil.example/system/x', 'https://evil.example/system/x', '/system/../login',
+      '/legal-acceptance?next=/system/partners/c1', '/change-password']) {
+      assert.equal(systemGateReturnPath(path), '/system/platform-access', String(path));
+    }
   });
 });

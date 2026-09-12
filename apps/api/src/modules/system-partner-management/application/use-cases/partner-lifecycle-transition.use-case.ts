@@ -1,5 +1,7 @@
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import type { Prisma } from '../../../../generated/prisma/client';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
 
 export type PartnerLifecycleCommand = {
   companyId: string;
@@ -30,8 +32,11 @@ function timestampData(targetStatus: 'ACTIVE' | 'DISABLED' | 'ARCHIVED'): Record
 export class PartnerLifecycleTransitionUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
-  async execute(cmd: PartnerLifecycleCommand): Promise<PartnerLifecycleResult> {
-    const company = await this.prisma.client.company.findUnique({
+  async execute(cmd: PartnerLifecycleCommand, transaction?: Prisma.TransactionClient): Promise<PartnerLifecycleResult> {
+    if (!transaction) return this.prisma.client.$transaction(tx => this.execute(cmd, tx));
+    const tx = transaction;
+    await lockPlanTermCompany(tx, cmd.companyId);
+    const company = await tx.company.findUnique({
       where: { id: cmd.companyId },
       select: { id: true, status: true, activatedAt: true, disabledAt: true, archivedAt: true },
     });
@@ -45,27 +50,30 @@ export class PartnerLifecycleTransitionUseCase {
     const fromStatus = company.status;
     const tsData = timestampData(cmd.targetStatus);
 
-    const updated = await this.prisma.client.$transaction(async (tx) => {
-      const result = await tx.company.update({
-        where: { id: cmd.companyId },
-        data: { status: cmd.targetStatus, ...tsData },
-        select: { id: true, status: true, activatedAt: true, disabledAt: true, archivedAt: true },
+    // A human disable supersedes a term hold, including DISABLED -> DISABLED. A later
+    // renewal must not mistake the old term marker for permission to lift this hold.
+    if (cmd.requestingAdminUserId !== null && cmd.targetStatus !== 'ACTIVE') {
+      await tx.companyPlanTerm.updateMany({
+        where: { companyId: cmd.companyId }, data: { termDisabledAt: null },
       });
+    }
+    const updated = await tx.company.update({
+      where: { id: cmd.companyId },
+      data: { status: cmd.targetStatus, ...tsData },
+      select: { id: true, status: true, activatedAt: true, disabledAt: true, archivedAt: true },
+    });
 
-      await tx.auditLog.create({
-        data: {
-          actorUserId: cmd.requestingAdminUserId,
-          action: 'system.partner_company.lifecycle.transition',
-          targetType: 'company',
-          targetId: cmd.companyId,
-          requestId: cmd.requestId,
-          result: 'SUCCESS',
-          riskLevel: 'CRITICAL',
-          metadataJson: { fromStatus, toStatus: cmd.targetStatus, reason: cmd.reason ?? null },
-        },
-      });
-
-      return result;
+    await tx.auditLog.create({
+      data: {
+        actorUserId: cmd.requestingAdminUserId,
+        action: 'system.partner_company.lifecycle.transition',
+        targetType: 'company',
+        targetId: cmd.companyId,
+        requestId: cmd.requestId,
+        result: 'SUCCESS',
+        riskLevel: 'CRITICAL',
+        metadataJson: { fromStatus, toStatus: cmd.targetStatus, reason: cmd.reason ?? null },
+      },
     });
 
     return {

@@ -9,7 +9,7 @@ export class PermissionResolverService {
     private readonly resolver: IPermissionResolverPort,
   ) {}
 
-  async resolveAccess(userId: string, companyId?: string): Promise<ResolvedAccess> {
-    return this.resolver.resolveForUser({ userId, companyId });
+  async resolveAccess(userId: string, companyId?: string, allowTermRecovery = false): Promise<ResolvedAccess> {
+    return this.resolver.resolveForUser({ userId, companyId, allowTermRecovery });
   }
 }

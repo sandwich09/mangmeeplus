@@ -54,6 +54,11 @@ function isLegalAcceptanceExempt(path: string): boolean {
  */
 const TERM_EXPIRY_EXEMPT_PREFIX = '/v1/auth/';
 const TERM_EXPIRY_EXEMPT_PATHS = new Set(['/v1/auth', '/v1/plan-term/notice']);
+const TERM_RECOVERY_ROUTES = new Set([
+  'GET /v1/plan-term/notice', 'GET /v1/auth/me', 'GET /v1/auth/me/companies',
+  'GET /v1/auth/legal-acceptance', 'POST /v1/auth/legal-acceptance',
+  'POST /v1/auth/password/change', 'POST /v1/auth/logout',
+]);
 
 function isTermExpiryExempt(path: string): boolean {
   const cleanPath = cleanRequestPath(path);
@@ -188,7 +193,10 @@ export class AuthGuard implements CanActivate {
     }
 
     try {
-      req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId);
+      // Only authenticated, explicitly scoped recovery/session reads can resolve a term hold.
+      // Permissions/legal/platform/session checks below still apply; never expose this as input.
+      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`);
+      req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId, allowTermRecovery);
     } catch (error) {
       // The company-access screen can name the blocked destination without widening access to any
       // company data endpoint. Other forbidden responses keep their existing shape.

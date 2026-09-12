@@ -13,6 +13,7 @@ import type { NotificationSummaryDto, NotificationPreferenceDto, NotificationRul
 import { IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS, DEFAULT_ENABLED_CHANNELS, DELIVERY_SWEEP_BATCH_LIMIT } from '../../domain/models/notification.model';
 import { AuditService } from '../../../audit/application/audit.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
 import { SHADOW_SURFACES } from '../../../feature-launch/domain/shadow-surface.catalog';
@@ -187,6 +188,18 @@ export class CreateOrUpdateNotificationEventUseCase {
     private readonly prisma: PrismaService,
   ) {}
 
+  /** Join a state change to the existing durable event/recipient/delivery queue. No I/O egress. */
+  async executeInTransaction(input: Parameters<CreateOrUpdateNotificationEventUseCase['execute']>[0], tx: Prisma.TransactionClient) {
+    const key = buildDedupKey(input);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`${input.companyId}:${key}`}, 0))`;
+    const prisma = { client: tx } as PrismaService;
+    return new CreateOrUpdateNotificationEventUseCase(
+      new PrismaNotificationEventRepository(prisma), new PrismaNotificationRecipientRepository(prisma),
+      new PrismaNotificationDeliveryRepository(prisma), new PrismaAlertStateRepository(prisma),
+      new PrismaNotificationRuleRepository(prisma), prisma,
+    ).execute(input);
+  }
+
   async execute(input: {
     companyId: string;
     triggerKey: string;
@@ -210,22 +223,14 @@ export class CreateOrUpdateNotificationEventUseCase {
 
     // Cooldown check
     const alertState = await this.alertStates.findByDedupKey(input.companyId, dedupKey);
-    if (alertState && isInCooldown(alertState.cooldownUntil, now)) {
-      // Update lastSeenAt only
-      if (existing) await this.events.update(input.companyId, existing.id, { lastSeenAt: now });
-      return { skipped: true, reason: 'cooldown' };
-    }
+    const coolingDown = existing && alertState && isInCooldown(alertState.cooldownUntil, now);
 
     let event = existing;
-    if (!event || event.status !== 'open') {
+    if (!event || (event.status !== 'open' && !coolingDown && input.sourceModule !== 'plan_term')) {
       event = await this.events.create({ companyId: input.companyId, triggerKey: input.triggerKey, sourceModule: input.sourceModule, sourceType: input.sourceType, sourceId: input.sourceId, severity: input.severity as any, title: input.title, body: input.body, payloadJson: {}, sourceRefsJson: { refs: input.sourceRefs ?? [] }, deepLinkHref: input.deepLinkHref, dedupKey, status: 'open', ruleId: rule?.id, firstSeenAt: now, lastSeenAt: now, resolvedAt: undefined });
     } else {
       await this.events.update(input.companyId, event.id, { lastSeenAt: now });
     }
-
-    // Cooldown duration
-    const cooldownMinutes = rule?.cooldownMinutes ?? 60;
-    await this.alertStates.upsert(input.companyId, dedupKey, { status: 'cooling_down', occurrenceCount: (alertState?.occurrenceCount ?? 0) + 1, lastTriggeredAt: now, cooldownUntil: computeCooldownUntil(cooldownMinutes, now) });
 
     // Create recipient + delivery rows only for current company members. The
     // delivery worker re-checks this again at egress for lifecycle races.
@@ -238,15 +243,21 @@ export class CreateOrUpdateNotificationEventUseCase {
       select: { userId: true },
     });
     for (const { userId } of activeRecipients) {
-      const existingRecipient = await this.recipients.findByEventAndUser(event.id, userId);
-      if (!existingRecipient) {
-        const recipient = await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
-        // Web delivery — immediately queued
-        await this.deliveries.create({ recipientId: recipient.id, companyId: input.companyId, channel: 'web', status: 'queued', attemptCount: 0, nextAttemptAt: now, sentAt: undefined, errorCode: undefined, errorMessage: undefined, providerMessageId: undefined, metadataJson: {} });
-        // LINE delivery — queued for worker
-        await this.deliveries.create({ recipientId: recipient.id, companyId: input.companyId, channel: 'line', status: 'queued', attemptCount: 0, nextAttemptAt: now, sentAt: undefined, errorCode: undefined, errorMessage: undefined, providerMessageId: undefined, metadataJson: {} });
+      const recipient = await this.recipients.findByEventAndUser(event.id, userId) ??
+        await this.recipients.create({ eventId: event.id, companyId: input.companyId, userId, recipientReason: 'role', readAt: undefined, dismissedAt: undefined, snoozedUntil: undefined });
+      // A retry repairs partial old event/recipient writes even during cooldown. Sent/failed
+      // deliveries are owned by the existing delivery worker, never recreated by this producer.
+      for (const channel of ['web', 'line'] as const) {
+        const delivery = await this.prisma.client.notificationDelivery.findFirst({
+          where: { recipientId: recipient.id, channel: channel === 'web' ? 'WEB' : 'LINE' }, select: { id: true },
+        });
+        if (!delivery) await this.deliveries.create({ recipientId: recipient.id, companyId: input.companyId, channel, status: 'queued', attemptCount: 0, nextAttemptAt: now, sentAt: undefined, errorCode: undefined, errorMessage: undefined, providerMessageId: undefined, metadataJson: {} });
       }
     }
+
+    if (coolingDown) return { event, skipped: true, reason: 'cooldown' };
+    const cooldownMinutes = rule?.cooldownMinutes ?? 60;
+    await this.alertStates.upsert(input.companyId, dedupKey, { status: 'cooling_down', occurrenceCount: (alertState?.occurrenceCount ?? 0) + 1, lastTriggeredAt: now, cooldownUntil: computeCooldownUntil(cooldownMinutes, now) });
 
     return { event, skipped: false };
   }

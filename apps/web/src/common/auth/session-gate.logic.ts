@@ -188,3 +188,9 @@ export function companyGateReturnPath(requestedPath: string | null | undefined, 
   const sanitized = usablePostAcceptanceLanding(sanitizeNextPath(requestedPath));
   return sanitized?.startsWith(`/companies/${companyId}/`) ? sanitized : dashboard;
 }
+
+/** Preserve the proxy's system deep link through every authentication gate. */
+export function systemGateReturnPath(requestedPath: string | null | undefined): string {
+  const sanitized = usablePostAcceptanceLanding(sanitizeNextPath(requestedPath));
+  return sanitized?.startsWith('/system/') ? sanitized : '/system/platform-access';
+}

@@ -63,6 +63,7 @@ function makeMembership(extra: Record<string, unknown> = {}) {
       {
         role: {
           key: 'MANAGER',
+          status: 'ACTIVE',
           permissions: [{ permission: { key: 'company.branch.read' } }],
         },
       },
@@ -104,6 +105,27 @@ describe('PrismaPermissionResolverRepository branch scopes', () => {
     await assert.rejects(() => suspended.resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' }), /Company is not active/);
   });
 
+  it('AX02 excludes disabled roles and their grants after a membership is reactivated', async () => {
+    const membership = makeMembership({ roles: [
+      { role: { key: 'STAFF', status: 'ACTIVE', permissions: [{ permission: { key: 'expense.read_own' } }] } },
+      { role: { key: 'OLD_MANAGER', status: 'DISABLED', permissions: [{ permission: { key: 'expense.read' } }] } },
+    ] });
+    const { resolver } = makePrismaResolver(membership);
+    const result = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
+    assert.deepEqual(result.roles, ['STAFF']);
+    assert.deepEqual(result.permissions, ['expense.read_own']);
+    assert.deepEqual(result.entitlementDeniedPermissions, {}, 'disabled role is not a package denial');
+  });
+
+  it('AX02 an active membership with only a disabled role gains no effective authority', async () => {
+    const { resolver } = makePrismaResolver(makeMembership({ roles: [
+      { role: { key: 'STALE_OWNER', status: 'DISABLED', permissions: [{ permission: { key: 'system.partner.update' } }] } },
+    ] }));
+    const result = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
+    assert.deepEqual(result.roles, []);
+    assert.deepEqual(result.permissions, []);
+  });
+
   it('leaves branchIds undefined for ALL_BRANCHES', async () => {
     const { resolver } = makePrismaResolver(makeMembership());
     const result = await resolver.resolveForUser({ userId: 'u-1', companyId: 'co-1' });
@@ -122,6 +144,7 @@ describe('PrismaPermissionResolverRepository branch scopes', () => {
         {
           role: {
             key: 'SYSTEM_ADMIN',
+            status: 'ACTIVE',
             permissions: [{ permission: { key: 'system.partner_dashboard.read' } }],
           },
         },
@@ -199,6 +222,7 @@ describe('PrismaPermissionResolverRepository feature entitlement gating (item 10
       {
         role: {
           key: 'OWNER',
+          status: 'ACTIVE',
           permissions: [
             { permission: { key: 'dashboard.read' } },          // dashboard_notifications feature
             { permission: { key: 'expense.read' } },            // expenses feature

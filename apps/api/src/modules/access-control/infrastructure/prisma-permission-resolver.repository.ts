@@ -24,7 +24,7 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
           },
         },
         branchScopes: { select: { branchId: true } },
-        company: { select: { status: true } },
+        company: { select: { status: true, planTerm: { select: { termDisabledAt: true } } } },
       },
     } as const;
 
@@ -41,27 +41,35 @@ export class PrismaPermissionResolverRepository implements IPermissionResolverPo
             userId,
             status: 'ACTIVE',
             company: { status: 'ACTIVE' },
-            roles: { some: { role: { key: 'SYSTEM_ADMIN' } } },
+            roles: { some: { role: { key: 'SYSTEM_ADMIN', status: 'ACTIVE' } } },
           },
           ...membershipInclude,
         }) ?? await this.prisma.client.companyMembership.findFirst({
           where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
           ...membershipInclude,
           orderBy: { createdAt: 'asc' },
-        });
+        }) ?? (input.allowTermRecovery ? await this.prisma.client.companyMembership.findFirst({
+          where: { userId, status: 'ACTIVE', company: { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } } },
+          ...membershipInclude, orderBy: { createdAt: 'asc' },
+        }) : null);
 
     if (!membership) {
       throw new ForbiddenException('No active company membership.');
     }
 
-    if (membership.company.status !== 'ACTIVE') {
+    const termRecovery = input.allowTermRecovery &&
+      membership.company.status === 'DISABLED' && Boolean(membership.company.planTerm?.termDisabledAt);
+    if (membership.company.status !== 'ACTIVE' && !termRecovery) {
       throw new ForbiddenException('Company is not active.');
     }
 
-    const roles = membership.roles.map((mr) => mr.role.key);
+    // A suspended/draft membership can retain a role that was disabled before reactivation.
+    // Only current ACTIVE roles may authorize web, admin console or LINE tools.
+    const activeRoles = membership.roles.filter((mr) => mr.role.status === 'ACTIVE');
+    const roles = activeRoles.map((mr) => mr.role.key);
     const grantedPermissions = [
       ...new Set(
-        membership.roles.flatMap((mr) =>
+        activeRoles.flatMap((mr) =>
           mr.role.permissions.map((rp) => rp.permission.key),
         ),
       ),

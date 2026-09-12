@@ -2,33 +2,64 @@
 
 import { useEffect, useState } from 'react';
 import { formatThaiDate } from '@/common/i18n/thai-date';
-import { fetchPlanTermNotice, type PlanTermNotice } from './plan-term.api';
+import { PlanTermNoticeError, readPlanTermNotice, type PlanTermNotice } from './plan-term.api';
 import { PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE } from './plan-term.logic';
 
 /**
  * The one page an expired company can open (P29 §4B). The owner is told exactly what happened and
  * how to fix it; staff get the neutral line — package dates and renewal are not their business.
  */
-export default function CompanyTermExpiredPage() {
+export default function CompanyTermExpiredPage({ companyId }: { companyId: string }) {
   const [notice, setNotice] = useState<PlanTermNotice | null>(null);
   const [settled, setSettled] = useState(false);
+  const [error, setError] = useState<number | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
     let active = true;
-    void fetchPlanTermNotice().then((result) => {
+    setSettled(false);
+    setNotice(null);
+    setError(null);
+    void readPlanTermNotice(companyId).then((result) => {
       if (!active) return;
       setNotice(result);
+    }).catch((cause: unknown) => {
+      if (active) setError(cause instanceof PlanTermNoticeError ? cause.status : 0);
+    }).finally(() => {
+      if (!active) return;
       setSettled(true);
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [companyId, retry]);
 
   if (!settled) {
     return (
       <div className="flex min-h-[60dvh] items-center justify-center p-4">
         <p className="text-sm text-gray-500">กำลังโหลด…</p>
+      </div>
+    );
+  }
+
+  if (error !== null) {
+    const title = error === 401 ? 'กรุณาเข้าสู่ระบบอีกครั้ง' : error === 403
+      ? 'ไม่มีสิทธิ์ดูสถานะบริษัทนี้' : 'โหลดสถานะไม่สำเร็จ';
+    return (
+      <div role="alert" className="mx-auto max-w-md p-6">
+        <h1 className="text-xl font-bold">{title}</h1>
+        <p className="mt-3">ยังตรวจสอบสถานะไม่ได้ กรุณาลองใหม่หรือติดต่อผู้ดูแล</p>
+        {error === 401 ? <a className="mt-4 inline-block underline" href={`/login?next=${encodeURIComponent(`/companies/${companyId}/renew`)}`}>เข้าสู่ระบบ</a>
+          : <button className="mt-4 rounded-lg border px-4 py-3" onClick={() => setRetry(value => value + 1)}>ลองใหม่</button>}
+      </div>
+    );
+  }
+
+  if (!notice || notice.derivedState !== 'EXPIRED') {
+    return (
+      <div role="status" className="mx-auto max-w-md p-6">
+        <h1 className="text-xl font-bold">บริษัทนี้ยังใช้งานได้ตามสิทธิ์</h1>
+        <a className="mt-4 inline-block underline" href={`/companies/${companyId}/dashboard`}>กลับไปใช้งาน</a>
       </div>
     );
   }

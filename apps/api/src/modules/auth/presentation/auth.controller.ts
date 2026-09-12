@@ -554,6 +554,8 @@ export class AuthController {
       content: `      <p id="greeting"></p>
       <p id="status" class="notice notice-info">กำลังเตรียมหน้าให้ค่ะ</p>
       <button id="notice-action" hidden></button>
+      <div id="companies" class="actions" hidden></div>
+      <button id="open-web" type="button" hidden>เปิดหน้าเว็บ</button>
       <section id="retry-view" data-view hidden>
         <p>กรุณาเปิดลิงก์นี้จากแอป LINE นะคะ ถ้าเปิดจากเบราว์เซอร์ปกติจะยังสมัครไม่ได้ค่ะ</p>
         <p><button id="retry">ลองอีกครั้ง</button></p>
@@ -633,7 +635,7 @@ export class AuthController {
       content: `      <h1>เริ่มใช้งาน</h1>
       <p id="status" class="notice notice-info">กำลังเปิดหน้าเว็บให้ค่ะ</p>
       <div id="companies" hidden></div>
-      <p><a id="open-web" class="btn" hidden>เปิดหน้าเว็บ</a></p>
+      <p><button id="open-web" type="button" hidden>เปิดหน้าเว็บ</button></p>
       <p><a id="go-signup" class="btn" href="/v1/auth/line/link-page/signup" hidden>เปิดร้านใหม่ ทดลองฟรี</a></p>
       <p><button id="link">ลองอีกครั้ง</button></p>
       <pre id="detail"></pre>`,

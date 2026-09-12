@@ -17,6 +17,8 @@ export interface ResolvedAccess {
 export interface ResolvePermissionsInput {
   userId: string;
   companyId?: string; // hint; server verifies
+  /** Server-selected recovery scope, never accepted from headers/query/body. */
+  allowTermRecovery?: boolean;
 }
 
 export interface IPermissionResolverPort {

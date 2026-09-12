@@ -1750,6 +1750,51 @@ describe('ProcessLineWebhookUseCase', () => {
 	    assert.equal(turn?.assistantReplyPreview, undefined);
 	  });
 
+  // AX01: CRM's permission survives while the sales feature can be switched off independently.
+  for (const lane of ['text', 'media'] as const) for (const salesEnabled of [false, true, null]) {
+    it(`AX01 ${lane} history checks tool feature as well as permission (sales=${salesEnabled})`, async () => {
+      const { prisma } = makePrisma({
+        entitlements: salesEnabled === null ? [] : [
+          { featureKey: 'ai_line_assistant', enabled: true },
+          { featureKey: 'expenses', enabled: true },
+          { featureKey: 'expenses.upload', enabled: true },
+          { featureKey: 'crm', enabled: true },
+          { featureKey: 'sales_documents', enabled: salesEnabled },
+        ],
+        recentTurns: [{
+          createdAt: new Date(Date.now() - 1000), userMessagePreview: 'ยอดขายเมื่อกี้',
+          replyPreview: 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท', intent: 'READ_SUMMARY', agent: 'sales', refused: false,
+          toolInvocations: [{ toolName: 'sales.get_sales_summary' }],
+        }],
+      });
+      const { useCase, intakeRequests, aiGatewayRequests } = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'crm.report.read', 'expense.receipt.line_upload'],
+        initReceiptUpload: { execute: async () => assert.fail('history test must not upload a receipt') },
+        completeReceiptUpload: { execute: async () => assert.fail('history test must not complete an upload') },
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
+        aiGatewayFn: () => ({ requestId: 'req-ai', replyText: 'ตรวจตามสิทธิ์ปัจจุบัน', sourceRefs: [], sourceLabels: [],
+          webLinks: [], intent: 'read_summary', agent: 'general', refused: false, toolsInvoked: [], durationMs: 5 }),
+      });
+      const eventId = `evt-AX01-${lane}-${salesEnabled}`;
+      if (lane === 'text') {
+        await useCase.execute({ ...BASE_EVENT, webhookEventId: eventId, messageText: 'อันนั้นล่ะ' });
+      } else {
+        (useCase as any).downloadLineMedia = async () => ({ fileName: 'receipt.jpg', mimeType: 'image/jpeg',
+          byteSize: JPEG_BYTES.byteLength, checksumSha256: 'AX01-image', bytes: JPEG_BYTES,
+          contentBase64: JPEG_BYTES.toString('base64') });
+        await useCase.executeReceiptUpload({ webhookEventId: eventId, lineUserId: BASE_EVENT.lineUserId,
+          replyToken: BASE_EVENT.replyToken, messagingChannelId: BASE_EVENT.messagingChannelId,
+          lineMessageId: eventId, messageType: 'image' }, 'อันนั้นล่ะ');
+      }
+      assert.equal(intakeRequests.length, 1, 'exercise the real text/media history-to-intake seam');
+      const history = intakeRequests[0]?.conversationContext?.recentTurns;
+      assert.equal(history?.length, 1);
+      assert.equal(history[0].userMessagePreview, 'ยอดขายเมื่อกี้', 'the user question is not a fresh authorized result');
+      assert.equal(history[0].assistantReplyPreview, salesEnabled === false ? undefined : 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท');
+      if (lane === 'text') assert.deepEqual(aiGatewayRequests[0]?.conversationContext, intakeRequests[0].conversationContext);
+    });
+  }
+
 	  it('rejects text-only receipt note through normal LINE AI permission when user lacks line.ai.query', async () => {
     const { prisma, updates } = makePrisma();
     const { useCase, replies, getAiGatewayCalled } = makeUseCase(prisma, {

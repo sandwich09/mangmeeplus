@@ -13,12 +13,13 @@ import { isRenewalPath, planTermView } from './plan-term.logic';
 export function PlanTermBanner({ companyId }: { companyId: string }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [notice, setNotice] = useState<PlanTermNotice | null>(null);
+  const [loaded, setLoaded] = useState<{ companyId: string; notice: PlanTermNotice | null } | null>(null);
+  const notice = loaded?.companyId === companyId ? loaded.notice : null;
 
   useEffect(() => {
     let active = true;
     void fetchPlanTermNotice(companyId).then((result) => {
-      if (active) setNotice(result);
+      if (active) setLoaded({ companyId, notice: result });
     });
     return () => {
       active = false;

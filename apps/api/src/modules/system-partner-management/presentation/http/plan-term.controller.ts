@@ -1,6 +1,6 @@
-import { Controller, Get, Headers, Post, Req } from '@nestjs/common';
+import { Controller, Get, Headers, Post, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertWorkerToken } from '../../../../common/security/worker-token';
 import { RequirePermissions } from '../../../../common/security/permissions.decorator';
@@ -24,8 +24,9 @@ export class PlanTermNoticeController {
   @RequirePermissions('account.session.read')
   @ApiOperation({ summary: 'Plan term state of the caller\'s current company (null when unlimited)' })
   @ApiResponse({ status: 200 })
-  get(@Req() req: AuthedRequest) {
-    return this.notice.execute(req.context.companyId, req.context.roles);
+  async get(@Req() req: AuthedRequest, @Res() res: Response) {
+    // Nest's default null response has an empty body; clients require JSON null for unlimited terms.
+    return res.json(await this.notice.execute(req.context.companyId, req.context.roles));
   }
 }
 

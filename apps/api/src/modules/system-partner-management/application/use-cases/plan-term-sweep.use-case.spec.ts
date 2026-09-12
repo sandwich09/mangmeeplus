@@ -40,7 +40,16 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
 
   const prisma = {
     client: {
+      $queryRaw: async () => [],
       companyPlanTerm: {
+        findUnique: async ({ where }: any) => {
+          const row = state.find(item => item.companyId === where.companyId);
+          return row ? { ...row, company: { name: row.companyName, status: row.companyStatus } } : null;
+        },
+        update: async ({ where, data }: any) => {
+          const row = state.find(item => item.companyId === where.companyId)!;
+          Object.assign(row, data); return row;
+        },
         findMany: async ({ where, take }: any) =>
           state
             .filter((row) => matches(row, where, new Date()))
@@ -72,6 +81,13 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
     },
   } as any;
 
+  prisma.client.$transaction = async (fn: any) => {
+    const before = structuredClone(state);
+    try { return await fn(prisma.client); } catch (error) {
+      state.splice(0, state.length, ...before); throw error;
+    }
+  };
+
   const lifecycle = { calls: [] as any[], execute: async (cmd: any) => {
     lifecycle.calls.push(cmd);
     const row = state.find((item) => item.companyId === cmd.companyId);
@@ -83,6 +99,8 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
     notifications.calls.push(input);
     return { skipped: false };
   } } as any;
+
+  notifications.executeInTransaction = notifications.execute;
 
   return { prisma, lifecycle, notifications, state, sweep: new PlanTermSweepUseCase(prisma, lifecycle, notifications) };
 }
@@ -130,7 +148,7 @@ describe('PlanTermSweepUseCase — expiry', () => {
     assert.deepEqual(world.state.map((row) => row.termDisabledAt ?? null), [null, null, null]);
   });
 
-  it('finishes a half-done expiry (stamped but still ACTIVE) without re-notifying', async () => {
+  it('finishes a legacy half-done expiry and reconciles its durable notice', async () => {
     const world = makeWorld([{
       companyId: 'co-1', companyName: 'ร้านหนึ่ง', companyStatus: 'ACTIVE',
       termEndsAt: past(1), expiredNotifiedAt: past(1),
@@ -139,7 +157,7 @@ describe('PlanTermSweepUseCase — expiry', () => {
 
     assert.equal(result.expired, 1);
     assert.equal(world.lifecycle.calls.length, 1, 'the interrupted transition is completed');
-    assert.equal(world.notifications.calls.length, 0, 'but the notice is not sent twice');
+    assert.equal(world.notifications.calls.length, 2, 'reconcile owner/admin event; event dedupe belongs to the notification use case');
   });
 
   it('one company failing never aborts the batch', async () => {

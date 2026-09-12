@@ -133,3 +133,22 @@ export async function revokePendingLineHandoffTokens(
   });
   return count;
 }
+
+
+/** Current company state decides the landing at LIFF selection and handoff exchange. */
+export function resolveLineHandoffTarget(
+  companyId: string,
+  targetPath: string,
+  company: { status: string; planTerm?: { termEndsAt?: Date; termDisabledAt?: Date | null } | null },
+  now = new Date(),
+): string | null {
+  if (!isSafeHandoffPath(targetPath, companyId)) return null;
+  const renewal = `/companies/${companyId}/renew`;
+  const recoveryTarget = new URL(targetPath, 'https://relative.invalid').pathname === renewal ? targetPath : renewal;
+  if (company.status === 'ACTIVE') {
+    return company.planTerm?.termEndsAt && company.planTerm.termEndsAt <= now ? recoveryTarget : targetPath;
+  }
+  // Same expiry-only recovery boundary as the permission resolver. A session grants no
+  // business access; the company guard still denies every protected operation until renewed.
+  return company.status === 'DISABLED' && company.planTerm?.termDisabledAt ? recoveryTarget : null;
+}

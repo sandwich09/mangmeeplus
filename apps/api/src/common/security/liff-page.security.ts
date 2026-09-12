@@ -154,6 +154,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   let lineUserId = '';
   let savedSubmission = null;
   let lastSignupStatus = null;
+  let preparedHandoffUrl = '';
+  const openWebBtn = document.getElementById('open-web');
 
   // One sentence for every "we cannot do this right now", so a flag that is off and a service that
   // is down read the same to a shop owner — neither is their problem to diagnose.
@@ -937,12 +939,15 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value) ? value : '';
   }
 
-  /**
-   * P10-L §3.5. The cookie the handoff sets has to land in Safari/Chrome, not in the LINE in-app
-   * browser (QR fix 2026-09-01) — so the destination is opened EXTERNALLY, and the same URL is left
-   * on screen as a tappable fallback for the client that refuses to open a window.
-   */
+  // Prepare on the network, then open synchronously from a user gesture. A normal anchor would
+  // consume this single-use credential in LINE's browser, leaving Safari/Chrome signed out.
   async function startSession(companyId) {
+    preparedHandoffUrl = '';
+    if (openWebBtn) openWebBtn.hidden = true;
+    for (const id of ['companies', 'go-signup']) {
+      const element = document.getElementById(id);
+      if (element) element.hidden = true;
+    }
     if (!await initLiff()) return;
     const idToken = currentIdToken();
     if (!idToken) return;
@@ -972,14 +977,26 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     }
     const handoffUrl = typeof session.handoffUrl === 'string' ? session.handoffUrl : '';
     if (!handoffUrl) throw new Error(UNAVAILABLE_TH);
-    const fallbackEl = document.getElementById('open-web');
-    if (fallbackEl) {
-      fallbackEl.href = handoffUrl;
-      fallbackEl.hidden = false;
-    }
-    setStatus('เปิดหน้าเว็บให้แล้วค่ะ ถ้าไม่เปิดเอง กดปุ่มด้านล่างได้เลยนะคะ', '', 'success');
-    liff.openWindow({ url: handoffUrl, external: true });
+    if (!openWebBtn) throw new Error(UNAVAILABLE_TH);
+    preparedHandoffUrl = handoffUrl;
+    openWebBtn.hidden = false;
+    setStatus('พร้อมแล้วค่ะ กดเปิดหน้าเว็บเพื่อเข้าร้าน', '', 'info');
   }
+
+  if (openWebBtn) openWebBtn.addEventListener('click', function (event) {
+    event.preventDefault();
+    if (!preparedHandoffUrl) return;
+    const url = preparedHandoffUrl;
+    preparedHandoffUrl = '';
+    openWebBtn.hidden = true;
+    try {
+      if (liff.isInClient()) liff.openWindow({ url, external: true });
+      else location.assign(url);
+      setStatus('หากหน้าเว็บยังไม่เปิด หรือกลับมาใช้ลิงก์เดิม ให้กดลองอีกครั้งเพื่อเปิดลิงก์ใหม่ค่ะ', '', 'info');
+    } catch {
+      setStatus('ยังเปิดหน้าเว็บไม่ได้ค่ะ กดลองอีกครั้งเพื่อสร้างลิงก์ใหม่', '', 'warning');
+    }
+  });
 
   function renderCompanyChoices(companies) {
     const listEl = document.getElementById('companies');
@@ -1029,6 +1046,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         button.textContent = label;
         button.disabled = false;
       }
+    } finally {
+      if (button && (mode === 'start' || button.id === 'start-existing')) button.disabled = false;
     }
   }
 

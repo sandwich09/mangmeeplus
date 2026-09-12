@@ -96,7 +96,7 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolFeature, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
@@ -838,11 +838,11 @@ export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'i
   return { decision: match[1] === '1' ? 'receipt' : match[1] === '2' ? 'illustration' : 'multiple', remainder: match[2].trim() };
 }
 
-function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[]): boolean {
+function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[], entitled: ReadonlySet<string> | null): boolean {
   if (!toolNames || toolNames.length === 0) return true;
   return toolNames.every((toolName) => {
     const meta = LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName);
-    return !!meta && hasToolPermissions(meta, permissions);
+    return !!meta && hasToolPermissions(meta, permissions) && hasToolFeature(meta, entitled);
   });
 }
 
@@ -1343,18 +1343,17 @@ export async function resolveCompanyForLineUser(
   });
 
   if (memberships.length === 0) return null;
-  if (memberships.length === 1) return { companyId: memberships[0].companyId };
 
-  // Multi-company user: check for selected context
+  // Expiry/revocation of selected B must never send the next message into the remaining ACTIVE A.
   const ctx = await prisma.client.lineCompanyContext.findUnique({
     where: { lineUserId },
     select: { companyId: true },
   });
-  if (!ctx) return { needsSelection: true };
+  if (!ctx) return memberships.length === 1 ? { companyId: memberships[0].companyId } : { needsSelection: true };
 
   // Verify the selected company is still in the user's active memberships
   const isValid = memberships.some((m) => m.companyId === ctx.companyId);
-  if (!isValid) return { needsSelection: true };
+  if (!isValid) return null;
 
   return { companyId: ctx.companyId };
 }
@@ -2233,21 +2232,36 @@ export class ProcessLineWebhookUseCase {
     userId: string,
     requestId: string,
   ): Promise<void> {
-    // ACTIVE first, then DISABLED: the expiry message carries this button, and that shop is the one
-    // most likely to press it.
-    const owned = await this.prisma.client.companyMembership.findFirst({
+    const current = await this.prisma.client.lineCompanyContext.findUnique({
+      where: { lineUserId: event.lineUserId }, select: { companyId: true },
+    });
+    const memberships = await this.prisma.client.companyMembership.findMany({
       where: {
         userId,
         status: 'ACTIVE',
-        company: { status: { in: ['ACTIVE', 'DISABLED'] } },
+        company: { OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }] },
         roles: { some: { role: { key: 'OWNER' } } },
       },
-      orderBy: [{ company: { status: 'asc' } }, { createdAt: 'asc' }],
-      select: { companyId: true, company: { select: { planTerm: { select: { tierKey: true } } } } },
+      orderBy: { createdAt: 'asc' },
+      select: { companyId: true, company: { select: { name: true, planTerm: { select: { tierKey: true } } } } },
     });
-    if (!owned) {
+    if (memberships.length === 0) {
       await this.deliverReply(event, PACKAGE_CHANGE_NOT_OWNER_REPLY);
       await this.updateEventLog(event.webhookEventId, 'package_change_denied', LINE_AI_ERROR_CODES.FORBIDDEN);
+      return;
+    }
+    // A stale/non-owner selection cannot silently target a different shop, even if only one is
+    // owned. The existing picker switches context; a second explicit request confirms the shop.
+    const owned = current?.companyId
+      ? memberships.find(row => row.companyId === current.companyId)
+      : memberships.length === 1 ? memberships[0] : undefined;
+    if (!owned) {
+      await this.deliverRequiredMessages(event, [
+        buildCompanyPickerMessage(memberships.map(row => ({ companyId: row.companyId, companyName: row.company.name }))),
+        { type: 'text', text: 'เลือกร้านที่ต้องการก่อน แล้วกด “ขอเปลี่ยนแพ็กเกจ” อีกครั้งค่ะ',
+          quickReply: { items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }] } },
+      ]);
+      await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
       return;
     }
     if (!this.packageChange) {
@@ -4484,7 +4498,9 @@ export class ProcessLineWebhookUseCase {
 
   private async listLineCompanies(userId: string): Promise<LineCompanyMembership[]> {
     return this.prisma.client.companyMembership.findMany({
-      where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+      where: { userId, status: 'ACTIVE', company: {
+        OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }],
+      } },
       select: {
         companyId: true,
         company: { select: { name: true, brandName: true } },
@@ -4561,7 +4577,7 @@ export class ProcessLineWebhookUseCase {
     });
 
     if (command.kind === 'list') {
-      const currentCompanyId = memberships.length === 1 ? memberships[0]!.companyId : current?.companyId;
+      const currentCompanyId = current?.companyId ?? (memberships.length === 1 ? memberships[0]!.companyId : undefined);
       const currentMembership = memberships.find((membership) => membership.companyId === currentCompanyId);
       if (!currentMembership) {
         await this.deliverRequiredMessages(event, [buildCompanyPickerMessage(
@@ -4877,8 +4893,11 @@ export class ProcessLineWebhookUseCase {
       },
     });
     if (rows.length === 0) return undefined;
+    // History is model input on both text and media lanes. A surviving CRM permission must not
+    // replay an old sales result after the company switches sales_documents off.
+    const entitled = await loadEntitledFeatureKeys(this.prisma, companyId);
     const recentTurns = [...rows].reverse().map((row) => {
-      const canUseReply = canUseAssistantPreview(row.toolInvocations?.map((tool) => tool.toolName), permissions);
+      const canUseReply = canUseAssistantPreview(row.toolInvocations?.map((tool) => tool.toolName), permissions, entitled);
       return {
         at: row.createdAt.toISOString(),
         ...(row.userMessagePreview && { userMessagePreview: row.userMessagePreview }),

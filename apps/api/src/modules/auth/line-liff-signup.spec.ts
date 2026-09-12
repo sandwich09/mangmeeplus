@@ -1058,10 +1058,10 @@ describe('P10-L LIFF client script', () => {
 
 // ── ExchangeLiffSessionUseCase ──
 
-type Membership = { companyId: string; company: { name: string; status?: string; planTerm?: { termDisabledAt: Date | null } | null } };
+type Membership = { companyId: string; company: { name: string; status?: string; planTerm?: { termDisabledAt: Date | null; termEndsAt?: Date } | null } };
 
 function makeUseCase(input: {
-  identity?: { userId: string; user: { status: string } } | null;
+  identity?: { userId: string; status?: string; user: { status: string } } | null;
   memberships?: Membership[];
   inactive?: Membership | null;
   context?: { companyId: string } | null;
@@ -1073,7 +1073,7 @@ function makeUseCase(input: {
   const audited: any[] = [];
   const prisma = {
     client: {
-      externalIdentity: { findFirst: async () => input.identity ?? null },
+      externalIdentity: { findFirst: async () => input.identity ? { status: 'ACTIVE', ...input.identity } : null },
       companyMembership: {
         findMany: async () => input.memberships ?? [],
         // The blocked-reason probe is the only findFirst on this model in the use case.
@@ -1097,7 +1097,7 @@ function makeUseCase(input: {
 }
 
 const activeIdentity = { userId: 'user-1', user: { status: 'ACTIVE' } };
-const membership = (companyId: string, name = 'ร้านทดสอบ'): Membership => ({ companyId, company: { name } });
+const membership = (companyId: string, name = 'ร้านทดสอบ'): Membership => ({ companyId, company: { name, status: 'ACTIVE' } });
 
 describe('ExchangeLiffSessionUseCase', () => {
   it('mints a handoff into the single active company, under that company root', async () => {
@@ -1121,7 +1121,7 @@ describe('ExchangeLiffSessionUseCase', () => {
 
     const disabledUser = await makeUseCase({ identity: { userId: 'user-1', user: { status: 'DISABLED' } } })
       .useCase.execute({ idToken: 'a.b.c' });
-    assert.deepEqual(disabledUser, { needsSignup: true });
+    assert.deepEqual(disabledUser, { reason: 'suspended' }, 'an inactive existing account must not be invited to create a new trial');
   });
 
   it('asks which shop when there are several and no usable context', async () => {
@@ -1218,4 +1218,31 @@ describe('ExchangeLiffSessionUseCase', () => {
   });
 
 
+});
+
+
+describe('GW04 LINE renewal round-trip regression', () => {
+  it('targets renewal for an explicitly selected expired company, retaining that company', async () => {
+    const h = makeUseCase({ identity: activeIdentity, memberships: [
+      membership('co-active'),
+      { companyId: 'co-expired', company: { name: 'Expired shop', status: 'DISABLED', planTerm: { termDisabledAt: new Date(), termEndsAt: new Date(Date.now() - 1000) } } },
+    ], context: { companyId: 'co-active' } });
+    await h.useCase.execute({ idToken: 'a.b.c', companyId: 'co-expired' });
+    assert.equal(h.minted[0].targetPath, '/companies/co-expired/renew');
+    assert.equal(h.minted[0].companyId, 'co-expired');
+  });
+
+  it('uses renewal before the sweep disables an ACTIVE company past its deadline', async () => {
+    const h = makeUseCase({ identity: activeIdentity, memberships: [
+      { companyId: 'co-expired', company: { name: 'Expired shop', status: 'ACTIVE', planTerm: { termDisabledAt: null, termEndsAt: new Date(Date.now() - 1000) } } },
+    ] });
+    await h.useCase.execute({ idToken: 'a.b.c' });
+    assert.equal(h.minted[0].targetPath, '/companies/co-expired/renew');
+  });
+});
+
+it('GW03 revoked LINE identity does not invite a replacement trial', async () => {
+  const h = makeUseCase({ identity: { ...activeIdentity, status: 'DISABLED' }, memberships: [membership('co-1')] });
+  assert.deepEqual(await h.useCase.execute({ idToken: 'test.id.token' }), { reason: 'suspended' });
+  assert.equal(h.minted.length, 0);
 });

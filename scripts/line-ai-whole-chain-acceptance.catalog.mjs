@@ -345,6 +345,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     cwd: 'apps/api',
     command: '../../node_modules/.bin/tsx',
     args: ['--test',
+      'src/common/security/liff-start-handoff.spec.ts',
       'src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
