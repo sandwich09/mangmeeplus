@@ -5,6 +5,7 @@ Two entry points share the same executor:
 ```sh
 infra/kamal/deploy-prod --profile <deployment-profile>             # read-only preflight
 infra/kamal/deploy-uat --profile <deployment-profile>              # read-only preflight
+infra/kamal/deploy-prod --profile <deployment-profile> --prepare   # build main + full config/image checks, no deployment
 infra/kamal/deploy-prod --profile <deployment-profile> --apply     # hotfix, no pending migrations
 infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, applies safe pending migrations
 ```
@@ -12,6 +13,56 @@ infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, app
 `--mode hotfix|normal` is explicit and available on either wrapper. The wrapper seals the environment;
 passing `--environment` cannot turn the UAT command into Production. There is no implicit bootstrap,
 infrastructure creation, gate opening, DNS change or fallback to another environment.
+
+## Preparing the Production command
+
+Production uses the same build/config/rollout executor as UAT, with its own target, live ECS baseline,
+Secrets Manager versions, AgentCore endpoints, registry, signing key and acceptance account.
+[production-target.example.json](production-target.example.json) lists the enrollment fields. It is
+intentionally rejected as a target: all resource placeholders need verified Production values and
+`cutoverComplete` is false. Create the private `.env.kamal/production/target.json` only as part of
+actual enrollment; do not copy UAT's target or turn this flag on to bypass infrastructure preparation.
+API hosts must span two AZs and be separate from AI/workers. AI and workers may share a host.
+
+After enrollment, run from the checkout containing the command:
+
+```sh
+infra/kamal/deploy-prod --profile <non-root-production-profile> --prepare
+```
+
+This runs the existing target preflight, fetches and pins `origin/main`, builds TypeScript and all
+four images plus AgentCore, validates the complete Production environment/secrets against the built
+images and migration/sync artifact catalog, renders all three native Kamal configs, and rereads
+baseline configuration/secret versions for drift. A local controller can be prepared before merge;
+its file hashes are recorded. Application code and tracked `config.json` still come from pinned main.
+Default invocation without `--prepare` or `--apply` remains target preflight only.
+
+Preparation performs local builds and cloud reads. It never acquires a remote lock, pushes/pulls to
+target hosts, updates AgentCore, writes database/catalog state, deploys containers, changes customer
+access, retires builds, or signs deployment acceptance. Existing unresolved deployments and local
+concurrent operations still block it. Success is `PREPARED_NO_DEPLOYMENT` in the private run's
+`result.json`; errors are terminal, with no automatic retry. `--prepare` rejects both `--apply` and
+`--rollback` combinations. It is also supported by `deploy-uat`.
+
+This is configuration/build preparation for an enrolled target, not an ECS-to-Kamal cutover tool.
+It does not prove write permissions, migration compatibility with the live DB, target pull/start
+behavior, customer journeys, or future runtime readiness. A full accepted Production deployment has
+not been measured; UAT's timings are not a Production guarantee. Do not count preparation time as
+zero when reporting an end-to-end release. `--apply` fetches/revalidates and builds current main again;
+it does not promote cached preparation evidence as proof of the newly selected source.
+
+After the controller is merged and the separate Production migration is approved/enrolled, the
+existing apply commands remain:
+
+```sh
+infra/kamal/deploy-prod --profile <non-root-production-profile> --mode hotfix --apply
+infra/kamal/deploy-prod --profile <non-root-production-profile> --mode normal --apply
+```
+
+Use one of these modes, not two runs. Hotfix refuses pending migrations; normal mode runs the existing
+migration safety checks. Production apply still requires the exact main controller and authenticated
+Production acceptance; UAT smoke/browser flags remain rejected. Until the Production migration is
+approved, continue using the [V2 Production protocol](../../docs/runbooks/uat-production-v2-deployment.md).
 
 **Current deployment status:** PR551/552 are merged. Main `6b95e505` deployed successfully to real
 UAT twice with complete config/readiness and verified KMS signatures, without repair or retry:

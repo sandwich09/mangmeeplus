@@ -10,6 +10,19 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Production configuration readback — 2026-09-13
+
+Read-only preparation used the existing non-root reader to capture all three Production ECS Express
+`activeConfigurations`, beginning 14:40:53 UTC. All advertise source
+`fc2838c4cb691033f41595c0d43587f10377d33c`; this is configuration evidence, not running-container or
+customer acceptance proof. All 12 distinct secret references resolved at their current versions;
+metadata/versions remained unchanged on the final read. New main `00cbaa8b` builds and its three
+service config schemas passed against this baseline plus tracked Production overrides, in local
+network-disabled validation containers. No Production resource or traffic was changed.
+
+No Production Kamal target is enrolled locally. The prepared command/example is not infrastructure
+or cutover completion. [Scope, checks and evidence](../agent-memory/kamal-prod-preparation-2026-09-13.md).
+
 ## UAT Kamal update — 2026-09-11 20:28 UTC
 
 Owner-authorized UAT Kamal proof is separate from the ECS V2 Production protocol. Production remains
