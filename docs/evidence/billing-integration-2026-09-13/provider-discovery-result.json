@@ -1,0 +1,56 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "provider-discovery-platform-scope-strict-window-idempotent-redacted-admission",
+    "provider-discovery-webhook-race-original-evidence-and-financials-preserved",
+    "provider-discovery-page-checkpoint-429-backoff-resume-worker-race",
+    "provider-discovery-cancel-lost-lease-and-revoked-actor-before-read-or-commit",
+    "provider-discovery-invalid-mode-duplicate-empty-page-and-retention-remain-incomplete",
+    "provider-discovery-cursor-scope-pagination-and-active-admission-cap",
+    "browser-provider-discovery-create-unknown-resume-reload-return-mobile"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Stripe"
+  ],
+  "realProviderPayment": false,
+  "status": "PASS for operator-requested fixed-window discovery; full spec remains IN PROGRESS",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "apiTypecheck": "PASS",
+  "workerBoundaryTests": 12,
+  "bodyDtoBoundaryTests": 4,
+  "fullCombinedRerun": "PASS150 at this checkpoint; signup8 is separate",
+  "limitations": [
+    "Provider HTTP transport is simulated; no native Stripe charge or recipient message",
+    "Daily automatic coverage, historical invoices, configuration and settlement drift remain open",
+    "Full C03/C05\u2013C08/mail/LINE scope and both authorized branch merges remain open"
+  ],
+  "baseCommit": "5adad5a93e763c3c7ba4f5406016dce28be86fc9",
+  "sources": {
+    ".github/workflows/ci.yml": "5ab1905e424add17868f0abd2c4a03a1b20edb1c955607b6c676ccf1f0a0eff6",
+    ".github/workflows/deploy-production.yml": "50a2992dd7e8604b3962f72d5383f2e98dd56250ca9a4a9f3b18cef4f881e492",
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "33237d9db454d3864fd21f3c98a990e36e797c0da09fbcd89d2b6d922a2da2a2",
+    "apps/api/src/modules/billing/application/billing-provider-scans.service.ts": "59d69b3919a6183df49203494764e2d6876308511cf89dd3180902edf9211d67",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "4430494f798da22a9137b35ac6a553a81de188b4d12520cdf78ed45252f3c038",
+    "apps/api/src/modules/billing/billing.module.ts": "f04ba10ab30157161d6aa09799dd719cfc439e024174922bc83943b13ee8848c",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "c848683de3f295145200e347ffba1160ff7c04e626a2b35cfa9cbc6969f1a325",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "af1a3cb8badbe94d5c667b658acb66f487d6ba4facb35e0ca147f25548c87d13",
+    "apps/api/src/scripts/billing-http-smoke.ts": "f04f9163fb54c4ba4278da03a64c6496aab0c73d279f30254c833c4f0b8e40f9",
+    "apps/api/src/scripts/billing-provider-scans-smoke.ts": "53e6778beb7cc50a6d7f751fd3308f98bec8ed9ef1e27d564692a3b6dd009312",
+    "apps/api/src/scripts/signup-claim-history-smoke.ts": "e24b67e49741ce5c9f82e303627d08e97d189761bae6beccdfea10d9b4b27743",
+    "apps/web/app/system/billing/provider-scans/[id]/page.tsx": "f91da16232beb22dc406cace24e00b96215abdbd6143e2e7c29d73175627b130",
+    "apps/web/app/system/billing/provider-scans/page.tsx": "3c27dbdb1028816ba65fc8c4bc782f599fcbbc8ac8edb0e50005af16eccf804a",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "35ea388eccdf1b3084e2d241af19a002606a2207bb04732a9c07161bb45ac98a",
+    "apps/web/src/features/billing-admin/BillingProviderEventsPage.tsx": "277a371ad1424e61e8dfe6f772c7ab548046b049d23e1d8e4ccc9fe2a91d2c3e",
+    "apps/web/src/features/billing-admin/BillingProviderScansPage.tsx": "12a4e881bd6da8f4e70a269c92df60a9905e42bc91fbe659b245276ca1a4f159",
+    "apps/workers/src/main.ts": "4be46aba174cc266f97b1f751f64f0356c70071e4a4d26e12571e06a80bc322d",
+    "apps/workers/src/modules/billing/billing-worker.ts": "e9db1b2cc03ced8f61d47fe00776ee059c64f9f0caf57b53b03304d55f851b05",
+    "infra/security/validate-production-maintenance-release.sh": "9a6a9e92bac90ab9e71b2f2445dd400afecf1da551d51049d0a4745259465241",
+    "packages/contracts/src/billing.ts": "9be43fe3720da2ab532a6f462d919223faecd2558e3668224c46968df04d0fb8"
+  },
+  "webTypecheck": "PASS",
+  "pinCheck": "PASS; worker enforcement and dependent validator hashes synchronized without trigger/policy changes"
+}

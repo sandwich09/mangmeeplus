@@ -20,7 +20,7 @@ export default function BillingProviderEventsPage({eventId}:{eventId?:string}) {
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
     <h1 className="text-2xl font-bold">เหตุการณ์จาก Stripe</h1>
     <p>รายการที่ระบบรับไว้แล้ว ผลประมวลผล event แยกจากผลชำระเงิน การเปิดสิทธิ์ และเคสอื่นของลูกค้า</p>
-    <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">บริษัท</Link><Link className={button} href="/system/billing/issues">คิวตรวจสอบ</Link>
+    <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">บริษัท</Link><Link className={button} href="/system/billing/issues">คิวตรวจสอบ</Link><Link className={button} href="/system/billing/provider-scans">ค้นหาเหตุการณ์ที่ตกหล่น</Link>
       {eventId&&<Link className={button} href="/system/billing/provider-events">กลับรายการ event</Link>}</nav>
     <button className={button} disabled={loading} onClick={()=>setReload(v=>v+1)}>โหลด event ล่าสุด</button>
     {!eventId&&<label className="block"><input type="checkbox" checked={all} onChange={e=>{setAll(e.target.checked);setCursor(null);}}/> รวมรายการที่ประมวลผลแล้ว</label>}

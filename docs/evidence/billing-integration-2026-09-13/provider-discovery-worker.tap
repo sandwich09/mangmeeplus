@@ -1,0 +1,96 @@
+TAP version 13
+# Subtest: missing internal endpoint backoff
+    # Subtest: logs the first sighting and then skips the endpoint for a whole window
+    ok 1 - logs the first sighting and then skips the endpoint for a whole window
+      ---
+      duration_ms: 1.082708
+      type: 'test'
+      ...
+    # Subtest: stays quiet while the endpoint keeps 404ing
+    ok 2 - stays quiet while the endpoint keeps 404ing
+      ---
+      duration_ms: 0.181625
+      type: 'test'
+      ...
+    # Subtest: resets on the first non-404 answer and logs again if it disappears later
+    ok 3 - resets on the first non-404 answer and logs again if it disappears later
+      ---
+      duration_ms: 0.181083
+      type: 'test'
+      ...
+    # Subtest: backs off one endpoint without muting the others
+    ok 4 - backs off one endpoint without muting the others
+      ---
+      duration_ms: 0.134583
+      type: 'test'
+      ...
+    # Subtest: keeps the api under one probe per endpoint per five minutes
+    ok 5 - keeps the api under one probe per endpoint per five minutes
+      ---
+      duration_ms: 0.070375
+      type: 'test'
+      ...
+    # Subtest: keeps the internal api behind postInternal
+    ok 6 - keeps the internal api behind postInternal
+      ---
+      duration_ms: 7.851542
+      type: 'test'
+      ...
+    1..6
+ok 1 - missing internal endpoint backoff
+  ---
+  duration_ms: 10.830959
+  type: 'suite'
+  ...
+# Subtest: workers startup wiring
+    # Subtest: registers every started worker for shutdown
+    ok 1 - registers every started worker for shutdown
+      ---
+      duration_ms: 1.671167
+      type: 'test'
+      ...
+    # Subtest: handles both SIGTERM and SIGINT
+    ok 2 - handles both SIGTERM and SIGINT
+      ---
+      duration_ms: 0.194292
+      type: 'test'
+      ...
+    # Subtest: bounds the drain with the configured timeout instead of waiting forever
+    ok 3 - bounds the drain with the configured timeout instead of waiting forever
+      ---
+      duration_ms: 0.112625
+      type: 'test'
+      ...
+    # Subtest: closes the health server before draining so the balancer stops routing here
+    ok 4 - closes the health server before draining so the balancer stops routing here
+      ---
+      duration_ms: 0.082625
+      type: 'test'
+      ...
+    # Subtest: applies the queue retry/DLQ policy before any worker starts
+    ok 5 - applies the queue retry/DLQ policy before any worker starts
+      ---
+      duration_ms: 0.073084
+      type: 'test'
+      ...
+    # Subtest: refuses a second shutdown rather than racing two closes
+    ok 6 - refuses a second shutdown rather than racing two closes
+      ---
+      duration_ms: 0.04975
+      type: 'test'
+      ...
+    1..6
+ok 2 - workers startup wiring
+  ---
+  duration_ms: 2.8135
+  type: 'suite'
+  ...
+1..2
+# tests 12
+# suites 2
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 321.954166

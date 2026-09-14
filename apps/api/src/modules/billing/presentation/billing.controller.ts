@@ -1,4 +1,4 @@
-import { BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import { BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -14,6 +14,7 @@ import { BillingOperationsService } from '../application/billing-operations.serv
 import { BillingScopesService } from '../application/billing-scopes.service';
 import { BillingConfigurationService } from '../application/billing-configuration.service';
 import { BillingNotificationsService } from '../application/billing-notifications.service';
+import { BillingProviderScansService } from '../application/billing-provider-scans.service';
 
 type AuthedRequest = Request & { context: RequestContext; rawBody?: Buffer };
 function bodyFields(value: unknown, fields: string[]): Record<string, unknown> {
@@ -43,7 +44,21 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService) {}
+    private readonly configuration: BillingConfigurationService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService) {}
+  @Get('provider-scans') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  providerScans(@Req() req: AuthedRequest, @Query() query: unknown) {
+    const fields=bodyFields(query,['cursor']);return this.scans.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('provider-scans/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  providerScan(@Req() req: AuthedRequest, @Param('id') id: string) { return this.scans.get(req.context,uuid(id)); }
+  @Post('provider-scans') @RequirePermissions('system.billing.reconcile.run')
+  async createProviderScan(@Req() req: AuthedRequest, @Body() body: BillingProviderScanDto, @Headers('idempotency-key') key?: string) {
+    bodyFields(body,['windowStart','windowEnd','reason']);await this.operationLimit(req);return this.scans.create(req.context,body,key??'');
+  }
+  @Post('provider-scans/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run')
+  async providerScanAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingVersionDto) {
+    bodyFields(body,['expectedVersion']);await this.operationLimit(req);return this.scans.act(req.context,uuid(id),action,body.expectedVersion);
+  }
   @Get('provider-events') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   providerEvents(@Req() req: AuthedRequest, @Query() query: unknown) {
     const fields=bodyFields(query,['cursor','all']);if(fields.all!==undefined&&fields.all!=='true')invalid();
@@ -327,7 +342,9 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService) {}
+  @Post('provider-scans/drain') @HttpCode(200)
+  drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.scans.drain(); }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);

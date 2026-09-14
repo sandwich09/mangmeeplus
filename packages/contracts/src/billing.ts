@@ -4,6 +4,12 @@ export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
 export type PaidTier = typeof BILLING_PAID_TIERS[number];
 export type BillingMode = 'TEST' | 'LIVE';
+export type BillingProviderScanView = {
+  id: string; mode: BillingMode; state: string; version: number; reason: string;
+  windowStart: string; windowEnd: string; createdAt: string; checkpointAt: string | null;
+  pages: number; seen: number; imported: number; known: number; ignored: number; incompatible: number;
+  retryAt: string | null; errorCode: string | null; canCancel: boolean; canResume: boolean;
+};
 export type BillingInterval = 'month' | 'year';
 export type BillingOfferKey = `${PaidTier}:${BillingInterval}`;
 export type BillingTaxTreatment = 'INCLUSIVE_VAT_7' | 'EXCLUSIVE_VAT_7' | 'NOT_VAT_REGISTERED';

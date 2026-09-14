@@ -120,6 +120,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <p>{issue.assigneeUserId?`ผู้รับผิดชอบ ${issue.assigneeName}${issue.assigneeAvailable?'':' (ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว)'}`:'ยังไม่มีผู้รับผิดชอบ'}</p>
       <p>{issue.backupUserId?`ผู้สำรอง ${issue.backupName}${issue.backupAvailable?'':' (ไม่มีสิทธิ์แล้ว)'}`:'ยังไม่ได้กำหนดผู้สำรอง'} · {issue.overdue?'เลยเวลาติดตาม · ':''}{issue.followUpAt?time(issue.followUpAt):'ยังไม่ได้กำหนดเวลาติดตาม'}</p>
       {issue.kind==='PROVIDER_EVENT_FAILED'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-events/${encodeURIComponent(issue.reference)}`}>ตรวจ event เดิมของเคสนี้</Link>}
+      {['PROVIDER_SCAN_FAILED','PROVIDER_SCAN_VERSION_UNSUPPORTED'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-scans/${encodeURIComponent(issue.reference)}`}>เปิดงานค้นหาเหตุการณ์ของเคสนี้</Link>}
       {issue.kind === 'CONTROL_OPERATION_REVIEW' && <Link className="inline-block underline" href={`/system/billing/operations/${encodeURIComponent(issue.reference)}`}>เปิดคำสั่งเดิมของเคสนี้</Link>}
       {issue.companyId && <Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}`}>กลับไปบริษัทนี้</Link>}
       {issue.companyId&&issue.kind.startsWith('NOTIFICATION_')&&<Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/deliveries`}>ตรวจรายการแจ้งเตือนเดิม</Link>}

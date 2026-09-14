@@ -143,7 +143,14 @@
     "claim-history-current-global-role-and-revocation",
     "claim-history-request-purpose-cursor-redaction-and-recorded-delivery-facts",
     "claim-history-read-only-no-provision-send-proof-or-window-change",
-    "browser-claim-history-queue-pagination-reload-expired-and-return-mobile"
+    "browser-claim-history-queue-pagination-reload-expired-and-return-mobile",
+    "provider-discovery-platform-scope-strict-window-idempotent-redacted-admission",
+    "provider-discovery-webhook-race-original-evidence-and-financials-preserved",
+    "provider-discovery-page-checkpoint-429-backoff-resume-worker-race",
+    "provider-discovery-cancel-lost-lease-and-revoked-actor-before-read-or-commit",
+    "provider-discovery-invalid-mode-duplicate-empty-page-and-retention-remain-incomplete",
+    "provider-discovery-cursor-scope-pagination-and-active-admission-cap",
+    "browser-provider-discovery-create-unknown-resume-reload-return-mobile"
   ],
   "simulatedProviders": [
     "Stripe",

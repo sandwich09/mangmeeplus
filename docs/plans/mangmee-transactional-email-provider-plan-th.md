@@ -1,9 +1,12 @@
 # แผน implement Postmark และใช้เอกสารลูกค้าจาก Stripe
 
-> **Implementation update 2026-09-14 — IN PROGRESS:** actual Next/Nest/PostgreSQL/Chromium + isolated marketing ผ่าน143กลุ่มกับ Stripe/Postmark/LINE จำลอง ครอบคลุมแพ็กเกจ/สิทธิ์และ Admin ที่บันทึกใน[หลักฐาน](../evidence/billing-integration-2026-09-13/README.md) รวมกู้ provider event เดิมและประวัติอีเมลรับบัญชี. ตัวเลขเป็น scenario groups ไม่ใช่ครบทุกflowในspec. Root CI34796370435(ac242d4b) และ Marketing CI34796387123(c502c90)ผ่าน. เพิ่มหลักฐานสมัครเว็บ8กลุ่มแยกจาก143เดิม รวมclaim/resend/ใบเสร็จ/logout-return และแก้claim tokenในURL; diffใหม่นี้รอCI. Controls/fullsignup/fullLINE/mail recoveryบางส่วนยังไม่ครบ; คำถามช่องทางemail resetรอOwner. Receipt-only HIDDEN; ยังไม่merge/deploy.
+> **Implementation update 2026-09-14 — IN PROGRESS:** actual Next/Nest/PostgreSQL/Chromium + isolated marketing ผ่าน150กลุ่มกับ Stripe/Postmark/LINE จำลอง รวมกู้ provider event เดิม ประวัติอีเมลรับบัญชี และค้นหาeventตกหล่นแบบระบุช่วง/ทำงานต่อ/ยกเลิกผ่านAdmin. หลักฐานสมัครเว็บ8กลุ่มแยกจาก150 รวมclaim/resend/7เมนู15ใบ/ใบเสร็จ/logout-return. จำนวนนี้ไม่ใช่ครบทุกflowในspec. Root CI34798203277(5adad5a9) และ Marketing CI34798218313(701eeed)ผ่าน; incrementค้นหาeventรอCIใหม่. Controls/fullsignup/fullLINE/mail recoveryยังมีส่วนค้าง; email password recoveryรอOwner. Receipt-only HIDDEN/Enterprise Coming soon; ยังไม่merge/deploy. ดู[หลักฐาน](../evidence/billing-integration-2026-09-13/README.md).
 
 
 สถานะ: **POSTMARK IMPLEMENTATION IN PROGRESS 2026-09-12; LOCAL TRANSPORT/PG/HTTP CHECKS PASS; FULL EM01–EM18 NOT COMPLETE**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
+
+
+Next EM05 verification increment: follow the verification-link recovery contract in the mail spec. Reuse the existing template/parser/public confirmation and account resend routes. Add explicit browser confirmation, fragment/legacy handling, token-bound loading/error/retry, and final transaction expiry/ACTIVE-user checks with a meaningful concurrency test. Record actual browser and focused regression evidence before marking this increment PASS. This is independent of the still-pending Owner choice for email password recovery; keep that new recovery channel closed.
 
 ## 1. ลำดับงาน
 

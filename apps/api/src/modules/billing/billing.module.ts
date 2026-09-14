@@ -9,6 +9,7 @@ import { BillingService } from './application/billing.service';
 import { BillingReconcilerService } from './application/billing-reconciler.service';
 import { BillingAdminService } from './application/billing-admin.service';
 import { BillingOperationsService } from './application/billing-operations.service';
+import { BillingProviderScansService } from './application/billing-provider-scans.service';
 import { BillingScopesService } from './application/billing-scopes.service';
 import { BillingConfigurationService } from './application/billing-configuration.service';
 import { StripeClient, STRIPE_FETCH } from './infrastructure/stripe.client';
@@ -17,7 +18,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
+  providers: [BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
 })
 export class BillingModule {}

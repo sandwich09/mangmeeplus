@@ -21,7 +21,7 @@ export class BillingAdminService {
       authSubject:row.initiatorUserId,authProvider:'system',scopes:{},roles:[],permissions:member.roles.flatMap(r=>r.role.permissions.map(p=>p.permission.key))};
     const access=await this.access(context,permission,tx);
     if(row.stripeAccountId!==this.billing.stripe.accountId||row.livemode!==this.billing.stripe.livemode||
-      (row.companyId ? !access.platformScope&&!access.companyIds.includes(row.companyId) : row.type!=='RETRY_PROVIDER_EVENT'||!access.platformScope))throw new ForbiddenException();
+      (row.companyId ? !access.platformScope&&!access.companyIds.includes(row.companyId) : !['RETRY_PROVIDER_EVENT','SCAN_PROVIDER_EVENTS'].includes(row.type)||!access.platformScope))throw new ForbiddenException();
     return context;
   }
 

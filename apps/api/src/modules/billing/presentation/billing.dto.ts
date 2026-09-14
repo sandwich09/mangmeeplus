@@ -1,9 +1,14 @@
-import { Allow, IsBoolean, IsInt, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
 export class BillingVersionDto {
   @IsInt() @Min(0) expectedVersion!: number;
+}
+export class BillingProviderScanDto {
+  @IsISO8601({strict:true,strictSeparator:true}) @MaxLength(40) windowStart!: string;
+  @IsISO8601({strict:true,strictSeparator:true}) @MaxLength(40) windowEnd!: string;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
 }
 export class BillingEventPreviewDto {
   @IsString() @MinLength(1) @MaxLength(64) sourceHash!: string;

@@ -17,10 +17,18 @@ import { observeBillingCharges } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 
-const EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
+export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
   'checkout.session.async_payment_failed', 'invoice.paid', 'invoice.payment_failed', 'invoice.payment_action_required', 'invoice.finalization_failed',
   'customer.subscription.created', 'customer.subscription.updated', 'customer.subscription.deleted', 'charge.refunded',
   'charge.dispute.created', 'charge.dispute.updated', 'charge.dispute.closed', 'refund.created', 'refund.updated', 'refund.failed']);
+
+/** Both authenticated provider discovery and signed ingress accept the same reference shape. */
+export function validBillingEvent(event: StripeObject, accountId: string, livemode: boolean): boolean {
+  return Boolean(event && event.object === 'event' && typeof event.id === 'string' && /^evt_[a-zA-Z0-9]+$/.test(event.id) &&
+    event.api_version === STRIPE_API_VERSION && event.livemode === livemode &&
+    (event.account === undefined || event.account === accountId) && typeof event.type === 'string' &&
+    typeof event.data?.object?.id === 'string' && /^[a-z]+_[a-zA-Z0-9_]+$/.test(event.data.object.id));
+}
 
 @Injectable()
 export class BillingReconcilerService {
@@ -32,11 +40,8 @@ export class BillingReconcilerService {
     if (!raw || !verifyStripeSignature(raw, signature, this.config.stripeWebhookSecret)) throw new UnauthorizedException('Invalid Stripe signature');
     let event: StripeObject;
     try { event = JSON.parse(raw.toString('utf8')); } catch { throw new BadRequestException('Invalid Stripe event'); }
-    if (!event || event.object !== 'event' || typeof event.id !== 'string' || !/^evt_[a-zA-Z0-9]+$/.test(event.id) ||
-        event.api_version !== STRIPE_API_VERSION || event.livemode !== this.stripe.livemode ||
-        (event.account !== undefined && event.account !== this.stripe.accountId) || typeof event.type !== 'string' ||
-        typeof event.data?.object?.id !== 'string' || !/^[a-z]+_[a-zA-Z0-9_]+$/.test(event.data.object.id)) throw new BadRequestException('Stripe environment or version mismatch');
-    if (!EVENTS.has(event.type)) return { accepted: true };
+    if (!validBillingEvent(event, this.stripe.accountId, this.stripe.livemode)) throw new BadRequestException('Stripe environment or version mismatch');
+    if (!BILLING_STRIPE_EVENTS.has(event.type)) return { accepted: true };
     try { await this.prisma.client.billingProviderEvent.upsert({ where: { stripeAccountId_livemode_eventId: {
       stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode, eventId: event.id,
     } }, create: { stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode, eventId: event.id, eventType: event.type,

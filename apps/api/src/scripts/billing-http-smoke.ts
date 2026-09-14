@@ -1,7 +1,10 @@
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { checkSignupJourney } from './signup-journey-smoke';
+import { checkBillingProviderScans } from './billing-provider-scans-smoke';
+import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
+import { BillingService } from '../modules/billing/application/billing.service';
 /** Full compiled AppModule + HTTP + PostgreSQL. Only external provider transports are simulated. */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
@@ -55,11 +58,11 @@ async function main() {
   let checkoutCalls = 0, badDocument = false, loseSubscriptionCheckout = false;
   const subscriptionCheckouts = new Map<string, ProviderObject>();
   const nativeFetch = globalThis.fetch;
-  let journeyTransport:((url:URL,init?:RequestInit)=>Response|undefined)|undefined;
+  let journeyTransport:((url:URL,init?:RequestInit)=>Promise<Response|undefined>|Response|undefined)|undefined;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input.toString());
     if (url.hostname === '127.0.0.1') return nativeFetch(input, init);
-    const journeyResponse=journeyTransport?.(url,init);if(journeyResponse!==undefined)return journeyResponse;
+    const journeyResponse=await journeyTransport?.(url,init);if(journeyResponse!==undefined)return journeyResponse;
     const noticeResponse = notificationFixture.request(url, init);
     if (noticeResponse !== undefined) return noticeResponse;
     assert.equal(url.origin, 'https://api.stripe.com', 'Unexpected external destination');
@@ -167,6 +170,19 @@ async function main() {
     const checkProviderEvents=()=>checkBillingProviderEvents({request,prisma,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,
       reconciler:app.get(BillingReconcilerService),operations:app.get(BillingOperationsService),provider,browser,interceptRead:hook=>{providerReadHook=hook;}});
     const checkClaimHistory=()=>checkSignupClaimHistory({request,prisma,userId:userIds[0]!,membershipId:memberId,browser});
+    const checkProviderScans=async()=>{
+      // Keep the actual operator limit; this independent scenario follows other commands in the combined suite.
+      const budget=await app.get(RedisRateLimitService).inspect('billing-operator-commands',userIds[0]!,30,60);
+      if(budget.count)await new Promise(resolve=>setTimeout(resolve,Math.min(60,budget.retryAfterSeconds+1)*1000));
+      return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
+        drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
+    };
+    if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'){
+      if(process.env.BILLING_BROWSER_E2E==='1'){
+        const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      }
+      cases.push(...await checkProviderScans());console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe'],realProviderPayment:false}));return;
+    }
     if(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkSignupJourney({app,prisma,origin,userId:userIds[0]!,membershipId:memberId,request,browser,
@@ -450,6 +466,7 @@ async function main() {
     cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser }));
     cases.push(...await checkProviderEvents());
     cases.push(...await checkClaimHistory());
+    cases.push(...await checkProviderScans());
     console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
       simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false, browserE2E: Boolean(browser) }));
   } finally {

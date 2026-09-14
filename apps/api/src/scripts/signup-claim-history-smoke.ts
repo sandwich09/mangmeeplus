@@ -58,7 +58,10 @@ export async function checkSignupClaimHistory(input:{prisma:PrismaService;userId
       await page.locator(`a[href="/system/signup-requests/${signup.id}/mail"]`).click();await page.waitForURL(`**/system/signup-requests/${signup.id}/mail`);
       await page.getByRole('button',{name:'ประวัติหน้าถัดไป',exact:true}).click();await page.getByRole('button',{name:'ประวัติหน้าแรก',exact:true}).click();
       await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('region',{name:'สถานะคำขอสมัคร'}).getByText(/EXPIRED/).waitFor();
-      await page.getByRole('button',{name:'โหลดประวัติล่าสุด',exact:true}).click();await page.getByRole('region',{name:'สถานะคำขอสมัคร'}).getByText(/EXPIRED/).waitFor();
+      const refreshed=await db.companySignupRequest.update({where:{id:signup.id},data:{version:{increment:1}}});
+      const loaded=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(`/signup-requests/${signup.id}/claim-deliveries`));
+      await page.getByRole('button',{name:'โหลดประวัติล่าสุด',exact:true}).click();assert.equal((await loaded).status(),200);
+      await page.getByRole('region',{name:'สถานะคำขอสมัคร'}).getByText(`EXPIRED · เวอร์ชัน ${refreshed.version}`,{exact:true}).waitFor();
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'history must fit the mobile viewport');
       await page.getByRole('region',{name:'สถานะคำขอสมัคร'}).screenshot({path:`${browser.evidenceDir}/admin-claim-history-mobile.png`});
       await page.getByRole('link',{name:'กลับคิวสมัคร',exact:true}).click();await page.waitForURL('**/system/signup-requests');
