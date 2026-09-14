@@ -12,6 +12,7 @@ RUN corepack enable
 
 FROM build-base AS manifests
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY patches ./patches
 COPY apps/workers/package.json apps/workers/package.json
 COPY packages/config/package.json packages/config/package.json
 

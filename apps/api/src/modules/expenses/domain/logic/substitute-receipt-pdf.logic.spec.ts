@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -63,6 +64,47 @@ async function assertCancelledWatermarkOnEveryPage(bytes: Buffer) {
 }
 
 describe('substitute receipt PDF', () => {
+  it('converts only the current RGB chunk, preserving pixels and bounded work in every PDF.js entry point', () => {
+    const packageRoot = dirname(requireFromWorkspace.resolve('pdfjs-dist/package.json'));
+    for (const entry of ['build/pdf.mjs', 'build/pdf.worker.mjs', 'image_decoders/pdf.image_decoders.mjs',
+      'legacy/build/pdf.mjs', 'legacy/build/pdf.worker.mjs', 'legacy/image_decoders/pdf.image_decoders.mjs']) {
+      const source = readFileSync(join(packageRoot, entry), 'utf8');
+      const start = source.indexOf('function convertRGBToRGBA({');
+      const end = source.indexOf('function grayToRGBA(', start);
+      assert.ok(start >= 0 && end > start, `${entry}: installed converter exists`);
+      for (const isLittleEndian of [true, false]) {
+        // Execute the installed dependency, not a duplicate of the patched algorithm.
+        const words = isLittleEndian ? Uint32Array : function (buffer: ArrayBuffer, offset: number, length: number) {
+          const view = new DataView(buffer);
+          return Array.from({ length }, (_, index) => view.getUint32(offset + index * 4, false));
+        };
+        const endian = { isLittleEndian };
+        const convert = new Function('FeatureTest', 'image_utils_FeatureTest', 'Uint32Array',
+          `${source.slice(start, end)}; return convertRGBToRGBA;`)(endian, endian, words);
+        for (const srcPos of [12, 120_000]) {
+          const pixels = Uint8Array.from([1, 2, 3, 21, 22, 23, 41, 42, 43, 61, 62, 63, 81, 82, 83]);
+          const bytes = new Uint8Array(srcPos + pixels.length);
+          bytes.set(pixels, srcPos);
+          let tailReads = 0;
+          const src = new Proxy(bytes, { get(target, key) {
+            if (typeof key === 'string' && /^\d+$/.test(key)) tailReads++;
+            return Reflect.get(target, key, target);
+          } });
+          const sentinel = 0x12345678;
+          const dest = new Uint32Array(9).fill(sentinel);
+          assert.deepEqual(convert({ src, srcPos, dest, destPos: 2, width: 5, height: 1 }),
+            { srcPos: srcPos + pixels.length, destPos: 7 }, `${entry}: chunk offsets`);
+          assert.equal(tailReads, 3, `${entry}: only the remaining pixel is read, regardless of previous chunks`);
+          const expected = Array.from({ length: 5 }, (_, index) => {
+            const [r, g, b] = pixels.subarray(index * 3, index * 3 + 3);
+            return (isLittleEndian ? r! | g! << 8 | b! << 16 | 0xff000000 : r! << 24 | g! << 16 | b! << 8 | 0xff) >>> 0;
+          });
+          assert.deepEqual(Array.from(dest), [sentinel, sentinel, ...expected, sentinel, sentinel], `${entry}: RGBA pixels and adjacent chunks`);
+        }
+      }
+    }
+  });
+
   it('renders every uploaded scan and attestation page for browsers without a PDF viewer', async () => {
     const scan = await PDFDocument.create();
     scan.addPage([400, 600]).drawText('LOCAL TEST SCAN ONE', { x: 40, y: 400 });
