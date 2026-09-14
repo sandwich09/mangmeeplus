@@ -1,3 +1,4 @@
+import { BillingCheckoutExpiryService } from './application/billing-checkout-expiry.service';
 import { BillingSettlementService } from './application/billing-settlement.service';
 import { Module } from '@nestjs/common';
 import { BillingReadinessService } from './application/billing-readiness.service';
@@ -21,7 +22,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
+  providers: [BillingCheckoutExpiryService, BillingSettlementService, BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
 })
 export class BillingModule {}

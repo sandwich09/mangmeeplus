@@ -163,6 +163,14 @@ export type BillingOperationView = { id: string; type: BillingOperationType; sta
   version: number; reason: string; initiatorUserId: string; approverUserId: string | null; errorCode: string | null;
   createdAt: string; observedAt: string | null; expiresAt: string; referenceId: string | null };
 
+export type BillingCheckoutState = 'open'|'expired'|'complete';
+export type BillingCheckoutPaymentState = 'paid'|'unpaid'|'no_payment_required';
+export type BillingCheckoutAttempts = {companyName:string;items:{id:string;companyId:string;createdAt:string;state:string;hasCheckout:boolean;channel:'web'|'line'}[];nextCursor:string|null};
+export type BillingCheckoutReview = {companyId:string;companyName:string;attemptId:string;mode:BillingMode;sourceHash:string|null;
+  providerState:BillingCheckoutState|null;paymentState:BillingCheckoutPaymentState|null;expiresAt:string|null;canExpire:boolean;blockedReason:string|null};
+export type BillingCheckoutExpiryOperation = BillingOperationView & {companyName:string;previewHash:string;dispatchedAt:string|null;
+  providerState:BillingCheckoutState|null;paymentState:BillingCheckoutPaymentState|null;reconciliationPending:boolean;reviewCaseId:string|null;allowedActions:('submit'|'cancel'|'run')[]};
+
 export type BillingRefundInput = { amountSatang:number; reason:string; memo:string; notifyCustomer:boolean; sourceHash:string };
 export type BillingRefundReview = { companyId:string; companyName:string; invoiceId:string; invoiceNumber:string|null; mode:BillingMode;
   paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;

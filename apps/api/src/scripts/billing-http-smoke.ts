@@ -505,12 +505,13 @@ async function main() {
     }
     if (process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingConfiguration({ request, prisma, companyId: companyIds[0]!, userIds, membershipId: memberId, stripeAccountId: accountId, browser,
       transport: hook => { journeyTransport = hook; },
+      scanAccounts:()=>request('/v1/internal/billing/scan','POST',{}, {'x-worker-token':workerToken}),
       drainProviderScans:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),
       drainOperations:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),drainNotifications,notificationFixture,
       signToken: (sid, userId) => new JwtService().sign({ sub: userId ?? userIds[1], sid }, { secret, algorithm: 'HS256', issuer: DEFAULT_JWT_ISSUER, audience: DEFAULT_JWT_AUDIENCE, expiresIn: 3600 }),
       recordLegal: (userId, membershipId) => client.$transaction(tx => app.get(LegalAcceptanceService).recordFromEvidence(tx, { userId, companyId: companyIds[0]!, membershipId,
         requestId: run, evidence: { ...release, locale: 'th', legalAcceptedAt: new Date() } })).then(() => {}) }));
-    if (process.env.BILLING_SETTLEMENT_ONLY === '1' || process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' || process.env.BILLING_SETTLEMENT_ONLY === '1' || process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-Next-Chromium', passed: cases, browserE2E: Boolean(browser), simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false })); return;
     }
     if (process.env.BILLING_CONFIG_ONLY !== '1') cases.push(...await checkBillingRestart({ request, prisma, companyId: companyIds[1]!, sourceCompanyId: companyIds[0]!, extraUserId: userIds[1]!,

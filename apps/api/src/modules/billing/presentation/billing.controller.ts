@@ -1,3 +1,4 @@
+import { BillingCheckoutExpiryService } from '../application/billing-checkout-expiry.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
@@ -58,7 +59,25 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService) {}
+  @Get('companies/:id/checkouts') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  checkoutAttempts(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.checkoutExpiry.attempts(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Get('companies/:id/checkouts/:attemptId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  async checkoutReview(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Query() query:unknown){bodyFields(query,[]);await this.operationLimit(req);return this.checkoutExpiry.review(req.context,textField(id,128),uuid(attemptId));}
+  @Post('companies/:id/checkouts/:attemptId/preview') @HttpCode(200) @RequirePermissions('system.billing.gate.manage') @Header('Cache-Control','no-store')
+  async checkoutPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Body() body:unknown){
+    const fields=bodyFields(body,['reason','sourceHash']);await this.operationLimit(req);return this.checkoutExpiry.preview(req.context,textField(id,128),uuid(attemptId),{reason:textField(fields.reason,500),sourceHash:textField(fields.sourceHash,64)});}
+  @Get('companies/:id/checkouts/:attemptId/requests') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  checkoutRequests(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.checkoutExpiry.history(req.context,textField(id,128),uuid(attemptId),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Get('checkout-expiry/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  checkoutExpiryGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.checkoutExpiry.get(req.context,uuid(id));}
+  @Post('checkout-expiry/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.gate.manage') @Header('Cache-Control','no-store')
+  async checkoutExpiryCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+    if(!['submit','cancel','run'].includes(action))invalid();const fields=bodyFields(body,action==='run'?['expectedVersion']:['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
+    if(action==='run')return this.checkoutExpiry.run(req.context,uuid(id),fields.expectedVersion as number);
+    return this.checkoutExpiry.command(req.context,uuid(id),action as 'submit'|'cancel',fields.expectedVersion as number,textField(fields.previewHash,64),key);
+  }
   @Get('settlements') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   settlementList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.settlement.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('settlements') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
@@ -507,14 +526,14 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService) {}
   @Post('provider-scans/drain') @HttpCode(200)
   async drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); const discovery=await this.scans.drain(),settlement=await this.settlement.drain();return {processed:discovery.processed+settlement.processed,failed:discovery.failed+settlement.failed}; }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
-    const readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),refunds=await this.refunds.drain(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
-    return { processed: readiness.processed + configuration.processed + refunds.processed + provider.processed + operations.processed, failed: readiness.failed + configuration.failed + refunds.failed + provider.failed + operations.failed };
+    const expiry=await this.checkoutExpiry.drain(),readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),refunds=await this.refunds.drain(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
+    return { processed: expiry.processed + readiness.processed + configuration.processed + refunds.processed + provider.processed + operations.processed, failed: expiry.failed + readiness.failed + configuration.failed + refunds.failed + provider.failed + operations.failed };
   }
   @Post('notifications/drain') @HttpCode(200)
   drainNotifications(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.notifications.drain(); }

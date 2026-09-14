@@ -5,7 +5,7 @@ const labels: Record<'mode'|'channel'|'company'|'payment'|'apply'|'access'|'subs
   priority: { NORMAL:'ปกติ', HIGH:'เร่งด่วน', CRITICAL:'เร่งด่วนมาก' },
   scope: { ACTIVE:'ดูแลบริษัทนี้ได้', EXPIRED:'สิทธิ์ดูแลบริษัทหมดอายุ', REVOKED:'ถอนสิทธิ์ดูแลบริษัทแล้ว' },
   tax: { NOT_VAT_REGISTERED:'ยังไม่จด VAT', INCLUSIVE_VAT_7:'รวม VAT 7% ในราคา', EXCLUSIVE_VAT_7:'บวก VAT 7% จากราคา' },
-  attempt: { CREATING:'กำลังสร้างรายการชำระ', REQUESTING:'กำลังขอรายการชำระ', OPEN:'รอชำระเงิน', PAID:'ชำระแล้ว รอตรวจการเปิดสิทธิ์', APPLYING:'กำลังเปิดสิทธิ์', COMPLETED:'ปิดขั้นตอนซื้อแล้ว', EXPIRED:'รายการซื้อหมดอายุ', FAILED:'สร้างรายการซื้อไม่สำเร็จ', UNKNOWN:'ยังยืนยันผลซื้อไม่ได้' },
+  attempt: { CREATING:'กำลังสร้างรายการชำระ', REQUESTING:'กำลังขอรายการชำระ', OPEN:'รอชำระเงิน', PAID:'ชำระแล้ว รอตรวจการเปิดสิทธิ์', APPLYING:'กำลังเปิดสิทธิ์', COMPLETED:'ทำรายการครบแล้ว ต้องตรวจผลจ่าย', EXPIRED:'รายการซื้อหมดอายุ', FAILED:'สร้างรายการซื้อไม่สำเร็จ', UNKNOWN:'ยังยืนยันผลซื้อไม่ได้' },
   quote: { UNUSED:'ยังไม่ได้ใช้ชำระเงิน' },
   mode: { TEST:'โหมดทดสอบ · ไม่มีการรับเงินจริง', LIVE:'โหมดรับเงินจริง', DISABLED:'ยังไม่เปิดการชำระเงิน' },
   channel: { WEB:'เว็บ', LINE:'LINE', EMAIL:'อีเมล', ERP:'ระบบมั่งมี' },
@@ -74,7 +74,7 @@ const issueKinds: Record<string,string> = {
 };
 export const billingIssueLabel = (value:string) => Object.hasOwn(issueKinds,value)?issueKinds[value]!:'รายการที่ต้องตรวจสอบ';
 const operationKinds: Record<string,string> = {
-  RECONCILE:'ตรวจสถานะล่าสุด', IMPORT_INVOICE:'บันทึกใบแจ้งหนี้เดิม', RETRY_APPLY:'ตรวจการเปิดสิทธิ์จากยอดชำระเดิม', RETRY_NOTIFICATION:'นำข้อความเดิมกลับเข้าคิว',
+  EXPIRE_CHECKOUT:'ตรวจและยุติหน้าชำระเดิม', RECONCILE:'ตรวจสถานะล่าสุด', IMPORT_INVOICE:'บันทึกใบแจ้งหนี้เดิม', RETRY_APPLY:'ตรวจการเปิดสิทธิ์จากยอดชำระเดิม', RETRY_NOTIFICATION:'นำข้อความเดิมกลับเข้าคิว',
   RECONCILE_NOTIFICATION:'ตรวจผลส่งข้อความเดิม', RETRY_PROVIDER_EVENT:'ตรวจเหตุการณ์ Stripe เดิม', CHANGE_COLLECTION:'จัดการต่ออายุ',
   SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
   SCAN_PROVIDER_INVOICES:'ตรวจประวัติใบแจ้งหนี้ Stripe', RECORD_SUPPORT_OUTCOME:'บันทึกผลติดต่อ', PUBLISH_POLICY:'เปลี่ยนนโยบายการชำระเงิน',

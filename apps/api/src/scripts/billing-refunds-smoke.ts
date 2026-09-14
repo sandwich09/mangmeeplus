@@ -178,8 +178,21 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const workerOp=await queued(),workerPosts=requests.length,drained=await input.drainOperations() as {status:number};assert.equal(drained.status,200);assert.equal((await get(workerOp.id)).state,'SUCCEEDED');assert.equal(requests.length,workerPosts+1);
     cases.push('refund-worker-drain-executes-approved-original-once-and-pending-create-blocks-new-sales');
     if(browser){
-      const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/companies/${companyId}/invoices/${local.id}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจหรือสร้างคำขอคืนเงิน',exact:true}).click();await page.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}).fill('10.001');
+      const page=browser.page;let readLimited=false;
+      const openReview=async(target:typeof page,navigate:()=>Promise<unknown>)=>{
+        for(let tries=0;tries<3;tries++){
+          const waiting=target.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname.endsWith(`/invoices/${local.id}/refund-review`));
+          if(tries===0)await navigate();else await target.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();
+          const response=await waiting;if(response.status()===200)return;
+          const body=await response.json();assert.equal(response.status(),429,JSON.stringify(body));assert.equal(body.code,'BILLING_RATE_LIMIT');
+          assert.ok(Number.isInteger(body.retryAfterSeconds)&&body.retryAfterSeconds>=1&&body.retryAfterSeconds<=60);readLimited=true;
+          await target.getByRole('alert').filter({hasText:`กรุณารอ ${body.retryAfterSeconds} วินาที`}).waitFor();
+          await new Promise(r=>setTimeout(r,Math.min(60,body.retryAfterSeconds+1)*1000));
+        }
+        assert.fail('Original refund review must recover through the visible bounded wait/reload path');
+      };
+      await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/companies/${companyId}/invoices/${local.id}`,{waitUntil:'domcontentloaded'});
+      await openReview(page,()=>page.getByRole('link',{name:'ตรวจหรือสร้างคำขอคืนเงิน',exact:true}).click());await page.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}).fill('10.001');
       await page.getByLabel('เหตุผลภายใน (ลูกค้าไม่เห็น)',{exact:true}).fill('PRIVATE_REFUND ทดสอบผ่านหน้าเว็บ');await page.getByRole('button',{name:'ตรวจยอดและผลกระทบ',exact:true}).click();
       assert.equal(await page.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}).evaluate(n=>(n as HTMLInputElement).validity.valid),false);
       await page.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}).fill('10.00');
@@ -210,7 +223,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
         const delivered=page.waitForResponse(r=>r.url().endsWith('/refund-preview'));release();await (await delivered).finished();await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
         assert.equal(new URL(page.url()).pathname,`/system/billing/companies/${companyId}`);
       }finally{release();await page.unroute('**/refund-preview');}
-      await page.goto(`${browser.origin}/system/billing/companies/${companyId}/invoices/${local.id}/refund`,{waitUntil:'domcontentloaded'});
+      await openReview(page,()=>page.goto(`${browser.origin}/system/billing/companies/${companyId}/invoices/${local.id}/refund`,{waitUntil:'domcontentloaded'}));
       await page.getByRole('region',{name:'คำขอคืนเงินเดิม',exact:true}).getByRole('link').filter({hasText:'PRIVATE_REFUND ทดสอบผ่านหน้าเว็บ'}).click();
       await page.getByRole('region',{name:'ผลกระทบการคืนเงิน',exact:true}).waitFor();const id=new URL(page.url()).pathname.split('/').at(-1)!;assert.equal(id,createdId);
       const browserCommand=async(target:typeof page,label:string,action:string)=>{
@@ -230,12 +243,13 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
       assert.equal(new URLSearchParams(requests[0]!.body).get('email_type'),'none');
       await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('region',{name:'ผลกระทบการคืนเงิน',exact:true}).waitFor();assert.equal(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await other.screenshot({path:`${browser.evidenceDir}/admin-refund-result-mobile.png`,fullPage:true});
-      await other.getByRole('link',{name:'กลับไปคำขอของใบแจ้งหนี้นี้',exact:true}).click();await other.getByRole('region',{name:'คำขอคืนเงินเดิม',exact:true}).waitFor();
+      await openReview(other,()=>other.getByRole('link',{name:'กลับไปคำขอของใบแจ้งหนี้นี้',exact:true}).click());await other.getByRole('region',{name:'คำขอคืนเงินเดิม',exact:true}).waitFor();
       await page.goto(`${browser.origin}/system/billing/issues/${failedView.reviewCaseId}`,{waitUntil:'domcontentloaded'});await page.getByRole('link',{name:'เปิดคำสั่งเดิมของเคสนี้',exact:true}).click();await page.getByRole('status').filter({hasText:'คืนเงินไม่สำเร็จ'}).waitFor();
       await page.screenshot({path:`${browser.evidenceDir}/admin-refund-failed-mobile.png`,fullPage:true});
       cases.push('browser-original-invoice-refund-form-precision-independent-approval-execution-reload-case-and-return-mobile');
       cases.push('browser-refund-late-preview-does-not-navigate-after-leaving-and-invoice-history-recovers-the-original');
       cases.push('browser-refund-customer-document-email-choice-is-independently-reviewed-and-private-reason-never-sent');
+      if(readLimited)cases.push('browser-refund-rate-limited-initial-read-reloads-original-invoice-after-bounded-wait');
       if(limited)cases.push('browser-refund-real-rate-limit-preserves-inputs-shows-bounded-wait-and-retries-original-review');
     }
     assert.deepEqual(await db.billingReceiptGrant.findMany({where:{billingAccountId:account.id},orderBy:{id:'asc'}}),grants);assert.deepEqual(await db.companyPlanTerm.findUnique({where:{companyId}}),term);
