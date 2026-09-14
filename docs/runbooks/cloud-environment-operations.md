@@ -28,7 +28,7 @@ Substitute artifact-preview500 was reproduced in the exact serving API image: PD
 extraction silently returned `unreadable` for the same omission. It is image packaging, not a missing
 running host. [Hotfix/audit and release ledger](../agent-memory/runtime-dependency-hotfix-20260914.md).
 
-The hotfix and shared HEIC/HEIF upload-source consistency are now deployed: operation
+The earlier hotfix and shared HEIC/HEIF upload-source consistency were deployed: operation
 `20260914T165647Z-f9ecf83a`, main source `038eb55409cf18db587c4e93b93d91492a20bf2e`, terminal
 `ACCEPTED_LINE_DEFERRED`,298.538s, all config/readiness checks and KMS signature verified, customer
 `OPEN`. Existing previously failing Drtb paper-form preview renders its PDF page after fresh reload;
@@ -37,8 +37,20 @@ internal API passed; new-container bounded logs show no missing-module/DOMMatrix
 AgentCore is now `kamal_uat_a` version5. Both UAT hosts retain the enrolled addresses above, Dev is
 stopped, and Production is unchanged. PR561/develop and PR562/main passed full exact-head CI before
 merge; owner explicitly authorized admin merge for main's missing reviewer approval only. See the
-linked release ledger for exact immutable image digests and signed artifact hash. Earlier September11
-serving-operation entries below are historical, not the currently deployed source.
+linked release ledger for exact immutable image digests and signed artifact hash.
+
+Latest serving UAT loading hotfix: operation `20260914T182800Z-e3b8bc63`, main source
+`f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9`, accepted 2026-09-14T18:34:03.090095Z,
+`ACCEPTED_LINE_DEFERRED`,364.651s, all eleven phases PASSED and KMS signature verified, customer
+`OPEN`. Exact API/DB, AI and Workers/Redis/internal API configs/readiness passed. AgentCore
+`kamal_uat_b` version6. Fresh Chrome Drtb reload shows route loading and preview loading with
+duplicate row actions disabled, then readable PDF page and enabled print. The earlier PDF/HEIC
+fixes remain included. Both UAT hosts retain enrolled addresses; Dev remains stopped and Production
+unchanged. PR565/develop CI34876912709 and PR566/main CI34878949174 passed full actual checks
+before owner-authorized admin merges. [Loading scope, exact digests and signed evidence](../agent-memory/action-loading-hotfix-20260915.md).
+Login/logout is NOT_REQUIRED_BY_OWNER, live LINE DEFERRED_BY_OWNER under retained UAT smoke
+authorization; CI LINE fixture acceptance is separate. Earlier serving-operation entries below
+are historical, not the currently deployed source.
 
 Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
 are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule
