@@ -1,4 +1,4 @@
-import { attachmentMimeTypeForFileName } from '@/common/files/upload-file.logic';
+import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, attachmentMimeTypeForFileName, classifyUploadSourceFile } from '@/common/files/upload-file.logic';
 import {
   isReceiptOcrRetryableFailure,
   type ExpenseExtractionResult,
@@ -20,10 +20,8 @@ export const MAX_PDF_EXTRACTION_BYTES = 4 * 1024 * 1024;
 // counters of 6/8/9 and merge adjacent digits.
 const MAX_IMAGE_EDGE_PX = 3200;
 const MIN_IMAGE_QUALITY = 0.72;
-export const RECEIPT_UPLOAD_ACCEPT =
-  '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/gif';
-export const SIGNATURE_UPLOAD_ACCEPT =
-  '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/heic,image/heif,image/gif';
+export const RECEIPT_UPLOAD_ACCEPT = ATTACHMENT_UPLOAD_ACCEPT;
+export const SIGNATURE_UPLOAD_ACCEPT = IMAGE_UPLOAD_ACCEPT;
 
 export type UploadFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
 
@@ -220,33 +218,12 @@ export function detectReceiptImageByteKind(bytes: Uint8Array): 'jpeg' | 'png' | 
 }
 
 export function classifyUploadFile(name: string, type: string): UploadFileKind {
-  const mime = type.toLowerCase();
-  const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1];
-  if (!mime) {
-    if (extension === 'pdf') return 'pdf';
-    if (extension === 'heic' || extension === 'heif') return 'heic';
-    if (['jpg', 'jpeg', 'jpe', 'png', 'gif'].includes(extension ?? '')) return 'image';
-    return 'unsupported';
-  }
-  if (mime === 'application/pdf' && extension === 'pdf') return 'pdf';
-  if ((mime === 'image/heic' && extension === 'heic') || (mime === 'image/heif' && extension === 'heif')) return 'heic';
-  if (
-    ((mime === 'image/jpeg' || mime === 'image/jpg') && (extension === 'jpg' || extension === 'jpeg' || extension === 'jpe'))
-    || (mime === 'image/png' && extension === 'png')
-    || (mime === 'image/gif' && extension === 'gif')
-  ) return 'image';
-  return 'unsupported';
+  return classifyUploadSourceFile({ name, type });
 }
 
 export function classifySignatureUploadFile(name: string, type: string): Exclude<UploadFileKind, 'pdf'> {
-  const standard = classifyUploadFile(name, type);
-  if (standard !== 'unsupported') return standard === 'pdf' ? 'unsupported' : standard;
-  const mime = type.toLowerCase();
-  const extension = name.toLowerCase().match(/\.([^.]+)$/)?.[1];
-  if (mime === 'image/jpg' && (extension === 'jpg' || extension === 'jpeg')) return 'image';
-  if ((!mime || mime === 'image/jpeg' || mime === 'image/jpg') && extension === 'jpe') return 'image';
-  if ((!mime || mime === 'image/gif') && extension === 'gif') return 'image';
-  return 'unsupported';
+  const kind = classifyUploadSourceFile({ name, type }, 'image');
+  return kind === 'pdf' ? 'unsupported' : kind;
 }
 
 async function decodeImage(file: File): Promise<ImageBitmap | HTMLImageElement> {

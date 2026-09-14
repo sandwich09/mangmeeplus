@@ -30,7 +30,7 @@ import type {
 import { authedApiFetch as apiFetch, authedFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 import { emitToast } from '@/common/feedback/toast-bus';
-import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { assertAllowedUploadFile, prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 
 // Same-origin: upload URLs stay relative and proxy through the /local-storage rewrite.
 const BASE = '';
@@ -207,7 +207,7 @@ export async function uploadExpenseEvidenceFile(
   purpose: 'expense.receipt.primary' | 'expense.receipt.supporting' | 'expense.payment.evidence',
 ): Promise<string> {
   return withGenericUploadError(async () => {
-    assertAllowedUploadFile(file);
+    file = await prepareAttachmentUpload(file);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `/v1/companies/${companyId}/attachments/upload-intent`,
       {
@@ -649,7 +649,7 @@ function downloadBlob(blob: Blob, fileName: string): void {
 }
 
 export async function submitSubstitutePaperFile(companyId: string, expenseId: string, evidenceId: string, file: File, input: Omit<import('@watchdog-bms/contracts').SubmitSubstituteReceiptPaperInput, 'attachmentId' | 'checksumSha256' | 'byteSize'>): Promise<SubstituteReceiptEvidenceSummary> {
-  assertAllowedUploadFile(file);
+  file = await prepareAttachmentUpload(file);
   if (!['application/pdf', 'image/png', 'image/jpeg'].includes(file.type) || file.size > 10_000_000) throw new Error('ใช้ PDF, PNG หรือ JPEG ขนาดไม่เกิน 10 MB');
   const base = `/v1/companies/${companyId}/expenses/${expenseId}/substitute-receipt/${evidenceId}/paper`;
   const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(`${base}/upload-intent`, {

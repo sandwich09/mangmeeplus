@@ -80,7 +80,7 @@ import {
   InfoBanner,
   inputClass,
 } from './ExpensesUi';
-import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile } from '@/common/files/upload-file.logic';
+import { ATTACHMENT_UPLOAD_ACCEPT, IMAGE_UPLOAD_ACCEPT, assertAllowedUploadFile, prepareAttachmentUpload } from '@/common/files/upload-file.logic';
 import { findForbiddenChars, normalizeDecimalInput, stripDisallowed } from '@/common/forms/sanitize';
 import {
   canEditSubstituteReceipt,
@@ -1155,9 +1155,9 @@ export function SubstituteReceiptWizardPage({
   ) => {
     if (!detail) throw new Error(t('expenses.substitute_wizard.expense_required', locale));
     if (!canUploadEvidence) throw new Error(t('expenses.substitute_wizard.upload_forbidden', locale));
-    const file = picked ?? (purpose === 'expense.payment.evidence' ? paymentFile : supportingFile);
-    if (!file) throw new Error(t('expenses.substitute_wizard.file_required', locale));
-    assertAllowedUploadFile(file);
+    const sourceFile = picked ?? (purpose === 'expense.payment.evidence' ? paymentFile : supportingFile);
+    if (!sourceFile) throw new Error(t('expenses.substitute_wizard.file_required', locale));
+    const file = await prepareAttachmentUpload(sourceFile);
     const pendingIssue = substituteReceiptEvidenceRenderabilityIssue([
       ...selectedEvidenceAttachments,
       { id: `pending-${purpose}`, originalFileName: file.name },
@@ -1275,8 +1275,8 @@ export function SubstituteReceiptWizardPage({
 
   const buildTransparentSignature = async () => {
     if (!signatureFile) throw new Error(t('expenses.substitute_wizard.signature_required', locale));
-    assertAllowedUploadFile(signatureFile, 'image');
-    const sourceUrl = URL.createObjectURL(signatureFile);
+    const file = await prepareAttachmentUpload(signatureFile, 'image');
+    const sourceUrl = URL.createObjectURL(file);
     try {
       const image = new Image();
       await new Promise<void>((resolve, reject) => {
