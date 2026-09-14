@@ -171,12 +171,19 @@ export class BillingAdminController {
   operation(@Req() req: AuthedRequest, @Param('id') id: string) { return this.operations.get(req.context, uuid(id)); }
   @Post('operations/preview') @HttpCode(200) @RequirePermissions('system.billing.read')
   async preview(@Req() req: AuthedRequest, @Body() body: BillingRepairPreviewDto) {
-    const fields = bodyFields(body, ['type', 'companyId', 'reason', 'expectedVersion','referenceId']);
+    const fields = bodyFields(body, ['type', 'companyId', 'reason', 'expectedVersion','referenceId','invoiceSourceHash']);
     if ((fields.type!=='RECONCILE'&&fields.type!=='RETRY_APPLY'&&fields.type!=='RETRY_NOTIFICATION'&&fields.type!=='RECONCILE_NOTIFICATION') || !Number.isInteger(fields.expectedVersion)) invalid();
     await this.operationLimit(req);
     return this.operations.preview(req.context, { type: fields.type, companyId: textField(fields.companyId, 128),
-      reason: textField(fields.reason, 500), expectedVersion: fields.expectedVersion as number,...fields.referenceId===undefined?{}:{referenceId:textField(fields.referenceId,128)} });
+      reason: textField(fields.reason, 500), expectedVersion: fields.expectedVersion as number,...fields.referenceId===undefined?{}:{referenceId:textField(fields.referenceId,128)},
+      ...fields.invoiceSourceHash===undefined?{}:{invoiceSourceHash:textField(fields.invoiceSourceHash,64)} });
   }
+  @Get('companies/:targetCompanyId/apply-invoices') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  applyInvoices(@Req() req:AuthedRequest,@Param('targetCompanyId') companyId:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);return this.operations.applyInvoices(req.context,companyId,fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('companies/:targetCompanyId/apply-invoices/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  applyInvoice(@Req() req:AuthedRequest,@Param('targetCompanyId') companyId:string,@Param('id') id:string) {return this.operations.applyInvoice(req.context,companyId,uuid(id));}
   @Post('operations') @HttpCode(202) @RequirePermissions('system.billing.read')
   async submit(@Req() req: AuthedRequest, @Body() body: BillingSubmitDto, @Headers('idempotency-key') key: string | undefined) {
     const fields = bodyFields(body, ['previewId', 'previewHash', 'expectedVersion']);

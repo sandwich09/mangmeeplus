@@ -45,6 +45,7 @@ export class BillingRepairPreviewDto extends BillingVersionDto {
   @IsString() @MaxLength(128) companyId!: string;
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
   @IsOptional() @IsString() @MaxLength(128) referenceId?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(64) invoiceSourceHash?: string;
 }
 export class BillingSubmitDto extends BillingVersionDto {
   @IsUUID() previewId!: string;

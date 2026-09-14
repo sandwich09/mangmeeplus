@@ -143,11 +143,14 @@ export type BillingOperatorCompanyDetail = BillingOperatorCompany & { usage: Bil
 export type BillingTimelineEntry = { reference: string; kind: string; type: string; state: string; recordedAt: string; occurredAt: string | null;
   updatedAt: string | null; observedAt: string | null; origin: string | null; amountSatang: number | null; href: string | null };
 export type BillingTimeline = { items: BillingTimelineEntry[]; nextCursor: string | null; auditIncluded: boolean; financialIncluded: boolean };
-export type BillingRepairPreview = { type: 'RECONCILE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION'; companyId: string; expectedVersion: number; reason: string; referenceId?:string };
+export type BillingRepairPreview = { type: 'RECONCILE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION'; companyId: string; expectedVersion: number; reason: string; referenceId?:string; invoiceSourceHash?:string };
+export type BillingApplyInvoiceView = { id:string;companyId:string;mode:BillingMode;version:number;accountVersion:number;applyState:string;paymentVerified:boolean;
+  periodStart:string;periodEnd:string;appliedAt:string|null;observedAt:string|null;sourceHash:string;canRetry:boolean };
 export type BillingRepairOperation = BillingOperationView & { sourceVersion: number; previewHash: string;
+  invoiceImpact?: { id:string;beforeState:string;periodStart:string;periodEnd:string };
   eventImpact?: { eventType: string; beforeState: string; attempts: number };
   deliveryImpact?:{channel:string;recipientUserId:string;beforeState:string;afterState:'QUEUED'|'OBSERVED';attemptCount:number;retryUntil:string|null;possibleDuplicate?:boolean};
-  allowedActions: ('submit' | 'retry' | 'cancel')[]; observed: { pendingAttemptId: string | null; issueCount: number; deliveryId?:string; deliveryState?:string; eventState?: string } | null };
+  allowedActions: ('submit' | 'retry' | 'cancel')[]; observed: { pendingAttemptId: string | null; issueCount: number; deliveryId?:string; deliveryState?:string; eventState?: string;invoiceId?:string;invoiceApplyState?:string } | null };
 export type BillingProviderEventView = { id: string; mode: BillingMode; eventType: string; state: string; attempts: number;
   receivedAt: string; processedAt: string | null; retryAt: string; leaseUntil: string | null; errorCode: string | null;
   sourceHash: string; canRetry: boolean; issueId: string | null };

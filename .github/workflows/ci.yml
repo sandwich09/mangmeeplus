@@ -586,6 +586,7 @@ jobs:
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_APPLY_RETRY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test legal release evidence gates
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |

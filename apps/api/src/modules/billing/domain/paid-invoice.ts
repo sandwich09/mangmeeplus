@@ -39,14 +39,16 @@ export function paidInvoiceEvidence(invoice: StripeObject, subscription: StripeO
       intent.currency !== 'thb' || intent.amount_received !== invoice.total || stripeId(intent.customer) !== customerId ||
       stripeId(intent.latest_charge) !== charge.id || charge.livemode !== livemode || charge.status !== 'succeeded' || !charge.paid || !charge.captured ||
       charge.currency !== 'thb' || charge.amount !== invoice.total || stripeId(charge.customer) !== customerId ||
-      stripeId(charge.payment_intent) !== intent.id || charge.payment_method_details?.type !== 'card') reject();
+      stripeId(charge.payment_intent) !== intent.id || charge.payment_method_details?.type !== 'card' ||
+      !Number.isSafeInteger(charge.amount_refunded) || charge.amount_refunded < 0 || charge.amount_refunded > invoice.total ||
+      typeof charge.disputed !== 'boolean') reject();
   const taxSatang = Array.isArray(invoice.total_taxes) ? invoice.total_taxes.reduce((sum: number, tax: StripeObject) => sum + tax.amount, 0) : 0;
   if (taxSatang !== snapshot.quote.taxSatang) reject();
   const balance = charge.balance_transaction;
   return { kind: invoice.billing_reason === 'subscription_create' ? 'INITIAL' : 'RENEWAL',
     invoiceId: invoice.id, subscriptionId: subscriptionId!, customerId: customerId!, chargeId: charge.id,
     number: typeof invoice.number === 'string' ? invoice.number : null, totalSatang: invoice.total, taxSatang, paidSatang: invoice.amount_paid,
-    refundedSatang: Number.isSafeInteger(charge.amount_refunded) ? charge.amount_refunded : 0, disputed: charge.disputed === true,
+    refundedSatang: charge.amount_refunded, disputed: charge.disputed,
     feeSatang: balance && typeof balance === 'object' && balance.currency === 'thb' && Number.isSafeInteger(balance.fee) ? balance.fee : null,
     periodStart: new Date(line.period.start * 1000), periodEnd: new Date(line.period.end * 1000),
     evidenceHash: hashBilling([invoice.id, subscriptionId, customerId, charge.id, invoice.total, invoice.amount_paid, snapshot.priceId, line.period.start, line.period.end]),

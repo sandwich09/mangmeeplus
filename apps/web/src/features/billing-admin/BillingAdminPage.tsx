@@ -104,6 +104,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
           <p>คืนเงินแล้ว {money(i.refundedSatang)} · {i.disputed ? 'มีข้อพิพาท ต้องตรวจรายกรณี' : i.financialObservedAt ? 'ไม่พบข้อพิพาทจากผลตรวจล่าสุด' : 'ยังไม่ได้ตรวจสถานะการเงิน'} · ตรวจการเงิน {time(i.financialObservedAt)}</p></article>)}
       </div>}
     </section>}
+    {!loading && company?.accountId && <Link className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/apply-invoices`}>ตรวจสิทธิ์จากใบเสร็จเดิม</Link>}
     {!loading && company?.accountId && <BillingOperationPanel key={`operation-${company.companyId}`} companyId={company.companyId} companyVersion={company.version} canReconcile={overview?.capabilities.includes('system.billing.reconcile.run')} />}
     {!loading&&company?.accountId&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/deliveries`}>รายการแจ้งเตือนแพ็กเกจ</Link>}
     {!loading && company && <BillingTimelinePanel key={`timeline-${company.companyId}`} companyId={company.companyId}/>}

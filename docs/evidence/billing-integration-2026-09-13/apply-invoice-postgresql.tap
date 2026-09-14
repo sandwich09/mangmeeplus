@@ -1,0 +1,226 @@
+TAP version 13
+# Subtest: paid capacity is serialized in PostgreSQL across existing create/reactivation/draft paths
+    # Subtest: two different new branches cannot take the same last slot
+    ok 1 - two different new branches cannot take the same last slot
+      ---
+      duration_ms: 50.531792
+      type: 'test'
+      ...
+    # Subtest: branch reactivation counts seats and leaves existing active edits usable
+    ok 2 - branch reactivation counts seats and leaves existing active edits usable
+      ---
+      duration_ms: 56.936958
+      type: 'test'
+      ...
+    # Subtest: only an actual platform role is excluded and OWNER counts as a purchased seat
+    ok 3 - only an actual platform role is excluded and OWNER counts as a purchased seat
+      ---
+      duration_ms: 19.73275
+      type: 'test'
+      ...
+    # Subtest: two employee reactivations compete for one actual seat
+    ok 4 - two employee reactivations compete for one actual seat
+      ---
+      duration_ms: 40.605125
+      type: 'test'
+      ...
+    # Subtest: different draft completions cannot both pass the same pre-activation count
+    ok 5 - different draft completions cannot both pass the same pre-activation count
+      ---
+      duration_ms: 41.098667
+      type: 'test'
+      ...
+# (node:14909) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: retained selection preserves OWNER, scopes, inactive rows and conversation history; stale sources change nothing
+    ok 6 - retained selection preserves OWNER, scopes, inactive rows and conversation history; stale sources change nothing
+      ---
+      duration_ms: 77.338
+      type: 'test'
+      ...
+    # Subtest: branch closure and new claims use the same company boundary; existing in-flight claims cannot be stranded
+    ok 7 - branch closure and new claims use the same company boundary; existing in-flight claims cannot be stranded
+      ---
+      duration_ms: 63.413625
+      type: 'test'
+      ...
+    # Subtest: system identity repair cannot bypass head-office, live-work, replacement identity or fresh-source boundaries
+    ok 8 - system identity repair cannot bypass head-office, live-work, replacement identity or fresh-source boundaries
+      ---
+      duration_ms: 74.679667
+      type: 'test'
+      ...
+    # Subtest: commercial suspension can be reversed through existing employee flows only with usable and authorized branch scope
+    ok 9 - commercial suspension can be reversed through existing employee flows only with usable and authorized branch scope
+      ---
+      duration_ms: 84.4465
+      type: 'test'
+      ...
+    1..9
+ok 1 - paid capacity is serialized in PostgreSQL across existing create/reactivation/draft paths
+  ---
+  duration_ms: 1176.380292
+  type: 'test'
+  ...
+# Subtest: renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+    # Subtest: mapped financial sweep rotates beyond one page without minting access or duplicate cases
+    ok 1 - mapped financial sweep rotates beyond one page without minting access or duplicate cases
+      ---
+      duration_ms: 911.567625
+      type: 'test'
+      ...
+    # Subtest: renewal after a restarted contract does not reapply its old-subscription admission fence
+    ok 2 - renewal after a restarted contract does not reapply its old-subscription admission fence
+      ---
+      duration_ms: 146.86
+      type: 'test'
+      ...
+    # Subtest: historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+    ok 3 - historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+      ---
+      duration_ms: 159.264417
+      type: 'test'
+      ...
+    # Subtest: grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+    ok 4 - grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+      ---
+      duration_ms: 243.631042
+      type: 'test'
+      ...
+    # Subtest: admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+    ok 5 - admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+      ---
+      duration_ms: 170.828083
+      type: 'test'
+      ...
+    # Subtest: grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+    ok 6 - grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+      ---
+      duration_ms: 164.774542
+      type: 'test'
+      ...
+    # Subtest: expired grace cancels collection once without new quota or deleting the unpaid invoice
+    ok 7 - expired grace cancels collection once without new quota or deleting the unpaid invoice
+      ---
+      duration_ms: 83.089208
+      type: 'test'
+      ...
+    # Subtest: a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+    ok 8 - a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+      ---
+      duration_ms: 67.113459
+      type: 'test'
+      ...
+    1..8
+ok 2 - renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+  ---
+  duration_ms: 2110.552125
+  type: 'test'
+  ...
+# Subtest: billing case detection and ownership on real PostgreSQL
+    # Subtest: concurrent detections create one episode and one audit
+    ok 1 - concurrent detections create one episode and one audit
+      ---
+      duration_ms: 86.038209
+      type: 'test'
+      ...
+    # Subtest: redetection preserves assigned state, note, priority, follow-up and operator version
+    ok 2 - redetection preserves assigned state, note, priority, follow-up and operator version
+      ---
+      duration_ms: 18.875208
+      type: 'test'
+      ...
+    # Subtest: resolved recurrence opens one new unassigned episode without losing the audit
+    ok 3 - resolved recurrence opens one new unassigned episode without losing the audit
+      ---
+      duration_ms: 41.309375
+      type: 'test'
+      ...
+    # Subtest: unchanged reviewed financial evidence stays resolved, changed evidence reopens
+    ok 4 - unchanged reviewed financial evidence stays resolved, changed evidence reopens
+      ---
+      duration_ms: 84.4505
+      type: 'test'
+      ...
+    # Subtest: detection rollback leaves neither issue nor episode audit
+    ok 5 - detection rollback leaves neither issue nor episode audit
+      ---
+      duration_ms: 35.79425
+      type: 'test'
+      ...
+    # Subtest: verified service resolution is audited once and preserves operator history
+    ok 6 - verified service resolution is audited once and preserves operator history
+      ---
+      duration_ms: 36.309875
+      type: 'test'
+      ...
+    # Subtest: candidate role and mode/company scope are checked from current rows
+    ok 7 - candidate role and mode/company scope are checked from current rows
+      ---
+      duration_ms: 115.064375
+      type: 'test'
+      ...
+    1..7
+ok 3 - billing case detection and ownership on real PostgreSQL
+  ---
+  duration_ms: 963.196792
+  type: 'test'
+  ...
+# Subtest: paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+    # Subtest: verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+    ok 1 - verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+      ---
+      duration_ms: 98.144958
+      type: 'test'
+      ...
+    # Subtest: all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+    ok 2 - all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+      ---
+      duration_ms: 11429.385625
+      type: 'test'
+      ...
+    # Subtest: failed OCR releases its exact reservation once; replay does not recharge
+    ok 3 - failed OCR releases its exact reservation once; replay does not recharge
+      ---
+      duration_ms: 25.568667
+      type: 'test'
+      ...
+    # Subtest: full-package repeat grants 1200 now, extends valid balance and records future service separately
+    ok 4 - full-package repeat grants 1200 now, extends valid balance and records future service separately
+      ---
+      duration_ms: 24.182333
+      type: 'test'
+      ...
+    # Subtest: payment apply races OCR without deadlock; a failed transaction grants nothing
+    ok 5 - payment apply races OCR without deadlock; a failed transaction grants nothing
+      ---
+      duration_ms: 80.229708
+      type: 'test'
+      ...
+    # Subtest: expiry/hold and cross-company database references cannot bypass admission
+    ok 6 - expiry/hold and cross-company database references cannot bypass admission
+      ---
+      duration_ms: 40.878125
+      type: 'test'
+      ...
+    # Subtest: signup/legacy monthly allowance retains its existing behavior without a billing pointer
+    ok 7 - signup/legacy monthly allowance retains its existing behavior without a billing pointer
+      ---
+      duration_ms: 101.74575
+      type: 'test'
+      ...
+    1..7
+ok 4 - paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+  ---
+  duration_ms: 12286.483625
+  type: 'test'
+  ...
+1..4
+# tests 35
+# suites 0
+# pass 35
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 13524.80525

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { BillingOperation, Prisma } from '../../../generated/prisma/client';
-import type { BillingRepairOperation, BillingRepairPreview } from '@watchdog-bms/contracts';
+import type { BillingAccount, BillingInvoice, BillingOperation, Prisma } from '../../../generated/prisma/client';
+import type { BillingApplyInvoiceView, BillingRepairOperation, BillingRepairPreview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
@@ -10,11 +10,12 @@ import { BillingReconcilerService } from './billing-reconciler.service';
 import { BillingService } from './billing.service';
 import { BillingNotificationsService } from './billing-notifications.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
+import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 
 const types=['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION','RETRY_PROVIDER_EVENT'];
 const isDelivery=(type:string)=>['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(type);
 const permission = (type: string) => (type === 'RECONCILE' || type === 'RETRY_PROVIDER_EVENT') ? 'system.billing.reconcile.run' : type === 'RETRY_APPLY' ? 'system.billing.apply.retry' : isDelivery(type)?'system.billing.notification.retry':null;
-type Proposed = { accountId: string; membershipId: string; actorCompanyId: string; deliverySourceHash?:string;mailAttemptId?:string;deliveryImpact?:BillingRepairOperation['deliveryImpact'];eventSourceHash?:string;eventImpact?:BillingRepairOperation['eventImpact'] };
+type Proposed = { accountId: string; membershipId: string; actorCompanyId: string; deliverySourceHash?:string;mailAttemptId?:string;deliveryImpact?:BillingRepairOperation['deliveryImpact'];eventSourceHash?:string;eventImpact?:BillingRepairOperation['eventImpact'];invoiceSourceHash?:string;invoiceImpact?:BillingRepairOperation['invoiceImpact'] };
 @Injectable()
 export class BillingOperationsService {
   constructor(private readonly prisma: PrismaService, private readonly admin: BillingAdminService,
@@ -24,16 +25,47 @@ export class BillingOperationsService {
     const access = await this.admin.access(context, key, tx);
     if (companyId === null ? !access.platformScope : !access.platformScope && !access.companyIds.includes(companyId)) throw new NotFoundException();
   }
+  private invoiceHash(row: BillingInvoice) {
+    // Observation timestamps do not invalidate a review; financial/application changes do.
+    return hashBilling([row.id,row.billingAccountId,row.version,row.providerInvoiceId,row.providerStatus,row.evidenceHash,row.contractSnapshot,row.offerSnapshot,
+      row.sourceAttemptId,row.subscriptionId,row.periodStart,row.periodEnd,row.applyStatus,row.appliedAt,row.totalSatang,row.paidSatang,row.refundedSatang,row.disputed]);
+  }
+  private async invoiceRow(account: BillingAccount, id: string | null, tx: Prisma.TransactionClient = this.prisma.client) {
+    if(!id)throw billingError('CONTROL_INVOICE_TARGET_REQUIRED','กรุณาเลือกใบเสร็จเดิมและตรวจผลกระทบใหม่');
+    const row=await tx.billingInvoice.findFirst({where:{id,billingAccountId:account.id}});
+    if(!row)throw new NotFoundException();return row;
+  }
+  private invoiceView(row:BillingInvoice,account:BillingAccount,canRun:boolean):BillingApplyInvoiceView {
+    const paymentVerified=row.providerStatus==='paid'&&row.paidSatang>0&&row.paidSatang===row.totalSatang;
+    return {id:row.id,companyId:account.companyId,mode:account.livemode?'LIVE':'TEST',version:row.version,accountVersion:account.version,
+      applyState:row.applyStatus,paymentVerified,periodStart:row.periodStart.toISOString(),periodEnd:row.periodEnd.toISOString(),
+      appliedAt:row.appliedAt?.toISOString()??null,observedAt:row.financialObservedAt?.toISOString()??null,sourceHash:this.invoiceHash(row),
+      canRetry:this.billing.stripe.enabled&&canRun&&paymentVerified&&row.applyStatus!=='APPLIED'};
+  }
+  async applyInvoices(context:RequestContext,companyId:string,cursor?:string) {
+    await this.authorize(context,companyId,'system.billing.read');const access=await this.admin.access(context,'system.billing.read');
+    const account=await this.billing.account(companyId);if(!account){if(cursor)throw new NotFoundException();return {items:[],nextCursor:null};}
+    if(cursor)await this.invoiceRow(account,cursor);
+    const rows=await this.prisma.client.billingInvoice.findMany({where:{billingAccountId:account.id,applyStatus:{not:'APPLIED'},...(cursor?{id:{gt:cursor}}:{})},orderBy:{id:'asc'},take:26});
+    return {items:rows.slice(0,25).map(row=>this.invoiceView(row,account,access.capabilities.includes('system.billing.apply.retry'))),nextCursor:rows.length>25?rows[24]!.id:null};
+  }
+  async applyInvoice(context:RequestContext,companyId:string,id:string) {
+    await this.authorize(context,companyId,'system.billing.read');const access=await this.admin.access(context,'system.billing.read');
+    const account=await this.billing.account(companyId);if(!account)throw new NotFoundException();
+    return this.invoiceView(await this.invoiceRow(account,id),account,access.capabilities.includes('system.billing.apply.retry'));
+  }
   private view(row: BillingOperation, actorId: string): BillingRepairOperation {
     if ((!row.companyId && row.type !== 'RETRY_PROVIDER_EVENT') || !permission(row.type)) throw new NotFoundException();
     const owned = row.initiatorUserId === actorId, fresh = row.expiresAt > new Date();
+    const apply=row.type==='RETRY_APPLY',targeted=!apply||Boolean(row.referenceId&&(row.proposedJson as Proposed).invoiceSourceHash);
     return { id: row.id, type: row.type as BillingRepairOperation['type'], state: row.state as BillingRepairOperation['state'],
       scope: row.companyId ? { kind: 'COMPANY', companyId: row.companyId, mode: row.livemode ? 'LIVE' : 'TEST' } : { kind: 'PLATFORM', mode: row.livemode ? 'LIVE' : 'TEST' }, version: row.version,
       reason: row.reason, initiatorUserId: row.initiatorUserId, approverUserId: null, errorCode: row.errorCode,
       createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null, expiresAt: row.expiresAt.toISOString(),
       referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
-      allowedActions: !owned ? [] : row.state === 'PREVIEW' ? [...(fresh ? ['submit' as const] : []), 'cancel'] :
-        row.state === 'QUEUED' ? ['cancel'] : ['UNKNOWN', 'FAILED', 'BLOCKED'].includes(row.state) ? ['retry'] : [],
+      allowedActions: !owned ? [] : row.state === 'PREVIEW' ? [...(fresh&&targeted ? ['submit' as const] : []), 'cancel'] :
+        row.state === 'QUEUED' ? ['cancel'] : ['UNKNOWN', 'FAILED', 'BLOCKED'].includes(row.state) ? [...(targeted?['retry' as const]:[]),...(apply?['cancel' as const]:[])] : [],
+      ...apply?{invoiceImpact:(row.proposedJson as Proposed).invoiceImpact}:{},
       ...row.type==='RETRY_PROVIDER_EVENT'?{eventImpact:(row.proposedJson as Proposed).eventImpact}:{},
       ...isDelivery(row.type)?{deliveryImpact:(row.proposedJson as Proposed).deliveryImpact}:{},observed: row.resultJson as BillingRepairOperation['observed'] };
   }
@@ -51,11 +83,13 @@ export class BillingOperationsService {
   }
   async list(context: RequestContext, companyId: string | null, cursor?: string,referenceId?:string) {
     await this.authorize(context, companyId, 'system.billing.read');
+    const access=await this.admin.access(context,'system.billing.read');
     if(companyId===null){if(!referenceId)throw new BadRequestException();await this.admin.providerEvent(context,referenceId);}
     if(cursor){const row=await this.row(context,cursor);if(row.companyId!==companyId||(referenceId&&row.referenceId!==referenceId))throw new NotFoundException();}
     const rows = await this.prisma.client.billingOperation.findMany({ where: { companyId, stripeAccountId: this.billing.stripe.accountId,
       livemode: this.billing.stripe.livemode, type: companyId===null?'RETRY_PROVIDER_EVENT':{ in: types },...referenceId?{referenceId}:{}, ...(cursor ? { id: { gt: cursor } } : {}) }, orderBy: { id: 'asc' }, take: 26 });
-    return { items: rows.slice(0, 25).map(r => this.view(r, context.userId)), nextCursor: rows.length > 25 ? rows[24]!.id : null };
+    return { items: rows.slice(0, 25).map(r => {const value=this.view(r,context.userId);
+      if(!access.capabilities.includes(permission(r.type)!))value.allowedActions=[];return value;}), nextCursor: rows.length > 25 ? rows[24]!.id : null };
   }
   async previewEvent(context: RequestContext, input: { referenceId: string; sourceHash: string; reason: string }) {
     await this.authorize(context, null, 'system.billing.reconcile.run');
@@ -82,6 +116,11 @@ export class BillingOperationsService {
     const account = await this.billing.account(input.companyId);
     if (!account || account.version !== input.expectedVersion) throw billingError('CONTROL_PREVIEW_STALE', 'ข้อมูลเปลี่ยนแล้ว กรุณาโหลดบริษัทและตรวจสอบใหม่');
     const proposed: Proposed = { accountId: account.id, membershipId: context.membershipId, actorCompanyId: context.companyId };
+    if(input.type==='RETRY_APPLY'){
+      const invoice=await this.invoiceRow(account,input.referenceId??null),view=this.invoiceView(invoice,account,true);
+      if(!view.canRetry||input.invoiceSourceHash!==view.sourceHash)throw billingError('CONTROL_PREVIEW_STALE','ใบเสร็จหรือสิทธิ์เปลี่ยนแล้ว กรุณาโหลดใบเสร็จเดิมและตรวจใหม่');
+      proposed.invoiceSourceHash=view.sourceHash;proposed.invoiceImpact={id:invoice.id,beforeState:invoice.applyStatus,periodStart:view.periodStart,periodEnd:view.periodEnd};
+    }else if(input.invoiceSourceHash!==undefined)throw new BadRequestException();
     if(isDelivery(input.type)){
       if(!input.referenceId)throw new BadRequestException();
       const source=await this.notifications.reviewDelivery(input.companyId,input.referenceId);
@@ -91,7 +130,7 @@ export class BillingOperationsService {
       const first=(source.row.metadataJson as {billing?:{firstStartedAt?:string}}).billing?.firstStartedAt;
       proposed.deliveryImpact={channel:source.row.channel,recipientUserId:source.row.recipient.userId,beforeState:source.row.status,afterState:input.type==='RECONCILE_NOTIFICATION'?'OBSERVED':'QUEUED',attemptCount:source.row.attemptCount,
         retryUntil:first?new Date(Date.parse(first)+23*3600000).toISOString():null,possibleDuplicate:source.kind==='EMAIL'&&source.possibleDuplicate};
-    }else if(input.referenceId!==undefined)throw new BadRequestException();
+    }else if(input.type!=='RETRY_APPLY'&&input.referenceId!==undefined)throw new BadRequestException();
     const row = await this.prisma.client.billingOperation.create({ data: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
       livemode: account.livemode, type: input.type, state: 'PREVIEW', proposedJson: proposed, sourceVersion: account.version,
       referenceId:input.referenceId,reason: input.reason.trim(), initiatorUserId: context.userId, requestHash: hashBilling([input.type, account.id, account.version, input.reason.trim(), proposed,input.referenceId??null]),
@@ -112,6 +151,10 @@ export class BillingOperationsService {
       }
       const proposed = preview.proposedJson as unknown as Proposed;
       const account = preview.companyId ? await tx.billingAccount.findUniqueOrThrow({ where: { id: proposed.accountId } }) : null;
+      if(preview.type==='RETRY_APPLY'){
+        const invoice=await this.invoiceRow(account!,preview.referenceId,tx);
+        if(!proposed.invoiceSourceHash||this.invoiceHash(invoice)!==proposed.invoiceSourceHash||!this.invoiceView(invoice,account!,true).canRetry)throw billingError('CONTROL_PREVIEW_STALE','ใบเสร็จเดิมเปลี่ยนแล้ว กรุณาตรวจผลกระทบใหม่');
+      }
       if(preview.type==='RETRY_PROVIDER_EVENT'){
         const event=await this.admin.providerEvent(context,preview.referenceId!,tx);
         if(!event.canRetry || event.sourceHash!==proposed.eventSourceHash)throw billingError('CONTROL_PREVIEW_STALE','รายการเดิมเปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุด');
@@ -139,7 +182,13 @@ export class BillingOperationsService {
       await this.authorize(context, row.companyId!, permission(row.type)!, tx);
       await this.lockOperation(tx, row);
       if (row.initiatorUserId !== context.userId || row.version !== expectedVersion ||
-          !(action === 'cancel' ? ['PREVIEW', 'QUEUED'] : ['UNKNOWN', 'FAILED', 'BLOCKED']).includes(row.state)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาตรวจสอบสถานะเดิม');
+          !(action === 'cancel' ? ['PREVIEW', 'QUEUED',...(row.type==='RETRY_APPLY'?['UNKNOWN','FAILED','BLOCKED']:[])] : ['UNKNOWN', 'FAILED', 'BLOCKED']).includes(row.state)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาตรวจสอบสถานะเดิม');
+      if(action==='retry'&&row.type==='RETRY_APPLY'){
+        const proposed=row.proposedJson as Proposed,account=await this.billing.account(row.companyId!,tx);
+        if(!account||!proposed.invoiceSourceHash)throw billingError('CONTROL_INVOICE_TARGET_REQUIRED','เลือกใบเสร็จเดิมและตรวจใหม่');
+        const invoice=await this.invoiceRow(account,row.referenceId,tx);
+        if((invoice.applyStatus!=='APPLIED'||!invoice.appliedAt)&&this.invoiceHash(invoice)!==proposed.invoiceSourceHash)throw billingError('CONTROL_PREVIEW_STALE','ใบเสร็จเดิมเปลี่ยนแล้ว ยกเลิกคำสั่งนี้และตรวจผลกระทบใหม่');
+      }
       if (action === 'retry' && await tx.billingOperation.findFirst({ where: { id: { not: id }, companyId: row.companyId,
         stripeAccountId: row.stripeAccountId, livemode: row.livemode, ...row.companyId?{}:{referenceId:row.referenceId}, type: { in: types },
         state: { in: ['QUEUED', 'RUNNING', 'UNKNOWN'] } } })) throw billingError('CONTROL_OPERATION_IN_PROGRESS', 'มีคำสั่งอื่นกำลังตรวจสอบบริษัทนี้ เปิดรายการเดิมก่อน');
@@ -148,6 +197,8 @@ export class BillingOperationsService {
         state: next, leaseToken: null, leaseUntil: null, errorCode: null, version: { increment: 1 },
       } });
       if (!changed.count) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาโหลดใหม่');
+      if(action==='cancel'&&row.type==='RETRY_APPLY')await resolveBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,
+        kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id},'INVOICE_APPLY_COMMAND_CANCELLED');
       await this.audit(tx, context, row, action, row.state, next);
       return this.view(await tx.billingOperation.findUniqueOrThrow({ where: { id } }), context.userId);
     });
@@ -169,7 +220,7 @@ export class BillingOperationsService {
         OR: [{ leaseUntil: null }, { leaseUntil: { lte: new Date() } }] }, data: { state: 'RUNNING', leaseToken: lease,
           leaseUntil: new Date(Date.now() + 180_000), version: { increment: 1 } } });
       if (!claimed.count) continue;
-      let authorized = false;
+      let authorized = false, applyError='CONTROL_OBSERVED_MISMATCH';
       try {
         const proposed = row.proposedJson as unknown as Proposed;
         const context=await this.admin.authorizeOperation(row,permission(row.type)!); authorized = true;
@@ -184,6 +235,29 @@ export class BillingOperationsService {
           });processed++;continue;
         }
         const account = await this.prisma.client.billingAccount.findFirstOrThrow({ where: { id: proposed.accountId, companyId: row.companyId!, stripeAccountId: row.stripeAccountId, livemode: row.livemode } });
+        if(row.type==='RETRY_APPLY'){
+          if(!row.referenceId||!proposed.invoiceSourceHash){applyError='CONTROL_INVOICE_TARGET_REQUIRED';throw new Error();}
+          applyError='CONTROL_INVOICE_SOURCE_CHANGED';
+          const original=await this.invoiceRow(account,row.referenceId);
+          if(original.applyStatus!=='APPLIED'||!original.appliedAt){
+            if(this.invoiceHash(original)!==proposed.invoiceSourceHash)throw new Error();
+            applyError='CONTROL_OBSERVED_MISMATCH';await this.reconciler.reconcileAccount(account.id,undefined,undefined,original.id);
+          }
+          applyError='CONTROL_OBSERVED_MISMATCH';
+          await this.prisma.client.$transaction(async tx=>{
+            await lockPlanTermCompany(tx,row.companyId!);await this.admin.authorizeOperation(row,'system.billing.apply.retry',tx).catch(error=>{authorized=false;throw error;});
+            const invoice=await this.invoiceRow(account,row.referenceId,tx),current=await tx.billingAccount.findUniqueOrThrow({where:{id:account.id}});
+            const state=invoice.applyStatus==='APPLIED'&&invoice.appliedAt?'SUCCEEDED':'UNKNOWN';
+            const changed=await tx.billingOperation.updateMany({where:{id:row.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()}},data:{
+              state,observedAt:new Date(),leaseToken:null,leaseUntil:null,version:{increment:1},errorCode:state==='SUCCEEDED'?null:'CONTROL_INVOICE_NOT_APPLIED'}});
+            if(!changed.count)throw new Error('billing.operation_lost_lease');
+            const identity={companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id};
+            if(state==='SUCCEEDED')await resolveBillingIssue(tx,identity,'ORIGINAL_INVOICE_APPLIED');else await detectBillingIssue(tx,identity);
+            await tx.billingOperation.update({where:{id:row.id},data:{resultJson:{pendingAttemptId:current.activeAttemptId,invoiceId:invoice.id,invoiceApplyState:invoice.applyStatus,
+              issueCount:await tx.billingIssue.count({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,state:{not:'RESOLVED'}}})}}});
+            await this.audit(tx,context,row,'observed','RUNNING',state);
+          });processed++;continue;
+        }
         if(row.type==='RECONCILE_NOTIFICATION'){
           const deliveryState=await this.notifications.reconcileDelivery(row.companyId!,row.referenceId!,proposed.mailAttemptId!);
           await this.prisma.client.$transaction(async tx=>{
@@ -221,11 +295,14 @@ export class BillingOperationsService {
         if (state === 'UNKNOWN') await this.billing.issue(row.companyId, 'CONTROL_OPERATION_REVIEW', row.id);
         processed++;
       } catch {
-        const changed = await this.prisma.client.billingOperation.updateMany({ where: { id: row.id, leaseToken: lease, state: 'RUNNING', leaseUntil: { gt: new Date() } }, data: {
-          state: authorized&&row.type!=='RETRY_NOTIFICATION' ? 'UNKNOWN' : 'BLOCKED', errorCode: authorized ? 'CONTROL_OBSERVED_MISMATCH' : 'CONTROL_PERMISSION_CHANGED',
-          leaseToken: null, leaseUntil: null, version: { increment: 1 },
-        } });
-        if (changed.count && row.type!=='RETRY_PROVIDER_EVENT') await this.billing.issue(row.companyId, 'CONTROL_OPERATION_REVIEW', row.id); failed++;
+        await this.prisma.client.$transaction(async tx=>{
+          const changed = await tx.billingOperation.updateMany({ where: { id: row.id, leaseToken: lease, state: 'RUNNING', leaseUntil: { gt: new Date() } }, data: {
+            state: authorized&&row.type!=='RETRY_NOTIFICATION'&&applyError==='CONTROL_OBSERVED_MISMATCH' ? 'UNKNOWN' : 'BLOCKED',
+            errorCode: authorized ? applyError : 'CONTROL_PERMISSION_CHANGED',leaseToken: null, leaseUntil: null, version: { increment: 1 },
+          } });
+          if (changed.count && row.type!=='RETRY_PROVIDER_EVENT') await detectBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,
+            kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id});
+        });failed++;
       }
     }
     return { processed, failed };

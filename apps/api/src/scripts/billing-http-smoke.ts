@@ -3,6 +3,7 @@ import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { checkSignupJourney } from './signup-journey-smoke';
 import { checkBillingProviderScans } from './billing-provider-scans-smoke';
 import { checkEmailVerification } from './email-verification-smoke';
+import { checkBillingApplyRetry } from './billing-apply-retry-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 import { BillingService } from '../modules/billing/application/billing.service';
@@ -56,6 +57,7 @@ async function main() {
   const repeatFixture = repeatProviderFixture(run, provider);
   const notificationFixture = billingNotificationFixture();
   let providerReadHook: ((path:string)=>Promise<void>) | undefined;
+  let providerCallHook: ((path:string,method:string)=>Promise<void>) | undefined;
   let checkoutCalls = 0, badDocument = false, loseSubscriptionCheckout = false;
   const subscriptionCheckouts = new Map<string, ProviderObject>();
   const nativeFetch = globalThis.fetch;
@@ -70,6 +72,7 @@ async function main() {
     const headers = new Headers(init?.headers);
     assert.equal(headers.get('stripe-version'), STRIPE_API_VERSION);
     const form = new URLSearchParams(String(init?.body ?? '')), path = url.pathname.slice(3);
+    await providerCallHook?.(path,init?.method??'GET');
     if(providerReadHook && (!init?.method || init.method==='GET'))await providerReadHook(path);
     const list = (data: ProviderObject[]) => ({ object: 'list', data, has_more: false });
     const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -320,11 +323,22 @@ async function main() {
     assert.equal(initialHeld.body.attemptId, checkout.body.attemptId); assert.equal(initialHeld.body.capacityRepair.attemptId, checkout.body.attemptId);
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 0);
     assert.equal((await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test' })).body.code, 'BILLING_EXISTING_SUBSCRIPTION');
+    const repairInitialCapacity=async()=>{
+    const currentHeld=(await request(base)).body;
     const initialOptions = (await request(`${base}/capacity?offerKey=PRO_999&interval=year`)).body;
-    const initialRepair = await request(`${base}/attempts/${checkout.body.attemptId}/capacity`, 'POST', { expectedVersion: initialHeld.body.capacityRepair.attemptVersion, accepted: true,
+    const initialRepair = await request(`${base}/attempts/${checkout.body.attemptId}/capacity`, 'POST', { expectedVersion: currentHeld.capacityRepair.attemptVersion, accepted: true,
       selection: { sourceHash: initialOptions.sourceHash, branchIds: initialOptions.branches.filter((b: any) => b.headOffice).map((b: any) => b.id),
         memberships: initialOptions.memberships.map((m: any) => ({ id: m.id, defaultBranchId: null })) } }, { 'idempotency-key': randomUUID() });
     assert.equal(initialRepair.status, 202, JSON.stringify(initialRepair.body));
+    };
+    cases.push(...await checkBillingApplyRetry({prisma,operations:app.get(BillingOperationsService),companyIds,stripeAccountId:accountId,origin,request,browser,
+      signToken:(sid,userId)=>new JwtService().sign({sub:userId,sid},{secret,algorithm:'HS256',issuer:DEFAULT_JWT_ISSUER,audience:DEFAULT_JWT_AUDIENCE,expiresIn:3600}),
+      recordLegal:(userId,membershipId,companyId)=>client.$transaction(tx=>app.get(LegalAcceptanceService).recordFromEvidence(tx,{userId,companyId,membershipId,
+        requestId:run,evidence:{...release,locale:'th',legalAcceptedAt:new Date()}})).then(()=>{}),
+      repairCapacity:repairInitialCapacity,charge,intercept:hook=>{providerCallHook=hook;}}));
+    if(process.env.BILLING_APPLY_RETRY_ONLY==='1'){
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false}));return;
+    }
     const initialAccount = await client.billingAccount.findFirstOrThrow({ where: { companyId: companyIds[0], stripeAccountId: accountId } });
     await app.get(BillingReconcilerService).reconcileAccount(initialAccount.id);
     await drainNotifications();

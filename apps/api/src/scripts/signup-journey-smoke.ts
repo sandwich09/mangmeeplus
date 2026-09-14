@@ -121,13 +121,16 @@ export async function checkSignupJourney(input:{app:INestApplication;prisma:Pris
     assert.deepEqual(enabled.map(r=>r.featureKey).sort(),[...FEATURE_PACKAGE_PRESETS.starter.featureKeys].sort());
     assert.equal(await db.externalIdentity.count({where:{userId:createdUser,provider:'LINE'}}),0);
     assert.equal((await pub('signup-claims/info',{token:raw})).body.valid,false);
-    await page.getByRole('heading',{name:`${companyName} พร้อมใช้งานแล้ว`,exact:true}).waitFor();
-    await page.getByRole('link',{name:'ไว้ทีหลัง — เข้าใช้งานเลย',exact:true}).click();
+    // Welcome reads account security through the real legal gate. Let that redirect finish;
+    // clicking a link while the gate navigates races a detached DOM on slower CI runners.
     await page.waitForURL('**/legal-acceptance?**');
     for(const name of ['termsAccepted','privacyAcknowledged','deletionAcknowledged'])await page.locator(`input[name="${name}"]`).check();
     await page.getByRole('button',{name:/ยืนยันและเริ่มใช้งาน|Confirm and start/i}).click();
     await page.waitForURL(url=>url.pathname==='/signup/welcome'||url.pathname.startsWith(`/companies/${createdCompany}/`));
-    if(new URL(page.url()).pathname==='/signup/welcome')await page.getByRole('link',{name:'ไว้ทีหลัง — เข้าใช้งานเลย',exact:true}).click();
+    if(new URL(page.url()).pathname==='/signup/welcome'){
+      await page.getByRole('heading',{name:`${companyName} พร้อมใช้งานแล้ว`,exact:true}).waitFor();
+      await page.getByRole('link',{name:'ไว้ทีหลัง — เข้าใช้งานเลย',exact:true}).click();
+    }
     await page.waitForURL(`**/companies/${createdCompany}/**`);
     await page.goto(`${browser.origin}/companies/${createdCompany}/expenses/upload`,{waitUntil:'domcontentloaded'});
     const file=await sharp({create:{width:32,height:32,channels:3,background:'#ffffff'}}).png().toBuffer();

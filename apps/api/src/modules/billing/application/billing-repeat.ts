@@ -11,7 +11,7 @@ import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/bill
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { grantPaidPackageReceipts, paidReceiptBalance } from './billing-receipt-grants';
-import { assertMappedCharge } from './billing-financial';
+import { assertMappedCharge, recordBillingFinancials } from './billing-financial';
 import { collectionContract, ownedSchedule, simpleCollection } from './billing-schedule';
 import { capacityOptions, capacityValid } from './billing-capacity';
 import { upgradeHistory } from './billing-upgrade';
@@ -397,12 +397,13 @@ export class BillingRepeat {
       await this.fence(tx, account, attempt, lease);
       const existing = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
       if (existing && existing.evidenceHash !== evidence.evidenceHash) throw review();
-      await tx.billingInvoice.upsert({ where: { sourceAttemptId: attempt.id }, update: { refundedSatang: evidence.refundedSatang, disputed: evidence.disputed, financialObservedAt: new Date(), feeSatang: evidence.feeSatang },
+      const invoice=await tx.billingInvoice.upsert({ where: { sourceAttemptId: attempt.id }, update: { feeSatang: evidence.feeSatang },
         create: { billingAccountId: account.id, sourceAttemptId: attempt.id, providerInvoiceId: evidence.invoiceId, subscriptionId: null,
           providerNumber: evidence.number, offerSnapshot: json(snapshot.quote.offer), contractSnapshot: json(snapshot), policyRevisionId: attempt.policyRevisionId,
           currency: 'THB', totalSatang: evidence.totalSatang, paidSatang: evidence.totalSatang, taxSatang: evidence.taxSatang,
           refundedSatang: evidence.refundedSatang, disputed: evidence.disputed, financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
           periodStart: new Date(journal.serviceStart!), periodEnd: new Date(journal.paidThrough!), providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
+      await recordBillingFinancials(tx,account,invoice,{refundedSatang:evidence.refundedSatang,disputed:evidence.disputed});
     });
   }
   private async apply(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, evidence: PaidCheckoutEvidence, journal: Journal, lease: string) {

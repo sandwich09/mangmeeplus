@@ -11,26 +11,27 @@ const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T
   cache: 'no-store', suppressErrorToast: true, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) } }),
 });
-export default function BillingOperationPanel({ operationId, companyId, companyVersion, canReconcile = false,deliveryId,canRetry=false,canCheckDelivery=false,eventId,eventSourceHash }: {
-  operationId?: string; companyId?: string; companyVersion?: number; canReconcile?: boolean;deliveryId?:string;canRetry?:boolean;canCheckDelivery?:boolean;eventId?:string;eventSourceHash?:string;
+export default function BillingOperationPanel({ operationId, companyId, companyVersion, canReconcile = false,deliveryId,canRetry=false,canCheckDelivery=false,eventId,eventSourceHash,invoiceId,invoiceSourceHash }: {
+  operationId?: string; companyId?: string; companyVersion?: number; canReconcile?: boolean;deliveryId?:string;canRetry?:boolean;canCheckDelivery?:boolean;eventId?:string;eventSourceHash?:string;invoiceId?:string;invoiceSourceHash?:string;
 }) {
   const [operation, setOperation] = useState<BillingRepairOperation | null>(null), [reason, setReason] = useState('');
+  const accept=(value:BillingRepairOperation)=>setOperation(current=>current?.id===value.id&&current.version>value.version?current:value);
   const [list, setList] = useState<{ items: BillingRepairOperation[]; nextCursor: string | null } | null>(null);
   const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [pollEnded, setPollEnded] = useState(false);
   useEffect(() => {
     let active = true;
-    const load = operationId ? api<BillingRepairOperation>(`/${encodeURIComponent(operationId)}`).then(value => { if (active) setOperation(value); }) :
-      api<{ items: BillingRepairOperation[]; nextCursor: string | null }>(`?${eventId?`referenceId=${encodeURIComponent(eventId)}`:`companyId=${encodeURIComponent(companyId!)}`}${deliveryId?`&referenceId=${encodeURIComponent(deliveryId)}`:''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+    const load = operationId ? api<BillingRepairOperation>(`/${encodeURIComponent(operationId)}`).then(value => { if (active) accept(value); }) :
+      api<{ items: BillingRepairOperation[]; nextCursor: string | null }>(`?${eventId?`referenceId=${encodeURIComponent(eventId)}`:`companyId=${encodeURIComponent(companyId!)}`}${deliveryId||invoiceId?`&referenceId=${encodeURIComponent(deliveryId??invoiceId!)}`:''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
         .then(value => { if (active) setList(value); });
     load.catch(() => { if (active) { setOperation(null); setList(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสอบสิทธิ์และลองใหม่'); } });
     return () => { active = false; };
-  }, [operationId, companyId, deliveryId, eventId, cursor, reload]);
+  }, [operationId, companyId, deliveryId, eventId, invoiceId, cursor, reload]);
   const inlineOperationId = operationId ? undefined : operation?.id;
   useEffect(() => {
     if (!inlineOperationId) return;
     let active = true;
-    void api<BillingRepairOperation>(`/${inlineOperationId}`).then(value => { if (active) setOperation(value); })
+    void api<BillingRepairOperation>(`/${inlineOperationId}`).then(value => { if (active) accept(value); })
       .catch(() => { if (active) { setOperation(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสิทธิ์และเปิดรายการเดิมอีกครั้ง'); } });
     return () => { active = false; };
   }, [inlineOperationId, reload]);
@@ -40,17 +41,17 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
     const timer = window.setInterval(() => {
       if (++polls > 24) { window.clearInterval(timer); if (active) setPollEnded(true); return; }
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-      void api<BillingRepairOperation>(`/${operation.id}`).then(value => { if (active) setOperation(value); }).catch(() => {});
+      void api<BillingRepairOperation>(`/${operation.id}`).then(value => { if (active) accept(value); }).catch(() => {});
     }, 5000);
     return () => { active = false; window.clearInterval(timer); };
   }, [operation?.id, operation?.state]);
   async function act(action: 'preview' | 'submit' | 'retry' | 'cancel') {
     if (busy) return; setBusy(true); setError('');
     try {
-      const value = action === 'preview' && eventId ? await authedApiFetch<BillingRepairOperation>(`/system/billing/provider-events/${eventId}/preview`,{method:'POST',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceHash:eventSourceHash,reason})}) : action === 'preview' ? await api<BillingRepairOperation>('/preview', { type: deliveryId?(canCheckDelivery?'RECONCILE_NOTIFICATION':'RETRY_NOTIFICATION'):'RECONCILE', companyId, expectedVersion: companyVersion, reason,...deliveryId?{referenceId:deliveryId}:{} }) :
+      const value = action === 'preview' && eventId ? await authedApiFetch<BillingRepairOperation>(`/system/billing/provider-events/${eventId}/preview`,{method:'POST',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceHash:eventSourceHash,reason})}) : action === 'preview' ? await api<BillingRepairOperation>('/preview', { type: invoiceId?'RETRY_APPLY':deliveryId?(canCheckDelivery?'RECONCILE_NOTIFICATION':'RETRY_NOTIFICATION'):'RECONCILE', companyId, expectedVersion: companyVersion, reason,...invoiceId?{referenceId:invoiceId,invoiceSourceHash}:deliveryId?{referenceId:deliveryId}:{} }) :
         action === 'submit' ? await api<BillingRepairOperation>('', { previewId: operation!.id, previewHash: operation!.previewHash, expectedVersion: operation!.version }, `billing-op-${operation!.id}`) :
           await api<BillingRepairOperation>(`/${operation!.id}/${action}`, { expectedVersion: operation!.version });
-      setOperation(value); setPollEnded(false); setReload(v => v + 1);
+      accept(value); setPollEnded(false); setReload(v => v + 1);
     } catch { setError('ยังยืนยันคำสั่งไม่ได้ กรุณาโหลดรายการเดิมหรือข้อมูลบริษัทล่าสุดก่อนดำเนินการต่อ'); }
     finally { setBusy(false); }
   }
@@ -65,6 +66,9 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       <h3 className="font-bold" role="status">{label(operation)}</h3>
       <p className="break-all">{operation.scope.mode} · บริษัท {operation.scope.kind === 'COMPANY' ? operation.scope.companyId : 'ระดับระบบ'}</p>
       <p>{operation.reason}</p><p className="break-all text-sm">เลขคำสั่ง {operation.id} · เวอร์ชัน {operation.version}</p>
+      {operation.invoiceImpact&&<p>ใบเสร็จเดิม {operation.invoiceImpact.id} · ก่อนตรวจ {operation.invoiceImpact.beforeState} · {new Date(operation.invoiceImpact.periodStart).toLocaleString('th-TH')} ถึง {new Date(operation.invoiceImpact.periodEnd).toLocaleString('th-TH')}</p>}
+      {operation.observed?.invoiceApplyState&&<p>ผลของใบเสร็จเดิม: {operation.observed.invoiceApplyState} · สิทธิ์ปัจจุบันและเงื่อนไขอื่นตรวจได้ที่ข้อมูลบริษัท</p>}
+      {operation.type==='RETRY_APPLY'&&!operation.invoiceImpact&&<p>คำสั่งเก่ายังไม่ได้ผูกใบเสร็จ ยกเลิกคำสั่งนี้แล้วเลือกใบเสร็จเดิมเพื่อตรวจใหม่</p>}
       {operation.eventImpact&&<p>{operation.eventImpact.eventType} · {operation.eventImpact.beforeState} · ตรวจแล้ว {operation.eventImpact.attempts} ครั้ง · ตรวจหลักฐานใหม่จากรายการเดิม</p>}
       {operation.deliveryImpact&&<div className="space-y-2"><p>{operation.deliveryImpact.channel} · {operation.deliveryImpact.beforeState} → {operation.deliveryImpact.afterState}</p>
         <p className="break-all">ผู้รับเดิม {operation.deliveryImpact.recipientUserId} · รายการส่ง {operation.referenceId}</p><p>พยายามส่งมาแล้ว {operation.deliveryImpact.attemptCount} ครั้ง</p>
@@ -78,6 +82,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       <div className="flex flex-wrap gap-2">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>{action === 'submit' ? 'ยืนยันส่งคำสั่งตรวจสอบ' : action === 'retry' ? 'ตรวจสอบคำสั่งเดิมอีกครั้ง' : 'ยกเลิกคำสั่งตรวจสอบ'}</button>)}</div>
       <div className="flex flex-wrap gap-3"><Link className="underline" href={`/system/billing/operations/${operation.id}`}>เปิดลิงก์คำสั่งนี้</Link>
         {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/deliveries/${operation.referenceId}`}>เปิดรายการส่งเดิม</Link>}
+        {operation.type==='RETRY_APPLY'&&operation.scope.kind==='COMPANY'&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices${operation.referenceId?`/${operation.referenceId}`:''}`}>กลับไปใบเสร็จเดิมหรือเลือกรายการ</Link>}
         {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไป event เดิม</Link>}
         {operation.scope.kind === 'COMPANY' && <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>
     </article>}
