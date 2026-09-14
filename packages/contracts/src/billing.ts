@@ -141,7 +141,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
   trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
 export type BillingOperationType = 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
-export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
+export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingOperationView = { id: string; type: BillingOperationType; state: BillingOperationState; scope: BillingScope;
   version: number; reason: string; initiatorUserId: string; approverUserId: string | null; errorCode: string | null;
@@ -195,7 +195,7 @@ export type BillingSalesCompany = { id: string; name: string; status: string };
 export type BillingConfiguration = { version: number; mode: BillingMode | 'DISABLED'; policy: BillingPolicy;
   policyRevisionId: string | null; gates: Record<BillingAction, boolean>; capabilities: string[]; reauthenticatedUntil: string | null; salesCompanies?: BillingSalesCompany[] };
 export type BillingConfigurationInput = { type: 'PUBLISH_POLICY' | 'SET_ACTION_GATE'; expectedVersion: number;
-  policy: BillingPolicy; gates: Record<BillingAction, boolean>; reason: string; draftId?:string;draftVersion?:number };
+  policy: BillingPolicy; gates: Record<BillingAction, boolean>; reason: string; draftId?:string;draftVersion?:number; effectiveAt?:string|null };
 export type BillingConfigurationDraftInput = Omit<BillingConfigurationInput,'draftVersion'>;
 export type BillingConfigurationImpact = { subscriptions: number; inFlightAttempts: number; unusedQuotes: number; pendingPlanChanges: number; collectionCommands: number;
   sourceHash?: string;
@@ -209,8 +209,9 @@ export type BillingConfigurationImpactItem = { reference: string; kind: BillingC
 export type BillingConfigurationImpactPage = { kind: BillingConfigurationImpactKind; items: (BillingConfigurationImpactItem & { companyName: string })[];
   sourceHash: string; matchesPreview: boolean; nextCursor: string | null; observedAt: string };
 export type BillingConfigurationOperation = BillingOperationView & { sourceVersion: number; previewHash: string;
-  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean> }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
-  allowedActions: ('submit' | 'approve' | 'cancel')[]; activeRevisionId: string | null };
+  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean>; effectiveAt?:string|null }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
+  scheduledFor?:string|null; scheduleDue?:boolean;
+  allowedActions: ('submit' | 'approve' | 'cancel' | 'apply')[]; activeRevisionId: string | null };
 
 
 export type BillingOperatorScopeView = { id: string; companyId: string; companyName: string; userId: string; userName: string;

@@ -9,30 +9,31 @@ const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm
 const field = 'mt-1 block w-full rounded-lg border bg-white p-2';
 const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
   portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ' };
-const stateNames: Record<string, string> = { DRAFT: 'ฉบับร่างที่บันทึกไว้', PREVIEW: 'ตรวจผลกระทบก่อนส่ง', AWAITING_APPROVAL: 'รอผู้อนุมัติอีกคน', SUCCEEDED: 'การตั้งค่านี้มีผลแล้ว', CANCELLED: 'ยกเลิกคำขอนี้แล้ว' };
+const stateNames: Record<string, string> = { DRAFT: 'ฉบับร่างที่บันทึกไว้', PREVIEW: 'ตรวจผลกระทบก่อนส่ง', AWAITING_APPROVAL: 'รอผู้อนุมัติอีกคน', SCHEDULED:'อนุมัติแล้ว รอถึงกำหนด',RUNNING:'กำลังตรวจและใช้ค่าตามกำหนด',BLOCKED:'ต้องตรวจคำขอตามกำหนดใหม่', SUCCEEDED: 'การตั้งค่านี้มีผลแล้ว', CANCELLED: 'ยกเลิกคำขอนี้แล้ว' };
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
 const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T>(`/system/billing${path}`, { cache: 'no-store', suppressErrorToast: true,
   ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) } }) });
 export default function BillingConfigurationPage({ operationId }: { operationId?: string }) {
   const [settings, setSettings] = useState<BillingConfiguration | null>(null), [policy, setPolicy] = useState<BillingPolicy | null>(null);
   const [gates, setGates] = useState<BillingConfiguration['gates'] | null>(null), [reason, setReason] = useState(''), [password, setPassword] = useState('');
+  const [scheduled,setScheduled]=useState(false),[effectiveAt,setEffectiveAt]=useState<string|null>(null);
   const [operation, setOperation] = useState<BillingConfigurationOperation | null>(null), [history, setHistory] = useState<{ items: BillingConfigurationOperation[]; nextCursor: string | null } | null>(null);
   const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const draftIntent=useRef<{key:string;body:unknown}|null>(null);
   const draft=operation?.state==='DRAFT'?operation:null;
-  const draftChanged=Boolean(draft&&JSON.stringify([policy,gates,reason])!==JSON.stringify([draft.proposed.policy,draft.proposed.gates,draft.reason]));
+  const draftChanged=Boolean(draft&&JSON.stringify([policy,gates,reason,scheduled?effectiveAt:null])!==JSON.stringify([draft.proposed.policy,draft.proposed.gates,draft.reason,draft.proposed.effectiveAt??null]));
   const closeIntent = useRef<{ key: string; body: unknown } | null>(null);
   useEffect(() => {
     let active = true; setLoading(true); setError('');
     Promise.all([api<BillingConfiguration>('/settings'), operationId ? api<BillingConfigurationOperation>(`/configuration-changes/${encodeURIComponent(operationId)}`) : null,
       api<{ items: BillingConfigurationOperation[]; nextCursor: string | null }>(`/configuration-changes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)])
-      .then(([s, op, h]) => { if (active) { setSettings(s); setPolicy(op?.state==='DRAFT'?op.proposed.policy:s.policy); setGates(op?.state==='DRAFT'?op.proposed.gates:s.gates); setHistory(h); if (operationId) {setOperation(op);setReason(op?.state==='DRAFT'?op.reason:'');} } })
+      .then(([s, op, h]) => { if (active) { setSettings(s); setPolicy(op?.state==='DRAFT'?op.proposed.policy:s.policy); setGates(op?.state==='DRAFT'?op.proposed.gates:s.gates); setHistory(h); if (operationId) {setOperation(op);setReason(op?.state==='DRAFT'?op.reason:'');setScheduled(Boolean(op?.proposed.effectiveAt));setEffectiveAt(op?.proposed.effectiveAt??null);} } })
       .catch(() => { if (active) { setSettings(null); setOperation(null); setError('โหลดการตั้งค่าไม่ได้ ตรวจสอบสิทธิ์ระดับระบบแล้วลองใหม่'); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [operationId, cursor, reload]);
   const canPolicy = settings?.capabilities.includes('system.billing.policy.manage'), canGates = settings?.capabilities.includes('system.billing.gate.manage');
-  async function act(action: 'reauthenticate' | 'preview' | 'submit' | 'approve' | 'cancel' | 'close' | 'save' | 'copy') {
+  async function act(action: 'reauthenticate' | 'preview' | 'submit' | 'approve' | 'cancel' | 'close' | 'save' | 'copy' | 'apply') {
     if (busy || !settings || !policy || !gates) return; setBusy(true); setError('');
     try {
       if (action === 'reauthenticate') {
@@ -43,12 +44,12 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
       if(action==='save'||action==='copy'){
         draftIntent.current??={key:`billing-draft-${crypto.randomUUID()}`,body:action==='copy'?{type:operation!.type,expectedVersion:0,...operation!.proposed,
           policy:operation!.type==='SET_ACTION_GATE'?settings.policy:operation!.proposed.policy,reason:operation!.reason}:
-          {type:draft?.type??(canPolicy?'PUBLISH_POLICY':'SET_ACTION_GATE'),expectedVersion:draft?.version??0,policy,gates,reason,...draft?{draftId:draft.id}:{}}};
+          {type:draft?.type??(canPolicy?'PUBLISH_POLICY':'SET_ACTION_GATE'),expectedVersion:draft?.version??0,policy,gates,reason,effectiveAt:scheduled?(effectiveAt??''):null,...draft?{draftId:draft.id}:{}}};
         result=await api('/configuration-drafts',draftIntent.current.body,draftIntent.current.key);draftIntent.current=null;
-        setPolicy(result.proposed.policy);setGates(result.proposed.gates);setReason(result.reason);
+        setPolicy(result.proposed.policy);setGates(result.proposed.gates);setReason(result.reason);setScheduled(Boolean(result.proposed.effectiveAt));setEffectiveAt(result.proposed.effectiveAt??null);
         void api<NonNullable<typeof history>>('/configuration-changes').then(setHistory).catch(()=>{});
       } else if (action === 'preview') {
-        result = await api('/configuration-changes/preview', { type: draft?.type??(canPolicy ? 'PUBLISH_POLICY' : 'SET_ACTION_GATE'), expectedVersion: settings.version, policy, gates, reason,...draft?{draftId:draft.id,draftVersion:draft.version}:{} });
+        result = await api('/configuration-changes/preview', { type: draft?.type??(canPolicy ? 'PUBLISH_POLICY' : 'SET_ACTION_GATE'), expectedVersion: settings.version, policy, gates, reason,effectiveAt:scheduled?(effectiveAt??''):null,...draft?{draftId:draft.id,draftVersion:draft.version}:{} });
       } else if (action === 'close') {
         // Keep an ambiguous transport retry attached to the original command until its result is read.
         closeIntent.current ??= { key: `billing-close-${crypto.randomUUID()}`, body: { expectedVersion: settings.version,
@@ -60,7 +61,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
           ...(action === 'cancel' ? {} : { previewHash: operation!.previewHash }) }, action === 'submit' ? `billing-config-${operation!.id}` : undefined);
       }
       setOperation(result);
-      if (result.state === 'SUCCEEDED' || result.state === 'CANCELLED') setReload(v => v + 1);
+      if (['SUCCEEDED','CANCELLED','SCHEDULED','BLOCKED'].includes(result.state)) setReload(v => v + 1);
     } catch (cause) {
       const code = (cause as { code?: string }).code;
       const status=(cause as {status?:number}).status;if((action==='save'||action==='copy')&&status&&status>=400&&status<500)draftIntent.current=null;
@@ -126,14 +127,22 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
           {BILLING_ACTIONS.filter(action => action !== 'portal_change_plan').map(action => <label key={action} className="flex items-center gap-2"><input type="checkbox" checked={gates[action]} onChange={e => setGates({ ...gates, [action]: e.target.checked })} />{gateNames[action]}</label>)}
           <p className="text-sm">ลูกค้าเปลี่ยนแพ็กเกจผ่านหน้ามั่งมี เพื่อคำนวณวันและโควตาสะสม ใช้ตัวเลือกเปลี่ยนแพ็กเกจด้านบน</p>
         </fieldset>
+        <fieldset disabled={busy} className="space-y-2"><legend className="font-semibold">วันที่เริ่มใช้ค่า</legend>
+          <label className="flex items-center gap-2"><input type="checkbox" checked={scheduled} onChange={e=>setScheduled(e.target.checked)}/>กำหนดวันเริ่มใช้ล่วงหน้า</label>
+          {scheduled?<><label className="block">วันและเวลาที่ให้มีผล<input type="datetime-local" className={field} value={localTime(effectiveAt)} onChange={e=>setEffectiveAt(Number.isFinite(Date.parse(e.target.value))?new Date(e.target.value).toISOString():null)}/></label>
+            <p className="text-sm">เวลาในอุปกรณ์นี้: {Intl.DateTimeFormat().resolvedOptions().timeZone} · เลือกล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี ต้องอนุมัติก่อนเวลาที่เลือก</p></>:<p>ใช้ค่าทันทีหลังผู้ดูแลอีกคนอนุมัติ</p>}
+        </fieldset>
         <div><label className="block" htmlFor="billing-policy-reason">เหตุผลการเปลี่ยนค่า</label><textarea id="billing-policy-reason" className={field} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></div>
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!reason.trim()} onClick={()=>void act('save')}>บันทึกฉบับร่าง</button><button className={button} disabled={busy || !reason.trim() || draftChanged} onClick={() => void act('preview')}>ตรวจผลกระทบการตั้งค่า</button>
+        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!reason.trim()||(scheduled&&!effectiveAt)} onClick={()=>void act('save')}>บันทึกฉบับร่าง</button><button className={button} disabled={busy || !reason.trim() || draftChanged||(scheduled&&!effectiveAt)} onClick={() => void act('preview')}>ตรวจผลกระทบการตั้งค่า</button>
           {!draft&&canGates && <button className={button} disabled={busy || !reason.trim() || !BILLING_ACTIONS.some(a => settings.gates[a] && !gates[a])} onClick={() => void act('close')}>หยุดเฉพาะช่องทางที่เอาเครื่องหมายออกทันที</button>}</div>
         {draftChanged&&<p>มีการแก้ไขที่ยังไม่บันทึก กรุณาบันทึกฉบับร่างก่อนตรวจผลกระทบ</p>}
         <p className="text-sm">หยุดรับรายการใหม่ไม่หยุดการต่ออายุเดิม หน้าชำระที่ออกไปแล้วต้องตรวจแยก การเปิดกลับต้องมีผู้อนุมัติอีกคน</p>
       </section>}
       {operation && <section className="space-y-3 rounded-xl border bg-white p-4" aria-label="คำขอเปลี่ยนการตั้งค่า">
         <h2 className="text-lg font-bold" role="status">{stateNames[operation.state] ?? operation.state}</h2>
+        {operation.proposed.effectiveAt&&<p>กำหนดใช้ค่า {new Date(operation.proposed.effectiveAt).toLocaleString('th-TH')} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
+        {operation.state==='SCHEDULED'&&<p>{operation.scheduleDue?'ถึงกำหนดแล้ว รอระบบตรวจและใช้ค่า กดดำเนินการด้านล่างได้หากยังรออยู่':'ค่าปัจจุบันยังใช้อยู่ ระบบจะตรวจข้อมูลและสิทธิ์อีกครั้งเมื่อถึงกำหนด'}</p>}
+        {operation.state==='BLOCKED'&&<p role="alert">ยังใช้ค่าตามกำหนดไม่ได้ ตรวจสิทธิ์และการตั้งค่าล่าสุด แล้วสร้างฉบับร่างจากคำขอนี้เพื่อขออนุมัติใหม่</p>}
         <p>{operation.reason}</p><p className="break-all text-sm">เลขคำขอ {operation.id} · เวอร์ชัน {operation.version}</p>
         {['PREVIEW', 'AWAITING_APPROVAL'].includes(operation.state) && <p>ใช้คำขอได้ถึง {new Date(operation.expiresAt).toLocaleString('th-TH')}
           {new Date(operation.expiresAt).getTime() <= Date.now() && ' · หมดอายุแล้ว กลับหน้าตั้งค่าเพื่อตรวจผลกระทบและส่งคำขอใหม่'}</p>}
@@ -158,7 +167,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         <ul className="space-y-1">{BILLING_ACTIONS.map(a => <li key={a}>{gateNames[a]}: {operation.proposed.gates[a] ? 'เปิด' : 'ปิด'}</li>)}</ul>
         <p>สัญญาที่จ่ายแล้วใช้เงื่อนไขเดิม {operation.state==='SUCCEEDED'?'คำขอนี้ผ่านการอนุมัติและนำไปใช้แล้ว':'การบันทึกหรือดูร่างยังไม่เปลี่ยนค่าที่ใช้งานอยู่'}</p>
         <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>
-          {action === 'submit' ? 'ส่งคำขอให้ผู้อนุมัติ' : action === 'approve' ? 'อนุมัติและใช้ค่าชุดนี้' : 'ยกเลิกคำขอนี้'}</button>)}</div>
+          {action === 'submit' ? 'ส่งคำขอให้ผู้อนุมัติ' : action === 'approve' ? (operation.proposed.effectiveAt?'อนุมัติและรอวันที่กำหนด':'อนุมัติและใช้ค่าชุดนี้') : action==='apply'?'ใช้ค่าที่อนุมัติไว้ตอนนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
         {operation.sourceDraftVersion!==undefined&&operation.referenceId&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.referenceId}`}>กลับฉบับร่างต้นทาง รุ่น {operation.sourceDraftVersion}</Link>}
         {operation.state!=='DRAFT'&&(operation.type==='PUBLISH_POLICY'?canPolicy:canGates)&&<div className="space-y-2">
           {operation.type==='SET_ACTION_GATE'&&<p>การสร้างร่างใหม่จะคัดลอกเฉพาะค่าสวิตช์ และใช้นโยบายล่าสุดที่โหลดไว้</p>}
@@ -175,3 +184,4 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
     </>}
   </main>;
 }
+function localTime(value:string|null){if(!value)return '';const date=new Date(value);return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16);}

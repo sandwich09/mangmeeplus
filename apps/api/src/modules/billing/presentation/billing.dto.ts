@@ -41,6 +41,7 @@ export class BillingConfigurationDto extends BillingVersionDto {
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
   @IsOptional() @IsUUID() draftId?: string;
   @IsOptional() @IsInt() @Min(0) draftVersion?: number;
+  @IsOptional() @IsString() @MaxLength(40) effectiveAt?: string | null;
 }
 export class BillingCloseDto extends BillingVersionDto {
   @IsObject() gates!: object;

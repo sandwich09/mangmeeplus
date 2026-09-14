@@ -186,7 +186,7 @@ export class BillingAdminController {
   }
   @Post('configuration-changes/preview') @HttpCode(200) @RequirePermissions('system.billing.read')
   async configurationPreview(@Req() req: AuthedRequest, @Body() body: BillingConfigurationDto) {
-    const fields = bodyFields(body, ['type', 'expectedVersion', 'policy', 'gates', 'reason','draftId','draftVersion']);
+    const fields = bodyFields(body, ['type', 'expectedVersion', 'policy', 'gates', 'reason','draftId','draftVersion','effectiveAt']);
     if(fields.draftId!==undefined)uuid(fields.draftId);
     if(fields.draftVersion!==undefined&&(!Number.isInteger(fields.draftVersion)||Number(fields.draftVersion)<0))invalid();
     await this.operationLimit(req);
@@ -194,17 +194,18 @@ export class BillingAdminController {
   }
   @Post('configuration-drafts') @HttpCode(200) @RequirePermissions('system.billing.read')
   async configurationDraft(@Req() req:AuthedRequest,@Body() body: BillingConfigurationDto,@Headers('idempotency-key') key?:string){
-    const fields=bodyFields(body,['type','expectedVersion','policy','gates','reason','draftId']);if(fields.draftId!==undefined)uuid(fields.draftId);
+    const fields=bodyFields(body,['type','expectedVersion','policy','gates','reason','draftId','effectiveAt']);if(fields.draftId!==undefined)uuid(fields.draftId);
     await this.operationLimit(req);return this.configuration.saveDraft(req.context,fields as unknown as BillingConfigurationDraftInput,key??'');
   }
   @Post('configuration-changes/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.read')
   async configurationAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingCommandDto,
     @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'previewHash']);
-    if (!Number.isInteger(fields.expectedVersion) || !['submit', 'approve', 'cancel'].includes(action)) invalid();
+    if (!Number.isInteger(fields.expectedVersion) || !['submit', 'approve', 'cancel', 'apply'].includes(action)) invalid();
     await this.operationLimit(req);
     if (action === 'cancel') return this.configuration.cancel(req.context, uuid(id), fields.expectedVersion as number);
     if (action === 'approve') return this.configuration.approve(req.context, uuid(id), fields.expectedVersion as number, textField(fields.previewHash));
+    if (action === 'apply') return this.configuration.applyScheduled(req.context, uuid(id), fields.expectedVersion as number, textField(fields.previewHash));
     return this.configuration.submit(req.context, uuid(id), fields.expectedVersion as number, textField(fields.previewHash), key ?? '');
   }
   @Post('settings/emergency-close') @HttpCode(200) @RequirePermissions('system.billing.gate.manage')
@@ -435,14 +436,14 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService) {}
   @Post('provider-scans/drain') @HttpCode(200)
   drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.scans.drain(); }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
-    const provider = await this.reconciler.drain(), operations = await this.operations.drain();
-    return { processed: provider.processed + operations.processed, failed: provider.failed + operations.failed };
+    const configuration=await this.configuration.drainScheduled(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
+    return { processed: configuration.processed+provider.processed + operations.processed, failed: configuration.failed+provider.failed + operations.failed };
   }
   @Post('notifications/drain') @HttpCode(200)
   drainNotifications(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.notifications.drain(); }

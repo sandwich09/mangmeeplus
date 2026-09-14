@@ -11,9 +11,20 @@ import { BillingService } from './billing.service';
 import { assertKeys, assertPolicyReady, assertStripePrice, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 import { stripeId } from '../infrastructure/stripe.client';
 import { configurationImpact } from './billing-configuration-impact';
+import { randomUUID } from 'node:crypto';
+import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 
 type Proposed = { policy: BillingPolicy; gates: BillingConfiguration['gates']; impact: BillingConfigurationImpact|null;
-  sourcePolicyRevision: string | null; membershipId: string; actorCompanyId: string; sessionId: string;draftVersion?:number;draftCreateHash?:string };
+  sourcePolicyRevision: string | null; membershipId: string; actorCompanyId: string; sessionId: string;draftVersion?:number;draftCreateHash?:string;effectiveAt?:string };
+type ScheduledApproval={membershipId:string;companyId:string;credentialVersion:string;initiatorCredentialVersion:string;approvedAt:string};
+function scheduledTime(value:unknown,review=false):string|undefined {
+  if(value==null)return undefined;
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(value)||!Number.isFinite(Date.parse(value)))throw new BadRequestException('Invalid publication time');
+  const at=Date.parse(value),calendar=new Date(`${value.slice(0,10)}T00:00:00Z`);
+  if(calendar.toISOString().slice(0,10)!==value.slice(0,10))throw new BadRequestException('Invalid publication date');
+  if(review&&(at<Date.now()+60000||at>Date.now()+365*86400000))throw billingError('CONTROL_SCHEDULE_TIME','เลือกเวลาล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี แล้วตรวจผลกระทบใหม่');
+  return new Date(at).toISOString();
+}
 // PostgreSQL JSONB may reorder object keys; compare semantic snapshots, not insertion order.
 function configurationHash(value: unknown): string {
   const canonical = (item: unknown): unknown => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
@@ -129,12 +140,15 @@ export class BillingConfigurationService {
       scope: { kind: 'PLATFORM', mode: row.livemode ? 'LIVE' : 'TEST' }, version: row.version, reason: row.reason, initiatorUserId: row.initiatorUserId,
       approverUserId: row.approverUserId, errorCode: row.errorCode, createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null,
       expiresAt: row.expiresAt.toISOString(), referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
-      proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates) }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
+      proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates),...p.effectiveAt?{effectiveAt:p.effectiveAt}:{} }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
+      scheduledFor:row.scheduledFor?.toISOString()??null,scheduleDue:Boolean(row.scheduledFor&&row.scheduledFor<=new Date()),
       salesCompanies: await this.salesCompanies(p.policy.salesCompanyIds),
       canEditDraft:row.state==='DRAFT'&&own&&access.capabilities.includes(permission(row.type)),sourceDraftVersion:p.draftVersion,
       allowedActions: [...(own && fresh && row.state === 'PREVIEW' && access.capabilities.includes(permission(row.type)) ? ['submit' as const] : []),
         ...(!own && fresh && row.state === 'AWAITING_APPROVAL' && access.capabilities.includes('system.billing.approval.approve') ? ['approve' as const] : []),
-        ...(own && ['DRAFT','PREVIEW', 'AWAITING_APPROVAL'].includes(row.state) ? ['cancel' as const] : [])] };
+        ...(['SCHEDULED','RUNNING'].includes(row.state)&&(!row.leaseUntil||row.leaseUntil<=new Date())&&row.scheduledFor&&row.scheduledFor<=new Date()&&access.capabilities.includes(permission(row.type))?['apply' as const]:[]),
+        ...((own&&['DRAFT','PREVIEW','AWAITING_APPROVAL'].includes(row.state))||
+          (row.scheduledFor&&['SCHEDULED','BLOCKED'].includes(row.state)&&(own||row.approverUserId===context.userId||access.capabilities.includes(permission(row.type))))?['cancel' as const]:[])] };
   }
   private async row(context: RequestContext, id: string, tx: Prisma.TransactionClient = this.prisma.client) {
     await this.platform(context, 'system.billing.read', tx);
@@ -168,18 +182,18 @@ export class BillingConfigurationService {
   async preview(context: RequestContext, input: BillingConfigurationInput) {
     if (!types.includes(input.type) || !Number.isInteger(input.expectedVersion) || input.expectedVersion < 0 || typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 500) throw new BadRequestException('Invalid configuration');
     await this.platform(context, permission(input.type));
-    const policy = parseBillingPolicy(input.policy), gates = this.gates(input.gates), state = await this.billing.settings();
+    const policy = parseBillingPolicy(input.policy), gates = this.gates(input.gates), state = await this.billing.settings(), effectiveAt=scheduledTime(input.effectiveAt,true);
     if (state.settings.version !== input.expectedVersion) throw stale();
     if (input.type === 'SET_ACTION_GATE' && configurationHash(policy) !== configurationHash(state.policy)) throw billingError('CONTROL_GATE_POLICY_STALE','โหลดนโยบายล่าสุดก่อนตรวจค่าสวิตช์อีกครั้ง');
     if (configurationHash(gates) !== configurationHash(state.gates)) await this.platform(context, 'system.billing.gate.manage');
     const draft=input.draftId?await this.row(context,input.draftId):null;
     if(draft&&(draft.state!=='DRAFT'||draft.initiatorUserId!==context.userId||draft.version!==input.draftVersion||draft.type!==input.type||
-      configurationHash([draft.reason,(draft.proposedJson as Proposed).policy,effectiveBillingGates((draft.proposedJson as Proposed).gates)])!==configurationHash([input.reason.trim(),policy,gates])))throw stale();
+      configurationHash([draft.reason,(draft.proposedJson as Proposed).policy,effectiveBillingGates((draft.proposedJson as Proposed).gates),(draft.proposedJson as Proposed).effectiveAt??null])!==configurationHash([input.reason.trim(),policy,gates,effectiveAt??null])))throw stale();
     if(!draft&&input.draftVersion!==undefined)throw new BadRequestException('Missing source draft');
     await this.validateCompanies(policy);
     await this.validateProvider(policy);
     const proposed: Proposed = { policy, gates, impact: await this.impact(policy, state.policy), sourcePolicyRevision: state.revision?.id ?? null,
-      membershipId: context.membershipId, actorCompanyId: context.companyId, sessionId: context.sessionId ?? '',...draft?{draftVersion:draft.version}:{} };
+      membershipId: context.membershipId, actorCompanyId: context.companyId, sessionId: context.sessionId ?? '',...draft?{draftVersion:draft.version}:{},...effectiveAt?{effectiveAt}:{} };
     const row = await this.prisma.client.$transaction(async tx=>{
       if(draft){await this.lock(tx);await this.platform(context,permission(input.type),tx);
         const current=await this.row(context,draft.id,tx);if(current.state!=='DRAFT'||current.version!==draft.version)throw stale();}
@@ -192,14 +206,14 @@ export class BillingConfigurationService {
   async saveDraft(context:RequestContext,input:BillingConfigurationDraftInput,key:string){
     if(!types.includes(input.type)||!Number.isInteger(input.expectedVersion)||input.expectedVersion<0||typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>500||
       !/^[a-zA-Z0-9_-]{16,120}$/.test(key))throw new BadRequestException('Invalid configuration draft');
-    const policy=parseBillingPolicy(input.policy),gates=this.gates(input.gates),reason=input.reason.trim();
-    const hash=configurationHash([input.draftId??null,input.expectedVersion,input.type,policy,gates,reason]);
+    const policy=parseBillingPolicy(input.policy),gates=this.gates(input.gates),reason=input.reason.trim(),effectiveAt=scheduledTime(input.effectiveAt);
+    const hash=configurationHash([input.draftId??null,input.expectedVersion,input.type,policy,gates,reason,...effectiveAt?[effectiveAt]:[]]);
     const row=await this.prisma.client.$transaction(async tx=>{
       await this.platform(context,permission(input.type),tx);const state=await this.lock(tx);
       await this.validateCompanies(policy, tx);
       if(input.type==='SET_ACTION_GATE'&&configurationHash(policy)!==configurationHash(state.policy))throw billingError('CONTROL_GATE_POLICY_STALE','โหลดนโยบายล่าสุดก่อนบันทึกร่างค่าสวิตช์อีกครั้ง');
       if(configurationHash(gates)!==configurationHash(state.gates))await this.platform(context,'system.billing.gate.manage',tx);
-      const proposed:Proposed={policy,gates,impact:null,sourcePolicyRevision:state.revision?.id??null,membershipId:context.membershipId,actorCompanyId:context.companyId,sessionId:context.sessionId??''};
+      const proposed:Proposed={policy,gates,impact:null,sourcePolicyRevision:state.revision?.id??null,membershipId:context.membershipId,actorCompanyId:context.companyId,sessionId:context.sessionId??'',...effectiveAt?{effectiveAt}:{}};
       let saved:BillingOperation;
       if(input.draftId){
         const current=await this.row(context,input.draftId,tx);
@@ -228,8 +242,8 @@ export class BillingConfigurationService {
     await tx.$queryRaw`SELECT id FROM "BillingSettings" WHERE id = ${state.settings.id} FOR UPDATE`;
     return this.billing.settings(tx);
   }
-  private audit(tx: Prisma.TransactionClient, context: RequestContext, row: BillingOperation, action: string) {
-    return tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: `billing.configuration.${action}`,
+  private audit(tx: Prisma.TransactionClient, context: RequestContext, row: BillingOperation, action: string,worker=false) {
+    return tx.auditLog.create({ data: { companyId: context.companyId, actorType:worker?'SERVICE':'USER',actorRefId:worker?'billing-configuration-worker':undefined,actorUserId: worker?null:context.userId, action: `billing.configuration.${action}`,
       targetType: 'BillingOperation', targetId: row.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
       metadataJson: { hash: row.requestHash, reason: row.reason, sourceVersion: row.sourceVersion, type: row.type } } });
   }
@@ -254,7 +268,7 @@ export class BillingConfigurationService {
     const candidate = await this.row(context, id);
     await this.platform(context, 'system.billing.approval.approve');
     if (candidate.initiatorUserId === context.userId) throw new ForbiddenException('ผู้ขออนุมัติรายการของตนเองไม่ได้');
-    if (candidate.state === 'SUCCEEDED' && candidate.approverUserId === context.userId && candidate.requestHash === previewHash) return this.view(candidate, context);
+    if (['SUCCEEDED','SCHEDULED'].includes(candidate.state) && candidate.approverUserId === context.userId && candidate.requestHash === previewHash) return this.view(candidate, context);
     await this.requireProof(context, this.prisma.client);
     const proposed = candidate.proposedJson as unknown as Proposed;
     await this.validateProvider(proposed.policy);
@@ -272,27 +286,121 @@ export class BillingConfigurationService {
       if (configurationHash(effectiveBillingGates(proposed.gates)) !== configurationHash(state.gates)) await this.platform(initiator, 'system.billing.gate.manage', tx);
       await this.validateCompanies(proposed.policy, tx);
       if (configurationHash(await this.impact(proposed.policy, state.policy, tx)) !== configurationHash(proposed.impact)) throw stale();
+      if(proposed.effectiveAt){
+        const at=new Date(proposed.effectiveAt);if(!Number.isFinite(at.getTime())||at<=new Date())throw billingError('CONTROL_SCHEDULE_TIME','เวลาที่เลือกผ่านไปแล้ว กรุณาตรวจผลกระทบพร้อมกำหนดเวลาใหม่');
+        await tx.$queryRaw`SELECT "userId" FROM "UserCredential" WHERE "userId" = ${current.initiatorUserId} FOR SHARE`;
+        const initiatorCredential=await this.activeCredential(tx,current.initiatorUserId),approverCredential=await this.activeCredential(tx,context.userId);
+        const scheduledApproval:ScheduledApproval={membershipId:context.membershipId,companyId:context.companyId,credentialVersion:approverCredential.updatedAt.toISOString(),
+          initiatorCredentialVersion:initiatorCredential.updatedAt.toISOString(),approvedAt:new Date().toISOString()};
+        const scheduled=await tx.billingOperation.update({where:{id},data:{state:'SCHEDULED',scheduledFor:at,approverUserId:context.userId,version:{increment:1},
+          resultJson:{scheduledApproval}}});await this.audit(tx,context,scheduled,'scheduled');return scheduled;
+      }
+      return this.publish(tx,state,current,proposed,context);
+    }); return this.view(row, context);
+  }
+  private async activeCredential(tx:Prisma.TransactionClient,userId:string){
+    const value=await tx.userCredential.findUnique({where:{userId}});
+    if(!value||value.status!=='ACTIVE'||value.mustChangePassword||(value.expiresAt&&value.expiresAt<=new Date()))throw new ForbiddenException();return value;
+  }
+  private async scheduledActor(row:BillingOperation,userId:string,membershipId:string,companyId:string,key:string,tx:Prisma.TransactionClient){
+    if(!userId||!membershipId||!companyId)throw stale();
+    if(tx!==this.prisma.client)await tx.$queryRaw`SELECT m.id FROM "CompanyMembership" m JOIN "User" u ON u.id=m."userId"
+      JOIN "MembershipRole" mr ON mr."membershipId"=m.id JOIN "Role" r ON r.id=mr."roleId"
+      JOIN "RolePermission" rp ON rp."roleId"=r.id WHERE m.id=${membershipId} AND u.id=${userId} ORDER BY r.id,rp."permissionId" FOR SHARE OF m,u,mr,r,rp`;
+    const member=await tx.companyMembership.findFirstOrThrow({where:{id:membershipId,userId,companyId},include:{roles:{include:{role:{include:{permissions:{include:{permission:true}}}}}}}});
+    const context:RequestContext={requestId:row.id,authSubject:userId,authProvider:'system',userId,companyId,membershipId,roles:[],scopes:{},permissions:member.roles.flatMap(r=>r.role.permissions.map(p=>p.permission.key))};
+    await this.platform(context,key,tx);return context;
+  }
+  private async scheduledActors(row:BillingOperation,state:Awaited<ReturnType<BillingService['settings']>>,tx:Prisma.TransactionClient){
+    const p=row.proposedJson as Proposed,a=(row.resultJson as {scheduledApproval?:ScheduledApproval}|null)?.scheduledApproval;
+    if(!a||!row.approverUserId||row.approverUserId===row.initiatorUserId||!row.scheduledFor||row.scheduledFor.toISOString()!==p.effectiveAt||
+      ![a.membershipId,a.companyId,a.credentialVersion,a.initiatorCredentialVersion,a.approvedAt].every(v=>typeof v==='string'&&v.length>0))throw stale();
+    if(row.requestHash!==configurationHash([row.type,row.sourceVersion,p,row.reason,row.referenceId??null])||
+      !Number.isFinite(Date.parse(a.approvedAt))||Date.parse(a.approvedAt)>=row.scheduledFor.getTime())throw stale();
+    if(tx!==this.prisma.client)await tx.$queryRaw(Prisma.sql`SELECT "userId" FROM "UserCredential" WHERE "userId" IN (${Prisma.join([row.initiatorUserId,row.approverUserId].sort())}) ORDER BY "userId" FOR SHARE`);
+    const initiator=await this.scheduledActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,permission(row.type),tx);
+    if(configurationHash(effectiveBillingGates(p.gates))!==configurationHash(state.gates))await this.platform(initiator,'system.billing.gate.manage',tx);
+    const approver=await this.scheduledActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx);
+    if((await this.activeCredential(tx,row.initiatorUserId)).updatedAt.toISOString()!==a.initiatorCredentialVersion||
+      (await this.activeCredential(tx,row.approverUserId)).updatedAt.toISOString()!==a.credentialVersion)throw new ForbiddenException();
+    return approver;
+  }
+  private async executeScheduled(candidate:BillingOperation,caller?:RequestContext){
+    const lease=randomUUID(),now=new Date();
+    const claimed=await this.prisma.client.billingOperation.updateMany({where:{id:candidate.id,version:candidate.version,scheduledFor:{lte:now},
+      stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,type:{in:types},state:{in:['SCHEDULED','RUNNING']},
+      OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]},data:{state:'RUNNING',leaseToken:lease,leaseUntil:new Date(now.getTime()+120000),version:{increment:1}}});
+    if(!claimed.count)return null;
+    try{
+      const proposed=candidate.proposedJson as Proposed,state=await this.billing.settings();
+      await this.scheduledActors(candidate,state,this.prisma.client);await this.validateProvider(proposed.policy);
+      await this.prisma.client.$transaction(async tx=>{
+        const approval=(candidate.resultJson as {scheduledApproval:ScheduledApproval}).scheduledApproval;
+        const companyIds=[...new Set([...proposed.impact?.salesCohort?.before??[],...proposed.policy.salesCompanyIds??[],proposed.actorCompanyId,approval.companyId])].sort();
+        if(companyIds.length)await tx.$queryRaw(Prisma.sql`SELECT id FROM "Company" WHERE id IN (${Prisma.join(companyIds)}) ORDER BY id FOR SHARE`);
+        const active=await this.lock(tx);
+        const current=await tx.billingOperation.findFirst({where:{id:candidate.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()}}});
+        if(!current||current.requestHash!==candidate.requestHash||current.sourceVersion!==active.settings.version||
+          configurationHash(current.proposedJson)!==configurationHash(candidate.proposedJson)||configurationHash(current.resultJson)!==configurationHash(candidate.resultJson))throw stale();
+        const approver=await this.scheduledActors(current,active,tx);
+        if(caller){await this.platform(caller,permission(current.type),tx);await this.requireProof(caller,tx);}
+        await this.validateCompanies(proposed.policy,tx);
+        if(configurationHash(await this.impact(proposed.policy,active.policy,tx))!==configurationHash(proposed.impact))throw stale();
+        await this.publish(tx,active,current,proposed,caller??approver,!caller);
+        await resolveBillingIssue(tx,{companyId:null,stripeAccountId:current.stripeAccountId,livemode:current.livemode,kind:'CONFIGURATION_SCHEDULE_REVIEW',referenceId:current.id},'SCHEDULED_CONFIGURATION_PUBLISHED');
+      });return true;
+    }catch(error){
+      await this.prisma.client.$transaction(async tx=>{
+        const changed=await tx.billingOperation.updateMany({where:{id:candidate.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()}},data:{state:'BLOCKED',errorCode:error instanceof ForbiddenException?'CONTROL_PERMISSION_CHANGED':'CONTROL_SCHEDULE_REVIEW',leaseToken:null,leaseUntil:null,version:{increment:1}}});
+        if(changed.count){
+          await detectBillingIssue(tx,{companyId:null,stripeAccountId:candidate.stripeAccountId,livemode:candidate.livemode,kind:'CONFIGURATION_SCHEDULE_REVIEW',referenceId:candidate.id});
+          await tx.auditLog.create({data:{actorType:'SERVICE',actorRefId:'billing-configuration-worker',action:'billing.configuration.schedule_blocked',targetType:'BillingOperation',targetId:candidate.id,
+            requestId:candidate.id,result:'FAILED',riskLevel:'HIGH',metadataJson:{hash:candidate.requestHash,sourceVersion:candidate.sourceVersion,type:candidate.type}}});
+        }
+      });return false;
+    }
+  }
+  async drainScheduled(){
+    if(!this.billing.stripe.enabled)return {processed:0,failed:0};
+    const rows=await this.prisma.client.billingOperation.findMany({where:{stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,companyId:null,
+      type:{in:types},state:{in:['SCHEDULED','RUNNING']},scheduledFor:{lte:new Date()},OR:[{leaseUntil:null},{leaseUntil:{lte:new Date()}}]},orderBy:[{scheduledFor:'asc'},{id:'asc'}],take:5});
+    let processed=0,failed=0;for(const row of rows){const result=await this.executeScheduled(row);if(result===true)processed++;else if(result===false)failed++;}return {processed,failed};
+  }
+  async applyScheduled(context:RequestContext,id:string,expectedVersion:number,previewHash:string){
+    const row=await this.row(context,id);await this.platform(context,permission(row.type));await this.requireProof(context,this.prisma.client);
+    if(row.requestHash!==previewHash)throw stale();if(row.state==='SUCCEEDED')return this.view(row,context);
+    if(row.version!==expectedVersion||!['SCHEDULED','RUNNING'].includes(row.state)||(row.leaseUntil&&row.leaseUntil>new Date()))throw stale();
+    if(!row.scheduledFor||row.scheduledFor>new Date())throw billingError('CONTROL_SCHEDULE_NOT_DUE','ยังไม่ถึงเวลาที่อนุมัติไว้');
+    await this.executeScheduled(row,context);return this.get(context,id);
+  }
+  private async publish(tx:Prisma.TransactionClient,state:Awaited<ReturnType<BillingService['settings']>>,current:BillingOperation,proposed:Proposed,context:RequestContext,worker=false){
+      const scheduledApproval=(current.resultJson as {scheduledApproval?:ScheduledApproval}|null)?.scheduledApproval;
       let revisionId = state.revision?.id ?? null;
       if (current.type === 'PUBLISH_POLICY') {
         const max = await tx.billingPolicyRevision.aggregate({ where: { stripeAccountId: current.stripeAccountId, livemode: current.livemode }, _max: { version: true } });
         const revision = await tx.billingPolicyRevision.create({ data: { stripeAccountId: current.stripeAccountId, livemode: current.livemode, version: (max._max.version ?? 0) + 1,
-          state: 'ACTIVE', policyJson: proposed.policy as unknown as Prisma.InputJsonValue, createdByUserId: current.initiatorUserId, approvedByUserId: context.userId, approvedAt: new Date() } });
+          state: 'ACTIVE', policyJson: proposed.policy as unknown as Prisma.InputJsonValue, createdByUserId: current.initiatorUserId, approvedByUserId: current.approverUserId??context.userId, approvedAt: scheduledApproval?new Date(scheduledApproval.approvedAt):new Date() } });
         revisionId = revision.id;
       }
       await tx.billingSettings.update({ where: { id: state.settings.id }, data: { policyRevisionId: revisionId, gatesJson: effectiveBillingGates(proposed.gates), version: { increment: 1 } } });
-      const updated = await tx.billingOperation.update({ where: { id }, data: { state: 'SUCCEEDED', approverUserId: context.userId, observedAt: new Date(),
-        version: { increment: 1 }, resultJson: { activeRevisionId: revisionId, settingsVersion: state.settings.version + 1 } } });
-      await this.audit(tx, context, updated, 'published'); return updated;
-    }); return this.view(row, context);
+      const changed = await tx.billingOperation.updateMany({ where: { id:current.id,version:current.version,state:current.state,
+        ...(current.scheduledFor?{leaseToken:current.leaseToken,leaseUntil:{gt:new Date()}}:{}) }, data: { state: 'SUCCEEDED', approverUserId: current.approverUserId??context.userId, observedAt: new Date(), leaseToken:null,leaseUntil:null,
+        version: { increment: 1 }, resultJson: { ...scheduledApproval?{scheduledApproval}:{}, activeRevisionId: revisionId, settingsVersion: state.settings.version + 1 } } });
+      if(!changed.count)throw stale();
+      const updated=await tx.billingOperation.findUniqueOrThrow({where:{id:current.id}});
+      await this.audit(tx, context, updated, 'published',worker); return updated;
   }
   async cancel(context: RequestContext, id: string, expectedVersion: number) {
     const row = await this.prisma.client.$transaction(async tx => {
       await this.platform(context, 'system.billing.read', tx);
       await this.lock(tx);
       const current = await this.row(context, id, tx);
-      if (current.initiatorUserId !== context.userId) throw new ForbiddenException();
-      const changed = await tx.billingOperation.updateMany({ where: { id, version: expectedVersion, state: { in: ['DRAFT','PREVIEW', 'AWAITING_APPROVAL'] } }, data: { state: 'CANCELLED', version: { increment: 1 } } });
+      const scheduled=Boolean(current.scheduledFor&&['SCHEDULED','BLOCKED'].includes(current.state));
+      if(current.initiatorUserId!==context.userId){if(!scheduled)throw new ForbiddenException();
+        if(current.approverUserId!==context.userId)await this.platform(context,permission(current.type),tx);await this.requireProof(context,tx);}
+      const changed = await tx.billingOperation.updateMany({ where: { id, version: expectedVersion, state: { in: ['DRAFT','PREVIEW', 'AWAITING_APPROVAL',...scheduled?['SCHEDULED','BLOCKED']:[]] } }, data: { state: 'CANCELLED', version: { increment: 1 } } });
       if (!changed.count) throw stale(); await this.audit(tx, context, current, 'cancelled');
+      if(scheduled)await resolveBillingIssue(tx,{companyId:null,stripeAccountId:current.stripeAccountId,livemode:current.livemode,kind:'CONFIGURATION_SCHEDULE_REVIEW',referenceId:id},'UNEXECUTED_SCHEDULE_CANCELLED');
       return tx.billingOperation.findUniqueOrThrow({ where: { id } });
     }); return this.view(row, context);
   }

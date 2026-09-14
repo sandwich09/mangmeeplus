@@ -9184,6 +9184,7 @@ model BillingOperation {
   idempotencyKey    String?
   requestHash       String
   expiresAt         DateTime
+  scheduledFor      DateTime?
   leaseToken        String?
   leaseUntil        DateTime?
   errorCode         String?
@@ -9193,4 +9194,5 @@ model BillingOperation {
   observedAt        DateTime?
   @@unique([stripeAccountId, livemode, idempotencyKey])
   @@index([state, createdAt])
+  @@index([stripeAccountId, livemode, state, scheduledFor], map: "BillingOperation_schedule_idx")
 }

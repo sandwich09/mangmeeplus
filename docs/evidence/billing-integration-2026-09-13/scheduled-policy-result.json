@@ -1,0 +1,88 @@
+{
+  "status": "PASS",
+  "slice": "C05 optional scheduled policy publication and retained Admin recovery",
+  "baseCommit": "7f1ce5a50fad9746ae1ca1a5a58187981cf811d0",
+  "sourceSha256": {
+    "packages/contracts/src/billing.ts": "09bb9c3dfc4f289627a261de3fc1a0bbe7d684f6ddd93f84f4ebf00dc9138ff4",
+    "apps/api/prisma/schema.prisma": "bc13f453e93ab4b2b53573caae1f00b9948477924f252baaa8e5fffb3c3ca827",
+    "apps/api/prisma/migrations/20260915010000_billing_scheduled_policy/migration.sql": "093d88e4f2cee82f67e7bdefe4f357e062d66d93f7358344e89ce66f85744c3c",
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "408925aa819aafea1c10320ce2a9256fd5c9cca383020eb678859061b6752f71",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "759ccae98d354fdbaa351e216b810eec160f765fabdbe6225be39afa908b0767",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "bd2b22720ed4cf9f68acd0af6fe2242e62891d4e38b5f8d7a20fb755b6a59d4a",
+    "apps/api/src/scripts/billing-scheduled-policy-smoke.ts": "2f70033703f07f128a5ee48f6075f42c4a6e079ae2f227bf16fa8f29e13dbf9d",
+    "apps/api/src/scripts/billing-configuration-smoke.ts": "748d52cc9674ef43283aebff4cb343eb67aa6da08d8daf0007888b70f5c1604e",
+    "apps/api/src/scripts/billing-http-smoke.ts": "89df00eaac0f7106e6d810a2df7258a2ebd89059d847aa291578a62ed16757b5",
+    "apps/web/src/common/api/api-error-message.ts": "e8c3e83dd8528daf308c68b5253dc63f7e5772f42b68ff1a75fb81e8e652486f",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "beeec37d8875d571612dc798b5029ff85c81a5106134049971b1402db2f91315",
+    "apps/web/src/features/billing-admin/BillingConfigurationPage.tsx": "7c5cbcdf8cf93b04fbb602d24e34c463105813b4403f867be10a620d524d1beb",
+    ".github/workflows/ci.yml": "f1220a5cc99adf78d67efda069c1e39e164ce1405c39c066eac5858cb15f213d"
+  },
+  "focusedBrowser": {
+    "command": "BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "groups": 12,
+    "result": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "browser-schedule-timezone-draft-reload-hash-independent-approval-mobile",
+        "schedule-strict-date-range-self-approval-idempotence-future-refusal-and-no-early-publication",
+        "schedule-worker-off-late-manual-apply-after-preview-expiry-result-reload-exactly-once",
+        "schedule-original-approver-cancel-preserves-policy-and-prevents-worker-publication",
+        "schedule-concurrent-workers-publish-once-with-service-audit",
+        "schedule-emergency-close-stale-source-deduplicated-case-copy-new-review-cancel-return",
+        "schedule-current-requester-approver-system-role-and-credential-version-revocation",
+        "schedule-provider-readiness-failure-blocks-without-changing-active-settings",
+        "schedule-authority-rechecked-after-provider-io-before-publication",
+        "schedule-running-cancel-race-lease-expiry-old-worker-fence-and-manual-reclaim",
+        "schedule-audit-failure-rolls-back-revision-settings-and-success-before-retained-case",
+        "schedule-material-impact-change-expired-approval-immediate-compatibility-and-no-financial-writes"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "log": "/tmp/mangmee-scheduled-policy-browser-final.log"
+  },
+  "checks": {
+    "apiTypecheck": "PASS /tmp/mangmee-scheduled-policy-api-typecheck-final.log",
+    "webTypecheck": "PASS /tmp/mangmee-scheduled-policy-web-typecheck.log",
+    "webErrorGuards": "13 PASS /tmp/mangmee-scheduled-policy-web-guards.tap",
+    "maintenancePins": "PASS d9e419d9565797dde54b8f58c2e3ccc03d4001e419f8fe61be9a28116d1e505c"
+  },
+  "limitations": [
+    "Provider transport is simulated. No real payment, email/LINE delivery, provider-account change, merge or deployment.",
+    "Only server Date is simulated in this isolated fixture. PostgreSQL and Redis clocks and normal HTTP authentication/rate limits remain real. The first browser run reached the real 5-per-300-second reauthentication limiter after excessive simulated time jumps; the fixture now uses the minimum approved one-minute schedule between scenarios. No production limit or credential check was weakened.",
+    "First local diagnostic failed because the new test used a nonexistent Prisma invoice relation; corrected to the existing account-ID pattern.",
+    "The original preview expiry is exercised by the browser-selected fifteen-minute schedule; non-browser diagnostic groups are not used as its acceptance evidence.",
+    "Source hashes cover the focused slice. Full combined acceptance and required CI remain reserved for final readiness under the owner cost instruction.",
+    "Nullable migration was applied ONLY to localhost:15432/mangmee_billing_20260912."
+  ],
+  "immediateSlaRegression": {
+    "command": "BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "groups": 8,
+    "result": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "sla-legacy-off-and-strict-three-priority-integer-bounds",
+        "browser-sla-draft-reload-impact-independent-approval-result-return-mobile",
+        "sla-episode-priority-original-policy-and-duplicate-clock-assignment-preservation",
+        "sla-manual-override-clear-original-deadline-and-concurrent-priority-cas",
+        "sla-missing-original-policy-manual-recovery-corrupt-config-case-survival-and-revoked-authority",
+        "sla-reopen-current-policy-and-turn-off-new-episodes-without-erasing-existing-deadlines",
+        "browser-sla-manual-clear-reload-overdue-pagination-case-return-mobile",
+        "sla-read-time-overdue-worker-off-scope-pagination-audit-and-no-financial-provider-mutation"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "log": "/tmp/mangmee-scheduled-policy-sla-regression.log"
+  }
+}
