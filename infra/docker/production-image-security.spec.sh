@@ -13,6 +13,12 @@ for path in ['apps/api/Dockerfile', 'apps/ai-gateway/Dockerfile', 'infra/api-web
         match = re.search(rf'^COPY --from=deps /app/node_modules/.pnpm/@img\+{name}@([0-9.]+)/node_modules/@img/{name} ', dockerfile, re.M)
         assert match, f'{path}: missing native {name} COPY'
         assert f"  '@img/{name}@{match[1]}':" in lock, f'{path}: {name}@{match[1]} is absent from pnpm-lock.yaml'
+    if path != 'apps/ai-gateway/Dockerfile':
+        for name in ['canvas', 'canvas-linux-x64-gnu']:
+            match = re.search(rf'^COPY --from=deps /app/node_modules/.pnpm/@napi-rs\+{name}@([0-9.]+)/node_modules/@napi-rs/{name} ', dockerfile, re.M)
+            assert match, f'{path}: missing PDF.js native {name} COPY'
+            assert f"  '@napi-rs/{name}@{match[1]}':" in lock, f'{path}: {name}@{match[1]} is absent from pnpm-lock.yaml'
+        assert 'RUN node /tmp/api-runtime-smoke.cjs ' in dockerfile, f'{path}: missing actual production-graph renderer smoke'
 PY
 scanner="$repo_root/infra/docker/verify-production-image.sh"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-bms-image-spec.XXXXXX")"

@@ -108,12 +108,20 @@ COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/package.
 COPY --from=runtime-artifacts --chown=node:node /app/packages/contracts/dist ./packages/contracts/dist
 COPY --from=deps /app/node_modules/.pnpm/@img+sharp-linux-x64@0.35.4/node_modules/@img/sharp-linux-x64 /tmp/sharp-native/sharp-linux-x64
 COPY --from=deps /app/node_modules/.pnpm/@img+sharp-libvips-linux-x64@1.3.3/node_modules/@img/sharp-libvips-linux-x64 /tmp/sharp-native/sharp-libvips-linux-x64
+COPY --from=deps /app/node_modules/.pnpm/@napi-rs+canvas@1.0.2/node_modules/@napi-rs/canvas /tmp/pdfjs-native/canvas
+COPY --from=deps /app/node_modules/.pnpm/@napi-rs+canvas-linux-x64-gnu@1.0.2/node_modules/@napi-rs/canvas-linux-x64-gnu /tmp/pdfjs-native/canvas-linux-x64-gnu
 RUN sharp_dir="$(readlink -f './apps/api/node_modules/sharp')" \
   && mkdir -p "$sharp_dir/node_modules/@img" \
   && cp -a /tmp/sharp-native/. "$sharp_dir/node_modules/@img/" \
   && rm -rf /tmp/sharp-native \
   && node -e "require('./apps/api/node_modules/sharp')"
+RUN pdfjs_dir="$(readlink -f './apps/api/node_modules/pdfjs-dist')" \
+  && mkdir -p "$pdfjs_dir/node_modules/@napi-rs" \
+  && cp -a /tmp/pdfjs-native/. "$pdfjs_dir/node_modules/@napi-rs/" \
+  && rm -rf /tmp/pdfjs-native
 USER node
+COPY --chown=node:node infra/docker/api-runtime-smoke.cjs /tmp/api-runtime-smoke.cjs
+RUN node /tmp/api-runtime-smoke.cjs /app/apps/api && rm /tmp/api-runtime-smoke.cjs
 WORKDIR /app/apps/api
 EXPOSE 3001
 CMD ["node", "dist/apps/api/src/main.js"]

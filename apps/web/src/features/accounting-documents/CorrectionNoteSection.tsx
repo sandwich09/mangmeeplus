@@ -6,6 +6,7 @@
 // the existing Issue button finalises it; the detail API supplies the remaining cumulative cap.
 
 import { useState } from 'react';
+import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import { baht } from '@/features/expenses/ExpensesUi';
@@ -170,7 +171,7 @@ export function CorrectionNoteSection({ detail, permissions, busy, onCreate }: {
               <input
                 className={`${inputClass} mt-1 min-h-12 py-2`}
                 type="file"
-                accept="image/jpeg,image/png,image/webp,application/pdf"
+                accept={ATTACHMENT_UPLOAD_ACCEPT}
                 onChange={(event) => setAttachment(event.target.files?.[0] ?? null)}
               />
               <span className="mt-1 block font-normal text-gray-500">รองรับรูปภาพหรือ PDF เพื่อเก็บกับใบลดหนี้/ใบเพิ่มหนี้ฉบับนี้</span>

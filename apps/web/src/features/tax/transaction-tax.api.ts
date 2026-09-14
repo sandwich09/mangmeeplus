@@ -21,7 +21,7 @@ import type {
 } from '@watchdog-bms/contracts';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 import { uploadReceiptFile } from '../expenses/expenses.api';
-import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 
 function qs(params?: Record<string, unknown>): string {
   const query = new URLSearchParams();
@@ -109,7 +109,7 @@ export const getTradeTaxEvidenceAttachmentDownloadUrl = (companyId: string, atta
 
 export async function uploadTradeTaxEvidenceAttachment(companyId: string, branchId: string | undefined, file: File): Promise<string> {
   return withGenericUploadError(async () => {
-    assertAllowedUploadFile(file);
+    file = await prepareAttachmentUpload(file);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `/companies/${companyId}/attachments/upload-intent`,
       { method: 'POST', body: JSON.stringify({ originalFileName: file.name, mimeType: file.type, byteSize: file.size, visibility: 'INTERNAL', ...(branchId ? { branchId } : {}) }) },
