@@ -10,6 +10,56 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Isolated AWS rehearsal completed — 2026-09-14
+
+Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
+are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule
+`sgr-0a12dbd8f66e96575` was removed and absence verified. Preserve the original allowlist.
+The last Dev public IP47.129.159.150 is historical and must be re-enrolled after any restart.
+Production services and the existing bastion were not changed. Earlier pending-approval entries
+below are historical. No IAM policy was changed.
+
+Shared core operation `20260914T003123Z-1f9c690a` passed on main00cbaa8b, then powered off Dev
+immediately. Main-to-core-proof507.797s; command including fixture setup/shutdown569.800s. This is
+not Production acceptance: synthetic credentials/data, single Dev host, customer gate CLOSED, no
+AgentCore update or real Production topology/provider/customer proof. Original failed Redis fixture
+setup is retained: official entrypoint UID999 could not read owner1000 mode0600 config. Correct
+fixture uses non-root UID1000 plus private writable data; TLS PONG/SAVE and clean core run passed.
+Private fixtures/app containers remain on the stopped volume; restarting Dev may restart them.
+[Full timing, scope and evidence](../agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+## Production configuration readback — 2026-09-13
+
+Read-only preparation used the existing non-root reader to capture all three Production ECS Express
+`activeConfigurations`, beginning 14:40:53 UTC. All advertise source
+`fc2838c4cb691033f41595c0d43587f10377d33c`; this is configuration evidence, not running-container or
+customer acceptance proof. All 12 distinct secret references resolved at their current versions;
+metadata/versions remained unchanged on the final read. New main `00cbaa8b` builds and its three
+service config schemas passed against this baseline plus tracked Production overrides, in local
+network-disabled validation containers. No Production resource or traffic was changed.
+
+No Production Kamal target is enrolled locally. The prepared command/example is not infrastructure
+or cutover completion. [Scope, checks and evidence](../agent-memory/kamal-prod-preparation-2026-09-13.md).
+
+Fresh 15:17–15:20 UTC rehearsal inspection: both UAT Kamal hosts and Dev are **stopped**, with no
+assigned public IP; the old addresses below must not be reused. The bastion remains running.
+Production RDS is available on PostgreSQL **18.3**, `db.t4g.small`, Multi-AZ, private/encrypted,
+35-day backups and deletion protection. Complete ECS config/12 secret-version metadata matches the
+earlier baseline. Existing reader credentials deny even the Dev start dry-run, CF/IAM discovery and
+Redis discovery. Owner subsequently restored root Console and authorized its use for isolated testing,
+requiring immediate simulation-host shutdown. Root readback confirms Production Redis **7.1.0**, two
+`cache.t4g.micro` nodes, Multi-AZ/failover, TLS, at-rest encryption and auth. The Dev SSH allowlist has
+the previous workstation address; an exact temporary /32 approval is pending. No host or IAM state
+changed. [Simulation evidence and pending access](../agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+Actual Production DB support read at **16:05:09 UTC**, using existing `watchdog_support_ro` IAM auth,
+verified TLS and a read-only transaction: PostgreSQL18.3, **182 applied migrations, 0 unfinished**.
+Ordered migration names/SQL checksums exactly match source `fc2838c4...`; main `00cbaa8b...` contains
+188. Its six pending migrations require normal mode before any hotfix-only promotion. No data or DDL
+was changed. Support session `root-l5tdyxu2594req3e72dhhl6lze` is verified **Terminated**. The local
+PostgreSQL18.3/TLS rehearsal passed the actual normal upgrade and subsequent hotfix, but does not
+establish AWS deployment timing, managed Redis parity, multi-AZ readiness or customer acceptance.
+
 ## UAT Kamal update — 2026-09-11 20:28 UTC
 
 Owner-authorized UAT Kamal proof is separate from the ECS V2 Production protocol. Production remains
