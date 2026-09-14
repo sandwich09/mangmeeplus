@@ -1,398 +1,128 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { CompleteEmployeeLineLinkUseCase } from './complete-employee-line-link.use-case';
 
-function hashToken(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
+// Transactional semantics are also exercised against actual PostgreSQL in line-binding.pg.spec.ts.
+function harness(fault?: 'verify' | 'link' | 'sever' | 'handoff' | 'audit' | 'membership') {
+  let state = {
+    token: { id: 'token', userId: 'user', companyId: 'company', membershipId: 'member', status: 'PENDING',
+      expiresAt: new Date(Date.now() + 60_000), usedAt: null, claimedLineUserId: null, claimedLineChannelId: null } as any,
+    linked: false,
+    old: { id: 'old', userId: 'user', providerUserId: 'old-line', status: 'ACTIVE', updatedAt: new Date(0) },
+    deletedContexts: 0, revoked: 0, recoveryRevoked: 0, audits: [] as any[],
+  };
+  const events: string[] = [];
+  const fails: any[] = [];
+  const tx = {
+    passwordResetToken: { updateMany: async () => { state.recoveryRevoked++; return { count: 1 }; } },
+    $executeRaw: async () => undefined,
+    employeeLineLinkToken: {
+      findUnique: async () => structuredClone(state.token),
+      updateMany: async ({ where, data }: any) => {
+        events.push('claim');
+        if (state.token.status !== where.status || state.token.expiresAt <= where.expiresAt.gt) return { count: 0 };
+        Object.assign(state.token, data); return { count: 1 };
+      },
+    },
+    companyMembership: { findFirst: async () => fault === 'membership' ? null : ({ id: 'member' }) },
+    externalIdentity: {
+      findFirst: async ({ where }: any) => state.linked && where.providerUserId === 'new-line' && where.providerChannelId === 'messaging' && where.userId === 'user' ? { id: 'new' } : null,
+      findMany: async () => state.old.status === 'ACTIVE' ? [structuredClone(state.old)] : [],
+      updateMany: async ({ where, data }: any) => {
+        if (fault === 'sever') throw Error('synthetic failure');
+        assert.equal(where.userId, state.old.userId);
+        assert.equal(where.updatedAt.getTime(), state.old.updatedAt.getTime());
+        state.old.status = data.status; return { count: 1 };
+      },
+    },
+    lineCompanyContext: { deleteMany: async () => { state.deletedContexts++; return { count: 1 }; } },
+    lineWebHandoffToken: { updateMany: async () => {
+      if (fault === 'handoff') throw Error('synthetic failure');
+      state.revoked++; return { count: 1 };
+    } },
+    auditLog: { create: async ({ data }: any) => {
+      if (fault === 'audit') throw Error('synthetic failure');
+      state.audits.push(data); return {};
+    } },
+  };
+  const prisma = { client: { ...tx, $transaction: async (work: any) => {
+    events.push('transaction'); const before = structuredClone(state);
+    try { return await work(tx); } catch (error) { state = before; throw error; }
+  } } } as any;
+  const link = {
+    canonicalChannelId: () => 'messaging',
+    linkVerifiedIdentity: async (_input: any, activeTx: any) => {
+      assert.equal(activeTx, tx); events.push('link');
+      if (fault === 'link') throw Error('synthetic failure');
+      state.linked = true; return { linked: true, providerUserId: 'new-line' };
+    },
+  } as any;
+  const verifier = { verify: async (proof: string) => {
+    events.push('verify'); if (fault === 'verify') throw new ForbiddenException();
+    return { subject: proof };
+  } } as any;
+  return { useCase: new CompleteEmployeeLineLinkUseCase(prisma, link, verifier, { log: async (event: any) => { fails.push(event); } } as any),
+    state: () => state, events, fails };
 }
+const input = { linkToken: 'synthetic-qr', idToken: 'new-line', requestId: 'request' };
 
-function makeUseCase(opts: {
-  token?: any;
-  membershipActive?: boolean;
-  linkThrows?: boolean;
-  linkThrowsConflict?: boolean;
-  linkThrowsForbidden?: boolean;
-  linkedLineUserId?: string;
-  linkedIdentityLinkedAt?: Date;
-  verifyThrows?: boolean;
-  otherActiveIdentities?: Array<{ id: string; providerUserId: string }>;
-  newerTokenExists?: boolean;
-  restoreThrows?: boolean;
-  severThrows?: boolean;
-  revokeThrows?: boolean;
-} = {}) {
-  const auditEvents: any[] = [];
-  const tokenUpdates: any[] = [];
-  const identityUpdates: any[] = [];
-  const handoffRevokes: any[] = [];
-  const contextDeletes: any[] = [];
-  /** Real rows with a real status, so a rolled-back sever can be observed as still ACTIVE. */
-  const identityRows = (opts.otherActiveIdentities ?? []).map((identity) => ({ ...identity, status: 'ACTIVE' }));
-  // Interleaved operation log: proves the claim happens BEFORE the identity link (H-09).
-  const ops: string[] = [];
-
-  const defaultToken = {
-    id: 'token-1',
-    companyId: 'company-1',
-    membershipId: 'membership-1',
-    userId: 'user-1',
-    tokenHash: hashToken('raw-token'),
-    status: 'PENDING',
-    usedAt: null,
-    createdAt: new Date(Date.now() - 60_000),
-    expiresAt: new Date(Date.now() + 60_000),
-  };
-  const token = opts.token === undefined ? defaultToken : opts.token;
-
-  const ops_ = {
-      employeeLineLinkToken: {
-        findUnique: async () => token,
-        findFirst: async () => (opts.newerTokenExists ? { id: 'token-newer' } : null),
-        // Atomic status CAS like the real updateMany: the transition only lands when
-        // the current status matches the WHERE clause.
-        updateMany: async ({ where, data }: any) => {
-          if (opts.restoreThrows && where.status === 'USED' && data.status === 'PENDING') {
-            ops.push('token:restore-throws');
-            throw new Error('db down');
-          }
-          tokenUpdates.push({ where, data });
-          ops.push(`token:${where.status}->${data.status}`);
-          if (!token || token.status !== where.status) return { count: 0 };
-          token.status = data.status;
-          return { count: 1 };
-        },
-      },
-      companyMembership: {
-        findFirst: async () => (opts.membershipActive === false ? null : { id: 'membership-1', status: 'ACTIVE' }),
-      },
-      externalIdentity: {
-        findFirst: async ({ where }: any) =>
-          opts.linkedLineUserId && where.providerUserId === opts.linkedLineUserId && where.userId === 'user-1'
-            ? { id: 'identity-1', linkedAt: opts.linkedIdentityLinkedAt ?? new Date() }
-            : null,
-        findMany: async () => identityRows
-          .filter((identity) => identity.status === 'ACTIVE')
-          .map(({ id, providerUserId }) => ({ id, providerUserId })),
-        updateMany: async ({ where, data }: any) => {
-          if (opts.severThrows) throw new Error('db down');
-          identityUpdates.push({ where, data });
-          ops.push('identity:sever-others');
-          const hit = identityRows.filter((identity) => identity.id === where.id && identity.status === where.status);
-          for (const identity of hit) identity.status = data.status;
-          return { count: hit.length };
-        },
-      },
-      lineCompanyContext: {
-        deleteMany: async (args: any) => { contextDeletes.push(args); return { count: 1 }; },
-      },
-      // The severed phone keeps whatever handoff deep links were sent to it; each is a bearer
-      // session for this employee until its TTL expires, so the sever kills them too.
-      lineWebHandoffToken: {
-        updateMany: async (args: any) => {
-          if (opts.revokeThrows) throw new Error('db down');
-          handoffRevokes.push(args);
-          return { count: 2 };
-        },
-      },
-  };
-  // Interactive transaction with rollback semantics: the callback gets the same delegates, and a
-  // throw restores the identity rows. Without it a spec cannot tell "severed then failed to revoke"
-  // (the defect) from "neither happened" (the fix).
-  const prisma = {
-    client: {
-      ...ops_,
-      $transaction: async (fn: any) => {
-        const snapshot = identityRows.map((identity) => ({ ...identity }));
-        try {
-          return await fn(ops_);
-        } catch (error) {
-          identityRows.forEach((identity, index) => Object.assign(identity, snapshot[index]));
-          throw error;
-        }
-      },
-    },
-  } as any;
-
-  const linkCalls: any[] = [];
-  const linkLineIdentity = {
-    execute: async (linkInput: any) => {
-      linkCalls.push(linkInput);
-      ops.push('link');
-      if (opts.linkThrowsConflict) throw new ConflictException('LINE account already linked to another user.');
-      if (opts.linkThrowsForbidden) throw new ForbiddenException('LINE identity is disabled.');
-      if (opts.linkThrows) throw new Error('LINE verify failed');
-      return { linked: true, providerUserId: 'line-user-1' };
-    },
-  } as any;
-
-  const lineVerifier = {
-    verify: async () => {
-      if (opts.verifyThrows) throw new Error('LINE verify failed');
-      return { subject: 'line-user-1' };
-    },
-  } as any;
-
-  const audit = { log: async (entry: any) => { auditEvents.push(entry); } } as any;
-
-  const useCase = new CompleteEmployeeLineLinkUseCase(prisma, linkLineIdentity, lineVerifier, audit);
-  return {
-    useCase, auditEvents, tokenUpdates, identityUpdates, handoffRevokes, contextDeletes,
-    identityRows, linkCalls, ops, token,
-  };
-}
-
-const input = { linkToken: 'raw-token', idToken: 'line-id-token', requestId: 'req-1' };
-
-describe('CompleteEmployeeLineLinkUseCase', () => {
-  it('links successfully and marks the token used exactly once', async () => {
-    const { useCase, auditEvents, linkCalls, token } = makeUseCase();
-    const result = await useCase.execute(input);
-
-    assert.deepEqual(result, { linked: true });
-    assert.equal(linkCalls[0].allowReassign, true);
-    assert.equal(token.status, 'USED');
-    assert.equal(auditEvents.length, 1);
-    assert.equal(auditEvents[0].action, 'access.employee.line_link.success');
+describe('atomic employee LINE QR', () => {
+  it('verifies before the transaction and commits claim, link, cleanup and audit together', async () => {
+    const h = harness();
+    assert.deepEqual(await h.useCase.execute(input), { linked: true });
+    assert.deepEqual(h.events, ['verify', 'transaction', 'claim', 'link']);
+    const state = h.state();
+    assert.equal(state.token.status, 'USED');
+    assert.equal(state.token.claimedLineUserId, 'new-line');
+    assert.equal(state.token.claimedLineChannelId, 'messaging');
+    assert.equal(state.old.status, 'UNLINKED');
+    assert.equal(state.recoveryRevoked, 1); assert.equal(state.deletedContexts, 1); assert.equal(state.revoked, 1);
+    assert.equal(state.audits.at(-1).action, 'access.employee.line_link.success');
   });
-
-  it('claims the token atomically BEFORE linking the identity (H-09 ordering)', async () => {
-    const { useCase, ops } = makeUseCase();
-    await useCase.execute(input);
-
-    assert.ok(ops.indexOf('token:PENDING->USED') < ops.indexOf('link'), `claim must precede link, got: ${ops.join(', ')}`);
-  });
-
-  it('gives exactly one winner when two LINE identities race the same token — the loser never links (H-09)', async () => {
-    const { useCase, linkCalls, token } = makeUseCase();
-    const [first, second] = await Promise.allSettled([
-      useCase.execute({ linkToken: 'raw-token', idToken: 'line-id-token-A', requestId: 'req-A' }),
-      useCase.execute({ linkToken: 'raw-token', idToken: 'line-id-token-B', requestId: 'req-B' }),
-    ]);
-
-    const outcomes = [first, second];
-    assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 1);
-    const loser = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult;
-    assert.match(String(loser.reason?.message), /invalid, expired, or already used/);
-    // No orphan side effect: only the winner's identity was ever linked.
-    assert.equal(linkCalls.length, 1);
-    assert.equal(token.status, 'USED');
-  });
-
-  it('burns the token (no restore) when the link fails for an unknown reason — a restore could resurrect a persisted link or a revoked QR', async () => {
-    const { useCase, ops, token, auditEvents } = makeUseCase({ linkThrows: true });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-
-    assert.equal(token.status, 'USED');
-    assert.deepEqual(ops, ['token:PENDING->USED', 'link']);
-    assert.equal(auditEvents[0].metadataJson.reason, 'line_verification_failed');
-  });
-
-  it('releases the claim (token back to PENDING) on a pre-write forbidden failure', async () => {
-    const { useCase, tokenUpdates, ops, token, auditEvents } = makeUseCase({ linkThrowsForbidden: true });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-
-    assert.equal(token.status, 'PENDING');
-    assert.deepEqual(ops, ['token:PENDING->USED', 'link', 'token:USED->PENDING']);
-    const restore = tokenUpdates.at(-1);
-    assert.equal(restore.where.status, 'USED');
-    assert.deepEqual(restore.data, { status: 'PENDING', usedAt: null });
-    assert.equal(auditEvents[0].metadataJson.reason, 'line_verification_failed');
-  });
-
-  it('releases the claim before surfacing an identity conflict', async () => {
-    const { useCase, token, auditEvents } = makeUseCase({ linkThrowsConflict: true });
-    await assert.rejects(() => useCase.execute(input), /already linked to another user/);
-
-    assert.equal(token.status, 'PENDING');
-    assert.equal(auditEvents[0].metadataJson.reason, 'line_identity_conflict');
-  });
-
-  it('re-revokes the restored token when a newer token was issued during the claim window', async () => {
-    const { useCase, token, ops } = makeUseCase({ linkThrowsConflict: true, newerTokenExists: true });
-    await assert.rejects(() => useCase.execute(input), /already linked to another user/);
-
-    assert.equal(token.status, 'REVOKED');
-    assert.deepEqual(ops, ['token:PENDING->USED', 'link', 'token:USED->PENDING', 'token:PENDING->REVOKED']);
-  });
-
-  it('leaves the token burned (fail closed) when the release itself fails', async () => {
-    const { useCase, token } = makeUseCase({ linkThrowsConflict: true, restoreThrows: true });
-    await assert.rejects(() => useCase.execute(input), /already linked to another user/);
-    assert.equal(token.status, 'USED');
-  });
-
-  it('severs other ACTIVE LINE identities of the user after a successful relink (identity cardinality)', async () => {
-    const { useCase, identityUpdates, auditEvents, handoffRevokes, contextDeletes, identityRows } = makeUseCase({
-      otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
+  for (const fault of ['link', 'sever', 'handoff', 'audit'] as const) {
+    it(`rolls back every mutation after ${fault} failure so the same QR can retry`, async () => {
+      const h = harness(fault), before = structuredClone(h.state());
+      await assert.rejects(h.useCase.execute(input), ServiceUnavailableException);
+      assert.deepEqual(h.state(), before);
+      assert.equal(h.fails.length, 1);
     });
-    await useCase.execute(input);
-
-    assert.equal(identityUpdates.length, 1);
-    assert.deepEqual(identityUpdates[0].where, { id: 'identity-old', status: 'ACTIVE' });
-    assert.deepEqual(identityUpdates[0].data, { status: 'UNLINKED' });
-    assert.equal(identityRows[0].status, 'UNLINKED');
-    // Same one-liner the other two sever paths run: with no identity there is no selected company.
-    assert.deepEqual(contextDeletes, [{ where: { lineUserId: 'line-user-old' } }]);
-
-    // Owner decision 2026-09-06: severing the old phone's identity is not enough while the deep
-    // links already delivered to it still exchange into this employee's session.
-    assert.deepEqual(handoffRevokes, [{
-      where: { lineUserId: 'line-user-old', userId: 'user-1', status: 'PENDING' },
-      data: { status: 'REVOKED' },
-    }]);
-
-    const unlinkAudit = auditEvents.find((event) => event.action === 'auth.identity.unlink');
-    assert.ok(unlinkAudit, 'per-identity AUTH_IDENTITY_UNLINK audit must be emitted');
-    assert.equal(unlinkAudit.targetId, 'identity-old');
-    assert.equal(unlinkAudit.metadataJson.severedProviderUserId, 'line-user-old');
-    assert.equal(unlinkAudit.metadataJson.keptProviderUserId, 'line-user-1');
-    assert.equal(unlinkAudit.metadataJson.handoffLinksRevoked, 2);
-
-    const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
-    assert.equal(successAudit.metadataJson.unlinkedPreviousLineIdentities, 1);
+  }
+  it('does not burn a pending QR for invalid LINE proof', async () => {
+    const h = harness('verify');
+    await assert.rejects(h.useCase.execute(input), ForbiddenException);
+    assert.deepEqual(h.events, ['verify']); assert.equal(h.state().token.status, 'PENDING');
+    assert.equal(h.fails[0].action, 'access.employee.line_link.failure');
   });
-
-  it('omits the sever metadata when the user had no other LINE identity', async () => {
-    const { useCase, auditEvents } = makeUseCase();
-    await useCase.execute(input);
-    assert.equal(auditEvents[0].metadataJson, undefined);
+  it('checks membership before claiming and again on a used QR', async () => {
+    const h = harness('membership');
+    await assert.rejects(h.useCase.execute(input), ForbiddenException);
+    assert.equal(h.state().token.status, 'PENDING');
+    h.state().token.status = 'USED';
+    await assert.rejects(h.useCase.execute(input), ForbiddenException);
+    assert.equal(h.events.includes('link'), false);
   });
-
-  it('still succeeds and flags the audit when the sever fails after a committed link', async () => {
-    const { useCase, auditEvents, token } = makeUseCase({
-      otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
-      severThrows: true,
+  it('recovers the original response with read-only verification and never severs a later identity', async () => {
+    const h = harness(); await h.useCase.execute(input);
+    h.state().old.status = 'ACTIVE'; // a later binding must survive an old USED QR
+    const before = structuredClone(h.state());
+    assert.deepEqual(await h.useCase.execute(input), { linked: true });
+    assert.deepEqual(h.state(), before);
+    assert.equal(h.events.filter(event => event === 'claim').length, 1);
+    await assert.rejects(h.useCase.execute({ ...input, idToken: 'different-line' }), ForbiddenException);
+    assert.deepEqual(h.state(), before);
+  });
+  for (const invalid of ['REVOKED', 'EXPIRED', 'old-used', 'expired-used', 'unlinked-used', 'changed-channel']) {
+    it(`requires a new QR for ${invalid}`, async () => {
+      const h = harness(); await h.useCase.execute(input);
+      if (invalid === 'REVOKED' || invalid === 'EXPIRED') h.state().token.status = invalid;
+      if (invalid === 'old-used') h.state().token.claimedLineUserId = null;
+      if (invalid === 'expired-used') h.state().token.expiresAt = new Date(0);
+      if (invalid === 'unlinked-used') h.state().linked = false;
+      if (invalid === 'changed-channel') h.state().token.claimedLineChannelId = 'other';
+      const before = structuredClone(h.state());
+      await assert.rejects(h.useCase.execute(input), ForbiddenException);
+      assert.deepEqual(h.state(), before);
     });
-    const result = await useCase.execute(input);
-
-    assert.deepEqual(result, { linked: true });
-    assert.equal(token.status, 'USED');
-    const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
-    assert.equal(successAudit.metadataJson.lineIdentitySeverFailed, true);
-  });
-
-  it('rejects an unknown token', async () => {
-    const { useCase } = makeUseCase({ token: null });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-  });
-
-  it('rejects an already-used token when the LINE user was never linked', async () => {
-    const { useCase } = makeUseCase({ token: { ...makeUseCase().token, status: 'USED' } });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-  });
-
-  it('treats a re-scan of a used token by the already-linked LINE user as success', async () => {
-    const { useCase, tokenUpdates, linkCalls } = makeUseCase({
-      token: { ...makeUseCase().token, status: 'USED' },
-      linkedLineUserId: 'line-user-1',
-    });
-    const result = await useCase.execute(input);
-
-    assert.deepEqual(result, { linked: true });
-    assert.equal(tokenUpdates.length, 0);
-    assert.equal(linkCalls.length, 0);
-  });
-
-  it('self-heals a missed sever on re-scan of a used token', async () => {
-    const { useCase, identityUpdates } = makeUseCase({
-      token: { ...makeUseCase().token, status: 'USED', usedAt: new Date(Date.now() - 5_000) },
-      linkedLineUserId: 'line-user-1',
-      otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
-    });
-    const result = await useCase.execute(input);
-
-    assert.deepEqual(result, { linked: true });
-    assert.equal(identityUpdates.length, 1);
-    assert.equal(identityUpdates[0].where.id, 'identity-old');
-  });
-
-  it('leaves the identity ACTIVE when the handoff revoke fails, so the re-scan can retry the sever', async () => {
-    // Owner decision 2026-09-06. Before this, the UNLINKED write landed and the revoke did not, and
-    // nothing could ever retry: the self-heal re-scan only looks for ACTIVE identities, so the row
-    // it needed to fix was already invisible to it — leaving a bearer deep link alive for its whole
-    // remaining TTL. One transaction means the sever either finishes or is still there to redo.
-    const { useCase, auditEvents, identityRows, handoffRevokes } = makeUseCase({
-      otherActiveIdentities: [{ id: 'identity-old', providerUserId: 'line-user-old' }],
-      revokeThrows: true,
-    });
-
-    const result = await useCase.execute(input);
-
-    assert.deepEqual(result, { linked: true }, 'a failed sever must not undo a committed link');
-    assert.equal(identityRows[0].status, 'ACTIVE', 'the UNLINKED write must roll back with the revoke');
-    assert.deepEqual(handoffRevokes, []);
-    const successAudit = auditEvents.find((event) => event.action === 'access.employee.line_link.success');
-    assert.equal(successAudit.metadataJson.lineIdentitySeverFailed, true);
-    assert.equal(
-      auditEvents.some((event) => event.action === 'auth.identity.unlink'),
-      false,
-      'no unlink audit for a sever that did not happen',
-    );
-  });
-
-  it('denies the grace path to an identity linked BEFORE the claim — the old phone cannot ride a used QR to sever the new account', async () => {
-    const usedAt = new Date();
-    const { useCase, identityUpdates } = makeUseCase({
-      token: { ...makeUseCase().token, status: 'USED', usedAt },
-      linkedLineUserId: 'line-user-1',
-      linkedIdentityLinkedAt: new Date(usedAt.getTime() - 60_000),
-      otherActiveIdentities: [{ id: 'identity-new', providerUserId: 'line-user-new' }],
-    });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-    assert.equal(identityUpdates.length, 0);
-  });
-
-  it('rejects a used token when the re-scanning LINE user is someone else', async () => {
-    const { useCase } = makeUseCase({
-      token: { ...makeUseCase().token, status: 'USED' },
-      linkedLineUserId: 'line-user-other',
-    });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-  });
-
-  it('rejects a used token when LINE verification fails during the re-scan check', async () => {
-    const { useCase } = makeUseCase({
-      token: { ...makeUseCase().token, status: 'USED' },
-      linkedLineUserId: 'line-user-1',
-      verifyThrows: true,
-    });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-  });
-
-  it('rejects an expired token', async () => {
-    const expired = { ...makeUseCase().token, expiresAt: new Date(Date.now() - 1000) };
-    const { useCase } = makeUseCase({ token: expired });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-  });
-
-  it('rejects when the membership is no longer active without burning the token', async () => {
-    const { useCase, token, tokenUpdates } = makeUseCase({ membershipActive: false });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-    assert.equal(token.status, 'PENDING');
-    assert.equal(tokenUpdates.length, 0);
-  });
-
-  it('rejects and audits without revealing the token value on LINE verification failure', async () => {
-    const { useCase, auditEvents } = makeUseCase({ linkThrows: true });
-    await assert.rejects(() => useCase.execute(input), /invalid, expired, or already used/);
-    assert.equal(auditEvents[0].action, 'access.employee.line_link.failure');
-    assert.ok(!JSON.stringify(auditEvents).includes('raw-token'));
-  });
-
-  it('surfaces the real message when the LINE account is already linked to another user', async () => {
-    const { useCase, auditEvents } = makeUseCase({ linkThrowsConflict: true });
-    // Masking this as a token error sends users hunting for new QR codes that can never work.
-    await assert.rejects(() => useCase.execute(input), /already linked to another user/);
-    assert.equal(auditEvents[0].action, 'access.employee.line_link.failure');
-    assert.equal(auditEvents[0].metadataJson.reason, 'line_identity_conflict');
-    assert.ok(!JSON.stringify(auditEvents).includes('raw-token'));
-  });
-
-  it('never includes the raw token in any audit metadata on success', async () => {
-    const { useCase, auditEvents } = makeUseCase();
-    await useCase.execute(input);
-    assert.ok(!JSON.stringify(auditEvents).includes('raw-token'));
-  });
+  }
 });

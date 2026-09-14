@@ -75,12 +75,13 @@ export class NotifyPasswordResetRequestUseCase {
     });
     if (!membership) return deny('no_active_company', user.id);
 
-    const lineToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
-    if (!lineToken) return deny('line_channel_unavailable', user.id, membership.companyId);
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const lineToken = credentials?.accessToken;
+    if (!lineToken || !credentials?.channelId) return deny('line_channel_unavailable', user.id, membership.companyId);
 
     // The destination comes only from the identity already bound to this exact account.
     const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: { userId: user.id, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId: user.id, provider: 'LINE', providerChannelId: credentials.channelId, status: 'ACTIVE' },
       select: { providerUserId: true },
     });
     if (!identity) return deny('line_identity_unavailable', user.id, membership.companyId);
@@ -105,7 +106,7 @@ export class NotifyPasswordResetRequestUseCase {
 
     // LINE latency and delivery state must not reveal account existence through this response.
     void this.deliverAndAudit({
-      lineToken,
+      lineChannelId: credentials.channelId,
       lineUserId: identity.providerUserId,
       temporaryPassword,
       expiresAt,
@@ -119,7 +120,7 @@ export class NotifyPasswordResetRequestUseCase {
   }
 
   private async deliverAndAudit(params: {
-    lineToken: string;
+    lineChannelId: string;
     lineUserId: string;
     temporaryPassword: string;
     expiresAt: Date;
@@ -133,8 +134,15 @@ export class NotifyPasswordResetRequestUseCase {
       dateStyle: 'medium',
       timeStyle: 'short',
     });
-    // Owner 2026-08-27: one-tap copy card; the altText carries no password (no lock-screen leak).
-    const delivered = await pushSystemLineMessages(params.lineToken, params.lineUserId, [
+    // Re-read immediately before I/O: a request queued before unlink/reassignment cannot use
+    // its old recipient or token snapshot to deliver another account's recovery credential.
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const identity = credentials?.channelId === params.lineChannelId && credentials.accessToken
+      ? await this.prisma.client.externalIdentity.findFirst({ where: {
+          userId: params.userId, provider: 'LINE', providerChannelId: params.lineChannelId,
+          providerUserId: params.lineUserId, status: 'ACTIVE',
+        }, select: { id: true } }) : null;
+    const delivered = Boolean(identity && credentials?.accessToken) && await pushSystemLineMessages(credentials!.accessToken!, params.lineUserId, [
       buildTemporaryPasswordFlexMessage(params.temporaryPassword, [
         `ใช้เข้าสู่ระบบภายใน ${expiry} แล้วตั้งรหัสผ่านใหม่ทันที`,
         'รหัสเดิมยังใช้ได้จนกว่าจะใช้รหัสนี้',

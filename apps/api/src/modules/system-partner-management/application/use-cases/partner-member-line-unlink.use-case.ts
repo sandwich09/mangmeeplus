@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { revokePendingLineHandoffTokens } from '../../../auth/domain/logic/line-handoff.logic';
 
@@ -22,17 +22,19 @@ export class PartnerMemberLineUnlinkUseCase {
 
     const identity = await this.prisma.client.externalIdentity.findFirst({
       where: { userId: cmd.memberUserId, provider: 'LINE', status: 'ACTIVE' },
-      select: { id: true, providerUserId: true },
+      select: { id: true, providerUserId: true, updatedAt: true },
     });
     if (!identity) throw new NotFoundException('No active LINE identity linked.');
 
     // Interactive rather than the array form because the audit row below reports a count the
     // revoke produces, and the array form cannot feed one statement's result into the next.
     await this.prisma.client.$transaction(async (tx) => {
-      await tx.externalIdentity.update({
-        where: { id: identity.id },
+      const changed = await tx.externalIdentity.updateMany({
+        where: { id: identity.id, userId: cmd.memberUserId, status: 'ACTIVE', updatedAt: identity.updatedAt },
         data: { status: 'UNLINKED', updatedAt: new Date() },
       });
+      if (changed.count !== 1) throw new ConflictException({ code: 'line_identity_changed', message: 'LINE binding changed. Reload and try again.' });
+      await tx.passwordResetToken.updateMany({ where: { userId: cmd.memberUserId, status: 'PENDING' }, data: { status: 'REVOKED' } });
       // line-support-request-spec-th §2.5, in the same transaction as the unlink: a context row
       // that outlives its identity names a shop this LINE account has left, and is what sent the
       // support notice to the wrong partner page in UAT. Nothing else keys on it — the intake

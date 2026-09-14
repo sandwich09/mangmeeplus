@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { Prisma } from '../../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
@@ -42,6 +43,7 @@ export class PlanTermSweepUseCase {
     private readonly prisma: PrismaService,
     private readonly lifecycle: PartnerLifecycleTransitionUseCase,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
+    @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
   ) {}
 
   async execute(limit = SWEEP_BATCH_LIMIT): Promise<PlanTermSweepResult> {
@@ -141,15 +143,11 @@ export class PlanTermSweepUseCase {
    * the platform company they are members of — a recipient is only ever created for a user who
    * holds an ACTIVE membership in the event's company, so the two cannot be one event.
    */
-  /**
-   * Whether any OWNER of this shop can act on a LINE instruction. Deliberately provider-only and
-   * not channel-scoped: an identity linked before LINE_MESSAGING_CHANNEL_ID was configured carries
-   * a different channel id but the customer does chat with this OA — the same looser lookup the
-   * notification LINE rail falls back to before it gives up.
-   */
+  /** Give LINE instructions only when the notification recipient has a current channel binding. */
   private async ownerHasLinkedLine(userIds: string[], tx: Prisma.TransactionClient): Promise<boolean> {
+    if (!this.config?.lineMessagingChannelId) return false;
     const identity = await tx.externalIdentity.findFirst({
-      where: { userId: { in: userIds }, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId: { in: userIds }, provider: 'LINE', providerChannelId: this.config.lineMessagingChannelId, status: 'ACTIVE' },
       select: { id: true },
     });
     return identity !== null;

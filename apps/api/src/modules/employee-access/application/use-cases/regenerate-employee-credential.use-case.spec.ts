@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { RegenerateEmployeeCredentialUseCase } from './regenerate-employee-credential.use-case';
 
 const KEY = Buffer.from('a'.repeat(64), 'hex');
-const CONFIG = { credentialEncryptionKey: KEY, lineMessagingChannelAccessToken: 'system-oa-token' } as any;
+const CONFIG = { credentialEncryptionKey: KEY, lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'system-oa-token' } as any;
 const PROFILE = { id: 'emp-1', companyId: 'company-1', userId: 'user-1', user: { id: 'user-1', username: 'staff.one' } };
 
 const COMMAND = { companyId: 'company-1', employeeId: 'emp-1', requestingUserId: 'admin-1', requestId: 'req-1' };

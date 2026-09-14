@@ -102,7 +102,7 @@ function makeWorld(rows: Row[], opts: { owners?: string[]; admins?: Array<{ comp
 
   notifications.executeInTransaction = notifications.execute;
 
-  return { prisma, lifecycle, notifications, state, sweep: new PlanTermSweepUseCase(prisma, lifecycle, notifications) };
+  return { prisma, lifecycle, notifications, state, sweep: new PlanTermSweepUseCase(prisma, lifecycle, notifications, { lineMessagingChannelId: 'synthetic' } as any) };
 }
 
 const past = (days: number) => new Date(Date.now() - days * DAY_MS);

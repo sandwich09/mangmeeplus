@@ -38,7 +38,7 @@ Authentication flow:
 Rules:
 
 - LINE proves user identity; WatchDog-BMS owns company membership, roles, permissions, policy rules, and audit.
-- LINE Messaging API user id is channel-scoped and must be linked to an internal user before business data is shown.
+- LINE user IDs are scoped to a LINE provider. The local identity record pins the configured Messaging channel and must resolve an ACTIVE internal user before business data is shown; a canonical UNLINKED/DISABLED record blocks legacy fallback. See the [billing controls identity contract](mangmee-billing-controls-spec-th.md) for proof-backed Admin QR repair and current-binding readiness.
 - Any user of any role may belong to multiple companies and may hold LINE company context; company selection is server-verified through LIFF/web context. (Owner decision 2026-08-29: replaces the earlier rule that only users who were OWNER of every company could select context — per-company authorization stays with the permission resolver and branch ABAC.)
 - WatchDog uses one shared LINE OA in the first pass. The webhook validates the shared channel, then resolves company from linked identity plus selected company context, never from the channel alone.
 - Removing or inactivating a user from a company immediately blocks LINE AI, alerts, deep links, uploads, and AI/tool access to that company's data.

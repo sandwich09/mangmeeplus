@@ -26,6 +26,8 @@ export type AccountSecurityState = {
   aiAssistantOptOutAt: string | null;
   /** Self-service LINE link: an ACTIVE LINE identity exists for this user. */
   lineLinked: boolean;
+  /** Current Messaging identity binding; provider delivery readiness is separate. */
+  lineMessagingReady?: boolean;
   lineLinkedAt: string | null;
 };
 

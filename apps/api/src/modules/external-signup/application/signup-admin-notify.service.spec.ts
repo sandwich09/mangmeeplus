@@ -23,7 +23,7 @@ function harness(options: { identities?: Array<{ providerUserId: string }>; toke
     },
   } as any;
   const config = {
-    lineMessagingChannelAccessToken: options.token === undefined ? TOKEN : options.token ?? undefined,
+    lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? TOKEN : options.token ?? undefined,
   } as any;
   const service = new SignupAdminNotifyService(lineMessagingCredentialsFixture(config), prisma, {} as any, {} as any, config, {
     warn: () => {}, error: () => {},

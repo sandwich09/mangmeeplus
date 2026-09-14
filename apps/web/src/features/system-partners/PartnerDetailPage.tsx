@@ -544,6 +544,9 @@ function MembersSection({
                       ) : (
                         <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500">Not linked</span>
                       )}
+                      {m.lineLinked && m.lineMessagingReady === false && (
+                        <p className="mt-1 max-w-52 text-xs text-amber-800">ตรวจช่องทาง LINE ของระบบ แล้วออก QR ใหม่เพื่อซ่อมการเชื่อมต่อ</p>
+                      )}
                     </td>
                     <td className="py-2.5 pr-4">
                       <div className="flex items-center gap-1.5">

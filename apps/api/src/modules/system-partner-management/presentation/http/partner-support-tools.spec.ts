@@ -114,7 +114,7 @@ function harness(options: Options = {}) {
 
   const config = {
     aiMonthlyBudgetSatang: 8000,
-    lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
+    lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
     sesWebBaseUrl: options.webBaseUrl ?? 'https://app.mangmeeplus.com',
   } as any;
 

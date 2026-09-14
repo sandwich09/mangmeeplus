@@ -6721,6 +6721,8 @@ model EmployeeLineLinkToken {
   tokenHash      String                      @unique
   status         EmployeeLineLinkTokenStatus @default(PENDING)
   expiresAt      DateTime
+  claimedLineUserId String?
+  claimedLineChannelId String?
   usedAt         DateTime?
   createdAt      DateTime                    @default(now())
   updatedAt      DateTime                    @updatedAt

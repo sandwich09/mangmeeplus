@@ -175,6 +175,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     no_membership: 'บัญชี LINE นี้ยังไม่ได้อยู่ในร้านไหนค่ะ ให้เจ้าของร้านส่งลิงก์เชิญให้อีกครั้งนะคะ'
   };
   const FAIL_TITLE_TH = {
+    employee: 'เชื่อม LINE ไม่สำเร็จ',
     customer: 'Registration failed',
     signup: 'ส่งคำขอไม่สำเร็จ',
     start: 'เปิดหน้าเว็บไม่สำเร็จ'
@@ -416,7 +417,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   async function initLiff() {
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(liffId)) throw new Error('LINE_LIFF_ID is not configured.');
     if (!apiBase) throw new Error('Invalid API origin.');
-    setStatus('Initializing LIFF...', '', 'info');
+    setStatus(mode === 'employee' ? 'กำลังตรวจการเชื่อมต่อ LINE…' : 'Initializing LIFF...', '', 'info');
     await liff.init({ liffId });
     if (!liff.isLoggedIn()) {
       liff.login({ redirectUri: location.href });
@@ -472,21 +473,27 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     removeQueryParam('token');
     const idToken = currentIdToken();
     if (!idToken) return;
-    setStatus('Linking...', '', 'info');
+    setStatus('กำลังเชื่อม LINE…', '', 'info');
     const res = await fetch(apiBase + '/auth/line/employee-link', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: linkToken, idToken })
     });
     const text = await res.text();
-    if (!res.ok) throw new Error(text || ('Link failed: ' + res.status));
+    if (!res.ok) {
+      let code = '';
+      try { const body = JSON.parse(text); code = body.code || (body.error && body.error.code) || ''; } catch (_) {}
+      if (code === 'line_identity_review_required') throw new Error('การเชื่อมต่อเดิมต้องให้ผู้ดูแลตรวจสอบ กรุณาติดต่อผู้ดูแลพร้อมแจ้งว่าต้องซ่อมการเชื่อมต่อ LINE');
+      if (code === 'line_identity_changed' || code === 'line_link_retry' || res.status >= 500) throw new Error('ยังทำรายการไม่สำเร็จ แตะเชื่อม LINE เพื่อลอง QR เดิมอีกครั้ง หากหมดอายุให้ผู้ดูแลออก QR ใหม่');
+      throw new Error('QR นี้ใช้กับบัญชี LINE นี้ไม่ได้ หรือหมดอายุแล้ว กรุณาใช้บัญชี LINE ที่สแกนครั้งแรก หรือติดต่อผู้ดูแลเพื่อออก QR ใหม่');
+    }
     if (oaAddUrl) {
-      setStatus('Linked. Opening LINE...', '', 'success');
+      setStatus('เชื่อม LINE สำเร็จ กำลังเปิด LINE…', '', 'success');
       openLineEl.href = oaAddUrl;
       openLineEl.hidden = false;
       setTimeout(function () { location.href = oaAddUrl; }, 800);
     } else {
-      setStatus('Linked. You can close this page and use LINE AI now.', '', 'success');
+      setStatus('เชื่อม LINE สำเร็จแล้ว ปิดหน้านี้และกลับไปที่ LINE ได้เลย', '', 'success');
     }
   }
 
@@ -1039,6 +1046,9 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
         // signupReady is false until the form is on screen, so this is precisely the init phase.
         setStatus(SIGNUP_INIT_FAIL_TH + '\n' + 'ปิดหน้านี้แล้วแตะเมนูใน LINE อีกครั้งนะคะ', '', 'error');
         showOnly('retry-view');
+      } else if (mode === 'employee') {
+        const detail = errorDetail(error);
+        setStatus(FAIL_TITLE_TH.employee, /^(การเชื่อมต่อเดิม|ยังทำรายการ|QR นี้)/.test(detail) ? detail : 'กรุณาแตะเชื่อม LINE เพื่อลอง QR เดิมอีกครั้ง หากหมดอายุหรือใช้บัญชี LINE ไม่ตรง ให้ผู้ดูแลออก QR ใหม่', 'error');
       } else {
         setStatus(FAIL_TITLE_TH[mode] || 'Link failed', errorDetail(error), 'error');
       }

@@ -14,6 +14,8 @@ export type AccountSecurityState = {
   /** Self-service LINE link: an ACTIVE LINE identity exists for this user. */
   lineLinked: boolean;
   lineLinkedAt: string | null;
+  /** Identity binding only; delivery still requires current provider credentials. */
+  lineMessagingReady: boolean;
   /** P10-L §3.6 "กันหลุด" contact number, held on the user, not an OTP factor. */
   phoneNumber: string | null;
   /**
@@ -44,7 +46,7 @@ export class GetAccountSecurityStateUseCase {
 
   async execute(userId: string): Promise<AccountSecurityState> {
     const now = new Date();
-    const [user, pendingToken, lineIdentity] = await Promise.all([
+    const [user, pendingToken, lineIdentities] = await Promise.all([
       this.prisma.client.user.findUnique({
         where: { id: userId },
         select: {
@@ -61,9 +63,10 @@ export class GetAccountSecurityStateUseCase {
         orderBy: { createdAt: 'desc' },
         select: { newEmail: true, expiresAt: true },
       }),
-      this.prisma.client.externalIdentity.findFirst({
+      this.prisma.client.externalIdentity.findMany({
         where: { userId, provider: 'LINE', status: 'ACTIVE' },
-        select: { linkedAt: true },
+        select: { linkedAt: true, providerChannelId: true },
+        orderBy: { linkedAt: 'desc' },
       }),
     ]);
 
@@ -74,8 +77,9 @@ export class GetAccountSecurityStateUseCase {
       pendingEmail: pendingToken?.newEmail ?? null,
       pendingEmailExpiresAt: pendingToken?.expiresAt.toISOString() ?? null,
       aiAssistantOptOutAt: user?.aiAssistantOptOutAt?.toISOString() ?? null,
-      lineLinked: lineIdentity != null,
-      lineLinkedAt: lineIdentity?.linkedAt.toISOString() ?? null,
+      lineLinked: lineIdentities.length > 0,
+      lineMessagingReady: Boolean(this.config?.lineMessagingChannelId && lineIdentities.some(identity => identity.providerChannelId === this.config?.lineMessagingChannelId)),
+      lineLinkedAt: lineIdentities[0]?.linkedAt.toISOString() ?? null,
       phoneNumber: user?.phoneNumber ?? null,
       username: user?.username ?? null,
       hasPassword: user?.credential != null,

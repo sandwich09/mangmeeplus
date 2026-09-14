@@ -66,7 +66,7 @@ describe('LINE recovery credential lifecycle', () => {
     const prisma = { client } as any;
     const issueToken = { execute: async () => ({ accessToken: 'test', refreshToken: 'test', expiresIn: 900 }) } as any;
     try {
-      await new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any), prisma, { lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any)
+      await new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any), prisma, { lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any)
         .execute({ username: 'owner.one' });
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.ok(recoveryPassword);

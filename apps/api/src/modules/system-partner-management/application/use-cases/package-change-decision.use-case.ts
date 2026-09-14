@@ -186,12 +186,13 @@ export class PackageChangeDecisionUseCase {
     requestedTierKey: string,
     note: string | undefined,
   ): Promise<void> {
-    const token = (await this.lineCredentials.get().catch(() => null))?.accessToken;
-    if (!token) return;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return;
     const text = body.action === 'APPROVE'
       ? packageChangeApprovedMessageTh(requestedTierKey, note)
       : packageChangeRejectedMessageTh(note);
-    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId)) {
+    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId, credentials.channelId)) {
       if (!await pushSystemLineMessage(token, providerUserId, text)) {
         this.logger.warn(
           { event: 'signup.line.package_change_notice_failed', riskLevel: 'LOW' },
@@ -206,14 +207,14 @@ export class PackageChangeDecisionUseCase {
  * The LINE identities of a shop's active OWNERs. Shared with the admin message box (SEC-05): both
  * answer "who speaks for this shop", and one definition keeps them from drifting apart.
  */
-export async function ownerLineUserIds(prisma: PrismaService, companyId: string): Promise<string[]> {
+export async function ownerLineUserIds(prisma: PrismaService, companyId: string, channelId: string): Promise<string[]> {
   const owners = await prisma.client.companyMembership.findMany({
     where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
     select: { userId: true },
   });
   if (owners.length === 0) return [];
   const identities = await prisma.client.externalIdentity.findMany({
-    where: { userId: { in: owners.map((owner) => owner.userId) }, provider: 'LINE', status: 'ACTIVE' },
+    where: { userId: { in: owners.map((owner) => owner.userId) }, provider: 'LINE', providerChannelId: channelId, status: 'ACTIVE' },
     select: { providerUserId: true },
   });
   // One owner may hold more than one identity row; the shop wants one message, not two.

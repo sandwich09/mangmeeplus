@@ -69,12 +69,10 @@ reopening the menu.
   so the owner's company-scoped audit page surfaces it. (Self-scoped consent; CRITICAL is reserved for
   admin-issued credentials for someone else.)
 
-### 4.2 Redemption — unchanged
+### 4.2 Redemption — Admin QR amendment 2026-09-14
 
 The minted token rides the existing public LIFF page (`GET /auth/line/link-page/employee`) and
-`POST /v1/auth/line/employee-link` (`CompleteEmployeeLineLinkUseCase`): single-use atomic claim,
-membership/company re-check, `allowReassign` sever of other LINE identities, used-token re-scan grace.
-No changes to any of it — self-issued tokens are indistinguishable from admin-issued ones by design.
+`POST /v1/auth/line/employee-link` (`CompleteEmployeeLineLinkUseCase`). The [billing controls identity contract](mangmee-billing-controls-spec-th.md) now governs repair: verify LINE proof before locks; commit claim, original verified subject/channel receipt, active membership checks, identity/context/sever, pending handoff/recovery revocation and audit in one transaction. A USED QR only confirms its original subject and current canonical binding within its original expiry; it never relinks or severs again. Historic USED rows without a receipt require a fresh Admin QR. Only an unambiguous known legacy channel is repairable; foreign, ambiguous or DISABLED bindings require review. The shipped OAuth sidebar entry in §8 remains the self-service entry.
 
 ### 4.3 Link status — extend `GET /v1/auth/account/security`
 
@@ -83,9 +81,10 @@ Add to `AccountSecurityState` (API use case + web type, additive):
 ```ts
 lineLinked: boolean;        // ACTIVE LINE identity exists for the user
 lineLinkedAt: string | null; // linkedAt of that identity
+lineMessagingReady: boolean; // an ACTIVE identity matches the configured Messaging channel
 ```
 
-The sidebar fetches this lazily when the user menu opens (not on shell mount) and the desktop modal polls it.
+The sidebar refreshes this on every user-menu opening, independently of password-menu visibility. Pending/failed reads must not reuse a previous binding state. A linked account without a current Messaging binding gets Admin repair guidance; its row remains disabled. This readiness field describes the binding, not provider-token health or paid/AI entitlement. The desktop modal below is superseded by §8.
 The user-menu item renders from `session.permissions` alone, so the menu never blocks on this call — but
 the row stays DISABLED until the state lands: "unknown" must not read as "not linked", or an
 already-linked user could start a re-link inside the fetch window (the accidental tap §3 forbids).
@@ -153,3 +152,7 @@ Two link rows with two mechanisms would be strictly worse than either, so §§3�
   reverting a live grant is not this change's call).
 - The admin-console 72h QR (slice A) is untouched: it remains the only path for a user who
   cannot log in at all, and the LIFF employee-link redemption continues to serve it.
+
+## 9. Admin repair verification — 2026-09-14
+
+[Focused proof](../evidence/billing-integration-2026-09-13/line-admin-qr-repair-result.json): 7 actual HTTP/PostgreSQL/Next/Chromium/LIFF groups and 15 PostgreSQL tests pass, including lost-response recovery, stale-owner fences, unlink revoking a delivered recovery password, fresh-QR relink and disabled self-relink. LINE SDK/verification/push are simulated; native acceptance and the wider billing/LINE scope remain separate.

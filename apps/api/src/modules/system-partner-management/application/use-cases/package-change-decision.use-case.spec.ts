@@ -82,7 +82,7 @@ function harness(options: {
   } as any;
 
   const config = {
-    lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
+    lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
     // Without this the SEC-05 allow-list is LIFF-only, and a note naming our own web app would be
     // refused for the wrong reason — hiding whether the glued-URL rule works at all.
     sesWebBaseUrl: 'https://app.mangmeeplus.com',

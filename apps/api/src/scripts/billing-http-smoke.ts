@@ -1,3 +1,4 @@
+import { checkLineBinding } from './line-binding-smoke';
 import { checkLineRuntimeCredentials } from './line-runtime-credentials-smoke';
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
@@ -51,6 +52,7 @@ async function main() {
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',
     POSTMARK_WEBHOOK_USERNAME: 'synthetic-billing', POSTMARK_WEBHOOK_PASSWORD: randomUUID(),
     LINE_MESSAGING_CHANNEL_SECRET: 's'.repeat(32), LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
+    ...(process.env.BILLING_LINE_BINDING_ONLY==='1'?{LINE_LOGIN_CHANNEL_ID:`login-${run}`,LINE_LIFF_ID:'1234567890-Synthetic'}:{}),
     CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     STRIPE_ACCOUNT_ID: accountId, STRIPE_SECRET_KEY: `sk_test_${run}`, STRIPE_WEBHOOK_SECRET: webhookSecret,
     WATCHDOG_JWT_SECRET_ARN: secret, WATCHDOG_JWT_ISSUER: DEFAULT_JWT_ISSUER, WATCHDOG_JWT_AUDIENCE: DEFAULT_JWT_AUDIENCE,
@@ -183,6 +185,11 @@ async function main() {
       return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_LINE_BINDING_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkLineBinding({app,prisma,origin,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium-LIFF',passed:cases,browserE2E:true,simulatedProviders:['LINE SDK/verification/push'],realProviderDelivery:false}));return;
+    }
     if(process.env.BILLING_LINE_CREDENTIALS_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkLineRuntimeCredentials({app,prisma,origin,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));

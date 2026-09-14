@@ -597,8 +597,9 @@ jobs:
           BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
           REDIS_URL: redis://127.0.0.1:6379
         run: |
-          pnpm --filter @watchdog-bms/api exec tsx --test src/common/config/line-messaging-credentials.service.spec.ts src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.spec.ts
+          pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/system-line-push.spec.ts src/modules/system-partner-management/application/use-cases/set-shared-line-credential.use-case.spec.ts
           BILLING_LINE_CREDENTIALS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_LINE_BINDING_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test legal release evidence gates
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |

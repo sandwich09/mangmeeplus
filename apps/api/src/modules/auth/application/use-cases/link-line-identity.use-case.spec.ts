@@ -23,6 +23,9 @@ function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[], revok
   prisma.client.lineWebHandoffToken = {
     updateMany: async (args: unknown) => { revokes.push(args); return { count: 0 }; },
   };
+  prisma.client.externalIdentity.findMany ??= async () => [];
+  prisma.client.auditLog ??= { create: async () => ({}) };
+  prisma.client.passwordResetToken ??= { updateMany: async () => ({ count: 0 }) };
   return prisma;
 }
 
@@ -90,7 +93,8 @@ describe('LinkLineIdentityUseCase', () => {
 
     assert.deepEqual(result, { linked: true, providerUserId: 'line-user-1' });
     assert.equal(creates.length, 0);
-    assert.equal(updates.length, 0);
+    assert.equal(updates.length, 1);
+    assert.ok(updates[0].data.linkedAt instanceof Date);
     assert.equal(contextUpserts.length, 1);
   });
 
@@ -197,8 +201,8 @@ describe('LinkLineIdentityUseCase', () => {
     });
     await useCase.execute(input);
 
-    assert.deepEqual(identityLocks, [[lineIdentityLockKey('msg-chan-1', 'line-user-1')]]);
-    assert.deepEqual(identityLocks[0], ['line-identity:msg-chan-1:line-user-1'], 'the literal both sites share');
+    assert.deepEqual(identityLocks, [['line-identity-user:user-1'], [lineIdentityLockKey('msg-chan-1', 'line-user-1')]]);
+    assert.deepEqual(identityLocks[1], ['line-identity:msg-chan-1:line-user-1'], 'the literal both sites share');
   });
 
   /**

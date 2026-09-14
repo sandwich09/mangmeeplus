@@ -434,6 +434,9 @@ const CODE_LABELS: Record<string, string> = {
   partner_line_message_external_link: 'ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF เท่านั้น กรุณาลบลิงก์ภายนอกออก',
   line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
   package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
+  line_identity_changed: 'การเชื่อมต่อ LINE เปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วลองอีกครั้ง',
+  line_identity_review_required: 'การเชื่อมต่อ LINE เดิมต้องให้ผู้ดูแลตรวจสอบ กรุณาติดต่อผู้ดูแลเพื่อออก QR เชื่อม LINE ใหม่',
+  line_link_retry: 'ยังเชื่อม LINE ไม่สำเร็จ กรุณาลองสแกน QR เดิมอีกครั้ง หากหมดอายุให้ผู้ดูแลออก QR ใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
   // Provisioning refused the LINE identity by name instead of letting a unique violation become
   // "ข้อมูลซ้ำ" — an operator reading that had nothing to do next. Both say what to change.

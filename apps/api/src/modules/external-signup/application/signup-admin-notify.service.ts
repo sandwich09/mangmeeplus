@@ -161,10 +161,11 @@ export class SignupAdminNotifyService {
      */
     options?: { skipProviderUserIdHash?: string },
   ): Promise<number> {
-    const token = (await this.lineCredentials.get().catch(() => null))?.accessToken;
-    if (!token) return 0;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return 0;
     const identities = await this.prisma.client.externalIdentity.findMany({
-      where: { userId: { in: userIds }, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId: { in: userIds }, provider: 'LINE', providerChannelId: credentials.channelId, status: 'ACTIVE' },
       select: { providerUserId: true },
     });
     let sent = 0;

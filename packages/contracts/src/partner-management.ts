@@ -120,6 +120,8 @@ export type PartnerMemberDto = {
   membershipStatus: PartnerMembershipStatus;
   roles: string[];
   lineLinked: boolean;
+  /** Current Messaging identity binding; provider delivery readiness is separate. */
+  lineMessagingReady?: boolean;
   credential?: PartnerMemberCredentialDto;
 };
 

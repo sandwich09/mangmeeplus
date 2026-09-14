@@ -36,9 +36,9 @@ describe('LINE recovery PostgreSQL lifecycle and concurrency', { skip: !database
       return { ok: delivered, status: delivered ? 200 : 500 } as Response;
     }) as typeof fetch;
     const requester = new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture({
-      lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
+      lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
     } as any), prisma, {
-      lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
+      lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
     } as any);
     const issueToken = { execute: async () => ({ accessToken: 'synthetic', refreshToken: 'synthetic', expiresIn: 900 }) } as any;
     const login = new PasswordLoginUseCase(prisma, issueToken, legal);

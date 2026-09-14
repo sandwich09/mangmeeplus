@@ -783,10 +783,10 @@ export class AuthController {
         'api-base': apiBase,
         'oa-add-url': oaAddUrl,
       },
-      content: `      <h1>Link your LINE account</h1>
-      <p id="status" class="notice notice-info">Ready</p>
-      <button id="link">Link LINE account</button>
-      <a id="open-line" class="btn" hidden>Open LINE</a>
+      content: `      <h1>เชื่อมบัญชี LINE</h1>
+      <p id="status" class="notice notice-info">กำลังเตรียมการเชื่อมต่อ</p>
+      <button id="link">เชื่อม LINE</button>
+      <a id="open-line" class="btn" hidden>เปิด LINE</a>
       <pre id="detail"></pre>`,
     });
   }

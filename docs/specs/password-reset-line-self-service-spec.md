@@ -23,10 +23,11 @@ This prevents a username-only reset request from locking the real user out while
 
 - Input stays `{ username: string }` and keeps the existing username/IP rate limits.
 - Response is always `200` with the same generic body for unknown, ineligible, unlinked, delivery-failed, and successful requests. `429` remains the only caller-visible distinction.
-- Eligible means: active user, usable credential, active membership in an active company, configured system LINE OA, and an ACTIVE LINE identity linked to that exact user.
+- Eligible means: active user, usable credential, active membership in an active company, configured system LINE OA, and an ACTIVE LINE identity linked to that exact user on the configured Messaging channel. A legacy or foreign-channel link is not a delivery destination; retain the generic response and Admin QR support path.
 - Generate a 12-character/72-bit base64url temporary password with the existing secure-token generator. Store only a domain-separated SHA-256 hash bound to the current credential hash in the existing `PasswordResetToken`; expiry is 30 minutes. Every password change/admin reset therefore invalidates earlier recovery passwords. Serialize repeat requests on the existing credential row, then revoke earlier PENDING tokens for the user.
 - Push after the transaction and outside the response timing path. Push only to the linked `providerUserId`; never accept a LINE ID from request input.
-- If LINE delivery fails, revoke the newly created token so an undelivered credential cannot remain usable.
+- Immediately before push, recheck current Messaging credentials and the exact current binding. If configuration/binding changed or delivery fails, revoke the newly created token so an undelivered credential cannot remain usable.
+- Successful identity unlink, sever or reassignment revokes the affected prior owner’s PENDING recovery tokens in the same transaction as the identity mutation. A stale owner/status/revision CAS must not revoke the new owner’s tokens. A delivered but unused recovery password therefore stops working after unlink. Already-consumed recovery/session policy stays unchanged.
 - Audit outcome without recording the temporary password, token hash, LINE user ID, or message body.
 
 ### `POST /v1/auth/password/login` (existing)

@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
@@ -26,10 +26,12 @@ export class UnlinkLineIdentityUseCase {
     // failed to sever: if any of the three writes cannot land, none of them do and the caller
     // retries. Owner decision 2026-09-06.
     const handoffLinksRevoked = await this.prisma.client.$transaction(async (tx) => {
-      await tx.externalIdentity.update({
-        where: { id: identity.id },
+      const changed = await tx.externalIdentity.updateMany({
+        where: { id: identity.id, userId: userId, status: 'ACTIVE', updatedAt: identity.updatedAt },
         data: { status: 'UNLINKED', updatedAt: new Date() },
       });
+      if (changed.count !== 1) throw new ConflictException({ code: 'line_identity_changed', message: 'LINE binding changed. Reload and try again.' });
+      await tx.passwordResetToken.updateMany({ where: { userId: userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
 
       // line-support-request-spec-th §2.5. The selected-company row survived the unlink, so it went
       // on naming a shop this LINE account is no longer in — which is what made "ติดต่อเจ้าหน้าที่"

@@ -95,11 +95,12 @@ export class RegenerateEmployeeCredentialUseCase {
 
   /** Best-effort delivery to the LINE identity already linked to this exact user. */
   private async pushTemporaryPassword(userId: string, temporaryPassword: string, expiresAt: Date): Promise<boolean> {
-    const token = (await this.lineCredentials.get().catch(() => null))?.accessToken;
-    if (!token) return false;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return false;
 
     const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: { userId, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId, provider: 'LINE', providerChannelId: credentials.channelId, status: 'ACTIVE' },
       select: { providerUserId: true },
     });
     if (!identity) return false;
