@@ -13,6 +13,10 @@ export default function BillingTimelinePanel({companyId}:{companyId:string}) {
       .then(result=>{if(active)setTimeline(result);}).catch(()=>{if(active)setError('โหลดประวัติไม่ได้ สิทธิ์หรือรายการอาจเปลี่ยน กรุณาโหลดใหม่หรือกลับหน้าแรก');});
     return()=>{active=false;generation.current++;};
   },[companyId,cursor,reload]);
+  function loadPage(nextCursor=cursor) {
+    generation.current++;setTimeline(null);setError('');setExportBusy(false);setExportError('');setExportNotice('');
+    setCursor(nextCursor);setReload(value=>value+1);
+  }
   async function downloadPage() {
     if(exportBusy||!timeline?.canExport)return;
     const current=generation.current;setExportBusy(true);setExportError('');setExportNotice('');
@@ -48,9 +52,9 @@ export default function BillingTimelinePanel({companyId}:{companyId:string}) {
       <p>ไฟล์นี้ใช้ตรวจสอบประวัติ ไม่ใช่ใบเสร็จหรือใบกำกับภาษี</p></div>}
     {exportError&&<p role="alert">{exportError}</p>}{exportNotice&&<p role="status">{exportNotice}</p>}
     <div className="flex flex-wrap gap-3">
-      <button className={billingControl} onClick={()=>setReload(v=>v+1)}>โหลดประวัติล่าสุด</button>
-      {timeline?.nextCursor&&<button className={billingControl} onClick={()=>setCursor(timeline.nextCursor!)}>ประวัติหน้าถัดไป</button>}
-      {cursor&&<button className={billingControl} onClick={()=>setCursor('')}>ประวัติหน้าแรก</button>}
+      <button className={billingControl} onClick={()=>loadPage()}>โหลดประวัติล่าสุด</button>
+      {timeline?.nextCursor&&<button className={billingControl} onClick={()=>loadPage(timeline.nextCursor!)}>ประวัติหน้าถัดไป</button>}
+      {cursor&&<button className={billingControl} onClick={()=>loadPage('')}>ประวัติหน้าแรก</button>}
     </div>
   </section>;
 }

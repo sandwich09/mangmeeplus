@@ -102,6 +102,7 @@ export type BillingStatus = {
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
   purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
+  refundReviewPending?: boolean;
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   attemptId: string | null; reference: string | null; observedAt: string | null;
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
@@ -155,6 +156,16 @@ export type BillingOperationView = { id: string; type: BillingOperationType; sta
   version: number; reason: string; initiatorUserId: string; approverUserId: string | null; errorCode: string | null;
   createdAt: string; observedAt: string | null; expiresAt: string; referenceId: string | null };
 
+export type BillingRefundInput = { amountSatang:number; reason:string; memo:string; notifyCustomer:boolean; sourceHash:string };
+export type BillingRefundReview = { companyId:string; companyName:string; invoiceId:string; invoiceNumber:string|null; mode:BillingMode;
+  paidSatang:number; refundedSatang:number; disputed:boolean; refundLimitSatang:number|null; canCreate:boolean; blockedReason:string|null;
+  sourceHash:string; observedAt:string; usage:BillingStatus['usage']; adjustments:BillingAdjustmentItem[] };
+export type BillingRefundOperation = BillingOperationView & { type:'REFUND'; sourceVersion:number; previewHash:string;
+  companyName:string; invoiceNumber:string|null; amountSatang:number; taxSatang:number; memo:string; notifyCustomer:boolean;
+  paidSatang:number; previousRefundedSatang:number; usage:BillingStatus['usage'];
+  allowedActions:('submit'|'approve'|'cancel'|'run')[]; dispatchedAt:string|null; creditNoteId:string|null; creditNoteNumber:string|null;
+  refundId:string|null; refundState:BillingAdjustmentItem['status']|null; reviewCaseId:string|null; bankReceiptConfirmed:false };
+
 export type BillingOperatorCompany = {
   accountId: string | null; companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; version: number;
   subscriptionState: string; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
@@ -165,6 +176,7 @@ export type BillingOperatorCompany = {
   branchLimit: number | null; employeeLimit: number | null; pendingPlanChangeId: string | null; collectionOperationId: string | null;
 };
 export type BillingOperatorIssue = { id: string; companyId: string | null; companyName?:string|null; kind: string; reference: string;
+  operationType?:string|null;
   state: string; assigneeUserId: string | null; note: string | null; version: number; createdAt: string; updatedAt: string;
   assigneeName: string | null; assigneeAvailable: boolean; backupUserId: string | null; backupName: string | null; backupAvailable: boolean;
   priority: 'NORMAL' | 'HIGH' | 'CRITICAL'; followUpAt: string | null; overdue: boolean; episode: number; lastSeenAt: string;

@@ -8,7 +8,7 @@ import type { RequestContext } from '../../auth/domain/models/request-context.mo
 import { verifyPassword } from '../../auth/domain/logic/password-credential.logic';
 import { BillingAdminService } from './billing-admin.service';
 import { BillingService } from './billing.service';
-import { assertRefundControlPolicy, assertKeys, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { assertRefundControlPolicy, assertKeys, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, configurationHash, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 import { stripeId } from '../infrastructure/stripe.client';
 import { configurationImpact } from './billing-configuration-impact';
 import { randomUUID } from 'node:crypto';
@@ -25,12 +25,7 @@ function scheduledTime(value:unknown,review=false):string|undefined {
   if(review&&(at<Date.now()+60000||at>Date.now()+365*86400000))throw billingError('CONTROL_SCHEDULE_TIME','เลือกเวลาล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี แล้วตรวจผลกระทบใหม่');
   return new Date(at).toISOString();
 }
-// PostgreSQL JSONB may reorder object keys; compare semantic snapshots, not insertion order.
-export function configurationHash(value: unknown): string {
-  const canonical = (item: unknown): unknown => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
-    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : item;
-  return hashBilling(canonical(value));
-}
+export { configurationHash } from '../domain/billing-policy';
 const types = ['PUBLISH_POLICY', 'SET_ACTION_GATE'];
 const permission = (type: string) => type === 'PUBLISH_POLICY' ? 'system.billing.policy.manage' : 'system.billing.gate.manage';
 const stale = () => billingError('CONTROL_PREVIEW_STALE', 'ข้อมูลเปลี่ยนหรือรายการหมดอายุ กรุณาโหลดการตั้งค่าและตรวจสอบใหม่');
@@ -314,14 +309,19 @@ export class BillingConfigurationService {
     const value=await tx.userCredential.findUnique({where:{userId}});
     if(!value||value.status!=='ACTIVE'||value.mustChangePassword||(value.expiresAt&&value.expiresAt<=new Date()))throw new ForbiddenException();return value;
   }
-  async operationActor(row:BillingOperation,userId:string,membershipId:string,companyId:string,key:string,tx:Prisma.TransactionClient){
+  async operationActor(row:BillingOperation,userId:string,membershipId:string,companyId:string,key:string,tx:Prisma.TransactionClient,targetCompanyId?:string){
     if(!userId||!membershipId||!companyId)throw stale();
     if(tx!==this.prisma.client)await tx.$queryRaw`SELECT m.id FROM "CompanyMembership" m JOIN "User" u ON u.id=m."userId"
       JOIN "MembershipRole" mr ON mr."membershipId"=m.id JOIN "Role" r ON r.id=mr."roleId"
       JOIN "RolePermission" rp ON rp."roleId"=r.id WHERE m.id=${membershipId} AND u.id=${userId} ORDER BY r.id,rp."permissionId" FOR SHARE OF m,u,mr,r,rp`;
     const member=await tx.companyMembership.findFirstOrThrow({where:{id:membershipId,userId,companyId},include:{roles:{include:{role:{include:{permissions:{include:{permission:true}}}}}}}});
     const context:RequestContext={requestId:row.id,authSubject:userId,authProvider:'system',userId,companyId,membershipId,roles:[],scopes:{},permissions:member.roles.flatMap(r=>r.role.permissions.map(p=>p.permission.key))};
-    await this.platform(context,key,tx);return context;
+    if(targetCompanyId===undefined)await this.platform(context,key,tx);
+    else {
+      if(tx!==this.prisma.client)await tx.$queryRaw`SELECT id FROM "BillingOperatorScope" WHERE "userId"=${userId} AND "companyId"=${targetCompanyId} FOR SHARE`;
+      await this.admin.scopedCompany(context,targetCompanyId,tx);await this.admin.access(context,'system.billing.financial.read',tx);await this.admin.access(context,key,tx);
+    }
+    return context;
   }
   private async scheduledActors(row:BillingOperation,state:Awaited<ReturnType<BillingService['settings']>>,tx:Prisma.TransactionClient){
     const p=row.proposedJson as Proposed,a=(row.resultJson as {scheduledApproval?:ScheduledApproval}|null)?.scheduledApproval;

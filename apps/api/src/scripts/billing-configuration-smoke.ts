@@ -1,3 +1,4 @@
+import { checkBillingRefunds } from './billing-refunds-smoke';
 import { checkBillingRefundControls } from './billing-refund-controls-smoke';
 import assert from 'node:assert/strict';
 import { checkBillingReadiness } from './billing-readiness-smoke';
@@ -47,14 +48,14 @@ export async function checkBillingConfiguration(input: {
   let secondBrowser: BrowserContext | undefined;
   const snapshot = await client.billingInvoice.findMany({ where: { billingAccountId: (await client.billingAccount.findFirstOrThrow({ where: { companyId, stripeAccountId } })).id }, orderBy: { id: 'asc' } });
   try {
-    if (process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       if (browser) {
         secondBrowser = await browser.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
         await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
           { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
         await secondBrowser.newPage();
       }
-      return await (process.env.BILLING_REFUND_CONTROLS_ONLY === '1' ? checkBillingRefundControls : process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+      return await (process.env.BILLING_REFUNDS_ONLY === '1' ? checkBillingRefunds : process.env.BILLING_REFUND_CONTROLS_ONLY === '1' ? checkBillingRefundControls : process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
     }
     const initial = await request(`${base}/settings`); assert.equal(initial.status, 200); assert.equal(initial.body.reauthenticatedUntil, null);
     const before = initial.body, revisionCount = await client.billingPolicyRevision.count({ where: { stripeAccountId } });
@@ -173,9 +174,11 @@ export async function checkBillingConfiguration(input: {
     await client.authSession.create({ data: { userId: userIds[1]!, tokenId: anotherSid, expiresAt: new Date(Date.now() + 3600000) } });
     assert.equal((await request(`${base}/settings`, 'GET', undefined, { authorization: `Bearer ${anotherToken}` })).body.reauthenticatedUntil, null, 'proof is not shared with another session');
     const scopeCases = await checkBillingScopes({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+    const refundControls = await checkBillingRefundControls({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+    const refundCases = await checkBillingRefunds({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
     return ['admin-configuration-password-proof-session-credential-expiry-and-platform-scope', 'admin-emergency-close-and-independent-approved-reopen-no-restart',
       'admin-vat-issuer-price-preview-publish-and-compensating-off-revision', 'admin-configuration-idempotency-revoked-requester-cancel-approval-race-and-historical-invoices',
-      ...(browser ? ['browser-admin-password-independent-approval-observed-config-and-mobile', 'browser-admin-vat-form-publish-return-off-without-process-restart'] : []), ...draftCases,...impactCases,...scopeCases];
+      ...(browser ? ['browser-admin-password-independent-approval-observed-config-and-mobile', 'browser-admin-vat-form-publish-return-off-without-process-restart'] : []), ...draftCases,...impactCases,...scopeCases,...refundControls,...refundCases];
   } finally {
     await secondBrowser?.close();
     await client.membershipRole.deleteMany({ where: { membershipId: { in: [input.membershipId, second.id] }, roleId: { in: [admin.id, role.id] } } });

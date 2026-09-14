@@ -15,6 +15,8 @@ import { BillingOperationsService } from '../application/billing-operations.serv
 import { BillingScopesService } from '../application/billing-scopes.service';
 import { BillingConfigurationService } from '../application/billing-configuration.service';
 import { BillingReadinessService } from '../application/billing-readiness.service';
+import { BillingRefundsService } from '../application/billing-refunds.service';
+import type { BillingRefundInput } from '@watchdog-bms/contracts';
 import { BillingNotificationsService } from '../application/billing-notifications.service';
 import { BillingProviderScansService } from '../application/billing-provider-scans.service';
 
@@ -55,7 +57,29 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService) {}
+  @Get('companies/:id/invoices/:invoiceId/refund-review') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async refundReview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
+    bodyFields(query,[]);await this.operationLimit(req);return this.refunds.review(req.context,textField(companyId,128),uuid(invoiceId));
+  }
+  @Post('companies/:id/invoices/:invoiceId/refund-preview') @HttpCode(200) @RequirePermissions('system.billing.refund.manage') @Header('Cache-Control','no-store')
+  async refundPreview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown){
+    await this.operationLimit(req);return this.refunds.preview(req.context,textField(companyId,128),uuid(invoiceId),body as BillingRefundInput);
+  }
+  @Get('companies/:id/invoices/:invoiceId/refund-requests') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async refundRequests(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
+    const fields=bodyFields(query,['cursor']);return this.refunds.list(req.context,textField(companyId,128),uuid(invoiceId),fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('refunds/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  refundRequest(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.refunds.get(req.context,uuid(id));}
+  @Post('refunds/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async refundCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key:string|undefined){
+    const fields=bodyFields(body,action==='run'?['expectedVersion']:['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||Number(fields.expectedVersion)<0)invalid();await this.operationLimit(req);
+    if(action==='run')return this.refunds.run(req.context,uuid(id),fields.expectedVersion as number);
+    if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();
+    return this.refunds.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);
+  }
   @Get('companies/:id/invoices/:invoiceId/adjustments/:kind') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   async adjustments(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') id:string,@Param('kind') kind:string,@Query() query:unknown) {
     const fields=bodyFields(query,['cursor']);await this.operationLimit(req);
@@ -466,14 +490,14 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService) {}
   @Post('provider-scans/drain') @HttpCode(200)
   drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.scans.drain(); }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
-    const readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
-    return { processed: readiness.processed + configuration.processed + provider.processed + operations.processed, failed: readiness.failed + configuration.failed + provider.failed + operations.failed };
+    const readiness=await this.readiness.drain(),configuration=await this.configuration.drainScheduled(),refunds=await this.refunds.drain(),provider = await this.reconciler.drain(), operations = await this.operations.drain();
+    return { processed: readiness.processed + configuration.processed + refunds.processed + provider.processed + operations.processed, failed: readiness.failed + configuration.failed + refunds.failed + provider.failed + operations.failed };
   }
   @Post('notifications/drain') @HttpCode(200)
   drainNotifications(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.notifications.drain(); }

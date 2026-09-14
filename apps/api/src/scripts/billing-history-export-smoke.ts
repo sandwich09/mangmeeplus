@@ -86,8 +86,10 @@ export async function checkBillingHistoryExport(input:Parameters<typeof checkBil
       const parts:Buffer[]=[];for await(const part of stream)parts.push(Buffer.from(part));const text=Buffer.concat(parts).toString('utf8');
       assert.match(download.suggestedFilename(),/^mangmee-billing-history-[\dT-]+\.csv$/);assert.ok(text.startsWith('\uFEFF'));assert.match(text,/เวลาส่งออก \(UTC\)/);assert.match(text,/249\.00/);
       await panel.getByRole('status').filter({hasText:'ดาวน์โหลดประวัติ'}).waitFor();
-      await panel.getByRole('button',{name:'ประวัติหน้าถัดไป',exact:true}).click();await button.waitFor();
-      const secondReference=(await panel.locator('article details p').first().textContent())!.replace('อ้างอิง ','');
+      const [nextResponse]=await Promise.all([p.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname.endsWith('/timeline')&&new URL(r.url()).searchParams.has('cursor')),
+        panel.getByRole('button',{name:'ประวัติหน้าถัดไป',exact:true}).click()]);
+      assert.equal(nextResponse.status(),200);const nextPage=await nextResponse.json(),secondReference=nextPage.items[0].reference;
+      await panel.getByText(`อ้างอิง ${secondReference}`,{exact:true}).waitFor({state:'attached'});await button.waitFor();
       const secondPromise=p.waitForEvent('download');await button.click();const second=await secondPromise,secondStream=await second.createReadStream();assert.ok(secondStream);
       const secondParts:Buffer[]=[];for await(const part of secondStream)secondParts.push(Buffer.from(part));assert.ok(Buffer.concat(secondParts).toString('utf8').includes(secondReference),'download matches the selected timeline page');
       await p.route('**/timeline/export',route=>route.abort('failed'),{times:1});await button.click();await panel.getByRole('alert').waitFor();

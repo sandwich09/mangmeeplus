@@ -32,6 +32,7 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_PORTAL_UNAVAILABLE') return 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง';
   if (code === 'BILLING_PORTAL_CONFIG_MISMATCH') return 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมมั่งมี';
   if (code === 'BILLING_COMPANY_HELD') return 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมมั่งมี';
+  if (code === 'BILLING_REFUND_PENDING') return 'กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ กรุณาโหลดสถานะล่าสุดหรือติดต่อทีมมั่งมี';
   if (code === 'BILLING_SALES_CLOSED' || code === 'BILLING_NOT_READY') return 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน';
   return 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจสอบสถานะหรือติดต่อทีมงานพร้อมเลขอ้างอิง';
 }
@@ -151,6 +152,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.nextChargeAt && <p>เรียกเก็บเงินครั้งถัดไป {date(status.nextChargeAt)}</p>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
         {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status">ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบสถานะและรายการเดิมด้านล่างได้</p>}
+        {status.refundReviewPending && <p role="status" className="rounded-xl bg-amber-50 p-3">กำลังตรวจสอบคำขอคืนเงิน จึงยังซื้อหรือเปลี่ยนแพ็กเกจไม่ได้ คำขอนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจเดิม คุณตรวจรายการเดิมด้านล่าง หรือ <a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมมั่งมี</a> ได้</p>}
         {status.accessState === 'HELD' && <p>บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
         {status.reference && <p className="break-all text-xs text-gray-500">เลขอ้างอิง {status.reference}</p>}
         {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}

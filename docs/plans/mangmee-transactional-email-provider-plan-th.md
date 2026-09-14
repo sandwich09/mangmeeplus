@@ -79,7 +79,7 @@ Evidence อยู่ `docs/evidence/postmark-email-<date>/`: exact source revis
 - Confirm webhook verification ต่อevent type, retry/dropbehaviorจากdocsกับaccountจริง, alertsและreconciliationถ้าendpointกลับมาหลังproviderหยุดretry. ให้callbackของprevious providerรับได้ระหว่างrollback; outboundเลือกทีละprovider.
 - Providerเก็บmessage contentตามretention; บันทึกเวลาจริง/ผู้เข้าถึง/ค่าใช้จ่าย. Postmarkreceiptเป็นค่าใช้จ่ายบริษัทเรา ไม่ทำvendorimporter และไม่ส่งซ้ำcustomerinvoiceที่Stripeส่งอยู่.
 - Stripeตั้งbusiness details/customer billing email/successful-payment+refund/invoice emailsettingsตามP26; reviewราคา/ภาษี/withholdingในB06ยังต้องจบก่อนเปิดขาย. **Thai tax/e-Tax generator deferred** ไม่ขยายงานmail providerเพื่อทำสิ่งนี้.
-- Easy-signup E0 ยังต้องเลือก code/link, returning login/recovery, eligibilityและfieldsก่อนruntimeflowใหม่. ข้อนี้ไม่ทำให้provider selectionกลับไปOPEN.
+- Easy-signup E0 สำหรับ flow สมัครใหม่ยังมีข้อเสนอ code/link, eligibility และ fields ตาม [แผนแยก](unified-easy-signup-plan-th.md). การกู้รหัสผ่านของบัญชีอีเมลเดิมได้รับอนุมัติและ implement แล้วตามหลักฐาน email-password-reset/Portal login; ไม่ต้องรอ E0 หรือเลือก provider ซ้ำ. ไม่ถือว่าผลนี้อนุมัติเปลี่ยน policy สมัครใหม่หรือเปิด production.
 
 ### C03 Postmark recovery implementation sequence — 2026-09-14
 

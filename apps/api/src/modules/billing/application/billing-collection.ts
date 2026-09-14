@@ -1,3 +1,4 @@
+import { assertNoPendingRefund } from './billing-refund-source';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { BillingCollectionAction, BillingCollectionOperation } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingOperation, Prisma } from '../../../generated/prisma/client';
@@ -133,6 +134,7 @@ export class BillingCollection {
       if (replay) { if (replay.id !== id || replay.requestHash !== previewHash || replay.initiatorUserId !== context.userId) throw review(); return replay; }
       const state = await this.billing.settings(tx);
       const proposed = current.proposedJson as unknown as Proposed;
+      if(account&&proposed.action!=='CANCEL_RENEWAL')await assertNoPendingRefund(tx,account);
       if (proposed.action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, context.companyId);
       if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription) || !account || account.version !== current.sourceVersion || account.activeAttemptId || account.activeCollectionOperationId ||
         (account.leaseUntil && account.leaseUntil > new Date()) || current.version !== expectedVersion || current.requestHash !== previewHash || current.expiresAt <= new Date() ||

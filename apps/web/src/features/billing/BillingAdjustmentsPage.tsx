@@ -37,6 +37,7 @@ export default function BillingAdjustmentsPage({companyId,invoiceId,admin=false}
   return <main className="mx-auto max-w-4xl space-y-5 break-words p-4 sm:p-8">
     <h1 className="text-2xl font-bold">การคืนเงินและเอกสารปรับยอด</h1>
     <nav className="flex flex-wrap gap-3"><Link className={button} href={back}>กลับไปประวัติการชำระเงิน</Link><a className={button} href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อทีมงาน</a></nav>
+    {admin&&data&&<Link className={button} href={`${base}/invoices/${encodeURIComponent(invoiceId)}/refund`}>ตรวจหรือสร้างคำขอคืนเงิน</Link>}
     <p className="break-all">อ้างอิงใบแจ้งหนี้ {invoiceId}</p>
     <p>สถานะคืนเงินเป็นผลจาก Stripe ธนาคารอาจใช้เวลาบันทึกยอด เอกสารปรับยอดและสิทธิ์แพ็กเกจต้องตรวจแยกจากการคืนเงิน</p>
     <div className="flex flex-wrap gap-3"><label>รายการที่ต้องการดู <select aria-label="รายการที่ต้องการดู" className="rounded-lg border p-2" value={kind} disabled={opening} onChange={e=>{setKind(e.target.value as BillingAdjustmentKind);setCursor(null);}}>

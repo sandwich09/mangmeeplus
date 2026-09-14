@@ -11,7 +11,7 @@ export function sameInvoiceSource(account: BillingAccount, row: BillingInvoice, 
     i.id,i.billingAccountId,i.providerInvoiceId,i.providerChargeId,i.subscriptionId,i.totalSatang,i.paidSatang]);
   if (source(account,row) !== source(currentAccount,current)) throw mismatch();
 }
-async function originalInvoice(stripe: StripeClient, account: BillingAccount, row: BillingInvoice) {
+export async function originalInvoice(stripe: StripeClient, account: BillingAccount, row: BillingInvoice) {
   if (!account.customerId || account.stripeAccountId !== stripe.accountId || account.livemode !== stripe.livemode || row.billingAccountId !== account.id) throw mismatch();
   await stripe.assertAccount();
   const invoice = await stripe.request('GET', `/invoices/${row.providerInvoiceId}`);
@@ -20,7 +20,7 @@ async function originalInvoice(stripe: StripeClient, account: BillingAccount, ro
     invoice.status !== 'paid' || invoice.total !== row.totalSatang || invoice.amount_paid !== row.paidSatang) throw mismatch();
   return invoice;
 }
-function adjustment(value: StripeObject, kind: BillingAdjustmentKind, account: BillingAccount, row: BillingInvoice): BillingAdjustmentItem {
+export function adjustment(value: StripeObject, kind: BillingAdjustmentKind, account: BillingAccount, row: BillingInvoice): BillingAdjustmentItem {
   if (!value || typeof value !== 'object' || typeof value.id !== 'string' || !idPattern.test(value.id) || value.currency !== 'thb' ||
     !Number.isSafeInteger(value.amount) || value.amount <= 0 || value.amount > row.totalSatang ||
     !Number.isSafeInteger(value.created) || value.created <= 0 || value.created > Math.floor(Date.now()/1000)+60) throw mismatch();

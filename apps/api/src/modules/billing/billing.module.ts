@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { BillingReadinessService } from './application/billing-readiness.service';
+import { BillingRefundsService } from './application/billing-refunds.service';
 import { RedisRateLimitService } from '../../common/security/redis-rate-limit.service';
 import { SystemPartnerManagementModule } from '../system-partner-management/system-partner-management.module';
 import { AuthModule } from '../auth/auth.module';
@@ -19,7 +20,7 @@ import { BillingAdminController, BillingCatalogController, BillingController, Bi
 @Module({
   imports: [SystemPartnerManagementModule, AuthModule, DataModelCoreModule, DashboardNotificationsModule],
   controllers: [BillingAdminController, BillingCatalogController, BillingController, BillingInternalController, StripeEventsController],
-  providers: [BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
+  providers: [BillingRefundsService, BillingReadinessService, BillingProviderScansService, BillingScopesService, BillingNotificationsService, BillingConfigurationService, BillingOperationsService, BillingAdminService, BillingService, BillingReconcilerService, StripeClient, RedisRateLimitService,
     { provide: STRIPE_FETCH, useFactory: () => globalThis.fetch.bind(globalThis) }],
 })
 export class BillingModule {}

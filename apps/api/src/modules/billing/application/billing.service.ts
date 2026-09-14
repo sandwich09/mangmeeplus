@@ -1,3 +1,4 @@
+import { assertNoPendingRefund, pendingRefund } from './billing-refund-source';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
@@ -204,6 +205,7 @@ export class BillingService {
       throw billingError('BILLING_LEGACY_REVIEW_REQUIRED', 'แพ็กเกจเดิมต้องให้ทีมงานตรวจสอบก่อนซื้อ');
     }
     const existing = await this.account(company.id);
+    if(existing)await assertNoPendingRefund(this.prisma.client,existing);
     if (existing?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
     if (existing?.activeAttemptId) throw billingError('BILLING_EXISTING_SUBSCRIPTION', 'มีรายการเดิมอยู่แล้ว กรุณาตรวจสถานะหรือจัดการสมาชิก');
     await this.stripe.assertAccount();
@@ -291,6 +293,7 @@ export class BillingService {
           quote.policyRevisionId !== state.revision?.id) throw billingError('BILLING_QUOTE_STALE', 'รายการหมดอายุหรือราคาเปลี่ยน กรุณาตรวจสอบอีกครั้ง');
       if (await tx.billingAttempt.findUnique({ where: { quoteId: quote.id } })) throw billingError('BILLING_QUOTE_STALE', 'กรุณาตรวจสอบราคาและยืนยันรายการใหม่');
       const snapshot = quote.snapshotJson as unknown as BillingSnapshot;
+      if(account)await assertNoPendingRefund(tx,account);
       if (account?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
       if (snapshot.settingsVersion !== state.settings.version) throw billingError('BILLING_QUOTE_STALE', 'การตั้งค่าการขายเปลี่ยน กรุณาตรวจสอบรายการใหม่');
       paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
@@ -430,15 +433,18 @@ export class BillingService {
     if (settings?.gates.plan_changes && (eligible || pending) && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
       !held && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active') allowedActions.push('plan_changes');
     const snapshot = invoice?.offerSnapshot as unknown as BillingQuote['offer'] | undefined;
+    const refundReviewPending = !!(account && await pendingRefund(this.prisma.client, account));
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     return { companyId: company.id, companyName: company.name, mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
-      purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED',
+      purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
       tierKey: term?.tierKey ?? null, interval: snapshot?.interval ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null, paidThrough: account?.paidThrough?.toISOString() ?? null,
       nextChargeAt: account?.nextChargeAt?.toISOString() ?? null, cancelAtPeriodEnd: account?.cancelAtPeriodEnd ?? false,
-      graceEndsAt: account?.graceEndsAt?.toISOString() ?? null, allowedActions, usage: await this.usage(company.id),
+      graceEndsAt: account?.graceEndsAt?.toISOString() ?? null,
+      allowedActions: allowedActions.filter(action => !refundReviewPending || !['new_sales', 'plan_changes', ...(account?.cancelAtPeriodEnd ? ['portal_cancel_subscription'] : [])].includes(action)),
+      usage: await this.usage(company.id),
       pendingPlanChange: pending,
       planCapacityRepair: !held && pending && invoice?.applyStatus === 'HELD' && invoice.errorCode === 'BILLING_CAP_SELECTION_REQUIRED' &&
         (invoice.contractSnapshot as unknown as BillingSnapshot).planChangeId === pending.id ? { operationId: pending.id, version: pending.version,

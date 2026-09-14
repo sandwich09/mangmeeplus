@@ -4,6 +4,12 @@ import { createHash } from 'node:crypto';
 import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 
 export function billingError(code: string, message: string): ConflictException { return new ConflictException({ code, message }); }
+// PostgreSQL JSONB may reorder object keys; compare semantic snapshots, not insertion order.
+export function configurationHash(value: unknown): string {
+  const canonical = (item: unknown): unknown => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : item;
+  return hashBilling(canonical(value));
+}
 export function hashBilling(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
 // Trusted stored gates only: native Portal plan changes have never been supported by pack accounting.
 export function effectiveBillingGates(value: unknown): Record<BillingAction, boolean> {
