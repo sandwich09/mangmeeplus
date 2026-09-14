@@ -166,11 +166,22 @@ export class BillingAdminController {
   settings(@Req() req: AuthedRequest) { return this.configuration.settings(req.context); }
   @Post('reauthenticate') @HttpCode(200) @RequirePermissions('system.billing.read')
   async reauthenticate(@Req() req: AuthedRequest, @Body() body: BillingReauthenticateDto) {
+    return this.reauthentication(req,body);
+  }
+  @Post('companies/:id/reauthenticate') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async reauthenticateCompany(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingReauthenticateDto) {
+    return this.reauthentication(req,body,textField(id,128));
+  }
+  @Get('companies/:id/reauthenticate') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  companyProof(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown) {
+    bodyFields(query,[]);return this.configuration.companyProof(req.context,textField(id,128));
+  }
+  private async reauthentication(req:AuthedRequest,body:BillingReauthenticateDto,companyId?:string) {
     const fields = bodyFields(body, ['password']);
     await this.admin.access(req.context, 'system.billing.read');
     const limit = await this.limits.consume('billing-reauthenticate', req.context.userId, 5, 300);
     if (!limit.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', retryAfterSeconds: limit.retryAfterSeconds }, 429);
-    return this.configuration.reauthenticate(req.context, textField(fields.password, 1024));
+    return this.configuration.reauthenticate(req.context, textField(fields.password, 1024),companyId);
   }
   @Get('configuration-checks') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   configurationChecks(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.readiness.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}

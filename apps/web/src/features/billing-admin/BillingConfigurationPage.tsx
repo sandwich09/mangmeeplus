@@ -9,7 +9,7 @@ import { apiErrorMessage } from '@/common/api/api-error-message';
 const button = billingControl;
 const field = 'mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
-  portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ' };
+  portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ', refunds:'รับคำขอคืนเงินที่ต้องอนุมัติ' };
 const stateNames: Record<string, string> = { DRAFT: 'ฉบับร่างที่บันทึกไว้', PREVIEW: 'ตรวจผลกระทบก่อนส่ง', AWAITING_APPROVAL: 'รอผู้อนุมัติอีกคน', SCHEDULED:'อนุมัติแล้ว รอถึงกำหนด',RUNNING:'กำลังตรวจและใช้ค่าตามกำหนด',BLOCKED:'ต้องตรวจคำขอตามกำหนดใหม่', SUCCEEDED: 'การตั้งค่านี้มีผลแล้ว', CANCELLED: 'ยกเลิกคำขอนี้แล้ว' };
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
 const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T>(`/system/billing${path}`, { cache: 'no-store', suppressErrorToast: true,
@@ -20,6 +20,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
   const [scheduled,setScheduled]=useState(false),[effectiveAt,setEffectiveAt]=useState<string|null>(null);
   const [operation, setOperation] = useState<BillingConfigurationOperation | null>(null), [history, setHistory] = useState<{ items: BillingConfigurationOperation[]; nextCursor: string | null } | null>(null);
   const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const refundLimitInput=useRef<HTMLInputElement|null>(null);
   const draftIntent=useRef<{key:string;body:unknown}|null>(null);
   const draft=operation?.state==='DRAFT'?operation:null;
   const draftChanged=Boolean(draft&&JSON.stringify([policy,gates,reason,scheduled?effectiveAt:null])!==JSON.stringify([draft.proposed.policy,draft.proposed.gates,draft.reason,draft.proposed.effectiveAt??null]));
@@ -35,7 +36,9 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
   }, [operationId, cursor, reload]);
   const canPolicy = settings?.capabilities.includes('system.billing.policy.manage'), canGates = settings?.capabilities.includes('system.billing.gate.manage');
   async function act(action: 'reauthenticate' | 'preview' | 'submit' | 'approve' | 'cancel' | 'close' | 'save' | 'copy' | 'apply') {
-    if (busy || !settings || !policy || !gates) return; setBusy(true); setError('');
+    if (busy || !settings || !policy || !gates) return;
+    if(['save','preview'].includes(action)&&refundLimitInput.current&&!refundLimitInput.current.reportValidity())return;
+    setBusy(true); setError('');
     try {
       if (action === 'reauthenticate') {
         const proof = await api<{ reauthenticatedUntil: string }>('/reauthenticate', { password });
@@ -66,7 +69,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
     } catch (cause) {
       const code = (cause as { code?: string }).code;
       const status=(cause as {status?:number}).status;if((action==='save'||action==='copy')&&status&&status>=400&&status<500)draftIntent.current=null;
-      setError(code === 'CONTROL_REAUTH_REQUIRED' ? 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง' :
+      setError(code === 'CONTROL_REFUND_CONFIG_REQUIRED' ? 'กรอกวงเงินคืนเงินก่อนเปิดรับคำขอ หรือปิดสวิตช์รับคำขอคืนเงินแล้วตรวจผลกระทบอีกครั้ง' : code === 'CONTROL_REAUTH_REQUIRED' ? 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง' :
         code === 'CONTROL_PREVIEW_STALE' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุ โหลดข้อมูลล่าสุดและตรวจผลกระทบใหม่' :
           code ? apiErrorMessage(cause) : 'ยังยืนยันผลไม่ได้ โหลดคำขอเดิมเพื่อตรวจสอบก่อนลองใหม่');
     } finally { if (action === 'reauthenticate') setPassword(''); setBusy(false); }
@@ -115,6 +118,17 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
               onChange={e=>setPolicy({...policy,supportSlaMinutes:{...policy.supportSlaMinutes!,[key]:Number(e.target.value)}})}/></label>)}
           </section>
           <p className="text-base">0 วันคือไม่ผ่อนผัน · เริ่มและจ่ายทันที · ยกเลิกสิ้นรอบ · คืนเงินและหนี้ค้างให้เจ้าหน้าที่ตรวจ</p>
+          <section className="space-y-2 rounded-xl border p-3" aria-label="วงเงินคืนเงิน">
+            <label className="block">วงเงินคืนเงินสูงสุดต่อคำขอ (บาท)<input ref={refundLimitInput} key={`${settings.version}:${draft?.id??''}:${draft?.version??''}`} className={field} inputMode="decimal"
+              defaultValue={policy.refundLimitSatang==null?'':(policy.refundLimitSatang/100).toFixed(2)} onChange={e=>{
+                const value=e.target.value.trim(),parts=value.split('.');
+                const amount=value===''?null:/^\d{1,8}(?:\.\d{1,2})?$/.test(value)?Number(parts[0])*100+Number((parts[1]??'').padEnd(2,'0')):NaN;
+                const valid=amount===null||(Number.isSafeInteger(amount)&&amount>=1&&amount<=2147483647);
+                e.target.setCustomValidity(valid?'':'กรอกจำนวนเงินมากกว่า 0 ไม่เกิน 21,474,836.47 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง');
+                if(valid)setPolicy({...policy,refundLimitSatang:amount});
+              }}/></label>
+            <p>เว้นว่างเพื่อปิดการคืนเงิน ทุกคำขอต้องมีผู้อนุมัติอีกคน การคืนเงินไม่เปลี่ยนแพ็กเกจอัตโนมัติ</p>
+          </section>
           <label className="block">เวอร์ชันข้อความยินยอม<input className={field} value={policy.consentRevision} maxLength={80} onChange={e => setPolicy({ ...policy, consentRevision: e.target.value })} /></label>
           <details className="rounded-lg border p-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">เชื่อมราคาและ Portal ของ Stripe</summary><div className="mt-3 space-y-3">
             <label className="block">Portal Configuration ID<input className={field} value={policy.portalConfigurationId ?? ''} onChange={e => setPolicy({ ...policy, portalConfigurationId: e.target.value || null })} /></label>
@@ -151,6 +165,10 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {operation.impact&&<p>สมาชิกเดิม {operation.impact.subscriptions} · รายการชำระที่กำลังดำเนินการ {operation.impact.inFlightAttempts} · ใบเสนอราคาที่ยังไม่ใช้ {operation.impact.unusedQuotes} · คำสั่งลดแพ็กเกจ {operation.impact.pendingPlanChanges} · คำสั่งต่ออายุที่ยังดำเนินการ {operation.impact.collectionCommands}</p>}
         {operation.impact&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.id}/affected`}>เปิดดูรายการที่เกี่ยวข้อง</Link>}
         <p>ภาษี {billingLabel('tax',operation.proposed.policy.taxTreatment)} · ผ่อนผัน {operation.proposed.policy.graceDays} วัน</p>
+        {operation.impact?.refundLimit&&<section aria-label="ผลต่อวงเงินคืนเงิน" className="space-y-2 rounded-xl border p-3">
+          <p>วงเงินต่อคำขอ เดิม: {operation.impact.refundLimit.before==null?'ปิดการคืนเงิน':money(operation.impact.refundLimit.before)} · หลังอนุมัติ: {operation.impact.refundLimit.after==null?'ปิดการคืนเงิน':money(operation.impact.refundLimit.after)}</p>
+          <p>ทุกคำขอต้องอนุมัติแยกกัน สิทธิ์แพ็กเกจและเอกสารเดิมไม่เปลี่ยน</p>
+        </section>}
         {operation.impact?.supportSla&&<section aria-label="ผลต่อกำหนดเวลาติดตามเคส" className="space-y-2 rounded-xl border p-3">
           <p>ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาเดิมไม่เปลี่ยน</p>
           {(['before','after'] as const).map(key=><p key={key}>{key==='before'?'เดิม':'หลังอนุมัติ'}: {operation.impact!.supportSla![key]?`ปกติ ${operation.impact!.supportSla![key]!.NORMAL} · สูง ${operation.impact!.supportSla![key]!.HIGH} · วิกฤต ${operation.impact!.supportSla![key]!.CRITICAL} นาที`:'ปิดเกณฑ์อัตโนมัติ'}</p>)}

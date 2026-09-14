@@ -8,7 +8,7 @@ import type { RequestContext } from '../../auth/domain/models/request-context.mo
 import { verifyPassword } from '../../auth/domain/logic/password-credential.logic';
 import { BillingAdminService } from './billing-admin.service';
 import { BillingService } from './billing.service';
-import { assertKeys, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { assertRefundControlPolicy, assertKeys, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 import { stripeId } from '../infrastructure/stripe.client';
 import { configurationImpact } from './billing-configuration-impact';
 import { randomUUID } from 'node:crypto';
@@ -59,12 +59,24 @@ export class BillingConfigurationService {
     }
     if (!(await this.proof(context, tx)).until) throw billingError('CONTROL_REAUTH_REQUIRED', 'กรุณายืนยันรหัสผ่านปัจจุบันก่อนดำเนินการ');
   }
-  async reauthenticate(context: RequestContext, password: string) {
-    await this.platform(context, 'system.billing.read');
+  private async proofAccess(context:RequestContext,companyId:string|undefined,tx:Prisma.TransactionClient=this.prisma.client) {
+    if(companyId===undefined)return this.platform(context,'system.billing.read',tx);
+    const {access}=await this.admin.scopedCompany(context,companyId,tx);
+    await this.admin.access(context,'system.billing.financial.read',tx);
+    if(!access.capabilities.some(key=>key==='system.billing.refund.manage'||key==='system.billing.approval.approve'))throw new ForbiddenException();
+    return access;
+  }
+  async companyProof(context:RequestContext,companyId:string) {
+    await this.proofAccess(context,companyId);
+    return {reauthenticatedUntil:(await this.proof(context)).until?.toISOString()??null};
+  }
+  async reauthenticate(context: RequestContext, password: string, companyId?:string) {
+    await this.proofAccess(context,companyId);
     if (typeof password !== 'string' || password.length < 1 || password.length > 1024) throw new BadRequestException('Invalid password');
     const proof = await this.proof(context);
     if (!proof.session || !proof.credential || !verifyPassword(password, proof.credential.passwordHash)) throw new ForbiddenException({ code: 'CONTROL_REAUTH_FAILED', message: 'ยืนยันรหัสผ่านไม่ได้ ตรวจสอบรหัสผ่านหรือใช้หน้ากู้บัญชี' });
     return this.prisma.client.$transaction(async tx => {
+      await this.proofAccess(context,companyId,tx);
       await tx.$queryRaw`SELECT id FROM "UserCredential" WHERE "userId" = ${context.userId} FOR SHARE`;
       await tx.$queryRaw`SELECT id FROM "AuthSession" WHERE id = ${context.sessionId ?? ''} FOR UPDATE`;
       const current = await this.proof(context, tx);
@@ -73,7 +85,7 @@ export class BillingConfigurationService {
       const changed = await tx.authSession.updateMany({ where: { id: current.session.id, status: 'ACTIVE', revokedAt: null, expiresAt: { gt: now } },
         data: { billingReauthenticatedAt: now, billingCredentialVersion: current.credential.updatedAt } });
       if (!changed.count) throw new ForbiddenException();
-      await tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.reauthenticated', targetType: 'AuthSession',
+      await tx.auditLog.create({ data: { companyId: companyId??context.companyId, actorUserId: context.userId, action: 'billing.reauthenticated', targetType: 'AuthSession',
         targetId: current.session.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'HIGH' } });
       return { reauthenticatedUntil: (await this.proof(context, tx)).until!.toISOString() };
     });
@@ -104,7 +116,7 @@ export class BillingConfigurationService {
     const where = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode };
     const { cursorValid: _cursor, items: _items, ...counts } = await configurationImpact(tx, where);
     const cohort = policy.salesCompanyIds !== undefined || before?.salesCompanyIds !== undefined;
-    return { ...counts, ...(policy.supportSlaMinutes!==undefined||before?.supportSlaMinutes!==undefined?{supportSla:{before:before?.supportSlaMinutes??null,after:policy.supportSlaMinutes??null}}:{}),
+    return { ...counts, ...(policy.refundLimitSatang!==undefined||before?.refundLimitSatang!==undefined?{refundLimit:{before:before?.refundLimitSatang??null,after:policy.refundLimitSatang??null}}:{}), ...(policy.supportSlaMinutes!==undefined||before?.supportSlaMinutes!==undefined?{supportSla:{before:before?.supportSlaMinutes??null,after:policy.supportSlaMinutes??null}}:{}),
       ...(cohort ? { salesCohort: { before: before?.salesCompanyIds ?? null, after: policy.salesCompanyIds ?? null,
       companies: await this.salesCompanies([...new Set([...(before?.salesCompanyIds ?? []), ...(policy.salesCompanyIds ?? [])])], tx) } } : {}),
       prices: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ offerKey: `${tier}:${interval}` as const,
@@ -189,6 +201,7 @@ export class BillingConfigurationService {
     if(draft&&(draft.state!=='DRAFT'||draft.initiatorUserId!==context.userId||draft.version!==input.draftVersion||draft.type!==input.type||
       configurationHash([draft.reason,(draft.proposedJson as Proposed).policy,effectiveBillingGates((draft.proposedJson as Proposed).gates),(draft.proposedJson as Proposed).effectiveAt??null])!==configurationHash([input.reason.trim(),policy,gates,effectiveAt??null])))throw stale();
     if(!draft&&input.draftVersion!==undefined)throw new BadRequestException('Missing source draft');
+    assertRefundControlPolicy(policy,gates.refunds);
     await this.validateCompanies(policy);
     await this.validateProvider(policy);
     const proposed: Proposed = { policy, gates, impact: await this.impact(policy, state.policy), sourcePolicyRevision: state.revision?.id ?? null,
@@ -373,6 +386,7 @@ export class BillingConfigurationService {
     await this.executeScheduled(row,context);return this.get(context,id);
   }
   private async publish(tx:Prisma.TransactionClient,state:Awaited<ReturnType<BillingService['settings']>>,current:BillingOperation,proposed:Proposed,context:RequestContext,worker=false){
+      assertRefundControlPolicy(proposed.policy,effectiveBillingGates(proposed.gates).refunds);
       const scheduledApproval=(current.resultJson as {scheduledApproval?:ScheduledApproval}|null)?.scheduledApproval;
       let revisionId = state.revision?.id ?? null;
       if (current.type === 'PUBLISH_POLICY') {

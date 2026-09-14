@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY } from '@watchdog-bms/contracts';
 import { appendPackageInterval, fullPackagePurchaseImpact, proratedReceiptIncrease } from './billing-package';
-import { assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
+import { assertRefundControlPolicy, effectiveBillingGates, assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
 
 test('provider prices require exact requested identity, product and recurring contract', () => {
@@ -125,4 +125,19 @@ test('invalid/overlapping history and unsafe counts fail closed; approved defaul
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, planChanges: 'NEXT_PERIOD' }));
   assert.throws(() => parseBillingPolicy({ ...BILLING_DRAFT_POLICY, taxRateId: 'txr_oldVatRate' }));
   assert.deepEqual(BILLING_DRAFT_POLICY.priceIds, {});
+});
+
+
+test('refund policy is closed for old settings and validates approved integer bounds',()=>{
+  assert.equal(effectiveBillingGates({new_sales:true}).refunds,false);
+  for(const refundLimitSatang of [undefined,null]){
+    const policy=parseBillingPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang});
+    assert.doesNotThrow(()=>assertRefundControlPolicy(policy,false));
+    assert.throws(()=>assertRefundControlPolicy(policy,true));
+  }
+  for(const value of [0,-1,1.1,2147483648,'24900',true,Infinity,NaN])
+    assert.throws(()=>parseBillingPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang:value}));
+  for(const refundLimitSatang of [1,24901,2147483647])
+    assert.doesNotThrow(()=>assertRefundControlPolicy(parseBillingPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang}),true));
+  assert.throws(()=>assertRefundControlPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang:24900,refundPolicy:null},true));
 });

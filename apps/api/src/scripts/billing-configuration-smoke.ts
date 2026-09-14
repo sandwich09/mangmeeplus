@@ -1,3 +1,4 @@
+import { checkBillingRefundControls } from './billing-refund-controls-smoke';
 import assert from 'node:assert/strict';
 import { checkBillingReadiness } from './billing-readiness-smoke';
 import { checkBillingSalesCohort } from './billing-sales-cohort-smoke';
@@ -46,14 +47,14 @@ export async function checkBillingConfiguration(input: {
   let secondBrowser: BrowserContext | undefined;
   const snapshot = await client.billingInvoice.findMany({ where: { billingAccountId: (await client.billingAccount.findFirstOrThrow({ where: { companyId, stripeAccountId } })).id }, orderBy: { id: 'asc' } });
   try {
-    if (process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       if (browser) {
         secondBrowser = await browser.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
         await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
           { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
         await secondBrowser.newPage();
       }
-      return await (process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+      return await (process.env.BILLING_REFUND_CONTROLS_ONLY === '1' ? checkBillingRefundControls : process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
     }
     const initial = await request(`${base}/settings`); assert.equal(initial.status, 200); assert.equal(initial.body.reauthenticatedUntil, null);
     const before = initial.body, revisionCount = await client.billingPolicyRevision.count({ where: { stripeAccountId } });

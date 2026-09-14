@@ -117,7 +117,7 @@ export class BillingAdminService {
       companies: await Promise.all(companies.slice(0,25).map(c => this.companyView(c,accounts.find(a=>a.companyId===c.id) ?? null))),
       nextCursor: companies.length > 25 ? companies[24]!.id : null };
   }
-  private async scopedCompany(context: RequestContext, companyId: string, tx:Prisma.TransactionClient=this.prisma.client) {
+  async scopedCompany(context: RequestContext, companyId: string, tx:Prisma.TransactionClient=this.prisma.client) {
     const access = await this.access(context, 'system.billing.read',tx);
     const company = await tx.company.findFirst({ where: { ...this.companyWhere(access), AND: { id: companyId } }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();

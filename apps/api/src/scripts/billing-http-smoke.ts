@@ -171,7 +171,7 @@ async function main() {
     const token = new JwtService().sign({ sub: userIds[0], sid }, { secret, algorithm: 'HS256', issuer: DEFAULT_JWT_ISSUER, audience: DEFAULT_JWT_AUDIENCE, expiresIn: 3600 });
     const policy = { ...BILLING_DRAFT_POLICY, priceIds: { 'PRO_999:year': 'price_ProYear' }, zeroPriceIds: { 'PRO_999:year': 'price_ZeroProYear' }, portalConfigurationId: 'bpc_Synthetic' };
     const revision = await client.billingPolicyRevision.create({ data: { stripeAccountId: accountId, livemode: false, version: 1, state: 'ACTIVE', policyJson: policy, createdByUserId: userIds[0]! } });
-    await client.billingSettings.create({ data: { id: `${accountId}:test`, stripeAccountId: accountId, livemode: false, policyRevisionId: revision.id, gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, true])) } });
+    await client.billingSettings.create({ data: { id: `${accountId}:test`, stripeAccountId: accountId, livemode: false, policyRevisionId: revision.id, gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, action!=='refunds'])) } });
     const base = `/v1/companies/${companyIds[0]}/billing`;
     const request = async (path: string, method = 'GET', body?: unknown, extra: Record<string, string> = {}) => {
       const response = await fetch(`${origin}${path}`, { method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...extra }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -277,7 +277,7 @@ async function main() {
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
       const toggleSales = async (enabled: boolean) => {
         await client.billingSettings.update({ where: { id: `${accountId}:test` }, data: {
-          gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, action === 'new_sales' ? enabled : true])), version: { increment: 1 },
+          gatesJson: Object.fromEntries(BILLING_ACTIONS.map(action => [action, action === 'new_sales' ? enabled : action!=='refunds'])), version: { increment: 1 },
         } });
         await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       };
@@ -509,7 +509,7 @@ async function main() {
       signToken: (sid, userId) => new JwtService().sign({ sub: userId ?? userIds[1], sid }, { secret, algorithm: 'HS256', issuer: DEFAULT_JWT_ISSUER, audience: DEFAULT_JWT_AUDIENCE, expiresIn: 3600 }),
       recordLegal: (userId, membershipId) => client.$transaction(tx => app.get(LegalAcceptanceService).recordFromEvidence(tx, { userId, companyId: companyIds[0]!, membershipId,
         requestId: run, evidence: { ...release, locale: 'th', legalAcceptedAt: new Date() } })).then(() => {}) }));
-    if (process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-Next-Chromium', passed: cases, browserE2E: Boolean(browser), simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false })); return;
     }
     if (process.env.BILLING_CONFIG_ONLY !== '1') cases.push(...await checkBillingRestart({ request, prisma, companyId: companyIds[1]!, sourceCompanyId: companyIds[0]!, extraUserId: userIds[1]!,

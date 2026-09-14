@@ -21,7 +21,7 @@ export type BillingScanSchedule = {mode:BillingMode|'DISABLED';revision:number;p
 export type BillingInterval = 'month' | 'year';
 export type BillingOfferKey = `${PaidTier}:${BillingInterval}`;
 export type BillingTaxTreatment = 'INCLUSIVE_VAT_7' | 'EXCLUSIVE_VAT_7' | 'NOT_VAT_REGISTERED';
-export const BILLING_ACTIONS = ['new_sales', 'plan_changes', 'portal_payment_method', 'portal_change_plan', 'portal_cancel_subscription', 'notification_delivery'] as const;
+export const BILLING_ACTIONS = ['new_sales', 'plan_changes', 'portal_payment_method', 'portal_change_plan', 'portal_cancel_subscription', 'notification_delivery', 'refunds'] as const;
 export type BillingAction = typeof BILLING_ACTIONS[number];
 export const BILLING_PERMISSIONS = ['system.billing.read', 'system.billing.financial.read', 'system.billing.document.read', 'system.billing.issue.manage',
   'system.billing.reconcile.run', 'system.billing.apply.retry', 'system.billing.policy.manage', 'system.billing.gate.manage',
@@ -55,6 +55,8 @@ export type BillingPolicy = {
   planChanges: 'UPGRADE_PRORATED_DOWNGRADE_PERIOD_END' | null;
   debtRecovery: 'MANUAL_REVIEW' | null;
   refundPolicy: 'MANUAL_REVIEW' | null;
+  /** Per manually approved refund command; absent/null keeps admission closed. */
+  refundLimitSatang?: number | null;
   priceIds: Partial<Record<BillingOfferKey, string>>;
   /** Internal prepaid scheduling prices; never public offers. */
   zeroPriceIds?: Partial<Record<BillingOfferKey, string>>;
@@ -207,6 +209,7 @@ export type BillingConfigurationInput = { type: 'PUBLISH_POLICY' | 'SET_ACTION_G
 export type BillingConfigurationDraftInput = Omit<BillingConfigurationInput,'draftVersion'>;
 export type BillingConfigurationImpact = { subscriptions: number; inFlightAttempts: number; unusedQuotes: number; pendingPlanChanges: number; collectionCommands: number;
   sourceHash?: string;
+  refundLimit?: {before:number|null;after:number|null};
   supportSla?: {before:NonNullable<BillingPolicy['supportSlaMinutes']>|null;after:NonNullable<BillingPolicy['supportSlaMinutes']>|null};
   salesCohort?: { before: string[] | null; after: string[] | null; companies: BillingSalesCompany[] };
   prices: { offerKey: BillingOfferKey; beforeTotalSatang: number; afterTotalSatang: number }[] };

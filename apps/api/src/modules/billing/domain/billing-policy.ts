@@ -21,7 +21,7 @@ export function paidVariant(tier: unknown, interval: unknown): { tier: PaidTier;
 }
 
 export function parseBillingPolicy(value: unknown): BillingPolicy {
-  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes']);
+  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes', 'refundLimitSatang']);
   const p = value as unknown as BillingPolicy;
   if (p.schemaVersion !== 1 || ![null, 'IMMEDIATE', 'AFTER_TRIAL'].includes(p.paidStart) ||
       ![null, 'INCLUSIVE_VAT_7', 'EXCLUSIVE_VAT_7', 'NOT_VAT_REGISTERED'].includes(p.taxTreatment) ||
@@ -31,6 +31,7 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
       typeof p.consentRevision !== 'string' || !/^[a-zA-Z0-9_.-]{1,80}$/.test(p.consentRevision) ||
       !(p.taxRateId === null || /^txr_[a-zA-Z0-9]+$/.test(p.taxRateId)) ||
       !(p.portalConfigurationId === null || /^bpc_[a-zA-Z0-9]+$/.test(p.portalConfigurationId))) throw new BadRequestException('Invalid billing policy');
+  if(p.refundLimitSatang!=null&&(!Number.isSafeInteger(p.refundLimitSatang)||p.refundLimitSatang<1||p.refundLimitSatang>2147483647))throw new BadRequestException('Invalid refund limit');
   const variants = BILLING_PAID_TIERS.flatMap((tier) => [`${tier}:month`, `${tier}:year`]);
   assertKeys(p.priceIds, variants);
   if (Object.values(p.priceIds).some((id) => typeof id !== 'string' || !/^price_[a-zA-Z0-9]+$/.test(id))) throw new BadRequestException('Invalid price mapping');
@@ -55,6 +56,11 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
   if(p.supportSlaMinutes!=null&&!validSupportSla(p.supportSlaMinutes))throw new BadRequestException('Invalid case follow-up minutes');
   return {...p,...p.salesCompanyIds?{salesCompanyIds:[...p.salesCompanyIds].sort()}:{},...p.supportSlaMinutes?{supportSlaMinutes:{
     NORMAL:p.supportSlaMinutes.NORMAL,HIGH:p.supportSlaMinutes.HIGH,CRITICAL:p.supportSlaMinutes.CRITICAL}}:{}};
+}
+
+export function assertRefundControlPolicy(policy:BillingPolicy|null,enabled:boolean):void {
+  if(enabled&&(!policy||policy.refundPolicy!=='MANUAL_REVIEW'||!Number.isSafeInteger(policy.refundLimitSatang)||policy.refundLimitSatang!<1||policy.refundLimitSatang!>2147483647))
+    throw billingError('CONTROL_REFUND_CONFIG_REQUIRED','กำหนดวงเงินคืนเงินและขออนุมัตินโยบายก่อนเปิดการคืนเงิน');
 }
 
 export function validSupportSla(value:unknown): value is NonNullable<BillingPolicy['supportSlaMinutes']> {
