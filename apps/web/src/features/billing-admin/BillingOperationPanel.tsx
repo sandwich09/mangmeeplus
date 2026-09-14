@@ -1,13 +1,14 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { billingControl, billingLabel, billingDeliveryLabel } from '../billing/billing-display';
 import type { BillingRepairOperation } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
+const button = billingControl;
 const labels: Record<string, string> = { PREVIEW: 'ตรวจสอบก่อนส่งคำสั่ง', QUEUED: 'รอระบบตรวจสอบ', RUNNING: 'กำลังตรวจสอบ', SUCCEEDED: 'ตรวจสอบสถานะล่าสุดแล้ว',
   UNKNOWN: 'ยังยืนยันผลไม่ได้', BLOCKED: 'ต้องตรวจสอบสิทธิ์หรือเงื่อนไข', FAILED: 'ดำเนินการไม่สำเร็จ', CANCELLED: 'ยกเลิกคำสั่งตรวจสอบแล้ว' };
-const label=(operation:BillingRepairOperation)=>operation.type==='IMPORT_INVOICE'&&operation.state==='SUCCEEDED'?'บันทึกใบแจ้งหนี้เดิมแล้ว':operation.type==='RETRY_NOTIFICATION'&&operation.state==='SUCCEEDED'?'นำรายการเดิมกลับเข้าคิวแล้ว':labels[operation.state]??operation.state;
+const label=(operation:BillingRepairOperation)=>operation.type==='IMPORT_INVOICE'&&operation.state==='SUCCEEDED'?'บันทึกใบแจ้งหนี้เดิมแล้ว':operation.type==='RETRY_NOTIFICATION'&&operation.state==='SUCCEEDED'?'นำรายการเดิมกลับเข้าคิวแล้ว':labels[operation.state]??'ต้องตรวจสอบสถานะ';
 const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T>(`/system/billing/operations${path}`, {
   cache: 'no-store', suppressErrorToast: true, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) } }),
@@ -66,19 +67,19 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       <button className={button} disabled={busy || !reason.trim()} onClick={() => void act('preview')}>ตรวจสอบผลกระทบ</button></div>}
     {operation && <article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="สถานะคำสั่ง">
       <h3 className="font-bold" role="status">{label(operation)}</h3>
-      <p className="break-all">{operation.scope.mode} · บริษัท {operation.scope.kind === 'COMPANY' ? operation.scope.companyId : 'ระดับระบบ'}</p>
-      <p>{operation.reason}</p><p className="break-all text-sm">เลขคำสั่ง {operation.id} · เวอร์ชัน {operation.version}</p>
-      {operation.findingImpact&&<p>ตรวจผลเดิม {operation.findingImpact.findingId} · สถานะตอนพบ {operation.findingImpact.beforeState} · สร้างเมื่อ {new Date(operation.findingImpact.invoiceCreatedAt).toLocaleString('th-TH')} · บันทึกหลักฐานอย่างเดียว แล้วตรวจการให้สิทธิ์แยกอีกขั้น</p>}
-      {operation.invoiceImpact&&<p>ใบเสร็จเดิม {operation.invoiceImpact.id} · ก่อนตรวจ {operation.invoiceImpact.beforeState} · {new Date(operation.invoiceImpact.periodStart).toLocaleString('th-TH')} ถึง {new Date(operation.invoiceImpact.periodEnd).toLocaleString('th-TH')}</p>}
-      {operation.observed?.invoiceApplyState&&<p>ผลของใบเสร็จเดิม: {operation.observed.invoiceApplyState} · สิทธิ์ปัจจุบันและเงื่อนไขอื่นตรวจได้ที่ข้อมูลบริษัท</p>}
+      <p>{billingLabel('mode',operation.scope.mode)} · {operation.scope.kind === 'COMPANY' ? 'คำสั่งของบริษัทที่เลือก' : 'คำสั่งระดับระบบ'}</p>
+      <p>{operation.reason}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงคำสั่ง</summary><p className="break-all">เลขคำสั่ง {operation.id} · รุ่นข้อมูล {operation.version}</p><p className="break-all">{operation.scope.kind==='COMPANY'?operation.scope.companyId:'ระดับระบบ'}</p></details>
+      {operation.findingImpact&&<p>ตรวจผลเดิม ใบแจ้งหนี้จากผลตรวจเดิม · สถานะตอนพบ {billingLabel('payment',operation.findingImpact.beforeState)} · สร้างเมื่อ {new Date(operation.findingImpact.invoiceCreatedAt).toLocaleString('th-TH')} · บันทึกหลักฐานอย่างเดียว แล้วตรวจการให้สิทธิ์แยกอีกขั้น</p>}
+      {operation.invoiceImpact&&<p>ใบเสร็จเดิม · ก่อนตรวจ {billingLabel('apply',operation.invoiceImpact.beforeState)} · {new Date(operation.invoiceImpact.periodStart).toLocaleString('th-TH')} ถึง {new Date(operation.invoiceImpact.periodEnd).toLocaleString('th-TH')}</p>}
+      {operation.observed?.invoiceApplyState&&<p>ผลของใบเสร็จเดิม: {billingLabel('apply',operation.observed.invoiceApplyState)} · สิทธิ์ปัจจุบันและเงื่อนไขอื่นตรวจได้ที่ข้อมูลบริษัท</p>}
       {operation.type==='RETRY_APPLY'&&!operation.invoiceImpact&&<p>คำสั่งเก่ายังไม่ได้ผูกใบเสร็จ ยกเลิกคำสั่งนี้แล้วเลือกใบเสร็จเดิมเพื่อตรวจใหม่</p>}
-      {operation.eventImpact&&<p>{operation.eventImpact.eventType} · {operation.eventImpact.beforeState} · ตรวจแล้ว {operation.eventImpact.attempts} ครั้ง · ตรวจหลักฐานใหม่จากรายการเดิม</p>}
-      {operation.deliveryImpact&&<div className="space-y-2"><p>{operation.deliveryImpact.channel} · {operation.deliveryImpact.beforeState} → {operation.deliveryImpact.afterState}</p>
-        <p className="break-all">ผู้รับเดิม {operation.deliveryImpact.recipientUserId} · รายการส่ง {operation.referenceId}</p><p>พยายามส่งมาแล้ว {operation.deliveryImpact.attemptCount} ครั้ง</p>
-        {operation.deliveryImpact.possibleDuplicate&&<p role="alert">ผลการส่งเดิมยังยืนยันไม่ได้ การส่งใหม่อาจทำให้ผู้รับได้รับซ้ำ</p>}{operation.deliveryImpact.channel==='LINE'&&<p>{operation.deliveryImpact.retryUntil?`ส่งซ้ำด้วย key เดิมได้ถึง ${new Date(operation.deliveryImpact.retryUntil).toLocaleString('th-TH')}`:'เริ่มนับเวลาส่งซ้ำเมื่อส่งคำขอครั้งแรก'}</p>}</div>}
+      {operation.eventImpact&&<p>เหตุการณ์ Stripe เดิม · {billingLabel('event',operation.eventImpact.beforeState)} · ตรวจแล้ว {operation.eventImpact.attempts} ครั้ง · ตรวจหลักฐานใหม่จากรายการเดิม</p>}
+      {operation.deliveryImpact&&<div className="space-y-2"><p>{billingLabel('channel',operation.deliveryImpact.channel)} · {billingDeliveryLabel(operation.deliveryImpact.beforeState,operation.deliveryImpact.channel)} → {billingDeliveryLabel(operation.deliveryImpact.afterState,operation.deliveryImpact.channel)}</p>
+        <p className="break-all">ผู้รับเดิม {operation.deliveryImpact.recipientName??'ตรวจชื่อได้จากรายการส่งต้นทาง'}</p><p>พยายามส่งมาแล้ว {operation.deliveryImpact.attemptCount} ครั้ง</p>
+        {operation.deliveryImpact.possibleDuplicate&&<p role="alert">ผลการส่งเดิมยังยืนยันไม่ได้ การส่งใหม่อาจทำให้ผู้รับได้รับซ้ำ</p>}{operation.deliveryImpact.channel==='LINE'&&<p>{operation.deliveryImpact.retryUntil?`นำรายการเดิมกลับเข้าคิวได้ถึง ${new Date(operation.deliveryImpact.retryUntil).toLocaleString('th-TH')}`:'เริ่มนับเวลาส่งซ้ำเมื่อส่งคำขอครั้งแรก'}</p>}</div>}
       {operation.observed && !operation.observed.eventState && <p>เคสที่ยังเปิด {operation.observed.issueCount} · {operation.observed.pendingAttemptId ? 'ยังมีรายการชำระเงินที่ต้องตามผล' : 'ไม่มีรายการซื้อค้าง'}</p>}
-      {operation.observed?.eventState&&<p>ผลการตรวจ event: {operation.observed.eventState} · ผลชำระเงินและสิทธิ์ดูได้จากข้อมูลบริษัทที่เชื่อมโยง</p>}
-      {operation.observed?.deliveryState&&<p>สถานะรายการส่งที่ตรวจพบ: {operation.observed.deliveryState}</p>}
+      {operation.observed?.eventState&&<p>ผลตรวจเหตุการณ์: {billingLabel('event',operation.observed.eventState)} · ผลชำระเงินและสิทธิ์ดูได้จากข้อมูลบริษัทที่เชื่อมโยง</p>}
+      {operation.observed?.deliveryState&&<p>สถานะรายการส่งที่ตรวจพบ: {billingDeliveryLabel(operation.observed.deliveryState,operation.deliveryImpact?.channel)}</p>}
       {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&<p>ผลคำสั่งนี้ไม่ใช่หลักฐานว่าลูกค้าได้รับข้อความ ให้ตรวจสถานะรายการส่งเดิม</p>}
       {pollEnded && <p>ยังรอผล สามารถกลับมาเปิดคำสั่งเดิมหรือโหลดข้อมูลล่าสุดได้</p>}
       {operation.errorCode && <p>เปิดรายการต้นทางและเคสเพื่อตรวจเงื่อนไขก่อนดำเนินการต่อ</p>}
@@ -88,7 +89,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
         {operation.type==='IMPORT_INVOICE'&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<><Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/invoice-findings/${operation.referenceId}`}>กลับผลตรวจใบแจ้งหนี้เดิม</Link>
           {operation.observed?.invoiceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices/${operation.observed.invoiceId}`}>ตรวจการให้สิทธิ์จากใบแจ้งหนี้ที่บันทึก</Link>}</>}
         {operation.type==='RETRY_APPLY'&&operation.scope.kind==='COMPANY'&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices${operation.referenceId?`/${operation.referenceId}`:''}`}>กลับไปใบเสร็จเดิมหรือเลือกรายการ</Link>}
-        {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไป event เดิม</Link>}
+        {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไปเหตุการณ์เดิม</Link>}
         {operation.scope.kind === 'COMPANY' && <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>
     </article>}
     {list && <div className="space-y-2">{list.items.map(item => <p key={item.id}><Link className="break-all underline" href={`/system/billing/operations/${item.id}`}>{label(item)} · {item.reason}</Link></p>)}</div>}

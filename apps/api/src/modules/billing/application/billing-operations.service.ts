@@ -151,7 +151,7 @@ export class BillingOperationsService {
       proposed.deliverySourceHash=source.sourceHash;
       if(input.type==='RECONCILE_NOTIFICATION'&&source.kind==='EMAIL')proposed.mailAttemptId=source.mail.evidenceAttempt!.id;
       const first=(source.row.metadataJson as {billing?:{firstStartedAt?:string}}).billing?.firstStartedAt;
-      proposed.deliveryImpact={channel:source.row.channel,recipientUserId:source.row.recipient.userId,beforeState:source.row.status,afterState:input.type==='RECONCILE_NOTIFICATION'?'OBSERVED':'QUEUED',attemptCount:source.row.attemptCount,
+      proposed.deliveryImpact={channel:source.row.channel,recipientUserId:source.row.recipient.userId,recipientName:source.recipientName,beforeState:source.row.status,afterState:input.type==='RECONCILE_NOTIFICATION'?'OBSERVED':'QUEUED',attemptCount:source.row.attemptCount,
         retryUntil:first?new Date(Date.parse(first)+23*3600000).toISOString():null,possibleDuplicate:source.kind==='EMAIL'&&source.possibleDuplicate};
     }else if(!['RETRY_APPLY','IMPORT_INVOICE'].includes(input.type)&&input.referenceId!==undefined)throw new BadRequestException();
     const row = await this.prisma.client.billingOperation.create({ data: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,

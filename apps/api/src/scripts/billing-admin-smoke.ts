@@ -47,7 +47,10 @@ export async function checkBillingAdmin(input: {
       await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('textbox', { name: 'บันทึกการดำเนินการ', exact: true }).fill(update.note);
       await page.getByRole('button', { name: 'รับเคสนี้', exact: true }).click();
-      await page.getByRole('region', { name: 'รายละเอียดเคส' }).getByText('รับงานแล้ว · เวอร์ชัน 1', { exact: true }).waitFor();
+      const caseRegion = page.getByRole('region', { name: 'รายละเอียดเคส' });
+      await caseRegion.getByText('รับงานแล้ว · เวอร์ชัน 1', { exact: true }).waitFor({ state: 'attached' });
+      await caseRegion.getByText('ข้อมูลอ้างอิงเคส', { exact: true }).click();
+      await caseRegion.getByText('รับงานแล้ว · เวอร์ชัน 1', { exact: true }).waitFor();
       await page.screenshot({ path: `${browser.evidenceDir}/admin-issue-mobile.png`, fullPage: true });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       page.off('request', record);

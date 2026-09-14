@@ -1,10 +1,11 @@
 'use client';
+import { billingControl, billingLabel } from '../billing/billing-display';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { BillingApplyInvoiceView } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import BillingOperationPanel from './BillingOperationPanel';
-const button='inline-flex min-h-11 items-center rounded-xl border px-4 py-2 font-semibold disabled:opacity-50';
+const button=billingControl;
 const time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มี';
 export default function BillingApplyInvoicesPage({companyId,invoiceId}:{companyId:string;invoiceId?:string}) {
   const base=`/system/billing/companies/${encodeURIComponent(companyId)}/apply-invoices`;
@@ -27,7 +28,7 @@ export default function BillingApplyInvoicesPage({companyId,invoiceId}:{companyI
     {invoice&&<>
       <section aria-label="สิทธิ์จากใบเสร็จเดิม" className="space-y-3 rounded-xl border p-4">
         <h2 className="font-bold">{invoice.applyState==='APPLIED'&&invoice.appliedAt?'ใบเสร็จนี้ให้สิทธิ์แล้ว':'ยังต้องตรวจการให้สิทธิ์'}</h2>
-        <p>{invoice.mode} · อ้างอิง {invoice.id}</p><p>สถานะ {invoice.applyState} · {invoice.paymentVerified?'มีหลักฐานจ่ายครบ':'ยังไม่มีหลักฐานจ่ายครบ'}</p>
+        <p>{billingLabel('mode',invoice.mode)}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงใบเสร็จ</summary><p className="break-all">อ้างอิง {invoice.id}</p></details><p>สถานะ {billingLabel('apply',invoice.applyState)} · {invoice.paymentVerified?'มีหลักฐานจ่ายครบ':'ยังไม่มีหลักฐานจ่ายครบ'}</p>
         <p>{time(invoice.periodStart)} ถึง {time(invoice.periodEnd)}</p><p>ให้สิทธิ์เมื่อ {time(invoice.appliedAt)} · ตรวจการเงินล่าสุด {time(invoice.observedAt)}</p>
         {!invoice.canRetry&&invoice.applyState!=='APPLIED'&&<p>ยังส่งคำสั่งจากใบเสร็จนี้ไม่ได้ ตรวจสิทธิ์ผู้ดูแล การเชื่อมต่อ และหลักฐานที่ข้อมูลบริษัทก่อน</p>}
         <p>ผลของใบเสร็จนี้แยกจากการคืนเงิน ข้อพิพาท และสถานะการใช้งานปัจจุบันของบริษัท</p>
@@ -37,7 +38,7 @@ export default function BillingApplyInvoicesPage({companyId,invoiceId}:{companyI
     {list&&<section aria-label="ใบเสร็จที่รอใช้สิทธิ์" className="space-y-3">
       {!list.items.length&&<p>ไม่พบใบเสร็จที่รอให้สิทธิ์ในรายการนี้ ตรวจสถานะปัจจุบันได้ที่ข้อมูลบริษัท</p>}
       {list.items.map(row=><article key={row.id} className="space-y-2 rounded-xl border p-4"><Link className="underline" href={`${base}/${row.id}`}>ตรวจใบเสร็จ {row.id}</Link>
-        <p>{row.applyState} · {time(row.periodStart)} ถึง {time(row.periodEnd)}</p></article>)}
+        <p>{billingLabel('apply',row.applyState)} · {time(row.periodStart)} ถึง {time(row.periodEnd)}</p></article>)}
       {list.nextCursor&&<button className={button} onClick={()=>setCursor(list.nextCursor)}>ใบเสร็จหน้าถัดไป</button>}
       {cursor&&<button className={button} onClick={()=>setCursor(null)}>ใบเสร็จหน้าแรก</button>}
     </section>}

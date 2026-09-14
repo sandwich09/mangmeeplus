@@ -187,12 +187,13 @@ export type BillingRepairOperation = BillingOperationView & { sourceVersion: num
   findingImpact?: {scanId:string;findingId:string;beforeState:string;invoiceCreatedAt:string};
   invoiceImpact?: { id:string;beforeState:string;periodStart:string;periodEnd:string };
   eventImpact?: { eventType: string; beforeState: string; attempts: number };
-  deliveryImpact?:{channel:string;recipientUserId:string;beforeState:string;afterState:'QUEUED'|'OBSERVED';attemptCount:number;retryUntil:string|null;possibleDuplicate?:boolean};
+  deliveryImpact?:{channel:string;recipientUserId:string;recipientName?:string|null;beforeState:string;afterState:'QUEUED'|'OBSERVED';attemptCount:number;retryUntil:string|null;possibleDuplicate?:boolean};
   allowedActions: ('submit' | 'retry' | 'cancel')[]; observed: { pendingAttemptId: string | null; issueCount: number; deliveryId?:string; deliveryState?:string; eventState?: string;invoiceId?:string;invoiceApplyState?:string } | null };
 export type BillingProviderEventView = { id: string; mode: BillingMode; eventType: string; state: string; attempts: number;
   receivedAt: string; processedAt: string | null; retryAt: string; leaseUntil: string | null; errorCode: string | null;
   sourceHash: string; canRetry: boolean; issueId: string | null };
 export type BillingDeliveryView = { id:string;companyId:string;mode:BillingMode;channel:'WEB'|'LINE'|'EMAIL';invoiceId:string;recipientUserId:string;
+  companyName?:string;recipientName?:string|null;invoiceNumber?:string|null;
   state:string;attemptCount:number;updatedAt:string;nextAttemptAt:string|null;acceptedAt:string|null;confirmedAt:string|null;
   errorCode:string|null;recoveryBlockedReason:string|null;accountVersion:number;retryOperationId:string|null;canRetry:boolean;canReconcile:boolean;possibleDuplicate:boolean;
   mailHistory?:Array<{id:string;generation:number;state:string;acceptedAt:string|null;deliveredAt:string|null;errorCode:string|null;possibleDuplicate:boolean}> };

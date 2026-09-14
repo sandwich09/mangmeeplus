@@ -131,6 +131,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     }
   }
   const status = data?.status;
+  const quotaReset = status?.usage.cadence === 'LEGACY_MONTH' && status.usage.resetsAt && status.termEndsAt &&
+    Date.parse(status.usage.resetsAt) < Date.parse(status.termEndsAt) ? status.usage.resetsAt : null;
+  const quotaExpiry = status?.usage.expiresAt ?? status?.termEndsAt;
   const confirmed = status?.accessState === 'ACTIVE' && (returning ? returnComplete : status.paymentState === 'PAID' && status.applyState === 'APPLIED');
   return <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
     <header><p className="text-sm text-gray-500">{status?.companyName ?? 'มั่งมี'}</p><h1 className="mt-1 text-2xl font-bold">แพ็กเกจและการชำระเงิน</h1></header>
@@ -144,7 +147,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       <section aria-label="สถานะแพ็กเกจ" className="space-y-3 rounded-2xl border bg-white p-5">
         <h2 className="text-lg font-bold">{confirmed ? 'ชำระแล้ว เปิดใช้งานแล้ว' : (returning ? returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState !== 'APPLIED' : status.paymentState === 'PAID' && status.applyState !== 'APPLIED') ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : status.paymentState === 'FAILED' ? 'เรียกเก็บเงินไม่สำเร็จ' : status.attemptId ? 'กำลังตรวจสอบรายการชำระเงิน' : status.accessState === 'EXPIRED' ? 'ครบกำหนดใช้งานแล้ว' : 'สิทธิ์ปัจจุบัน'}</h2>
         <p>แพ็กเกจ {status.tierKey && status.tierKey in PLAN_TIER_PRESETS ? PLAN_TIER_PRESETS[status.tierKey as PlanTierKey].labelTh : 'อยู่ระหว่างตรวจสอบ'} · ใช้งานได้ถึง {date(status.termEndsAt)}</p>
-        <p>ใบเสร็จคงเหลือ {status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}{status.usage.cadence === 'LEGACY_MONTH' ? ` · รอบใหม่ ${date(status.usage.resetsAt)}` : ` · ใช้ได้ถึง ${date(status.usage.expiresAt)}`}</p>
+        <p>ใบเสร็จคงเหลือ {status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}{quotaReset ? ` · รอบใหม่ ${date(quotaReset)}` : quotaExpiry ? ` · ใช้ได้ถึง ${date(quotaExpiry)}` : ''}</p>
         {status.nextChargeAt && <p>เรียกเก็บเงินครั้งถัดไป {date(status.nextChargeAt)}</p>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
         {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status">ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบสถานะและรายการเดิมด้านล่างได้</p>}

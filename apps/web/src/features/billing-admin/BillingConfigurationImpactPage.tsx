@@ -1,4 +1,5 @@
 'use client';
+import { billingControl, billingLabel } from '../billing/billing-display';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BILLING_CONFIGURATION_IMPACT_KINDS, type BillingConfigurationImpactKind, type BillingConfigurationImpactPage as ImpactPage } from '@watchdog-bms/contracts';
@@ -6,7 +7,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
 
 const labels: Record<BillingConfigurationImpactKind,string> = { SUBSCRIPTION:'สมาชิกเดิม',ATTEMPT:'รายการชำระที่กำลังดำเนินการ',QUOTE:'ใบเสนอราคาที่ยังไม่ใช้',PLAN_CHANGE:'คำสั่งลดแพ็กเกจ',COLLECTION:'คำสั่งต่ออายุที่ยังดำเนินการ' };
-const button='inline-block rounded-xl border px-4 py-3 text-sm font-semibold disabled:opacity-50';
+const button=billingControl;
 
 export default function BillingConfigurationImpactPage({operationId}:{operationId:string}) {
   const [selection,setSelection]=useState<{kind:BillingConfigurationImpactKind;cursor?:string;sourceHash?:string}>({kind:'SUBSCRIPTION'});
@@ -29,10 +30,10 @@ export default function BillingConfigurationImpactPage({operationId}:{operationI
     {loading&&<p role="status">กำลังโหลดรายการที่เกี่ยวข้อง…</p>}{error&&<p role="alert">{error}</p>}
     {data&&<>
       <p role={data.matchesPreview?'status':'alert'}>{data.matchesPreview?'รายการยังตรงกับฉบับที่ตรวจผลกระทบ':'รายการเปลี่ยนหรือคำขอเดิมไม่มีหลักฐานรายชื่อ กลับคำขอเดิมแล้วสร้างฉบับร่างเพื่อตรวจผลกระทบใหม่ก่อนอนุมัติ'}</p>
-      <p className="text-sm">ตรวจล่าสุด {new Date(data.observedAt).toLocaleString('th-TH')}</p>
+      <p className="text-base">ตรวจล่าสุด {new Date(data.observedAt).toLocaleString('th-TH')}</p>
       <section aria-label="รายการผลกระทบ" className="space-y-3">{data.items.map(item=><article key={item.reference} className="space-y-2 rounded-xl border bg-white p-4">
-        <h2 className="font-semibold">{item.companyName}</h2><p>{labels[item.kind]} · {item.state}</p>
-        <p className="break-all text-sm">เลขรายการ {item.recordId}</p>
+        <h2 className="font-semibold">{item.companyName}</h2><p>{labels[item.kind]} · {billingLabel(item.kind==='SUBSCRIPTION'?'subscription':item.kind==='ATTEMPT'?'attempt':item.kind==='QUOTE'?'quote':'operation',item.state)}</p>
+        <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงรายการ</summary><p className="break-all">เลขรายการ {item.recordId}</p></details>
         {item.boundary&&<p>{item.kind==='QUOTE'?'ใช้ใบเสนอราคาได้ถึง':'สิ้นช่วงที่จ่ายแล้ว'} {new Date(item.boundary).toLocaleString('th-TH')}</p>}
         {item.nextChargeAt&&<p>เรียกเก็บครั้งถัดไป {new Date(item.nextChargeAt).toLocaleString('th-TH')}</p>}
         <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(item.companyId)}`}>ดูบริษัท {item.companyName}</Link>

@@ -93,12 +93,12 @@ export async function checkBillingMailRecovery(input:Parameters<typeof checkBill
       await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();await page.waitForURL(/\/operations\//);await page.reload();await input.drainOperations();
       await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();await page.getByRole('status').filter({hasText:'นำรายการเดิมกลับเข้าคิวแล้ว'}).waitFor();
       const pending=await latest(item.id);notificationFixture.loseNextMail(pending.id);await input.drainNotifications();await db.emailSendAttempt.update({where:{id:pending.id},data:{nextRecoveryAt:new Date(0)}});
-      await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);await page.getByRole('heading',{name:'TEST · EMAIL · UNKNOWN',exact:true}).waitFor();
+      await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);await page.getByRole('heading',{name:'อีเมล · ยังยืนยันผลส่งไม่ได้',exact:true}).waitFor();
       await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).fill('ตามผลรายการเดิมจาก Postmark');await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
-      await page.getByText('EMAIL · UNKNOWN → OBSERVED',{exact:true}).waitFor();await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
+      await page.getByText('อีเมล · ยังยืนยันผลส่งไม่ได้ → ตรวจผลเดิมก่อนส่งใหม่',{exact:true}).waitFor();await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
       await input.drainOperations();await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();await page.waitForURL(/\/operations\//);await page.reload();
-      await page.getByText('สถานะรายการส่งที่ตรวจพบ: ACCEPTED',{exact:true}).waitFor();await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);
-      await page.getByRole('heading',{name:'TEST · EMAIL · ACCEPTED',exact:true}).waitFor();assert.equal(sent(pending.id),1);
+      await page.getByText('สถานะรายการส่งที่ตรวจพบ: ผู้ให้บริการรับคำขอแล้ว',{exact:true}).waitFor();await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);
+      await page.getByRole('heading',{name:'อีเมล · ผู้ให้บริการรับคำขอแล้ว',exact:true}).waitFor();assert.equal(sent(pending.id),1);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`${browser.evidenceDir}/admin-mail-recovery-mobile.png`,fullPage:true});
     }
     return ['admin-postmark-original-intent-ready-generation-replay-and-no-counter-reset','admin-postmark-revoked-operator-parks-ready-and-new-review-resumes-same-generation',

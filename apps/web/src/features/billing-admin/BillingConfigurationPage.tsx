@@ -1,11 +1,12 @@
 'use client';
+import { billingControl, billingLabel, billingOfferLabel } from '../billing/billing-display';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import BillingSalesCohortPicker from './BillingSalesCohortPicker';
 import { BILLING_ACTIONS, BILLING_PAID_TIERS, type BillingAction, type BillingConfiguration, type BillingConfigurationOperation, type BillingPolicy } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const button = 'inline-flex min-h-11 items-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold disabled:opacity-50';
+const button = billingControl;
 const field = 'mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
   portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ' };
@@ -79,7 +80,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
       <button className={button} disabled={busy || loading} onClick={() => setReload(v => v + 1)}>โหลดการตั้งค่าล่าสุด</button></nav>
     {loading && <p role="status">กำลังโหลด…</p>}{error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {settings && policy && gates && <>
-      <p>{settings.mode} · เวอร์ชัน {settings.version} · {settings.policyRevisionId ? 'มีนโยบายที่เผยแพร่แล้ว' : 'ยังรอตั้งค่าและอนุมัตินโยบาย'}</p>
+      <p>{billingLabel('mode',settings.mode)} · เวอร์ชัน {settings.version} · {settings.policyRevisionId ? 'มีนโยบายที่เผยแพร่แล้ว' : 'ยังรอตั้งค่าและอนุมัตินโยบาย'}</p>
       <section className="space-y-3 rounded-xl border bg-white p-4" aria-label="ยืนยันตัวตนเพื่อเปลี่ยนการตั้งค่า">
         <h2 className="font-bold">ยืนยันรหัสผ่าน</h2>
         <p>การส่งและอนุมัติคำขอต้องยืนยันรหัสผ่านปัจจุบัน ใช้ได้ 5 นาทีในอุปกรณ์นี้</p>
@@ -108,61 +109,61 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
           </div>}
           <label className="block">ระยะผ่อนผันเมื่อต่ออายุไม่ผ่าน (วัน)<input className={field} type="number" min={0} max={30} value={policy.graceDays ?? ''} onChange={e => setPolicy({ ...policy, graceDays: e.target.value === '' ? null : Number(e.target.value) })} /></label>
           <section aria-label="กำหนดเวลาติดตามเคสส่วนกลาง" className="space-y-3 rounded-xl border p-3">
-            <label className="flex items-center gap-2"><input type="checkbox" checked={policy.supportSlaMinutes!=null} onChange={e=>setPolicy({...policy,supportSlaMinutes:e.target.checked?{NORMAL:0,HIGH:0,CRITICAL:0}:null})}/>ใช้กำหนดเวลาติดตามเคสส่วนกลาง</label>
-            <p className="text-sm">ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาของเคสเดิมยังคงอยู่ เวลาที่ระบุเองในเคสมีผลก่อนเกณฑ์อัตโนมัติ</p>
+            <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={policy.supportSlaMinutes!=null} onChange={e=>setPolicy({...policy,supportSlaMinutes:e.target.checked?{NORMAL:0,HIGH:0,CRITICAL:0}:null})}/>ใช้กำหนดเวลาติดตามเคสส่วนกลาง</label>
+            <p className="text-base">ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาของเคสเดิมยังคงอยู่ เวลาที่ระบุเองในเคสมีผลก่อนเกณฑ์อัตโนมัติ</p>
             {policy.supportSlaMinutes&&([['NORMAL','ปกติ'],['HIGH','สูง'],['CRITICAL','วิกฤต']] as const).map(([key,label])=><label className="block" key={key}>ติดตามระดับ{label}ภายใน (นาที)<input className={field} type="number" min={1} max={525600} value={policy.supportSlaMinutes![key]||''}
               onChange={e=>setPolicy({...policy,supportSlaMinutes:{...policy.supportSlaMinutes!,[key]:Number(e.target.value)}})}/></label>)}
           </section>
-          <p className="text-sm">0 วันคือไม่ผ่อนผัน · เริ่มและจ่ายทันที · ยกเลิกสิ้นรอบ · คืนเงินและหนี้ค้างให้เจ้าหน้าที่ตรวจ</p>
+          <p className="text-base">0 วันคือไม่ผ่อนผัน · เริ่มและจ่ายทันที · ยกเลิกสิ้นรอบ · คืนเงินและหนี้ค้างให้เจ้าหน้าที่ตรวจ</p>
           <label className="block">เวอร์ชันข้อความยินยอม<input className={field} value={policy.consentRevision} maxLength={80} onChange={e => setPolicy({ ...policy, consentRevision: e.target.value })} /></label>
-          <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold">เชื่อมราคาและ Portal ของ Stripe</summary><div className="mt-3 space-y-3">
+          <details className="rounded-lg border p-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">เชื่อมราคาและ Portal ของ Stripe</summary><div className="mt-3 space-y-3">
             <label className="block">Portal Configuration ID<input className={field} value={policy.portalConfigurationId ?? ''} onChange={e => setPolicy({ ...policy, portalConfigurationId: e.target.value || null })} /></label>
             {BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => {
               const key = `${tier}:${interval}` as const;
-              return <div className="grid gap-3 rounded-lg bg-gray-50 p-3 sm:grid-cols-2" key={key}>{(['priceIds', 'zeroPriceIds'] as const).map(kind => <label key={kind}>{key} · {kind === 'priceIds' ? 'ราคาเก็บเงิน' : 'ราคาศูนย์สำหรับช่วงจ่ายล่วงหน้า'}
+              return <div className="grid gap-3 rounded-lg bg-gray-50 p-3 sm:grid-cols-2" key={key}>{(['priceIds', 'zeroPriceIds'] as const).map(kind => <label key={kind}>{billingOfferLabel(key)} · {kind === 'priceIds' ? 'ราคาเก็บเงิน' : 'ราคาศูนย์สำหรับช่วงจ่ายล่วงหน้า'}
                 <input className={field} value={policy[kind]?.[key] ?? ''} onChange={e => { const mapping = { ...policy[kind] }; if (e.target.value) mapping[key] = e.target.value; else delete mapping[key]; setPolicy({ ...policy, [kind]: mapping }); }} /></label>)}</div>;
             }))}
           </div></details>
         </fieldset>
         <fieldset disabled={busy || !canGates} className="space-y-2"><legend className="mb-2 font-semibold">ช่องทางดำเนินการ</legend>
-          {BILLING_ACTIONS.filter(action => action !== 'portal_change_plan').map(action => <label key={action} className="flex items-center gap-2"><input type="checkbox" checked={gates[action]} onChange={e => setGates({ ...gates, [action]: e.target.checked })} />{gateNames[action]}</label>)}
-          <p className="text-sm">ลูกค้าเปลี่ยนแพ็กเกจผ่านหน้ามั่งมี เพื่อคำนวณวันและโควตาสะสม ใช้ตัวเลือกเปลี่ยนแพ็กเกจด้านบน</p>
+          {BILLING_ACTIONS.filter(action => action !== 'portal_change_plan').map(action => <label key={action} className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={gates[action]} onChange={e => setGates({ ...gates, [action]: e.target.checked })} />{gateNames[action]}</label>)}
+          <p className="text-base">ลูกค้าเปลี่ยนแพ็กเกจผ่านหน้ามั่งมี เพื่อคำนวณวันและโควตาสะสม ใช้ตัวเลือกเปลี่ยนแพ็กเกจด้านบน</p>
         </fieldset>
         <fieldset disabled={busy} className="space-y-2"><legend className="font-semibold">วันที่เริ่มใช้ค่า</legend>
-          <label className="flex items-center gap-2"><input type="checkbox" checked={scheduled} onChange={e=>setScheduled(e.target.checked)}/>กำหนดวันเริ่มใช้ล่วงหน้า</label>
+          <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={scheduled} onChange={e=>setScheduled(e.target.checked)}/>กำหนดวันเริ่มใช้ล่วงหน้า</label>
           {scheduled?<><label className="block">วันและเวลาที่ให้มีผล<input type="datetime-local" className={field} value={localTime(effectiveAt)} onChange={e=>setEffectiveAt(Number.isFinite(Date.parse(e.target.value))?new Date(e.target.value).toISOString():null)}/></label>
-            <p className="text-sm">เวลาในอุปกรณ์นี้: {Intl.DateTimeFormat().resolvedOptions().timeZone} · เลือกล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี ต้องอนุมัติก่อนเวลาที่เลือก</p></>:<p>ใช้ค่าทันทีหลังผู้ดูแลอีกคนอนุมัติ</p>}
+            <p className="text-base">เวลาในอุปกรณ์นี้: {Intl.DateTimeFormat().resolvedOptions().timeZone} · เลือกล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี ต้องอนุมัติก่อนเวลาที่เลือก</p></>:<p>ใช้ค่าทันทีหลังผู้ดูแลอีกคนอนุมัติ</p>}
         </fieldset>
         <div><label className="block" htmlFor="billing-policy-reason">เหตุผลการเปลี่ยนค่า</label><textarea id="billing-policy-reason" className={field} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></div>
         <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!reason.trim()||(scheduled&&!effectiveAt)} onClick={()=>void act('save')}>บันทึกฉบับร่าง</button><button className={button} disabled={busy || !reason.trim() || draftChanged||(scheduled&&!effectiveAt)} onClick={() => void act('preview')}>ตรวจผลกระทบการตั้งค่า</button>
           {!draft&&canGates && <button className={button} disabled={busy || !reason.trim() || !BILLING_ACTIONS.some(a => settings.gates[a] && !gates[a])} onClick={() => void act('close')}>หยุดเฉพาะช่องทางที่เอาเครื่องหมายออกทันที</button>}</div>
         {draftChanged&&<p>มีการแก้ไขที่ยังไม่บันทึก กรุณาบันทึกฉบับร่างก่อนตรวจผลกระทบ</p>}
-        <p className="text-sm">หยุดรับรายการใหม่ไม่หยุดการต่ออายุเดิม หน้าชำระที่ออกไปแล้วต้องตรวจแยก การเปิดกลับต้องมีผู้อนุมัติอีกคน</p>
+        <p className="text-base">หยุดรับรายการใหม่ไม่หยุดการต่ออายุเดิม หน้าชำระที่ออกไปแล้วต้องตรวจแยก การเปิดกลับต้องมีผู้อนุมัติอีกคน</p>
       </section>}
       {operation && <section className="space-y-3 rounded-xl border bg-white p-4" aria-label="คำขอเปลี่ยนการตั้งค่า">
-        <h2 className="text-lg font-bold" role="status">{stateNames[operation.state] ?? operation.state}</h2>
+        <h2 className="text-lg font-bold" role="status">{stateNames[operation.state] ?? billingLabel('operation',operation.state)}</h2>
         {operation.proposed.effectiveAt&&<p>กำหนดใช้ค่า {new Date(operation.proposed.effectiveAt).toLocaleString('th-TH')} ({Intl.DateTimeFormat().resolvedOptions().timeZone})</p>}
         {operation.state==='SCHEDULED'&&<p>{operation.scheduleDue?'ถึงกำหนดแล้ว รอระบบตรวจและใช้ค่า กดดำเนินการด้านล่างได้หากยังรออยู่':'ค่าปัจจุบันยังใช้อยู่ ระบบจะตรวจข้อมูลและสิทธิ์อีกครั้งเมื่อถึงกำหนด'}</p>}
         {operation.state==='BLOCKED'&&<p role="alert">ยังใช้ค่าตามกำหนดไม่ได้ ตรวจสิทธิ์และการตั้งค่าล่าสุด แล้วสร้างฉบับร่างจากคำขอนี้เพื่อขออนุมัติใหม่</p>}
-        <p>{operation.reason}</p><p className="break-all text-sm">เลขคำขอ {operation.id} · เวอร์ชัน {operation.version}</p>
+        <p>{operation.reason}</p><p className="break-all text-base">เลขคำขอ {operation.id} · เวอร์ชัน {operation.version}</p>
         {['PREVIEW', 'AWAITING_APPROVAL'].includes(operation.state) && <p>ใช้คำขอได้ถึง {new Date(operation.expiresAt).toLocaleString('th-TH')}
           {new Date(operation.expiresAt).getTime() <= Date.now() && ' · หมดอายุแล้ว กลับหน้าตั้งค่าเพื่อตรวจผลกระทบและส่งคำขอใหม่'}</p>}
         {operation.impact&&<p>สมาชิกเดิม {operation.impact.subscriptions} · รายการชำระที่กำลังดำเนินการ {operation.impact.inFlightAttempts} · ใบเสนอราคาที่ยังไม่ใช้ {operation.impact.unusedQuotes} · คำสั่งลดแพ็กเกจ {operation.impact.pendingPlanChanges} · คำสั่งต่ออายุที่ยังดำเนินการ {operation.impact.collectionCommands}</p>}
         {operation.impact&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.id}/affected`}>เปิดดูรายการที่เกี่ยวข้อง</Link>}
-        <p>ภาษี {operation.proposed.policy.taxTreatment} · ผ่อนผัน {operation.proposed.policy.graceDays} วัน</p>
+        <p>ภาษี {billingLabel('tax',operation.proposed.policy.taxTreatment)} · ผ่อนผัน {operation.proposed.policy.graceDays} วัน</p>
         {operation.impact?.supportSla&&<section aria-label="ผลต่อกำหนดเวลาติดตามเคส" className="space-y-2 rounded-xl border p-3">
           <p>ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาเดิมไม่เปลี่ยน</p>
           {(['before','after'] as const).map(key=><p key={key}>{key==='before'?'เดิม':'หลังอนุมัติ'}: {operation.impact!.supportSla![key]?`ปกติ ${operation.impact!.supportSla![key]!.NORMAL} · สูง ${operation.impact!.supportSla![key]!.HIGH} · วิกฤต ${operation.impact!.supportSla![key]!.CRITICAL} นาที`:'ปิดเกณฑ์อัตโนมัติ'}</p>)}
         </section>}
         {operation.proposed.policy.issuer && <p>{operation.proposed.policy.issuer.legalName} · {operation.proposed.policy.issuer.address} · เลขภาษี {operation.proposed.policy.issuer.thaiTaxId}</p>}
-        {operation.impact&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">ยอดชำระก่อนและหลัง</caption><thead><tr><th>แพ็กเกจ</th><th>เดิม</th><th>ใหม่</th></tr></thead><tbody>
-          {operation.impact.prices.map(p => <tr key={p.offerKey}><td className="py-2">{p.offerKey}</td><td>{money(p.beforeTotalSatang)}</td><td>{money(p.afterTotalSatang)}</td></tr>)}
+        {operation.impact&&<div className="overflow-x-auto"><table className="w-full text-left text-base"><caption className="text-left font-semibold">ยอดชำระก่อนและหลัง</caption><thead><tr><th>แพ็กเกจ</th><th>เดิม</th><th>ใหม่</th></tr></thead><tbody>
+          {operation.impact.prices.map(p => <tr key={billingOfferLabel(p.offerKey)}><td className="py-2">{billingOfferLabel(p.offerKey)}</td><td>{money(p.beforeTotalSatang)}</td><td>{money(p.afterTotalSatang)}</td></tr>)}
         </tbody></table></div>}
         <section className="space-y-2" aria-label="กลุ่มบริษัทในคำขอ">
           <p>กลุ่มที่เสนอ: {operation.proposed.policy.salesCompanyIds == null ? 'ทุกบริษัท รวมบริษัทที่จะสมัครภายหลัง' : `${operation.proposed.policy.salesCompanyIds.length} บริษัทที่เลือก`}</p>
           {operation.impact?.salesCohort && <p>กลุ่มเดิม: {operation.impact.salesCohort.before == null ? 'ทุกบริษัท' : `${operation.impact.salesCohort.before.length} บริษัท`}</p>}
           <ul>{(operation.impact?.salesCohort?.companies ?? operation.salesCompanies ?? []).map(c => <li key={c.id} className="break-all">
-            <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(c.id)}`}>{c.name}</Link> · {c.id} · {c.status} · {operation.proposed.policy.salesCompanyIds == null || operation.proposed.policy.salesCompanyIds.includes(c.id) ? 'อยู่ในกลุ่มใหม่' : 'ออกจากกลุ่มใหม่'}
+            <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(c.id)}`}>{c.name}</Link> · {billingLabel('company',c.status)} · {operation.proposed.policy.salesCompanyIds == null || operation.proposed.policy.salesCompanyIds.includes(c.id) ? 'อยู่ในกลุ่มใหม่' : 'ออกจากกลุ่มใหม่'}
           </li>)}</ul>
         </section>
         <ul className="space-y-1">{BILLING_ACTIONS.map(a => <li key={a}>{gateNames[a]}: {operation.proposed.gates[a] ? 'เปิด' : 'ปิด'}</li>)}</ul>
@@ -178,7 +179,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {operation.state === 'AWAITING_APPROVAL' && <p>ผู้ดูแลอีกคนที่มีสิทธิ์อนุมัติเปิดลิงก์นี้ ตรวจผลกระทบ และยืนยันรหัสผ่านก่อนอนุมัติได้</p>}
       </section>}
       <section className="space-y-3" aria-label="ประวัติการตั้งค่า"><h2 className="font-bold">ประวัติและคำขอที่รอ</h2>
-        {history?.items.map(o => <p key={o.id}><Link className="underline" href={`/system/billing/configuration-changes/${o.id}`}>{stateNames[o.state] ?? o.state} · {o.reason}</Link></p>)}
+        {history?.items.map(o => <p key={o.id}><Link className="underline" href={`/system/billing/configuration-changes/${o.id}`}>{stateNames[o.state] ?? billingLabel('operation',o.state)} · {o.reason}</Link></p>)}
         {history?.nextCursor && <button className={button} onClick={() => setCursor(history.nextCursor)}>ประวัติหน้าถัดไป</button>}
         {cursor && <button className={button} onClick={() => setCursor(null)}>ประวัติหน้าแรก</button>}
       </section>

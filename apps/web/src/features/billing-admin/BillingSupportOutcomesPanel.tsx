@@ -1,11 +1,12 @@
 'use client';
+import { billingControl, billingLabel } from '../billing/billing-display';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { BillingOperatorIssue, BillingSupportOutcome, BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const button='rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
+const button=billingControl;
 const kinds:Record<BillingSupportOutcomeKind,string>={CUSTOMER_CONTACTED:'ติดต่อลูกค้าแล้ว',PROVIDER_CONTACTED:'ติดต่อผู้ให้บริการแล้ว',REPLY_RECORDED:'ได้รับคำตอบแล้ว',REVIEW_REQUESTED:'ขอให้ตรวจสอบเพิ่มเติม'};
 const statuses={PREVIEW:'รอยืนยันบันทึก',SUCCEEDED:'บันทึกผลติดต่อแล้ว',CANCELLED:'ยกเลิกฉบับตรวจสอบแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing/issues${path}`,{cache:'no-store',suppressErrorToast:true,
@@ -40,17 +41,17 @@ export default function BillingSupportOutcomesPanel({issue,canManage,onRecorded}
   }
   return <section className="space-y-4 rounded-xl border bg-white p-4" aria-label="ผลการติดต่อของเคส">
     <h2 className="text-lg font-bold">ผลการติดต่อและขอตรวจสอบ</h2>
-    <p className="text-sm">บันทึกคำตอบและงานติดตามของเคสนี้ ผลติดต่อยังไม่ใช่หลักฐานว่าจ่ายสำเร็จ และไม่เปลี่ยนสิทธิ์แพ็กเกจหรือปิดเคส</p>
+    <p className="text-base">บันทึกคำตอบและงานติดตามของเคสนี้ ผลติดต่อยังไม่ใช่หลักฐานว่าจ่ายสำเร็จ และไม่เปลี่ยนสิทธิ์แพ็กเกจหรือปิดเคส</p>
     {error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {canManage&&<div className="space-y-3"><label className="block" htmlFor="support-outcome-kind">ประเภทผลติดต่อ</label><select id="support-outcome-kind" className="mt-2 block w-full rounded-lg border p-3" value={kind} onChange={e=>setKind(e.target.value as BillingSupportOutcomeKind)}>
       {Object.entries(kinds).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select>
       <label className="block" htmlFor="support-outcome-note">รายละเอียดผลติดต่อ</label><textarea id="support-outcome-note" className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)}/>
-      <p className="text-xs text-gray-600">ระบุข้อเท็จจริงและงานที่ต้องติดตามต่อ หลีกเลี่ยงรหัสผ่าน ข้อมูลบัตร และข้อมูลลับ</p>
+      <p className="text-base text-gray-600">ระบุข้อเท็จจริงและงานที่ต้องติดตามต่อ หลีกเลี่ยงรหัสผ่าน ข้อมูลบัตร และข้อมูลลับ</p>
       <button className={button} disabled={busy||!note.trim()} onClick={()=>void act('preview')}>ตรวจบันทึกก่อนยืนยัน</button></div>}
     {record&&<article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="บันทึกผลติดต่อที่เลือก">
       <h3 role="status" className="font-bold">{statuses[record.state]}</h3>
-      <p>{record.mode} · รอบปัญหา {record.episode} · {kinds[record.kind]}</p><p className="whitespace-pre-wrap break-words">{record.note}</p>
-      <p className="break-all text-sm">ผู้บันทึก {record.actorUserId} · {new Date(record.recordedAt??record.createdAt).toLocaleString('th-TH')}</p>
+      <p>{billingLabel('mode',record.mode)} · รอบปัญหา {record.episode} · {kinds[record.kind]}</p><p className="whitespace-pre-wrap break-words">{record.note}</p>
+      <p>บันทึก {new Date(record.recordedAt??record.createdAt).toLocaleString('th-TH')}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงผู้บันทึก</summary><p className="break-all">ผู้บันทึก {record.actorUserId}</p></details>
       {record.state==='PREVIEW'&&!record.canSubmit&&<p>ข้อมูลหรือสิทธิ์เปลี่ยน หรือหมดเวลาตรวจสอบแล้ว โหลดเคสล่าสุดและนำข้อความนี้ไปตรวจใหม่</p>}
       <div className="flex flex-wrap gap-2">
         {canManage&&record.canSubmit&&<button className={button} disabled={busy} onClick={()=>void act('submit')}>ยืนยันบันทึกผลติดต่อ</button>}

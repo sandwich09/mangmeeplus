@@ -1,11 +1,12 @@
 'use client';
+import { billingControl, billingLabel } from '../billing/billing-display';
 import Link from 'next/link';
 import { useRouter,useSearchParams } from 'next/navigation';
 import { useEffect,useRef,useState } from 'react';
 import type { BillingScanSchedule,BillingScanScheduleOperation } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const base='/system/billing/provider-scans',button='min-h-11 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50';
+const base='/system/billing/provider-scans',button=billingControl;
 const field='block min-h-11 w-full min-w-0 rounded-lg border p-2',time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มี';
 const states={PREVIEW:'รอยืนยันการตั้งค่า',SUCCEEDED:'เผยแพร่การตั้งค่าแล้ว',CANCELLED:'ยกเลิกฉบับตั้งค่าแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`${base}/schedule${path}`,{cache:'no-store',suppressErrorToast:true,
@@ -45,13 +46,13 @@ export function BillingScanSchedulePanel() {
     <p>เปิดเพื่อตรวจเหตุการณ์ใหม่ต่อจากรอบที่เสร็จแล้ว ระบบจะหยุดรอให้งานเดิมกู้คืนหรือยกเลิกก่อนเริ่มรอบใหม่ ประวัติใบแจ้งหนี้ที่เก่ากว่าช่วงค้นหายังต้องตรวจแยก</p>
     {error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {!schedule?<p role="status">{error?'ยังโหลดการตั้งค่าไม่ได้':'กำลังโหลดการตั้งค่า…'}</p>:<>
-      <p>{schedule.mode} · การตั้งค่ารุ่น {schedule.revision} · {schedule.enabled?'เปิดตรวจตามรอบ':'ปิดตรวจตามรอบ'}</p>
-      <p className="break-all">ผู้รับผิดชอบ {schedule.ownerUserId??'ยังไม่ได้กำหนด'}</p>
+      <p>{billingLabel('mode',schedule.mode)} · การตั้งค่ารุ่น {schedule.revision} · {schedule.enabled?'เปิดตรวจตามรอบ':'ปิดตรวจตามรอบ'}</p>
+      <p>{schedule.ownerUserId?'มีผู้รับผิดชอบรอบตรวจแล้ว':'ยังไม่ได้กำหนดผู้รับผิดชอบ'}</p>{schedule.ownerUserId&&<details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงผู้รับผิดชอบ</summary><p className="break-all">{schedule.ownerUserId}</p></details>}
       <p>กำหนดรอบถัดไป {time(schedule.nextDueAt)} · ตรวจครบล่าสุดถึง {time(schedule.lastCompletedWindowEnd)}</p>
       {schedule.blockedReason&&<p role="status">{schedule.blockedReason==='CONTROL_SCAN_PENDING'?'มีงานเดิมยังไม่จบ เปิดงานเดิมเพื่อดูผล กู้คืน หรือยกเลิกก่อน':schedule.blockedReason==='CONTROL_PERMISSION_CHANGED'?'ผู้รับผิดชอบไม่มีสิทธิ์ปัจจุบัน ให้ผู้ดูแลที่มีสิทธิ์ตรวจและเผยแพร่การตั้งค่าใหม่':schedule.blockedReason==='BILLING_NOT_CONFIGURED'?'ยังไม่พร้อมเชื่อมต่อ Stripe':'ค่าที่บันทึกไม่สมบูรณ์ ให้ตรวจและเผยแพร่การตั้งค่าใหม่'}</p>}
       {schedule.lastRun&&<Link className="block underline" href={`${base}/${schedule.lastRun.id}`}>เปิดงานตรวจอัตโนมัติล่าสุด</Link>}
       {schedule.canManage&&<form className="space-y-3" onSubmit={event=>{event.preventDefault();void act('preview');}}>
-        <label className="flex items-center gap-2"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/>เปิดการตรวจตามรอบ</label>
+        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/>เปิดการตรวจตามรอบ</label>
         <label className="block" htmlFor="scan-interval">ตรวจทุกกี่ชั่วโมง (1–168)</label><input id="scan-interval" className={field} type="number" required min={1} max={168} value={interval} onChange={e=>setInterval(Number(e.target.value))}/>
         <label className="block" htmlFor="scan-lookback">ครั้งแรกตรวจย้อนหลังกี่ชั่วโมง (1–672)</label><input id="scan-lookback" className={field} type="number" required min={1} max={672} value={lookback} onChange={e=>setLookback(Number(e.target.value))}/>
         <label className="block" htmlFor="scan-schedule-reason">เหตุผลปรับรอบตรวจ</label><textarea id="scan-schedule-reason" className={field} required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/>
@@ -60,7 +61,7 @@ export function BillingScanSchedulePanel() {
       </form>}
     </>}
     {record&&<article aria-label="ฉบับตั้งค่าที่เลือก" className="space-y-3 rounded-lg bg-gray-50 p-3">
-      <h3 role="status" className="font-semibold">{states[record.state]}</h3><p>{record.mode} · อ้างอิงรุ่น {record.sourceRevision}</p>
+      <h3 role="status" className="font-semibold">{states[record.state]}</h3><p>{billingLabel('mode',record.mode)} · อ้างอิงรุ่น {record.sourceRevision}</p>
       <p>{record.enabled?'เปิด':'ปิด'} · ทุก {record.intervalHours} ชั่วโมง · ครั้งแรกย้อนหลัง {record.initialLookbackHours} ชั่วโมง</p>
       <p className="whitespace-pre-wrap">{record.reason}</p><p>ยืนยันได้ถึง {time(record.expiresAt)}</p>
       {record.state==='PREVIEW'&&!record.canPublish&&<p>ข้อมูลหรือสิทธิ์เปลี่ยน หรือหมดเวลายืนยันแล้ว นำค่ามาตรวจใหม่ได้</p>}

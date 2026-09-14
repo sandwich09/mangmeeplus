@@ -49,7 +49,7 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
       if(browser){
         const page=browser.page;await page.setViewportSize({width:390,height:844});
         await page.goto(`${browser.origin}/system/billing/companies/${companyId}/deliveries/${row.id}`,{waitUntil:'domcontentloaded'});
-        await page.getByRole('heading',{name:'TEST · LINE · SKIPPED',exact:true}).waitFor();await page.getByText(/ให้ผู้ดูแลระบบตรวจการเชื่อมต่อ LINE/).first().waitFor();
+        await page.getByRole('heading',{name:'LINE · ยังไม่ส่งตามเงื่อนไข',exact:true}).waitFor();await page.getByText(/ให้ผู้ดูแลระบบตรวจการเชื่อมต่อ LINE/).first().waitFor();
         assert.equal(await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).count(),0);
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
         if(fault==='expired')await page.screenshot({path:`${browser.evidenceDir}/admin-delivery-config-unavailable-mobile.png`,fullPage:true});
@@ -107,7 +107,7 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
       await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
       await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();await page.waitForURL(/\/system\/billing\/operations\//);await page.reload();
       await input.drainOperations();await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();await page.getByRole('status').filter({hasText:'นำรายการเดิมกลับเข้าคิวแล้ว'}).waitFor();
-      await input.drainNotifications();await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);await page.getByRole('heading',{name:'TEST · LINE · SENT',exact:true}).waitFor();
+      await input.drainNotifications();await page.getByRole('link',{name:'เปิดรายการส่งเดิม',exact:true}).click();await page.waitForURL(/\/deliveries\//);await page.getByRole('heading',{name:'LINE · ผู้ให้บริการรับคำขอแล้ว',exact:true}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`${browser.evidenceDir}/admin-delivery-recovery-mobile.png`,fullPage:true});
     }
     const mailCases=await checkBillingMailRecovery({...input,invoiceId:invoice.id});

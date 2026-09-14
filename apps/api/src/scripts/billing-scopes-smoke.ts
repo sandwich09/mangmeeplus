@@ -119,7 +119,7 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await page.screenshot({ path: `${browser.evidenceDir}/admin-scopes-mobile.png`, fullPage: true });
       await page.getByRole('link', { name: 'รายการขอบเขตทั้งหมด', exact: true }).click();
-      await page.getByRole('region', { name: 'ขอบเขตปัจจุบัน', exact: true }).getByText(/ACTIVE/).waitFor();
+      await page.getByRole('region', { name: 'ขอบเขตปัจจุบัน', exact: true }).getByText(/ดูแลบริษัทนี้ได้/).waitFor();
     } else { assert.equal((await approveRequest(`${base}/reauthenticate`, 'POST', { password })).status, 200);
       assert.equal((await approve(waiting)).body.state, 'SUCCEEDED'); }
     assert.equal((await approve(waiting)).body.state, 'SUCCEEDED');
@@ -138,7 +138,7 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
       await scope.getByRole('button', { name: /^ตรวจถอนขอบเขต/ }).click();
       await page.getByRole('button', { name: 'ยืนยันถอนขอบเขต', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'บันทึกขอบเขตแล้ว' }).waitFor();
-      await scope.getByText(/REVOKED/).waitFor();
+      await scope.getByText(/ถอนสิทธิ์ดูแลบริษัทแล้ว/).waitFor();
     } else assert.equal((await submit((await preview('REVOKE_SCOPE')).body)).body.state, 'SUCCEEDED');
     assert.equal((await delegated(`${base}/companies/${companyId}`)).status, 404);
     assert.equal((await submit(proposed)).body.state, 'SUCCEEDED');

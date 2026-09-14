@@ -33,7 +33,9 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
       await page.getByLabel('สถานะ',{exact:true}).selectOption('WAITING_PROVIDER');await page.getByLabel('ความเร่งด่วน',{exact:true}).selectOption('CRITICAL');
       const future=await page.evaluate(()=>{const d=new Date(Date.now()+86400000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);});
       await page.getByLabel('เวลาติดตามภายใน',{exact:true}).fill(future);await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill(desired.note);
-      await page.getByRole('button',{name:'บันทึกสถานะ',exact:true}).click();await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'บันทึกสถานะ',exact:true}).click();
+      await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor({state:'attached'});
+      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor();
     }else assert.equal((await update(desired)).status,200);
     const assigned=(await detail()).body;assert.equal(assigned.assigneeUserId,targetId);assert.equal(assigned.backupUserId,input.userIds[1]);assert.equal(assigned.priority,'CRITICAL');assert.ok(assigned.followUpAt);
     await client.$transaction(tx=>detectBillingIssue(tx,identity));const again=(await detail()).body;
@@ -49,7 +51,8 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
     if(browser) {
       const page=browser.page;await page.getByRole('button',{name:'โหลดข้อมูลล่าสุด',exact:true}).click();await page.getByText(/ผู้รับผิดชอบ .*ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว/).waitFor();
       await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill('คืนคิวเพราะขอบเขตเดิมหมดอายุ');await page.getByRole('button',{name:'คืนเคสเข้าคิว',exact:true}).click();
-      await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor();
+      await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor({state:'attached'});
+      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor();
     }else assert.equal((await update({expectedVersion:assigned.version,state:'OPEN',assigneeUserId:null,backupUserId:null,note:'คืนคิวเพราะขอบเขตเดิมหมดอายุ'})).status,200);
     await client.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:scope.expiresAt}});
     await client.billingIssue.update({where:{id:issue.id},data:{followUpAt:new Date(Date.now()-60000)}});

@@ -51,6 +51,7 @@ export class BillingNotificationsService {
   async delivery(context:RequestContext,companyId:string,id:string):Promise<BillingDeliveryView> {
     const access=await this.authorize(context,companyId);const source=await this.reviewDelivery(companyId,id),{row,account,blockedReason}=source;
     return {id:row.id,companyId,mode:account.livemode?'LIVE':'TEST',channel:row.channel,invoiceId:row.recipient.event.sourceId!,recipientUserId:row.recipient.userId,
+      companyName:source.companyName,recipientName:source.recipientName,invoiceNumber:source.invoiceNumber,
       state:row.status,attemptCount:row.attemptCount,updatedAt:row.updatedAt.toISOString(),nextAttemptAt:row.nextAttemptAt?.toISOString()??null,
       acceptedAt:row.sentAt?.toISOString()??null,confirmedAt:source.kind==='EMAIL'?source.mail.evidenceAttempt?.deliveredAt?.toISOString()??null:null,errorCode:row.errorCode,recoveryBlockedReason:blockedReason,accountVersion:account.version,
       retryOperationId:(row.metadataJson as {retryOperationId?:string}).retryOperationId??null,canRetry:!blockedReason&&access.capabilities.includes('system.billing.notification.retry'),
@@ -89,7 +90,7 @@ export class BillingNotificationsService {
     if(!blockedReason&&row.attemptCount>=MAX_DELIVERY_ATTEMPTS)blockedReason='LINE_RETRY_EXHAUSTED';
     const sourceHash=hashBilling([row.updatedAt,row.status,row.attemptCount,row.metadataJson,invoice.id,invoice.applyStatus,invoice.appliedAt,
       account.version,company.status,company.planTerm?.termDisabledAt,owner?.id,owner?.userId,preference,settings.settings.version,binding]);
-    return {kind:'NOTIFICATION' as const,row,account,sourceHash,blockedReason,binding};
+    return {kind:'NOTIFICATION' as const,row,account,sourceHash,blockedReason,binding,companyName:company.name,recipientName:owner?.user.displayName??null,invoiceNumber:invoice.providerNumber};
   }
   private async reviewEmailDelivery(companyId:string,id:string,tx:Prisma.TransactionClient) {
     const outbox=await tx.outboxEvent.findFirst({where:{id,companyId,aggregateType:'BillingInvoice',eventType:BILLING_NOTICE_EMAIL}});
@@ -126,6 +127,7 @@ export class BillingNotificationsService {
       errorCode:evidenceAttempt?.status==='ACCEPTED'?null:attempt?.errorCode??outbox.lastError,metadataJson:{retryOperationId:recovery?.operationId},recipient:{userId,event:{sourceId:invoice.id}}};
     const sourceHash=hashBilling([outbox.updatedAt,outbox.status,outbox.headersJson,attempts,company.status,company.planTerm?.termDisabledAt,owner?.id,owner?.user.emailVerifiedAt,settings.settings.version,binding,account.version]);
     return {kind:'EMAIL' as const,row,account,sourceHash,blockedReason,binding,canReconcile,possibleDuplicate:Boolean(attempt?.possibleDuplicate||attempt?.errorCode==='delivery_unconfirmed_possible_duplicate'),
+      companyName:company.name,recipientName:owner?.user.displayName??null,invoiceNumber:invoice.providerNumber,
       mail:{outbox,attempt,attempts,evidenceAttempt,intentKey,recipient}};
   }
   private emailBinding(companyName:string,companyId:string,recipient:string) {

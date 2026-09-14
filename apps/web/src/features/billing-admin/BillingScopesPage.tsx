@@ -1,10 +1,11 @@
 'use client';
+import { billingControl, billingLabel, billingPermissionLabel } from '../billing/billing-display';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { BillingOperatorScopeView, BillingScopeChange, BillingScopeDirectory } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const base='/system/billing', button='rounded-xl border px-4 py-3 text-sm font-semibold disabled:opacity-50';
+const base='/system/billing', button=billingControl;
 const get=<T,>(path:string)=>authedApiFetch<T>(base+path,{cache:'no-store',suppressErrorToast:true});
 const post=<T,>(path:string,body:unknown,key?:string)=>authedApiFetch<T>(base+path,{method:'POST',headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},body:JSON.stringify(body),suppressErrorToast:true});
 const date=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ไม่กำหนดวันหมดอายุ';
@@ -28,9 +29,9 @@ export default function BillingScopesPage({operationId}:{operationId?:string}) {
   const preview=(type:'GRANT_SCOPE'|'REVOKE_SCOPE',scope?:BillingOperatorScopeView)=>act(async()=>{setChange(await post<BillingScopeChange>('/scope-changes/preview',{
     type,userId:scope?.userId??userId,companyId:scope?.companyId??companyId,expiresAt:type==='REVOKE_SCOPE'||permanent?null:new Date(expiry).toISOString(),reason}));});
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
-    <h1 className="text-2xl font-bold">ขอบเขตบริษัทของเจ้าหน้าที่ Billing</h1>
+    <h1 className="text-2xl font-bold">บริษัทที่เจ้าหน้าที่การชำระเงินดูแล</h1>
     <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">กลับหน้าดูแลการชำระเงิน</Link><Link className={button} href="/system/billing/operator-scopes">รายการขอบเขตทั้งหมด</Link></nav>
-    <p>เลือกบริษัทที่เจ้าหน้าที่ดูแลได้ สิทธิ์ทำงานยังมาจาก role เดิม การเพิ่มขอบเขตต้องมีผู้อนุมัติอีกคน การถอนขอบเขตไม่ลบผู้ใช้หรือข้อมูลบริษัท</p>
+    <p>เลือกบริษัทที่เจ้าหน้าที่ดูแลได้ สิทธิ์ทำงานยังเป็นไปตามบทบาทเดิม การเพิ่มขอบเขตต้องมีผู้อนุมัติอีกคน การถอนขอบเขตไม่ลบผู้ใช้หรือข้อมูลบริษัท</p>
     {error&&<p role="alert" className="rounded-xl bg-red-50 p-3">{error}</p>}{notice&&<p role="status">{notice}</p>}
     <button className={button} disabled={busy} onClick={load}>โหลดข้อมูลล่าสุด</button>
     {!scopes&&!error&&<p role="status">กำลังโหลดขอบเขต…</p>}
@@ -48,25 +49,25 @@ export default function BillingScopesPage({operationId}:{operationId?:string}) {
             {!directories[kind]!.items.length&&<p>ไม่พบรายการ ลองเปลี่ยนคำค้น</p>}{directories[kind]!.nextCursor&&<button className={button} disabled={busy} onClick={()=>void directory(kind,directories[kind]!.nextCursor!)}>รายชื่อหน้าถัดไป</button>}</>}
         </div>)}
         <label className="block">หมดอายุขอบเขต<input type="datetime-local" className="mt-1 block rounded-lg border p-3" disabled={permanent} value={expiry} onChange={e=>setExpiry(e.target.value)}/></label>
-        <label className="flex gap-2"><input type="checkbox" checked={permanent} onChange={e=>setPermanent(e.target.checked)}/>ยืนยันให้ขอบเขตนี้โดยไม่กำหนดวันหมดอายุ</label>
+        <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={permanent} onChange={e=>setPermanent(e.target.checked)}/>ยืนยันให้ขอบเขตนี้โดยไม่กำหนดวันหมดอายุ</label>
         <button className={button} disabled={busy||!userId||!companyId||!reason.trim()||(!permanent&&!expiry)} onClick={()=>void preview('GRANT_SCOPE')}>ตรวจผลกระทบการให้ขอบเขต</button>
       </section>}
       <label className="block">เหตุผลการเปลี่ยนขอบเขต<textarea className="mt-2 block w-full rounded-lg border p-3" maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label>
       {change&&<section className="space-y-3 rounded-xl border-2 border-green-700 bg-white p-5" aria-label="คำขอขอบเขต">
-        <h2 role="status" className="font-bold">{states[change.state]??change.state}</h2><p>{change.mode} · {change.userName} · {change.companyName}</p>
-        <p>{change.type==='GRANT_SCOPE'?'ให้/ปรับขอบเขต':'ถอนขอบเขตทันทีเมื่อยืนยัน'} · เดิม {change.current?.state??'ยังไม่มีขอบเขต'} · {change.type==='GRANT_SCOPE'?date(change.scopeExpiresAt):'ไม่มีสิทธิ์ผ่านขอบเขตนี้หลังถอน'}</p>
-        <p>สิทธิ์ Billing ของ role ปัจจุบัน: {change.capabilities.join(', ')||'ไม่มี'}</p><p>เหตุผล: {change.reason}</p><p>เลขอ้างอิง {change.id} · เวอร์ชัน {change.version} · ตรวจได้ถึง {date(change.expiresAt)}</p>
+        <h2 role="status" className="font-bold">{states[change.state]??billingLabel('operation',change.state)}</h2><p>{billingLabel('mode',change.mode)} · {change.userName} · {change.companyName}</p>
+        <p>{change.type==='GRANT_SCOPE'?'ให้/ปรับขอบเขต':'ถอนขอบเขตทันทีเมื่อยืนยัน'} · เดิม {change.current?billingLabel('scope',change.current.state):'ยังไม่มีขอบเขต'} · {change.type==='GRANT_SCOPE'?date(change.scopeExpiresAt):'ไม่มีสิทธิ์ผ่านขอบเขตนี้หลังถอน'}</p>
+        <p>สิทธิ์ตามบทบาทปัจจุบัน: {change.capabilities.map(billingPermissionLabel).join(' · ')||'ไม่มี'}</p><p>เหตุผล: {change.reason}</p><p>ตรวจได้ถึง {date(change.expiresAt)}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงคำขอ</summary><p>เลขอ้างอิง {change.id} · เวอร์ชัน {change.version}</p><p>{change.capabilities.join(", ")}</p></details>
         <div className="flex flex-wrap gap-3">{change.allowedActions.map(action=><button key={action} className={button} disabled={busy} onClick={()=>void act(async()=>{
           const result=await post<BillingScopeChange>(`/scope-changes/${change.id}/${action}`,{expectedVersion:change.version,previewHash:change.previewHash},action==='submit'?`billing-scope-${change.id}`:undefined);setChange(result);load();
         })}>{action==='submit'?(change.type==='GRANT_SCOPE'?'ส่งคำขอให้ผู้อนุมัติ':'ยืนยันถอนขอบเขต'):action==='approve'?'อนุมัติขอบเขตนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
         <Link className="inline-block underline" href={`/system/billing/scope-changes/${change.id}`}>เปิดคำขอขอบเขตนี้</Link>
       </section>}
       <section className="space-y-3" aria-label="ขอบเขตปัจจุบัน"><h2 className="text-lg font-bold">ขอบเขตปัจจุบัน</h2>
-        {scopes.items.map(scope=><article key={scope.id} className="space-y-2 rounded-xl border bg-white p-4"><p>{scope.mode} · {scope.userName} · {scope.companyName}</p><p>{scope.state} · {date(scope.expiresAt)} · เวอร์ชัน {scope.version}</p>
+        {scopes.items.map(scope=><article key={scope.id} className="space-y-2 rounded-xl border bg-white p-4"><p>{billingLabel('mode',scope.mode)} · {scope.userName} · {scope.companyName}</p><p>{billingLabel('scope',scope.state)} · {date(scope.expiresAt)} · เวอร์ชัน {scope.version}</p>
           {scope.state!=='REVOKED'&&<button className={button} disabled={busy||!reason.trim()} onClick={()=>void preview('REVOKE_SCOPE',scope)}>ตรวจถอนขอบเขต {scope.companyName}</button>}</article>)}
         {!scopes.items.length&&<p>ยังไม่มีขอบเขตในหน้านี้</p>}{scopes.nextCursor&&<button className={button} onClick={()=>setCursor(scopes.nextCursor!)}>ขอบเขตหน้าถัดไป</button>}{cursor&&<button className={button} onClick={()=>setCursor('')}>ขอบเขตหน้าแรก</button>}
       </section>
-      <section className="space-y-3" aria-label="ประวัติคำขอขอบเขต"><h2 className="text-lg font-bold">คำขอและรายการรออนุมัติ</h2>{changes?.items.map(op=><p key={op.id}><Link className="underline" href={`/system/billing/scope-changes/${op.id}`}>{op.companyName} · {op.userName} · {states[op.state]??op.state}</Link></p>)}
+      <section className="space-y-3" aria-label="ประวัติคำขอขอบเขต"><h2 className="text-lg font-bold">คำขอและรายการรออนุมัติ</h2>{changes?.items.map(op=><p key={op.id}><Link className="underline" href={`/system/billing/scope-changes/${op.id}`}>{op.companyName} · {op.userName} · {states[op.state]??billingLabel('operation',op.state)}</Link></p>)}
         {changes?.nextCursor&&<button className={button} onClick={()=>setChangesCursor(changes.nextCursor!)}>คำขอหน้าถัดไป</button>}{changesCursor&&<button className={button} onClick={()=>setChangesCursor('')}>คำขอหน้าแรก</button>}
       </section>
     </>}

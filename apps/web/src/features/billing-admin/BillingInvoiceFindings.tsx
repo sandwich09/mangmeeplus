@@ -1,4 +1,5 @@
 'use client';
+import { billingControl } from '../billing/billing-display';
 import Link from 'next/link';
 import {useEffect,useState} from 'react';
 import type {BillingInvoiceFinding} from '@watchdog-bms/contracts';
@@ -6,7 +7,7 @@ import {authedApiFetch} from '@/common/api/authed-fetch';
 import {apiErrorMessage} from '@/common/api/api-error-message';
 const classification={MATCHED:'ข้อมูลสรุปตรงกันตอนตรวจ',LOCAL_MISSING:'ยังไม่พบใบแจ้งหนี้นี้ในระบบตอนตรวจ',DIFFERENT:'ข้อมูลสรุปต่างจากระบบตอนตรวจ'};
 const status:Record<string,string>={draft:'ฉบับร่าง',open:'เปิดเรียกเก็บ',paid:'Stripe แสดงว่าจ่ายแล้ว',uncollectible:'หนี้ที่ตัดเก็บไม่ได้',void:'ยกเลิกใบแจ้งหนี้'};
-const button='min-h-11 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50',time=(value:string)=>new Date(value).toLocaleString('th-TH');
+const button=billingControl,time=(value:string)=>new Date(value).toLocaleString('th-TH');
 export function BillingInvoiceFindings({companyId,scanId,version}:{companyId:string;scanId:string;version:number}) {
   const [list,setList]=useState<{items:BillingInvoiceFinding[];nextCursor:string|null}|null>(null),[cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0),[error,setError]=useState('');
   useEffect(()=>{setCursor(null);setList(null);},[companyId,scanId]);
@@ -21,7 +22,7 @@ export function BillingInvoiceFindings({companyId,scanId,version}:{companyId:str
     {list?.items.length===0&&<p>ยังไม่มีผลตรวจในงานนี้ งานที่ยังไม่จบอาจมีรายการเพิ่มภายหลัง</p>}
     {list?.items.map(row=><article key={row.id} className="space-y-2 rounded-xl border p-4">
       <h3 className="font-semibold">{classification[row.classification]}</h3><p>{status[row.providerStatus]??'ต้องตรวจสถานะเพิ่มเติม'}</p>
-      <p>สร้างใบแจ้งหนี้ {time(row.invoiceCreatedAt)} · ตรวจพบ {time(row.observedAt)}</p><p className="break-all text-xs">อ้างอิงผลตรวจ {row.id}</p>
+      <p>สร้างใบแจ้งหนี้ {time(row.invoiceCreatedAt)} · ตรวจพบ {time(row.observedAt)}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงผลตรวจ</summary><p className="break-all">อ้างอิงผลตรวจ {row.id}</p></details>
       {row.localInvoiceId?<><p>ปัจจุบันมีใบแจ้งหนี้ในระบบ · {row.localApplyState==='APPLIED'?'บันทึกการให้สิทธิ์แล้ว':'ยังต้องตรวจการให้สิทธิ์'}</p>
         <Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(companyId)}/apply-invoices/${encodeURIComponent(row.localInvoiceId)}`}>ตรวจใบแจ้งหนี้เดิมและผลให้สิทธิ์</Link></>:<p>ยังไม่มีใบแจ้งหนี้ที่ผูกกับรายการนี้ ให้ผู้ดูแลตรวจเคสก่อนดำเนินการ ไม่ให้ลูกค้าซื้อซ้ำเพื่อแก้ปัญหานี้</p>}
       <Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(companyId)}/invoice-findings/${row.id}`}>ตรวจหลักฐานใบแจ้งหนี้รายการนี้</Link>

@@ -84,6 +84,8 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
       await page.getByText(/ใช้เวลาที่ผู้ดูแลกำหนดทับอยู่/).waitFor();
       await page.getByLabel('เวลาติดตามภายใน', { exact: true }).fill(''); await page.getByLabel('บันทึกการดำเนินการ', { exact: true }).fill('กลับมาใช้เกณฑ์ส่วนกลางเดิม');
       await page.getByRole('button', { name: 'บันทึกสถานะ', exact: true }).click();
+      await page.getByText(`รอรับงาน · เวอร์ชัน ${override.body.version + 1}`, { exact: true }).waitFor({state:'attached'});
+      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();
       await page.getByText(`รอรับงาน · เวอร์ชัน ${override.body.version + 1}`, { exact: true }).waitFor();
       await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('region', { name: 'รายละเอียดเคส', exact: true }).waitFor();
       assert.equal(await page.getByLabel('เวลาติดตามภายใน', { exact: true }).inputValue(), '');

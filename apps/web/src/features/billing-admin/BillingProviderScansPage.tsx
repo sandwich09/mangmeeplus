@@ -1,4 +1,5 @@
 'use client';
+import { billingControl, billingLabel } from '../billing/billing-display';
 import Link from 'next/link';
 import {BillingInvoiceFindings} from './BillingInvoiceFindings';
 import { BillingScanSchedulePanel } from './BillingScanSchedulePanel';
@@ -7,10 +8,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { BillingProviderScanView } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 
-const eventBase='/system/billing/provider-scans',button='min-h-11 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50';
+const eventBase='/system/billing/provider-scans',button=billingControl;
 const time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มี';
 const localTime=(ms:number)=>{const date=new Date(ms);return new Date(ms-date.getTimezoneOffset()*60000).toISOString().slice(0,16);};
-const state=(value:string)=>({QUEUED:'รอตรวจต่อ',RUNNING:'กำลังตรวจ',SUCCEEDED:'ตรวจครบช่วงที่เลือก',UNKNOWN:'ต้องตรวจสอบก่อนทำต่อ',BLOCKED:'ติดเงื่อนไข',CANCELLED:'ยกเลิกแล้ว'}[value]??value);
+const state=(value:string)=>({QUEUED:'รอตรวจต่อ',RUNNING:'กำลังตรวจ',SUCCEEDED:'ตรวจครบช่วงที่เลือก',UNKNOWN:'ต้องตรวจสอบก่อนทำต่อ',BLOCKED:'ติดเงื่อนไข',CANCELLED:'ยกเลิกแล้ว'}[value]??'ต้องตรวจสอบสถานะ');
 export default function BillingProviderScansPage({scanId,companyId}:{scanId?:string;companyId?:string}) {
   const base=companyId?`/system/billing/companies/${encodeURIComponent(companyId)}/invoice-scans`:eventBase;
   const router=useRouter(),intent=useRef<{body:string;key:string}|null>(null);
@@ -68,7 +69,7 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
     </form>}
     {companyId&&!scanId&&list&&!list.canCreate&&<p>เริ่มงานใหม่ไม่ได้ในขณะนี้ ตรวจสิทธิ์ผู้ดูแลและบัญชี Stripe ของบริษัท หรือเปิดงานเดิมเพื่อดูผล</p>}
     {scan&&<section aria-label={companyId?'ผลการตรวจใบแจ้งหนี้':'ผลการค้นหาเหตุการณ์'} className="space-y-3 rounded-xl border p-4">
-      <h2 className="text-lg font-bold">{state(scan.state)}</h2><p>{scan.mode} · {scan.reason}</p><p>อ้างอิง {scan.id}</p>
+      <h2 className="text-lg font-bold">{state(scan.state)}</h2><p>{billingLabel('mode',scan.mode)} · {scan.reason}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงงานตรวจ</summary><p className="break-all">อ้างอิง {scan.id}</p></details>
       <p>{time(scan.windowStart)} ถึง {time(scan.windowEnd)}</p><p>บันทึกความคืบหน้าล่าสุด {time(scan.checkpointAt)}</p>
       <p>ตรวจแล้ว {scan.pages} หน้า · พบ {scan.seen} {companyId?'ใบแจ้งหนี้':'เหตุการณ์'}</p>{scan.invoiceFindings?<p>ข้อมูลตรงกัน {scan.invoiceFindings.matched} · ยังไม่พบในระบบ {scan.invoiceFindings.missing} · ข้อมูลต่างกัน {scan.invoiceFindings.different}</p>:<p>รับเพิ่ม {scan.imported} · มีอยู่แล้ว {scan.known} · ไม่เกี่ยวข้อง {scan.ignored} · รุ่นข้อมูลที่ต้องตรวจเพิ่ม {scan.incompatible}</p>}
       {scan.retryAt&&<p>ตรวจต่อได้ตั้งแต่ {time(scan.retryAt)}</p>}
@@ -81,7 +82,7 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
     {companyId&&scan&&<BillingInvoiceFindings companyId={companyId} scanId={scan.id} version={scan.version}/>}
     {list&&<section aria-label="รายการงานค้นหา" className="space-y-3">{!list.items.length&&<p>ยังไม่มีงานตรวจในรายการนี้</p>}
       {list.items.map(row=><article key={row.id} className="space-y-2 rounded-xl border p-4"><Link className="underline" href={`${base}/${row.id}`}>{state(row.state)} · {row.reason}</Link>
-        <p>{row.mode} · {time(row.windowStart)} ถึง {time(row.windowEnd)}</p><p>ตรวจแล้ว {row.pages} หน้า · {companyId?'เก็บผลตรวจ':'รับเพิ่ม'} {row.imported} {companyId?'รายการ':'เหตุการณ์'}</p></article>)}
+        <p>{billingLabel('mode',row.mode)} · {time(row.windowStart)} ถึง {time(row.windowEnd)}</p><p>ตรวจแล้ว {row.pages} หน้า · {companyId?'เก็บผลตรวจ':'รับเพิ่ม'} {row.imported} {companyId?'รายการ':'เหตุการณ์'}</p></article>)}
       {list.nextCursor&&<button className={button} onClick={()=>setCursor(list.nextCursor)}>งานหน้าถัดไป</button>}
       {cursor&&<button className={button} onClick={()=>setCursor(null)}>งานหน้าแรก</button>}
     </section>}

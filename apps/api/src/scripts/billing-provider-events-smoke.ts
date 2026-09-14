@@ -114,10 +114,10 @@ export async function checkBillingProviderEvents(input: {
       const page=browser.page;
       await page.setViewportSize({width:390,height:844});
       await page.goto(`${browser.origin}/system/billing/provider-events`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('button',{name:'event หน้าถัดไป',exact:true}).click();await page.getByRole('button',{name:'event หน้าแรก',exact:true}).click();
+      await page.getByRole('button',{name:'เหตุการณ์หน้าถัดไป',exact:true}).click();await page.getByRole('button',{name:'เหตุการณ์หน้าแรก',exact:true}).click();
       await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจ event เดิมของเคสนี้',exact:true}).click();
-      await page.getByRole('region',{name:'รายละเอียด event',exact:true}).getByText(/PROCESSED/).waitFor();
+      await page.getByRole('link',{name:'ตรวจเหตุการณ์ Stripe เดิมของเคสนี้',exact:true}).click();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).getByText(/ตรวจเหตุการณ์แล้ว/).waitFor();
       await page.goto(`${browser.origin}/system/billing/provider-events/${cancelled.id}`,{waitUntil:'domcontentloaded'});
       await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).fill('ตรวจรายการเดิมจากหน้าจอ');
       const beforePreview=await db.billingOperation.count({where:{referenceId:cancelled.id}});
@@ -136,14 +136,14 @@ export async function checkBillingProviderEvents(input: {
       await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();
       await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
       await operations.drain();await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
-      await page.getByText('ผลการตรวจ event: PROCESSED',{exact:false}).waitFor({timeout:3000});
+      await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor({timeout:3000});
       await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();
       await page.waitForURL('**/system/billing/operations/*');
-      await page.getByText('ผลการตรวจ event: PROCESSED',{exact:false}).waitFor();
-      await page.reload({waitUntil:'domcontentloaded'});await page.getByText('ผลการตรวจ event: PROCESSED',{exact:false}).waitFor();
-      await page.getByRole('link',{name:'กลับไป event เดิม',exact:true}).click();
-      await page.getByRole('region',{name:'รายละเอียด event',exact:true}).getByText(/PROCESSED/).waitFor();
-      await page.getByRole('region',{name:'รายละเอียด event',exact:true}).screenshot({path:`${browser.evidenceDir}/admin-provider-event-mobile.png`});
+      await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor();
+      await page.reload({waitUntil:'domcontentloaded'});await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor();
+      await page.getByRole('link',{name:'กลับไปเหตุการณ์เดิม',exact:true}).click();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).getByText(/ตรวจเหตุการณ์แล้ว/).waitFor();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).screenshot({path:`${browser.evidenceDir}/admin-provider-event-mobile.png`});
     }
     return ['provider-event-platform-scope-mode-redaction-pagination','provider-event-preview-stale-lease-dedupe-and-cancel',
       'provider-event-reauthorization-unavailable-unmapped-same-command-recovery','provider-event-shared-worker-lease-loss-and-processed-replay',

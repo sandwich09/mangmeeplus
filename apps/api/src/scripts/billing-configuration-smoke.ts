@@ -71,8 +71,8 @@ export async function checkBillingConfiguration(input: {
         await page.getByLabel('Stripe Tax Rate ID', { exact: true }).fill(proposed.taxRateId);
       }
       await page.getByText('เชื่อมราคาและ Portal ของ Stripe', { exact: true }).click();
-      await page.getByLabel('PRO_999:year · ราคาเก็บเงิน', { exact: true }).fill(proposed.priceIds['PRO_999:year']);
-      await page.getByLabel('PRO_999:year · ราคาศูนย์สำหรับช่วงจ่ายล่วงหน้า', { exact: true }).fill(proposed.zeroPriceIds['PRO_999:year']);
+      await page.getByLabel('มืออาชีพ (PRO) · รายปี · ราคาเก็บเงิน', { exact: true }).fill(proposed.priceIds['PRO_999:year']);
+      await page.getByLabel('มืออาชีพ (PRO) · รายปี · ราคาศูนย์สำหรับช่วงจ่ายล่วงหน้า', { exact: true }).fill(proposed.zeroPriceIds['PRO_999:year']);
       await page.getByLabel('เหตุผลการเปลี่ยนค่า', { exact: true }).fill('ทดสอบเปลี่ยน VAT และย้อนกลับผ่านหน้าเว็บ');
       await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();

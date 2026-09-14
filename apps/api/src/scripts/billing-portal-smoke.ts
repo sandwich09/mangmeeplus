@@ -99,6 +99,15 @@ export async function checkBillingPortal(input: Parameters<typeof checkBillingRe
       const page = browser.page, billingUrl = `${browser.origin}/companies/${companyId}/billing`;
       await page.setViewportSize({ width: 390, height: 844 }); await page.goto(billingUrl, { waitUntil: 'domcontentloaded' });
       const button = page.getByRole('button', { name: 'จัดการบัตรชำระเงิน', exact: true }); await button.waitFor();
+      const resetAt = Date.parse((await request(base)).body.usage.resetsAt), region = page.getByRole('region', { name: 'สถานะแพ็กเกจ', exact: true });
+      assert.ok(Number.isFinite(resetAt));
+      await db.companyPlanTerm.update({ where: { companyId }, data: { termEndsAt: new Date(resetAt - 1) } });
+      await page.reload({ waitUntil: 'domcontentloaded' }); await button.waitFor();
+      assert.ok(!(await region.innerText()).includes('รอบใหม่'), 'no future quota promise after the service expires');
+      await db.companyPlanTerm.update({ where: { companyId }, data: { termEndsAt: new Date(resetAt + 86400000) } });
+      await page.reload({ waitUntil: 'domcontentloaded' }); await button.waitFor();
+      assert.ok((await region.innerText()).includes('รอบใหม่'), 'show the next monthly quota only within current service rights');
+      await restoreTerm(); await page.reload({ waitUntil: 'domcontentloaded' }); await button.waitFor();
       unavailable = true; await button.click(); await page.getByRole('alert').filter({ hasText: 'ยังยืนยันผลรายการไม่ได้' }).waitFor();
       assert.equal(page.url(), billingUrl); unavailable = false;
       await page.route('https://billing.stripe.com/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: `<meta charset="utf-8"><main><h1>Stripe จำลอง</h1><a href="${browser.origin}${returnPath}">กลับมั่งมี</a></main>` }));
