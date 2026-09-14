@@ -1,0 +1,835 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-14T00:43:19.011867+00:00",
+  "status": "PASSED_ISOLATED_CLOUD_CORE_REHEARSAL_NOT_PRODUCTION_ACCEPTANCE",
+  "mainSource": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+  "productionConfigSource": "fc2838c4cb691033f41595c0d43587f10377d33c",
+  "scriptSha256": "da7d009203e51530bd5275f95ed2a94e2de4c178f8b645037fbe7875d75bc9f7",
+  "scope": "Actual isolated local TLS rehearsal plus shared fresh main/build/config/ECR/database/native Kamal rollout/readback on dedicated AWS Dev; not full Production acceptance.",
+  "productionMutated": false,
+  "cloudDeploymentExecuted": true,
+  "fullProductionDeployElapsedSeconds": null,
+  "productionInspection": {
+    "currentEngine": "PostgreSQL 18.3",
+    "rdsMultiAZ": true,
+    "rdsEncrypted": true,
+    "rdsPrivate": true,
+    "servicesCaptured": 3,
+    "secretReferences": 12,
+    "oldDevAndBothUatHostsStopped": true,
+    "productionKamalTargetEnrolled": false,
+    "continuity": {
+      "productionConfigStillMatchesValidatedBaseline": true,
+      "secretVersionsStillMatch": true,
+      "sharedControllerUnchangedFromPriorTests": true,
+      "baselineReadAt": "2026-09-13T15:20:31.221712+00:00"
+    },
+    "redis": {
+      "replicationGroup": "watchdog-bms-prod-redis",
+      "engine": "redis",
+      "engineVersion": "7.1.0",
+      "memberCount": 2,
+      "status": "available",
+      "multiAZ": "enabled",
+      "automaticFailover": "enabled",
+      "transitEncryption": true,
+      "atRestEncryption": true,
+      "authentication": true,
+      "nodeType": "cache.t4g.micro"
+    },
+    "rootUseAuthorizedForIsolatedRehearsal": true,
+    "simulationHostStarted": true
+  },
+  "databaseProof": {
+    "engine": "18.3",
+    "baselineSourceCatalogMigrations": 182,
+    "candidateCatalogMigrations": 188,
+    "pendingMigrationsInSourceBasedFixture": 6,
+    "liveProductionMigrationLedgerRead": true,
+    "baselineIsCustomerSnapshot": false,
+    "normalUpgradePassed": true,
+    "hotfixBeforeUpgrade": "EXPECTED_REJECTION",
+    "hotfixAfterUpgrade": "PASSED",
+    "productionOpenRouteAuthorityNotProven": true,
+    "liveMigrationCatalogEvidence": {
+      "observedAt": "2026-09-13T16:05:09.040227+00:00",
+      "source": "AWS CloudShell -> AWS-StartInteractiveCommand -> existing bastion -> watchdog_support_ro IAM authentication",
+      "sessionId": "root-l5tdyxu2594req3e72dhhl6lze",
+      "sqlReadOnly": true,
+      "tlsVerifyFull": true,
+      "serverVersion": "18.3",
+      "appliedMigrations": 182,
+      "unfinishedMigrations": 0,
+      "liveCatalogMd5": "40a5a8ba0eca164cb736de7a17368c9a",
+      "sourceCatalogs": [
+        {
+          "source": "fc2838c4cb691033f41595c0d43587f10377d33c",
+          "migrationCount": 182,
+          "catalogMd5": "40a5a8ba0eca164cb736de7a17368c9a"
+        },
+        {
+          "source": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+          "migrationCount": 188,
+          "catalogMd5": "01316c8aba6362d388b08bc9cd4241da"
+        }
+      ],
+      "baselineMatchesLive": true,
+      "pendingCandidateMigrations": [
+        "20260820180000_document_delivery_link",
+        "20260910110000_substitute_receipt_editable_draft_facts",
+        "20260910120000_substitute_receipt_revision_lineage",
+        "20260910180000_reimbursement_source_snapshot",
+        "20260910181000_reimbursement_attachment_snapshot",
+        "20260911120000_expense_draft_number_identity"
+      ],
+      "note": "Fingerprint compares ordered migration names and stored SQL SHA-256 checksums. No customer rows read; not a data snapshot. Session tool printed EOF after the successful SQL row; CLI exited 0.",
+      "supportSessionStatus": "Terminated",
+      "supportSessionActive": false
+    },
+    "firstReleaseModeRequired": "normal; six pending migrations prevent hotfix mode"
+  },
+  "runtimeProof": {
+    "images": "Exact previously built main artifacts; no rebuild included in this component run",
+    "services": {
+      "api-web": {
+        "running": true,
+        "imageId": "sha256:3366d38540a2e8f17070f3df8c7e3cb8b523c7bdb384fb2a0456a34c930e5250",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "9e919ad50767ce92f296e42111e03b11576c9402785cb913b996d9d450287a63",
+        "configValidationPassed": true
+      },
+      "ai-gateway": {
+        "running": true,
+        "imageId": "sha256:de327a84931c3654b6409c62659493eed68e3989eecf764b24e04ac0efde1894",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "fa5d1859787ff476b1939d6c1cf354cb6158bb1948160b045da5d43bdeffde2f",
+        "configValidationPassed": true
+      },
+      "workers": {
+        "running": true,
+        "imageId": "sha256:4a153abf1f3646a9944d968bcff0c97993b318d8071ecc2fc5c34284a363650a",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "d34d596841f77f16a38a062bea48fb65d4c9ef3b2eef6dd93848b681c8c8355a",
+        "configValidationPassed": true
+      }
+    },
+    "readiness": {
+      "ai-gateway": {
+        "kamal-prod-rehearsal-26126bc13dae": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "kamal-prod-rehearsal-26126bc13dae": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "kamal-prod-rehearsal-26126bc13dae": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "frontendAvailable": true,
+    "structuredErrorEvents": {
+      "api-web": [],
+      "ai-gateway": [],
+      "workers": []
+    },
+    "redisVersion": "Redis server v=7.4.10 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=5642fd1cb14d7f56",
+    "changedConfigurationKeys": {
+      "api-web": {
+        "regeneratedSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "LINE_LOGIN_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN",
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "AI_ACTOR_DELEGATION_SIGNING_KEY",
+          "WORKER_INTERNAL_TOKEN",
+          "WATCHDOG_JWT_SECRET_ARN",
+          "CREDENTIAL_ENCRYPTION_KEY",
+          "PDPA_PSEUDONYMIZATION_KEY",
+          "PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS"
+        ],
+        "changedPlainKeys": [
+          "AI_GATEWAY_INTERNAL_URL",
+          "AWS_EC2_METADATA_DISABLED",
+          "CLAMAV_HOST",
+          "CORS_ALLOWED_ORIGINS",
+          "EMAIL_LOGO_URL",
+          "EXPENSE_DRAFT_NUMBERING_ENABLED",
+          "GIT_SHA",
+          "INTERNAL_API_URL",
+          "LINE_ACCOUNT_LINK_URL",
+          "LINE_OA_ADD_URL",
+          "LINE_OA_QR_IMAGE_URL",
+          "NEXT_PUBLIC_LINE_ACCOUNT_LINK_URL",
+          "NEXT_PUBLIC_LINE_OA_ADD_URL",
+          "NEXT_PUBLIC_LINE_OA_QR_IMAGE_URL",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET",
+          "SERVICE_VERSION",
+          "SES_FROM_ADDRESS",
+          "WATCHDOG_JWT_ISSUER",
+          "WEB_BASE_URL"
+        ]
+      },
+      "ai-gateway": {
+        "regeneratedSecretKeys": [
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "WATCHDOG_JWT_SECRET_ARN"
+        ],
+        "changedPlainKeys": [
+          "AGENTCORE_EXPECTED_ARTIFACT_SHA256",
+          "AGENTCORE_EXPECTED_SOURCE_COMMIT",
+          "AGENTCORE_RUNTIME_ARN",
+          "AWS_EC2_METADATA_DISABLED",
+          "CORS_ALLOWED_ORIGINS",
+          "ERP_CORE_INTERNAL_URL",
+          "GIT_SHA",
+          "PUBLIC_BASE_URL",
+          "SERVICE_VERSION",
+          "WATCHDOG_JWT_ISSUER"
+        ]
+      },
+      "workers": {
+        "regeneratedSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "WORKER_INTERNAL_TOKEN"
+        ],
+        "changedPlainKeys": [
+          "AWS_EC2_METADATA_DISABLED",
+          "GIT_SHA",
+          "INTERNAL_API_URL",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET",
+          "SERVICE_VERSION"
+        ]
+      }
+    },
+    "secrets": "New random isolated credentials only; no production secret values in running workloads",
+    "network": "Docker internal network, no published ports or cloud credentials",
+    "limits": "Startup/readiness observation only; no sustained load, AWS IAM/provider, ECR/SSH/Kamal proxy, TLS, HA, storage/antivirus or external/authenticated business acceptance"
+  },
+  "attempts": [
+    {
+      "id": "postgres-upgrade-01",
+      "outcome": "PASSED_LOCAL_DATABASE_REHEARSAL",
+      "elapsedSecondsIncludingSetupAndCleanup": 64.776
+    },
+    {
+      "id": "runtime-01",
+      "outcome": "NOT_ACCEPTED_AS_STABLE",
+      "reason": "14 workers startup 502 errors; harness started workers before API readiness, unlike actual Release.deploy. Receipt preserved and assessment added."
+    },
+    {
+      "id": "runtime-02",
+      "outcome": "LOCAL_READINESS_AND_ZERO_RUNTIME_ERRORS_PASSED",
+      "setupSeconds": 1.552,
+      "phases": [
+        {
+          "name": "bootstrap-deployed-source-schema",
+          "status": "PASSED",
+          "elapsedSeconds": 3.036
+        },
+        {
+          "name": "hotfix-refuses-pending-source-migrations",
+          "status": "EXPECTED_REJECTION",
+          "elapsedSeconds": 3.452
+        },
+        {
+          "name": "actual-normal-release-database-and-authority",
+          "status": "PASSED",
+          "elapsedSeconds": 29.71
+        },
+        {
+          "name": "actual-hotfix-after-normal-upgrade",
+          "status": "PASSED",
+          "elapsedSeconds": 26.26
+        },
+        {
+          "name": "actual-images-production-config-and-runtime-readiness",
+          "status": "PASSED",
+          "elapsedSeconds": 16.969
+        }
+      ],
+      "elapsedSecondsIncludingSetupAndCleanup": 81.831,
+      "timingBoundary": "Component test only; includes isolated DB setup/baseline seed, expected rejection, normal+hotfix DB checks, container startup/readiness/log readback and cleanup. Excludes earlier build, cloud setup and all cloud deployment stages; never use as a Production deploy time."
+    },
+    {
+      "id": "runtime-tls-01",
+      "outcome": "PASSED_LOCAL_DATABASE_REHEARSAL",
+      "scope": "Isolated local component test; not main-to-Production deployment time",
+      "setupSeconds": 1.634,
+      "elapsedSecondsIncludingSetupAndCleanup": 85.575,
+      "phases": [
+        {
+          "name": "bootstrap-deployed-source-schema",
+          "status": "PASSED",
+          "elapsedSeconds": 3.096
+        },
+        {
+          "name": "actual-client-verified-database-tls",
+          "status": "PASSED",
+          "elapsedSeconds": 3.386
+        },
+        {
+          "name": "hotfix-refuses-pending-source-migrations",
+          "status": "EXPECTED_REJECTION",
+          "elapsedSeconds": 3.435
+        },
+        {
+          "name": "actual-normal-release-database-and-authority",
+          "status": "PASSED",
+          "elapsedSeconds": 30.769
+        },
+        {
+          "name": "actual-hotfix-after-normal-upgrade",
+          "status": "PASSED",
+          "elapsedSeconds": 26.244
+        },
+        {
+          "name": "actual-images-production-config-and-runtime-readiness",
+          "status": "PASSED",
+          "elapsedSeconds": 16.101
+        }
+      ]
+    },
+    {
+      "id": "20260914T001658Z-a1f78642",
+      "outcome": "FAILED_CLOUD_REHEARSAL",
+      "commandElapsedSecondsIncludingSetupAndShutdown": 131.357,
+      "deployElapsedSeconds": null,
+      "reason": "Fixture Redis official entrypoint dropped to UID999; private config belonged to UID1000. Failed during setup before main build. Original result retained; host stopped. Fixed non-root UID1000/private writable volume; actual Linux TLS PONG and SAVE passed, restartCount0, config/key0600."
+    },
+    {
+      "id": "20260914T003123Z-1f9c690a",
+      "outcome": "PASSED_ISOLATED_CLOUD_CORE_REHEARSAL_NOT_PRODUCTION_ACCEPTANCE",
+      "deployElapsedSeconds": 507.797,
+      "commandElapsedSecondsIncludingSetupAndShutdown": 569.8,
+      "retriesInsideDeployClock": 0
+    }
+  ],
+  "cleanupPassed": true,
+  "blocker": "Temporary SSH approval was granted and cleaned up. Full Production acceptance remains unproved: no Production Kamal target enrolled; dedicated Dev AgentCore spare endpoint and live callback are missing; no provider update, signed customer OPEN or Production role/topology proof.",
+  "remainingCloudProof": [
+    "Enroll and verify actual Production hosts, roles, registry, permanent routing, signing and cutover; do not infer enrollment from example placeholders.",
+    "Prepare a dedicated isolated AgentCore spare and live callback; run actual artifact upload/update/version readback and provider acceptance. Existing Dev endpoint is old source; UAT candidate is not a Dev spare.",
+    "Verify Production role permissions, managed database/cache certificate chain/version/HA, storage, antivirus and external provider journeys.",
+    "Exercise customer OPEN acceptance, signing and remaining controller phases, then measure a complete release and a repeat; this single core rehearsal is neither full Production time nor a stable-time guarantee."
+  ],
+  "privateEvidenceRoot": ".env.kamal/production/simulation-20260913",
+  "evidenceSha256": {
+    "infrastructure-prerequisites.json": "5aaddbf8c0f7b9d9ab941a901d3caeadd305227f403dd7e409f871f52604b850",
+    "production-baseline-evidence.json": "ea52d9053d739e2c2885504c641f3bb863d7fdecd73eca35d3b7fe12a97afb84",
+    "evidence-continuity.json": "1b14d418d99b854f68def969b98e5c8c208e38a2c28446022daef977cfb8644e",
+    "postgres-upgrade-01/result.json": "08b7db1f92c14714791e7edd70259107c3017a0b2684fe66074447556d892343",
+    "runtime-01/result.json": "c9c9b6ee9a7b9f8e3e250357c501d816ff9b390fadc7cfa67e57c0176a3b97a2",
+    "runtime-01/assessment.json": "d50198809a695b5c5017a63a56ad9477ddf562723397447cd19a26c1a669997d",
+    "runtime-02/result.json": "db73cd0c65f7717f8a2ac7a9f01c6ccffe3720f8cb4e769321280dca5990c134",
+    "runtime-02/api-web-runtime.log": "9367366dfc73de356b42c3f3d48c3802d348bf2a3b4c7ab399d6ba27882f7422",
+    "runtime-02/ai-gateway-runtime.log": "b5a40431bfe1d36d672d80303582009f6ca2c1706592707b837694b5a87fd319",
+    "runtime-02/workers-runtime.log": "6b29ccd4115cb86bbbfd664c232616efa55e2d40f6aec8c3e1b4c3f775d3d5b0",
+    "root-cloud-inspection.json": "9001b2bba1b74d7dbb5ae221144f2b2787ba7b59f38e8b2a0d39038798c2fc59",
+    "production-live-catalog-evidence.json": "bb1b353637f144f3032e54f82455337547b31271ca716a37cb101de75a713221",
+    "runtime-tls-01/result.json": "e86865be31be5d2c88a50e91c0b5919790f7d476ab40b68601ac1bdb608f7f5b",
+    "runtime-tls-01/api-web-runtime.log": "f6aa377445b5b1ad1c069595a4c8a71bd41f4330febf66a9dc6191bc4086a594",
+    "runtime-tls-01/ai-gateway-runtime.log": "d392a22e7639f160c166e24c57d6167f65c7754938c39730e61bb1e9f2ad45d2",
+    "runtime-tls-01/workers-runtime.log": "41237454fc5a543c6863b821e8b78a1d9c30eea4539b4742793bf6f7918d55b2",
+    "final-stopped-evidence.json": "e5a9f4f1d92aeef0851667833aa08175f29ea54222e96a231a3ef1af136d6a22",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/result.json": "40a37deda6e995542ef24761d21f88dde5cdd4daac4157aef692625859f1fc8b",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/inventory.json": "9f4b620ed060226f12e63c3589aa722a72eb948d2a93e81fd35c01d52ee0f2c4",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/publication.json": "562142368ddc66c0607cc0525eb63e574e523dc06155bd86dcb37a1070aecd9b",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/build/build-result.json": "33904e0e68c353456d0e3159d50a154072215cce11a63f90a3daf9525cf8a001",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/api-web-runtime.log": "3eb127f193c2321fdcb02e64c477d051f3fc2b1f3f90aad80ccd4ea2294f3977",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/ai-gateway-runtime.log": "301175cbca39b90a60d18ff83b9bd06902a0c61f960aa6fdd9bc34c5949b4a1a",
+    ".env.kamal/uat/runs/20260914T003123Z-1f9c690a/workers-runtime.log": "643d30539c05d666cd552040b2daac870f168b41995202ef73037adb5a4323cc",
+    ".env.kamal/uat/runs/20260914T001658Z-a1f78642/result.json": "081afbfd0905101bc76d434880d75496f7dd5291b05036d4728896f150e0c8ef",
+    "cloud-20260914/redis-linux-fix-proof.log": "f9a2a78eacae0ddb01ac1b0317d5e0b2090bf0f34dd882872313e77ed6ce7c48",
+    "cloud-20260914/final-cleanup-evidence.json": "35352c48caa539310431c24db79ed55452b920eeab96482b3de947c21f499a2d"
+  },
+  "runtimeTlsProof": {
+    "databaseVersion": "18.3",
+    "databaseTls": {
+      "ssl": true,
+      "version": "TLSv1.3"
+    },
+    "tlsScope": "Same verify-full DB URL options and rediss with trusted CA; disposable CA replaces AWS CA. This does not prove AWS networking, certificate chain or HA.",
+    "runtimeReadback": {
+      "api-web": {
+        "running": true,
+        "imageId": "sha256:3366d38540a2e8f17070f3df8c7e3cb8b523c7bdb384fb2a0456a34c930e5250",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "153b4ed4647dc0e278e5101e3c467bc20f505146dde35713d7056de0c89a89c4",
+        "configValidationPassed": true
+      },
+      "ai-gateway": {
+        "running": true,
+        "imageId": "sha256:de327a84931c3654b6409c62659493eed68e3989eecf764b24e04ac0efde1894",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "c0c397513508459a4b1e44049c03485aa96012967138cb10cd80959a43532b9a",
+        "configValidationPassed": true
+      },
+      "workers": {
+        "running": true,
+        "imageId": "sha256:4a153abf1f3646a9944d968bcff0c97993b318d8071ecc2fc5c34284a363650a",
+        "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "environmentSha256": "94017293bbd378dd6c088fafffa7a92c8c3592bd1aaeb17bffb6e182a1a9699d",
+        "configValidationPassed": true
+      }
+    },
+    "readiness": {
+      "ai-gateway": {
+        "kamal-prod-rehearsal-b1522ea12e2a": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "kamal-prod-rehearsal-b1522ea12e2a": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "kamal-prod-rehearsal-b1522ea12e2a": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "runtimeErrorEvents": {
+      "api-web": [],
+      "ai-gateway": [],
+      "workers": []
+    },
+    "frontendAvailable": true,
+    "redisVersion": "Redis server v=7.4.10 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=5642fd1cb14d7f56",
+    "runtimeConfigDifferences": {
+      "api-web": {
+        "regeneratedSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "LINE_LOGIN_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN",
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "AI_ACTOR_DELEGATION_SIGNING_KEY",
+          "WORKER_INTERNAL_TOKEN",
+          "WATCHDOG_JWT_SECRET_ARN",
+          "CREDENTIAL_ENCRYPTION_KEY",
+          "PDPA_PSEUDONYMIZATION_KEY",
+          "PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS"
+        ],
+        "changedPlainKeys": [
+          "AI_GATEWAY_INTERNAL_URL",
+          "AWS_EC2_METADATA_DISABLED",
+          "CLAMAV_HOST",
+          "CORS_ALLOWED_ORIGINS",
+          "EMAIL_LOGO_URL",
+          "EXPENSE_DRAFT_NUMBERING_ENABLED",
+          "GIT_SHA",
+          "INTERNAL_API_URL",
+          "LINE_ACCOUNT_LINK_URL",
+          "LINE_OA_ADD_URL",
+          "LINE_OA_QR_IMAGE_URL",
+          "NEXT_PUBLIC_LINE_ACCOUNT_LINK_URL",
+          "NEXT_PUBLIC_LINE_OA_ADD_URL",
+          "NEXT_PUBLIC_LINE_OA_QR_IMAGE_URL",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET",
+          "SERVICE_VERSION",
+          "SES_FROM_ADDRESS",
+          "WATCHDOG_JWT_ISSUER",
+          "WEB_BASE_URL"
+        ]
+      },
+      "ai-gateway": {
+        "regeneratedSecretKeys": [
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "WATCHDOG_JWT_SECRET_ARN"
+        ],
+        "changedPlainKeys": [
+          "AGENTCORE_EXPECTED_ARTIFACT_SHA256",
+          "AGENTCORE_EXPECTED_SOURCE_COMMIT",
+          "AGENTCORE_RUNTIME_ARN",
+          "AWS_EC2_METADATA_DISABLED",
+          "CORS_ALLOWED_ORIGINS",
+          "ERP_CORE_INTERNAL_URL",
+          "GIT_SHA",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "SERVICE_VERSION",
+          "WATCHDOG_JWT_ISSUER"
+        ]
+      },
+      "workers": {
+        "regeneratedSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "WORKER_INTERNAL_TOKEN"
+        ],
+        "changedPlainKeys": [
+          "AWS_EC2_METADATA_DISABLED",
+          "GIT_SHA",
+          "INTERNAL_API_URL",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET",
+          "SERVICE_VERSION"
+        ]
+      }
+    },
+    "cleanupPassed": true,
+    "limits": "Real images and production validators; synthetic secrets, isolated empty data. Database/cache TLS with disposable trusted CA. AWS/provider, object storage, antivirus, external journeys, public HTTPS and HA are not exercised.",
+    "plainTextLogReview": "No unexpected failures. Broad exception search matched only three info-level entitlement-exceptions route-registration lines."
+  },
+  "finalHostState": {
+    "observedAt": "2026-09-14T00:41:22.152660+00:00",
+    "source": "AWS root CloudShell visible readback after scoped revoke; prod-rehearsal-final-cleanup.json",
+    "instances": [
+      {
+        "instanceId": "i-011918b0d49534d1c",
+        "state": "stopped"
+      },
+      {
+        "instanceId": "i-0883f1ff88440ca07",
+        "state": "stopped"
+      },
+      {
+        "instanceId": "i-0eb581c5ac3b3d7ba",
+        "state": "stopped"
+      }
+    ],
+    "allStopped": true,
+    "startedByThisTask": true,
+    "temporaryRuleAbsent": true,
+    "removedRuleId": "sgr-0a12dbd8f66e96575"
+  },
+  "cloudCoreProof": {
+    "operationId": "20260914T003123Z-1f9c690a",
+    "status": "PASSED_ISOLATED_CLOUD_CORE_REHEARSAL_NOT_PRODUCTION_ACCEPTANCE",
+    "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+    "controllerSha256": "1d3f408450f03d28c4406125b7ecf183b853d387c5fe867a3f9967090821efb2",
+    "rehearsalScriptSha256": "8c400065809319360c7c4300be4b30f8003c6fd418588513a05d961ebb14b21c",
+    "releaseId": "f14437dc31ee2fca218953ceafc64133866d8fbe28450afbc95431cd6c8c9b8e",
+    "baselineCatalog": "182:40a5a8ba0eca164cb736de7a17368c9a",
+    "databaseVersion": "18.3",
+    "redisVersion": "Redis server v=7.4.10 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=d70b7db78d693e15",
+    "setupPhases": [
+      {
+        "name": "setup-target-preflight",
+        "startedSeconds": 0.002,
+        "status": "PASSED",
+        "elapsedSeconds": 12.98,
+        "endedSeconds": 12.982
+      },
+      {
+        "name": "setup-isolated-tls-dependencies",
+        "startedSeconds": 12.984,
+        "status": "PASSED",
+        "elapsedSeconds": 46.036,
+        "endedSeconds": 59.021
+      }
+    ],
+    "phases": [
+      {
+        "name": "fresh-main-typescript-all-artifacts",
+        "startedSeconds": 0.0,
+        "status": "PASSED",
+        "elapsedSeconds": 57.714,
+        "endedSeconds": 57.715
+      },
+      {
+        "name": "fresh-production-config-isolation-validation",
+        "startedSeconds": 57.716,
+        "status": "PASSED",
+        "elapsedSeconds": 13.048,
+        "endedSeconds": 70.764
+      },
+      {
+        "name": "publish-four-images-and-pull-exact-artifacts",
+        "startedSeconds": 70.765,
+        "status": "PASSED",
+        "elapsedSeconds": 256.314,
+        "endedSeconds": 327.08
+      },
+      {
+        "name": "production-config-freshness-before-mutation",
+        "startedSeconds": 327.082,
+        "status": "PASSED",
+        "elapsedSeconds": 4.027,
+        "endedSeconds": 331.109
+      },
+      {
+        "name": "actual-normal-database-sync-and-authority",
+        "startedSeconds": 331.109,
+        "status": "PASSED",
+        "elapsedSeconds": 68.652,
+        "endedSeconds": 399.761
+      },
+      {
+        "name": "native-kamal-rollout-and-complete-readback",
+        "startedSeconds": 399.763,
+        "status": "PASSED",
+        "elapsedSeconds": 84.968,
+        "endedSeconds": 484.732
+      },
+      {
+        "name": "final-deep-health-frontend-and-error-scan",
+        "startedSeconds": 484.733,
+        "status": "PASSED",
+        "elapsedSeconds": 23.062,
+        "endedSeconds": 507.795
+      }
+    ],
+    "setupElapsedSeconds": 59.023,
+    "deployElapsedSeconds": 507.797,
+    "shutdownAndLockCleanupSeconds": 2.98,
+    "commandElapsedSecondsIncludingSetupAndShutdown": 569.8,
+    "deployStartedAt": "2026-09-14T00:32:22.224527+00:00",
+    "deployFinishedAt": "2026-09-14T00:40:50.027068+00:00",
+    "shutdownRequested": true,
+    "configurationDifferences": {
+      "api-web": {
+        "syntheticSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "LINE_LOGIN_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN",
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "AI_ACTOR_DELEGATION_SIGNING_KEY",
+          "WORKER_INTERNAL_TOKEN",
+          "WATCHDOG_JWT_SECRET_ARN",
+          "CREDENTIAL_ENCRYPTION_KEY",
+          "PDPA_PSEUDONYMIZATION_KEY",
+          "PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS"
+        ],
+        "changedPlainKeys": [
+          "AI_GATEWAY_INTERNAL_URL",
+          "AWS_EC2_METADATA_DISABLED",
+          "CLAMAV_HOST",
+          "CORS_ALLOWED_ORIGINS",
+          "EMAIL_LOGO_URL",
+          "INTERNAL_API_URL",
+          "LINE_ACCOUNT_LINK_URL",
+          "LINE_OA_ADD_URL",
+          "LINE_OA_QR_IMAGE_URL",
+          "NEXT_PUBLIC_LINE_ACCOUNT_LINK_URL",
+          "NEXT_PUBLIC_LINE_OA_ADD_URL",
+          "NEXT_PUBLIC_LINE_OA_QR_IMAGE_URL",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET",
+          "SES_FROM_ADDRESS",
+          "WATCHDOG_JWT_ISSUER",
+          "WEB_BASE_URL"
+        ]
+      },
+      "ai-gateway": {
+        "syntheticSecretKeys": [
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "WATCHDOG_JWT_SECRET_ARN"
+        ],
+        "changedPlainKeys": [
+          "AGENTCORE_RUNTIME_ARN",
+          "AWS_EC2_METADATA_DISABLED",
+          "CORS_ALLOWED_ORIGINS",
+          "ERP_CORE_INTERNAL_URL",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "WATCHDOG_JWT_ISSUER"
+        ]
+      },
+      "workers": {
+        "syntheticSecretKeys": [
+          "DATABASE_URL",
+          "REDIS_URL",
+          "WORKER_INTERNAL_TOKEN"
+        ],
+        "changedPlainKeys": [
+          "AWS_EC2_METADATA_DISABLED",
+          "INTERNAL_API_URL",
+          "NODE_EXTRA_CA_CERTS",
+          "PUBLIC_BASE_URL",
+          "S3_BUCKET"
+        ]
+      }
+    },
+    "migrationAndAuthorityVerified": true,
+    "finalRuntimeReadback": {
+      "api-web": [
+        {
+          "running": true,
+          "imageId": "sha256:1833da8337313cabec0a91d8945fb92269c4279af519ff6de0bf8484d3687a95",
+          "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+          "environmentSha256": "4a81b172fda1a36cc06c5760a4028c22ffdf26858a22190403593c5a673897ee",
+          "configValidationPassed": true,
+          "instanceId": "i-0883f1ff88440ca07",
+          "containerId": "7003c7c939ee69b115ff1e6503b82b4e6a0cd31389ea68ec2346030bf7a3dc40",
+          "containerName": "mangmee-kamal-dev-web-00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-api-web"
+        }
+      ],
+      "ai-gateway": [
+        {
+          "running": true,
+          "imageId": "sha256:9914db5f6a092121d7d80a2f36205031e8ca29aac4adc4180eb1e541c0fbe0c2",
+          "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+          "environmentSha256": "de3e2dc5fbddc40fe8104d16a1f142b41984a582aacdd5e157f7a281db4e928e",
+          "configValidationPassed": true,
+          "instanceId": "i-0883f1ff88440ca07",
+          "containerId": "c6e90f78ba0d896a3e6d53cd2d63e7bb7586f8babef9d2fa78bd319ea21495cb",
+          "containerName": "mangmee-kamal-dev-ai-gateway-web-00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-ai-gateway"
+        }
+      ],
+      "workers": [
+        {
+          "running": true,
+          "imageId": "sha256:a112cf4a80db2b7a70bacd794ffa06888288ffc74cb3a48791c7340655b304d1",
+          "sourceCommit": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+          "environmentSha256": "38508937087536385e41c4f15404d4031a9b6b4af454f72d7988e9647e605340",
+          "configValidationPassed": true,
+          "instanceId": "i-0883f1ff88440ca07",
+          "containerId": "ef96bfa0bff13164a0f08f3e1345224470a5cf2a6c22d0dc08d8451b1999531d",
+          "containerName": "mangmee-kamal-dev-workers-web-00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-workers"
+        }
+      ]
+    },
+    "readiness": {
+      "ai-gateway": {
+        "i-0883f1ff88440ca07": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "i-0883f1ff88440ca07": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "i-0883f1ff88440ca07": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "runtimeErrorEvents": {
+      "api-web": [],
+      "ai-gateway": [],
+      "workers": []
+    },
+    "frontendAvailable": true,
+    "observedSyntheticCustomerGate": {
+      "status": 200,
+      "body": {
+        "state": "CLOSED"
+      }
+    },
+    "providerAcceptance": "NOT_EXERCISED",
+    "productionTargetAcceptance": "NOT_EXERCISED",
+    "cache": "Existing local build cache reused; registry shared layers may also be reused. Not a cold-cache measurement.",
+    "phaseBoundaryOverheadSeconds": 0.012,
+    "completeScriptExitFromDeployClockSeconds": 510.777,
+    "timingBoundary": "507.797s is fresh main to final core readiness on Dev. 59.023s fixture/preflight setup precedes it; 2.980s lock cleanup/shutdown request follows. Whole command 569.800s. Instance boot, earlier diagnostics and final AWS cleanup readback are separate. AgentCore update, customer OPEN/signing and Production topology are unexercised, not zero-duration phases.",
+    "buildEvidence": {
+      "build-api-web": {
+        "elapsedSeconds": 4.993,
+        "exitCode": 0
+      },
+      "install": {
+        "elapsedSeconds": 5.46,
+        "exitCode": 0
+      },
+      "contracts": {
+        "elapsedSeconds": 1.751,
+        "exitCode": 0
+      },
+      "prisma": {
+        "elapsedSeconds": 3.445,
+        "exitCode": 0
+      },
+      "typescript": {
+        "elapsedSeconds": 36.043,
+        "exitCode": 0
+      },
+      "di": {
+        "elapsedSeconds": 1.557,
+        "exitCode": 0
+      },
+      "agentcore": {
+        "elapsedSeconds": 4.137,
+        "exitCode": 0
+      },
+      "build-ai-gateway": {
+        "elapsedSeconds": 0.467,
+        "exitCode": 0
+      },
+      "build-workers": {
+        "elapsedSeconds": 0.329,
+        "exitCode": 0
+      },
+      "export-tools-base": {
+        "elapsedSeconds": 0.627,
+        "exitCode": 0
+      },
+      "build-tools": {
+        "elapsedSeconds": 0.537,
+        "exitCode": 0
+      }
+    },
+    "environmentKeyCounts": {
+      "api-web": 113,
+      "ai-gateway": 58,
+      "workers": 21
+    },
+    "keyCountNote": "Each service includes two test-only diagnostic keys: NODE_EXTRA_CA_CERTS and AWS_EC2_METADATA_DISABLED.",
+    "publication": {
+      "api-web": {
+        "tag": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/mangmee-kamal-dev/api-web:00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-api-web",
+        "imageId": "sha256:1833da8337313cabec0a91d8945fb92269c4279af519ff6de0bf8484d3687a95",
+        "digest": "sha256:1833da8337313cabec0a91d8945fb92269c4279af519ff6de0bf8484d3687a95"
+      },
+      "ai-gateway": {
+        "tag": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/mangmee-kamal-dev/api-web:00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-ai-gateway",
+        "imageId": "sha256:9914db5f6a092121d7d80a2f36205031e8ca29aac4adc4180eb1e541c0fbe0c2",
+        "digest": "sha256:9914db5f6a092121d7d80a2f36205031e8ca29aac4adc4180eb1e541c0fbe0c2"
+      },
+      "workers": {
+        "tag": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/mangmee-kamal-dev/api-web:00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-workers",
+        "imageId": "sha256:a112cf4a80db2b7a70bacd794ffa06888288ffc74cb3a48791c7340655b304d1",
+        "digest": "sha256:a112cf4a80db2b7a70bacd794ffa06888288ffc74cb3a48791c7340655b304d1"
+      },
+      "tools": {
+        "tag": "311414082667.dkr.ecr.ap-southeast-1.amazonaws.com/mangmee-kamal-dev/api-web:00cbaa8b98954c068103c012dd6d485d25b1563a-20260914T003123Z-1f9c690a-tools",
+        "imageId": "sha256:49d8178c0f1adc4b7989afeeb4e65211aac618b2c3939e4040a3c9a7b9d6460f",
+        "digest": "sha256:49d8178c0f1adc4b7989afeeb4e65211aac618b2c3939e4040a3c9a7b9d6460f"
+      }
+    },
+    "logReview": "No structured error events. Broad text review found only info-level exception-route registration and successful scans/jobs with failed:0.",
+    "fullProductionDeployElapsedSeconds": null,
+    "stableRepeatProven": false,
+    "startedAt": "2026-09-14T00:31:23.219793+00:00",
+    "wallSecondsFromCommandStartToAwsCleanupReadback": 598.933,
+    "allCloudWorkWallSecondsFromFirstInstanceStartToFinalCleanup": 2317.82,
+    "allCloudWorkBoundary": "2026-09-14T00:02:44.332641Z to 00:41:22.152660Z, includes initial preparation, failed fixture setup, stopped interval, diagnosis/fix, successful rehearsal and final verification; not deployment time."
+  }
+}

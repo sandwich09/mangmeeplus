@@ -4,9 +4,11 @@ import argparse
 import copy
 import hashlib
 import importlib.util
+import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -194,6 +196,112 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r,calls=self.runner(tmp);r.args.apply=False;r.run()
             self.assertEqual(calls,['preflight']);self.assertEqual(r.receipt['status'],'PREFLIGHT_PASSED_NO_DEPLOYMENT')
+
+    def test_prepare_runs_all_local_validation_without_cloud_writes(self):
+        expected=['preflight','source_and_build','configuration','render','config_freshness']
+        for environment in ('production','uat'):
+            with self.subTest(environment=environment),tempfile.TemporaryDirectory() as tmp:
+                r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True;r.args.environment=environment
+                r.target=target(environment);r.run();r.save()
+                self.assertEqual(calls,expected)
+                self.assertEqual(r.receipt['status'],'PREPARED_NO_DEPLOYMENT')
+                self.assertEqual(r.changed,[])
+                self.assertFalse((r.state/'active.json').exists())
+                self.assertFalse((r.work/'accepted.json').exists())
+        for fail in expected:
+            with self.subTest(fail=fail),tempfile.TemporaryDirectory() as tmp:
+                r,calls=self.runner(tmp,fail);r.args.apply=False;r.args.prepare=True
+                with self.assertRaisesRegex(RuntimeError,'injected'):r.run()
+                self.assertEqual(calls,expected[:expected.index(fail)+1])
+                self.assertEqual(r.receipt['phases'][-1]['status'],'FAILED')
+                self.assertNotEqual(r.receipt['status'],'PREPARED_NO_DEPLOYMENT')
+                self.assertEqual(r.changed,[])
+                self.assertFalse((r.state/'active.json').exists())
+                # Exiting a failed preparation releases the local flock.
+                with (r.state/'deployment.lock').open('a+') as lock:
+                    m.fcntl.flock(lock,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)
+
+    def test_prepare_preserves_unreconciled_operation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True
+            m.write(r.state/'active.json',{'operationId':'unreconciled'})
+            with self.assertRaisesRegex(ValueError,'reconciliation'):r.run()
+            self.assertEqual(calls,[])
+            self.assertEqual(m.read(r.state/'active.json'),{'operationId':'unreconciled'})
+
+    def test_prepare_rejects_concurrent_local_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls=self.runner(tmp);r.args.apply=False;r.args.prepare=True
+            with (r.state/'deployment.lock').open('a+') as lock:
+                m.fcntl.flock(lock,m.fcntl.LOCK_EX|m.fcntl.LOCK_NB)
+                with self.assertRaisesRegex(RuntimeError,'already active'):r.run()
+            self.assertEqual(calls,[])
+
+    def test_production_example_cannot_be_used_as_enrollment(self):
+        example=m.read(Path(__file__).with_name('production-target.example.json'))
+        self.assertIs(example['cutoverComplete'],False)
+        with self.assertRaises(ValueError):m.validate_target(example,'production')
+
+    def test_production_prepare_cannot_select_uat_acceptance(self):
+        for browser in (True,False):
+            with self.subTest(browser=browser),tempfile.TemporaryDirectory() as tmp:
+                r,_=self.runner(tmp);r.target=target('production');r.args.environment='production'
+                r.args.prepare=True;r.args.apply=False;r.manual_browser=browser;r.smoke_acceptance=not browser
+                with self.assertRaises(ValueError):r.validate_acceptance_target()
+
+    def test_prepare_cli_rejects_apply_and_rollback_before_target_access(self):
+        for extra in (['--apply'],['--rollback','20260911T000000Z-abcdef01']):
+            with self.subTest(extra=extra),patch.object(sys,'argv',['release.py','--environment','production','--prepare',*extra]), \
+                    patch.object(sys,'stderr',io.StringIO()),patch.object(m,'Release') as constructor:
+                with self.assertRaises(SystemExit) as result:m.main()
+                self.assertEqual(result.exception.code,2)
+                constructor.assert_not_called()
+
+    def test_prepare_failure_receipt_is_terminal_and_redacted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r,calls=self.runner(tmp,'configuration');r.args.apply=False;r.args.prepare=True;r.secrets={'configuration'}
+            with patch.object(sys,'argv',['release.py','--environment','production','--prepare']), \
+                    patch.object(m,'Release',return_value=r),patch.object(sys,'stderr',io.StringIO()):
+                self.assertEqual(m.main(),1)
+            saved=m.read(r.work/'result.json')
+            self.assertEqual(saved['status'],'FAILED')
+            self.assertIn('finishedAt',saved)
+            self.assertEqual(saved['error'],'injected [REDACTED]')
+
+    def test_production_preflight_pins_main_for_prepare_and_still_checks_apply_controller(self):
+        for prepare in (True,False):
+            with self.subTest(prepare=prepare),tempfile.TemporaryDirectory() as tmp:
+                r,_=self.runner(tmp);del r.preflight
+                r.target=target('production');r.target['agentcoreCandidateQualifier']='candidate_spare'
+                r.args.environment='production';r.args.apply=not prepare;r.args.prepare=prepare
+                key=Path(tmp)/'key';key.write_text('synthetic');key.chmod(0o600);r.target['sshKey']=str(key)
+                r.hosts={h['instanceId']:h for rows in r.target['hosts'].values() for h in rows}
+                infos=[{'InstanceId':h['instanceId'],'State':{'Name':'running'},'VpcId':h['vpcId'],'PrivateIpAddress':h['address'],
+                    'Tags':[{'Key':'aws:cloudformation:stack-name','Value':h['stack']}],'IamInstanceProfile':{'Arn':'synthetic'},
+                    'MetadataOptions':{'HttpTokens':'required','HttpPutResponseHopLimit':2},
+                    'Placement':{'AvailabilityZone':'ap-southeast-1'+str(i)}} for i,h in enumerate(r.hosts.values())]
+                reads=[]
+                def aws(args,**kwargs):
+                    reads.append(args[:2])
+                    return {('sts','get-caller-identity'):{'Account':m.ACCOUNT,'Arn':'arn:aws:iam::'+m.ACCOUNT+':user/production-reader'},
+                        ('ec2','describe-instances'):{'Reservations':[{'Instances':infos}]},
+                        ('kms','describe-key'):{'KeyMetadata':{'KeyUsage':'SIGN_VERIFY','KeyState':'Enabled'}},
+                        ('ecr','describe-repositories'):{},('bedrock-agentcore-control','get-agent-runtime-endpoint'):{'status':'READY','liveVersion':'1'},
+                        ('bedrock-agentcore-control','get-agent-runtime'):{'environmentVariables':{}}}[tuple(args[:2])]
+                commands=[]
+                def command(args,**kwargs):
+                    commands.append(args)
+                    return 'a'*40 if args[1]=='rev-parse' else 'local controller differs'
+                r.aws=aws;r.command=command;r.local_uat_test=False;r.validate_acceptance_target=lambda:None
+                r.remote=lambda *args,**kwargs:json.dumps([{'State':{'Running':True},'Config':{'Image':'kamal-proxy:v0.9.2'}}])
+                if prepare:
+                    r.preflight()
+                    self.assertEqual(r.pinned_sha,'a'*40)
+                    self.assertEqual(commands,[['git','fetch','origin','main'],['git','rev-parse','origin/main']])
+                    self.assertTrue(r.receipt['targetVerified'])
+                else:
+                    with self.assertRaisesRegex(ValueError,'Controller differs from pinned main'):r.preflight()
+                self.assertTrue(all(op.startswith(('get-','describe-')) for _,op in reads))
 
     def test_secret_safe_failure_log_and_timeout(self):
         with tempfile.TemporaryDirectory() as tmp:

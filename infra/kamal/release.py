@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fresh main -> complete config/artifacts -> native Kamal -> verified customer access.
 
-Default is read-only preflight. --apply is a deployment, never an infrastructure bootstrap.
+Default is read-only preflight. --prepare adds local build/config validation without deployment.
+--apply is a deployment, never an infrastructure bootstrap.
 A target must be enrolled under .env.kamal/<environment>/target.json before first use.
 """
 import argparse
@@ -183,6 +184,8 @@ class Release:
             'status': 'RUNNING', 'phases': [], 'lineAcceptance': 'DEFERRED_BY_OWNER', 'productionMutated': False}
         self.receipt['controllerManifest'] = controller_manifest()
         self.receipt['controllerSha256'] = digest(self.receipt['controllerManifest'])
+        if getattr(args, 'prepare', False):
+            self.receipt['controllerScope'] = 'local preparation only; application/config from pinned main; no deployment'
         self.local_uat_test = local_uat_controller(self.target, args.uat_controller_sha256, self.receipt['controllerSha256'])
         if self.local_uat_test: self.receipt['controllerScope'] = 'owner-requested local controller test on real UAT; application from main'
         self.secrets = set()
@@ -295,11 +298,11 @@ class Release:
         require(ep['status']=='READY','Enrolled AgentCore endpoint is not READY')
         runtime=self.aws(['bedrock-agentcore-control','get-agent-runtime','--agent-runtime-id',arn.rsplit('/',1)[1],
                   '--agent-runtime-version',ep['liveVersion']])
-        if self.args.apply and not self.args.rollback:
+        if (self.args.apply or getattr(self.args, 'prepare', False)) and not self.args.rollback:
             self.command(['git','fetch','origin','main'],cwd=ROOT,log='fetch-main')
             self.pinned_sha=self.command(['git','rev-parse','origin/main'],cwd=ROOT).strip()
             require(re.fullmatch(r'[0-9a-f]{40}',self.pinned_sha),'Invalid main source')
-            if self.target['kind']!='dev' and not self.local_uat_test:
+            if self.args.apply and self.target['kind']!='dev' and not self.local_uat_test:
                 for path in CONTROLLER_FILES:
                     committed=self.command(['git','show',self.pinned_sha+':'+path],cwd=ROOT)
                     require(committed==(ROOT/path).read_text(),'Controller differs from pinned main: '+path)
@@ -468,6 +471,11 @@ class Release:
                 return
             require(not active.exists(), 'Previous deployment needs explicit reconciliation: '+str(active))
             with self.phase('target-preflight'): self.preflight()
+            if getattr(self.args, 'prepare', False):
+                with self.phase('main-typescript-build'): self.source_and_build()
+                with self.phase('fresh-config-and-image-validation'): self.configuration(); self.render()
+                with self.phase('config-freshness-readback'): self.config_freshness()
+                self.receipt['status']='PREPARED_NO_DEPLOYMENT'; return
             if not self.args.apply:
                 self.receipt['status']='PREFLIGHT_PASSED_NO_DEPLOYMENT'; return
             self.acquire_remote_lock()
@@ -942,12 +950,16 @@ def main():
     p.add_argument('--target',type=Path)
     p.add_argument('--profile',default=os.environ.get('AWS_PROFILE',''))
     p.add_argument('--mode',choices=['hotfix','normal'],default='hotfix')
-    p.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
+    action=p.add_mutually_exclusive_group()
+    action.add_argument('--apply',action='store_true',help='Deploy to the enrolled target; default only checks prerequisites')
+    action.add_argument('--prepare',action='store_true',help='Build pinned main and validate complete config locally; only reads the enrolled cloud target, never deploys')
     p.add_argument('--uat-controller-sha256', help='Explicit hash-bound test of the new local controller on real UAT only')
     p.add_argument('--uat-browser-acceptance', action='store_true', help='Wait for owner login and retained operator browser evidence on real UAT; no stored login password')
     p.add_argument('--uat-smoke-acceptance', action='store_true', help='Owner-authorized real UAT config/readiness and public OPEN smoke, without login/logout')
     p.add_argument('--rollback',help='Restore the complete previous deployment captured by this terminal hotfix operation ID')
     args=p.parse_args()
+    if args.prepare and args.rollback:
+        p.error('--prepare cannot be combined with --rollback')
     release=None
     try:
         release=Release(args); release.run()
