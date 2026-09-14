@@ -1,13 +1,15 @@
 'use client';
 
 import type React from 'react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PrototypeDataNotice } from '@/common/components/prototype-data-notice';
 import { MangmeeBranchChip, MangmeeCard, cx } from '@/common/components/mangmee';
 import {
   GENERIC_UPLOAD_ERROR_MESSAGE,
   IMAGE_UPLOAD_ACCEPT,
-  uploadFileValidationError,
+  prepareAttachmentUpload,
+  uploadErrorMessage,
+  uploadSourceFileValidationError,
 } from '@/common/files/upload-file.logic';
 import {
   BROADCAST_COLOR_TONES,
@@ -66,6 +68,7 @@ export function BroadcastPrototypePage() {
   const [image, setImage] = useState<string | null>(null);
   const [uploadName, setUploadName] = useState('');
   const [uploadError, setUploadError] = useState('');
+  const uploadSequence = useRef(0);
   const [msg, setMsg] = useState('');
   const [sent, setSent] = useState(false);
 
@@ -90,23 +93,35 @@ export function BroadcastPrototypePage() {
     setMode('ai');
   };
 
-  const onUploadImg = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const onUploadImg = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const validationError = uploadFileValidationError(file, 'image');
+    const sequence = ++uploadSequence.current;
+    const validationError = uploadSourceFileValidationError(file, 'image');
     if (validationError || file.size > 5 * 1024 * 1024) {
       setUploadError(validationError ?? 'รูปภาพต้องมีขนาดไม่เกิน 5 MB');
       event.target.value = '';
       return;
     }
     setUploadError('');
-    const reader = new FileReader();
-    reader.onload = () => {
-      setImage(String(reader.result));
-      setUploadName(file.name);
-    };
-    reader.onerror = () => setUploadError(GENERIC_UPLOAD_ERROR_MESSAGE);
-    reader.readAsDataURL(file);
+    try {
+      const prepared = await prepareAttachmentUpload(file, 'image');
+      if (sequence !== uploadSequence.current) return;
+      if (prepared.size > 5 * 1024 * 1024) {
+        setUploadError('รูปภาพต้องมีขนาดไม่เกิน 5 MB');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (sequence !== uploadSequence.current) return;
+        setImage(String(reader.result));
+        setUploadName(file.name);
+      };
+      reader.onerror = () => { if (sequence === uploadSequence.current) setUploadError(GENERIC_UPLOAD_ERROR_MESSAGE); };
+      reader.readAsDataURL(prepared);
+    } catch (cause) {
+      if (sequence === uploadSequence.current) setUploadError(uploadErrorMessage(cause));
+    }
   };
 
   return (

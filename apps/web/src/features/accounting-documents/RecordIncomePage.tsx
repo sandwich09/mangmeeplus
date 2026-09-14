@@ -14,7 +14,7 @@ import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { ErrorBanner, baht, err, inputClass, btnClass, ghostClass } from '@/features/expenses/ExpensesUi';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import type { AccountingPaymentMethod, RevenueCategorySummary } from '@watchdog-bms/contracts';
-import { ATTACHMENT_UPLOAD_ACCEPT, uploadFileValidationError } from '@/common/files/upload-file.logic';
+import { ATTACHMENT_UPLOAD_ACCEPT, uploadSourceFileValidationError } from '@/common/files/upload-file.logic';
 import {
   createDocument,
   getVatRegistrationStatus,
@@ -584,14 +584,14 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
                         accept={ATTACHMENT_UPLOAD_ACCEPT}
                         onChange={(event) => {
                           const file = event.target.files?.[0] ?? null;
-                          const fileError = file ? uploadFileValidationError(file) : null;
+                          const fileError = file ? uploadSourceFileValidationError(file) : null;
                           setAttachmentError(fileError);
                           setAttachmentFile(fileError ? null : file);
                           setAttachmentLinked(false);
                         }}
                         aria-label="ไฟล์แนบเอกสารขาย"
                       />
-                      <span className="mt-1 block text-base text-gray-500">รองรับ PDF, JPG และ PNG</span>
+                      <span className="mt-1 block text-base text-gray-500">รองรับ PDF, JPG/JPEG, PNG, HEIC/HEIF และ GIF</span>
                       {attachmentError && <span className="mt-1 block text-base font-semibold text-red-700">{attachmentError}</span>}
                     </label>
                   )}

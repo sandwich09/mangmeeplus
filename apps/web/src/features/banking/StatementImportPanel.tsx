@@ -1,7 +1,7 @@
 'use client';
 
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
-import { uploadErrorMessage } from '@/common/files/upload-file.logic';
+import { prepareAttachmentUpload, uploadErrorMessage } from '@/common/files/upload-file.logic';
 
 import { useState, useEffect, useCallback } from 'react';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -96,7 +96,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
     if (fileKind === 'unsupported') {
       setFileName(undefined);
       setRawText('');
-      setError('รองรับเฉพาะ CSV, TSV, TXT, PDF, PNG, JPG และ JPEG โดยนามสกุลต้องตรงกับชนิดไฟล์');
+      setError('รองรับเฉพาะ CSV, TSV, TXT, PDF, PNG, JPG/JPEG, HEIC/HEIF และ GIF โดยนามสกุลต้องตรงกับชนิดไฟล์');
       return;
     }
     const maxBytes = fileKind === 'extractable' ? MAX_STATEMENT_BINARY_BYTES : MAX_STATEMENT_TEXT_BYTES;
@@ -110,8 +110,9 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
     if (fileKind === 'extractable') {
       setRawText(''); setBusy(true);
       try {
-        const fileBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-        const ex = await extractStatementFile(companyId, bankAccountId, { fileBase64, mimeType: file.type, fileName: file.name });
+        const prepared = await prepareAttachmentUpload(file);
+        const fileBase64 = bytesToBase64(new Uint8Array(await prepared.arrayBuffer()));
+        const ex = await extractStatementFile(companyId, bankAccountId, { fileBase64, mimeType: prepared.type, fileName: prepared.name });
         setExtraction(ex);
         const result = await previewStatementImport(companyId, bankAccountId, { rows: ex.rows });
         setPreview({ ...result, parsedRows: ex.rows });

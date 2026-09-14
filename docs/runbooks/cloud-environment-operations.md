@@ -12,6 +12,22 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ## Isolated AWS rehearsal completed — 2026-09-14
 
+Later owner-requested UAT power resume: both retained Kamal hosts are running again (API
+`i-0eb581c5ac3b3d7ba` at `13.212.80.73`, AI/workers `i-011918b0d49534d1c` at `13.213.14.149`).
+Verified EC2 identity and preserved SSH keys before updating private enrollment; private ALB targets
+remain `10.92.0.10`/`10.92.0.42`. Dev remains stopped. The stopped-state read below is historical.
+Owner approved permanent TCP22 ingress `27.130.60.231/32` for both UAT groups only, preserving
+`27.130.53.193/32`: API `sg-021fe21a46c0fcb88` rule `sgr-0e4dfb75cc6543bff`, AI
+`sg-089ddbf86bd4251a1` rule `sgr-0d133747833e0c6e0`. Exact `DescribeSecurityGroups` readback confirms
+both /32 rules on both groups; no broader/IAM access change. Account-scoped non-root operator used.
+This manual ingress is owner-approved drift; do not remove it as temporary rehearsal access or
+overwrite it with the older CloudFormation allowlist without preserving the approved rule.
+
+Substitute artifact-preview500 was reproduced in the exact serving API image: PDF.js optional
+`@napi-rs/canvas` was stripped by `--no-optional`, causing `DOMMatrix is not defined`; bank PDF text
+extraction silently returned `unreadable` for the same omission. It is image packaging, not a missing
+running host. [Hotfix/audit and release ledger](../agent-memory/runtime-dependency-hotfix-20260914.md).
+
 Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
 are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule
 `sgr-0a12dbd8f66e96575` was removed and absence verified. Preserve the original allowlist.

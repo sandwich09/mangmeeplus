@@ -5,6 +5,7 @@ import type { SubstituteReceiptEvidenceSummary, SubstituteReceiptPaperPreview, S
 import { MangmeeCard } from '@/common/components/mangmee';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
+import { ATTACHMENT_UPLOAD_ACCEPT } from '@/common/files/upload-file.logic';
 import { DocumentPreviewModal } from '@/common/components/document-preview';
 import { acceptSubstitutePaper, downloadSubstituteReceiptFormPdf, listSubstituteReceiptHistory, previewSubstitutePaper, submitSubstitutePaperFile } from './expenses.api';
 import { btnClass, ghostClass, inputClass, ErrorBanner, err } from './ExpensesUi';
@@ -57,7 +58,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         })}>1. ดาวน์โหลดแบบฟอร์มไปกรอกและเซ็น</button>
         <p className="text-sm text-gray-600">หากแก้ข้อมูลที่หน้ารายการค่าใช้จ่าย ให้ดาวน์โหลดแบบฟอร์มล่าสุดไปลงนามใหม่ เอกสารใช้เลขเดิม และฉบับที่เคยเซ็นจะอยู่ในประวัติ</p>
         <h3 className="font-bold">2. อัปโหลดฉบับที่กรอกและลงนามครบทั้งสองส่วน</h3>
-        <ThemedFile file={file} accept="application/pdf,image/png,image/jpeg" aria-label="ฉบับลงนามบนกระดาษ" onChange={(picked) => { setFile(picked); setMatches(false); }} />
+        <ThemedFile file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} aria-label="ฉบับลงนามบนกระดาษ" onChange={(picked) => { setFile(picked); setMatches(false); }} />
         <p className="text-xs text-gray-500">PDF ไม่เกิน 5 หน้า หรือภาพ PNG/JPEG ขนาดไม่เกิน 10 MB ให้เห็นครบทุกหน้าและอ่านได้ชัดเจน</p>
         <div className="grid gap-4 md:grid-cols-2">{signerFields('ผู้รับรองการจ่าย', payer, setPayer)}{signerFields('ผู้อนุมัติ', approver, setApprover)}</div>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={samePerson} onChange={(event) => setSamePerson(event.target.checked)} /><span>ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)</span></label>
