@@ -1,3 +1,4 @@
+import { checkBillingHistoryExport } from './billing-history-export-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { checkBillingConfiguration } from './billing-configuration-smoke';
@@ -66,6 +67,7 @@ export async function checkBillingCompanyRead(input: Parameters<typeof checkBill
     assert.equal((await delegated(`${base}/companies/${companyIds[3]}/timeline`)).status,404);
     const manualTimeline=(await delegated(`${base}/companies/${manualId}/timeline`)).body.items;
     assert.equal(manualTimeline.length,1);assert.equal(manualTimeline[0].type,'CURRENT_PLAN_TERM');assert.equal(manualTimeline[0].origin,'ERP');
+    const exportCases=await checkBillingHistoryExport(input);
     if(browser) {
       const page=browser.page;await page.setViewportSize({width:390,height:844});
       await page.goto(`${browser.origin}/system/billing`,{waitUntil:'domcontentloaded'});
@@ -93,7 +95,7 @@ export async function checkBillingCompanyRead(input: Parameters<typeof checkBill
     assert.deepEqual({accounts:await client.billingAccount.count({where:{stripeAccountId}}),invoices:await client.billingInvoice.count({where:{billingAccountId:{in:accounts}}}),
       grants:await client.billingReceiptGrant.count({where:{companyId:{in:companyIds}}})},before,'reads never provision a billing account or mutate money/quota');
     assert.equal(await client.billingAccount.count({where:{companyId:{in:[trialId,manualId]}}}),0);
-    return ['admin-company-trial-manual-paid-held-grace-and-expiry-provenance','admin-company-scoped-search-stable-pagination-and-read-without-provisioning',
+    return [...exportCases,'admin-company-trial-manual-paid-held-grace-and-expiry-provenance','admin-company-scoped-search-stable-pagination-and-read-without-provisioning',
       'admin-timeline-timestamp-ties-mode-scope-financial-audit-and-recipient-redaction',...(browser?['browser-admin-trial-search-no-account-and-mobile','browser-admin-timeline-pages-related-record-back-refresh-and-mobile']:[])];
   } finally {
     if(browser&&viewport)await browser.page.setViewportSize(viewport);

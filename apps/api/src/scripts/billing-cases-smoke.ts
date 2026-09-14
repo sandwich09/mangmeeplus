@@ -38,6 +38,10 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
       await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor();
     }else assert.equal((await update(desired)).status,200);
     const assigned=(await detail()).body;assert.equal(assigned.assigneeUserId,targetId);assert.equal(assigned.backupUserId,input.userIds[1]);assert.equal(assigned.priority,'CRITICAL');assert.ok(assigned.followUpAt);
+    const companyName=(await client.company.findUniqueOrThrow({where:{id:companyId}})).name;
+    assert.equal(assigned.companyName,companyName);
+    const queue=(await request(`${base}/issues?companyId=${companyId}`)).body;
+    assert.ok(queue.items.some((row:any)=>row.id===issue.id&&row.companyName===companyName));
     await client.$transaction(tx=>detectBillingIssue(tx,identity));const again=(await detail()).body;
     for(const field of ['state','assigneeUserId','backupUserId','note','priority','followUpAt','version','episode'])assert.deepEqual(again[field],assigned[field]);
     assert.equal((await update(desired)).status,409,'old version cannot overwrite current assignment');
@@ -63,6 +67,7 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
       const page=browser.page;await page.getByRole('link',{name:'คิวตรวจสอบ',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/issues`);
       await page.getByLabel('กรองคิว',{exact:true}).selectOption('OVERDUE');await page.locator(`a[href="/system/billing/issues/${issue.id}?queue=OVERDUE"]`).click();await page.waitForURL(`${browser.origin}/system/billing/issues/${issue.id}?queue=OVERDUE`);
       await page.getByText(/เลยเวลาติดตาม/).waitFor();assert.equal(await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).count(),0);
+      await page.getByRole('region',{name:'รายละเอียดเคส',exact:true}).getByText(companyName,{exact:true}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:`${browser.evidenceDir}/admin-case-followup-mobile.png`,fullPage:true});
     }

@@ -7,7 +7,7 @@
 
 > **ขอบเขต merge 2026-09-11: เอกสารเท่านั้น** — ผล runtime repair/test ที่อ้างเป็นหลักฐานจาก branch งานแยก ยังไม่ใช่การนำโค้ดนั้นเข้า main/develop. ดู [สถานะส่งมอบเอกสาร](../agent-memory/billing-spec-docs-merge-2026-09-11.md).
 
-สถานะ: **SPEC/PLAN UPDATED; full package E2E NOT RUN; Stripe runtime NOT IMPLEMENTED**. [Spec หลักของ amendment](../specs/mangmee-package-entitlements-spec-th.md) คือ requirement ตาม Owner 2026-09-11. ต่อจาก S0–S5/L0–L5/C01–C08 เดิม ไม่เริ่ม billing engine อีกชุด. [หลักฐานรอบนี้](../evidence/package-entitlements-2026-09-11/README.md) แยก focused/current-marketing regression จาก future paid E2E.
+สถานะเมื่อจัดทำเอกสาร 2026-09-11: **SPEC/PLAN UPDATED; runtime ยังไม่เริ่มในรอบนั้น**. สถานะปัจจุบันคือ IMPLEMENTATION IN PROGRESS ตามหลักฐานและ task memory ด้านบน; มีโค้ดและผลทดสอบจำลองแล้ว แต่ยังไม่ผ่าน full acceptance/merge. [Spec หลักของ amendment](../specs/mangmee-package-entitlements-spec-th.md) คือ requirement ตาม Owner 2026-09-11. ต่อจาก S0–S5/L0–L5/C01–C08 เดิม ไม่เริ่ม billing engine อีกชุด. [หลักฐานรอบนี้](../evidence/package-entitlements-2026-09-11/README.md) แยก focused/current-marketing regression จาก future paid E2E.
 
 ## 1. ลำดับส่งมอบและ impact
 

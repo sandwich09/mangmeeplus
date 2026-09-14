@@ -122,12 +122,14 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     {!loading && company && <BillingTimelinePanel key={`timeline-${company.companyId}`} companyId={company.companyId}/>}
     {!loading && issueList && <section aria-label="รายการเคส" className="space-y-3">{issueList.length === 0 && <p>ไม่พบเคสที่ยังเปิดในหน้านี้</p>}
       {issueList.map(i => <article key={i.id} className="rounded-xl border bg-white p-4"><Link className="font-semibold underline" href={`/system/billing/issues/${i.id}${queueQuery()}`}>{issueKind(i.kind)}</Link>
+        <p className="font-semibold">{i.companyId?i.companyName??'ไม่พบชื่อบริษัท ดูเลขในข้อมูลอ้างอิง':'รายการระดับระบบ'}</p>
         <p>{states[i.state] ?? 'ต้องตรวจสอบสถานะ'} · {i.assigneeUserId ? `${i.assigneeName}${i.assigneeAvailable?'':' · ผู้รับผิดชอบเดิมไม่มีสิทธิ์แล้ว'}` : 'ยังไม่มีผู้รับผิดชอบ'}</p>
-        <p>{billingLabel('priority',i.priority)} · รอบปัญหา {i.episode} · {i.overdue?'เลยเวลาติดตาม':effectiveFollowUp(i)?`ติดตาม ${time(effectiveFollowUp(i))}`:'ยังไม่ได้กำหนดเวลาติดตาม'}</p><p className="break-all text-base">อ้างอิง {i.reference}</p></article>)}
+        <p>{billingLabel('priority',i.priority)} · รอบปัญหา {i.episode} · {i.overdue?'เลยเวลาติดตาม':effectiveFollowUp(i)?`ติดตาม ${time(effectiveFollowUp(i))}`:'ยังไม่ได้กำหนดเวลาติดตาม'}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงเคส</summary><p className="break-all">{i.companyId&&`เลขบริษัท ${i.companyId} · `}อ้างอิง {i.reference}</p></details></article>)}
       {company && <Link href="/system/billing/issues" className="inline-block underline">เปิดคิวทั้งหมด</Link>}
     </section>}
     {!loading && issue && <section className="space-y-4 rounded-xl border bg-white p-5" aria-label="รายละเอียดเคส">
-      <h2 className="font-bold">{issueKind(issue.kind)}</h2><p>{states[issue.state] ?? 'ต้องตรวจสอบสถานะ'}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงเคส</summary><p>{states[issue.state] ?? 'ต้องตรวจสอบสถานะ'} · เวอร์ชัน {issue.version}</p><p className="break-all">เลขเคส {issue.id} · {issue.kind} · {issue.reference}</p></details>
+      <p className="font-semibold">{issue.companyId?issue.companyName??'ไม่พบชื่อบริษัท ดูเลขในข้อมูลอ้างอิง':'รายการระดับระบบ'}</p>
+      <h2 className="font-bold">{issueKind(issue.kind)}</h2><p>{states[issue.state] ?? 'ต้องตรวจสอบสถานะ'}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงเคส</summary><p>{states[issue.state] ?? 'ต้องตรวจสอบสถานะ'} · เวอร์ชัน {issue.version}</p><p className="break-all">เลขเคส {issue.id} · {issue.kind} · {issue.reference}</p>{issue.companyId&&<p className="break-all">เลขบริษัท {issue.companyId}</p>}</details>
       <p>อัปเดต {time(issue.updatedAt)}</p>{issue.note && <p className="whitespace-pre-wrap">{issue.note}</p>}
       <p>รอบปัญหา {issue.episode} · ตรวจพบล่าสุด {time(issue.lastSeenAt)} · {billingLabel('priority',issue.priority)}</p>
       <p>{issue.assigneeUserId?`ผู้รับผิดชอบ ${issue.assigneeName}${issue.assigneeAvailable?'':' (ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว)'}`:'ยังไม่มีผู้รับผิดชอบ'}</p>

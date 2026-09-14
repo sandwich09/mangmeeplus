@@ -279,6 +279,11 @@ export class BillingAdminController {
     const fields = bodyFields(query, ['cursor','search']);
     return this.admin.overview(req.context, fields.cursor === undefined ? undefined : textField(fields.cursor,128), fields.search === undefined || fields.search === '' ? '' : textField(fields.search,100));
   }
+  @Post('companies/:id/timeline/export') @HttpCode(200) @RequirePermissions('system.billing.export') @Header('Cache-Control','no-store')
+  async exportTimeline(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown) {
+    const fields=bodyFields(body,['cursor']);await this.operationLimit(req);
+    return this.admin.exportTimeline(req.context,textField(id,128),fields.cursor===undefined?undefined:textField(fields.cursor,180));
+  }
   @Get('companies/:id/timeline') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   timeline(@Req() req: AuthedRequest, @Param('id') id: string, @Query() query: unknown) {
     const fields = bodyFields(query,['cursor']);

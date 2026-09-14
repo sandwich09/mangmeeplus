@@ -1,3 +1,4 @@
+import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
@@ -51,11 +52,12 @@ export class BillingAdminService {
     return { items: await Promise.all(rows.slice(0, 25).map(row => this.providerEvent(context, row.id))), nextCursor: rows.length > 25 ? rows[24]!.id : null };
   }
 
-  private async issueView(row:BillingIssue,tx:Prisma.TransactionClient=this.prisma.client):Promise<BillingOperatorIssue> {
+  private async issueView(row:BillingIssue,tx:Prisma.TransactionClient=this.prisma.client,companyName?:string|null):Promise<BillingOperatorIssue> {
     const ids=[...new Set([row.assigneeUserId,row.backupUserId].filter((id):id is string=>Boolean(id)))];
     const users=ids.length?await tx.user.findMany({where:{id:{in:ids}},select:{id:true,displayName:true}}):[];
     const available=await issueOperators(tx,row,{ids});
-    return {id:row.id,companyId:row.companyId,kind:row.kind,reference:row.referenceId,state:row.state,assigneeUserId:row.assigneeUserId,note:row.note,version:row.version,
+    const name=companyName===undefined&&row.companyId?(await tx.company.findUnique({where:{id:row.companyId},select:{name:true}}))?.name??null:companyName??null;
+    return {id:row.id,companyId:row.companyId,companyName:name,kind:row.kind,reference:row.referenceId,state:row.state,assigneeUserId:row.assigneeUserId,note:row.note,version:row.version,
       createdAt:row.createdAt.toISOString(),updatedAt:row.updatedAt.toISOString(),episode:row.episode,lastSeenAt:row.lastSeenAt.toISOString(),
       assigneeName:users.find(u=>u.id===row.assigneeUserId)?.displayName??row.assigneeUserId,assigneeAvailable:available.items.some(u=>u.id===row.assigneeUserId),
       backupUserId:row.backupUserId,backupName:users.find(u=>u.id===row.backupUserId)?.displayName??row.backupUserId,backupAvailable:available.items.some(u=>u.id===row.backupUserId),
@@ -115,11 +117,11 @@ export class BillingAdminService {
       companies: await Promise.all(companies.slice(0,25).map(c => this.companyView(c,accounts.find(a=>a.companyId===c.id) ?? null))),
       nextCursor: companies.length > 25 ? companies[24]!.id : null };
   }
-  private async scopedCompany(context: RequestContext, companyId: string) {
-    const access = await this.access(context, 'system.billing.read');
-    const company = await this.prisma.client.company.findFirst({ where: { ...this.companyWhere(access), AND: { id: companyId } }, include: { planTerm: true } });
+  private async scopedCompany(context: RequestContext, companyId: string, tx:Prisma.TransactionClient=this.prisma.client) {
+    const access = await this.access(context, 'system.billing.read',tx);
+    const company = await tx.company.findFirst({ where: { ...this.companyWhere(access), AND: { id: companyId } }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();
-    const account = this.billing.stripe.enabled ? await this.billing.account(companyId) : null;
+    const account = this.billing.stripe.enabled ? await this.billing.account(companyId,tx) : null;
     return { access, company, account };
   }
   private async scopedInvoice(context:RequestContext,companyId:string,id:string,permission:string) {
@@ -142,11 +144,35 @@ export class BillingAdminService {
       targetId:id,requestId:context.requestId,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{kind,...creditNoteId?{creditNoteId}:{}}}});
     return result;
   }
+  async exportTimeline(context:RequestContext,companyId:string,cursor?:string) {
+    await this.access(context,'system.billing.export');
+    const source=await this.scopedCompany(context,companyId);
+    const mode=this.billing.stripe.enabled?(this.billing.stripe.livemode?'LIVE':'TEST'):'DISABLED';
+    const timeline=await billingTimeline(this.prisma.client,{companyId,accountId:source.account?.id??null,
+      stripeAccountId:this.billing.stripe.enabled?this.billing.stripe.accountId:null,livemode:this.billing.stripe.livemode,
+      financial:source.access.capabilities.includes('system.billing.financial.read'),audit:source.access.capabilities.includes('system.billing.audit.read'),cursor});
+    const result=billingHistoryExport(source.company,mode,timeline);
+    return this.prisma.client.$transaction(async tx=>{
+      await this.access(context,'system.billing.export',tx);
+      const current=await this.scopedCompany(context,companyId,tx);
+      if(current.account?.id!==source.account?.id||current.account?.version!==source.account?.version||
+        current.company.name!==source.company.name||current.company.status!==source.company.status||
+        current.access.capabilities.includes('system.billing.financial.read')!==timeline.financialIncluded||
+        current.access.capabilities.includes('system.billing.audit.read')!==timeline.auditIncluded)
+        throw billingError('CONTROL_EXPORT_CHANGED','ข้อมูลหรือสิทธิ์เปลี่ยนแล้ว โหลดประวัติล่าสุดก่อนดาวน์โหลดอีกครั้ง');
+      await tx.auditLog.create({data:{companyId,actorUserId:context.userId,action:'billing.history.exported',targetType:'Company',targetId:companyId,
+        requestId:context.requestId,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{mode,accountId:source.account?.id??null,cursor:cursor??null,
+          rowCount:result.rowCount,references:timeline.items.map(entry=>entry.reference),financialIncluded:result.financialIncluded,
+          auditIncluded:result.auditIncluded,exportedAt:result.exportedAt,sha256:result.sha256}}});
+      return result;
+    });
+  }
+
   async timeline(context: RequestContext, companyId: string, cursor?: string) {
     const { access, account } = await this.scopedCompany(context,companyId);
-    return billingTimeline(this.prisma.client, { companyId, accountId: account?.id ?? null,
+    return {...await billingTimeline(this.prisma.client, { companyId, accountId: account?.id ?? null,
       stripeAccountId: this.billing.stripe.enabled ? this.billing.stripe.accountId : null, livemode: this.billing.stripe.livemode,
-      financial: access.capabilities.includes('system.billing.financial.read'), audit: access.capabilities.includes('system.billing.audit.read'), cursor });
+      financial: access.capabilities.includes('system.billing.financial.read'), audit: access.capabilities.includes('system.billing.audit.read'), cursor }),canExport:access.capabilities.includes('system.billing.export')};
   }
   async company(context: RequestContext, companyId: string, invoiceCursor?: string): Promise<BillingOperatorCompanyDetail> {
     const { access, account, company } = await this.scopedCompany(context,companyId);
@@ -165,7 +191,7 @@ export class BillingAdminService {
         paymentState: r.providerStatus, applyState: r.applyStatus, periodStart: r.periodStart.toISOString(), periodEnd: r.periodEnd.toISOString(),
         createdAt: r.createdAt.toISOString(), hasDocuments: r.providerStatus === 'paid' })), nextCursor: rows.length > 25 ? rows[24]!.id : null };
     } else if (invoiceCursor) throw new ForbiddenException();
-    return { ...await this.companyView(company,account), usage: await this.billing.usage(companyId), issues: await Promise.all(issues.map(i=>this.issueView(i))), financial };
+    return { ...await this.companyView(company,account), usage: await this.billing.usage(companyId), issues: await Promise.all(issues.map(i=>this.issueView(i,this.prisma.client,company.name))), financial };
   }
   async issues(context: RequestContext, input: { cursor?: string; companyId?: string; state?: string; queue?: 'UNASSIGNED'|'OVERDUE' }) {
     const access = await this.access(context, 'system.billing.read');
@@ -177,7 +203,9 @@ export class BillingAdminService {
       ...(input.queue==='OVERDUE'?{OR:[{followUpAt:{lte:new Date()}},{followUpAt:null,slaDueAt:{lte:new Date()}}],state:{not:'RESOLVED'}}:{}) };
     if (input.cursor && !await this.prisma.client.billingIssue.findFirst({ where: { ...where, id: input.cursor } })) throw new NotFoundException();
     const rows = await this.prisma.client.billingIssue.findMany({ where: { ...where, ...(input.cursor ? { id: { gt: input.cursor } } : {}) }, orderBy: { id: 'asc' }, take: 26 });
-    return { items: await Promise.all(rows.slice(0, 25).map(i=>this.issueView(i))), nextCursor: rows.length > 25 ? rows[24]!.id : null };
+    const companyIds=[...new Set(rows.slice(0,25).flatMap(row=>row.companyId?[row.companyId]:[]))];
+    const names=new Map((companyIds.length?await this.prisma.client.company.findMany({where:{id:{in:companyIds}},select:{id:true,name:true}}):[]).map(c=>[c.id,c.name]));
+    return { items: await Promise.all(rows.slice(0, 25).map(i=>this.issueView(i,this.prisma.client,i.companyId?names.get(i.companyId)??null:null))), nextCursor: rows.length > 25 ? rows[24]!.id : null };
   }
   async issue(context: RequestContext, id: string) {
     const access = await this.access(context, 'system.billing.read');
