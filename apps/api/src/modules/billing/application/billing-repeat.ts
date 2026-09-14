@@ -6,7 +6,7 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import type { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { StripeClient, stripeId, safeStripeUrl, type StripeObject } from '../infrastructure/stripe.client';
-import { assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
+import { assertCompanyCanBuy, assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
 import { detectBillingIssue } from './billing-issues';
@@ -190,6 +190,7 @@ export class BillingRepeat {
       await this.fence(tx, account, attempt, lease); await this.sourceFence(tx, account, attempt, snapshot);
       await this.billing.assertOwner({ companyId: account.companyId, userId: attempt.initiatingUserId } as RequestContext, tx);
       const state = await this.billing.settings(tx);
+      assertCompanyCanBuy(state.policy, account.companyId);
       if (!state.gates.new_sales || !state.gates.plan_changes || state.revision?.id !== attempt.policyRevisionId || state.settings.version !== snapshot.settingsVersion) throw review();
     });
     const abort = async (status: 'EXPIRED' | 'FAILED') => {

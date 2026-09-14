@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { BILLING_ACTIONS, BILLING_CONFIGURATION_IMPACT_KINDS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, billingOffer, type BillingPolicy, type BillingConfiguration,
   type BillingConfigurationImpactPage, type BillingConfigurationImpactKind,
   type BillingConfigurationInput, type BillingConfigurationDraftInput, type BillingConfigurationImpact, type BillingConfigurationOperation } from '@watchdog-bms/contracts';
-import type { BillingOperation, Prisma } from '../../../generated/prisma/client';
+import { Prisma, type BillingOperation } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { verifyPassword } from '../../auth/domain/logic/password-credential.logic';
@@ -73,8 +73,15 @@ export class BillingConfigurationService {
       gates: Object.fromEntries(BILLING_ACTIONS.map(a => [a, false])) as BillingConfiguration['gates'], capabilities: access.capabilities, reauthenticatedUntil: null };
     const state = await this.billing.settings();
     return { version: state.settings.version, mode: this.billing.stripe.livemode ? 'LIVE' : 'TEST', policy: state.policy ?? BILLING_DRAFT_POLICY,
-      policyRevisionId: state.revision?.id ?? null, gates: state.gates, capabilities: access.capabilities,
+      policyRevisionId: state.revision?.id ?? null, gates: state.gates, capabilities: access.capabilities, salesCompanies: await this.salesCompanies(state.policy?.salesCompanyIds),
       reauthenticatedUntil: (await this.proof(context)).until?.toISOString() ?? null };
+  }
+  private async salesCompanies(ids: string[] | null | undefined, tx: Prisma.TransactionClient = this.prisma.client) {
+    return ids?.length ? tx.company.findMany({ where: { id: { in: ids } }, orderBy: { id: 'asc' }, select: { id: true, name: true, status: true } }) : [];
+  }
+  private async validateCompanies(policy: BillingPolicy, tx: Prisma.TransactionClient = this.prisma.client) {
+    if ((await this.salesCompanies(policy.salesCompanyIds, tx)).length !== (policy.salesCompanyIds?.length ?? 0))
+      throw billingError('CONTROL_SALES_COMPANY_INVALID', 'มีบริษัทที่ไม่พบแล้ว กรุณาเลือกบริษัทใหม่และตรวจผลกระทบอีกครั้ง');
   }
   private gates(value: unknown): BillingConfiguration['gates'] {
     assertKeys(value, BILLING_ACTIONS);
@@ -85,7 +92,9 @@ export class BillingConfigurationService {
   private async impact(policy: BillingPolicy, before: BillingPolicy | null, tx: Prisma.TransactionClient = this.prisma.client): Promise<BillingConfigurationImpact> {
     const where = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode };
     const { cursorValid: _cursor, items: _items, ...counts } = await configurationImpact(tx, where);
-    return { ...counts,
+    const cohort = policy.salesCompanyIds !== undefined || before?.salesCompanyIds !== undefined;
+    return { ...counts, ...(cohort ? { salesCohort: { before: before?.salesCompanyIds ?? null, after: policy.salesCompanyIds ?? null,
+      companies: await this.salesCompanies([...new Set([...(before?.salesCompanyIds ?? []), ...(policy.salesCompanyIds ?? [])])], tx) } } : {}),
       prices: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ offerKey: `${tier}:${interval}` as const,
         beforeTotalSatang: quoteTotals(billingOffer(tier, interval).priceSatang, before?.taxTreatment ?? null).totalSatang,
         afterTotalSatang: quoteTotals(billingOffer(tier, interval).priceSatang, policy.taxTreatment).totalSatang }))) };
@@ -120,6 +129,7 @@ export class BillingConfigurationService {
       approverUserId: row.approverUserId, errorCode: row.errorCode, createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null,
       expiresAt: row.expiresAt.toISOString(), referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
       proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates) }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
+      salesCompanies: await this.salesCompanies(p.policy.salesCompanyIds),
       canEditDraft:row.state==='DRAFT'&&own&&access.capabilities.includes(permission(row.type)),sourceDraftVersion:p.draftVersion,
       allowedActions: [...(own && fresh && row.state === 'PREVIEW' && access.capabilities.includes(permission(row.type)) ? ['submit' as const] : []),
         ...(!own && fresh && row.state === 'AWAITING_APPROVAL' && access.capabilities.includes('system.billing.approval.approve') ? ['approve' as const] : []),
@@ -165,6 +175,7 @@ export class BillingConfigurationService {
     if(draft&&(draft.state!=='DRAFT'||draft.initiatorUserId!==context.userId||draft.version!==input.draftVersion||draft.type!==input.type||
       configurationHash([draft.reason,(draft.proposedJson as Proposed).policy,effectiveBillingGates((draft.proposedJson as Proposed).gates)])!==configurationHash([input.reason.trim(),policy,gates])))throw stale();
     if(!draft&&input.draftVersion!==undefined)throw new BadRequestException('Missing source draft');
+    await this.validateCompanies(policy);
     await this.validateProvider(policy);
     const proposed: Proposed = { policy, gates, impact: await this.impact(policy, state.policy), sourcePolicyRevision: state.revision?.id ?? null,
       membershipId: context.membershipId, actorCompanyId: context.companyId, sessionId: context.sessionId ?? '',...draft?{draftVersion:draft.version}:{} };
@@ -184,6 +195,7 @@ export class BillingConfigurationService {
     const hash=configurationHash([input.draftId??null,input.expectedVersion,input.type,policy,gates,reason]);
     const row=await this.prisma.client.$transaction(async tx=>{
       await this.platform(context,permission(input.type),tx);const state=await this.lock(tx);
+      await this.validateCompanies(policy, tx);
       if(input.type==='SET_ACTION_GATE'&&configurationHash(policy)!==configurationHash(state.policy))throw billingError('CONTROL_GATE_POLICY_STALE','โหลดนโยบายล่าสุดก่อนบันทึกร่างค่าสวิตช์อีกครั้ง');
       if(configurationHash(gates)!==configurationHash(state.gates))await this.platform(context,'system.billing.gate.manage',tx);
       const proposed:Proposed={policy,gates,impact:null,sourcePolicyRevision:state.revision?.id??null,membershipId:context.membershipId,actorCompanyId:context.companyId,sessionId:context.sessionId??''};
@@ -246,6 +258,9 @@ export class BillingConfigurationService {
     const proposed = candidate.proposedJson as unknown as Proposed;
     await this.validateProvider(proposed.policy);
     const row = await this.prisma.client.$transaction(async tx => {
+      // Match purchase/lifecycle lock order: companies first, then BillingSettings.
+      const companyIds = [...new Set([...(proposed.impact?.salesCohort?.before ?? []), ...(proposed.policy.salesCompanyIds ?? [])])].sort();
+      if (companyIds.length) await tx.$queryRaw(Prisma.sql`SELECT id FROM "Company" WHERE id IN (${Prisma.join(companyIds)}) ORDER BY id FOR SHARE`);
       const state = await this.lock(tx), current = await this.row(context, id, tx);
       await this.platform(context, 'system.billing.approval.approve', tx); await this.requireProof(context, tx);
       if (current.state !== 'AWAITING_APPROVAL' || current.version !== expectedVersion || current.requestHash !== previewHash || current.expiresAt <= new Date() || current.sourceVersion !== state.settings.version) throw stale();
@@ -254,6 +269,7 @@ export class BillingConfigurationService {
         sessionId: proposed.sessionId, permissions: member.roles.flatMap(r => r.role.permissions.map(p => p.permission.key)) };
       await this.platform(initiator, permission(current.type), tx);
       if (configurationHash(effectiveBillingGates(proposed.gates)) !== configurationHash(state.gates)) await this.platform(initiator, 'system.billing.gate.manage', tx);
+      await this.validateCompanies(proposed.policy, tx);
       if (configurationHash(await this.impact(proposed.policy, state.policy, tx)) !== configurationHash(proposed.impact)) throw stale();
       let revisionId = state.revision?.id ?? null;
       if (current.type === 'PUBLISH_POLICY') {

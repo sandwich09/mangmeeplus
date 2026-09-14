@@ -8,7 +8,7 @@ import type { BillingAccount, Prisma } from '../../../generated/prisma/client';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { StripeClient, StripeRequestError, safeStripeUrl, stripeId } from '../infrastructure/stripe.client';
-import { assertPolicyReady, assertStripePrice, billingError, billingMonth, effectiveBillingGates, hashBilling, paidVariant, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { assertCompanyCanBuy, companyCanBuy, assertPolicyReady, assertStripePrice, billingError, billingMonth, effectiveBillingGates, hashBilling, paidVariant, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 
 import { BillingRepeat, type RepeatSource } from './billing-repeat';
 import { BillingCollection } from './billing-collection';
@@ -81,7 +81,7 @@ export class BillingService {
     const offers = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const)
       .flatMap((tier) => (['month', 'year'] as const).map((interval) => {
         const offer = billingOffer(tier, interval);
-        if (tier !== 'ENTERPRISE_1999' && state?.policy && state.gates.new_sales &&
+        if (tier !== 'ENTERPRISE_1999' && state?.policy && state.policy.salesCompanyIds?.length !== 0 && state.gates.new_sales &&
             state.policy.priceIds[`${tier}:${interval}`]) {
           try { assertPolicyReady(state.policy); offer.availability = 'AVAILABLE'; offer.reason = null; } catch { /* Draft remains unavailable. */ }
         }
@@ -186,6 +186,7 @@ export class BillingService {
     if (!this.stripe.enabled) throw billingError('BILLING_NOT_READY', 'ระบบชำระเงินยังไม่เปิดให้บริการ');
     const state = await this.settings();
     if (!state.policy || !state.revision || !state.gates.new_sales) throw billingError('BILLING_SALES_CLOSED', 'ยังไม่เปิดรับชำระเงินใหม่');
+    assertCompanyCanBuy(state.policy, context.companyId);
     assertPolicyReady(state.policy);
     if (state.policy.paidStart !== 'IMMEDIATE') throw billingError('CONTROL_POLICY_NOT_SUPPORTED', 'การเริ่มสมาชิกต้องชำระทันทีตามนโยบายปัจจุบัน');
     const priceId = state.policy.priceIds[`${tier}:${interval}`];
@@ -291,6 +292,7 @@ export class BillingService {
       paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
       if (body.accepted !== true || body.consentRevision !== snapshot.quote.consentRevision || !['web', 'line'].includes(body.channel)) throw billingError('BILLING_CONSENT_REQUIRED', 'กรุณายืนยันเงื่อนไขการเรียกเก็บเงิน');
       if (!state.policy || !state.gates.new_sales) throw billingError('BILLING_SALES_CLOSED', 'ยังไม่เปิดรับชำระเงินใหม่');
+      assertCompanyCanBuy(state.policy, context.companyId);
       assertPolicyReady(state.policy);
       const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
       if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
@@ -342,6 +344,7 @@ export class BillingService {
         await this.assertOwner(context, tx);
         const state = await this.settings(tx);
         if (!state.gates.new_sales || state.revision?.id !== attempt.policyRevisionId || state.settings.version !== snapshot.settingsVersion) throw billingError('BILLING_SALES_CLOSED', 'หยุดรับรายการใหม่ชั่วคราว');
+        assertCompanyCanBuy(state.policy, context.companyId);
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
@@ -404,27 +407,29 @@ export class BillingService {
     const settings = this.stripe.enabled ? await this.settings() : null;
     const state = billingState(company, account, invoice, attempt), held = state.accessState === 'HELD';
     const allowedActions: BillingAction[] = [];
+    const eligible = companyCanBuy(settings?.policy ?? null, company.id);
     let policyReady = false;
     if (settings?.policy) { try { assertPolicyReady(settings.policy); policyReady = true; } catch { /* Keep incomplete policies closed. */ } }
     if (settings?.policy && policyReady && !held) {
-      if (!account?.baseSubscriptionId && !account?.activeAttemptId && !account?.activeCollectionOperationId && settings.gates.new_sales) allowedActions.push('new_sales');
+      if (!account?.baseSubscriptionId && !account?.activeAttemptId && !account?.activeCollectionOperationId && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
       if (account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
         ['canceled', 'incomplete_expired'].includes(account.subscriptionState) && account.paidThrough && account.paidThrough <= new Date() &&
-        !(account.graceEndsAt && account.graceEndsAt > new Date()) && settings.gates.new_sales) allowedActions.push('new_sales');
+        !(account.graceEndsAt && account.graceEndsAt > new Date()) && settings.gates.new_sales && eligible) allowedActions.push('new_sales');
       if (account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active' && !account.cancelAtPeriodEnd &&
           account.paidThrough && account.paidThrough > new Date() && !account.graceEndsAt && settings.gates.new_sales && settings.gates.plan_changes &&
-          Object.keys(settings.policy.zeroPriceIds ?? {}).length) allowedActions.push('new_sales');
+          Object.keys(settings.policy.zeroPriceIds ?? {}).length && eligible) allowedActions.push('new_sales');
       if (account?.customerId && settings.gates.portal_payment_method) allowedActions.push('portal_payment_method');
     }
     if (settings && !held && account?.baseSubscriptionId && !account.activeAttemptId && !account.activeCollectionOperationId &&
       ['active', 'past_due', 'unpaid'].includes(account.subscriptionState) && settings.gates.portal_cancel_subscription) allowedActions.push('portal_cancel_subscription');
     const pending = account?.pendingPlanChangeId ? await this.collection.get(context, account.pendingPlanChangeId) : null;
-    if (settings?.gates.plan_changes && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
+    if (settings?.gates.plan_changes && (eligible || pending) && account?.paidThrough && account.paidThrough.getTime() > Date.now()+600000 && !account.cancelAtPeriodEnd && !account.graceEndsAt &&
       !held && !account.activeAttemptId && !account.activeCollectionOperationId && account.subscriptionState === 'active') allowedActions.push('plan_changes');
     const snapshot = invoice?.offerSnapshot as unknown as BillingQuote['offer'] | undefined;
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     return { companyId: company.id, companyName: company.name, mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
+      purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED',
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
       tierKey: term?.tierKey ?? null, interval: snapshot?.interval ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null, paidThrough: account?.paidThrough?.toISOString() ?? null,

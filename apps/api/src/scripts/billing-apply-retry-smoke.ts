@@ -20,6 +20,9 @@ export async function checkBillingApplyRetry(input:{
   const account=await db.billingAccount.findFirstOrThrow({where:{companyId,stripeAccountId:input.stripeAccountId,livemode:false}});
   const original=await db.billingInvoice.findFirstOrThrow({where:{billingAccountId:account.id,applyStatus:'HELD'}});
   const term=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:actorCompany}});
+  const settings=await db.billingSettings.findUniqueOrThrow({where:{id:`${input.stripeAccountId}:test`}});
+  const policy=await db.billingPolicyRevision.findUniqueOrThrow({where:{id:settings.policyRevisionId!}});
+  let closedRevision:string|undefined;
   const invoices:string[]=[],cases:string[]=[];let context:BrowserContext|undefined,foreignAccount:string|undefined;
   const calls:{path:string;method:string}[]=[],scope={userId,companyId,stripeAccountId:input.stripeAccountId,livemode:false};
   let fault:((path:string,method:string)=>Promise<void>)|undefined;
@@ -32,6 +35,12 @@ export async function checkBillingApplyRetry(input:{
       providerStatus:'paid',evidenceHash:tag,applyStatus:'HELD',...extra}});invoices.push(row.id);return row;
   };
   try{
+    // Synthetic publication snapshot: keep the original consent's immutable revision intact.
+    const max=await db.billingPolicyRevision.aggregate({where:{stripeAccountId:input.stripeAccountId,livemode:false},_max:{version:true}});
+    const closed=await db.billingPolicyRevision.create({data:{stripeAccountId:input.stripeAccountId,livemode:false,version:(max._max.version??0)+1,
+      state:'ACTIVE',policyJson:{...(policy.policyJson as Prisma.JsonObject),salesCompanyIds:[]},createdByUserId:policy.createdByUserId}});closedRevision=closed.id;
+    await db.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:closed.id,version:{increment:1}}});
+    assert.equal((await input.request(`/v1/companies/${companyId}/billing`)).body.purchaseEligibility,'COMPANY_SALES_CLOSED');
     await db.user.create({data:{id:userId,displayName:'Synthetic apply operator',email:`${userId}@example.test`}});
     const permissions=await Promise.all(['account.session.read','system.billing.read','system.billing.apply.retry'].map(key=>db.permission.upsert({where:{key},update:{},create:{key,description:key}})));
     await db.role.create({data:{id:roleId,key:`APPLY_${tag}`,name:'Synthetic apply support',scopeKey:'system',isSystem:true,
@@ -191,11 +200,14 @@ export async function checkBillingApplyRetry(input:{
       await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท'}).waitFor();
       cases.push('browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return');
     }
+    cases.push('apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort');
     return cases;
   }catch(error){if(context){const page=context.pages()[0];if(page){await page.screenshot({path:`${browser!.evidenceDir}/apply-retry-failure.png`,fullPage:true});
     console.error('Apply retry browser failure',await page.locator('main').last().innerText());}}throw error;
   }finally{
     input.intercept();await context?.close();
+    await db.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:settings.policyRevisionId,version:{increment:1}}});
+    if(closedRevision)await db.billingPolicyRevision.delete({where:{id:closedRevision}});
     await db.billingInvoice.deleteMany({where:{id:{in:invoices}}});
     if(foreignAccount)await db.billingAccount.delete({where:{id:foreignAccount}});
     const ownOperations=await db.billingOperation.findMany({where:{initiatorUserId:userId,stripeAccountId:input.stripeAccountId},select:{id:true}});

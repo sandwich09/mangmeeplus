@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import BillingSalesCohortPicker from './BillingSalesCohortPicker';
 import { BILLING_ACTIONS, BILLING_PAID_TIERS, type BillingAction, type BillingConfiguration, type BillingConfigurationOperation, type BillingPolicy } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
@@ -92,6 +93,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         <p>บันทึกและกลับมาแก้ได้โดยยังไม่เปลี่ยนค่าที่ใช้งานจริง ตรวจผลกระทบและขออนุมัติเมื่อพร้อม</p>
         <p>ราคาและนโยบายของสัญญาที่จ่ายแล้วคงเดิม การเปลี่ยนนี้ไม่ย้ายสมาชิกเดิมหรือแก้เอกสารย้อนหลัง</p>
         <fieldset disabled={busy || !canPolicy} className="space-y-3">
+          <BillingSalesCohortPicker ids={policy.salesCompanyIds} companies={(draft ? draft.salesCompanies : settings.salesCompanies) ?? []} onChange={ids => setPolicy({ ...policy, salesCompanyIds: ids })} />
           <label className="block">ภาษีมูลค่าเพิ่ม<select aria-label="ภาษีมูลค่าเพิ่ม" className={field} value={policy.taxTreatment ?? ''} onChange={e => setPolicy({ ...policy,
             taxTreatment: e.target.value as BillingPolicy['taxTreatment'], taxRateId: e.target.value === 'NOT_VAT_REGISTERED' ? null : policy.taxRateId })}>
             <option value="NOT_VAT_REGISTERED">ปิด — ยังไม่จด VAT</option><option value="INCLUSIVE_VAT_7">เปิด 7% — รวมในราคา</option><option value="EXCLUSIVE_VAT_7">เปิด 7% — บวกจากราคา</option>
@@ -136,6 +138,13 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {operation.impact&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">ยอดชำระก่อนและหลัง</caption><thead><tr><th>แพ็กเกจ</th><th>เดิม</th><th>ใหม่</th></tr></thead><tbody>
           {operation.impact.prices.map(p => <tr key={p.offerKey}><td className="py-2">{p.offerKey}</td><td>{money(p.beforeTotalSatang)}</td><td>{money(p.afterTotalSatang)}</td></tr>)}
         </tbody></table></div>}
+        <section className="space-y-2" aria-label="กลุ่มบริษัทในคำขอ">
+          <p>กลุ่มที่เสนอ: {operation.proposed.policy.salesCompanyIds == null ? 'ทุกบริษัท รวมบริษัทที่จะสมัครภายหลัง' : `${operation.proposed.policy.salesCompanyIds.length} บริษัทที่เลือก`}</p>
+          {operation.impact?.salesCohort && <p>กลุ่มเดิม: {operation.impact.salesCohort.before == null ? 'ทุกบริษัท' : `${operation.impact.salesCohort.before.length} บริษัท`}</p>}
+          <ul>{(operation.impact?.salesCohort?.companies ?? operation.salesCompanies ?? []).map(c => <li key={c.id} className="break-all">
+            <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(c.id)}`}>{c.name}</Link> · {c.id} · {c.status} · {operation.proposed.policy.salesCompanyIds == null || operation.proposed.policy.salesCompanyIds.includes(c.id) ? 'อยู่ในกลุ่มใหม่' : 'ออกจากกลุ่มใหม่'}
+          </li>)}</ul>
+        </section>
         <ul className="space-y-1">{BILLING_ACTIONS.map(a => <li key={a}>{gateNames[a]}: {operation.proposed.gates[a] ? 'เปิด' : 'ปิด'}</li>)}</ul>
         <p>สัญญาที่จ่ายแล้วใช้เงื่อนไขเดิม {operation.state==='SUCCEEDED'?'คำขอนี้ผ่านการอนุมัติและนำไปใช้แล้ว':'การบันทึกหรือดูร่างยังไม่เปลี่ยนค่าที่ใช้งานอยู่'}</p>
         <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>

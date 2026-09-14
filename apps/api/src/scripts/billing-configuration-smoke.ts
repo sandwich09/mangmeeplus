@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { checkBillingSalesCohort } from './billing-sales-cohort-smoke';
 import { randomUUID } from 'node:crypto';
 import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
 import { hashPassword } from '../modules/auth/domain/logic/password-credential.logic';
@@ -13,6 +14,7 @@ export async function checkBillingConfiguration(input: {
   request: (path: string, method?: string, body?: unknown, extra?: Record<string, string>) => Promise<{ status: number; body: any }>;
   prisma: PrismaService; companyId: string; userIds: string[]; membershipId: string; stripeAccountId: string;
   browser?: Awaited<ReturnType<typeof startBillingBrowser>>; signToken: (sid: string, userId?: string) => string; recordLegal: (userId: string, membershipId: string) => Promise<void>;
+  transport: (hook?: (url: URL, init?: RequestInit) => Promise<Response | undefined>) => void;
   drainOperations:()=>Promise<unknown>;drainNotifications:()=>Promise<unknown>;notificationFixture:ReturnType<typeof import('./billing-notification-smoke').billingNotificationFixture>;
 }) {
   const { prisma, userIds, companyId, stripeAccountId, browser } = input, client = prisma.client, base = '/v1/system/billing', run = randomUUID();
@@ -41,6 +43,15 @@ export async function checkBillingConfiguration(input: {
   let secondBrowser: BrowserContext | undefined;
   const snapshot = await client.billingInvoice.findMany({ where: { billingAccountId: (await client.billingAccount.findFirstOrThrow({ where: { companyId, stripeAccountId } })).id }, orderBy: { id: 'asc' } });
   try {
+    if (process.env.BILLING_SALES_COHORT_ONLY === '1') {
+      if (browser) {
+        secondBrowser = await browser.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
+        await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
+          { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
+        await secondBrowser.newPage();
+      }
+      return await checkBillingSalesCohort({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+    }
     const initial = await request(`${base}/settings`); assert.equal(initial.status, 200); assert.equal(initial.body.reauthenticatedUntil, null);
     const before = initial.body, revisionCount = await client.billingPolicyRevision.count({ where: { stripeAccountId } });
     const preview = (policy = before.policy, gates = before.gates, version = before.version, type = 'PUBLISH_POLICY') => request(`${base}/configuration-changes/preview`, 'POST', {

@@ -4,7 +4,7 @@ import type { BillingAccount, BillingOperation, Prisma } from '../../../generate
 import type { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
-import { assertPolicyReady, assertStripePrice, billingError, hashBilling, paidVariant, quoteTotals } from '../domain/billing-policy';
+import { assertCompanyCanBuy, assertPolicyReady, assertStripePrice, billingError, hashBilling, paidVariant, quoteTotals } from '../domain/billing-policy';
 import { appendPackageInterval } from '../domain/billing-package';
 import { stripeId, type StripeClient, type StripeObject } from '../infrastructure/stripe.client';
 import type { BillingService, BillingSnapshot } from './billing.service';
@@ -58,6 +58,7 @@ export class BillingCollection {
     await this.billing.assertOwner(context);
     await this.assertCompany(context.companyId);
     const account = await this.billing.account(context.companyId), state = await this.billing.settings();
+    if (action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, context.companyId);
     if (!(changing(action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription)) throw billingError('BILLING_COLLECTION_CLOSED', 'ติดต่อทีมงานพร้อมเลขอ้างอิงเพื่อจัดการการต่ออายุ');
     if (!account?.customerId || !account.baseSubscriptionId || !account.paidThrough || account.activeAttemptId || account.activeCollectionOperationId) throw review();
     const accepted = await collectionContract(this.prisma.client, account);
@@ -132,6 +133,7 @@ export class BillingCollection {
       if (replay) { if (replay.id !== id || replay.requestHash !== previewHash || replay.initiatorUserId !== context.userId) throw review(); return replay; }
       const state = await this.billing.settings(tx);
       const proposed = current.proposedJson as unknown as Proposed;
+      if (proposed.action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, context.companyId);
       if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription) || !account || account.version !== current.sourceVersion || account.activeAttemptId || account.activeCollectionOperationId ||
         (account.leaseUntil && account.leaseUntil > new Date()) || current.version !== expectedVersion || current.requestHash !== previewHash || current.expiresAt <= new Date() ||
         current.initiatorUserId !== context.userId || current.state !== 'PREVIEW') throw review();
@@ -221,6 +223,7 @@ export class BillingCollection {
           await this.billing.assertOwner({ companyId: account.companyId, userId: row.initiatorUserId } as RequestContext, tx);
           await this.assertCompany(account.companyId, tx);
           const state = await this.billing.settings(tx);
+          if (proposed.action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, account.companyId);
           if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription)) throw review();
           if (proposed.change && (current.pendingPlanChangeId !== proposed.change.previousId || current.paidThrough!.getTime() <= Date.now()+60000 ||
             (proposed.change.selection && !capacityValid(await capacityOptions(tx, current.companyId, proposed.snapshot.quote.offer), proposed.change.selection)))) throw review();

@@ -21,7 +21,7 @@ export function paidVariant(tier: unknown, interval: unknown): { tier: PaidTier;
 }
 
 export function parseBillingPolicy(value: unknown): BillingPolicy {
-  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer']);
+  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds']);
   const p = value as unknown as BillingPolicy;
   if (p.schemaVersion !== 1 || ![null, 'IMMEDIATE', 'AFTER_TRIAL'].includes(p.paidStart) ||
       ![null, 'INCLUSIVE_VAT_7', 'EXCLUSIVE_VAT_7', 'NOT_VAT_REGISTERED'].includes(p.taxTreatment) ||
@@ -49,7 +49,17 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
       typeof p.issuer.thaiTaxId !== 'string' || !/^\d{13}$/.test(p.issuer.thaiTaxId) || typeof p.issuer.stripeTaxId !== 'string' ||
       !/^txi_[a-zA-Z0-9]+$/.test(p.issuer.stripeTaxId)) throw new BadRequestException('Invalid billing issuer');
   }
-  return p;
+  if (p.salesCompanyIds != null && (!Array.isArray(p.salesCompanyIds) || p.salesCompanyIds.length > 100 ||
+      p.salesCompanyIds.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) ||
+      new Set(p.salesCompanyIds).size !== p.salesCompanyIds.length)) throw new BadRequestException('Invalid sales companies');
+  return p.salesCompanyIds ? { ...p, salesCompanyIds: [...p.salesCompanyIds].sort() } : p;
+}
+
+export function companyCanBuy(policy: BillingPolicy | null, companyId: string): boolean {
+  return Boolean(policy && (policy.salesCompanyIds == null || policy.salesCompanyIds.includes(companyId)));
+}
+export function assertCompanyCanBuy(policy: BillingPolicy | null, companyId: string): void {
+  if (!companyCanBuy(policy, companyId)) throw billingError('BILLING_COMPANY_SALES_CLOSED', 'ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน');
 }
 
 export function assertPolicyReady(policy: BillingPolicy): void {

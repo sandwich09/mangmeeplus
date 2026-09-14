@@ -7,6 +7,7 @@ import type {ProviderScansSmokeInput} from './billing-provider-scans-smoke';
 export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{roleId:string;adminId:string}) {
   const db=input.prisma.client,tag=randomUUID().replaceAll('-',''),companyId=`invoice-history-${tag}`,customerId=`cus_history${tag}`,prefix=`in_history${tag}`;
   const base=`/v1/system/billing/companies/${companyId}/invoice-scans`,cases:string[]=[];
+  const browserResponses:{path:string;status:number}[]=[];
   const request:typeof input.request=async(...args)=>{
     for(let tries=0;;tries++){const result=await input.request(...args);if(result.status!==429||tries>=2)return result;
       assert.ok(result.body.retryAfterSeconds<=60);await new Promise(resolve=>setTimeout(resolve,Math.min(60,result.body.retryAfterSeconds+1)*1000));}
@@ -114,7 +115,16 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
 
     if(input.browser){
       await new Promise(resolve=>setTimeout(resolve,60000));
-      const {page,origin,evidenceDir}=input.browser;await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/system/billing/companies/${companyId}`,{waitUntil:'domcontentloaded'});
+      const {page,origin,evidenceDir}=input.browser;await page.setViewportSize({width:390,height:844});
+      page.on('response',response=>{const path=new URL(response.url()).pathname;if(path.includes('/system/billing'))browserResponses.push({path,status:response.status()});});
+      const detail=await request(`/v1/system/billing/companies/${companyId}`);assert.equal(detail.status,200,JSON.stringify({status:detail.status,code:detail.body?.code}));assert.equal(detail.body.accountId,account.id);
+      const [navigation,companyResponse]=await Promise.all([
+        page.goto(`${origin}/system/billing/companies/${companyId}`,{waitUntil:'domcontentloaded'}),
+        page.waitForResponse(response=>new URL(response.url()).pathname===`/api/v1/system/billing/companies/${companyId}`&&response.request().method()==='GET'),
+      ]);
+      assert.ok(navigation?.ok(),'Admin company document must load successfully');assert.equal(companyResponse.status(),200);
+      assert.equal((await companyResponse.json()).accountId,account.id);
+      await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท',exact:true}).waitFor();
       await page.getByRole('link',{name:'ตรวจประวัติใบแจ้งหนี้ Stripe',exact:true}).click();await page.waitForURL(`**/companies/${companyId}/invoice-scans`);
       await page.getByLabel('เหตุผล',{exact:true}).fill('ตรวจประวัติจากเว็บและกู้ผลที่ค้าง');let lostResponse=false,createdId='';
       await page.route(`**/companies/${companyId}/invoice-scans`,async route=>{
@@ -144,6 +154,12 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
     assert.equal(await db.billingIssue.count({where:{companyId,kind:'PROVIDER_INVOICE_REVIEW'}}),1);assert.equal((await db.billingIssue.findUniqueOrThrow({where:{id:review.id}})).state,'OPEN');
     assert.deepEqual(await ledger(),expectedLedger);assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}}),term);assert.equal(await db.billingReceiptGrant.count({where:{companyId}}),0);
     assert.equal(await db.billingProviderEvent.count({where:{stripeAccountId:input.stripeAccountId,objectId:{startsWith:prefix}}}),0);return cases;
+  }catch(error){
+    try{if(input.browser){const {page,evidenceDir}=input.browser;
+      console.error('Invoice history browser diagnostic',JSON.stringify({path:new URL(page.url()).pathname,responses:browserResponses,
+        headings:await page.locator('h1,h2').allTextContents(),alerts:await page.getByRole('alert').allTextContents(),links:await page.locator('main a').allTextContents()}));
+      await page.screenshot({path:`${evidenceDir}/invoice-discovery-failure.png`,fullPage:true});}}catch{console.error('Invoice history diagnostics unavailable');}
+    throw error;
   }finally{
     input.transport();await db.billingOperatorScope.deleteMany({where:{companyId}});await db.auditLog.deleteMany({where:{companyId}});await db.billingIssue.deleteMany({where:{companyId}});
     await db.billingInvoice.deleteMany({where:{billingAccountId:account.id}});await db.companyPlanTerm.deleteMany({where:{companyId}});await db.billingAccount.delete({where:{id:account.id}});await db.company.delete({where:{id:companyId}});

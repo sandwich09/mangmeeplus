@@ -139,6 +139,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         <p>ใบเสร็จคงเหลือ {status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}{status.usage.cadence === 'LEGACY_MONTH' ? ` · รอบใหม่ ${date(status.usage.resetsAt)}` : ` · ใช้ได้ถึง ${date(status.usage.expiresAt)}`}</p>
         {status.nextChargeAt && <p>เรียกเก็บเงินครั้งถัดไป {date(status.nextChargeAt)}</p>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
+        {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status">ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบสถานะและรายการเดิมด้านล่างได้</p>}
         {status.accessState === 'HELD' && <p>บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน ข้อมูลยังอยู่ครบ</p>}
         {status.reference && <p className="break-all text-xs text-gray-500">เลขอ้างอิง {status.reference}</p>}
         {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}

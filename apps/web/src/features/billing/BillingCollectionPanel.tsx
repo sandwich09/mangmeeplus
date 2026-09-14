@@ -60,7 +60,7 @@ export default function BillingCollectionPanel({ companyId, status, catalog, ope
     {status.planCapacityRepair && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รับชำระรอบใหม่แล้ว กรุณาตรวจเลือกสาขาและผู้ใช้ก่อนเปิดสิทธิ์แพ็กเกจใหม่</p>
       <button className={button} disabled={busy} onClick={() => { setBusy(true); const repair = status.planCapacityRepair!;
         void api.capacity(repair.offerKey, repair.interval).then(options => setSelection({ options, repair, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false)); }}>เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว</button></div>}
-    {!operationId && status.allowedActions.includes('plan_changes') && targetOffers.length > 0 && <div className="space-y-2"><p>ลดแพ็กเกจเมื่อครบเวลาที่ซื้อไว้ทั้งหมด โดยเลือกรายชื่อที่จะคงสิทธิ์ก่อน</p>
+    {!operationId && status.purchaseEligibility !== 'COMPANY_SALES_CLOSED' && status.allowedActions.includes('plan_changes') && targetOffers.length > 0 && <div className="space-y-2"><p>ลดแพ็กเกจเมื่อครบเวลาที่ซื้อไว้ทั้งหมด โดยเลือกรายชื่อที่จะคงสิทธิ์ก่อน</p>
       <div className="flex flex-wrap gap-2">{targetOffers.map(offer => <button key={offer.offerKey} className={button} disabled={busy || offer.availability !== 'AVAILABLE' || Date.parse(catalog.validUntil) <= Date.now()} onClick={() => {
         setBusy(true); setError(''); void api.capacity(offer.offerKey, offer.interval).then(options => setSelection({ options, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false));
       }}>ตรวจลดเป็น {offer.label}</button>)}</div></div>}

@@ -61,6 +61,8 @@ export type BillingPolicy = {
   taxRateId: string | null;
   portalConfigurationId: string | null;
   consentRevision: string;
+  /** New purchase admission only. Absent/null: all; []: closed; otherwise explicit existing companies. */
+  salesCompanyIds?: string[] | null;
   issuer?: { legalName: string; address: string; thaiTaxId: string; stripeTaxId: string };
 };
 export const BILLING_DRAFT_POLICY: BillingPolicy = {
@@ -95,6 +97,7 @@ export type BillingStatus = {
   companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
+  purchaseEligibility?: 'ELIGIBLE' | 'COMPANY_SALES_CLOSED';
   accessState: 'ACTIVE' | 'EXPIRED' | 'HELD'; subscriptionState: string; documentState: 'NONE' | 'PENDING' | 'READY';
   attemptId: string | null; reference: string | null; observedAt: string | null;
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
@@ -174,13 +177,15 @@ export type BillingDeliveryView = { id:string;companyId:string;mode:BillingMode;
   errorCode:string|null;recoveryBlockedReason:string|null;accountVersion:number;retryOperationId:string|null;canRetry:boolean;canReconcile:boolean;possibleDuplicate:boolean;
   mailHistory?:Array<{id:string;generation:number;state:string;acceptedAt:string|null;deliveredAt:string|null;errorCode:string|null;possibleDuplicate:boolean}> };
 
+export type BillingSalesCompany = { id: string; name: string; status: string };
 export type BillingConfiguration = { version: number; mode: BillingMode | 'DISABLED'; policy: BillingPolicy;
-  policyRevisionId: string | null; gates: Record<BillingAction, boolean>; capabilities: string[]; reauthenticatedUntil: string | null };
+  policyRevisionId: string | null; gates: Record<BillingAction, boolean>; capabilities: string[]; reauthenticatedUntil: string | null; salesCompanies?: BillingSalesCompany[] };
 export type BillingConfigurationInput = { type: 'PUBLISH_POLICY' | 'SET_ACTION_GATE'; expectedVersion: number;
   policy: BillingPolicy; gates: Record<BillingAction, boolean>; reason: string; draftId?:string;draftVersion?:number };
 export type BillingConfigurationDraftInput = Omit<BillingConfigurationInput,'draftVersion'>;
 export type BillingConfigurationImpact = { subscriptions: number; inFlightAttempts: number; unusedQuotes: number; pendingPlanChanges: number; collectionCommands: number;
   sourceHash?: string;
+  salesCohort?: { before: string[] | null; after: string[] | null; companies: BillingSalesCompany[] };
   prices: { offerKey: BillingOfferKey; beforeTotalSatang: number; afterTotalSatang: number }[] };
 export const BILLING_CONFIGURATION_IMPACT_KINDS = ['SUBSCRIPTION', 'ATTEMPT', 'QUOTE', 'PLAN_CHANGE', 'COLLECTION'] as const;
 export type BillingConfigurationImpactKind = typeof BILLING_CONFIGURATION_IMPACT_KINDS[number];
@@ -189,7 +194,7 @@ export type BillingConfigurationImpactItem = { reference: string; kind: BillingC
 export type BillingConfigurationImpactPage = { kind: BillingConfigurationImpactKind; items: (BillingConfigurationImpactItem & { companyName: string })[];
   sourceHash: string; matchesPreview: boolean; nextCursor: string | null; observedAt: string };
 export type BillingConfigurationOperation = BillingOperationView & { sourceVersion: number; previewHash: string;
-  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean> }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number;
+  proposed: { policy: BillingPolicy; gates: Record<BillingAction, boolean> }; impact: BillingConfigurationImpact|null;canEditDraft?:boolean;sourceDraftVersion?:number; salesCompanies?: BillingSalesCompany[];
   allowedActions: ('submit' | 'approve' | 'cancel')[]; activeRevisionId: string | null };
 
 
