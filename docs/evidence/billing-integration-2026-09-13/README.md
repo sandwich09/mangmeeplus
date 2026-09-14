@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+Additional signup acceptance 2026-09-14: [8 actual browser/HTTP/PostgreSQL groups](signup-journey-result.json) pass independently of the earlier143 checkpoint. Public form→manual approval→Postmark response-loss recovery→claim→seven-menu trial15→skip LINE/legal→actual local receipt bytes→logout/login return; expired link→status/resend preserves activation. New fragment links exclude proof from HTTP URLs, retain legacy compatibility and survive reload. The OCR transport returns a synthetic503, so this proves saved-file/manual-review recovery, not successful extraction. [Mobile return](signup-returning-receipt-mobile.png), [API78](signup-claim-link-api.tap), [web1703](signup-web-regression.tap); both typechecks pass. Prior root CI34796370435(ac242d4b) and marketing CI34796387123(c502c90) pass; the new signup/CI-browser diff still needs its own CI. Full spec remains in progress; no merge/deploy.
+
 Latest checkpoint: **143 combined browser/HTTP scenario groups PASS**, [result](browser-result.json). Actual Next/Nest/PostgreSQL/auth/CSRF/legal gates and the isolated marketing bundle execute with simulated Stripe, Postmark and LINE transports. The complete spec/plan remains **IN PROGRESS**. Root CI34794722241 passed main tests and all HTTP assertions, then failed shutdown because the runner lacked Redis; a pinned Redis CI service is being added. Marketing CI34792867313 passed. No merge or deployment.
 
 ## Current verified scope

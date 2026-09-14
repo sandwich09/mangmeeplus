@@ -1,12 +1,13 @@
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
+import { checkSignupJourney } from './signup-journey-smoke';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 /** Full compiled AppModule + HTTP + PostgreSQL. Only external provider transports are simulated. */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { createHmac, randomUUID } from 'node:crypto';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { json } from 'express';
 import cookieParser from 'cookie-parser';
@@ -40,6 +41,7 @@ async function main() {
   const secret = randomUUID(), webhookSecret = `whsec_${run}`, workerToken = randomUUID();
   Object.assign(process.env, { APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'test', SERVICE_NAME: 'billing-http-smoke',
     S3_BUCKET: 'synthetic-billing-smoke', DATABASE_URL: databaseUrl, EMAIL_PROVIDER: 'postmark', BILLING_MODE: 'test', RECEIPT_QUOTA_ENFORCED: 'false',
+    ...(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?{EXTERNAL_SIGNUP_ENABLED:'true',AI_GATEWAY_INTERNAL_URL:'https://synthetic-ai.example.test'}:{}),
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',
     POSTMARK_WEBHOOK_USERNAME: 'synthetic-billing', POSTMARK_WEBHOOK_PASSWORD: randomUUID(),
     LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
@@ -53,9 +55,11 @@ async function main() {
   let checkoutCalls = 0, badDocument = false, loseSubscriptionCheckout = false;
   const subscriptionCheckouts = new Map<string, ProviderObject>();
   const nativeFetch = globalThis.fetch;
+  let journeyTransport:((url:URL,init?:RequestInit)=>Response|undefined)|undefined;
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input.toString());
     if (url.hostname === '127.0.0.1') return nativeFetch(input, init);
+    const journeyResponse=journeyTransport?.(url,init);if(journeyResponse!==undefined)return journeyResponse;
     const noticeResponse = notificationFixture.request(url, init);
     if (noticeResponse !== undefined) return noticeResponse;
     assert.equal(url.origin, 'https://api.stripe.com', 'Unexpected external destination');
@@ -122,8 +126,9 @@ async function main() {
   const { PlatformAccessService } = await import('../modules/auth/application/platform-access.service');
   const { BillingReconcilerService } = await import('../modules/billing/application/billing-reconciler.service');
   const { admitCompanyOcr } = await import('../modules/line-ai/application/company-ocr-governance');
-  const app = await NestFactory.create(AppModule, { abortOnError: false, bodyParser: false, logger: false });
-  app.use(PROVIDER_EVENTS_PATH, providerEventsJson); app.use(json({ limit: '5mb' })); app.use(cookieParser()); app.setGlobalPrefix('v1');
+  const app = await NestFactory.create(AppModule, { abortOnError: false, bodyParser: false, logger: process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?['error']:false });
+  app.use(PROVIDER_EVENTS_PATH, providerEventsJson); app.use(json({ limit: '5mb' })); app.use(cookieParser());
+  app.setGlobalPrefix('v1', { exclude: [{ path: 'local-storage/(.*)', method: RequestMethod.ALL }] });
   app.useGlobalPipes(new TrimStringsPipe(), new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS));
   const prisma = app.get(PrismaService), client = prisma.client, cases: string[] = [];
   let roleId = '', memberId = '';
@@ -162,6 +167,12 @@ async function main() {
     const checkProviderEvents=()=>checkBillingProviderEvents({request,prisma,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,
       reconciler:app.get(BillingReconcilerService),operations:app.get(BillingOperationsService),provider,browser,interceptRead:hook=>{providerReadHook=hook;}});
     const checkClaimHistory=()=>checkSignupClaimHistory({request,prisma,userId:userIds[0]!,membershipId:memberId,browser});
+    if(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkSignupJourney({app,prisma,origin,userId:userIds[0]!,membershipId:memberId,request,browser,
+        drain:()=>request('/v1/internal/signup-claim-email/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,simulatedProviders:['DNS','Postmark','AI Gateway (503)'],objectStorage:'real-local-bytes',realProviderDelivery:false,browserE2E:true}));return;
+    }
     if (process.env.BILLING_CLAIM_HISTORY_ONLY === '1') {
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});

@@ -7,6 +7,7 @@ import {
   isValidThaiMobile,
   lineStartUrl,
   readTokenParam,
+  readEmailLinkToken,
   signInAgainPath,
   validatePasswordConfirmation,
   verifyOtpInput,
@@ -31,6 +32,14 @@ describe('auth.logic', () => {
 
   it('trims token params', () => {
     assert.equal(readTokenParam('  abc123  '), 'abc123');
+  });
+
+  it('reads new fragment and legacy query proofs without accepting ambiguous links', () => {
+    assert.equal(readEmailLinkToken('?r=request', '#token=proof'), 'proof');
+    assert.equal(readEmailLinkToken('?token=legacy&r=request', ''), 'legacy');
+    assert.equal(readEmailLinkToken('?token=same', '#token=same'), 'same');
+    for (const [query, hash] of [['', ''], ['?token=one&token=two', ''], ['', '#token=one&token=two'],
+      ['?token=one', '#token=two'], ['', '#token=%20']]) assert.equal(readEmailLinkToken(query!, hash!), null);
   });
 
   it('prefers explicit error messages', () => {
