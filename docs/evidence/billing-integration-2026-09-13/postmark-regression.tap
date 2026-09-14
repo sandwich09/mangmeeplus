@@ -1,0 +1,96 @@
+TAP version 13
+# Subtest: Postmark durable delivery on PostgreSQL
+    # Subtest: fences attempts, preserves business state and never confuses callback delivery with identity proof
+        # Subtest: refuses unauthenticated callbacks before durable receipt
+        ok 1 - refuses unauthenticated callbacks before durable receipt
+          ---
+          duration_ms: 10.902625
+          type: 'test'
+          ...
+        # Subtest: concurrent claim intents reserve only one in-flight generation
+        ok 2 - concurrent claim intents reserve only one in-flight generation
+          ---
+          duration_ms: 28.749834
+          type: 'test'
+          ...
+        # Subtest: concurrent dispatch and replay send the same attempt at most once
+        ok 3 - concurrent dispatch and replay send the same attempt at most once
+          ---
+          duration_ms: 40.122083
+          type: 'test'
+          ...
+        # Subtest: expiry and suppression before dispatch persist terminal state without contacting the provider
+        ok 4 - expiry and suppression before dispatch persist terminal state without contacting the provider
+          ---
+          duration_ms: 26.59775
+          type: 'test'
+          ...
+        # Subtest: claim worker records a Postmark ID only in provider-neutral attempts; replay does not mint or send twice
+        ok 5 - claim worker records a Postmark ID only in provider-neutral attempts; replay does not mint or send twice
+          ---
+          duration_ms: 41.521708
+          type: 'test'
+          ...
+        # Subtest: callback before response can suppress a claim and accepted response cannot undo the failure
+        ok 6 - callback before response can suppress a claim and accepted response cannot undo the failure
+          ---
+          duration_ms: 19.86025
+          type: 'test'
+          ...
+        # Subtest: mismatched recipient or message identity cannot poison another attempt
+        ok 7 - mismatched recipient or message identity cannot poison another attempt
+          ---
+          duration_ms: 4.4
+          type: 'test'
+          ...
+        # Subtest: timeout keeps UNKNOWN until lookup; an empty lookup permits only a bounded, labelled retry
+        ok 8 - timeout keeps UNKNOWN until lookup; an empty lookup permits only a bounded, labelled retry
+          ---
+          duration_ms: 20.527541
+          type: 'test'
+          ...
+        # Subtest: unknown lookup rejects mismatched metadata and accepts a single bound provider result
+        ok 9 - unknown lookup rejects mismatched metadata and accepts a single bound provider result
+          ---
+          duration_ms: 13.680625
+          type: 'test'
+          ...
+        # Subtest: reviewed billing recovery reserves one unsent generation and preserves the failed attempt
+        ok 10 - reviewed billing recovery reserves one unsent generation and preserves the failed attempt
+          ---
+          duration_ms: 23.627875
+          type: 'test'
+          ...
+        # Subtest: reviewed recovery keeps suppression, current binding and five-generation limit
+        ok 11 - reviewed recovery keeps suppression, current binding and five-generation limit
+          ---
+          duration_ms: 10.309917
+          type: 'test'
+          ...
+        # Subtest: late acceptance of an earlier generation prevents READY from dispatching
+        ok 12 - late acceptance of an earlier generation prevents READY from dispatching
+          ---
+          duration_ms: 9.599208
+          type: 'test'
+          ...
+        1..12
+    ok 1 - fences attempts, preserves business state and never confuses callback delivery with identity proof
+      ---
+      duration_ms: 375.2745
+      type: 'test'
+      ...
+    1..1
+ok 1 - Postmark durable delivery on PostgreSQL
+  ---
+  duration_ms: 375.723667
+  type: 'suite'
+  ...
+1..1
+# tests 13
+# suites 1
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 595.209542

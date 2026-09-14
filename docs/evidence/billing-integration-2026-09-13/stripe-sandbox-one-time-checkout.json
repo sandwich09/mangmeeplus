@@ -1,0 +1,72 @@
+{
+  "status": "VERIFIED_PROVIDER_PRIMITIVE_ONLY",
+  "scope": "Actual hosted Checkout with an official synthetic card in Stripe sandbox. No real charge and no new subscription. Mangmee repurchase/collection/grant loop remains unfinished.",
+  "accountId": "acct_1UEk5IRvebw5L0s3",
+  "livemode": false,
+  "checkout": {
+    "id": "cs_test_a16ekNWqutEitmvJ3kpaoO74d39sL9bvWVsiNOsEBmKVjXbXvT3V9I5ofz",
+    "mode": "payment",
+    "status": "complete",
+    "payment_status": "paid",
+    "subscription": null,
+    "amount_total": 999000,
+    "invoice_creation_enabled": true
+  },
+  "invoice": {
+    "id": "in_1UF6rERvebw5L0s3w5mBr9Vu",
+    "status": "paid",
+    "billing_reason": "manual",
+    "collection_method": "send_invoice",
+    "parent": null,
+    "total": 999000,
+    "amount_paid": 999000,
+    "amount_remaining": 0,
+    "created": 1789280743,
+    "paid_at": 1789280743,
+    "invoice_pdf_available": true,
+    "hosted_invoice_available": true
+  },
+  "line": {
+    "priceId": "price_1UF6qLRvebw5L0s3qm1gv1nT",
+    "productId": "prod_VFayQljbc5ex5g",
+    "price_type": "one_time",
+    "price_active": false,
+    "amount": 999000,
+    "quantity": 1,
+    "currency": "thb",
+    "parent_type": "invoice_item_details",
+    "invoice_item": "ii_1UF6rERvebw5L0s3SDBsTqM3",
+    "proration": false,
+    "subscription": null,
+    "period_start": 1947647807,
+    "period_end": 1947647807
+  },
+  "invoicePayment": {
+    "id": "inpay_1UF6rERvebw5L0s3wJDn5xqU",
+    "status": "paid",
+    "amount_paid": 999000,
+    "paymentIntentId": "pi_3UF6rCRvebw5L0s301L1bHza"
+  },
+  "charge": {
+    "id": "ch_3UF6rCRvebw5L0s308XjKuip",
+    "status": "succeeded",
+    "paid": true,
+    "captured": true,
+    "amount": 999000,
+    "amount_refunded": 0,
+    "disputed": false,
+    "method": "card",
+    "receipt_available": true
+  },
+  "parserImpact": [
+    "One-time Checkout invoice requires its own exact session/attempt/account/customer/line/payment binding.",
+    "Do not infer purchased service dates from zero-length invoice line period.",
+    "Inactive inline one-time Price is expected; a recurring Price active check would reject a valid payment.",
+    "A generic paid manual invoice is insufficient evidence for granting a package."
+  ],
+  "privacy": "Only synthetic test identifiers and amounts retained; no card details, client secrets, contact data, document URLs or API credentials.",
+  "sources": [
+    "https://docs.stripe.com/api/checkout/sessions/create",
+    "https://docs.stripe.com/api/invoice-payment/list"
+  ]
+}

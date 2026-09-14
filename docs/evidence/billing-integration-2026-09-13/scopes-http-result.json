@@ -1,0 +1,20 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "admin-configuration-password-proof-session-credential-expiry-and-platform-scope",
+    "admin-emergency-close-and-independent-approved-reopen-no-restart",
+    "admin-vat-issuer-price-preview-publish-and-compensating-off-revision",
+    "admin-configuration-idempotency-revoked-requester-cancel-approval-race-and-historical-invoices",
+    "admin-scope-directory-pagination-and-real-platform-target-boundary",
+    "admin-scope-independent-password-approved-grant-and-delegated-redaction",
+    "admin-scope-revoke-expiry-mode-and-historical-replay-no-regrant",
+    "admin-scope-stale-role-version-expired-preview-revoked-initiator-and-unchanged-ledgers"
+  ],
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false,
+  "browserE2E": false
+}

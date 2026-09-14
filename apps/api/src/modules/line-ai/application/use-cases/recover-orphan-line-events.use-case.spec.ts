@@ -14,7 +14,7 @@ type Row = {
   createdAt: Date;
 };
 
-type Outcome = { webhookEventId: string; messagesJson: unknown; attempts: number; deliveredAt: Date | null };
+type Outcome = { webhookEventId: string; messagesJson: unknown; authorizationJson?: unknown; attempts: number; deliveredAt: Date | null };
 
 /** The exact rendered payload a turn would have delivered — a Flex card, not a text preview. */
 const STORED_MESSAGES = [
@@ -38,15 +38,20 @@ function makeHarness(rows: Row[], opts: {
   pushResult?: string;
   pushThrows?: boolean;
   outcomeCasWins?: boolean;
+  sourceCurrent?: boolean;
+  verifyThrows?: boolean;
+  duringVerify?: (store: Map<string, Row>) => void;
 } = {}) {
   const store = new Map(rows.map((row) => [row.id, { ...row }]));
-  const outcomeStore = new Map((opts.outcomes ?? []).map((outcome) => [outcome.webhookEventId, { ...outcome }]));
+  const outcomeStore = new Map((opts.outcomes ?? []).map((outcome) => [outcome.webhookEventId, { ...outcome, authorizationJson: outcome.authorizationJson === undefined ? { synthetic: 'original-read-proof' } : outcome.authorizationJson }]));
   const enqueued: any[] = [];
   const audits: any[] = [];
   const pushes: Array<{ to: string; messages: any[]; operationId?: string }> = [];
 
   const prisma = {
     client: {
+      lineReadEvidence: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
+      lineLedgerDelivery: { findMany: async () => [], deleteMany: async () => ({ count: 0 }) },
       lineTurnOutcome: {
         findMany: async ({ where }: any) => [...outcomeStore.values()].filter((outcome) => (
           (where.webhookEventId?.in as string[] | undefined)?.includes(outcome.webhookEventId) !== false
@@ -121,8 +126,15 @@ function makeHarness(rows: Row[], opts: {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
   } as any;
 
+  const useCase = new RecoverOrphanLineEventsUseCase(prisma, config, audit, buffer, lineReply);
+  const verified: any[] = [];
+  (useCase as any).readEvidence = { verifyDelivery: async (proof: any, recipient: any) => {
+    verified.push({ proof, recipient }); opts.duringVerify?.(store);
+    if (opts.verifyThrows) throw new Error('source unavailable');
+    return proof?.synthetic === 'original-read-proof' && opts.sourceCurrent !== false;
+  } };
   return {
-    useCase: new RecoverOrphanLineEventsUseCase(prisma, config, audit, buffer, lineReply),
+    useCase, verified,
     store, outcomeStore, enqueued, audits, pushes,
   };
 }
@@ -136,6 +148,30 @@ const rowAt = (id: string, ageMs: number, over: Partial<Row> = {}): Row => ({
   processedAt: null,
   createdAt: new Date(Date.now() - ageMs),
   ...over,
+});
+
+describe('AP22 original outcome authorization', () => {
+  for (const fault of ['legacy', 'changed', 'unavailable', 'lease-lost', 'unchanged'] as const) it(`revalidates original proof without rerouting: ${fault}`, async () => {
+    const id = `authorization-${fault}`;
+    const h = makeHarness([rowAt(id, LINE_BUFFER_ORPHAN_REPROCESS_MS + 1000, { status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER' })], {
+      replayEnabled: true, sourceCurrent: fault !== 'changed', verifyThrows: fault === 'unavailable',
+      ...(fault === 'lease-lost' ? { duringVerify: store => { store.get(id)!.processedAt = new Date(Date.now() + 1000); } } : {}),
+      outcomes: [{ webhookEventId: id, messagesJson: STORED_MESSAGES, authorizationJson: fault === 'legacy' ? null : { synthetic: 'original-read-proof' }, attempts: 1, deliveredAt: null }],
+    });
+    const result = await h.useCase.execute();
+    assert.equal(h.enqueued.length, 0); assert.equal(h.verified.length, 1);
+    assert.equal(h.verified[0].recipient.webhookEventId, id);
+    if (fault === 'unchanged') { assert.equal(result.replayed, 1); assert.deepEqual(h.pushes[0].messages, STORED_MESSAGES); }
+    else if (fault === 'lease-lost') assert.equal(h.pushes.length, 0);
+    else {
+      assert.equal(h.store.get(id)?.errorCode, 'LINE_OUTCOME_REAUTHORIZATION_REQUIRED');
+      assert.equal(h.outcomeStore.get(id)?.deliveredAt, null);
+      assert.equal(h.pushes.length, 1); assert.doesNotMatch(JSON.stringify(h.pushes), /125,000/);
+      assert.match(JSON.stringify(h.pushes), /กรุณาเปิดเว็บ/);
+      assert.ok(h.audits.some(row => row.metadataJson?.reason === 'outcome_reauthorization_required'));
+      await h.useCase.execute(); assert.equal(h.pushes.length, 1, 'the generic notice is attempted once');
+    }
+  });
 });
 
 describe('parseBufferEnvelope', () => {

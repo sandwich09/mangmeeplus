@@ -1,0 +1,13 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-with-simulated-Stripe",
+  "passed": [
+    "admin-configuration-password-proof-session-credential-expiry-and-platform-scope",
+    "admin-emergency-close-and-independent-approved-reopen-no-restart",
+    "admin-vat-issuer-price-preview-publish-and-compensating-off-revision",
+    "admin-configuration-idempotency-revoked-requester-cancel-approval-race-and-historical-invoices",
+    "browser-admin-password-independent-approval-observed-config-and-mobile",
+    "browser-admin-vat-form-publish-return-off-without-process-restart"
+  ],
+  "realProviderPayment": false,
+  "browserE2E": true
+}

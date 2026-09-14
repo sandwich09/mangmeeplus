@@ -13,8 +13,11 @@ function makeRepo() {
   const branch = {
     create: mock.fn(async ({ data }: any) => ({ ...row, ...data })),
     update: mock.fn(async ({ data }: any) => ({ ...row, ...data })),
+    findFirstOrThrow: async () => row,
+    count: async () => 0,
   };
-  return { repo: new PrismaBranchRepository({ client: { branch } } as any), branch };
+  const tx = { branch, $queryRaw: async () => [], companyPlanTerm: { findUnique: async () => null } };
+  return { repo: new PrismaBranchRepository({ client: { ...tx, $transaction: async (fn: any) => fn(tx) } } as any), branch };
 }
 
 describe('PrismaBranchRepository tax identity coupling', () => {

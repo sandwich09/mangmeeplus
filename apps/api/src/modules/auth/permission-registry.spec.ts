@@ -7,12 +7,20 @@ import { EmployeeController } from '../employee-access/presentation/http/employe
 import { PermissionController } from '../employee-access/presentation/http/permission.controller';
 import { RoleController } from '../employee-access/presentation/http/role.controller';
 import { ReimbursementPolicyController } from '../reimbursements/presentation/http/reimbursement-policy.controller';
+import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
 
 function requiredAny(target: object, method: string): string[] {
   return Reflect.getMetadata(REQUIRED_ANY_PERMISSIONS_KEY, (target as Record<string, object>)[method]);
 }
 
 describe('permission-registry', () => {
+  it('billing control grants are registered only for platform administration, never customer OWNER', () => {
+    assert.ok(BILLING_PERMISSIONS.includes('system.billing.approval.approve'));
+    for (const key of BILLING_PERMISSIONS) {
+      assert.ok(PERMISSION_KEYS.includes(key)); assert.ok(ROLE_GRANTS.SYSTEM_ADMIN!.includes(key));
+      assert.ok(!COMPANY_PERMISSION_KEYS.includes(key)); assert.ok(!ROLE_GRANTS.OWNER!.includes(key));
+    }
+  });
   it('lets employee create/update permissions load only the supporting editor catalogs', () => {
     assert.deepEqual(requiredAny(RoleController.prototype, 'list'), [
       'access.role.read', 'access.role.manage', 'access.employee.create', 'access.employee.update',

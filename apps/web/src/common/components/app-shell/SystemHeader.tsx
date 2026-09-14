@@ -26,16 +26,17 @@ const SUPPORT_REQUESTS_HREF = '/system/support-requests';
  * `system.partner_company.update`) or an outage leaves `null`, which renders no badge at all
  * rather than a confident zero.
  */
-function useOpenSupportCount(pathname: string): number | null {
+function useOpenSupportCount(pathname: string, enabled: boolean): number | null {
   const [openCount, setOpenCount] = useState<number | null>(null);
-  useEffect(() => subscribeSupportOpenCount(setOpenCount), []);
+  useEffect(() => enabled ? subscribeSupportOpenCount(setOpenCount) : undefined, [enabled]);
   useEffect(() => {
+    if (!enabled) { setOpenCount(null); return; }
     const controller = new AbortController();
     getSupportOpenCount({ signal: controller.signal })
       .then((result) => { if (!controller.signal.aborted) setOpenCount(result.open); })
       .catch(() => { if (!controller.signal.aborted) setOpenCount(null); });
     return () => controller.abort();
-  }, [pathname]);
+  }, [pathname, enabled]);
   return openCount;
 }
 
@@ -55,13 +56,14 @@ const SECTIONS = [
   // that have to land before this comes back.
   // { href: '/system/line-settings', label: 'LINE' },
   { href: '/system/ai-budget', label: 'AI Budget' },
+  { href: '/system/billing', label: 'การชำระเงิน' },
 ];
 
-const SystemHeader: React.FC = () => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean }> = ({ billingOnly = false, billingAllowed = false }) => {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const pathname = usePathname();
-  const openSupportCount = useOpenSupportCount(pathname);
+  const openSupportCount = useOpenSupportCount(pathname, !billingOnly);
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -76,11 +78,11 @@ const SystemHeader: React.FC = () => {
   return (
     <header className="sticky top-0 z-40 flex w-full flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 lg:px-6">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <Link href="/system/partners" className="mr-1 text-sm font-semibold text-gray-900">
-          WatchDog System Admin
+        <Link href={billingOnly ? "/system/billing" : "/system/partners"} className="mr-1 text-sm font-semibold text-gray-900">
+          {billingOnly ? 'มั่งมี · ดูแลการชำระเงิน' : 'WatchDog System Admin'}
         </Link>
         <nav aria-label="ส่วนงานผู้ดูแลระบบ" className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap md:max-w-none md:overflow-x-visible md:whitespace-normal">
-          {SECTIONS.map((section) => {
+          {SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' : section.href !== '/system/billing' || billingAllowed).map((section) => {
             const active = pathname.startsWith(section.href);
             return (
               <Link

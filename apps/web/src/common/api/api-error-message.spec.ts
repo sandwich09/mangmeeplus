@@ -3,6 +3,13 @@ import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
 
+test('billing rate limit displays only the bounded wait and preserves a route to retry', () => {
+  const error = (seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code: 'BILLING_RATE_LIMIT', details: { retryAfterSeconds: seconds } });
+  assert.equal(apiErrorMessage(error(31)), 'ทำรายการถี่เกินไป กรุณารอ 31 วินาที แล้วลองรายการเดิมอีกครั้ง');
+  for (const invalid of ['secret', 0, -1, 301, NaN, 1.5]) assert.equal(apiErrorMessage(error(invalid)), 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง');
+  assert.match(apiErrorMessage({ code: 'CONTROL_ACTION_NOT_SUPPORTED' }), /หน้ามั่งมี/);
+});
+
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
 test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {

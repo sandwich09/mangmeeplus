@@ -1,0 +1,22 @@
+TAP version 13
+# Subtest: financial observations reject malformed or differently owned money evidence
+ok 1 - financial observations reject malformed or differently owned money evidence
+  ---
+  duration_ms: 0.637375
+  type: 'test'
+  ...
+# Subtest: a stale financial observer cannot update an invoice or open a case
+ok 2 - a stale financial observer cannot update an invoice or open a case
+  ---
+  duration_ms: 0.284
+  type: 'test'
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 2
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 181.523792

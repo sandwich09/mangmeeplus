@@ -112,6 +112,7 @@ export type AlertState = {
 // triggerKey is suppressed by the preference gate. Workflow-emitted keys must appear
 // here or their pushes are dropped before reaching the provider.
 export const IMPLEMENTED_TRIGGER_KEYS: string[] = [
+  'billing.package_updated',
   'daily_owner_summary',
   'stock_low',
   'crm_sla_breach',

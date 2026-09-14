@@ -2,7 +2,8 @@
  * Internal-only controller for AI Gateway to invoke ERP read tools.
  * Requires workload secret plus API-issued, single-use actor delegation.
  */
-import { Controller, Post, Body, Headers, UnauthorizedException, Logger, HttpCode } from '@nestjs/common';
+import { Controller, Inject, Post, Body, Headers, UnauthorizedException, Logger, HttpCode } from '@nestjs/common';
+import { LineReadEvidenceService, isLineEvidenceRead } from '../../application/line-read-evidence.service';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsArray, IsNotEmpty, IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
@@ -151,6 +152,7 @@ const KNOWN_TOOL_CATEGORIES: ReadonlySet<string> = new Set<ToolCategory>([
 @Controller('internal/ai/tools')
 export class InternalToolsController {
   private readonly logger = new Logger(InternalToolsController.name);
+  @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
   private readonly toolMap: Map<string, { execute(ctx: ErpToolContext, input: Record<string, unknown>): Promise<ToolResult> }> = new Map();
 
@@ -407,7 +409,7 @@ export class InternalToolsController {
       };
     }
     const ctx: ErpToolContext = {
-      requestId: dto.context.requestId,
+      requestId: auditRequestId,
       companyId: access.companyId,
       userId: dto.context.userId,
       membershipId: access.membershipId,
@@ -449,6 +451,9 @@ export class InternalToolsController {
     //    `if (meta && …)` shape skipped the permission check for unregistered names entirely.
     if (!meta) return deny('TOOL_NOT_FOUND', 'LOW', 'unavailable', 'TOOL_NOT_FOUND');
 
+    const user = await this.prisma.client.user.findUnique({ where: { id: delegation.sub }, select: { status: true, aiAssistantOptOutAt: true } });
+    if (!user || user.status !== 'ACTIVE' || user.aiAssistantOptOutAt) return deny('ACTOR_INACTIVE', 'MEDIUM', 'forbidden', 'AI_PERMISSION_DENIED');
+
     // 2. Classification, re-enforced on the authoritative side (the gateway is not a gate).
     const categoryDenial = this.classificationDenial(meta);
     if (categoryDenial) return deny(categoryDenial, 'HIGH', 'forbidden', 'AI_TOOL_CATEGORY_DENIED');
@@ -483,6 +488,9 @@ export class InternalToolsController {
 
     try {
       const result = await tool.execute(ctx, dto.input ?? {});
+      if (result.toolName !== dto.toolName) throw new Error('LINE_READ_RESULT_TOOL_MISMATCH');
+      // The model receives private data only after the API retained enough evidence to re-read it.
+      if (result.status === 'ok' && isLineEvidenceRead(dto.toolName)) await this.readEvidence.record(ctx, dto.input ?? {}, result);
       if (meta.sensitiveAudit && result.status === 'ok') {
         await this.audit.log({
           companyId: ctx.companyId,

@@ -53,7 +53,7 @@ export class GetPartnerAiUsageUseCase {
       const txPrisma = { client: tx } as PrismaService;
       // PrismaPg uses one connection for an interactive transaction; keep these sequential so the
       // adapter never receives overlapping client.query calls while preserving the same snapshot.
-      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true } });
+      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true, planTerm: { select: { billingReceiptAccountId: true } } } });
       const months = await tx.companyAiMonthlyUsage.findMany({
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
         select: MONTH_SELECT,
@@ -64,6 +64,7 @@ export class GetPartnerAiUsageUseCase {
           monthlyBudgetSatang: true,
           ocrEnabled: true,
           ocrMonthlyLimit: true,
+          receiptQuotaEnforced: true,
           ocrConfigVersion: true,
           updatedAt: true,
         },
@@ -128,8 +129,14 @@ export class GetPartnerAiUsageUseCase {
         config: {
           enabled: configuration?.ocrEnabled ?? true,
           monthlyLimit: configuration?.ocrMonthlyLimit ?? null,
+          receiptQuotaEnforced: configuration?.receiptQuotaEnforced ?? null,
           version: configuration?.ocrConfigVersion ?? 0,
           updatedAt: configuration?.updatedAt.toISOString() ?? null,
+        },
+        planQuota: {
+          enforced: company.planTerm?.billingReceiptAccountId ? true : (configuration?.receiptQuotaEnforced ?? this.config.receiptQuotaEnforced) === true,
+          source: company.planTerm?.billingReceiptAccountId ? 'PAID_GRANTS' : configuration?.receiptQuotaEnforced == null ? 'DEFAULT' : 'COMPANY',
+          defaultEnforced: this.config.receiptQuotaEnforced === true,
         },
         current: ocrMonth(monthKey, currentUploads),
         previous: ocrMonth(previousMonthKey, previousUploads),

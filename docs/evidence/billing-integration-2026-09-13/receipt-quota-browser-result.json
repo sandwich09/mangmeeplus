@@ -1,0 +1,11 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation",
+    "runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion",
+    "runtime-receipt-quota-paid-grants-cannot-bypass",
+    "browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock"
+  ],
+  "browserE2E": true,
+  "providerCalls": false
+}

@@ -7,6 +7,19 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  EMPLOYEE_BRANCH_SCOPE_UNAVAILABLE: 'กรุณาแก้สาขาที่พนักงานมีสิทธิ์และสาขาเริ่มต้นให้ใช้งานได้ ก่อนเปิดสิทธิ์อีกครั้ง',
+  BILLING_RATE_LIMIT: 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
+  CONTROL_ACTION_NOT_SUPPORTED: 'เปลี่ยนแพ็กเกจผ่านหน้ามั่งมี โดยใช้ตัวเลือกซื้อซ้ำและเปลี่ยนแพ็กเกจ',
+  CONTROL_POLICY_NOT_READY: 'การตั้งค่ายังไม่ครบ บันทึกฉบับร่างแล้วเติมข้อมูลก่อนตรวจผลกระทบอีกครั้ง',
+  CONTROL_IMPACT_NOT_READY: 'ตรวจผลกระทบจากฉบับร่างก่อนเปิดรายชื่อรายการที่เกี่ยวข้อง',
+  CONTROL_GATE_POLICY_STALE: 'นโยบายเปลี่ยนแล้ว โหลดการตั้งค่าล่าสุดก่อนบันทึกหรือคัดลอกร่างค่าสวิตช์อีกครั้ง',
+  CONTROL_PREVIEW_STALE: 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุ โหลดข้อมูลล่าสุดและตรวจผลกระทบใหม่',
+  CONTROL_REAUTH_REQUIRED: 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง',
+  CONTROL_REAUTH_FAILED: 'ยืนยันรหัสผ่านไม่ได้ ตรวจสอบรหัสผ่านหรือใช้หน้ากู้บัญชี',
+  BILLING_PLAN_CHANGE_REQUIRED: 'เลือกแพ็กเกจและรอบชำระจากหน้าจัดการแพ็กเกจ แล้วตรวจผลกระทบก่อนยืนยัน',
+  BILLING_SALES_CLOSED: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
+  BILLING_QUOTE_STALE: 'รายการหมดอายุหรือข้อมูลเปลี่ยน กรุณาเลือกราคาและยืนยันใหม่',
+  BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาเลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
   reimbursement_source_unavailable: 'ไม่พบค่าใช้จ่ายต้นทางที่เปิดได้ กรุณาเลือกใหม่',
   reimbursement_source_currency_mismatch: 'สกุลเงินของค่าใช้จ่ายต้องตรงกับใบเบิก',
   reimbursement_source_already_settled: 'รายการนี้บันทึกบัญชี จ่ายเงิน หรือปิดรายการแล้ว จึงนำมาเบิกซ้ำไม่ได้',
@@ -797,11 +810,18 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     statusCode?: unknown;
     kind?: unknown;
     details?: unknown;
+    retryAfterSeconds?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code === 'BILLING_RATE_LIMIT') {
+    const seconds = details?.retryAfterSeconds ?? error?.retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300) {
+      return `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`;
+    }
+  }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);

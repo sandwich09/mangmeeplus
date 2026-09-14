@@ -60,6 +60,15 @@ const TERM_RECOVERY_ROUTES = new Set([
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
 ]);
 
+// Only routes implemented by BillingController may recover a term hold. All still require
+// the live session, legal acceptance, platform access, tenant binding and a fresh OWNER check.
+export function isBillingRecoveryRoute(method: string, path: string): boolean {
+  const clean = cleanRequestPath(path).toLowerCase();
+  const prefix = '/v1/companies/[^/]+/billing';
+  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/attempts/[^/]+|/collection/[^/]+)?$`).test(clean)
+    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);
+}
+
 function isTermExpiryExempt(path: string): boolean {
   const cleanPath = cleanRequestPath(path);
   return TERM_EXPIRY_EXEMPT_PATHS.has(cleanPath) || cleanPath.startsWith(TERM_EXPIRY_EXEMPT_PREFIX);
@@ -117,6 +126,9 @@ export class AuthGuard implements CanActivate {
     const cleanPath = cleanRequestPath(reqPath);
     if (isPublic && ALWAYS_PUBLIC_PATHS.has(cleanPath)) return true;
     if (isPublic && isInternalWorkerPath(cleanPath)) return true;
+    // Payment and delivery evidence must still arrive while customer entry is closed.
+    // These exact callbacks authenticate independently using Stripe HMAC/Postmark Basic auth.
+    if (isPublic && req.method === 'POST' && /^\/v1\/public\/(stripe-events|postmark-events)$/i.test(cleanPath)) return true;
 
     const access = this.platformAccess ? await this.platformAccess.getStatus() : null;
     const accessClosed = access?.effectiveState === 'CLOSED';
@@ -179,7 +191,7 @@ export class AuthGuard implements CanActivate {
 
     const session = await this.prisma.client.authSession.findUnique({
       where: { tokenId },
-      select: { userId: true, status: true, expiresAt: true },
+      select: { id: true, userId: true, status: true, expiresAt: true },
     });
     if (!session || session.userId !== subject || session.status !== 'ACTIVE' || session.expiresAt <= new Date()) {
       throw new UnauthorizedException('Session is expired or revoked.');
@@ -195,8 +207,9 @@ export class AuthGuard implements CanActivate {
     try {
       // Only authenticated, explicitly scoped recovery/session reads can resolve a term hold.
       // Permissions/legal/platform/session checks below still apply; never expose this as input.
-      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`);
+      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`) || isBillingRecoveryRoute(req.method, cleanPath);
       req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId, allowTermRecovery);
+      req.context.sessionId = session.id;
     } catch (error) {
       // The company-access screen can name the blocked destination without widening access to any
       // company data endpoint. Other forbidden responses keep their existing shape.
@@ -239,7 +252,7 @@ export class AuthGuard implements CanActivate {
     // P29) matches nothing here and is completely unaffected. SYSTEM_ADMIN is exempt for the same
     // reason it is exempt from the platform-closed gate above: the console that fixes an expiry
     // must not be lockable by one.
-    if (!isTermExpiryExempt(reqPath) && !req.context.roles.includes('SYSTEM_ADMIN')) {
+    if (!isTermExpiryExempt(reqPath) && !isBillingRecoveryRoute(req.method, reqPath) && !req.context.roles.includes('SYSTEM_ADMIN')) {
       const term = await this.prisma.client.companyPlanTerm.findUnique({
         where: { companyId: req.context.companyId },
         select: { termEndsAt: true },

@@ -252,7 +252,7 @@ describe('SetPartnerAiModelUseCase', () => {
 });
 
 function makeOcrPrisma(input: {
-  existing?: { ocrEnabled: boolean; ocrMonthlyLimit: number | null; ocrConfigVersion?: number };
+  existing?: { ocrEnabled: boolean; ocrMonthlyLimit: number | null; ocrConfigVersion?: number; receiptQuotaEnforced?: boolean | null };
   status?: string;
 } = {}) {
   let saved = input.existing ? { ...input.existing, ocrConfigVersion: input.existing.ocrConfigVersion ?? 0 } : undefined;
@@ -271,10 +271,12 @@ function makeOcrPrisma(input: {
           ...saved,
           ocrEnabled: update.ocrEnabled,
           ocrMonthlyLimit: update.ocrMonthlyLimit,
+          receiptQuotaEnforced: update.receiptQuotaEnforced,
           ocrConfigVersion: saved.ocrConfigVersion + update.ocrConfigVersion.increment,
         } : {
           ocrEnabled: create.ocrEnabled,
           ocrMonthlyLimit: create.ocrMonthlyLimit,
+          receiptQuotaEnforced: create.receiptQuotaEnforced,
           ocrConfigVersion: create.ocrConfigVersion,
         };
         return { ...saved, updatedAt: new Date('2026-08-27T00:00:00Z') };
@@ -293,6 +295,7 @@ function makeOcrPrisma(input: {
 }
 
 const ocrCommand = (overrides: Partial<{
+  receiptQuotaEnforced: boolean | null;
   enabled: boolean;
   monthlyLimit: number | null;
   expectedVersion: number;
@@ -309,6 +312,21 @@ const ocrCommand = (overrides: Partial<{
 });
 
 describe('SetPartnerOcrConfigUseCase', () => {
+  it('preserves an omitted override and versions explicit enforce, observe and inheritance changes', async () => {
+    const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: 100, receiptQuotaEnforced: true, ocrConfigVersion: 3 } });
+    const uc = new SetPartnerOcrConfigUseCase(state.prisma);
+    assert.equal((await uc.execute(ocrCommand({ expectedVersion: 3 }))).receiptQuotaEnforced, true);
+    assert.equal(state.audits.length, 0);
+    const observed = await uc.execute(ocrCommand({ receiptQuotaEnforced: false, expectedVersion: 3 }));
+    assert.equal(observed.receiptQuotaEnforced, false); assert.equal(observed.version, 4);
+    await assert.rejects(uc.execute(ocrCommand({ receiptQuotaEnforced: true, expectedVersion: 3 })), ConflictException);
+    const inherited = await uc.execute(ocrCommand({ receiptQuotaEnforced: null, expectedVersion: 4 }));
+    assert.equal(inherited.receiptQuotaEnforced, null); assert.equal(inherited.version, 5);
+    assert.equal(state.audits[1].metadataJson.fromReceiptQuotaEnforced, false);
+    assert.equal(state.audits[1].metadataJson.toReceiptQuotaEnforced, null);
+    await assert.rejects(uc.execute(ocrCommand({ receiptQuotaEnforced: 'false' as any, expectedVersion: 5 })), UnprocessableEntityException);
+  });
+
   it('writes config and CRITICAL before/after audit in the same transaction', async () => {
     const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: null, ocrConfigVersion: 3 } });
     const result = await new SetPartnerOcrConfigUseCase(state.prisma).execute(ocrCommand({
@@ -324,6 +342,7 @@ describe('SetPartnerOcrConfigUseCase', () => {
     assert.equal(state.audits[0].riskLevel, 'CRITICAL');
     assert.deepEqual(state.audits[0].metadataJson, {
       fromEnabled: true, toEnabled: false, fromMonthlyLimit: null, toMonthlyLimit: 25,
+      fromReceiptQuotaEnforced: null, toReceiptQuotaEnforced: null,
       fromVersion: 3, toVersion: 4,
     });
   });
@@ -356,7 +375,7 @@ describe('SetPartnerOcrConfigUseCase', () => {
         && (error.getResponse() as any).code === 'ocr_config_version_conflict'
         && (error.getResponse() as any).currentVersion === 3,
     );
-    assert.deepEqual(state.saved(), { ocrEnabled: false, ocrMonthlyLimit: 25, ocrConfigVersion: 3 });
+    assert.deepEqual(state.saved(), { ocrEnabled: false, ocrMonthlyLimit: 25, receiptQuotaEnforced: null, ocrConfigVersion: 3 });
     assert.equal(state.upserts(), 1);
     assert.equal(state.audits.length, 1);
 

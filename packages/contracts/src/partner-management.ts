@@ -170,6 +170,8 @@ export type SetPartnerAiModelDto = {
 /** Platform-admin OCR control. Both fields are absolute desired state; replaying the same body is a no-op. */
 export type SetPartnerOcrConfigDto = {
   enabled: boolean;
+  /** Trial/manual receipts only. null inherits startup; omitted preserves the saved override. */
+  receiptQuotaEnforced?: boolean | null;
   /** null = unlimited; otherwise 1..1,000,000 reads per Bangkok calendar month. */
   monthlyLimit: number | null;
   /** CAS fence from the latest partner AI-usage read. */
@@ -178,6 +180,7 @@ export type SetPartnerOcrConfigDto = {
 
 export type PartnerOcrConfigDto = {
   enabled: boolean;
+  receiptQuotaEnforced?: boolean | null;
   monthlyLimit: number | null;
   /** Dedicated OCR-config CAS version; starts at 0 and increments only on a real config change. */
   version: number;
@@ -211,6 +214,8 @@ export type PartnerAiUsageDto = {
   topTags: Array<{ tag: string; costSatang: number; calls: number }>;
   ocr: {
     config: PartnerOcrConfigDto;
+    /** Observed enforcement, independent from the operational OCR cap. Paid grants cannot be bypassed. */
+    planQuota?: { enforced: boolean; source: 'PAID_GRANTS' | 'COMPANY' | 'DEFAULT'; defaultEnforced: boolean };
     current: PartnerOcrUsageMonthDto;
     previous: PartnerOcrUsageMonthDto;
   };

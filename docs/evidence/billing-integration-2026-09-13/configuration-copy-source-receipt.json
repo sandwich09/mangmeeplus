@@ -1,0 +1,13 @@
+{
+  "status": "Later focused Admin42 PASS, including old SET_ACTION_GATE copied after a new policy publication. API/web typechecks exit0 and safe error checks45 PASS. No combined129 run.",
+  "baseCheckpoint": "source-receipt.json",
+  "baseCombinedGroups": 128,
+  "focusedGroups": 42,
+  "sources": {
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "07b4e258e6d64f790c6dcd970f8746ac54e155f6d13e2610f9c331d044ee4de5",
+    "apps/web/src/features/billing-admin/BillingConfigurationPage.tsx": "2d35cbf70d59ca16767c106ba4f8a868d50975e2407977ba8153def56654a610",
+    "apps/web/src/common/api/api-error-message.ts": "d9c0a87648319a8dcc78877c57814231ff8de152bc392775582f3995b5beaa3e",
+    "apps/api/src/scripts/billing-configuration-impact-smoke.ts": "003539164acc5ebb4b67e1107e7dee3b37b6495f3759c4ee66b6f9d320f8221e"
+  },
+  "scope": "Only the four source files changed since the full128 checkpoint. Most42 groups overlap128. Full project remains IN PROGRESS; no push/CI/merge/deploy."
+}

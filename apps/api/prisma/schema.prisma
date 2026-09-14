@@ -380,6 +380,8 @@ model Company {
   // Item 07
   aiConversations                   AiConversation[]
   aiTurns                           AiTurn[]
+  lineReadEvidence                  LineReadEvidence[]
+  lineLedgerDeliveries              LineLedgerDelivery[]
   aiToolInvocations                 AiToolInvocation[]
   // Item 08
   accountingCounterparties          AccountingCounterparty[]
@@ -421,6 +423,7 @@ model Company {
   aiUsageEvents                     AiUsageEvent[]
   aiMonthlyUsage                    CompanyAiMonthlyUsage[]
   ocrUsageEvents                    CompanyOcrUsageEvent[]
+  billingReceiptGrants              BillingReceiptGrant[]
   ocrMonthlyUsage                   CompanyOcrMonthlyUsage[]
   integrationCredentials            CompanyIntegrationCredential[]
   // Item 11
@@ -565,6 +568,8 @@ model User {
   updatedAt               DateTime                 @updatedAt
   credential              UserCredential?
   externalIdentities      ExternalIdentity[]
+  lineReadEvidence        LineReadEvidence[]
+  lineLedgerDeliveries    LineLedgerDelivery[]
   sessions                AuthSession[]
   emailVerificationTokens EmailVerificationToken[]
   passwordResetTokens     PasswordResetToken[]
@@ -607,6 +612,8 @@ model UserCredential {
 
 model AuthSession {
   id              String            @id @default(cuid())
+  billingReauthenticatedAt DateTime?
+  billingCredentialVersion DateTime?
   userId          String
   tokenId         String            @unique
   // L-01: the immediately-previous refresh token id and the instant it was rotated out.
@@ -1645,6 +1652,61 @@ model AiTurn {
   @@index([conversationId])
 }
 
+enum LineLedgerDeliveryStatus {
+  PREPARING
+  READY
+  UNKNOWN
+  ACCEPTED
+  REFUSED
+  PARKED
+}
+
+/// First exact queued response per Redis stream/entry. A reclaim never regenerates saved output.
+model LineLedgerDelivery {
+  id                   String                   @id
+  companyId            String
+  userId               String
+  webhookEventId       String
+  entryId              String
+  entryKind            String                   @default("sub_request")
+  status               LineLedgerDeliveryStatus @default(PREPARING)
+  leaseToken           String?
+  leaseExpiresAt       DateTime?
+  expiresAt            DateTime
+  messagesJson         Json?
+  authorizationJson    Json?
+  completionJson       Json?
+  attempts             Int                      @default(0)
+  acceptedAt           DateTime?
+  errorCode            String?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  company              Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status, createdAt])
+  @@index([createdAt])
+}
+
+/// Bounded original read inputs and result digest for current-source delivery revalidation.
+/// A locator/proof is never authority by itself: actor access and the same ERP read run again.
+model LineReadEvidence {
+  id           String   @id @default(cuid())
+  companyId    String
+  userId       String
+  membershipId String
+  requestId    String
+  toolName     String
+  inputJson    Json
+  resultHash   String
+  createdAt    DateTime @default(now())
+  company      Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, userId, requestId, createdAt])
+  @@index([createdAt])
+}
+
 model AiToolInvocation {
   id             String   @id @default(cuid())
   turnId         String
@@ -1673,6 +1735,8 @@ model LineWebhookEventLog {
   eventType      String
   status         String    @default("received")
   errorCode      String?
+  /// First completed top-level producer owns the final outward notification across live/queue.
+  deliveryOwnerId String?
   /**
    * Buffered LINE payload (LineBufferEnvelope) held ONLY while the turn is in flight, so a
    * crashed pod can replay it instead of losing the message: the buffer is in-process memory
@@ -1710,6 +1774,8 @@ model LineTurnOutcome {
   companyId        String?
   /// The exact LineReplyMessage[] handed to the adapter. Replayed VERBATIM — never re-rendered.
   messagesJson     Json
+  /// Server-issued original actor/source provenance. Legacy null may not authorize private replay.
+  authorizationJson Json?
   /// flex | text | text_parts_then_flex | text_fallback (the last set when a rejected Flex payload
   /// was re-sent as its own altText).
   presentationKind String
@@ -3152,6 +3218,7 @@ model CompanySignupRequest {
   claimEmailLastSentAt   DateTime?
   // SES MessageId of the last claim email. The only join key an SNS bounce/complaint event carries
   // back to this row (spec §4D); unique because SES never reuses a MessageId.
+  latestClaimEmailAttemptId String?
   claimEmailSesMessageId String?            @unique
   claimReminderSentAt    DateTime?
   provisioningAttemptId  String?            @unique
@@ -3265,6 +3332,9 @@ model CompanyPlanTerm {
   branchLimit       Int
   employeeLimit     Int
   monthlySlipLimit  Int
+  /// Null preserves legacy/trial monthly quota. Set only by verified billing apply.
+  billingReceiptAccountId String?
+  billingReceiptAccount BillingAccount? @relation(fields: [billingReceiptAccountId, companyId], references: [id, companyId], onDelete: Restrict)
   termStartAt       DateTime
   termEndsAt        DateTime
   warningDays       Int       @default(7)
@@ -3335,6 +3405,7 @@ model CompanyAiConfiguration {
   monthlyBudgetSatang        Int? // null = inherit AI_MONTHLY_BUDGET_SATANG (metering spec §7.3)
   ocrEnabled                 Boolean  @default(true)
   ocrMonthlyLimit            Int? // null = unlimited; Platform Admin only (OCR governance spec §4)
+  receiptQuotaEnforced       Boolean? // trial/manual plan override; null inherits startup; paid grants always enforce
   ocrConfigVersion           Int      @default(0) // monotonic CAS fence; increment only on real OCR config change
   updatedBySystemAdminUserId String?
   createdAt                  DateTime @default(now())
@@ -3418,12 +3489,15 @@ model CompanyOcrUsageEvent {
   monthKey    String // 'YYYY-MM', Asia/Bangkok
   sourceRoute String // 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract'
   requestId   String
+  billingReceiptGrantId String?
+  billingReceiptGrant BillingReceiptGrant? @relation(fields: [billingReceiptGrantId, companyId], references: [id, companyId], onDelete: Restrict)
   createdAt   DateTime @default(now())
   company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@unique([companyId, sourceRoute, requestId])
   @@index([companyId, monthKey, sourceRoute])
   @@index([companyId, createdAt])
+  @@index([billingReceiptGrantId])
 }
 
 // Serialized by the per-company/month advisory lock in the admission helper. This aggregate is
@@ -8810,4 +8884,305 @@ model LineIntakeState {
   // drop it.
   @@index([companyId, userId, chatKeyHash, status])
   @@index([status, expiresAt])
+}
+
+// Transactional mail transport evidence. Never stores a token, body or credential.
+model EmailSendAttempt {
+  id                 String   @id @default(uuid())
+  intentKey          String
+  generation         Int
+  purpose            String
+  signupRequestId    String?
+  provider           String
+  providerServerId   Int
+  stream             String
+  recipient          String
+  providerMessageId  String?
+  status             String   @default("SENDING")
+  possibleDuplicate  Boolean  @default(false)
+  dispatchStartedAt  DateTime?
+  errorCode          String?
+  deadlineAt         DateTime?
+  submittedAt        DateTime?
+  deliveredAt        DateTime?
+  suppressedAt       DateTime?
+  nextRecoveryAt     DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([intentKey, generation])
+  @@unique([provider, providerServerId, providerMessageId])
+  @@index([status, nextRecoveryAt])
+  @@index([signupRequestId])
+}
+
+model EmailSuppression {
+  id               String @id @default(cuid())
+  providerServerId Int
+  stream           String
+  recipient        String
+  reason           String
+  createdAt        DateTime @default(now())
+
+  @@unique([providerServerId, stream, recipient])
+}
+
+// SaaS billing is separate from the customers' ERP invoices and payments.
+model BillingPolicyRevision {
+  id              String @id @default(uuid())
+  stripeAccountId String
+  livemode        Boolean
+  version         Int
+  state           String @default("DRAFT")
+  policyJson      Json
+  createdByUserId  String
+  approvedByUserId String?
+  approvedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@unique([stripeAccountId, livemode, version])
+}
+
+model BillingSettings {
+  id                String @id
+  stripeAccountId   String
+  livemode          Boolean
+  version           Int @default(0)
+  policyRevisionId  String?
+  gatesJson         Json
+  updatedAt         DateTime @updatedAt
+
+  @@unique([stripeAccountId, livemode])
+}
+
+/// Additional company/mode boundary for delegated billing operators; system admins remain platform scoped.
+model BillingOperatorScope {
+  version         Int @default(0)
+  updatedAt       DateTime @default(now()) @updatedAt
+  id              String @id @default(uuid())
+  userId          String
+  stripeAccountId String
+  livemode        Boolean
+  companyId       String
+  expiresAt       DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+  createdByUserId String
+  @@unique([userId, stripeAccountId, livemode, companyId])
+}
+
+model BillingAccount {
+  id                  String @id @default(uuid())
+  companyId           String
+  stripeAccountId     String
+  livemode            Boolean
+  customerId          String?
+  baseSubscriptionId  String?
+  activeAttemptId     String?
+  activeCollectionOperationId String? @unique
+  pendingPlanChangeId  String? @unique
+  contractAttemptId   String?
+  termProjectionHash  String?
+  nextReconcileAt     DateTime @default(now())
+  subscriptionState   String @default("NONE")
+  cancelAtPeriodEnd   Boolean @default(false)
+  paidThrough         DateTime?
+  graceEndsAt         DateTime?
+  nextChargeAt        DateTime?
+  version             Int @default(0)
+  observedAt          DateTime?
+  leaseToken          String?
+  leaseUntil          DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  receiptGrants       BillingReceiptGrant[]
+  receiptPlanTerms    CompanyPlanTerm[]
+  subscriptionContracts BillingSubscriptionContract[]
+
+  @@unique([id, companyId])
+  @@unique([companyId, stripeAccountId, livemode])
+  @@unique([stripeAccountId, livemode, customerId])
+  @@unique([stripeAccountId, livemode, baseSubscriptionId])
+  @@index([observedAt])
+}
+
+/// Purchased package units. OCR events reserve/consume a grant; deleting the exact failed event releases it.
+model BillingReceiptGrant {
+  id                String @id @default(uuid())
+  companyId         String
+  billingAccountId  String
+  sourceKey         String
+  sourceHash        String
+  kind              String
+  units             Int
+  serviceStart      DateTime
+  serviceEnd        DateTime
+  availableAt       DateTime
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  policyRevisionId  String
+  createdAt         DateTime @default(now())
+  company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  billingAccount    BillingAccount @relation(fields: [billingAccountId, companyId], references: [id, companyId], onDelete: Restrict)
+  admissions        CompanyOcrUsageEvent[]
+
+  @@unique([id, companyId])
+  @@unique([billingAccountId, sourceKey])
+  @@index([companyId, billingAccountId, expiresAt])
+}
+
+/// Immutable customer consent for recurring collection from a service boundary.
+model BillingSubscriptionContract {
+  revision          Int @default(autoincrement()) @unique
+  id                String @id @default(uuid())
+  billingAccountId  String
+  sourceAttemptId   String
+  effectiveAt       DateTime
+  snapshotJson      Json
+  createdAt         DateTime @default(now())
+  billingAccount    BillingAccount @relation(fields: [billingAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([billingAccountId, sourceAttemptId])
+  @@index([billingAccountId, effectiveAt])
+}
+
+model BillingQuote {
+  id               String @id @default(uuid())
+  companyId        String
+  initiatingUserId String
+  policyRevisionId String
+  snapshotJson     Json
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  @@index([companyId, createdAt])
+}
+
+model BillingAttempt {
+  id                String @id @default(uuid())
+  billingAccountId  String
+  initiatingUserId  String
+  quoteId           String @unique
+  channel           String
+  idempotencyKey    String
+  requestHash       String
+  quoteSnapshot     Json
+  policyRevisionId  String
+  consentRevision   String
+  consentAt         DateTime
+  status            String @default("CREATING")
+  checkoutSessionId String? @unique
+  collectionJson    Json?
+  subscriptionId    String?
+  errorCode         String?
+  version           Int @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@unique([billingAccountId, idempotencyKey])
+  @@index([status, updatedAt])
+}
+
+model BillingInvoice {
+  id                String @id @default(uuid())
+  billingAccountId  String
+  providerInvoiceId String
+  sourceAttemptId   String? @unique
+  subscriptionId    String?
+  providerNumber    String?
+  offerSnapshot     Json
+  contractSnapshot  Json?
+  policyRevisionId  String
+  currency          String
+  totalSatang       Int
+  paidSatang        Int
+  refundedSatang    Int @default(0)
+  disputed          Boolean @default(false)
+  financialObservedAt DateTime?
+  taxSatang         Int @default(0)
+  feeSatang         Int?
+  providerChargeId  String?
+  periodStart       DateTime
+  periodEnd         DateTime
+  providerStatus    String
+  evidenceHash      String
+  applyStatus       String @default("PENDING")
+  errorCode         String?
+  appliedAt         DateTime?
+  version           Int @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@unique([billingAccountId, providerInvoiceId])
+  @@index([applyStatus, updatedAt])
+}
+
+model BillingProviderEvent {
+  id              String @id @default(uuid())
+  stripeAccountId String
+  livemode        Boolean
+  eventId         String
+  eventType       String
+  objectId        String
+  apiVersion      String
+  evidenceHash    String
+  status          String @default("PENDING")
+  leaseToken      String?
+  leaseUntil      DateTime?
+  attempts        Int @default(0)
+  retryAt         DateTime @default(now())
+  errorCode       String?
+  receivedAt      DateTime @default(now())
+  processedAt     DateTime?
+  @@unique([stripeAccountId, livemode, eventId])
+  @@index([status, retryAt])
+}
+
+model BillingIssue {
+  id                String @id @default(uuid())
+  stripeAccountId   String
+  livemode          Boolean
+  companyId         String?
+  kind              String
+  referenceId       String
+  state             String @default("OPEN")
+  assigneeUserId    String?
+  backupUserId      String?
+  priority          String @default("NORMAL")
+  followUpAt        DateTime?
+  episode           Int @default(1)
+  lastSeenAt        DateTime @default(now())
+  note              String?
+  version           Int @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  resolvedAt        DateTime?
+  @@unique([stripeAccountId, livemode, kind, referenceId])
+  @@index([state, createdAt])
+  @@index([stripeAccountId, livemode, state, followUpAt], map: "BillingIssue_scope_followUpAt_idx")
+}
+
+model BillingOperation {
+  id                String @id @default(uuid())
+  stripeAccountId   String
+  livemode          Boolean
+  companyId         String?
+  type              String
+  state             String @default("PREVIEW")
+  referenceId       String?
+  proposedJson      Json
+  sourceVersion     Int
+  version           Int @default(0)
+  reason            String
+  initiatorUserId   String
+  approverUserId    String?
+  idempotencyKey    String?
+  requestHash       String
+  expiresAt         DateTime
+  leaseToken        String?
+  leaseUntil        DateTime?
+  errorCode         String?
+  resultJson        Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  observedAt        DateTime?
+  @@unique([stripeAccountId, livemode, idempotencyKey])
+  @@index([state, createdAt])
 }

@@ -1,0 +1,25 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "real-session-tenant-and-expired-owner-recovery",
+    "hidden-enterprise-and-forged-price-rejected",
+    "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+    "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+    "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+    "historical-paid-invoice-survives-replaced-subscription-item",
+    "downgrade-owner-tenant-target-capacity-and-stale-selection-before-provider",
+    "ordinary-downgrade-lost-create-update-same-command-one-subscription-no-charge-or-cap-change",
+    "downgrade-cancel-resume-preserves-target-explicit-cancel-restores-accepted-price",
+    "downgrade-repeat-expiry-restores-old-date-paid-repeat-adds-quota-extends-date-preserves-target",
+    "downgrade-pending-upgrade-charges-delta-retains-lower-target-and-paid-end",
+    "failed-lower-renewal-grace-retains-old-tier-without-free-target-quota",
+    "paid-lower-renewal-stale-selection-held-original-invoice-repair-atomic-cap-and-one-grant"
+  ],
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false,
+  "browserE2E": false
+}

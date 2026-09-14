@@ -346,9 +346,17 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
     command: '../../node_modules/.bin/tsx',
     args: ['--test',
       'src/common/security/liff-start-handoff.spec.ts',
+      // Web/LINE signup shares the durable mail consumer; preserve its provider boundary too.
+      'src/modules/auth/infrastructure/postmark.client.spec.ts',
+      'src/modules/billing/domain/billing-package.spec.ts',
+      'src/modules/billing/domain/paid-checkout-invoice.spec.ts',
+      'src/modules/billing/infrastructure/stripe.client.spec.ts',
+      'src/modules/billing/line-billing-entry.spec.ts',
       'src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts',
       'src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts',
+      'src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts',
+      'src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts',
       'src/modules/line-ai/application/line-message-buffer.service.spec.ts',
       // §8.3 DB-backed neutral intake state: the four zero-write guarantees (outage, stale/expired,
       // cross-user, cross-chat/company). `pnpm test`'s per-package list does not name this file, so

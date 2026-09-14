@@ -14,6 +14,8 @@ describe('middleware.logic', () => {
     assert.equal(isProtectedPagePath('/system'), true);
     assert.equal(isProtectedPagePath('/system/partners'), true);
     assert.equal(isProtectedPagePath('/legal-acceptance'), true);
+    assert.equal(isProtectedPagePath('/billing/companies'), true);
+    assert.equal(isProtectedPagePath('/billing/companies-preview'), false);
     assert.equal(isProtectedPagePath('/login'), false);
     assert.equal(isProtectedPagePath('/'), false);
     assert.equal(isProtectedPagePath('/systematic'), false);

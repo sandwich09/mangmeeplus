@@ -50,19 +50,37 @@ import { LineIdTokenService } from './application/line-id-token.service';
 import { PlatformAccessService } from './application/platform-access.service';
 import { PublicPlatformAccessController, SystemPlatformAccessController } from './presentation/platform-access.controller';
 
-type MailerSelectionConfig = Pick<AppConfigService, 'emailProvider' | 'isLocal' | 'sesRegion' | 'sesFromAddress' | 'sesWebBaseUrl'>;
+import { PostmarkAuthMailerAdapter } from './infrastructure/postmark-auth-mailer.adapter';
+import { POSTMARK_FETCH, PostmarkClient } from './infrastructure/postmark.client';
+import { EmailDeliveryService } from './application/email-delivery.service';
+import { PostmarkEventsService } from './application/postmark-events.service';
+import { PostmarkEventsController } from './presentation/postmark-events.controller';
+
+type MailerSelectionConfig = Pick<AppConfigService, 'emailProvider' | 'isLocal' | 'sesRegion' | 'sesFromAddress' | 'sesWebBaseUrl'> & Partial<Pick<AppConfigService, 'postmarkServerToken' | 'postmarkServerId' | 'postmarkMessageStream' | 'postmarkFromAddress' | 'postmarkWebhookUsername' | 'postmarkWebhookPassword'>>;
 
 export function selectAuthMailer(
   config: MailerSelectionConfig,
   disabledMailer: DisabledAuthMailerAdapter,
   localConsoleMailer: LocalConsoleAuthMailerAdapter,
   sesMailer: SesAuthMailerAdapter,
+  postmarkMailer?: PostmarkAuthMailerAdapter,
 ) {
   if (config.emailProvider === 'disabled') return disabledMailer;
   if (config.emailProvider === 'local-console') {
     if (!config.isLocal) throw new Error('EMAIL_PROVIDER=local-console is allowed only when APP_ENV=local.');
     return localConsoleMailer;
   }
+  if (config.emailProvider === 'postmark') {
+    if (!postmarkMailer || !config.postmarkServerToken || !config.postmarkServerId || !config.postmarkFromAddress ||
+        !config.postmarkMessageStream || !config.sesWebBaseUrl || !config.postmarkWebhookUsername ||
+        (config.postmarkWebhookPassword?.length ?? 0) < 24 ||
+        (!config.isLocal && config.postmarkServerToken === 'POSTMARK_API_TEST')) {
+      throw new Error('Postmark requires server, sender, explicit web origin and webhook credentials.');
+    }
+    if (new URL(config.sesWebBaseUrl).protocol !== 'https:') throw new Error('Postmark WEB_BASE_URL must use HTTPS.');
+    return postmarkMailer;
+  }
+  if (config.emailProvider !== 'ses') throw new Error('Unsupported email provider.');
   if (!config.sesRegion || !config.sesFromAddress || !config.sesWebBaseUrl) {
     throw new Error('EMAIL_PROVIDER=ses requires SES_REGION, SES_FROM_ADDRESS, and WEB_BASE_URL.');
   }
@@ -72,7 +90,7 @@ export function selectAuthMailer(
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
   imports: [JwtModule.register({}), AccessControlModule, AuditModule],
-  controllers: [AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
+  controllers: [PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
@@ -116,6 +134,11 @@ export function selectAuthMailer(
     DisabledAuthMailerAdapter,
     LocalConsoleAuthMailerAdapter,
     SesAuthMailerAdapter,
+    PostmarkAuthMailerAdapter,
+    EmailDeliveryService,
+    PostmarkEventsService,
+    PostmarkClient,
+    { provide: POSTMARK_FETCH, useValue: globalThis.fetch },
     {
       provide: SES_EMAIL_CLIENT_TOKEN,
       inject: [AppConfigService],
@@ -123,13 +146,14 @@ export function selectAuthMailer(
     },
     {
       provide: AUTH_MAILER_TOKEN,
-      inject: [AppConfigService, DisabledAuthMailerAdapter, LocalConsoleAuthMailerAdapter, SesAuthMailerAdapter],
+      inject: [AppConfigService, DisabledAuthMailerAdapter, LocalConsoleAuthMailerAdapter, SesAuthMailerAdapter, PostmarkAuthMailerAdapter],
       useFactory: (
         config: AppConfigService,
         disabledMailer: DisabledAuthMailerAdapter,
         localConsoleMailer: LocalConsoleAuthMailerAdapter,
         sesMailer: SesAuthMailerAdapter,
-      ) => selectAuthMailer(config, disabledMailer, localConsoleMailer, sesMailer),
+        postmarkMailer: PostmarkAuthMailerAdapter,
+      ) => selectAuthMailer(config, disabledMailer, localConsoleMailer, sesMailer, postmarkMailer),
     },
   ],
   // P12-3b: `MintLineHandoffTokenUseCase` is exported so the LINE send boundary in `line-ai` can
@@ -138,6 +162,6 @@ export function selectAuthMailer(
   // adapter (disabled / local-console / ses) rather than constructing a second SES client.
   // `LineIdTokenService` is exported so the LINE-first signup surfaces verify an ID token through
   // the same audience/channel policy the employee-link and web-login lanes already use (SEC-01).
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN],
+  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN, EmailDeliveryService, PostmarkEventsService],
 })
 export class AuthModule {}

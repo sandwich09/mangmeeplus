@@ -202,6 +202,8 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
       await client.lineTurnOutcome.create({ data: { webhookEventId: eventId, companyId, messagesJson: messages, presentationKind: 'flex' } });
       const worker = new RecoverOrphanLineEventsUseCase({ client } as any, { lineAiTerminalOutcomeReplayEnabled: true, aiDataRetentionDays: 90 } as any,
         noAudit, { enqueue: async () => { throw new Error('business work must not be replayed'); } } as any, adapter);
+      // This transport/JSONB test isolates authorization; real current-source replay is covered by line-read-evidence.pg.spec.ts.
+      (worker as any).readEvidence = { verifyDelivery: async () => true };
       await Promise.all([worker.execute(), worker.execute()]);
       assert.equal(calls.length, 2);
       assert.deepEqual(calls[1], calls[0]);

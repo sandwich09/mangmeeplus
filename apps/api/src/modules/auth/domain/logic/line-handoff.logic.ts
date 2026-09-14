@@ -144,7 +144,9 @@ export function resolveLineHandoffTarget(
 ): string | null {
   if (!isSafeHandoffPath(targetPath, companyId)) return null;
   const renewal = `/companies/${companyId}/renew`;
-  const recoveryTarget = new URL(targetPath, 'https://relative.invalid').pathname === renewal ? targetPath : renewal;
+  const path = new URL(targetPath, 'https://relative.invalid').pathname;
+  const billing = `/companies/${encodeURIComponent(companyId)}/billing`;
+  const recoveryTarget = path === renewal || path === billing || path === `${billing}/return` ? targetPath : renewal;
   if (company.status === 'ACTIVE') {
     return company.planTerm?.termEndsAt && company.planTerm.termEndsAt <= now ? recoveryTarget : targetPath;
   }

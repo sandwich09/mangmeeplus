@@ -1,0 +1,115 @@
+TAP version 13
+# Subtest: reimbursement draft edit vs submit (real PostgreSQL)
+    # Subtest: commits exactly one winner and leaves one internally consistent aggregate
+    ok 1 - commits exactly one winner and leaves one internally consistent aggregate
+      ---
+      duration_ms: 277.953958
+      type: 'test'
+      ...
+    # Subtest: a stale submit rolls back candidates and numbering, then retry uses the unconsumed number
+    ok 2 - a stale submit rolls back candidates and numbering, then retry uses the unconsumed number
+      ---
+      duration_ms: 46.382667
+      type: 'test'
+      ...
+    # Subtest: two requests submitting the same receipt have exactly one winner
+    ok 3 - two requests submitting the same receipt have exactly one winner
+      ---
+      duration_ms: 37.236875
+      type: 'test'
+      ...
+    # Subtest: reuses only a committed document number already owned by the same request
+    ok 4 - reuses only a committed document number already owned by the same request
+      ---
+      duration_ms: 83.103959
+      type: 'test'
+      ...
+    # Subtest: cancel and submit use the same request lock and have exactly one winner
+    ok 5 - cancel and submit use the same request lock and have exactly one winner
+      ---
+      duration_ms: 180.366459
+      type: 'test'
+      ...
+    # Subtest: a failed rejection transition rolls its step decision back before retry
+    ok 6 - a failed rejection transition rolls its step decision back before retry
+      ---
+      duration_ms: 51.350541
+      type: 'test'
+      ...
+    # Subtest: two concurrent approval decisions have exactly one winner
+    ok 7 - two concurrent approval decisions have exactly one winner
+      ---
+      duration_ms: 24.848583
+      type: 'test'
+      ...
+    # Subtest: blocks approval after a requester cancellation intent has started
+    ok 8 - blocks approval after a requester cancellation intent has started
+      ---
+      duration_ms: 22.380083
+      type: 'test'
+      ...
+    # Subtest: imports the actual payer independently of the preparer and retains source facts after JSONB round-trip
+    ok 9 - imports the actual payer independently of the preparer and retains source facts after JSONB round-trip
+      ---
+      duration_ms: 55.768
+      type: 'test'
+      ...
+    # Subtest: rejects wrong tenant/branch/payee, company money, unissued/paper-unlinked evidence, tax handoff and amount/date tampering
+    ok 10 - rejects wrong tenant/branch/payee, company money, unissued/paper-unlinked evidence, tax handoff and amount/date tampering
+      ---
+      duration_ms: 31.486375
+      type: 'test'
+      ...
+    # Subtest: requires draft refresh after source edits and locks ordinary expense edits after submit
+    ok 11 - requires draft refresh after source edits and locks ordinary expense edits after submit
+      ---
+      duration_ms: 68.075208
+      type: 'test'
+      ...
+    # Subtest: prevents claiming one expense twice through different receipt files and catches a newly linked manual receipt
+    ok 12 - prevents claiming one expense twice through different receipt files and catches a newly linked manual receipt
+      ---
+      duration_ms: 60.318625
+      type: 'test'
+      ...
+    # Subtest: rejects source changes at claim-born confirmation, without attaching the original receipt twice
+    ok 13 - rejects source changes at claim-born confirmation, without attaching the original receipt twice
+      ---
+      duration_ms: 34.836375
+      type: 'test'
+      ...
+    # Subtest: retains a finance-owned upload for the employee while rejecting unvalidated or changed files
+    ok 14 - retains a finance-owned upload for the employee while rejecting unvalidated or changed files
+      ---
+      duration_ms: 35.902542
+      type: 'test'
+      ...
+    # Subtest: freezes generic file deletion and new evidence links after a source is submitted
+    ok 15 - freezes generic file deletion and new evidence links after a source is submitted
+      ---
+      duration_ms: 47.174083
+      type: 'test'
+      ...
+# (node:63888) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: confirms source-backed gross costs and pays the employee once without settling the original expense twice
+    ok 16 - confirms source-backed gross costs and pays the employee once without settling the original expense twice
+      ---
+      duration_ms: 201.283
+      type: 'test'
+      ...
+    1..16
+ok 1 - reimbursement draft edit vs submit (real PostgreSQL)
+  ---
+  duration_ms: 1495.801125
+  type: 'suite'
+  ...
+1..1
+# tests 16
+# suites 1
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1717.239542

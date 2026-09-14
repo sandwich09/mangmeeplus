@@ -1274,6 +1274,7 @@ function AiUsageBudgetSection({
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [receiptQuotaMode, setReceiptQuotaMode] = useState('inherit');
   const [ocrLimitInput, setOcrLimitInput] = useState('');
   const [ocrLoading, setOcrLoading] = useState(false);
   const { confirm, confirmDialog } = useConfirm();
@@ -1284,6 +1285,7 @@ function AiUsageBudgetSection({
       setUsage(result);
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
       setOcrEnabled(result.ocr.config.enabled);
+      setReceiptQuotaMode(result.ocr.config.receiptQuotaEnforced == null ? 'inherit' : result.ocr.config.receiptQuotaEnforced ? 'enforce' : 'observe');
       setOcrLimitInput(result.ocr.config.monthlyLimit === null ? '' : String(result.ocr.config.monthlyLimit));
       setUsageError(null);
     } catch (err) {
@@ -1366,12 +1368,14 @@ function AiUsageBudgetSection({
     try {
       const config = await setPartnerOcrConfig(companyId, {
         enabled: ocrEnabled,
+        ...(usage.ocr.planQuota ? { receiptQuotaEnforced: receiptQuotaMode === 'inherit' ? null : receiptQuotaMode === 'enforce' } : {}),
         monthlyLimit: parsed.monthlyLimit,
         expectedVersion: usage.ocr.config.version,
       });
       setUsage((previous) => previous ? { ...previous, ocr: { ...previous.ocr, config } } : previous);
       setOcrEnabled(config.enabled);
       setOcrLimitInput(config.monthlyLimit === null ? '' : String(config.monthlyLimit));
+      await loadUsage();
       showToast('บันทึกการตั้งค่า OCR แล้ว', 'success');
     } catch (err) {
       if (await reloadAfterOcrConfigConflict(err, loadUsage)) {
@@ -1577,6 +1581,23 @@ function AiUsageBudgetSection({
                 เดือนก่อน ({formatThaiMonth(usage.ocr.previous.monthKey)}): อ่าน {usage.ocr.previous.usedCount.toLocaleString('th-TH')} ครั้ง ·
                 ใบเสร็จอัปโหลด {usage.ocr.previous.uploadedReceiptDocumentCount.toLocaleString('th-TH')} ฉบับ
               </p>
+            </div>
+
+            <div className="space-y-2 border-t border-gray-100 pt-4">
+              <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">บังคับโควตาใบเสร็จของแพ็กเกจทดลอง / กำหนดเอง</label>
+              <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
+                onChange={(event) => setReceiptQuotaMode(event.target.value)}
+                disabled={ocrLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
+                <option value="inherit">ตามค่าเริ่มต้นของระบบ</option>
+                <option value="enforce">บังคับ — ครบโควตาแล้วหยุดอ่านใบใหม่</option>
+                <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบโควตา</option>
+              </select>
+              <p className="text-sm leading-6 text-gray-600" data-testid="receipt-quota-effective">
+                {usage.ocr.planQuota
+                  ? `สถานะที่บันทึก: ${usage.ocr.planQuota.enforced ? 'บังคับโควตา' : 'นับอย่างเดียว'} · ${usage.ocr.planQuota.source === 'PAID_GRANTS' ? 'แพ็กเกจที่ชำระเงิน' : usage.ocr.planQuota.source === 'COMPANY' ? 'การตั้งค่าบริษัท' : 'ค่าเริ่มต้นของระบบ'}`
+                  : 'ยังโหลดสถานะการบังคับโควตาไม่ได้'}
+              </p>
+              <p className="text-xs leading-5 text-gray-500">มีผลกับคำขอใหม่จากเว็บและ LINE หลังบันทึก ไม่รีเซ็ตจำนวนที่ใช้ แพ็กเกจที่ชำระเงินบังคับโควตาและวันหมดอายุเสมอ ส่วนรูป statement ใช้เพดาน OCR ด้านล่าง</p>
             </div>
 
             <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">

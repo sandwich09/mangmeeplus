@@ -26,7 +26,7 @@ export function PlanTermBanner({ companyId }: { companyId: string }) {
     };
   }, [companyId]);
 
-  const view = planTermView(notice, isRenewalPath(pathname ?? ''));
+  const view = planTermView(notice, isRenewalPath(pathname ?? '') || /^\/companies\/[^/]+\/billing(?:\/return)?\/?$/.test(pathname ?? ''));
 
   useEffect(() => {
     if (view === 'renewal-page') router.replace(`/companies/${companyId}/renew`);

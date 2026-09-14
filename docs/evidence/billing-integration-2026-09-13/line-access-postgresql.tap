@@ -1,0 +1,65 @@
+TAP version 13
+# Subtest: LINE delivery actor access on isolated PostgreSQL
+    # Subtest: sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+    ok 1 - sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+      ---
+      duration_ms: 191.201833
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+    ok 2 - suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+      ---
+      duration_ms: 47.773292
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+    ok 3 - suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+      ---
+      duration_ms: 39.316208
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+    ok 4 - suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+      ---
+      duration_ms: 46.084125
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+    ok 5 - suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+      ---
+      duration_ms: 46.716
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+    ok 6 - suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+      ---
+      duration_ms: 53.621541
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+    ok 7 - suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+      ---
+      duration_ms: 43.0355
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+    ok 8 - suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+      ---
+      duration_ms: 36.793166
+      type: 'test'
+      ...
+    1..8
+ok 1 - LINE delivery actor access on isolated PostgreSQL
+  ---
+  duration_ms: 678.078625
+  type: 'suite'
+  ...
+1..1
+# tests 8
+# suites 1
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1171.093208

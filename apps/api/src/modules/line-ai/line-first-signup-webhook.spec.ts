@@ -327,6 +327,7 @@ function harness(options: {
       },
     }) as any,
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
 
   // The use case builds its own Logger; capture what it writes at ERROR.
   (useCase as any).logger = { error: (entry: any) => errors.push(entry), warn: () => {}, log: () => {} };
@@ -1233,7 +1234,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
     assert.match(rendered(h), /รับคำขอแล้วค่ะ/);
     // SEC-04: the shop is found by asking for an OWNER membership, not by trusting the button.
     const where = h.membershipQueries[0].where;
-    assert.deepEqual(where.roles, { some: { role: { key: 'OWNER' } } });
+    assert.deepEqual(where.roles, { some: { role: { key: 'OWNER', status: 'ACTIVE' } } });
     assert.equal(where.status, 'ACTIVE');
   });
 

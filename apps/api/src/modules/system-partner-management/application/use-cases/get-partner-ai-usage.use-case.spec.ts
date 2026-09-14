@@ -35,7 +35,8 @@ function makePrisma(opts: {
   overrideSatang?: number | null;
   tags?: Array<{ usageTag: string; _sum: { costSatang: number | null }; _count: { _all: number } }>;
   companyExists?: boolean;
-  ocrConfig?: { enabled: boolean; monthlyLimit: number | null; version?: number; updatedAt?: Date };
+  paid?: boolean;
+  ocrConfig?: { enabled: boolean; monthlyLimit: number | null; version?: number; updatedAt?: Date; receiptQuotaEnforced?: boolean | null };
   ocrMonths?: Array<{ monthKey: string; usedCount: number }>;
   ocrSources?: Array<{ monthKey: string; sourceRoute: string; _count: { _all: number } }>;
   uploads?: [number, number];
@@ -44,7 +45,7 @@ function makePrisma(opts: {
   let uploadIndex = 0;
   const client: any = {
       company: {
-        findUnique: async () => opts.companyExists === false ? null : { id: 'co-1' },
+        findUnique: async () => opts.companyExists === false ? null : { id: 'co-1', planTerm: opts.paid ? { billingReceiptAccountId: 'paid-account' } : null },
       },
       companyAiMonthlyUsage: {
         findMany: async (args: any) => { calls.monthWhere = args.where; return opts.months ?? []; },
@@ -54,6 +55,7 @@ function makePrisma(opts: {
           monthlyBudgetSatang: opts.overrideSatang ?? null,
           ocrEnabled: opts.ocrConfig?.enabled ?? true,
           ocrMonthlyLimit: opts.ocrConfig?.monthlyLimit ?? null,
+          receiptQuotaEnforced: opts.ocrConfig?.receiptQuotaEnforced ?? null,
           ocrConfigVersion: opts.ocrConfig?.version ?? 0,
           updatedAt: opts.ocrConfig?.updatedAt ?? new Date('2026-08-27T00:00:00.000Z'),
         }),
@@ -82,6 +84,13 @@ function makePrisma(opts: {
 }
 
 describe('GetPartnerAiUsageUseCase', () => {
+  for (const paid of [false, true]) for (const override of [null, false, true]) for (const startup of [false, true]) {
+    it(`reports effective enforcement and source: paid=${paid}, override=${override}, startup=${startup}`, async () => {
+      const prisma = makePrisma({ paid, ocrConfig: { enabled: true, monthlyLimit: null, receiptQuotaEnforced: override } });
+      const result = await new GetPartnerAiUsageUseCase(prisma, { ...makeConfig(), receiptQuotaEnforced: startup }).execute('co-1');
+      assert.deepEqual(result.ocr.planQuota, { enforced: paid || (override ?? startup), source: paid ? 'PAID_GRANTS' : override === null ? 'DEFAULT' : 'COMPANY', defaultEnforced: startup });
+    });
+  }
   it('maps the current and previous month aggregates', async () => {
     const prisma = makePrisma({ months: [monthRow(PREVIOUS, 111), monthRow(CURRENT, 222)] });
     const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
@@ -157,6 +166,7 @@ describe('GetPartnerAiUsageUseCase', () => {
 
     assert.deepEqual(result.ocr.config, {
       enabled: false,
+      receiptQuotaEnforced: null,
       monthlyLimit: 40,
       version: 6,
       updatedAt: '2026-08-27T00:00:00.000Z',

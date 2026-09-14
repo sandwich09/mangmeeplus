@@ -3,7 +3,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import SystemHeader from '@/common/components/app-shell/SystemHeader';
 import { fetchServerSessionResult } from '@/common/auth/server-session';
-import { isSystemAdmin, legalAcceptancePath, systemGateReturnPath } from '@/common/auth/session-gate.logic';
+import { isSystemAdmin, canOpenSystemBilling, legalAcceptancePath, systemGateReturnPath } from '@/common/auth/session-gate.logic';
 import { REQUEST_PATH_HEADER } from '@/common/auth/auth-cookies.constants';
 import SystemAccessDenied from '@/features/auth/SystemAccessDenied';
 
@@ -22,7 +22,7 @@ export default async function SystemLayout({ children }: { children: ReactNode }
   if (result.status === 'unavailable') {
     throw new Error('Cannot reach the authentication service. Please try again.');
   }
-  if (result.status === 'forbidden' || !isSystemAdmin(result.session)) {
+  if (result.status === 'forbidden' || (!isSystemAdmin(result.session) && !canOpenSystemBilling(result.session, returnTo))) {
     return <SystemAccessDenied />;
   }
   if (result.session.mustChangePassword) {
@@ -34,7 +34,7 @@ export default async function SystemLayout({ children }: { children: ReactNode }
 
   return (
     <div className="min-h-dvh bg-gray-50">
-      <SystemHeader />
+      <SystemHeader billingOnly={!isSystemAdmin(result.session)} billingAllowed={result.session.permissions.includes('system.billing.read')} />
       {children}
     </div>
   );

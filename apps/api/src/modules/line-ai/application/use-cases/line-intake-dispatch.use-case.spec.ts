@@ -451,6 +451,7 @@ function makeHarness(opts: {
       : undefined) as any,
     opts.expenseDraftConversation,
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
   // The dispatcher's own logger, so a test can assert what an operator sees at level 40.
   const warnings: any[] = [];
   (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), error: () => {}, log: () => {}, debug: () => {} };
@@ -720,6 +721,17 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /ติดต่อผู้ดูแลระบบของบริษัท/);
   });
 
+  it('reduces a stored capability reply to a fixed hint without copying any trailing private facts', async () => {
+    const h = makeHarness({ permissions: ['line.ai.query'], conversationTurns: [{ ...CAPABILITY_TURN[0],
+      replyPreview: `${CAPABILITY_TURN[0]!.replyPreview}\nข้อมูลลับจากสาขาเดิม 987654 บาท`,
+    }] });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ดูรายการที่มีสิทธิ์' });
+    const history = h.routeRequests[0]?.conversationContext?.recentTurns;
+    assert.equal(history?.[0]?.intent, 'CAPABILITY_OVERVIEW');
+    assert.equal(history?.[0]?.assistantReplyPreview, undefined);
+    assert.doesNotMatch(JSON.stringify(h.routeRequests), /987654|ข้อมูลลับ/);
+  });
+
   it('does not treat the same vague text as capability follow-up without the delivered capability marker', () => {
     assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', undefined), false);
     assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', {
@@ -936,7 +948,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
 
-  it('keeps group and room chats on the single-turn path in phase 1', async () => {
+  it('keeps a committed group capture but delivers only a private-chat instruction', async () => {
     let contextLoads = 0;
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
@@ -949,10 +961,12 @@ describe('LINE intake dispatch – text path', () => {
       },
     });
 
-    await h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' });
+    await assert.rejects(h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' }), /LINE_DELIVERY_FAILED_PERMANENT/);
 
     assert.equal(contextLoads, 0);
     assert.equal(h.captured[0].draftConversationEnabled, false);
+    assert.equal(h.captured.length, 1, 'delivery denial does not replay or undo completed capture');
+    assert.match(h.replies[0] ?? '', /แชตส่วนตัว/);
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
 

@@ -53,6 +53,7 @@ type OcrEvent = { id: string; companyId: string; monthKey: string; sourceRoute: 
 
 function fakeOcrPrisma(input: {
   enabled?: boolean;
+  receiptQuotaEnforced?: boolean | null;
   limit?: number | null;
   used?: number;
   receiptUsed?: number;
@@ -89,9 +90,9 @@ function fakeOcrPrisma(input: {
       },
     },
     companyAiConfiguration: {
-      findUnique: async () => input.enabled === undefined && input.limit === undefined
+      findUnique: async () => input.enabled === undefined && input.limit === undefined && input.receiptQuotaEnforced === undefined
         ? null
-        : { ocrEnabled: input.enabled ?? true, ocrMonthlyLimit: input.limit ?? null },
+        : { ocrEnabled: input.enabled ?? true, ocrMonthlyLimit: input.limit ?? null, receiptQuotaEnforced: input.receiptQuotaEnforced },
     },
     companyOcrMonthlyUsage: {
       findUnique: async () => usedCount === 0 ? null : { usedCount },
@@ -325,6 +326,14 @@ describe('company OCR admission', () => {
 describe('company OCR admission — commercial plan ceiling', () => {
   const FREE_TRIAL = { tierKey: 'FREE_TRIAL_15', monthlySlipLimit: 15 };
   const enforced = { ...baseOcrAdmission, enforceReceiptQuota: true };
+  for (const override of [null, false, true]) for (const startup of [false, true]) {
+    it(`uses the saved runtime override for both receipt lanes: override=${override}, startup=${startup}`, async () => {
+      for (const sourceRoute of ['receipt-ocr-web', 'receipt-ocr-line'] as const) {
+        const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15, receiptQuotaEnforced: override });
+        assert.equal((await admitCompanyOcr(state.prisma, { ...baseOcrAdmission, sourceRoute, enforceReceiptQuota: startup })).allowed, !(override ?? startup));
+      }
+    });
+  }
 
   it('refuses receipt 16 of 15 as plan_exceeded, with its own code and no usage event', async () => {
     const state = fakeOcrPrisma({ planTerm: FREE_TRIAL, used: 15 });

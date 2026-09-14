@@ -1,0 +1,67 @@
+TAP version 13
+# Subtest: paid capacity is serialized in PostgreSQL across existing create/reactivation/draft paths
+    # Subtest: two different new branches cannot take the same last slot
+    ok 1 - two different new branches cannot take the same last slot
+      ---
+      duration_ms: 23.879959
+      type: 'test'
+      ...
+    # Subtest: branch reactivation counts seats and leaves existing active edits usable
+    ok 2 - branch reactivation counts seats and leaves existing active edits usable
+      ---
+      duration_ms: 14.019792
+      type: 'test'
+      ...
+    # Subtest: only an actual platform role is excluded and OWNER counts as a purchased seat
+    ok 3 - only an actual platform role is excluded and OWNER counts as a purchased seat
+      ---
+      duration_ms: 7.192625
+      type: 'test'
+      ...
+    # Subtest: two employee reactivations compete for one actual seat
+    ok 4 - two employee reactivations compete for one actual seat
+      ---
+      duration_ms: 22.808083
+      type: 'test'
+      ...
+    # Subtest: different draft completions cannot both pass the same pre-activation count
+    ok 5 - different draft completions cannot both pass the same pre-activation count
+      ---
+      duration_ms: 20.847
+      type: 'test'
+      ...
+# (node:64565) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+    # Subtest: retained selection preserves OWNER, scopes, inactive rows and conversation history; stale sources change nothing
+    ok 6 - retained selection preserves OWNER, scopes, inactive rows and conversation history; stale sources change nothing
+      ---
+      duration_ms: 44.372334
+      type: 'test'
+      ...
+    # Subtest: branch closure and new claims use the same company boundary; existing in-flight claims cannot be stranded
+    ok 7 - branch closure and new claims use the same company boundary; existing in-flight claims cannot be stranded
+      ---
+      duration_ms: 42.75975
+      type: 'test'
+      ...
+    # Subtest: system identity repair cannot bypass head-office, live-work, replacement identity or fresh-source boundaries
+    ok 8 - system identity repair cannot bypass head-office, live-work, replacement identity or fresh-source boundaries
+      ---
+      duration_ms: 41.164625
+      type: 'test'
+      ...
+    1..8
+ok 1 - paid capacity is serialized in PostgreSQL across existing create/reactivation/draft paths
+  ---
+  duration_ms: 432.56175
+  type: 'test'
+  ...
+1..1
+# tests 9
+# suites 0
+# pass 9
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 697.358958

@@ -152,3 +152,16 @@ describe('isLineGroupChatKey', () => {
     }
   });
 });
+
+describe('billing LINE return survives term expiry while business pages remain blocked', () => {
+  it('preserves only billing/review returns on an expiry-only company and refuses admin holds', async () => {
+    const { resolveLineHandoffTarget } = await import('./line-handoff.logic');
+    const expired = { status: 'DISABLED', planTerm: { termEndsAt: new Date(0), termDisabledAt: new Date(0) } };
+    for (const path of ['/billing?channel=line', '/billing/return?attempt=one']) {
+      assert.equal(resolveLineHandoffTarget(COMPANY, `/companies/${COMPANY}${path}`, expired), `/companies/${COMPANY}${path}`);
+      assert.equal(resolveLineHandoffTarget(COMPANY, `/companies/${COMPANY}${path}`, { status: 'DISABLED' }), null);
+    }
+    for (const path of ['/expenses', '/billing/admin', '/billing/return/forged']) assert.equal(resolveLineHandoffTarget(COMPANY, `/companies/${COMPANY}${path}`, expired), `/companies/${COMPANY}/renew`);
+    assert.equal(resolveLineHandoffTarget(COMPANY, '/companies/foreign/billing', expired), null);
+  });
+});

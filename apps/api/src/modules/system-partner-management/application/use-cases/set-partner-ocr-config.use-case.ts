@@ -8,6 +8,7 @@ const OCR_MONTHLY_LIMIT_MAX = 1_000_000;
 export type SetPartnerOcrConfigCommand = {
   companyId: string;
   enabled: boolean;
+  receiptQuotaEnforced?: boolean | null;
   monthlyLimit: number | null;
   expectedVersion: number;
   requestingAdminUserId: string;
@@ -21,6 +22,9 @@ export class SetPartnerOcrConfigUseCase {
 
   async execute(cmd: SetPartnerOcrConfigCommand): Promise<PartnerOcrConfigDto> {
     if (typeof cmd.enabled !== 'boolean') throw new UnprocessableEntityException('enabled must be a boolean.');
+    if (cmd.receiptQuotaEnforced != null && typeof cmd.receiptQuotaEnforced !== 'boolean') {
+      throw new UnprocessableEntityException('receiptQuotaEnforced must be a boolean or null.');
+    }
     if (!Number.isInteger(cmd.expectedVersion) || cmd.expectedVersion < 0) {
       throw new UnprocessableEntityException('expectedVersion must be a non-negative integer.');
     }
@@ -45,14 +49,16 @@ export class SetPartnerOcrConfigUseCase {
 
       const existing = await tx.companyAiConfiguration.findUnique({
         where: { companyId: cmd.companyId },
-        select: { ocrEnabled: true, ocrMonthlyLimit: true, ocrConfigVersion: true, updatedAt: true },
+        select: { ocrEnabled: true, ocrMonthlyLimit: true, receiptQuotaEnforced: true, ocrConfigVersion: true, updatedAt: true },
       });
       const before = {
         enabled: existing?.ocrEnabled ?? true,
         monthlyLimit: existing?.ocrMonthlyLimit ?? null,
+        receiptQuotaEnforced: existing?.receiptQuotaEnforced ?? null,
         version: existing?.ocrConfigVersion ?? 0,
       };
-      if (before.enabled === cmd.enabled && before.monthlyLimit === cmd.monthlyLimit) {
+      const receiptQuotaEnforced = cmd.receiptQuotaEnforced === undefined ? before.receiptQuotaEnforced : cmd.receiptQuotaEnforced;
+      if (before.enabled === cmd.enabled && before.monthlyLimit === cmd.monthlyLimit && before.receiptQuotaEnforced === receiptQuotaEnforced) {
         return { ...before, updatedAt: existing?.updatedAt.toISOString() ?? null };
       }
       if (before.version !== cmd.expectedVersion) {
@@ -71,16 +77,18 @@ export class SetPartnerOcrConfigUseCase {
           monthlyBudgetSatang: null,
           ocrEnabled: cmd.enabled,
           ocrMonthlyLimit: cmd.monthlyLimit,
+          receiptQuotaEnforced,
           ocrConfigVersion: 1,
           updatedBySystemAdminUserId: cmd.requestingAdminUserId,
         },
         update: {
           ocrEnabled: cmd.enabled,
           ocrMonthlyLimit: cmd.monthlyLimit,
+          receiptQuotaEnforced,
           ocrConfigVersion: { increment: 1 },
           updatedBySystemAdminUserId: cmd.requestingAdminUserId,
         },
-        select: { ocrEnabled: true, ocrMonthlyLimit: true, ocrConfigVersion: true, updatedAt: true },
+        select: { ocrEnabled: true, ocrMonthlyLimit: true, receiptQuotaEnforced: true, ocrConfigVersion: true, updatedAt: true },
       });
 
       await tx.auditLog.create({
@@ -97,6 +105,8 @@ export class SetPartnerOcrConfigUseCase {
             toEnabled: saved.ocrEnabled,
             fromMonthlyLimit: before.monthlyLimit,
             toMonthlyLimit: saved.ocrMonthlyLimit,
+            fromReceiptQuotaEnforced: before.receiptQuotaEnforced,
+            toReceiptQuotaEnforced: saved.receiptQuotaEnforced ?? null,
             fromVersion: before.version,
             toVersion: saved.ocrConfigVersion,
           },
@@ -106,6 +116,7 @@ export class SetPartnerOcrConfigUseCase {
       return {
         enabled: saved.ocrEnabled,
         monthlyLimit: saved.ocrMonthlyLimit,
+        receiptQuotaEnforced: saved.receiptQuotaEnforced ?? null,
         version: saved.ocrConfigVersion,
         updatedAt: saved.updatedAt.toISOString(),
       };

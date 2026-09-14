@@ -1,7 +1,7 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { PrismaService } from '../../../common/database/prisma.service';
-import { CompanySignupCoreService } from './company-signup-core.service';
+import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import {
   parseSnsEnvelope,
   snsHttpsUrl,
@@ -131,7 +131,7 @@ export class SesEventsUseCase {
     if (!sesMessageId) return { handled: 'ignored' };
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { claimEmailSesMessageId: sesMessageId },
-      select: { id: true, state: true },
+      select: { id: true, state: true, latestClaimEmailAttemptId: true },
     });
     // An event for a message this product did not send, or for one whose row is long gone.
     if (!request) {
@@ -140,23 +140,29 @@ export class SesEventsUseCase {
     }
     // Idempotent by state: a redelivered event, or a row already claimed/expired/failed, is left
     // exactly as it is. Only the request still waiting on that email can be failed by it.
-    if (request.state !== 'EMAIL_PENDING') {
+    if (request.state !== 'EMAIL_PENDING' || request.latestClaimEmailAttemptId) {
       this.logger.info({
         event: 'ses.event.state_not_pending', signupRequestId: request.id, state: request.state,
       }, 'ses.event.state_not_pending');
       return { handled: 'ignored' };
     }
 
-    await this.core.advance(request.id, 'EMAIL_FAILED', correlationRequestId, input.failureCode);
-    await this.prisma.client.auditLog.create({
-      data: {
-        actorType: 'SERVICE', actorRefId: SERVICE_ACTOR,
-        action: input.auditAction,
-        targetType: 'company_signup_request', targetId: request.id, requestId: correlationRequestId,
-        result: 'FAILED', riskLevel: 'HIGH',
-        metadataJson: { ...input.detail, sesMessageId, failureCode: input.failureCode },
-      },
-    });
+    try {
+      await this.core.advance(request.id, 'EMAIL_FAILED', correlationRequestId, input.failureCode,
+        signupStateGuard('email_attempt_changed', (current) => current.state === 'EMAIL_PENDING' &&
+          !current.latestClaimEmailAttemptId && current.claimEmailSesMessageId === sesMessageId),
+        { alsoInTransaction: async (tx) => {
+          await tx.auditLog.create({ data: {
+            actorType: 'SERVICE', actorRefId: SERVICE_ACTOR, action: input.auditAction,
+            targetType: 'company_signup_request', targetId: request.id, requestId: correlationRequestId,
+            result: 'FAILED', riskLevel: 'HIGH',
+            metadataJson: { ...input.detail, sesMessageId, failureCode: input.failureCode },
+          } });
+        } });
+    } catch (error) {
+      if (error instanceof ConflictException && error.message === 'email_attempt_changed') return { handled: 'ignored' };
+      throw error;
+    }
     return { handled: 'failed' };
   }
 }

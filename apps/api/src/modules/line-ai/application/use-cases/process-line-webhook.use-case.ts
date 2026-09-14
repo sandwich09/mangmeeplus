@@ -8,7 +8,8 @@
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Injectable, Logger, Optional, ForbiddenException, ConflictException } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger, Optional, ForbiddenException, ConflictException } from '@nestjs/common';
+import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -96,8 +97,9 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolFeature, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
 import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
@@ -109,7 +111,7 @@ import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
-import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
+import { capabilityFollowUpReply, capabilityHistoryIntent, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { safeLineErrorDetails, parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
@@ -838,14 +840,6 @@ export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'i
   return { decision: match[1] === '1' ? 'receipt' : match[1] === '2' ? 'illustration' : 'multiple', remainder: match[2].trim() };
 }
 
-function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[], entitled: ReadonlySet<string> | null): boolean {
-  if (!toolNames || toolNames.length === 0) return true;
-  return toolNames.every((toolName) => {
-    const meta = LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName);
-    return !!meta && hasToolPermissions(meta, permissions) && hasToolFeature(meta, entitled);
-  });
-}
-
 function companyLabel(membership: LineCompanyMembership): string {
   return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
 }
@@ -1407,6 +1401,13 @@ const bahtText = (amount: string) => {
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
+  private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
+  private readonly deliveryDenialNotified = new WeakSet<object>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
+  private readonly deliveryDenialCode = new WeakMap<object, string>();
+  private readonly replayedOutcomes = new WeakMap<object, unknown>();
+  private readonly intermediateDeliveries = new WeakSet<object>();
+  @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -1516,7 +1517,7 @@ export class ProcessLineWebhookUseCase {
    * runbook R8 rule 2: "availability problems therefore degrade toward closed, never toward open".
    */
   private async refuseWhenLaunchRouteClosed(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     actorUserId: string,
     companyId: string,
     requestId: string,
@@ -1630,7 +1631,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async refusePendingLegalAcceptance(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
     companyId: string,
     membershipId: string,
@@ -1758,7 +1759,7 @@ export class ProcessLineWebhookUseCase {
    *  queued batch never ends in silence (spec §10). Push consumes OA quota —
    *  the fallback is counted via the `line_push_fallback_used` log line. */
   private async deliverReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
   ): Promise<void> {
@@ -1776,7 +1777,7 @@ export class ProcessLineWebhookUseCase {
    *  resolver, the entitlement read, the router and the model — so an expired company costs one
    *  indexed membership lookup and not a single token. */
   private async replyIfTermExpiredOwner(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
   ): Promise<boolean> {
     if (!await ownsTermExpiredCompany(this.prisma, userId)) return false;
@@ -2240,7 +2241,7 @@ export class ProcessLineWebhookUseCase {
         userId,
         status: 'ACTIVE',
         company: { OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }] },
-        roles: { some: { role: { key: 'OWNER' } } },
+        roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },
       },
       orderBy: { createdAt: 'asc' },
       select: { companyId: true, company: { select: { name: true, planTerm: { select: { tierKey: true } } } } },
@@ -2262,6 +2263,15 @@ export class ProcessLineWebhookUseCase {
           quickReply: { items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }] } },
       ]);
       await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
+      return;
+    }
+    if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
+      // Old rich-menu/message commands converge here too. The card offers a review page, never
+      // claims payment or changes rights; the existing delivery seam binds its handoff to this owner.
+      event.handoff = { userId, companyId: owned.companyId };
+      const url = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
+      await this.deliverReply(event, `📦 ${owned.company.name}\nดูแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่\n${url}\nกรุณาตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินค่ะ`);
+      await this.updateEventLog(event.webhookEventId, 'billing_review_link', undefined, owned.companyId);
       return;
     }
     if (!this.packageChange) {
@@ -2460,7 +2470,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverRequiredMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<void> {
     const result = await this.deliverMessages(event, messages);
@@ -2483,7 +2493,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -2521,7 +2531,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReplies(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     texts: string[],
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -2569,14 +2579,14 @@ export class ProcessLineWebhookUseCase {
    *  is timed once here rather than at one call site — and it stays the NETWORK send (plus its own
    *  delivery bookkeeping), never the message construction, which is the separate `render` stage. */
   private async deliverMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
   }
 
   private async sendMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     // Handoff is set only after company membership resolves. Bind tenant without advancing the
@@ -2594,8 +2604,19 @@ export class ProcessLineWebhookUseCase {
       // Waiting feedback is cosmetic; it must never block the actual answer.
       this.logger.warn({ msg: 'LINE waiting feedback settlement failed', ...safeLineErrorDetails(error) });
     }
-    if (this.config.lineAiTerminalOutcomeReplayEnabled) {
-      const outcome = await this.recordTurnOutcome(event.webhookEventId, messages, presentationKindOf(messages));
+    // Claim before storing an outcome: a queue winner must not acquire a competing live outcome
+    // between its UNKNOWN send and reclaim, or that outcome would strand its exact-payload retry.
+    if (this.deliverySources.has(event) && !this.intermediateDeliveries.has(event)) {
+      const owner = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId: event.webhookEventId, ...(event.handoff ? { companyId: event.handoff.companyId } : {}),
+          OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }] },
+        data: { deliveryOwnerId: 'webhook' },
+      });
+      if (owner.count !== 1) return 'failed_other';
+    }
+    const persistentOutcome = this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event);
+    if (persistentOutcome) {
+      const outcome = await this.recordTurnOutcome(event, messages, presentationKindOf(messages));
       if (!outcome) {
         await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
         return 'failed_other';
@@ -2619,8 +2640,8 @@ export class ProcessLineWebhookUseCase {
       // would either mark the stale Flex outcome delivered (send ok) or leave replay pushing the
       // very payload LINE just rejected (send fails). Nothing has reached the user this turn, so
       // recovery converts this same rejected representation without repeating business work.
-      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
-        const replacement = await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback', messages);
+      if (persistentOutcome) {
+        const replacement = await this.recordTurnOutcome(event, textMessages, 'text_fallback', messages);
         if (!replacement) {
           await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_REPRESENTATION_PENDING');
           return 'failed_other';
@@ -2629,9 +2650,10 @@ export class ProcessLineWebhookUseCase {
       result = await this.attemptDelivery(event, textMessages);
     }
     if (result !== 'ok') {
-      await this.updateEventLog(event.webhookEventId, result === 'failed_permanent' ? 'delivery_failed' : 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
+      await this.updateEventLog(event.webhookEventId, result === 'failed_permanent' ? 'delivery_failed' : 'delivery_pending',
+        this.deliveryDenialCode.get(event) ?? `LINE_DELIVERY_${result.toUpperCase()}`);
     } else {
-      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
+      if (persistentOutcome) {
         // API acceptance is separate from rendering and device delivery. If its outcome stamp
         // fails, keep a durable event marker so recovery updates bookkeeping without another send.
         const acceptance = await this.prisma.client.lineTurnOutcome.updateMany({
@@ -2670,7 +2692,7 @@ export class ProcessLineWebhookUseCase {
    *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
    *  and every observable byte of the legacy path is unchanged. */
   private async attemptDelivery(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     // P12-3b: the ONE place every reply and its push fallback pass through, so wrapping here covers
@@ -2688,6 +2710,7 @@ export class ProcessLineWebhookUseCase {
         messages,
       )
       : messages;
+    if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
     let result: LineDeliveryResult;
     try {
       result = await this.lineReply.sendReply(event.replyToken, outgoing);
@@ -2696,6 +2719,7 @@ export class ProcessLineWebhookUseCase {
       result = 'failed_other';
     }
     if (result === 'failed_token' || (result === 'failed_flex' && !this.config.lineAiFlexTextFallbackEnabled)) {
+      if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
       this.logger.warn({ msg: 'line_push_fallback_used' });
       try {
         result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, outgoing, event.webhookEventId);
@@ -2707,6 +2731,77 @@ export class ProcessLineWebhookUseCase {
     return result;
   }
 
+  private async mayDeliverBusinessReply(event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string }): Promise<boolean> {
+    const original = this.deliveryAccess.get(event);
+    if (this.replayedOutcomes.has(event)) {
+      const current = await this.readEvidence.verifyDelivery(this.replayedOutcomes.get(event), {
+        webhookEventId: event.webhookEventId, lineUserId: event.lineUserId, chatId: event.pushTargetId ?? event.lineUserId,
+        channelId: event.messagingChannelId ?? '',
+      }).catch(() => false);
+      if (!current) { await this.denyBusinessDelivery(event, 'LINE_OUTCOME_REAUTHORIZATION_REQUIRED', original); return false; }
+    }
+    if (!original) return true; // Fresh public and dedicated account/billing recovery paths have their own gates.
+    let allowed = false;
+    let denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+    try {
+      const sources = this.deliverySources.get(event);
+      let sourcesCurrent = true;
+      if (sources) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sources.ids !== null && (!sources.ids.length
+          || await this.readEvidence.verify(original.companyId, original.userId, sources.requestId, sources.ids));
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const identity = await this.resolveLineIdentity(event);
+      if (sourcesCurrent && identity?.userId === original.userId && identity.user.status === 'ACTIVE' && !identity.user.aiAssistantOptOutAt
+        && (!event.pushTargetId || event.pushTargetId === event.lineUserId)) {
+        const access = await this.permissionResolver.resolveAccess(original.userId, original.companyId);
+        const entitled = await loadEntitledFeatureKeys(this.prisma, original.companyId);
+        const context = await this.prisma.client.lineCompanyContext.findUnique({
+          where: { lineUserId: event.lineUserId }, select: { companyId: true, aiPausedUntil: true },
+        });
+        allowed = (!context?.companyId || context.companyId === original.companyId)
+          && (original.allowDuringSupportPause || !context?.aiPausedUntil || context.aiPausedUntil.getTime() <= Date.now())
+          && original.fingerprint === resolvedLineDeliveryAccessFingerprint(original.userId, original.companyId, access, entitled);
+      }
+    } catch (error) {
+      this.logger.warn({ msg: 'line_delivery_access_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+    }
+    if (!allowed) await this.denyBusinessDelivery(event, denialCode, original);
+    return allowed;
+  }
+
+  private async denyBusinessDelivery(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    denialCode: string,
+    original?: { userId: string; companyId: string },
+  ): Promise<void> {
+    this.deliveryDenialCode.set(event, denialCode);
+    await this.audit.log({ companyId: original?.companyId, actorUserId: original?.userId,
+      action: 'ai.line.delivery.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId,
+      requestId: event.webhookEventId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: denialCode === 'LINE_DELIVERY_ACCESS_CHANGED' ? 'delivery_access_changed' : 'delivery_source_changed' } }).catch(error => {
+      // An audit outage cannot turn denial into an exception that replays completed business work.
+      this.logger.warn({ msg: 'line_delivery_denial_audit_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+    });
+    await this.updateEventLog(event.webhookEventId, 'delivery_failed', denialCode, original?.companyId);
+    if (!this.deliveryDenialNotified.has(event)) {
+      this.deliveryDenialNotified.add(event);
+      // This separate refusal contains no stored business facts, company link or handoff token.
+      // Do not route it through the saved-outcome path, which retains the original private answer.
+      const messages = [this.lineReply.buildTextMessage(event.pushTargetId && event.pushTargetId !== event.lineUserId
+        ? 'เพื่อความเป็นส่วนตัว กรุณาเปิดแชตส่วนตัวกับมั่งมี หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
+        : denialCode !== 'LINE_DELIVERY_ACCESS_CHANGED'
+          ? 'ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
+          : 'สิทธิ์หรือร้านที่เลือกเปลี่ยนระหว่างดำเนินการ กรุณาเลือกร้านแล้วถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
+      try {
+        const result = await this.lineReply.sendReply(event.replyToken, messages);
+        if (result === 'failed_token') await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:access-denied`);
+      } catch (error) {
+        this.logger.warn({ msg: 'line_delivery_refusal_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+      }
+    }
+  }
+
   private async completePendingDelivery(webhookEventId: string): Promise<void> {
     await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { webhookEventId, status: 'delivery_pending' },
@@ -2716,11 +2811,12 @@ export class ProcessLineWebhookUseCase {
 
   /** Only a provider-rejected representation can be replaced; ordinary fallback cannot rewrite facts. */
   private async recordTurnOutcome(
-    webhookEventId: string,
+    event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
     messages: LineReplyMessage[],
     presentationKind: string,
     rejectedMessages?: LineReplyMessage[],
   ): Promise<{ messages: LineReplyMessage[]; accepted: boolean } | null> {
+    const { webhookEventId } = event;
     try {
       // Do not write an outcome that the replay reader cannot read back.
       if (!parseOutcomeMessages(messages)) return null;
@@ -2736,11 +2832,23 @@ export class ProcessLineWebhookUseCase {
         if (updated.count !== 1) return null;
         return { messages, accepted: false };
       }
+      const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+      const authorizationJson = { v: 1, producerId,
+        ...(access && sources?.ids?.length ? { read: {
+          userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
+          requestId: sources.requestId, ids: sources.ids, webhookEventId,
+          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
+          channelId: event.messagingChannelId ?? '',
+        } } : {}),
+      };
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
-        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, presentationKind, attempts: 1 },
+        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, authorizationJson, presentationKind, attempts: 1 },
         update: { attempts: { increment: 1 } },
       });
+      if ((outcome.authorizationJson as { producerId?: string } | null)?.producerId !== producerId) {
+        this.replayedOutcomes.set(event, outcome.authorizationJson);
+      }
       const stored = parseOutcomeMessages(outcome.messagesJson);
       return stored ? { messages: stored, accepted: outcome.deliveredAt != null } : null;
     } catch (error) {
@@ -3033,6 +3141,9 @@ export class ProcessLineWebhookUseCase {
     // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
     // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+      fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
+      allowDuringSupportPause: deterministicCommand });
     const menuCommand = staffMenuCommand(event.messageText);
     const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
       .some((permission) => resolvedAccess.permissions.includes(permission));
@@ -3279,7 +3390,7 @@ export class ProcessLineWebhookUseCase {
       // re-ask about THAT file instead of asking the customer to send one.
     }
 
-    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, resolvedAccess.permissions) : undefined;
+    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId) : undefined;
     const valueCandidates = computeValueCandidates(normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
@@ -3584,6 +3695,7 @@ export class ProcessLineWebhookUseCase {
           && isSubstituteReceiptConversationText(normalizedText);
         if (result.pendingQuestion || carriedIntentArmed) {
           await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
             companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId,
             items: [{
@@ -3791,6 +3903,7 @@ export class ProcessLineWebhookUseCase {
         const awaitingUser = !!result.pendingQuestion || !!result.candidateExpenseIds?.length;
         if (awaitingUser) {
           await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
             companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId,
             items: [{
@@ -3875,6 +3988,7 @@ export class ProcessLineWebhookUseCase {
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           resolvedReimbursementIds, 'reimbursement_payer_reclarify');
         await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
@@ -4061,6 +4175,7 @@ export class ProcessLineWebhookUseCase {
           userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
         });
         await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
@@ -4239,6 +4354,7 @@ export class ProcessLineWebhookUseCase {
       // Item 10F: the clarified request waits in the ledger; the next turn carries it and the
       // reclaim expires it silently (audited) when the user never answers.
       await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
         companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
         userId: identity.userId,
         items: [{
@@ -4329,6 +4445,7 @@ export class ProcessLineWebhookUseCase {
     // unacked and the reclaim worker re-runs it (at-least-once is safe: read-only channel).
     const ledgerTurnId = this.ledger
       ? await this.ledger.appendTurn({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, text: normalizedText,
           ...(valueCandidates && { valueCandidates }),
@@ -4362,6 +4479,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
         return;
       }
+      if (ledgerTurnId) this.intermediateDeliveries.add(event);
       await this.deliverReply(
         event,
         failure.replyKind === 'timeout'
@@ -4375,6 +4493,9 @@ export class ProcessLineWebhookUseCase {
       // pushes the answer, so a gateway outage cannot silently lose the request.
       return;
     }
+
+    // The API's own read rows are authoritative even when gateway telemetry omits them.
+    this.deliverySources.set(event, { requestId, ids: await this.readEvidence.forTurn(turnRequest, turnResponse).catch(() => null) });
 
     // 9. Persist the turn + audit FIRST, so a LINE delivery failure can never lose the record.
     if (turnResponse.refusalReason === 'mutation_blocked') {
@@ -4462,6 +4583,7 @@ export class ProcessLineWebhookUseCase {
         'business_answer');
       if (substituteInterruption.pendingQuestion) {
         await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
@@ -4479,6 +4601,7 @@ export class ProcessLineWebhookUseCase {
       const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage);
       if (subRequests.length > 0) {
         await this.ledger.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, items: subRequests,
         });
@@ -4871,7 +4994,7 @@ export class ProcessLineWebhookUseCase {
     } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
-  private async loadConversationContext(companyId: string, userId: string, permissions: string[]): Promise<LineAiConversationContext | undefined> {
+  private async loadConversationContext(companyId: string, userId: string): Promise<LineAiConversationContext | undefined> {
     const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
     const rows = await this.prisma.client.aiTurn.findMany({
       where: {
@@ -4889,20 +5012,20 @@ export class ProcessLineWebhookUseCase {
         intent: true,
         agent: true,
         refused: true,
-        toolInvocations: { select: { toolName: true } },
       },
     });
     if (rows.length === 0) return undefined;
-    // History is model input on both text and media lanes. A surviving CRM permission must not
-    // replay an old sales result after the company switches sales_documents off.
-    const entitled = await loadEntitledFeatureKeys(this.prisma, companyId);
+    // AP21: tool permission/feature checks cannot prove a historical record is still in scope.
+    // Even an unchanged actor can lose access when a record moves. The existing sourceRefs carry
+    // locators, not current authorization. Keep the user's questions for follow-ups, but never
+    // send stored derived replies; current business facts must be read through ERP tools. The
+    // bounded stored preview is inspected only to recognize a fixed capability-help routing hint.
+    // Its contents never enter model input, and the help examples use current access again.
     const recentTurns = [...rows].reverse().map((row) => {
-      const canUseReply = canUseAssistantPreview(row.toolInvocations?.map((tool) => tool.toolName), permissions, entitled);
       return {
         at: row.createdAt.toISOString(),
         ...(row.userMessagePreview && { userMessagePreview: row.userMessagePreview }),
-        ...(canUseReply && row.replyPreview && { assistantReplyPreview: row.replyPreview }),
-        ...(row.intent && { intent: String(row.intent) }),
+        ...(row.intent && { intent: capabilityHistoryIntent(row.replyPreview) ?? String(row.intent) }),
         ...(row.agent && { agent: row.agent }),
         refused: row.refused,
       };
@@ -5037,7 +5160,10 @@ export class ProcessLineWebhookUseCase {
 
     await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
-    if (await lineAssistantDisabled(this.prisma, companyId)) {
+    const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+      fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
+    if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
@@ -5150,7 +5276,7 @@ export class ProcessLineWebhookUseCase {
     // LINE Intake Router: semantic classification of the media message
     // (expense evidence vs signature vs other) before any record is created.
     const conversationContext = access.permissions.includes('line.ai.query')
-      ? await this.loadConversationContext(companyId, identity.userId, access.permissions)
+      ? await this.loadConversationContext(companyId, identity.userId)
       : undefined;
     const caption = captionText?.trim() ?? '';
     const captionSuffix = caption ? ` ${caption}` : '';
@@ -6324,6 +6450,7 @@ ${link}`, ctx.companyId, access);
     });
     if (continuation.pendingQuestion) {
       await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
         companyId: ctx.companyId, chatKey: event.pushTargetId ?? event.lineUserId,
         turnId: ctx.requestId, webhookEventId: event.webhookEventId, userId: ctx.userId,
         items: [{
@@ -6598,6 +6725,7 @@ ${link}`, ctx.companyId, access);
     });
     if (pendingQuestion) {
       await this.ledger?.appendSubRequests({
+          messagingChannelId: event.messagingChannelId,
         companyId, chatKey: event.pushTargetId ?? event.lineUserId, turnId: requestId,
         webhookEventId: event.webhookEventId, userId,
         items: [{
@@ -6823,7 +6951,7 @@ ${link}`, ctx.companyId, access);
    * meets this at 10, not 15. Returns what was said, for the turn record.
    */
   private async deliverReceiptQuotaRefusal(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     companyId: string,
     userId: string,
   ): Promise<string> {
@@ -6832,14 +6960,14 @@ ${link}`, ctx.companyId, access);
     // sent, and the numberless copy below is a true sentence without it.
     const snapshot = await receiptQuotaSnapshot(this.prisma, companyId, monthKey).catch((error) => {
       this.logger.warn({ msg: 'receipt.quota.snapshot_failed', companyId, monthKey, ...safeLineErrorDetails(error) });
-      return { usedCount: 0, planLimit: null, tierKey: null };
+      return { usedCount: 0, planLimit: null, tierKey: null, cadence: undefined };
     });
-    const { planLimit, tierKey } = snapshot;
-    const limit = displayReceiptQuotaLimit(planLimit, tierKey);
+    const { planLimit, tierKey, cadence } = snapshot;
+    const limit = displayReceiptQuotaLimit(planLimit, tierKey, cadence);
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
     const text = first
-      ? receiptQuotaExceededTextTh(limit, tierKey)
-      : receiptQuotaExceededShortTextTh(limit, tierKey);
+      ? receiptQuotaExceededTextTh(limit, tierKey, cadence)
+      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence);
     let delivered = true;
     try {
       if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
@@ -6956,6 +7084,7 @@ ${link}`, ctx.companyId, access);
     const result = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: {
         webhookEventId,
+        OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }],
         // Once delivery is pending, only the delivery path itself may advance
         // the event. Callers that continue after deliverMessages must not turn
         // an unsent response into a false "completed" record.

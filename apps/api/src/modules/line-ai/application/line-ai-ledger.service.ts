@@ -66,6 +66,7 @@ export type LedgerEntry = {
   kind: LedgerEntryKind;
   turnId: string;
   webhookEventId: string;
+  messagingChannelId?: string;
   userId: string;
   text: string;
   intent?: string;
@@ -137,6 +138,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     kind: map['kind'],
     turnId: map['turnId'],
     webhookEventId: map['webhookEventId'] ?? '',
+    ...(map['messagingChannelId'] ? { messagingChannelId: map['messagingChannelId'] } : {}),
     userId: map['userId'],
     text: map['text'] ?? '',
     ...(map['intent'] ? { intent: map['intent'] } : {}),
@@ -213,6 +215,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
     chatKey: string;
     turnId: string;
     webhookEventId: string;
+    messagingChannelId?: string;
     userId: string;
     text: string;
     valueCandidates?: LineAiValueCandidates;
@@ -223,6 +226,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
       kind: 'turn',
       turnId: input.turnId,
       webhookEventId: input.webhookEventId,
+      ...(input.messagingChannelId ? { messagingChannelId: input.messagingChannelId } : {}),
       userId: input.userId,
       text: input.text,
       state: 'pending',
@@ -237,6 +241,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
     chatKey: string;
     turnId: string;
     webhookEventId: string;
+    messagingChannelId?: string;
     userId: string;
     items: LedgerSubRequestInput[];
     now?: Date;
@@ -246,6 +251,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
         kind: 'sub_request',
         turnId: input.turnId,
         webhookEventId: input.webhookEventId,
+        ...(input.messagingChannelId ? { messagingChannelId: input.messagingChannelId } : {}),
         userId: input.userId,
         text: item.text,
         state: item.state,
@@ -395,7 +401,8 @@ export class LineAiLedgerService implements OnModuleDestroy {
       await redis.xgroup('CREATE', key, LEDGER_GROUP, '0', 'MKSTREAM').catch((err: Error) => {
         if (!String(err?.message).includes('BUSYGROUP')) throw err;
       });
-      const pairs = Object.entries({ ...fields, createdAt: now.toISOString() }).flat();
+      const channelId = fields.messagingChannelId || this.config.lineMessagingChannelId;
+      const pairs = Object.entries({ ...fields, ...(channelId ? { messagingChannelId: channelId } : {}), createdAt: now.toISOString() }).flat();
       const id = await redis.xadd(key, 'MAXLEN', '~', this.config.lineAiLedgerMaxLen, '*', ...pairs);
       if (!id) return null;
       // Consume-on-append: the PEL is always exactly the set of unacked entries, which makes

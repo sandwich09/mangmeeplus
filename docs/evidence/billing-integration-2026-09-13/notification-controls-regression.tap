@@ -1,0 +1,411 @@
+TAP version 13
+# Subtest: ProcessDueNotificationDeliveriesUseCase (A4)
+    # Subtest: processes every due delivery and reports the count
+    ok 1 - processes every due delivery and reports the count
+      ---
+      duration_ms: 0.965959
+      type: 'test'
+      ...
+    # Subtest: one delivery failure never aborts the rest of the sweep
+    ok 2 - one delivery failure never aborts the rest of the sweep
+      ---
+      duration_ms: 0.1825
+      type: 'test'
+      ...
+    # Subtest: empty due set is a no-op
+    ok 3 - empty due set is a no-op
+      ---
+      duration_ms: 0.049333
+      type: 'test'
+      ...
+    1..3
+ok 1 - ProcessDueNotificationDeliveriesUseCase (A4)
+  ---
+  duration_ms: 1.608958
+  type: 'suite'
+  ...
+# Subtest: CreateOrUpdateNotificationEventUseCase recipients
+    # Subtest: creates deliveries only for distinct ACTIVE company members
+    ok 1 - creates deliveries only for distinct ACTIVE company members
+      ---
+      duration_ms: 0.276083
+      type: 'test'
+      ...
+    1..1
+ok 2 - CreateOrUpdateNotificationEventUseCase recipients
+  ---
+  duration_ms: 0.347458
+  type: 'suite'
+  ...
+# Subtest: ProcessQueuedDeliveryUseCase LINE target resolution
+    # Subtest: delivers through the configured shared OA channel when the company has no binding row
+    ok 1 - delivers through the configured shared OA channel when the company has no binding row
+      ---
+      duration_ms: 17.203042
+      type: 'test'
+      ...
+    # Subtest: records a 409 with LINE accepted-request evidence as sent
+    ok 2 - records a 409 with LINE accepted-request evidence as sent
+      ---
+      duration_ms: 0.433125
+      type: 'test'
+      ...
+    # Subtest: keeps a bare LINE 409 as a failed delivery
+    ok 3 - keeps a bare LINE 409 as a failed delivery
+      ---
+      duration_ms: 0.366708
+      type: 'test'
+      ...
+    # Subtest: claims a non-customer LINE delivery so overlapping workers push once
+    ok 4 - claims a non-customer LINE delivery so overlapping workers push once
+      ---
+      duration_ms: 5.628
+      type: 'test'
+      ...
+    # Subtest: does not send cached CRM customer PII when erasure suppresses the delivery before the final lock
+    ok 5 - does not send cached CRM customer PII when erasure suppresses the delivery before the final lock
+      ---
+      duration_ms: 0.536667
+      type: 'test'
+      ...
+    # Subtest: suppresses customer-linked LINE egress when the recipient membership is no longer active
+    ok 6 - suppresses customer-linked LINE egress when the recipient membership is no longer active
+      ---
+      duration_ms: 0.249459
+      type: 'test'
+      ...
+    # Subtest: re-reads a live CRM notification under the customer lock before LINE egress
+    ok 7 - re-reads a live CRM notification under the customer lock before LINE egress
+      ---
+      duration_ms: 0.329667
+      type: 'test'
+      ...
+# {"event":"notification_sweep_company_failed","sweep":"snapshot","companyId":"co-1","error":"one company failed"}
+# {"event":"notification_sweep_company_failed","sweep":"daily_owner_summary","companyId":"co-1","error":"one company failed"}
+    # Subtest: claims and persists a CRM LINE outcome inside the customer lock so overlapping workers push once
+    ok 8 - claims and persists a CRM LINE outcome inside the customer lock so overlapping workers push once
+      ---
+      duration_ms: 7.258583
+      type: 'test'
+      ...
+    1..8
+ok 3 - ProcessQueuedDeliveryUseCase LINE target resolution
+  ---
+  duration_ms: 32.19375
+  type: 'suite'
+  ...
+# Subtest: notification producer sweeps
+    # Subtest: uses the stable period key for daily-summary identity and keeps the snapshot in source refs
+    ok 1 - uses the stable period key for daily-summary identity and keeps the snapshot in source refs
+      ---
+      duration_ms: 0.140084
+      type: 'test'
+      ...
+    # Subtest: generates today snapshots for every active company and isolates failures
+    ok 2 - generates today snapshots for every active company and isolates failures
+      ---
+      duration_ms: 0.326375
+      type: 'test'
+      ...
+    # Subtest: runs the stock-low scan for every active company
+    ok 3 - runs the stock-low scan for every active company
+      ---
+      duration_ms: 0.120166
+      type: 'test'
+      ...
+    # Subtest: creates Bangkok-day summaries only for companies with an enabled rule
+    ok 4 - creates Bangkok-day summaries only for companies with an enabled rule
+      ---
+      duration_ms: 0.531917
+      type: 'test'
+      ...
+    1..4
+ok 4 - notification producer sweeps
+  ---
+  duration_ms: 1.181583
+  type: 'suite'
+  ...
+# Subtest: notification sweeps shadow coverage (piece 5)
+    # Subtest: records one observation per due delivery, and processes them all
+    ok 1 - records one observation per due delivery, and processes them all
+      ---
+      duration_ms: 0.131625
+      type: 'test'
+      ...
+    # Subtest: records a delivery that then fails — the observation is about the guard, not the outcome
+    ok 2 - records a delivery that then fails — the observation is about the guard, not the outcome
+      ---
+      duration_ms: 0.045333
+      type: 'test'
+      ...
+    # Subtest: gives each shared-helper sweep its own surface name
+    ok 3 - gives each shared-helper sweep its own surface name
+      ---
+      duration_ms: 0.081208
+      type: 'test'
+      ...
+    # Subtest: flushes the daily-summary sweep even though it re-throws on partial failure
+    ok 4 - flushes the daily-summary sweep even though it re-throws on partial failure
+      ---
+      duration_ms: 0.286208
+      type: 'test'
+      ...
+    # Subtest: flushes on any escape from inside the sweep loop (finally, mutation-proved)
+    ok 5 - flushes on any escape from inside the sweep loop (finally, mutation-proved)
+      ---
+      duration_ms: 0.08125
+      type: 'test'
+      ...
+    # Subtest: flushes the delivery sweep on any escape from inside its loop (finally, mutation-proved)
+    ok 6 - flushes the delivery sweep on any escape from inside its loop (finally, mutation-proved)
+      ---
+      duration_ms: 0.091083
+      type: 'test'
+      ...
+    # Subtest: completes every delivery when the real probe cannot read the launch tables
+    ok 7 - completes every delivery when the real probe cannot read the launch tables
+      ---
+      duration_ms: 0.269459
+      type: 'test'
+      ...
+    # Subtest: runs every company in a shared-helper sweep when the real probe cannot read
+    ok 8 - runs every company in a shared-helper sweep when the real probe cannot read
+      ---
+      duration_ms: 0.333959
+      type: 'test'
+      ...
+    1..8
+ok 5 - notification sweeps shadow coverage (piece 5)
+  ---
+  duration_ms: 1.39025
+  type: 'suite'
+  ...
+# Subtest: dashboard snapshot cache across a period rollover
+    # Subtest: does not serve yesterday numbers under today heading
+    ok 1 - does not serve yesterday numbers under today heading
+      ---
+      duration_ms: 1.602375
+      type: 'test'
+      ...
+    # Subtest: still reuses the cache within the same period, so the fix costs no extra generation
+    ok 2 - still reuses the cache within the same period, so the fix costs no extra generation
+      ---
+      duration_ms: 0.103666
+      type: 'test'
+      ...
+    1..2
+ok 6 - dashboard snapshot cache across a period rollover
+  ---
+  duration_ms: 2.114208
+  type: 'suite'
+  ...
+# Subtest: dashboard snapshot lookup scope
+    # Subtest: keys the lookup on scope and scopeKey, matching company-wide on NULL
+    ok 1 - keys the lookup on scope and scopeKey, matching company-wide on NULL
+      ---
+      duration_ms: 0.522
+      type: 'test'
+      ...
+    1..1
+ok 7 - dashboard snapshot lookup scope
+  ---
+  duration_ms: 0.559334
+  type: 'suite'
+  ...
+# Subtest: cursor pagination keys
+    # Subtest: never filters the page on a key it does not sort by
+    ok 1 - never filters the page on a key it does not sort by
+      ---
+      duration_ms: 0.335542
+      type: 'test'
+      ...
+    # Subtest: asks for no cursor at all on the first page
+    ok 2 - asks for no cursor at all on the first page
+      ---
+      duration_ms: 0.059209
+      type: 'test'
+      ...
+    1..2
+ok 8 - cursor pagination keys
+  ---
+  duration_ms: 0.481208
+  type: 'suite'
+  ...
+# Subtest: unread badge counting
+    # Subtest: counts in the database instead of transferring the backlog
+    ok 1 - counts in the database instead of transferring the backlog
+      ---
+      duration_ms: 0.150167
+      type: 'test'
+      ...
+    1..1
+ok 9 - unread badge counting
+  ---
+  duration_ms: 0.2945
+  type: 'suite'
+  ...
+# Subtest: every emitted trigger can actually be delivered
+    # Subtest: leaves no trigger emitted by a module but dropped by the preference gate
+    ok 1 - leaves no trigger emitted by a module but dropped by the preference gate
+      ---
+      duration_ms: 21.599792
+      type: 'test'
+      ...
+    # Subtest: keeps report_ready deliverable, and out of the future list that suppressed it
+    ok 2 - keeps report_ready deliverable, and out of the future list that suppressed it
+      ---
+      duration_ms: 0.057208
+      type: 'test'
+      ...
+    # Subtest: never lets a key sit in both lists, which would make the gate depend on read order
+    ok 3 - never lets a key sit in both lists, which would make the gate depend on read order
+      ---
+      duration_ms: 0.175334
+      type: 'test'
+      ...
+    1..3
+ok 10 - every emitted trigger can actually be delivered
+  ---
+  duration_ms: 22.144333
+  type: 'suite'
+  ...
+# Subtest: notification source links
+    # Subtest: opens the exact persisted report export without substituting another report
+    ok 1 - opens the exact persisted report export without substituting another report
+      ---
+      duration_ms: 0.336458
+      type: 'test'
+      ...
+    1..1
+ok 11 - notification source links
+  ---
+  duration_ms: 0.760541
+  type: 'suite'
+  ...
+# Subtest: implemented-trigger gate (LINE preference suppression)
+    # Subtest: passes every notification triggerKey the auto-enabled workflow templates emit
+    ok 1 - passes every notification triggerKey the auto-enabled workflow templates emit
+      ---
+      duration_ms: 0.120875
+      type: 'test'
+      ...
+    # Subtest: keeps the pre-existing implemented keys
+    ok 2 - keeps the pre-existing implemented keys
+      ---
+      duration_ms: 0.192375
+      type: 'test'
+      ...
+    1..2
+ok 12 - implemented-trigger gate (LINE preference suppression)
+  ---
+  duration_ms: 0.378208
+  type: 'suite'
+  ...
+# Subtest: notification.logic
+    # Subtest: builds stable dedup key from tenant, trigger, source, and period
+    ok 1 - builds stable dedup key from tenant, trigger, source, and period
+      ---
+      duration_ms: 0.118791
+      type: 'test'
+      ...
+    # Subtest: keeps repeated event inside cooldown
+    ok 2 - keeps repeated event inside cooldown
+      ---
+      duration_ms: 0.210834
+      type: 'test'
+      ...
+    # Subtest: suppresses non-critical LINE during overnight quiet hours only
+    ok 3 - suppresses non-critical LINE during overnight quiet hours only
+      ---
+      duration_ms: 10.300542
+      type: 'test'
+      ...
+    1..3
+ok 13 - notification.logic
+  ---
+  duration_ms: 10.887875
+  type: 'suite'
+  ...
+# Subtest: Bangkok dashboard period boundaries
+    # Subtest: moves the day boundary at Bangkok midnight, not UTC midnight
+    ok 1 - moves the day boundary at Bangkok midnight, not UTC midnight
+      ---
+      duration_ms: 1.086125
+      type: 'test'
+      ...
+    # Subtest: keeps the dashboard week Monday-Sunday in Bangkok
+    ok 2 - keeps the dashboard week Monday-Sunday in Bangkok
+      ---
+      duration_ms: 0.119042
+      type: 'test'
+      ...
+    # Subtest: moves the month boundary at Bangkok midnight
+    ok 3 - moves the month boundary at Bangkok midnight
+      ---
+      duration_ms: 0.195292
+      type: 'test'
+      ...
+    1..3
+ok 14 - Bangkok dashboard period boundaries
+  ---
+  duration_ms: 1.558
+  type: 'suite'
+  ...
+# Subtest: delivery retry/backoff (A4)
+    # Subtest: classifies transient vs terminal delivery errors
+    ok 1 - classifies transient vs terminal delivery errors
+      ---
+      duration_ms: 0.149167
+      type: 'test'
+      ...
+    # Subtest: backoff grows exponentially from 30s and caps at 1h
+    ok 2 - backoff grows exponentially from 30s and caps at 1h
+      ---
+      duration_ms: 0.0875
+      type: 'test'
+      ...
+    # Subtest: resolveDeliveryOutcome: non-failed statuses pass through unchanged
+    ok 3 - resolveDeliveryOutcome: non-failed statuses pass through unchanged
+      ---
+      duration_ms: 0.102542
+      type: 'test'
+      ...
+    # Subtest: resolveDeliveryOutcome: retryable failure with attempts left requeues with backoff
+    ok 4 - resolveDeliveryOutcome: retryable failure with attempts left requeues with backoff
+      ---
+      duration_ms: 0.0385
+      type: 'test'
+      ...
+    # Subtest: resolveDeliveryOutcome: exhausted retries go terminal FAILED
+    ok 5 - resolveDeliveryOutcome: exhausted retries go terminal FAILED
+      ---
+      duration_ms: 0.030042
+      type: 'test'
+      ...
+    # Subtest: resolveDeliveryOutcome: non-retryable failure goes terminal FAILED even with attempts left
+    ok 6 - resolveDeliveryOutcome: non-retryable failure goes terminal FAILED even with attempts left
+      ---
+      duration_ms: 0.023917
+      type: 'test'
+      ...
+    1..6
+ok 15 - delivery retry/backoff (A4)
+  ---
+  duration_ms: 0.502292
+  type: 'suite'
+  ...
+# Subtest: resolves completed source work, retains active work and can reopen after a payment void
+ok 16 - resolves completed source work, retains active work and can reopen after a payment void
+  ---
+  duration_ms: 1.734
+  type: 'test'
+  ...
+1..16
+# tests 49
+# suites 15
+# pass 49
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 286.257875

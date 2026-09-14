@@ -2,13 +2,23 @@ import type { LineAiConversationContext, LineCapabilityGroupId } from '@watchdog
 import { canAdvertiseReceiptCapture, LINE_CAPABILITY_GROUPS, LINE_CAPABILITY_REPLY_PREFIXES, usableCapabilityGroupIds } from '@watchdog-bms/contracts';
 import { normalizeLineText } from './line-ai-classifier.logic';
 
+/** A routing hint only; every capability example is rebuilt from current access. */
+export const CAPABILITY_HISTORY_INTENT = 'CAPABILITY_OVERVIEW';
+
+export function capabilityHistoryIntent(reply: string | null | undefined): string | undefined {
+  return reply && LINE_CAPABILITY_REPLY_PREFIXES.some(prefix => reply.startsWith(prefix))
+    ? CAPABILITY_HISTORY_INTENT : undefined;
+}
+
 export function isDeliveredCapabilityFollowUp(
   text: string,
   context: LineAiConversationContext | undefined,
 ): boolean {
   const normalized = normalizeLineText(text).toLocaleLowerCase('th-TH');
   if (!/^(อย่างไร|อย่างไหร่|ยังไง|แบบไหน|เช่นอะไร|how|how so|such as what)[?？]?$/iu.test(normalized)) return false;
-  const lastReply = context?.recentTurns.at(-1)?.assistantReplyPreview ?? '';
+  const lastTurn = context?.recentTurns.at(-1);
+  if (lastTurn?.intent === CAPABILITY_HISTORY_INTENT) return true;
+  const lastReply = lastTurn?.assistantReplyPreview ?? '';
   // The card and the teaching walkthrough (spec §8.1) both count: the openings are a shared contract.
   return LINE_CAPABILITY_REPLY_PREFIXES.some((prefix) => lastReply.startsWith(prefix));
 }

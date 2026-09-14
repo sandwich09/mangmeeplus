@@ -3,7 +3,10 @@ import { civilDateToUtcDate, isCivilDate, type CivilDate } from '@watchdog-bms/c
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
 import { canonicalFingerprint } from '../../../../common/security/canonical-fingerprint';
-import { maskTaxId } from '../../../data-model-core/domain/logic/identity-reconciliation.logic';
+import { findBranchDuplicates, maskTaxId } from '../../../data-model-core/domain/logic/identity-reconciliation.logic';
+import { canLeaveActiveBranch } from '../../../data-model-core/domain/logic/branch.logic';
+import { assertNoInFlightReimbursements } from '../../../reimbursements/application/branch-in-flight';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import type { RequestContext } from '../../../auth/domain/models/request-context.model';
 
 export type ResolveTaxIdCommand = {
@@ -167,20 +170,32 @@ export class ResolveIdentityReconciliationUseCase {
       const item = await this.lockAndLoadItem(tx, itemId, 'BRANCH_DUP');
       const replay = this.replayOrConflict(item, command.commandId);
       if (replay) return replay;
+      await lockPlanTermCompany(tx, item.companyId);
       this.assertSourceUnchanged(item, command.expectedSourceFingerprint);
+      const branches = await tx.branch.findMany({ where: { companyId: item.companyId }, select: { id: true, type: true, status: true, taxBranchCode: true } });
+      const source = findBranchDuplicates(branches).find(finding => finding.discriminator === item.discriminator);
+      if (!source || source.sourceFingerprint !== item.sourceFingerprint) throw new ConflictException('Branch source changed; regenerate and review the item.');
 
       const target = await tx.branch.findFirst({
         where: { id: command.targetBranchId, companyId: item.companyId },
-        select: { id: true, taxBranchCode: true, type: true },
+        select: { id: true, taxBranchCode: true, type: true, status: true },
       });
       if (!target) throw new NotFoundException(`Branch ${command.targetBranchId} not found in this company`);
+      if (target.status !== 'ACTIVE' || (item.discriminator.startsWith('__') ? target.type !== 'HEAD_OFFICE' : target.taxBranchCode !== item.discriminator))
+        throw new ConflictException('Target is not part of this active duplicate identity.');
 
       if (command.action === 'ARCHIVE') {
-        await tx.branch.update({ where: { id: target.id }, data: { status: 'ARCHIVED' } });
+        const active = branches.filter(branch => branch.status === 'ACTIVE');
+        const refusal = canLeaveActiveBranch(target, active.filter(branch => branch.type === 'HEAD_OFFICE').length, active.length);
+        if (refusal) throw new UnprocessableEntityException(refusal);
+        await assertNoInFlightReimbursements({ client: tx }, item.companyId, target.id);
+        await tx.branch.update({ where: { id: target.id }, data: { status: 'ARCHIVED', updatedByUserId: ctx.userId } });
       } else {
+        if (branches.some(branch => branch.id !== target.id && branch.status === 'ACTIVE' && branch.taxBranchCode === command.newCode))
+          throw new ConflictException('The replacement tax branch code already belongs to an active branch.');
         await tx.branch.update({
           where: { id: target.id },
-          data: { taxBranchCode: command.newCode!, isVatEstablishment: true },
+          data: { taxBranchCode: command.newCode!, isVatEstablishment: true, updatedByUserId: ctx.userId },
         });
       }
 

@@ -26,11 +26,14 @@ export class AccountClaimTokenService {
      * a 72-hour token issued on day 28 of a 30-day window was killed mid-life by the sweep.
      */
     windowStartedAt: Date | null = null,
+    transaction?: Prisma.TransactionClient,
+    maximumExpiresAt?: Date | null,
   ): Promise<MintedClaimToken> {
     const rawToken = randomBytes(CLAIM_TOKEN_BYTES).toString('base64url');
-    const expiresAt = claimTokenExpiresAt(now, windowStartedAt);
+    const calculatedExpiry = claimTokenExpiresAt(now, windowStartedAt);
+    const expiresAt = maximumExpiresAt && maximumExpiresAt < calculatedExpiry ? maximumExpiresAt : calculatedExpiry;
 
-    await this.prisma.client.$transaction(async (tx) => {
+    const write = async (tx: Prisma.TransactionClient) => {
       await tx.accountClaimToken.updateMany({
         where: { signupRequestId, usedAt: null, revokedAt: null },
         data: { revokedAt: now },
@@ -38,7 +41,9 @@ export class AccountClaimTokenService {
       await tx.accountClaimToken.create({
         data: { signupRequestId, tokenHash: hashClaimToken(rawToken), expiresAt },
       });
-    });
+    };
+    if (transaction) await write(transaction);
+    else await this.prisma.client.$transaction(write);
 
     return { rawToken, expiresAt };
   }

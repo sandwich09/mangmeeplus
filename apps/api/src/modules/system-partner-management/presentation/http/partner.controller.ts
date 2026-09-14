@@ -114,6 +114,7 @@ export class SetAiModelBodyDto {
 
 export class SetOcrConfigBodyDto {
   @IsBoolean() enabled!: boolean;
+  @IsOptional() @IsBoolean() receiptQuotaEnforced?: boolean | null;
   // Unlike the partial AI-model body, this is absolute desired state: undefined must fail,
   // while null deliberately means unlimited.
   @ValidateIf((_object, value) => value !== null) @IsInt() @Min(1) @Max(1_000_000) monthlyLimit!: number | null;
@@ -415,6 +416,7 @@ export class PartnerController {
     return this.setOcrConfig.execute({
       companyId,
       enabled: dto.enabled,
+      ...(dto.receiptQuotaEnforced !== undefined ? { receiptQuotaEnforced: dto.receiptQuotaEnforced } : {}),
       monthlyLimit: dto.monthlyLimit,
       expectedVersion: dto.expectedVersion,
       requestingAdminUserId: req.context.userId,

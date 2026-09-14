@@ -1127,6 +1127,25 @@ describe('P11 SES auth mailer provider boundary', () => {
       }
     }
   });
+  it('selects Postmark explicitly and refuses incomplete or validation-only production credentials', () => {
+    const disabled = new DisabledAuthMailerAdapter();
+    const local = new LocalConsoleAuthMailerAdapter(config());
+    const ses = sesMailer().mailer;
+    const postmark = { provider: 'postmark' } as any;
+    const settings = config({ emailProvider: 'postmark', postmarkServerToken: 'synthetic-server-token', postmarkServerId: 42,
+      postmarkMessageStream: 'outbound', postmarkFromAddress: 'system@example.test',
+      postmarkWebhookUsername: 'callback', postmarkWebhookPassword: 'synthetic-webhook-secret-12345' });
+    assert.equal(selectAuthMailer(settings, disabled, local, ses, postmark), postmark);
+    for (const key of ['postmarkServerToken', 'postmarkServerId', 'postmarkMessageStream', 'postmarkFromAddress',
+      'sesWebBaseUrl', 'postmarkWebhookUsername', 'postmarkWebhookPassword']) {
+      assert.throws(() => selectAuthMailer({ ...settings, [key]: undefined }, disabled, local, ses, postmark), /Postmark requires/);
+    }
+    assert.throws(() => selectAuthMailer({ ...settings, sesWebBaseUrl: 'http://app.example.test' }, disabled, local, ses, postmark), /HTTPS/);
+    assert.throws(() => selectAuthMailer({ ...settings, postmarkServerToken: 'POSTMARK_API_TEST' }, disabled, local, ses, postmark), /Postmark requires/);
+    assert.equal(selectAuthMailer({ ...settings, isLocal: true, postmarkServerToken: 'POSTMARK_API_TEST' }, disabled, local, ses, postmark), postmark);
+    assert.throws(() => selectAuthMailer(settings, disabled, local, ses), /Postmark requires/);
+    assert.throws(() => selectAuthMailer({ ...settings, emailProvider: 'typo' }, disabled, local, ses, postmark), /Unsupported email provider/);
+  });
 
   it('never uses the public API origin as the SES frontend base', async () => {
     const disabled = new DisabledAuthMailerAdapter();

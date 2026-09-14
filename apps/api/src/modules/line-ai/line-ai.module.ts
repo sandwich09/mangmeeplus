@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { LineReadEvidenceService } from './application/line-read-evidence.service';
+import { LineLedgerDeliveryService } from './application/line-ledger-delivery.service';
+import { ERP_READ_TOOL_REGISTRY, type ErpReadToolPort } from './domain/ports/erp-read-tool.port';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { AccessControlModule } from '../access-control/access-control.module';
@@ -228,6 +231,10 @@ const erpTools = [
     DrainLineLedgerUseCase,
     RecoverOrphanLineEventsUseCase,
     ...erpTools,
+    { provide: ERP_READ_TOOL_REGISTRY, inject: erpTools,
+      useFactory: (...tools: ErpReadToolPort[]) => new Map(tools.map(tool => [tool.toolName, tool])) },
+    LineReadEvidenceService,
+    LineLedgerDeliveryService,
   ],
   exports: [ProcessLineWebhookUseCase, LineMessageBufferService],
 })

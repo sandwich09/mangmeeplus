@@ -50,6 +50,14 @@ export default async function CompanyWorkspaceLayout({
     redirect(legalAcceptancePath(returnTo, companyId));
   }
 
+  // Billing recovery must not mount the business shell's branch/profile/notification queries.
+  // Those correctly reject an expired term and would redirect the owner away from checkout.
+  // The session, company, password and legal gates above still apply, with fresh OWNER checks
+  // on every billing API request below.
+  const billingPath = `/companies/${companyId}/billing`;
+  const requestPath = returnTo.split('?')[0];
+  if (requestPath === billingPath || requestPath === `${billingPath}/return`) return <>{children}</>;
+
   return (
     <WorkspaceLayoutClient companyId={companyId} session={sessionResult.session}>
       {children}

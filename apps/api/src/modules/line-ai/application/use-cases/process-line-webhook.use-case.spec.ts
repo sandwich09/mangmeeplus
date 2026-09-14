@@ -613,6 +613,7 @@ function makeUseCase(
     undefined, // intakeState
     opts.handoffLinks, // P12-3b handoff seam; absent = LINE_WEB_HANDOFF_ENABLED off
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
 
 	  return { useCase, replies, sentMessages, sentMessageBatches, pushes, aiGatewayRequests, intakeRequests, auditEvents, legalChecks, getAiGatewayCalled: () => aiGatewayCalled };
 	}
@@ -626,6 +627,116 @@ const BASE_EVENT = Object.freeze({
   replyToken: 'reply-1',
   messageText: 'ดู dashboard',
   messagingChannelId: 'msg-channel-1',
+});
+
+describe('AP22 live actor delivery fence', () => {
+  for (const lane of ['text', 'media'] as const) for (const change of ['membership', 'role', 'branch', 'feature', 'company', 'unlink', 'optout', 'disabled', 'pause'] as const) {
+    it(`${lane} suppresses derived content when ${change} changes during model work`, async () => {
+      const { prisma, aiTurnUpdates } = makePrisma();
+      const revoke = () => {
+        if (['membership', 'role', 'branch'].includes(change)) {
+          const original = (h.useCase as any).permissionResolver.resolveAccess;
+          (h.useCase as any).permissionResolver.resolveAccess = async (...args: unknown[]) => {
+            const access = await original(...args);
+            return { ...access,
+              ...(change === 'membership' ? { membershipId: 'replacement-membership' } : {}),
+              ...(change === 'role' ? { roles: [] } : {}),
+              ...(change === 'branch' ? { scopes: { branchIds: [] } } : {}),
+            };
+          };
+        } else if (change === 'feature') {
+          prisma.client.companyFeatureEntitlement.findMany = async () => [{ featureKey: 'ai_line_assistant', enabled: false }];
+        } else if (change === 'company' || change === 'pause') {
+          prisma.client.lineCompanyContext.findUnique = async () => ({
+            companyId: change === 'company' ? 'company-2' : 'company-1',
+            aiPausedUntil: change === 'pause' ? new Date(Date.now() + 60_000) : null,
+          });
+        } else {
+          prisma.client.externalIdentity.findFirst = async () => change === 'unlink' ? null : ({ userId: 'user-1',
+            user: { status: change === 'disabled' ? 'DISABLED' : 'ACTIVE', aiAssistantOptOutAt: change === 'optout' ? new Date() : null } });
+        }
+      };
+      const h = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.read_own'],
+        intakeRouteFn: () => {
+          if (lane === 'media') { revoke(); return { status: 'ROUTED', intent: 'UNSUPPORTED', language: 'th', confidence: 1 }; }
+          return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 };
+        },
+        aiGatewayFn: () => {
+          revoke();
+          return { requestId: 'req-fence', replyText: 'ข้อมูลลับ 987654 บาท', sourceRefs: [], sourceLabels: [],
+            webLinks: [], intent: 'read_summary', agent: 'accounting', refused: false, toolsInvoked: [], durationMs: 1 };
+        },
+        initReceiptUpload: { execute: async () => assert.fail('not an authorized receipt-capture request') },
+        completeReceiptUpload: { execute: async () => assert.fail('not an authorized upload completion') },
+      });
+      if (lane === 'text') {
+        await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fence-${lane}-${change}` });
+      } else {
+        (h.useCase as any).downloadLineMedia = async () => ({ fileName: 'test.jpg', mimeType: 'image/jpeg',
+          byteSize: JPEG_BYTES.byteLength, checksumSha256: 'synthetic-fence-image', bytes: JPEG_BYTES, contentBase64: JPEG_BYTES.toString('base64') });
+        await h.useCase.executeReceiptUpload({ ...BASE_EVENT, webhookEventId: `fence-${lane}-${change}`, lineMessageId: `image-${change}`, messageType: 'image' });
+      }
+      assert.equal(h.intakeRequests.length, 1);
+      assert.equal(h.aiGatewayRequests.length, lane === 'text' ? 1 : 0);
+      assert.match(h.replies.join('\n'), /สิทธิ์หรือร้านที่เลือกเปลี่ยน/);
+      assert.doesNotMatch(JSON.stringify(h.sentMessages), /987654|companies\/|handoff/);
+      assert.equal(h.auditEvents.filter((event: any) => event.action === 'ai.line.delivery.denied').length, 1);
+      if (lane === 'text') assert.equal((aiTurnUpdates.at(-1) as any)?.data.status, 'ERROR');
+    });
+  }
+
+  for (const seam of ['handoff', 'reply-fallback'] as const) it(`checks access again at ${seam}`, async () => {
+    const { prisma } = makePrisma();
+    const unlink = () => { prisma.client.externalIdentity.findFirst = async () => null; };
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query'],
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
+      aiGatewayFn: () => ({ requestId: 'req-fence', replyText: 'ข้อมูลลับ 987654 บาท', sourceRefs: [], sourceLabels: [],
+        webLinks: [], intent: 'read_summary', agent: 'accounting', refused: false, toolsInvoked: [], durationMs: 1 }),
+      ...(seam === 'handoff' ? { handoffLinks: { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { unlink(); return messages; } } }
+        : { sendReplyFn: async () => { unlink(); return 'failed_token'; } }),
+    });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `fence-${seam}` });
+    assert.doesNotMatch(JSON.stringify(h.pushes), /987654|companies\/|handoff/);
+    if (seam === 'reply-fallback') assert.match(h.pushes[0]?.text, /สิทธิ์หรือร้านที่เลือกเปลี่ยน/);
+    else assert.doesNotMatch(JSON.stringify(h.sentMessages), /987654/);
+    assert.ok(h.auditEvents.some((event: any) => event.action === 'ai.line.delivery.denied'));
+  });
+});
+
+describe('AP22 live source delivery fence', () => {
+  for (const fault of ['missing', 'store-error', 'changed', 'read-error', 'reply-fallback', 'handoff', 'unchanged'] as const) {
+    it(`rechecks source evidence at final send: ${fault}`, async () => {
+      const { prisma, updates } = makePrisma();
+      let sourceCurrent = true, proofReads = 0, privateReplies = 0;
+      const h = makeUseCase(prisma, {
+        permissions: ['line.ai.query'],
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
+        aiGatewayFn: () => ({ requestId: 'model-untrusted-request', replyText: 'ข้อมูลลับ 987654 บาท', sourceRefs: [], sourceLabels: [],
+          webLinks: [], intent: 'read_summary', agent: 'accounting', refused: false, toolsInvoked: ['expense.get_detail'], durationMs: 1 }),
+        ...(fault === 'handoff' ? { handoffLinks: { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { sourceCurrent = false; return messages; } } } : {}),
+        ...(fault === 'reply-fallback' ? { sendReplyFn: async (_token: string, messages: unknown) => { if (/987654/.test(JSON.stringify(messages))) { privateReplies++; sourceCurrent = false; return 'failed_token'; } return 'ok'; } } : {}),
+      });
+      (h.useCase as any).readEvidence = {
+        forTurn: async (request: any) => {
+          assert.notEqual(request.requestId, 'model-untrusted-request');
+          if (fault === 'store-error') throw new Error('evidence store down');
+          return fault === 'missing' ? null : ['source-1'];
+        },
+        verify: async () => { proofReads++; if (fault === 'read-error') throw new Error('source read down'); return fault !== 'changed' && sourceCurrent; },
+      };
+      await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `source-${fault}` });
+      if (fault === 'unchanged') {
+        assert.match(JSON.stringify(h.sentMessages), /987654/); assert.equal(proofReads, 1);
+      } else {
+        assert.doesNotMatch(JSON.stringify([...h.sentMessages, ...h.pushes]), /987654/);
+        assert.ok(updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+        assert.ok(h.auditEvents.some((event: any) => event.metadataJson?.reason === 'delivery_source_changed'));
+      }
+      if (fault === 'reply-fallback') { assert.equal(privateReplies, 1); assert.equal(proofReads, 2); }
+    });
+  }
 });
 
 describe('toAiTurnIntent (free-form model intent → AiTurn enum)', () => {
@@ -670,7 +781,8 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT });
 
-    assert.equal(identityQueries.length, 1);
+    assert.equal(identityQueries.length, 2, 'identity is resolved at entry and again before delivery');
+    assert.deepEqual(identityQueries[1], identityQueries[0]);
     assert.equal(identityQueries[0].providerChannelId, 'msg-channel-1');
     assert.equal(identityQueries[0].providerUserId, 'line-user-secret');
   });
@@ -916,7 +1028,7 @@ describe('ProcessLineWebhookUseCase', () => {
 
     await useCase.execute({ ...BASE_EVENT });
 
-    assert.equal(identityQueries.length, 2);
+    assert.equal(identityQueries.length, 4, 'the same legacy resolution is checked again before delivery');
     assert.equal(identityQueries[1].providerChannelId, undefined);
     // Identity resolved, so the turn reaches the permission gate instead of the unlinked reply.
     assert.match(replies[0] ?? '', /ไม่มีสิทธิ์/);
@@ -1365,9 +1477,9 @@ describe('ProcessLineWebhookUseCase', () => {
       }),
     });
 
-    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-push-card', pushTargetId: 'group-1' });
+    await useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-push-card', pushTargetId: BASE_EVENT.lineUserId });
 
-    assert.equal(pushes[0]?.to, 'group-1');
+    assert.equal(pushes[0]?.to, BASE_EVENT.lineUserId);
     assert.equal(pushes[0]?.message.type, 'flex');
   });
 
@@ -1752,7 +1864,8 @@ describe('ProcessLineWebhookUseCase', () => {
 
   // AX01: CRM's permission survives while the sales feature can be switched off independently.
   for (const lane of ['text', 'media'] as const) for (const salesEnabled of [false, true, null]) {
-    it(`AX01 ${lane} history checks tool feature as well as permission (sales=${salesEnabled})`, async () => {
+    it(`AP21/AX01 ${lane} keeps questions but re-reads business facts even with allowed/legacy features (sales=${salesEnabled})`, async () => {
+      const oldQuestions = ['ยอดขายเมื่อกี้', 'สินค้านั้น', 'บิลเมื่อกี้', 'แล้วต่ออย่างไร'];
       const { prisma } = makePrisma({
         entitlements: salesEnabled === null ? [] : [
           { featureKey: 'ai_line_assistant', enabled: true },
@@ -1761,14 +1874,20 @@ describe('ProcessLineWebhookUseCase', () => {
           { featureKey: 'crm', enabled: true },
           { featureKey: 'sales_documents', enabled: salesEnabled },
         ],
-        recentTurns: [{
-          createdAt: new Date(Date.now() - 1000), userMessagePreview: 'ยอดขายเมื่อกี้',
-          replyPreview: 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท', intent: 'READ_SUMMARY', agent: 'sales', refused: false,
-          toolInvocations: [{ toolName: 'sales.get_sales_summary' }],
-        }],
+        recentTurns: oldQuestions.map((question, i) => ({
+          createdAt: new Date(Date.now() - (4 - i) * 1000), userMessagePreview: question,
+          replyPreview: 'ข้อมูลเดิมจากสาขาที่เข้าถึงไม่ได้ 123456 บาท', intent: 'READ_SUMMARY', agent: 'sales', refused: i === 3,
+          // Known permitted tool, unknown tool, no tools and a refusal that echoed prior facts.
+          toolInvocations: i === 0 ? [{ toolName: 'sales.get_sales_summary' }] : i === 1 ? [{ toolName: 'unknown.tool' }] : [],
+          sourceRefsJson: [{ module: 'expenses', entityType: 'ExpenseRecord', entityId: 'moved-record', permissionChecked: true }],
+        })),
       });
+      const historyReads: any[] = [];
+      const findHistory = prisma.client.aiTurn.findMany;
+      prisma.client.aiTurn.findMany = async (args: any) => { historyReads.push(args); return findHistory(args); };
       const { useCase, intakeRequests, aiGatewayRequests } = makeUseCase(prisma, {
         permissions: ['line.ai.query', 'crm.report.read', 'expense.receipt.line_upload'],
+        branchIds: [],
         initReceiptUpload: { execute: async () => assert.fail('history test must not upload a receipt') },
         completeReceiptUpload: { execute: async () => assert.fail('history test must not complete an upload') },
         intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.9 }),
@@ -1788,9 +1907,14 @@ describe('ProcessLineWebhookUseCase', () => {
       }
       assert.equal(intakeRequests.length, 1, 'exercise the real text/media history-to-intake seam');
       const history = intakeRequests[0]?.conversationContext?.recentTurns;
-      assert.equal(history?.length, 1);
-      assert.equal(history[0].userMessagePreview, 'ยอดขายเมื่อกี้', 'the user question is not a fresh authorized result');
-      assert.equal(history[0].assistantReplyPreview, salesEnabled === false ? undefined : 'ยอดขายเก่าที่ได้จากระบบ 123456 บาท');
+      assert.deepEqual(history?.map((turn: any) => turn.userMessagePreview), oldQuestions);
+      assert.ok(history.every((turn: any) => turn.assistantReplyPreview === undefined));
+      assert.doesNotMatch(JSON.stringify(intakeRequests), /123456|moved-record/);
+      assert.equal(historyReads.length, 1);
+      assert.equal(historyReads[0].where.companyId, 'company-1');
+      assert.equal(historyReads[0].where.userId, 'user-1');
+      assert.equal(historyReads[0].select.replyPreview, true, 'bounded preview is inspected only for a fixed public capability-routing hint');
+      assert.equal(historyReads[0].select.sourceRefsJson, undefined);
       if (lane === 'text') assert.deepEqual(aiGatewayRequests[0]?.conversationContext, intakeRequests[0].conversationContext);
     });
   }
@@ -3215,6 +3339,7 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => { throw new Error('expense table missing'); } } as any,
       { execute: async () => undefined } as any,
     );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
@@ -3277,6 +3402,7 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => { throw new Error('no expense expected on a failed read'); } } as any,
       { execute: async () => undefined } as any,
     );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
@@ -3342,6 +3468,7 @@ describe('ProcessLineWebhookUseCase', () => {
       { execute: async () => { throw new Error('no expense expected'); } } as any,
       { execute: async () => undefined } as any,
     );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
       checksumSha256: 'hash', contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
@@ -3406,6 +3533,7 @@ describe('ProcessLineWebhookUseCase', () => {
         },
       } as any,
     );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
@@ -3540,6 +3668,7 @@ describe('ProcessLineWebhookUseCase', () => {
         findExpenseIdsByAttachmentChecksum: async () => [],
       } as any,
     );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg',
       mimeType: 'image/jpeg',
@@ -3601,7 +3730,7 @@ describe('message buffering interplay (dedup relaxation + push fallback)', () =>
     assert.equal(h.replies.length, 0);
   });
 
-  it('expired reply token falls back to push into the source chat', async () => {
+  it('sends only a private-chat instruction to a group after an expired reply token', async () => {
     const { prisma } = makePrisma();
     const h = makeUseCase(prisma, {
       permissions: ['line.ai.query'],
@@ -3612,7 +3741,8 @@ describe('message buffering interplay (dedup relaxation + push fallback)', () =>
     await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-push-1', pushTargetId: 'group-42' });
     assert.equal(h.pushes.length, 1);
     assert.equal(h.pushes[0].to, 'group-42');
-    assert.match(h.pushes[0].text, /turn-answer/);
+    assert.match(h.pushes[0].text, /แชตส่วนตัว/);
+    assert.doesNotMatch(JSON.stringify(h.pushes), /turn-answer|companies\//);
   });
 
   it('push fallback targets the 1:1 user when no chat target is set', async () => {
@@ -3738,6 +3868,7 @@ function makeLedgerUseCase(prisma: any, opts: {
     undefined, undefined, undefined, undefined, undefined, undefined,
     ledger,
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
   return { useCase, events, ledgerCalls, aiGatewayRequests, intakeRequests, sentMessages };
 }
 
@@ -3803,6 +3934,34 @@ describe('ProcessLineWebhookUseCase – the monthly AI budget is not congestion 
 });
 
 describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
+  for (const failure of ['busy', 'timeout']) it(`keeps ${failure} feedback intermediate so the queue can deliver the final answer`, async () => {
+    const { prisma, turnOutcomeWrites, updates } = makePrisma();
+    const h = makeLedgerUseCase(prisma, {
+      config: { lineAiTerminalOutcomeReplayEnabled: true },
+      aiGatewayFn: () => {
+        const error: any = new Error(failure);
+        error.getStatus = () => failure === 'busy' ? 429 : 504;
+        error.getResponse = () => ({ code: failure === 'busy' ? 'AI_BUDGET_BUSY' : 'AI_TIMEOUT' });
+        throw error;
+      },
+    });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-intermediate-${failure}`, messageText: 'ยอดขายวันนี้' });
+    assert.equal(h.sentMessages.length, 1);
+    assert.equal(h.ledgerCalls.turns.length, 1); assert.equal(h.ledgerCalls.acks.length, 0);
+    assert.equal(turnOutcomeWrites.length, 0, 'feedback must not occupy the final outcome');
+    assert.ok(updates.every((update: any) => !update.data.deliveryOwnerId), 'the queue may still own final delivery');
+  });
+
+  it('a queue winner prevents the late live producer from saving a competing outcome or sending', async () => {
+    const { prisma, turnOutcomeWrites } = makePrisma();
+    const originalUpdate = prisma.client.lineWebhookEventLog.updateMany;
+    prisma.client.lineWebhookEventLog.updateMany = async (args: any) => args.data.deliveryOwnerId === 'webhook' ? { count: 0 } : originalUpdate(args);
+    const h = makeLedgerUseCase(prisma, { config: { lineAiTerminalOutcomeReplayEnabled: true }, aiGatewayFn: () => LEDGER_TURN_RESPONSE });
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-queue-winner', messageText: 'ยอดขายวันนี้' });
+    assert.equal(h.aiGatewayRequests.length, 1); assert.equal(h.sentMessages.length, 0);
+    assert.equal(turnOutcomeWrites.length, 0); assert.equal(h.ledgerCalls.acks.length, 0);
+  });
+
   it('appends before the gateway and acknowledges only after confirmed delivery', async () => {
     const { prisma } = makePrisma();
     const { useCase, events, ledgerCalls } = makeLedgerUseCase(prisma, {
@@ -5158,6 +5317,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     opts.stateRepo,
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
   // Capture the shadow divergence line without asserting on a real logger transport.
   const logger = (useCase as any).logger;
   const originalLog = logger.log.bind(logger);
@@ -5505,7 +5665,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.equal(h.sends.length, 1, 'API acceptance closes this logical notification');
   });
 
-  it('replays a pending saved payload after restart without OCR, draft writes, or a new admission', async () => {
+  it('keeps an unverifiable captured outcome after restart and gives safe recovery without OCR, draft writes, or admission', async () => {
     const h = receiptHarness({ replay: true, draft: true, sendFails: true });
     await h.useCase.executeReceiptUpload(h.event());
     const counts = h.counts();
@@ -5515,8 +5675,10 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     h.allowSend();
     await h.useCase.executeReceiptUpload(h.event());
     assert.deepEqual(h.counts(), counts);
-    assert.deepEqual(h.sends[1], stored);
-    assert.equal(h.eventStore.get('receipt-event').status, 'completed');
+    assert.notDeepEqual(h.sends[1], stored);
+    assert.match(JSON.stringify(h.sends[1]), /กรุณาเปิดเว็บ/);
+    assert.equal(h.eventStore.get('receipt-event').errorCode, 'LINE_OUTCOME_REAUTHORIZATION_REQUIRED');
+    assert.equal(h.outcomeStore.get('receipt-event').deliveredAt, null);
   });
 
   it('new webhook identity for the same provider message recovers the saved capture before download or routing', async () => {
@@ -5565,7 +5727,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.equal(h.counts().applied, 1);
   });
 
-  it('replays a failed duplicate card delivery without restarting capture', async () => {
+  it('retains a failed duplicate card and gives safe recovery when its original source proof is absent', async () => {
     const h = receiptHarness({ replay: true, sendFails: true });
     await h.useCase.executeReceiptUpload(h.event());
     await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
@@ -5575,8 +5737,10 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     const before = h.counts();
     h.allowSend();
     await h.useCase.executeReceiptUpload(h.event('duplicate-failed', 'new-image'));
-    assert.deepEqual(h.sends.at(-1), card);
+    assert.deepEqual(h.outcomeStore.get('duplicate-failed').messagesJson, card);
     assert.deepEqual(h.counts(), before);
+    // A normal provider redelivery is deduped; an operator/orphan replay needs original proof.
+    assert.equal(h.outcomeStore.get('duplicate-failed').deliveredAt, null);
   });
 
   it('does not expose a matching receipt from another creator or chat', async () => {

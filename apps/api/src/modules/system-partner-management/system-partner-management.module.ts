@@ -84,8 +84,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     SendPartnerLineMessageUseCase,
     PackageChangeDecisionUseCase,
   ],
-  // Nothing outside this module needs a plan-term writer: onboarding is the single place a term
-  // row is created (review B-01), and it calls `applyPlanTermPreset` directly.
-  exports: [],
+  // Verified billing recovery uses the same lifecycle writer and its audit/notification effects.
+  exports: [PartnerLifecycleTransitionUseCase],
 })
 export class SystemPartnerManagementModule {}

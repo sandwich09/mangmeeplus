@@ -1,0 +1,8 @@
+{
+  "layer": "POSTMARK_API_TEST",
+  "externalDelivery": false,
+  "status": 200,
+  "errorCode": 0,
+  "validMessageId": true,
+  "validSubmittedAt": true
+}

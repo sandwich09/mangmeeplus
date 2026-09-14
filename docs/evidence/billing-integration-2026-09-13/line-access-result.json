@@ -1,0 +1,43 @@
+{
+  "status": "Local LINE history/live/queued actor fences verified; source-record revalidation, stored-outcome replay and UNKNOWN recovery still incomplete.",
+  "providerSimulation": [
+    "AI Gateway",
+    "LINE"
+  ],
+  "actualDatabase": "isolated localhost PostgreSQL",
+  "moduleCheckpoint": {
+    "files": 39,
+    "tests": 1218,
+    "passed": 1218,
+    "skipped": 0,
+    "note": "Includes existing two concurrent quota PostgreSQL tests. Before final audit/refusal-copy correction."
+  },
+  "finalFocusedCheckpoint": {
+    "files": 4,
+    "tests": 535,
+    "passed": 535,
+    "skipped": 0,
+    "includesPostgresqlActorTests": 8,
+    "note": "Overlaps module checkpoint; does not represent535 distinct business flows."
+  },
+  "apiTypecheck": "PASS",
+  "noDeployment": true,
+  "scope": [
+    "user-only history with fixed capability-help hint and current examples",
+    "live text/media access recheck after model/link preparation and before push fallback",
+    "queued actor/identity/optout/company/feature/scope checks before model and after handoff",
+    "generic safe private-chat/current-access return, completed ERP outcomes preserved",
+    "actual DB role/membership/company/empty-branch/feature/unlink/optout changes and retained undelivered outcome"
+  ],
+  "sources": {
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "512f5b437e268e52fc01a378a3efc21c01767e662fef8679f285ab61dba9e424",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "2bca380dcdaeaa95ba9bb79edb2914efb498350dd17b7c05be75622351f8d569",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts": "2e4c6360fb20ea087c70e29580fbeb174727f5cf4e17d1e987ba16f313e42a88",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts": "25ae15e2502bf3700b2a7d0f1b6daf73ae30e76f4ee8f8ea88d52a3d6af776e3",
+    "apps/api/src/modules/line-ai/application/line-delivery-access.ts": "37db6bc2df020255acd7ad56a6e7ea970b5610aac293d08e70d0a74630cd43ee",
+    "apps/api/src/modules/line-ai/domain/logic/line-ai-capability-follow-up.logic.ts": "c93b36b2d874ed883cabe202c8787c6ba573f83dcf419d671a994728e74cbf0b",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "8220936a563623cb2b8c168f6be86a57c163d75626fc59a6c57357bde9ff8a2b",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "2860fe8adfcc50d7092ce87c9ea66b3367bb2f425c73b42efea6107c2e55e3a8",
+    "apps/api/src/modules/line-ai/line-delivery-access.pg.spec.ts": "be934055ef48d7def42b7b80be239b25ec0d5b59904f9904993cd13b83b70b34"
+  }
+}

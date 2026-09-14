@@ -18,6 +18,9 @@ type LimitPrisma = {
   };
 };
 
+/** A company-created role with the same name cannot turn a paid seat into platform access. */
+export const PLATFORM_SEAT_EXEMPT_ROLE = { key: 'SYSTEM_ADMIN', status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } as const;
+
 async function planLimits(prisma: LimitPrisma, companyId: string) {
   return prisma.client.companyPlanTerm.findUnique({
     where: { companyId },
@@ -39,7 +42,7 @@ export async function assertEmployeeLimit(prisma: LimitPrisma, companyId: string
   if (!term) return; // no term row = unlimited
   // SYSTEM_ADMIN memberships are platform staff, never a seat the company bought.
   const active = await prisma.client.companyMembership.count({
-    where: { companyId, status: 'ACTIVE', roles: { none: { role: { key: 'SYSTEM_ADMIN' } } } },
+    where: { companyId, status: 'ACTIVE', roles: { none: { role: PLATFORM_SEAT_EXEMPT_ROLE } } },
   });
   if (active >= term.employeeLimit) {
     throw new UnprocessableEntityException(employeeLimitMessageTh(term.employeeLimit));

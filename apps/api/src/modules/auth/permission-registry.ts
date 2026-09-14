@@ -1,5 +1,6 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
+import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
 
 export type PermissionRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -10,6 +11,8 @@ export type PermissionDef = {
 };
 
 export const PERMISSIONS: PermissionDef[] = [
+  ...BILLING_PERMISSIONS.map((key): PermissionDef => ({ key, description: `Platform billing: ${key.slice('system.billing.'.length)}`,
+    riskLevel: key.endsWith('.read') ? 'MEDIUM' : key === 'system.billing.issue.manage' ? 'HIGH' : 'CRITICAL' })),
   { key: 'account.session.read',       description: 'Read own session info',              riskLevel: 'LOW' },
   { key: 'account.password.change',    description: 'Change own account password',        riskLevel: 'MEDIUM' },
   { key: 'account.identity.link',      description: 'Link external identity',             riskLevel: 'MEDIUM' },
@@ -467,6 +470,7 @@ const STAFF_ROLE_GRANTS = [
 export const ROLE_GRANTS: Record<string, string[]> = {
   OWNER: COMPANY_PERMISSION_KEYS,
   SYSTEM_ADMIN: [
+    ...BILLING_PERMISSIONS,
     'account.session.read',
     'account.password.change',
     'account.identity.link',

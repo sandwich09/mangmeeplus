@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmployeeDetail, UpdateEmployeeInput } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { EMPLOYEE_PROFILE_INCLUDE, toEmployeeSummary } from '../dto/employee-access.mapper';
@@ -205,6 +206,7 @@ export class UpdateEmployeeUseCase {
     }
 
     await this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, cmd.companyId);
       await tx.employeeAccessProfile.update({
         where: { id: cmd.employeeId },
         data: {

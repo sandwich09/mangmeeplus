@@ -136,17 +136,17 @@ export class RequestReceiptExtractionUseCase {
       // "the read failed, try again", and trying again is the one thing that cannot work here.
       if (response.errorCode === RECEIPT_QUOTA_ERROR_CODE) {
         await this.auditOutcome(ctx, expenseId, 'receipt_quota_exceeded', attachment.id, 0, undefined, undefined, response.errorCode);
-        const { usedCount, planLimit, tierKey } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);
-        const shownLimit = displayReceiptQuotaLimit(planLimit, tierKey);
+        const { usedCount, planLimit, tierKey, cadence, expiresAt } = await receiptQuotaSnapshot(this.prisma, ctx.companyId);
+        const shownLimit = displayReceiptQuotaLimit(planLimit, tierKey, cadence);
         throw new ConflictException({
           code: 'receipt_quota_exceeded',
           // `tierKey` decides the sentence: a FREE_TRIAL_15 shop hears about its trial, a paying
           // tier hears about its package. Dropping it gave every shop the paying-tier wording.
-          message: receiptQuotaExceededTextTh(shownLimit, tierKey),
+          message: receiptQuotaExceededTextTh(shownLimit, tierKey, cadence),
           count: usedCount,
           limit: planLimit,
           tierKey,
-          monthKey: bangkokMonthKey(),
+          ...(cadence ? { cadence, expiresAt } : { monthKey: bangkokMonthKey() }),
         });
       }
 

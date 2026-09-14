@@ -1066,7 +1066,7 @@ export class AuthController {
       select: {
         companyId: true,
         company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true } } } },
-        roles: { select: { role: { select: { key: true } } } },
+        roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { key: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     });

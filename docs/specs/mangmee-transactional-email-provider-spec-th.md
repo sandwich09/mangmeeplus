@@ -1,5 +1,8 @@
 # Postmark transactional email และขอบเขตเอกสาร Stripe
 
+> **Implementation update 2026-09-14 — IN PROGRESS:** ซื้อครั้งแรก/ซื้อซ้ำ, upgrade ทุกช่วงที่จ่ายสะสม, downgrade สิ้นรอบ/เลือกสาขาและสมาชิก/ซ่อม invoice เดิม, cancel/resume/restart, financial observations, Admin company/timeline/scopes/case ownership และกู้คืน LINE/Postmark รายการเดิม, ฉบับร่างการตั้งค่า และ policy/gate/VAT มี actual Next/Nest/PostgreSQL/Chromium + marketing ผ่าน133กลุ่มกับ Stripe/Postmark/LINE จำลอง. Focused Admin42 (รวมแก้ copy gate หลังเปลี่ยน policy), downgrade17 และ regression/PG มีส่วนทับซ้อน. ดู [หลักฐานและข้อจำกัด](../evidence/billing-integration-2026-09-13/README.md). Controls/Postmark operations/full signup/full LINE/native/CI/merge ยังไม่ครบ. Receipt-only HIDDEN; ไม่มี deploy.
+
+
 สถานะ: **POSTMARK SELECTED / IMPLEMENTATION SPEC READY 2026-09-11; runtime และ provider E2E ยัง NOT IMPLEMENTED / NOT RUN**.
 
 Owner เลือก **Postmark** แล้ว เพราะมี Receipt ค่าบริการให้บริษัทมั่งมีเก็บลงบัญชี และยืนยันขอบเขตว่า **Invoice/Receipt ให้ลูกค้าที่จ่ายค่ามั่งมีใช้ Stripe**. การเปลี่ยนเอกสารนี้ไม่ใช่การเปิดบัญชี ซื้อบริการ activate provider หรือ deploy. Sender.net ถูกแทนที่ในแผนปัจจุบัน; ผลสำรวจเดิมเป็นประวัติเท่านั้น.
@@ -70,7 +73,7 @@ Accepted ต้องเป็น HTTP 200 + ErrorCode=0 + valid MessageID/Submi
 
 เพิ่ม `EmailSendAttempt` สำหรับผูกผลส่ง/การส่งซ้ำ โดย reuse outbox เดิมเป็นคิว. ข้อมูล: opaque id, intent key/purpose, subject reference (signup request หรือ user), optional companyId/outboxEventId, generation, provider, providerServerId/stream, recipient snapshot ที่ได้รับสิทธิ์, providerMessageId nullable, send status, submitted/deadline/settled timestamps, error code และ delivery/suppression facts. **ไม่มี raw token/OTP/body/attachment bytes ในตารางหรือ outbox**.
 
-Unique `(intentKey,generation)` และ `(provider,providerServerId,providerMessageId)` เมื่อ ID มีค่า; index unknown/next recovery ตามงานที่ใช้. เพิ่ม latest claim-attempt pointer ใน signup request เพื่อ CAS; backfill legacy SES reference เฉพาะที่มีจริง ไม่แต่ง deliveredAt หรือ generation history. คง `claimEmailSesMessageId` สำหรับ rollback/SES callback เก่า; Postmark ใช้ attempt ใหม่. การลบ legacy field เป็นงานถัดไปหลัง drain/retention ไม่รวมรอบนี้.
+Unique `(intentKey,generation)` และ `(provider,providerServerId,providerMessageId)` เมื่อ ID มีค่า; index unknown/next recovery ตามงานที่ใช้. `dispatchStartedAt` ต้องจองด้วย CAS ก่อน POST; worker/replay อีกตัวส่ง attempt เดิมไม่ได้. Unknown retry ออก generation ใหม่พร้อม `possibleDuplicate` ที่ติดไปกับประวัติ และไม่ใช้ negative/incomplete lookup เป็นหลักฐานว่ายังไม่ส่ง. เพิ่ม latest claim-attempt pointer ใน signup request เพื่อ CAS; backfill legacy SES reference เฉพาะที่มีจริง ไม่แต่ง deliveredAt หรือ generation history. คง `claimEmailSesMessageId` สำหรับ rollback/SES callback เก่า; Postmark ใช้ attempt ใหม่. การลบ legacy field เป็นงานถัดไปหลัง drain/retention ไม่รวมรอบนี้.
 
 Callback ใช้ sanitized `OutboxEvent` ที่ reserve event type เช่น `email.postmark.event.received`; unique eventKey กัน replay, ไม่เพิ่ม message broker/inbox framework. เก็บเฉพาะ field ที่จำเป็นต่อ mapping, discard Content/Subject/Details/body/header secrets ก่อน persistence. Event ที่ยัง map ไม่ได้เก็บในคิวเพื่อ reconcile และมี retention/alert ตาม operational policy ไม่ให้สร้าง account จาก payload.
 
@@ -78,6 +81,8 @@ Callback ใช้ sanitized `OutboxEvent` ที่ reserve event type เช�
 
 1. Claim consumer ตรวจ state/lease แล้ว transaction สร้าง attempt + update latest generation + mint hash ตาม P11; raw proof อยู่ memory ตอนส่ง. กำหนด attempt ก่อน POST เพื่อรับ callback ที่มาก่อน response ได้.
 2. POST ผ่าน selected adapter. Write result ด้วย expected generation/lease/latest pointer; response เก่าไม่ทับ current state. Metadata attempt ID เป็น correlation เท่านั้น; callback ต้องผ่าน auth และตรวจ server/stream/recipient/message binding ก่อนผูก ID ที่ยังว่าง.
+
+การผูก callback ที่ไม่มี MessageID ใน attempt ยังต้อง serialize ที่แถว attempt แล้วอ่าน binding ใหม่; callback สองข้อความห้ามแข่งกันเขียน ID คนละค่า. JSON parser ของ provider endpoint จำกัด 256 KiB ครอบคลุม case/trailing slash ที่ router รับ และห้ามคืน/บันทึก parser error ที่ยก raw content มาอ้าง; ใช้ข้อความกลาง 400/413.
 3. หลัง accepted update `claimEmailLastSentAt` เฉพาะ current attempt; success/callback/replay ไม่ทำ provision เอง. เมื่อ resend/retry ต้อง revoke proof เก่าตาม mint-at-send และไม่ขยาย activation window. Claim เดิม TTL 72 ชั่วโมงตาม P11 ไม่ยืมไปเป็น OTP/login TTL.
 4. Hard bounce ของ latest pending claim เปลี่ยน EMAIL_PENDING→EMAIL_FAILED ด้วย CAS + audit transaction; late bounce ของ attempt เก่าหรือคำขอ READY ไม่ย้อน business state. Callback-before-response ที่ terminal แล้วต้องไม่ถูก accepted response ลบผล bounce.
 5. Raw proof ที่ส่งอาจค้างในอีเมลรุ่นเก่า; UI ชี้ฉบับล่าสุดและมี resend/recovery. App log/outbox/hash-only ยังรักษาเดิม แต่ Postmark เป็นผู้ประมวลผลเนื้อหาและมี provider retention; อย่าอ้างว่าไม่มีสำเนา secret นอก memory ของแอปเลย.

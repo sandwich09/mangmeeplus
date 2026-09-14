@@ -11,7 +11,8 @@
  *
  * Runs from the LINE AI ledger worker's minute tick (worker-token internal endpoint).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
+import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -61,6 +62,7 @@ export function parseBufferEnvelope(value: unknown): LineBufferEnvelope | null {
 @Injectable()
 export class RecoverOrphanLineEventsUseCase {
   private readonly logger = new Logger(RecoverOrphanLineEventsUseCase.name);
+  @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -112,13 +114,14 @@ export class RecoverOrphanLineEventsUseCase {
     const outcomes = this.config.lineAiTerminalOutcomeReplayEnabled && rows.length > 0
       ? new Map((await this.prisma.client.lineTurnOutcome.findMany({
         where: { webhookEventId: { in: rows.map((row) => row.webhookEventId) } },
-        select: { webhookEventId: true, messagesJson: true, deliveredAt: true },
+        select: { webhookEventId: true, messagesJson: true, authorizationJson: true, deliveredAt: true },
       })).map((outcome) => [outcome.webhookEventId, outcome]))
-      : new Map<string, { messagesJson: unknown; deliveredAt: Date | null }>();
+      : new Map<string, { messagesJson: unknown; authorizationJson: unknown; deliveredAt: Date | null }>();
 
     const result: OrphanSweepResult = { replayed: 0, expired: 0, skipped: 0, purged: 0 };
     const replayBefore = new Date(now - ORPHAN_REPLAY_MAX_AGE_MS);
     for (const row of rows) {
+      if (row.deliveryOwnerId?.startsWith('ledger:')) { result.skipped += 1; continue; }
       const envelope = parseBufferEnvelope(row.payloadJson);
       if (!envelope) {
         await this.park(row, 'orphan_unreadable', 'ORPHAN_PAYLOAD_UNREADABLE');
@@ -146,7 +149,7 @@ export class RecoverOrphanLineEventsUseCase {
         continue;
       }
       if (outcome) {
-        result[await this.replayOutcome(row, envelope, outcome.messagesJson)] += 1;
+        result[await this.replayOutcome(row, envelope, outcome.messagesJson, outcome.authorizationJson)] += 1;
         continue;
       }
       if (row.status === 'delivery_pending' && row.errorCode?.startsWith('LINE_')) {
@@ -212,6 +215,7 @@ export class RecoverOrphanLineEventsUseCase {
     row: { id: string; status: string; errorCode: string | null; webhookEventId: string; processedAt: Date | null },
     envelope: LineBufferEnvelope,
     messagesJson: unknown,
+    authorizationJson: unknown,
   ): Promise<'replayed' | 'skipped'> {
     let messages = parseOutcomeMessages(messagesJson);
     // These oversized previews were rejected locally before any provider attempt. Repair only
@@ -240,9 +244,11 @@ export class RecoverOrphanLineEventsUseCase {
       });
       if (replaced.count !== 1) return 'skipped';
     }
+    const claimedAt = new Date();
     const claimed = await this.prisma.client.lineWebhookEventLog.updateMany({
-      where: { id: row.id, status: row.status, errorCode: row.errorCode, processedAt: row.processedAt },
-      data: { status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM, processedAt: new Date() },
+      where: { id: row.id, status: row.status, errorCode: row.errorCode, processedAt: row.processedAt,
+        OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }] },
+      data: { status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM, processedAt: claimedAt, deliveryOwnerId: 'webhook' },
     });
     if (claimed.count !== 1) return 'skipped';
 
@@ -250,6 +256,24 @@ export class RecoverOrphanLineEventsUseCase {
       where: { webhookEventId: row.webhookEventId },
       data: { attempts: { increment: 1 } },
     }).catch(() => null);
+
+    const authorized = await this.readEvidence.verifyDelivery(authorizationJson, {
+      webhookEventId: row.webhookEventId, lineUserId: envelope.lineUserId, chatId: envelope.chatId, channelId: envelope.messagingChannelId,
+    }).catch(() => false);
+    // A slow read cannot let an expired claimant send after another worker took ownership.
+    const fenced = await this.prisma.client.lineWebhookEventLog.updateMany({
+      where: { id: row.id, status: 'delivery_pending', errorCode: OUTCOME_REPLAY_CLAIM, processedAt: claimedAt },
+      data: authorized ? { processedAt: new Date() } : { status: 'delivery_failed', errorCode: 'LINE_OUTCOME_REAUTHORIZATION_REQUIRED', processedAt: new Date(), payloadJson: Prisma.DbNull },
+    });
+    if (fenced.count !== 1) return 'skipped';
+    if (!authorized) {
+      await this.audit.log({ actorType: 'SYSTEM', actorRefId: 'line-orphan-sweep', action: 'ai.line.delivery.denied',
+        targetType: 'LineWebhookEvent', targetId: row.webhookEventId, requestId: row.webhookEventId,
+        result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: 'outcome_reauthorization_required' } }).catch(() => {});
+      const notice = [this.lineReply.buildTextMessage('ยังยืนยันข้อมูลหรือสิทธิ์ของคำตอบเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
+      await this.lineReply.sendPush(envelope.chatId, notice, `${row.webhookEventId}:reauthorize`).catch(() => 'failed_other');
+      return 'skipped';
+    }
 
     // Same recipient, payload and operation key as the FIRST push, including reply fallback.
     let delivery: Awaited<ReturnType<LineReplyAdapter['sendPush']>> = 'failed_other';
@@ -301,6 +325,10 @@ export class RecoverOrphanLineEventsUseCase {
    *  received. Same window as the other AI data so there is one knob, not two. */
   private async purgeExpiredEvents(now: number): Promise<number> {
     const before = new Date(now - this.config.aiDataRetentionDays * 24 * 60 * 60 * 1000);
+    const proofs = await this.prisma.client.lineReadEvidence.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
+    if (proofs.length) await this.prisma.client.lineReadEvidence.deleteMany({ where: { id: { in: proofs.map(row => row.id) } } });
+    const deliveries = await this.prisma.client.lineLedgerDelivery.findMany({ where: { createdAt: { lt: before } }, select: { id: true }, orderBy: { createdAt: 'asc' }, take: MAX_PURGE_BATCH });
+    if (deliveries.length) await this.prisma.client.lineLedgerDelivery.deleteMany({ where: { id: { in: deliveries.map(row => row.id) } } });
     const expired = await this.prisma.client.lineWebhookEventLog.findMany({
       where: { createdAt: { lt: before } },
       select: { id: true },

@@ -1,14 +1,17 @@
 # แผน implement Postmark และใช้เอกสารลูกค้าจาก Stripe
 
-สถานะ: **POSTMARK SELECTED / SPEC + API RESEARCH READY 2026-09-11; IMPLEMENTATION NOT STARTED**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
+> **Implementation update 2026-09-14 — IN PROGRESS:** ซื้อครั้งแรก/ซื้อซ้ำ, upgrade ทุกช่วงที่จ่ายสะสม, downgrade สิ้นรอบ/เลือกสาขาและสมาชิก/ซ่อม invoice เดิม, cancel/resume/restart, financial observations, Admin company/timeline/scopes/case ownership และกู้คืน LINE/Postmark รายการเดิม, ฉบับร่างการตั้งค่า และ policy/gate/VAT มี actual Next/Nest/PostgreSQL/Chromium + marketing ผ่าน133กลุ่มกับ Stripe/Postmark/LINE จำลอง. Focused Admin42 (รวมแก้ copy gate หลังเปลี่ยน policy), downgrade17 และ regression/PG มีส่วนทับซ้อน. ดู [หลักฐานและข้อจำกัด](../evidence/billing-integration-2026-09-13/README.md). Controls/Postmark operations/full signup/full LINE/native/CI/merge ยังไม่ครบ. Receipt-only HIDDEN; ไม่มี deploy.
+
+
+สถานะ: **POSTMARK IMPLEMENTATION IN PROGRESS 2026-09-12; LOCAL TRANSPORT/PG/HTTP CHECKS PASS; FULL EM01–EM18 NOT COMPLETE**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
 
 ## 1. ลำดับงาน
 
 | ขั้น | งาน | Exit evidence / dependency | สถานะ |
 |---|---|---|---|
-| M0 Contract | เลือก Postmark, อ่าน endpoint/auth/error/webhook/attachment/receipt/sandbox และ map กับ port/outbox/SES field ปัจจุบัน; เลือกใช้ single-send API + app templates + Basic Auth webhook | spec §2–5 และ official reference ระบุได้; account-specific values ตรวจใน M4 ไม่บล็อกการเริ่มเขียน M1 ด้วย placeholder test config | **DOCS DONE**; actual account preflight NOT RUN |
-| M1 Adapter/config | เพิ่ม postmark enum/getters/factory branch และ PostmarkAuthMailerAdapter; timeout/JSON-result/error mapping/tracking off/attempt metadata; รักษา disabled/console/SES และ no-op/opt-in methods | focused tests, config/API typecheck, DI boot โดย deny external network; no package.json change เว้นเปลี่ยน dependency ที่จำเป็น | NOT STARTED |
-| M2 Delivery reliability | เพิ่ม provider-aware attempt/latest claim pointer และ migration; integrate API-side claim drain/lease/mint-at-send, error-aware scheduling/unknown reconciliation, public Postmark endpoint, sanitized callback outbox/suppression | real PG concurrency/crash/callback-before-response/replay/legacy regression + browser/API/DB; ไม่เก็บ Postmark ID ใน SES column | NOT STARTED |
+| M0 Contract | เลือก Postmark, อ่าน endpoint/auth/error/webhook/attachment/receipt/sandbox และ map กับ port/outbox/SES field ปัจจุบัน; เลือกใช้ single-send API + app templates + Basic Auth webhook | spec §2–5 และ official reference ระบุได้; account-specific values ตรวจใน M4 ไม่บล็อกการเริ่มเขียน M1 ด้วย placeholder test config | **DOCS DONE**; account/domain/server read-only preflight recorded 2026-09-12 |
+| M1 Adapter/config | เพิ่ม postmark enum/getters/factory branch และ PostmarkAuthMailerAdapter; timeout/JSON-result/error mapping/tracking off/attempt metadata; รักษา disabled/console/SES และ no-op/opt-in methods | focused tests, config/API typecheck, DI boot โดย deny external network; no package.json change เว้นเปลี่ยน dependency ที่จำเป็น | IMPLEMENTED / LOCAL CHECKS PASS; CI NOT RUN |
+| M2 Delivery reliability | เพิ่ม provider-aware attempt/latest claim pointer และ migration; integrate API-side claim drain/lease/mint-at-send, error-aware scheduling/unknown reconciliation, public Postmark endpoint, sanitized callback outbox/suppression | real PG concurrency/crash/callback-before-response/replay/legacy regression + browser/API/DB; ไม่เก็บ Postmark ID ใน SES column | IN PROGRESS: durable dispatch/callback/reconcile tested; complete recovery/browser/retention coverage remains |
 | M3 Stripe customer documents | P26 reuse Stripe Invoice/PDF/Charge Receipt URL, company permission, unavailable/expired-link states และ Stripe email configuration/resend support | Stripe payment→invoice/receipt evidence และไม่สร้าง customer PDF/เลขใหม่/ส่งซ้ำด้วย Postmark. ไม่ต้องสร้าง custom tax-document subsystem | NOT STARTED; depends on P26 Stripe implementation/settings และ B06 ส่วนที่ใช้จริง |
 | M4 Provider proof/rollout | provision account/server/stream/domain/keys/webhook auth, Sandbox proof, controlled live inbox, billing Receipt details, quota/retention/alerts/rollback | L0/L1/L2/L3 แยกผล; runbook protocol ครบก่อนเปิดจริง; provider selected ไม่เท่ากับ account approved/live ready | PARTIAL 2026-09-12: account approved/live; domain DKIM + custom Return-Path Verified; existing server/transactional stream confirmed, allowance 100 emails/period ([evidence](../agent-memory/postmark-domain-dns-2026-09-12.md)); integration/delivery proof/rollout NOT RUN |
 
@@ -25,7 +28,7 @@ M1/M2 สำหรับ P11 flow เดิมเริ่มได้โดย�
 
 ## 3. Acceptance matrix
 
-ทุกแถวด้านล่าง **NOT RUN**. Row IDs EM01–EM14 คงไว้เพื่อ cross-reference แต่รายละเอียดปรับเป็น Postmark/Stripe ตาม Owner ล่าสุด; ยังไม่มีผล runtime เดิมที่ถูกเปลี่ยนเป็น PASS. แถวที่ไม่ใช้กับรุ่นที่เปิดต้องมี explicit DEFERRED พร้อมเหตุผล; ห้าม defer signup recovery/delivery correctness ที่เปิดจริง.
+แถว EM01–EM08/EM16/EM18 มี **PARTIAL LOCAL EVIDENCE 2026-09-12** ตาม [ผลตรวจ](../evidence/postmark-email-2026-09-12/README.md); ยังไม่ถือว่าแต่ละแถวผ่านครบ. EM09–EM15/EM17 ยังไม่มี full end-to-end/provider acceptance. Row IDs คงไว้เพื่อ cross-reference; ไม่เปลี่ยนผล runtime เดิมให้เป็น Postmark PASS. แถวที่ไม่ใช้กับรุ่นที่เปิดต้องมี explicit DEFERRED พร้อมเหตุผล; ห้าม defer signup recovery/delivery correctness ที่เปิดจริง.
 
 | ID | วิธีทดสอบ | Assertion |
 |---|---|---|
@@ -52,17 +55,11 @@ M1/M2 สำหรับ P11 flow เดิมเริ่มได้โดย�
 
 **L0 local:** ใช้ fake HTTP edge ใน test กับ real API/PG/worker/browser; block network ไป Postmark/Stripe/LINE. Collector เก็บ proof ใน memoryเพื่อกรอกใน browser ไม่ persistใน report/screenshot/trace. Fault injection ต้องกำหนดลำดับ response/callback/worker crash ได้; ทดสอบ current request context/permission/business actionจริง ไม่ mock UI เป็น READY.
 
-Test runner ปัจจุบันของ API คือ `tsx --test`. หลังเพิ่มไฟล์ตาม M1/M2 ใช้คำสั่งตัวอย่างต่อไปนี้; paths ของ Postmark เป็นไฟล์ที่จะสร้าง ไม่ได้มีผลรันทดสอบแล้ว:
+Test runner ปัจจุบันของ API คือ `tsx --test`; ใช้ API tsconfig สำหรับ decorators. คำสั่งจริงและ source hashes อยู่ใน [evidence](../evidence/postmark-email-2026-09-12/README.md). ไฟล์ใหม่คือ `src/modules/auth/infrastructure/postmark.client.spec.ts`, `src/modules/auth/postmark-delivery.pg.spec.ts` และ compiled `src/scripts/postmark-http-smoke.ts`. PG/HTTP ใช้ฐานข้อมูล localhost ที่แยกสำหรับ test; HTTP smoke boot AppModule จริงและปฏิเสธ fetch ไป provider ภายนอก.
 
-```sh
-pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/infrastructure/postmark-auth-mailer.adapter.spec.ts src/modules/external-signup/application/postmark-event.use-case.spec.ts
-pnpm --filter @watchdog-bms/api exec tsc --noEmit
-pnpm --filter @watchdog-bms/config exec tsc --noEmit
-```
+CI registration เพิ่ม Postmark contract เข้า owned acceptance catalog และเพิ่ม isolated PG/HTTP step หลัง SWC boot build; ยังไม่ dispatch CI หรือ merge. ไม่มี package.json/dependency edit.
 
-PG fixture และ Playwright reuse harness ที่ repo มี; เพิ่ม `postmark-email-delivery.pg.spec.ts` / `e2e/postmark-email-readiness.spec.ts` ตามตำแหน่งที่ reviewer เลือก แล้วบันทึกคำสั่งจริง. ไม่แก้ package.json เพียงเพิ่ม scripts/test path. Suite ใหม่ต้องจับ regression จริง ไม่ทดสอบแค่ object shape ซ้ำ implementation.
-
-**L1 validation:** ใช้ public POSTMARK_API_TEST token กับ payloadสังเคราะห์; proof คือ request/API resultเท่านั้น ไม่ใช่ live domain/message receipt. ไม่เก็บ test tokenเป็นproductionsecret.
+**L1 validation:** PASS 2026-09-12 — public POSTMARK_API_TEST กับ payloadสังเคราะห์ได้ HTTP 200/ErrorCode 0/valid MessageID และ SubmittedAt; ไม่มี email delivery. ใช้ public POSTMARK_API_TEST token กับ payloadสังเคราะห์; proof คือ request/API resultเท่านั้น ไม่ใช่ live domain/message receipt. ไม่เก็บ test tokenเป็นproductionsecret.
 
 **L2 provider Sandbox:** account serverต้องสร้างเป็น Sandbox อย่าง explicitและผูก IDที่config; อาจเห็น Delivered/webhookแต่ไม่มีinbox และนับquota. Fake bounce domain ทดสอบ hard/softได้; SpamComplaint ใช้ authenticated synthetic fixture แยกเพราะ generatorไม่รองรับ. ไม่ส่งเมลจริงแล้วกดreport spamเพื่อให้testผ่าน.
 
@@ -70,7 +67,7 @@ PG fixture และ Playwright reuse harness ที่ repo มี; เพิ�
 
 **Stripe document proof:** ใช้ signed fixtures/Stripe sandboxหลังมี P26 implementation; test receiptใช้ทางmanual/providerที่docsรองรับ ไม่ถือว่าtest modeเปิดautoemailให้เหมือนliveเสมอ. ตรวจดาวน์โหลดInvoice/Receipt, Stripe email settingsและreceiverแยกจากpay→access. ไม่ต้องมีPostmarkinvoiceemailในflowนี้.
 
-Evidence อยู่ `docs/evidence/postmark-email-<date>/`: exact source revision/hash, command/config/server mode, red/green counts, sanitized correlation IDs, cleanup และข้อจำกัดต่อระดับ. ไม่ใช้ Stripe S-pre/SES foundationเป็นPostmarkpass. ไม่มี evidence folder ใหม่ที่แอบอ้าง runtime pass ในรอบนี้.
+Evidence อยู่ `docs/evidence/postmark-email-<date>/`: exact source revision/hash, command/config/server mode, red/green counts, sanitized correlation IDs, cleanup และข้อจำกัดต่อระดับ. ไม่ใช้ Stripe S-pre/SES foundationเป็นPostmarkpass. ผลรอบ 2026-09-12 แยก local/validation pass จาก Sandbox/inbox และ Stripe ที่ยังไม่ผ่านอย่างชัดเจน.
 
 ## 5. Operations และข้อที่ยังเปิด
 
@@ -79,6 +76,12 @@ Evidence อยู่ `docs/evidence/postmark-email-<date>/`: exact source revis
 - Providerเก็บmessage contentตามretention; บันทึกเวลาจริง/ผู้เข้าถึง/ค่าใช้จ่าย. Postmarkreceiptเป็นค่าใช้จ่ายบริษัทเรา ไม่ทำvendorimporter และไม่ส่งซ้ำcustomerinvoiceที่Stripeส่งอยู่.
 - Stripeตั้งbusiness details/customer billing email/successful-payment+refund/invoice emailsettingsตามP26; reviewราคา/ภาษี/withholdingในB06ยังต้องจบก่อนเปิดขาย. **Thai tax/e-Tax generator deferred** ไม่ขยายงานmail providerเพื่อทำสิ่งนี้.
 - Easy-signup E0 ยังต้องเลือก code/link, returning login/recovery, eligibilityและfieldsก่อนruntimeflowใหม่. ข้อนี้ไม่ทำให้provider selectionกลับไปOPEN.
+
+### C03 Postmark recovery implementation sequence — 2026-09-14
+
+Add scoped email references to the existing Billing delivery list using the original billing.status.email outbox and provider-aware attempts. A durable RECONCILE_NOTIFICATION command performs bounded metadata lookup only; a separate RETRY_NOTIFICATION command reviews the resulting evidence and can reserve one READY successor generation within the existing five-attempt cap. Reuse current outbox headers, operation CAS/idempotency and attempt uniqueness; no new broker or provider failover. An unsent READY generation is resumed rather than duplicated. The sender claims READY immediately before dispatch, preserves all old attempts, checks current actor/verified recipient/purpose/template/server/stream/suppression and stops if another generation has already been accepted.
+
+Prove CONFIG→review→READY→accepted, UNKNOWN→same-message lookup with no resend, empty lookup→visible possible duplicate, late positive callback, revoked operator before dispatch, suppression/changed identity/security hold, replay/two operators, cap exhaustion and original invoice/quota immutability with real PG/HTTP/browser. Keep accepted and delivered separate. Auth/claim/reset history and proof-lifecycle recovery remain an additional mail slice; this billing notification design is not their acceptance. Current native Postmark inbox proof is still not claimed.
 - ก่อนแตะcloudอ่าน [cloud operations](../runbooks/cloud-environment-operations.md); ก่อน UAT/productionอ่าน [release protocol](../runbooks/uat-production-v2-deployment.md). ไม่มีdeployหรือเปิดpaidgateในรอบเอกสาร.
 
 ## 6. Definition of ready ของเอกสาร
@@ -90,3 +93,5 @@ Evidence อยู่ `docs/evidence/postmark-email-<date>/`: exact source revis
 - [ ] M1–M4 implementation + EM01–EM18; actual provider/Stripe document acceptance.
 
 ผลตรวจเอกสาร/ลิงก์/fixturesบันทึกใน [task memory](../agent-memory/unified-easy-signup-2026-09-11.md). Docs-readyไม่ใช่production-ready; ไม่อ้าง API/inbox/E2Eผ่านจากการอ่านเอกสาร.
+
+M3 billing recovery verification in progress 2026-09-14: exercise real company-scoped Admin API through Next rewrite as well as direct HTTP, including the namespaced original outbox reference in URL and query. Prove retry→READY→worker→acceptance and lookup→observed original attempt separately, with browser reload/back/history, withdrawn operator/content, suppression/changed recipient/cap/backoff, and late acceptance of an older generation. The old generation and billing ledgers must remain unchanged except observed provider facts; the new generation must not send after a positive older-generation observation. PostgreSQL13 TAP covers reservation and dispatch fencing. Focused Admin browser31 groups passed after fixing the encoded-colon route boundary; this overlaps the full integration suite. The final combined regression also checks that old transport errors stay in history and do not appear as the current accepted result. Full auth/claim/reset operations and native inbox acceptance remain open.
