@@ -411,7 +411,7 @@ function makePrisma(opts: {
           if (!identityUserId) return null;
           const scopedTo = args?.where?.providerChannelId;
           if (scopedTo && scopedTo !== identityChannelId) return null;
-          return { userId: identityUserId, user: { status: identityStatus, displayName, aiAssistantOptOutAt } };
+          return { status: 'ACTIVE', userId: identityUserId, user: { status: identityStatus, displayName, aiAssistantOptOutAt } };
         },
       },
       companyMembership: {
@@ -653,8 +653,12 @@ describe('AP22 live actor delivery fence', () => {
             aiPausedUntil: change === 'pause' ? new Date(Date.now() + 60_000) : null,
           });
         } else {
-          prisma.client.externalIdentity.findFirst = async () => change === 'unlink' ? null : ({ userId: 'user-1',
-            user: { status: change === 'disabled' ? 'DISABLED' : 'ACTIVE', aiAssistantOptOutAt: change === 'optout' ? new Date() : null } });
+          prisma.client.externalIdentity.findFirst = async ({ where }: any) => {
+            const bindingStatus = change === 'unlink' && where.providerChannelId ? 'UNLINKED' : 'ACTIVE';
+            if (where.status && where.status !== bindingStatus) return null;
+            return { status: bindingStatus, userId: 'user-1',
+              user: { status: change === 'disabled' ? 'DISABLED' : 'ACTIVE', aiAssistantOptOutAt: change === 'optout' ? new Date() : null } };
+          };
         }
       };
       const h = makeUseCase(prisma, {
@@ -774,8 +778,7 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.match(replies[0] ?? '', /ยินดีต้อนรับสู่มั่งมีพลัส/);
   });
 
-  // A LINE userId only means anything within one messaging channel, so an unscoped lookup could
-  // answer a webhook from one OA with an identity linked on another.
+  // LINE userIds are provider-scoped; resolve the approved Messaging binding first.
   it('resolves the identity on the webhook channel', async () => {
     const { prisma, identityQueries } = makePrisma();
     const { useCase } = makeUseCase(prisma, { permissions: ['dashboard.read'] });
@@ -786,6 +789,47 @@ describe('ProcessLineWebhookUseCase', () => {
     assert.deepEqual(identityQueries[1], identityQueries[0]);
     assert.equal(identityQueries[0].providerChannelId, 'msg-channel-1');
     assert.equal(identityQueries[0].providerUserId, 'line-user-secret');
+  });
+
+  for (const status of ['UNLINKED', 'DISABLED']) {
+    for (const lane of ['text', 'media', 'legal', 'support']) {
+      it(`does not revive an active legacy alias for a canonical ${status} ${lane} caller`, async () => {
+        const { prisma, updates } = makePrisma();
+        const rows = [
+          { provider: 'LINE', providerUserId: BASE_EVENT.lineUserId, providerChannelId: 'msg-channel-1', status, userId: 'current-user', user: { status: 'ACTIVE' } },
+          { provider: 'LINE', providerUserId: BASE_EVENT.lineUserId, providerChannelId: 'old-login-channel', status: 'ACTIVE', userId: 'previous-user', user: { status: 'ACTIVE' } },
+        ];
+        const queries: any[] = [];
+        prisma.client.externalIdentity.findFirst = async ({ where }: any) => {
+          queries.push(where);
+          return rows.find(row => Object.entries(where).every(([key, value]) => (row as any)[key] === value)) ?? null;
+        };
+        // A wrong actor must not reach company permissions, even if it has a live old membership.
+        prisma.client.companyMembership.findMany = async () => { throw Error('old account must not be consulted'); };
+        const h = makeUseCase(prisma, { config: { lineMessagingChannelId: 'msg-channel-1' }, legalAcceptanceRequired: true });
+        const event = { ...BASE_EVENT, webhookEventId: `canonical-${status}-${lane}` };
+        if (lane === 'text') await h.useCase.execute(event);
+        if (lane === 'media') await h.useCase.executeReceiptUpload({ ...event, lineMessageId: 'synthetic-image', messageType: 'image' });
+        if (lane === 'legal') assert.deepEqual(await h.useCase.preflightLegalAcceptance(event), { status: 'continue' });
+        if (lane === 'support') {
+          // This caller must retain channel context; queued older input may omit it.
+          assert.equal(await (h.useCase as any).resolveSupportAsker({ lineUserId: event.lineUserId }), null);
+        }
+        assert.equal(queries.length, 1);
+        assert.equal(queries[0].providerChannelId, 'msg-channel-1');
+        assert.equal(h.getAiGatewayCalled(), false);
+        assert.equal(h.legalChecks.length, 0);
+        if (lane === 'text' || lane === 'media') assert.equal((updates.at(-1) as any).data.status, 'unlinked');
+      });
+    }
+  }
+
+  it('refuses channel-free production AI resolution before any identity read', async () => {
+    const { prisma, identityQueries } = makePrisma();
+    const h = makeUseCase(prisma, { config: { isProduction: true } });
+    await assert.rejects(h.useCase.preflightLegalAcceptance({ lineUserId: BASE_EVENT.lineUserId }),
+      (error: any) => error.getStatus?.() === 503);
+    assert.deepEqual(identityQueries, []);
   });
 
   it('still reports unlinked when neither the scoped nor the fallback lookup finds an identity', async () => {

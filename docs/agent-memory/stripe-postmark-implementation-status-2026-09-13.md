@@ -1,6 +1,6 @@
 # Agent Memory: Stripe / Postmark implementation
 
-Status: IN PROGRESS; owner resumed with “ทำต่อ”. Owner asked progress: communicated approximately70% of total scope (estimate, not a calculated coverage metric). Latest combined161 PASS belongs to ef7dd3d9; current delivery-read/error-UX correction has focused65 + Messaging8 + Thai/error54 PASS (overlap), and final API/web typechecks PASS. Preparing this correction for commit/new CI. No merge or deployment.
+Status: IN PROGRESS; owner resumed after the latest pause with “ทำต่อ”; owner resumed with “ทำต่อ”. Owner asked progress: communicated approximately70% of total scope (estimate, not a calculated coverage metric). Latest combined161 PASS belongs to ef7dd3d9; delivery-read/error-UX correction d422ab1e has focused65 + Messaging8 + Thai/error54 PASS (overlap), final API/web typechecks PASS, and is pushed with CI34827265627 FAILED (unowned Messaging resolver test). No merge or deployment.
 Owner: Codex / repository owner.
 Scope: Implement approved package/payment/Postmark/Admin C01–C08/web/LINE specs, prove simulated E2E, then merge develop and main in BOTH repositories after green CI. Keep live deployment separate.
 
@@ -19,6 +19,7 @@ Scope: Implement approved package/payment/Postmark/Admin C01–C08/web/LINE spec
 ## Current repositories / CI
 
 - Root: /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus, branch codex/stripe-postmark-implementation-20260912, draft PR558 to develop.
+- Latest HEADd422ab1e pushed; CI34827265627 IN_PROGRESS at initial read. PR558 body updated with focused proof and remaining scope. This supersedes the failed ef7 checkpoint below.
 - Root HEADef7dd3d9 (Messaging runtime publication) pushed; CI34824733275 FAILED at pnpm test: web Thai error coverage found8 new LINE codes missing from the common message catalog. API/HTTP/browser steps did not finish; do not claim this CI green. Add the reviewed actionable translations without exempting the coverage guard. Previous ac1b3b8e CI34807517926 FAILED in email-verification browser return (profile email timeout): fixture navigated away while /login redirect was pending. It now waits for the final authenticated dashboard before opening profile; local6 PASS. Original-invoice d3ac0c83 CI34805765742 PASS. Previous CI34803284452 at6da65148 FAILED in signup browser fixture: click raced the actual account-security legal redirect. The corrected fixture now lets the gate finish, accepts legal, then skips LINE; local signup8 PASS. Do not rerun the known old revision as a fix.
 - Previous root7ca2d7a8 C07 missing-event discovery: CI34801493799 PASS.
 - Isolated marketing: /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912, same branch, draft PR2 to develop. HEAD969e4c0; CI34824750232 PASS.
@@ -95,4 +96,26 @@ Owner has not answered the earlier question whether to add verified-email Postma
 
 Final API typecheck after all fixture edits PASS (/tmp/mangmee-delivery-read-api-typecheck-final.log); no local test process remains active. Source hashes unchanged and git diff --check PASS.
 
-Next: commit/push the verified delivery-read/rate-limit/Thai-message correction to replace failed ef7 CI. Both draft PRs remain open. Then implement the spec-first legacy LINE repair via existing Admin QR, preserving disabled self-relink, before remaining controls. Continue independent implementation while CI runs; do not ready/merge the draft solely because a checkpoint passes.
+Next: delivery-read/rate-limit/Thai-message correction committed/pushed d422ab1e; new CI34827265627 is running. Both draft PRs remain open. Implement the spec-first legacy LINE repair via existing Admin QR, preserving disabled self-relink, before remaining controls. Continue independent implementation while CI runs; do not ready/merge the draft solely because a checkpoint passes.
+
+## Paused by owner — 2026-09-14
+
+Owner said “plause ก่อน”; stop implementation and testing. No merge or deployment. Preserve the uncommitted canonical LINE binding fix and unrelated task files.
+
+Latest read-only CI snapshot: d422ab1e CI34827265627 COMPLETED/FAILURE in Typecheck and Test; source/config/secret/security/migration jobs passed. Failure details have NOT yet been inspected. Do not claim this checkpoint CI green or rerun it blindly.
+
+Uncommitted correction: ExchangeLineToken canonical identity lookup now observes ACTIVE/UNLINKED/DISABLED before permitting legacy fallback; canonical inactive rows cannot resurrect an older ACTIVE alias. Auth/callback59 tests PASS; dedicated local PostgreSQL1 test PASS (explicit isolated DB), with the PG command added to CI. No typecheck after these edits yet. Logs /tmp/mangmee-line-tombstone-auth.tap and /tmp/mangmee-line-tombstone-pg.tap.
+
+Root-cause audit remains open: ProcessLineWebhookUseCase.resolveLineIdentity around2869 has the same status-filtered canonical lookup and unrestricted fallback. Its resolveSupportAsker caller around2019 passes no channel. Inspect the existing event/config channel and fixtures; fix all affected AI resolution paths while preserving the approved Admin QR legacy repair lane and disabled self-relink. No AI code edit was made before pause. Existing QR recovery also needs subject-bound USED-token proof and owner/version fencing; those are findings, not implemented.
+
+On resume: inspect CI failure, complete scoped LINE correction with spec/plan and actual checks, update evidence, then continue remaining approved scope. No local smoke or typecheck was started during the final read-only snapshot.
+
+## Resumed LINE canonical binding correction — 2026-09-14
+
+Owner resumed “ทำต่อ”. Confirmed CI34827265627 failed the unchanged spec-suite ownership guard: common/config/line-messaging-credentials.service.spec.ts was not in a maintained runner. Its six assertions now live in the existing default system-line-push.spec.ts entry; no package.json edit or guard exemption.
+
+Canonical inactive LINE bindings now stop legacy fallback in login and the shared AI resolver. Support keeps the event channel and older queued input uses configured Messaging channel; production with neither refuses before identity read. Text/media/legal/support entry and final delivery revocation regressions included. Affected source suite661 PASS (0fail/0skip); actual isolated PostgreSQL login1 PASS. These are overlapping source/PG checks, not a new combined HTTP/browser run. First typecheck found a fixture type missing ExternalIdentity.status; annotation corrected and final typecheck pending. Pins current/diff check PASS. Logs /tmp/mangmee-line-binding-resume.tap, /tmp/mangmee-line-tombstone-pg.tap, /tmp/mangmee-line-binding-api-typecheck.log.
+
+Next: finish final typecheck/evidence/commit for this bounded fix, then implement Admin QR legacy repair with exact claimed subject, stale-unlink fences and account/recipient readiness together. Do not claim all C07 or full task complete from this increment.
+
+Final API typecheck after the fixture annotation PASS; source661 and PostgreSQL1 proofs recorded in line-canonical-binding-result.json. Preparing bounded canonical-binding/CI-runner commit. No merge/deploy.

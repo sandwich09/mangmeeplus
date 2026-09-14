@@ -182,7 +182,7 @@ type Harness = ReturnType<typeof harness>;
 function harness(options: {
   // `id` only matters to the support path (§2.1.1 queue link); the status card reads the name.
   pendingSignup?: { id?: string; companyName: string } | null;
-  identity?: { userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
+  identity?: { status: string; userId: string; user: { status: string; aiAssistantOptOutAt: Date | null; displayName: string } } | null;
   ownerMembership?: any;
   ownerMemberships?: any[];
   /** ACTIVE memberships in ACTIVE companies — what `resolveCompanyForLineUser` reads (§2.1.1). */
@@ -399,7 +399,7 @@ describe('P10-L webhook doors', () => {
   // would read as though the system had forgotten them — and door one invites a duplicate signup.
   it('welcomes back a LINE account it already knows, instead of offering to open a shop', async () => {
     const h = harness({
-      identity: { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } },
+      identity: { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } },
     });
     await h.useCase.execute(event(LINE_FOLLOW_EVENT_TEXT));
 
@@ -451,7 +451,7 @@ describe('P10-L webhook doors', () => {
 });
 
 describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spec-th §2.1', () => {
-  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
   it('opens a request against the shop the asker is in NOW, and pauses the assistant', async () => {
     const h = harness({
@@ -634,7 +634,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
    * shop is in the chat to take.
    */
   it('still opens a package-change request while a human is handling the thread', async () => {
-    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
     const paused = harness({
       identity,
       ownerMembership: { companyId: 'co-1', company: { planTerm: { tierKey: 'FREE_TRIAL_15' } } },
@@ -648,7 +648,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
   });
 
   it('still keeps free text paused, which is what the pause is for', async () => {
-    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
     const paused = harness({
       identity,
       context: { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) },
@@ -670,7 +670,7 @@ describe('P10-L contact-staff pause (§8), rewritten by line-support-request-spe
  * operator surface could see, while being told a human was reading it.
  */
 describe('a customer who writes back is still in the queue (UAT 2026-09-06)', () => {
-  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
   const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
   const mediaEvent = () => ({
     webhookEventId: 'evt-photo', replyToken: 'reply-1', lineUserId: 'Uline-1',
@@ -984,7 +984,7 @@ describe('a customer who writes back is still in the queue (UAT 2026-09-06)', ()
  * advertises did nothing because the phone keyboard wrote "ai". Spec §2.2 delta รอบ 6.
  */
 describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอบ 6)', () => {
-  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
   const pausedContext = { companyId: 'co-1', aiPausedUntil: new Date(Date.now() + 3_600_000) };
   const waiting = { id: 'sr-9', status: 'OPEN', companyId: 'co-1' };
 
@@ -1170,7 +1170,7 @@ describe('the pause silences the assistant, not the app (UAT 2026-09-06 รอ�
  * has got to. Before this, one column held both and the newest message ate the question.
  */
 describe('the original question outlives every follow-up (UAT 2026-09-06)', () => {
-  const linked = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const linked = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
   it('keeps the tap-time question in its own column', async () => {
     const h = harness({
@@ -1224,7 +1224,7 @@ describe('the original question outlives every follow-up (UAT 2026-09-06)', () =
 });
 
 describe('P10-L package change from LINE (§3.7)', () => {
-  const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
   it('opens a request for an owner and says the team will call back', async () => {
     const h = harness({
@@ -1279,7 +1279,7 @@ describe('P10-L package change from LINE (§3.7)', () => {
 });
 
 describe('P10-L day-7 nudge answers (§3.6)', () => {
-  const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
 
   it('sends the settings link on "ใส่เลย"', async () => {
     const h = harness({ identity, ownerMembership: { companyId: 'co-1' } });
@@ -1303,7 +1303,7 @@ describe('P10-L day-7 nudge answers (§3.6)', () => {
 });
 
 describe('GW05 package request stays with the selected company', () => {
-  const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+  const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
   const rows = ['a', 'b'].map(id => ({ companyId: `co-${id}`, company: { name: `Shop ${id}`, planTerm: { tierKey: 'BASIC_499' } } }));
   it('uses selected B even when A is first in the owner query', async () => {
     const h = harness({ identity, ownerMemberships: rows, context: { companyId: 'co-b', aiPausedUntil: null } });
@@ -1366,7 +1366,7 @@ describe('GW10 LINE message context after expiry or membership revocation', () =
     assert.deepEqual(await resolveCompanyForLineUser(prisma, 'user-1', 'Uline-1'), { companyId: 'co-a' });
   });
   it('returns picker → company switch → explicit package request for the same B', async () => {
-    const identity = { userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
+    const identity = { status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE', aiAssistantOptOutAt: null, displayName: 'นิด' } };
     const rows = ['a','b'].map(id => ({ companyId: `co-${id}`, roles: [], company: { name: `Shop ${id}`, planTerm: { tierKey: 'BASIC_499' } } }));
     const before = harness({ identity, ownerMemberships: rows, memberships: rows });
     await before.useCase.execute(event(PACKAGE_CHANGE_COMMAND));

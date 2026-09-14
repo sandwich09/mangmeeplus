@@ -571,6 +571,7 @@ jobs:
           psql -h 127.0.0.1 -U watchdog -d watchdog_recovery_ci -c 'CREATE DATABASE watchdog_postmark_ci'
           pnpm --filter @watchdog-bms/api exec prisma migrate deploy
           pnpm --filter @watchdog-bms/api exec tsx --tsconfig tsconfig.json --test src/modules/auth/postmark-delivery.pg.spec.ts src/modules/billing/billing-receipts.pg.spec.ts src/modules/billing/billing-grace.pg.spec.ts src/modules/billing/billing-caps.pg.spec.ts src/modules/billing/billing-issues.pg.spec.ts src/modules/line-ai/line-delivery-access.pg.spec.ts src/modules/line-ai/line-read-evidence.pg.spec.ts src/modules/line-ai/line-ledger-delivery.pg.spec.ts
+          AUTH_LINE_BINDING_TEST_DATABASE_URL="$DATABASE_URL" pnpm --filter @watchdog-bms/api exec tsx --test src/modules/auth/line-binding.pg.spec.ts
           node apps/api/dist/apps/api/src/scripts/postmark-http-smoke.js
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test signup and billing recovery with real browser and isolated providers

@@ -80,7 +80,7 @@ function makePrisma(opts: {
         findMany: async (args: any) => branchRows.filter((row) => !args?.where?.id?.in || args.where.id.in.includes(row.id)),
       },
       externalIdentity: {
-        findFirst: async () => ({ userId: 'user-1', user: { status: 'ACTIVE' } }),
+        findFirst: async () => ({ status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE' } }),
       },
       companyMembership: {
         findMany: async () => [{ companyId: 'company-1', company: { name: 'c1', brandName: null }, roles: [{ role: { key: 'OWNER' } }] }],

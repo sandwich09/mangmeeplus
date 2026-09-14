@@ -803,7 +803,7 @@ describe('ExchangeLineTokenUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ user: { id: 'u-2', status: 'ACTIVE' } }),
+          findFirst: async () => ({ status: 'ACTIVE', user: { id: 'u-2', status: 'ACTIVE' } }),
         },
       },
     } as any;
@@ -821,7 +821,7 @@ describe('ExchangeLineTokenUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ user: { id: 'u-3', status: 'SUSPENDED' } }),
+          findFirst: async () => ({ status: 'ACTIVE', user: { id: 'u-3', status: 'SUSPENDED' } }),
         },
       },
     } as any;
@@ -857,6 +857,26 @@ describe('ExchangeLineTokenUseCase', () => {
     assert.equal(calls[0].providerChannelId, 'msg-ch-1');
     assert.equal(calls[1].providerChannelId, undefined);
   });
+
+  for (const status of ['ACTIVE', 'UNLINKED', 'DISABLED']) {
+    it(`keeps the canonical ${status} binding authoritative over an active legacy alias`, async () => {
+      const identities = [
+        { id: 'canonical', provider: 'LINE', providerUserId: 'same-line-user', providerChannelId: 'msg-ch-1', status, user: { id: 'current-user', status: 'ACTIVE' } },
+        { id: 'legacy', provider: 'LINE', providerUserId: 'same-line-user', providerChannelId: 'old-login-channel', status: 'ACTIVE', user: { id: 'previous-user', status: 'ACTIVE' } },
+      ];
+      const queries: unknown[] = [], issued: string[] = [];
+      const prisma = { client: { externalIdentity: { findFirst: async ({ where }: any) => {
+        queries.push(where);
+        return identities.find(row => Object.entries(where).every(([key, value]) => (row as any)[key] === value)) ?? null;
+      } } } } as any;
+      const verifier = { verify: async () => ({ subject: 'same-line-user' }) } as any;
+      const issueToken = { execute: async (userId: string) => { issued.push(userId); return { accessToken: 'synthetic', refreshToken: 'synthetic', expiresIn: 900 }; } } as any;
+      const result = await new ExchangeLineTokenUseCase(verifier, prisma, exchangeConfig, issueToken).execute('synthetic-id-token', 'channel-1');
+      assert.equal(result.linked, status === 'ACTIVE');
+      assert.deepEqual(issued, status === 'ACTIVE' ? ['current-user'] : []);
+      assert.equal(queries.length, 1, 'canonical unlink/disable must not consult the legacy identity');
+    });
+  }
 
   it('fails closed in production when the canonical channel is not configured', async () => {
     const lineVerifier = { verify: async () => ({ subject: 'line-u5' }) } as any;

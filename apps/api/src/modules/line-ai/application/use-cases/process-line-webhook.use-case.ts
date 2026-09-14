@@ -9,7 +9,7 @@ import { LineMessagingCredentialsService } from '../../../../common/config/line-
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Inject, Injectable, Logger, Optional, ForbiddenException, ConflictException } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
 import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -1892,7 +1892,7 @@ export class ProcessLineWebhookUseCase {
    * to one, and that is exactly the person the old shape dropped.
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
-    const asker = await this.resolveSupportAsker(event.lineUserId);
+    const asker = await this.resolveSupportAsker(event);
     // Dedupe is per LIVE request, not per day (§2.2.4): while one is live the answer is "you are
     // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
     // ANSWERED counts as live (review 2026-09-06): deduping on OPEN alone meant TAPPING the button
@@ -2011,12 +2011,13 @@ export class ProcessLineWebhookUseCase {
    * for a chat that can ask a question; a support ticket cannot, so it falls back to the oldest
    * membership rather than filing the request against no shop at all.
    */
-  private async resolveSupportAsker(lineUserId: string): Promise<{
+  private async resolveSupportAsker(event: { lineUserId: string; messagingChannelId?: string }): Promise<{
     companyId: string | null;
     signupRequestId?: string;
     lastMessageText?: string;
   } | null> {
-    const identity = await this.resolveLineIdentity({ lineUserId });
+    const { lineUserId } = event;
+    const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
       const pending = await this.pendingSignupFor(lineUserId);
       return pending ? { companyId: null, signupRequestId: pending } : null;
@@ -2858,26 +2859,26 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
-  /**
-   * LINE userIds are channel-scoped: the same person has a different `providerUserId` per
-   * messaging channel, so an unfiltered `providerUserId` lookup can resolve a webhook from one OA
-   * against an identity linked on another. The webhook carries its own channel, so match on it
-   * first. Identities linked before `providerChannelId` was recorded (or under a legacy channel)
-   * still fall back to the channel-agnostic query with a warn — the same shape the notification
-   * delivery path uses, so relinking is not required to keep chatting.
+  /** LINE IDs are provider-scoped; the approved local binding uses the Messaging channel.
+   * An explicit canonical unlink/disable is authoritative over any older legacy alias.
+   * Legacy-only accounts retain their existing route until the Admin QR repair is complete.
    */
   private async resolveLineIdentity(event: { lineUserId: string; messagingChannelId?: string }) {
+    const channelId = event.messagingChannelId ?? this.config.lineMessagingChannelId;
     const where = { providerUserId: event.lineUserId, provider: 'LINE' as const, status: 'ACTIVE' as const };
-    if (event.messagingChannelId) {
+    if (!channelId && this.config.isProduction) {
+      throw new ServiceUnavailableException('LINE channel configuration is missing.');
+    }
+    if (channelId) {
       const scoped = await this.prisma.client.externalIdentity.findFirst({
-        where: { ...where, providerChannelId: event.messagingChannelId },
+        where: { providerUserId: event.lineUserId, provider: 'LINE', providerChannelId: channelId },
         include: { user: true },
       });
-      if (scoped) return scoped;
+      if (scoped) return scoped.status === 'ACTIVE' ? scoped : null;
     }
     const identity = await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
-    if (identity && event.messagingChannelId) {
-      this.logger.warn({ msg: 'line_identity_channel_agnostic_fallback', messagingChannelId: event.messagingChannelId });
+    if (identity && channelId) {
+      this.logger.warn({ msg: 'line_identity_channel_agnostic_fallback', messagingChannelId: channelId });
     }
     return identity;
   }
