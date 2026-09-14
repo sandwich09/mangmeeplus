@@ -14,12 +14,14 @@ import { createRevenueCategory, listManageRevenueCategories, updateRevenueCatego
 // purpose: every row is company-owned (no global defaults by design), and there is no tax-code
 // column yet — output-code suggestions wait for accountant-confirmed values (spec §9 answer 5).
 
-function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; onToggle: () => void }) {
+function Toggle({ on, disabled, loading = false, onToggle }: { on: boolean; disabled?: boolean; loading?: boolean; onToggle: () => void }) {
   return (
-    <button role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}
+    <button role="switch" aria-checked={on} disabled={disabled || loading} aria-busy={loading} data-loading-indicator onClick={onToggle}
       className="relative -my-2.5 flex h-11 w-11 flex-shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 sm:my-0 sm:h-6">
       <span className={cx('relative block h-6 w-11 rounded-full transition', on ? 'bg-brand-500' : 'bg-gray-300')}>
-        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+        <span className={cx('absolute top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')}>
+          {loading && <span aria-hidden="true" className="action-loading-spinner h-3 w-3 rounded-full border-2 border-gray-500 border-t-transparent" />}
+        </span>
       </span>
     </button>
   );
@@ -126,12 +128,12 @@ export function RevenueCategoryPanel({ companyId }: { companyId: string }) {
                           <span className="flex min-w-64 items-center gap-2">
                             <input autoFocus className="mangmee-input h-9" value={editName} disabled={updating} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
                               onKeyDown={(e) => { if (e.key === 'Enter') void saveName(c.id); if (e.key === 'Escape') setEditId(null); }} />
-                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} aria-busy={Boolean(updating)} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
                             <button className={cx(ghostClass, 'h-9 px-3 text-xs')} disabled={updating} onClick={() => setEditId(null)}>ยกเลิก</button>
                           </span>
                         ) : c.name}
                       </td>
-                      <td className="whitespace-nowrap"><Toggle on={active} disabled={updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'ปิดใช้หมวดเรียบร้อยแล้ว' : 'เปิดใช้หมวดเรียบร้อยแล้ว')} /></td>
+                      <td className="whitespace-nowrap"><Toggle on={active} disabled={updatingId === c.id} loading={updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'ปิดใช้หมวดเรียบร้อยแล้ว' : 'เปิดใช้หมวดเรียบร้อยแล้ว')} /></td>
                       <td className="w-px whitespace-nowrap text-right">
                         <span className="inline-flex items-center justify-end gap-1.5">
                           {editId !== c.id && <IconBtn title="แก้ชื่อ" onClick={() => { setEditId(c.id); setEditName(c.name); }}>{ICON.edit}</IconBtn>}
@@ -148,7 +150,7 @@ export function RevenueCategoryPanel({ companyId }: { companyId: string }) {
       </MangmeeCard>
 
       <Modal open={showCreate} title="เพิ่มหมวดรายรับใหม่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
-        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวด'}</button></>}>
+        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวด'}</button></>}>
         <div className="space-y-3">
           {createError && <ErrorBanner message={createError} />}
           <label className="text-sm font-semibold text-gray-700">ชื่อหมวด *</label>
@@ -163,7 +165,7 @@ export function RevenueCategoryPanel({ companyId }: { companyId: string }) {
             <p className="mt-1.5 text-sm leading-relaxed text-gray-500">หมวดที่ปิดใช้จะไม่แสดงให้เลือกในเอกสารใหม่ แต่เอกสารเดิมที่ใช้หมวดนี้ยังอยู่ครบ · เปิดใช้ใหม่ได้ทุกเมื่อจากปุ่มสวิตช์</p>
             <div className="mt-4 flex justify-end gap-2">
               <button className={ghostClass} disabled={updating} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button className={dangerClass} disabled={updating} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'ปิดใช้หมวดเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังปิดใช้...' : 'ปิดใช้'}</button>
+              <button className={dangerClass} disabled={updating} aria-busy={Boolean(updating)} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'ปิดใช้หมวดเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังปิดใช้...' : 'ปิดใช้'}</button>
             </div>
           </div>
         </div>

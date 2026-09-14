@@ -218,7 +218,7 @@ function RequestModal({ companyId, onClose, onDone }: { companyId: string; onClo
           )}
           <div className="flex justify-end gap-2">
             <button className={ghostClass} onClick={onClose} disabled={busy}>ยกเลิก</button>
-            <button className={btnClass} onClick={submit} disabled={busy || loadingTemplates || !selected?.enabled || (needsCustomer && !sourceRecordId.trim())}>ส่งคำขอ</button>
+            <button className={btnClass} onClick={submit} disabled={busy || loadingTemplates || !selected?.enabled || (needsCustomer && !sourceRecordId.trim())} aria-busy={Boolean(busy)}>ส่งคำขอ</button>
           </div>
         </div>
       )}
@@ -312,8 +312,8 @@ function SuggestionDetailModal({ companyId, id, onClose, onChanged }: { companyI
               {validationLabel && <p className="mt-1 text-xs text-gray-500">ผลตรวจสอบ: {validationLabel}</p>}
               {canCreateSourceDraft(d.status, a.actionType, a.status, d.needsData) && (
                 <div className="mt-2 flex gap-2">
-                  <button className={ghostClass} disabled={busy !== null} onClick={() => run(`v-${a.id}`, () => validateAiAction(companyId, d.id, a.id), 'ตรวจสอบการดำเนินการเรียบร้อยแล้ว')}>ตรวจสอบ</button>
-                  <button className={btnClass} disabled={busy !== null} onClick={() => run(`c-${a.id}`, () => createAiSourceDraft(companyId, d.id, a.id, d.sourceStateChanged ? { acknowledgeSourceStateChanged: true } : {}), 'สร้างร่างในระบบเรียบร้อยแล้ว')}>สร้างร่างในระบบ</button>
+                  <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run(`v-${a.id}`, () => validateAiAction(companyId, d.id, a.id), 'ตรวจสอบการดำเนินการเรียบร้อยแล้ว')}>ตรวจสอบ</button>
+                  <button className={btnClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run(`c-${a.id}`, () => createAiSourceDraft(companyId, d.id, a.id, d.sourceStateChanged ? { acknowledgeSourceStateChanged: true } : {}), 'สร้างร่างในระบบเรียบร้อยแล้ว')}>สร้างร่างในระบบ</button>
                 </div>
               )}
               {a.status === 'SOURCE_DRAFT_CREATED' && <p className="mt-2 text-xs text-emerald-600">สร้างร่างในระบบต้นทางแล้ว</p>}
@@ -333,8 +333,8 @@ function SuggestionDetailModal({ companyId, id, onClose, onChanged }: { companyI
 
         {actionable && (
           <div className="flex justify-end gap-2 border-t border-gray-100 pt-3">
-            <button className={ghostClass} disabled={busy !== null} onClick={() => run('regen', () => reviewAiSuggestion(companyId, d.id, { decision: 'REQUEST_REGENERATION' }), 'ขอสร้างคำแนะนำใหม่เรียบร้อยแล้ว')}>สร้างใหม่</button>
-            <button className={ghostClass} disabled={busy !== null} onClick={() => run('dismiss', () => reviewAiSuggestion(companyId, d.id, { decision: 'DISMISS', note: 'dismissed from web' }), 'ปิดคำแนะนำเรียบร้อยแล้ว')}>ปิดคำแนะนำ</button>
+            <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('regen', () => reviewAiSuggestion(companyId, d.id, { decision: 'REQUEST_REGENERATION' }), 'ขอสร้างคำแนะนำใหม่เรียบร้อยแล้ว')}>สร้างใหม่</button>
+            <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('dismiss', () => reviewAiSuggestion(companyId, d.id, { decision: 'DISMISS', note: 'dismissed from web' }), 'ปิดคำแนะนำเรียบร้อยแล้ว')}>ปิดคำแนะนำ</button>
           </div>
         )}
       </div>

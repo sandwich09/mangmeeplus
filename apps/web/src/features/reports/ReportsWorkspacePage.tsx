@@ -265,9 +265,9 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
         : 'รายงานสำเร็จรูป มุมมองที่บันทึกไว้ และการส่งออกข้อมูลแบบตรวจสอบสิทธิ์'}
       actions={(
         <div className="flex flex-wrap gap-2">
-          <button className={ghostClass} onClick={() => void refresh()} disabled={loading}>รีเฟรช</button>
-          <button className={ghostClass} onClick={() => void saveView()} disabled={busyAction !== null || historyOnly || !selected || selected.status !== 'ENABLED'}>{busyAction === 'view' ? 'กำลังบันทึก...' : 'บันทึกมุมมอง'}</button>
-          <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={busyAction !== null || historyOnly || !result || !selected}>{busyAction === 'export' ? 'กำลังส่งออก...' : 'ส่งออก CSV'}</button>
+          <button className={ghostClass} onClick={() => void refresh()} disabled={loading} aria-busy={Boolean(loading)}>รีเฟรช</button>
+          <button className={ghostClass} onClick={() => void saveView()} disabled={busyAction !== null || historyOnly || !selected || selected.status !== 'ENABLED'} aria-busy={Boolean(busyAction === 'view')}>{busyAction === 'view' ? 'กำลังบันทึก...' : 'บันทึกมุมมอง'}</button>
+          <button className={btnClass} onClick={() => void requestExport('CSV')} disabled={busyAction !== null || historyOnly || !result || !selected} aria-busy={Boolean(busyAction === 'export')}>{busyAction === 'export' ? 'กำลังส่งออก...' : 'ส่งออก CSV'}</button>
         </div>
       )}
     >
@@ -330,7 +330,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                 </div>
               ))}
               {runs.length === 0 && <p className="text-sm text-gray-400">ยังไม่มีประวัติรายงานที่คุณดูได้</p>}
-              {runCursor && <button className="min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void loadMoreRuns()} disabled={busyAction !== null}>{busyAction === 'runs' ? 'กำลังโหลด...' : 'ดูประวัติเพิ่ม'}</button>}
+              {runCursor && <button className="min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void loadMoreRuns()} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'runs')}>{busyAction === 'runs' ? 'กำลังโหลด...' : 'ดูประวัติเพิ่ม'}</button>}
             </div>
           </MangmeeCard>
 
@@ -347,7 +347,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                   </div>
                   {(item.warnings ?? []).length > 0 && <div className="mt-1 text-xs text-amber-700">ข้อมูลบางส่วน · {item.warnings!.map(reportWarningText).join(' · ')}</div>}
                   {item.status === 'READY' && (
-                    <button className="mt-2 min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void downloadExport(item)} disabled={busyAction !== null}>
+                    <button className="mt-2 min-h-11 text-sm font-semibold text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void downloadExport(item)} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'download')}>
                       {busyAction === 'download' ? 'กำลังดาวน์โหลด...' : 'ดาวน์โหลดไฟล์เดิม'}
                     </button>
                   )}
@@ -375,7 +375,7 @@ export function ReportsWorkspacePage({ companyId }: { companyId: string }) {
                     <div>{selected.code} · {selected.sourceModule}</div>
                   </details>
                 </div>
-                <button className={selected.status === 'ENABLED' ? btnClass : dangerClass} onClick={() => void run()} disabled={running || selected.status !== 'ENABLED'}>
+                <button className={selected.status === 'ENABLED' ? btnClass : dangerClass} onClick={() => void run()} disabled={running || selected.status !== 'ENABLED'} aria-busy={Boolean(running)}>
                   {running ? 'กำลังทำงาน...' : selected.status === 'ENABLED' ? 'เรียกรายงาน' : STATUS_LABEL[selected.status]}
                 </button>
               </div>

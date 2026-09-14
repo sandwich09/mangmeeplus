@@ -175,7 +175,7 @@ function ChannelAutonomySettings({ companyId, channel }: { companyId: string; ch
       {optionsLoading && !optionsError ? <div className="mt-2 text-xs text-gray-500">กำลังโหลดรายชื่อพนักงานและสาขา...</div> : null}
       {optionsError ? <div className="mt-2 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{optionsError}</div> : null}
       {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-2 text-sm text-red-700">{error}</div> : null}
-      <button className={`${primaryBtn} mt-3`} disabled={saving || optionsLoading || Boolean(optionsError)} onClick={() => void save()}>
+      <button className={`${primaryBtn} mt-3`} disabled={saving || optionsLoading || Boolean(optionsError)} aria-busy={Boolean(saving)} onClick={() => void save()}>
         {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
       </button>
     </div>
@@ -237,7 +237,7 @@ function ConnectWizard({ companyId, onConnected }: { companyId: string; onConnec
       </div>
       {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
       <div className="mt-4">
-        <button className={primaryBtn} onClick={submit} disabled={submitting}>
+        <button className={primaryBtn} onClick={submit} disabled={submitting} aria-busy={Boolean(submitting)}>
           {submitting ? 'กำลังเชื่อมต่อ...' : 'เชื่อมต่อ LINE OA'}
         </button>
       </div>
@@ -328,7 +328,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             className={secondaryBtn}
-            disabled={busy !== null}
+            disabled={busy !== null} aria-busy={Boolean(busy === 'test')}
             onClick={() => run('test', async () => {
               const result = await testChannel(companyId, channel.id);
               if (result.ok) setNotice(`เชื่อมต่อสำเร็จ — บอท "${result.botDisplayName}" พร้อมใช้งาน`);
@@ -343,7 +343,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
           </button>
           <button
             className={secondaryBtn}
-            disabled={busy !== null}
+            disabled={busy !== null} aria-busy={Boolean(busy === 'reveal')}
             onClick={() => run('reveal', async () => {
               setRevealed(await revealChannelCredential(companyId, channel.id));
             })}
@@ -352,7 +352,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
           </button>
           <button
             className={dangerBtn}
-            disabled={busy !== null}
+            disabled={busy !== null} aria-busy={Boolean(busy !== null)}
             onClick={async () => {
               const reason = await promptInput({
                 title: 'ปิดการใช้งานช่องทาง',
@@ -403,7 +403,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
           <div className="mt-3 flex gap-2">
             <button
               className={primaryBtn}
-              disabled={busy !== null}
+              disabled={busy !== null} aria-busy={Boolean(busy === 'rotate')}
               onClick={() => run('rotate', async () => {
                 await rotateChannel(companyId, channel.id, rotateForm);
                 setRotateOpen(false);
@@ -532,7 +532,7 @@ function SlaPolicyCard({ companyId }: { companyId: string }) {
           </div>
           {error ? <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
           <div className="mt-4">
-            <button className={primaryBtn} onClick={() => void save()} disabled={saving || policy === null}>
+            <button className={primaryBtn} onClick={() => void save()} disabled={saving || policy === null} aria-busy={Boolean(saving)}>
               {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า SLA'}
             </button>
           </div>

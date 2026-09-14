@@ -463,7 +463,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           <span className="flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ background: '#F4EBFF', color: '#7A5AF8' }}>{ICON.sparkle}</span>
           <p className="text-sm leading-relaxed text-gray-600">{t('expenses.upload_ai_strip_before', locale)}<b className="text-gray-800">{t('expenses.upload_ai_strip_bold', locale)}</b>{t('expenses.upload_ai_strip_after', locale)}</p>
         </div>
-        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked}>
+        <button className={cx(btnClass, 'mt-5 h-12 w-full text-base')} onClick={handleUpload} disabled={loading || preparing || quotaBlocked} aria-busy={Boolean(loading)} data-loading-indicator>
           <span className="inline-flex items-center justify-center gap-2">
             {(preparing || loading || extracting) && <InlineSpinner />}
             {extracting ? t('expenses.ai_reading', locale) : preparing ? t('expenses.upload_preparing', locale) : loading ? t('expenses.uploading', locale) : t('expenses.upload_cta', locale)}
@@ -697,7 +697,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
             <div className="mt-3">
               <div className="mb-1 text-xs font-medium text-gray-600">{t('expenses.non_expense_override_reason', locale)}</div>
               <textarea className={inputClass} rows={2} maxLength={500} value={classificationOverrideReason} onChange={(e) => setClassificationOverrideReason(stripDisallowed(e.target.value))} placeholder={t('expenses.non_expense_override_reason_placeholder', locale)} />
-              <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
+              <button className={cx(btnClass, 'mt-2')} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>
               {classificationConfirmBlocker && <p className="mt-1 text-xs font-medium text-warning-700">{t(classificationConfirmBlocker, locale)}</p>}
             </div>
           </details>
@@ -781,7 +781,7 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
           </label>}
           {assessment.attachmentIds.some(id => !detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) && <div className="rounded-xl bg-warning-50 p-3 text-warning-700">
             <p>ไฟล์ที่เคยเลือกบางไฟล์ใช้ไม่ได้แล้ว กรุณาเลือกหลักฐานใหม่</p>
-            <button type="button" className={ghostClass} disabled={busy || !isMutable || !canReview} onClick={() => setAssessment(value => ({ ...value, attachmentIds: value.attachmentIds.filter(id => detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) }))}>เอาไฟล์ที่ใช้ไม่ได้ออก</button>
+            <button type="button" className={ghostClass} disabled={busy || !isMutable || !canReview} aria-busy={Boolean(busy)} onClick={() => setAssessment(value => ({ ...value, attachmentIds: value.attachmentIds.filter(id => detail.attachments.some(file => file.id === id && isExpenseEvidenceFile(file))) }))}>เอาไฟล์ที่ใช้ไม่ได้ออก</button>
           </div>}
           <fieldset disabled={busy || !isMutable || !canReview} className="space-y-1"><legend>เลือกไฟล์ที่ใช้ประกอบรายการ</legend>
             {detail.attachments.filter(file => isExpenseEvidenceFile(file)).map(file => <label key={file.id} className="flex min-h-11 items-center gap-2 break-all">
@@ -796,10 +796,10 @@ export function DocumentReviewSection({ companyId, detail, isMutable, canReview,
       </div>
       {isMutable && canReview && (
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => run(() => saveDocumentReview(undefined, false), 'บันทึกแบบร่างแล้ว กลับมาแก้รายการนี้ต่อได้')}>บันทึกแบบร่าง</button>
-          <button className={btnClass} disabled={busy || !reviewComplete || (!dirty && reviewSaved)} onClick={() => run(() => saveDocumentReview(), 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t(busy ? 'expenses.saving' : !dirty && reviewSaved ? 'expenses.doc_review_saved' : 'expenses.doc_review_save', locale)}</button>
+          <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => saveDocumentReview(undefined, false), 'บันทึกแบบร่างแล้ว กลับมาแก้รายการนี้ต่อได้')}>บันทึกแบบร่าง</button>
+          <button className={btnClass} disabled={busy || !reviewComplete || (!dirty && reviewSaved)} aria-busy={Boolean(busy)} onClick={() => run(() => saveDocumentReview(), 'บันทึกการตรวจเอกสารเรียบร้อยแล้ว')}>{t(busy ? 'expenses.saving' : !dirty && reviewSaved ? 'expenses.doc_review_saved' : 'expenses.doc_review_save', locale)}</button>
           {(!reviewComplete || dirty || !reviewSaved || busy) && <p id={`expense-document-review-hint-${detail.id}`} role="status" className="w-full rounded-xl border border-warning-100 bg-warning-50 p-3 text-sm font-medium text-warning-700">{busy ? t('expenses.saving', locale) : assessmentError ?? t(!reviewComplete ? 'expenses.doc_review_choose_required' : 'expenses.doc_review_required_next', locale)}</p>}
-          {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
+          {classificationReviewState.showFinanceOverride && !checkBillBlocked && <button className={btnClass} disabled={busy || !canResolveClassification} aria-busy={Boolean(busy)} onClick={() => run(overrideClassification, 'ยืนยันการจัดประเภทรายการเรียบร้อยแล้ว')}>{t('expenses.non_expense_override_action', locale)}</button>}
           {/* `w-full` puts the reason on its own line of the wrapping row, under the buttons —
               a disabled button on a phone has no tooltip to fall back on. */}
           {classificationReviewState.showFinanceOverride && !checkBillBlocked && classificationConfirmBlocker && (
@@ -1159,7 +1159,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
         <h3 className="font-semibold text-gray-800">{t('expenses.vendor_and_lines', locale)}</h3>
         {!isMutable && <span className="text-xs text-gray-400">{t('expenses.read_only', locale)}</span>}
       </div>
-      {showSaveDraft && isMutable && <button type="button" className={ghostClass} disabled={busy} onClick={() => void save(true)}>
+      {showSaveDraft && isMutable && <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void save(true)}>
         {busy ? t('expenses.source_draft_saving', locale)
           : t(detail.status === 'DRAFT' ? 'expenses.review_save_draft' : 'expenses.source_draft_save', locale)}
       </button>}
@@ -1177,7 +1177,7 @@ export function ExpenseReviewEditSection({ companyId, detail, isMutable, canRevi
               </div>
             ))}
           </dl>
-          <button type="button" className={ghostClass} disabled={busy} onClick={() => setValues((v) => applyExpenseAiSuggestion(v, aiSuggestion))}>
+          <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => setValues((v) => applyExpenseAiSuggestion(v, aiSuggestion))}>
             {t('expenses.ai_suggestion_apply', locale)}
           </button>
         </div>
@@ -2044,7 +2044,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
               <option value="summary">{t('expenses.export_columns_summary', locale)}</option>
               <option value="full">{t('expenses.export_columns_full', locale)}</option>
             </ThemedSelect>
-            <button className={btnClass} onClick={exportExcel} disabled={exporting}>{exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}</button>
+            <button className={btnClass} onClick={exportExcel} disabled={exporting} aria-busy={Boolean(exporting)}>{exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}</button>
           </div>
           <p className="text-xs text-gray-400">{t('expenses.export_desc', locale)}</p>
         </div></details> : null}
@@ -2184,7 +2184,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
         footer={(
           <>
             <button type="button" className={ghostClass} disabled={deleting} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-            <button type="button" className={dangerClass} disabled={deleting} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
+            <button type="button" className={dangerClass} disabled={deleting} aria-busy={Boolean(deleting)} onClick={() => void removeExpense()}>{deleting ? 'กำลังลบ...' : 'ลบถาวร'}</button>
           </>
         )}
       >
@@ -2320,7 +2320,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
             <div className="sm:col-span-2">
               <span className="mb-1 block text-xs font-medium text-gray-600">{t('expenses.manual_receipt', locale)}</span>
               {canAttachReceipt ? <>
-                <ThemedFile file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} onChange={(file) => void selectReceiptFile(file)} />
+                <ThemedFile file={receiptFile} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy || preparingReceipt || !!savedExpenseId} loading={Boolean(busy || preparingReceipt)} onChange={(file) => void selectReceiptFile(file)} />
                 {preparingReceipt ? <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_preparing', locale)}</p>
                   : !receiptFile && <p className="mt-1 text-xs text-gray-400">{t('expenses.manual_receipt_helper', locale)}</p>}
               </> : <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">{t('expenses.manual_receipt_forbidden', locale)}</p>}
@@ -2336,7 +2336,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
                 <span className="flex items-center gap-1.5">
                   <span className="tabular-nums text-xs font-semibold text-gray-500">{baht(itemNet(item))}</span>
                   {items.length > 1 && (
-                    <button type="button" aria-label={t('expenses.manual_remove_item', locale)} disabled={busy} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-error-50 hover:text-error-600">
+                    <button type="button" aria-label={t('expenses.manual_remove_item', locale)} disabled={busy} aria-busy={Boolean(busy)} onClick={() => setItems((current) => current.filter((_, i) => i !== index))} className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-error-50 hover:text-error-600">
                       <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-4 w-4"><path d="M3.5 5.5h13m-9.5 0v-1a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5v1m-6.5 0 .6 10a1.5 1.5 0 0 0 1.5 1.4h3.8a1.5 1.5 0 0 0 1.5-1.4l.6-10M8.2 8.5v5m3.6-5v5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
                     </button>
                   )}
@@ -2407,7 +2407,7 @@ function ManualExpensePanel({ companyId, branchId, canAttachReceipt, onSuccess }
             : <>
               {/* `item.unitPrice` is truthy for "0", so a ฿0 draft used to save happily here and was
                   only refused much later, by จัดทำใบรับรองแทนใบเสร็จ. The rule belongs to this form. */}
-              <button formNoValidate={Boolean(draftSave.current.body)} disabled={busy || preparingReceipt || (!draftSave.current.body && (!expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)))} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
+              <button formNoValidate={Boolean(draftSave.current.body)} disabled={busy || preparingReceipt || (!draftSave.current.body && (!expenseDate || !amountReady || !items.every((item) => item.description.trim() && item.unitPrice)))} aria-busy={Boolean(busy)} className={cx(btnClass, 'w-full')}>{busy ? t('expenses.manual_saving', locale) : t('expenses.manual_save_draft', locale)}</button>
               {!amountReady && <p className="text-xs font-semibold leading-5 text-warning-700">{t('expenses.manual_total_required', locale)}</p>}
             </>}
           <p className="text-xs leading-relaxed text-gray-500">{t('expenses.manual_intro', locale)}</p>

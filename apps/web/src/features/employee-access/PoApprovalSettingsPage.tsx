@@ -190,7 +190,7 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
             กำหนดขั้นการอนุมัติใบสั่งซื้อ (PO) ตามวงเงิน · ใบที่อนุมัติครบขั้นแล้ว ระบบจะสร้างรายการซื้อ/รายจ่ายของวันนั้นในเมนู “ค่าใช้จ่าย+ใบเสร็จ” ให้อัตโนมัติ
           </p>
         </div>
-        <div className="flex items-center gap-3"><MangmeeBranchChip label={t('branch.scope.company_wide', locale)} /><button type="button" disabled={loading || saving || saved} aria-busy={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400">{saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}{saving ? 'กำลังบันทึก...' : saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
+        <div className="flex items-center gap-3"><MangmeeBranchChip label={t('branch.scope.company_wide', locale)} /><button type="button" disabled={loading || saving || saved} aria-busy={saving} onClick={() => void save()} className="inline-flex h-10 items-center gap-2 rounded-lg bg-brand-500 px-4 text-sm font-bold text-white disabled:bg-gray-200 disabled:text-gray-400" data-loading-indicator>{saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}{saving ? 'กำลังบันทึก...' : saved ? '✓ บันทึกแล้ว' : 'บันทึก'}</button></div>
       </div>
       {loading && <div className="text-sm text-gray-500">กำลังโหลดนโยบาย...</div>}
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -215,7 +215,7 @@ export function PoApprovalSettingsPage({ companyId }: { companyId: string }) {
 
           <button
             type="button"
-            disabled={loading}
+            disabled={loading} aria-busy={Boolean(loading)}
             onClick={() => void addRule()}
             className="mt-2 flex h-10 w-full items-center justify-center rounded-lg border border-dashed border-gray-300 bg-white text-sm font-extrabold text-gray-500 hover:border-brand-200 hover:bg-brand-25 hover:text-brand-700"
           >

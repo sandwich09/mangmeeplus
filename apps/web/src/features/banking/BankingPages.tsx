@@ -120,7 +120,7 @@ function BankAccountList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">ยอดยกมา</label><input className={inputClass} type="number" value={form.openingBalanceAmount} onChange={e => setForm(f => ({ ...f, openingBalanceAmount: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating} aria-busy={Boolean(creating)}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
@@ -146,7 +146,7 @@ function BankAccountList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3"><StatusBadge status={a.status} map={ACCOUNT_STATUS_LABELS} /></td>
                   <td className="px-4 py-3">
                     {a.status === 'ACTIVE' && (
-                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} onClick={() => action(a.id, () => deactivateBankAccount(companyId, a.id), 'ปิดใช้งานบัญชีธนาคารเรียบร้อยแล้ว')}>ปิดใช้งาน</button>
+                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} aria-busy={Boolean(actionLoading === a.id)} onClick={() => action(a.id, () => deactivateBankAccount(companyId, a.id), 'ปิดใช้งานบัญชีธนาคารเรียบร้อยแล้ว')}>ปิดใช้งาน</button>
                     )}
                   </td>
                 </tr>
@@ -268,7 +268,7 @@ function ReconciliationList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">วันสิ้นสุด *</label><ThemedDate className={inputClass} required value={form.periodEndDate} onChange={e => setForm(f => ({ ...f, periodEndDate: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังสร้าง...' : 'สร้าง'}</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating} aria-busy={Boolean(creating)}>{creating ? 'กำลังสร้าง...' : 'สร้าง'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
@@ -292,10 +292,10 @@ function ReconciliationList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3"><StatusBadge status={r.status} map={RECON_STATUS_LABELS} /></td>
                   <td className="px-4 py-3 flex gap-1 flex-wrap">
                     {['DRAFT', 'IN_REVIEW'].includes(r.status) && (
-                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === r.id} onClick={() => action(r.id, () => completeReconciliation(companyId, r.id, []), 'ดำเนินการกระทบยอดเสร็จสิ้นเรียบร้อยแล้ว')}>เสร็จสิ้น</button>
+                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === r.id} aria-busy={Boolean(actionLoading === r.id)} onClick={() => action(r.id, () => completeReconciliation(companyId, r.id, []), 'ดำเนินการกระทบยอดเสร็จสิ้นเรียบร้อยแล้ว')}>เสร็จสิ้น</button>
                     )}
                     {r.status === 'COMPLETED' && (
-                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === r.id} onClick={() => void reopen(r.id)}>เปิดใหม่</button>
+                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === r.id} aria-busy={Boolean(actionLoading === r.id)} onClick={() => void reopen(r.id)}>เปิดใหม่</button>
                     )}
                   </td>
                 </tr>
@@ -387,7 +387,7 @@ function AdjustmentList({ companyId }: { companyId: string }) {
             <div><label className="block text-xs text-gray-600 mb-1">วันที่ *</label><ThemedDate className={inputClass} required value={form.adjustmentDate} onChange={e => setForm(f => ({ ...f, adjustmentDate: e.target.value }))} /></div>
           </div>
           {error && <ErrorBanner message={error} />}
-          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
+          <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} disabled={creating} onClick={() => setShowForm(false)}>ยกเลิก</button><button type="submit" className={btnClass} disabled={creating} aria-busy={Boolean(creating)}>{creating ? 'กำลังบันทึก...' : 'บันทึก'}</button></div>
         </form>
       )}
       {!showForm && error && <ErrorBanner message={error} />}
@@ -412,13 +412,13 @@ function AdjustmentList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3"><StatusBadge status={a.status} map={ADJ_STATUS_LABELS} /></td>
                   <td className="px-4 py-3 flex gap-1 flex-wrap">
                     {a.status === 'DRAFT' && (
-                      <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} onClick={() => action(a.id, () => submitAdjustment(companyId, a.id), 'ส่งขออนุมัติรายการปรับปรุงเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>
+                      <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} aria-busy={Boolean(actionLoading === a.id)} onClick={() => action(a.id, () => submitAdjustment(companyId, a.id), 'ส่งขออนุมัติรายการปรับปรุงเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>
                     )}
                     {a.status === 'PENDING_APPROVAL' && (
-                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === a.id} onClick={() => void approve(a.id)}>อนุมัติ</button>
+                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === a.id} aria-busy={Boolean(actionLoading === a.id)} onClick={() => void approve(a.id)}>อนุมัติ</button>
                     )}
                     {['DRAFT', 'PENDING_APPROVAL'].includes(a.status) && (
-                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} onClick={() => void voidEntry(a.id)}>ยกเลิก</button>
+                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === a.id} aria-busy={Boolean(actionLoading === a.id)} onClick={() => void voidEntry(a.id)}>ยกเลิก</button>
                     )}
                   </td>
                 </tr>

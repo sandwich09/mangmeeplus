@@ -86,12 +86,12 @@ export function CorrectionNoteSection({ detail, permissions, busy, onCreate }: {
     <section className="space-y-3 border-t border-gray-200 pt-4">
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         {canCredit && (
-          <button type="button" className={ghostClass} disabled={busy || !eligibility.enabled} onClick={() => open('CREDIT_NOTE')}>
+          <button type="button" className={ghostClass} disabled={busy || !eligibility.enabled} aria-busy={Boolean(busy)} onClick={() => open('CREDIT_NOTE')}>
             ใบลดหนี้ (ลดยอด)
           </button>
         )}
         {canDebit && (
-          <button type="button" className={ghostClass} disabled={busy || !eligibility.enabled} onClick={() => open('DEBIT_NOTE')}>
+          <button type="button" className={ghostClass} disabled={busy || !eligibility.enabled} aria-busy={Boolean(busy)} onClick={() => open('DEBIT_NOTE')}>
             ใบเพิ่มหนี้ (เพิ่มยอด)
           </button>
         )}
@@ -181,7 +181,7 @@ export function CorrectionNoteSection({ detail, permissions, busy, onCreate }: {
           <button
             type="button"
             className={`${btnClass} h-14 w-full text-base`}
-            disabled={busy || !!buildError}
+            disabled={busy || !!buildError} aria-busy={Boolean(busy)}
             onClick={() => {
               if (!build || 'error' in build) return;
               void onCreate(

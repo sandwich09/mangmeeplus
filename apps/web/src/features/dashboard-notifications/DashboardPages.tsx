@@ -311,8 +311,8 @@ export function CompanyDashboardPage({
           <button
             type="button"
             onClick={handleRefresh}
-            disabled={refreshing}
-            className="shrink-0 whitespace-nowrap flex min-h-11 items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-[17px] py-[9px] sm:min-h-0 text-[15px] font-bold text-gray-600 shadow-[var(--shadow-theme-sm)] disabled:opacity-60"
+            disabled={refreshing} aria-busy={Boolean(refreshing)}
+            className="shrink-0 whitespace-nowrap flex min-h-11 items-center gap-2 rounded-[10px] border border-gray-200 bg-white px-[17px] py-[9px] sm:min-h-0 text-[15px] font-bold text-gray-600 shadow-[var(--shadow-theme-sm)] disabled:opacity-60" data-loading-indicator
           >
             <RefreshIcon className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
             {t('dashboard.home.refresh', locale)}

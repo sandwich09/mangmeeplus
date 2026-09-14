@@ -630,7 +630,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                           <div role="listbox" className="absolute left-0 top-10 z-20 w-60 max-w-[min(15rem,80vw)] overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                             {roleOptions.map((role) => (
                               <button
-                                key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy}
+                                key={role.id} type="button" role="option" aria-selected={selectedRoleIds.length === 1 && selectedRoleIds[0] === role.id} disabled={busy} aria-busy={Boolean(busy)}
                                 onClick={() => void changeSelectedRole(role.id)}
                                 className={cx('flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm font-extrabold hover:bg-gray-50 disabled:opacity-60', selectedRoleIds.includes(role.id) ? 'text-brand-700' : 'text-gray-700')}
                               >
@@ -681,9 +681,9 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                         </button>
                         {employeeMenuOpen && (
                           <div role="menu" className="fixed inset-x-4 bottom-4 z-20 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 text-sm font-extrabold shadow-lg sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-10 sm:w-52">
-                            {canEditEmployee && <button type="button" role="menuitem" disabled={busy} onClick={editSelectedEmployee} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">แก้ไขข้อมูลพนักงาน</button>}
+                            {canEditEmployee && <button type="button" role="menuitem" disabled={busy} aria-busy={Boolean(busy)} onClick={editSelectedEmployee} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">แก้ไขข้อมูลพนักงาน</button>}
                             {canIssueCredential && <button type="button" role="menuitem" disabled={busy} onClick={() => { setEmployeeMenuOpen(false); setResetError(null); setResetTarget(selectedEmployee); }} className="w-full px-3 py-2 text-left text-gray-700 hover:bg-gray-50 disabled:opacity-50">รีเซ็ตรหัสผ่าน</button>}
-                            {canDisableEmployee && <button type="button" role="menuitem" disabled={busy} onClick={() => void deleteSelectedEmployee()} className="w-full px-3 py-2 text-left text-error-700 hover:bg-error-50 disabled:opacity-50">{selectedIsDraft ? 'ลบร่างพนักงาน' : 'ลบพนักงาน'}</button>}
+                            {canDisableEmployee && <button type="button" role="menuitem" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void deleteSelectedEmployee()} className="w-full px-3 py-2 text-left text-error-700 hover:bg-error-50 disabled:opacity-50">{selectedIsDraft ? 'ลบร่างพนักงาน' : 'ลบพนักงาน'}</button>}
                           </div>
                         )}
                       </div>
@@ -828,7 +828,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
                 {canEditBranchScope && <div className="mangmee-segmented mt-5">
                   <button
                     type="button"
-                    disabled={busy || viewerBranchIds !== undefined}
+                    disabled={busy || viewerBranchIds !== undefined} aria-busy={Boolean(busy)}
                     onClick={() => void selectAllBranches()}
                     aria-pressed={selectedEmployee.branchScopeMode === 'ALL_BRANCHES' && !branchPickerOpen}
                     className={cx(
@@ -916,7 +916,7 @@ export function IndividualPermissionsPrototypePage({ companyId, viewerPermission
               ยกเลิก
             </button>
             <button
-              type="button" disabled={resetting} onClick={() => void confirmResetPassword()}
+              type="button" disabled={resetting} aria-busy={Boolean(resetting)} onClick={() => void confirmResetPassword()}
               className="inline-flex h-10 items-center rounded-lg bg-brand-600 px-4 text-sm font-extrabold text-white hover:bg-brand-700 disabled:opacity-50"
             >
               {resetting ? 'กำลังรีเซ็ต...' : 'ยืนยันรีเซ็ตรหัสผ่าน'}

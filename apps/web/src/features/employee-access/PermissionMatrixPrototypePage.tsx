@@ -360,7 +360,7 @@ export function PermissionMatrixPrototypePage({ companyId, viewerPermissions }: 
                     แก้ไข
                   </button>
                   {!selectedRole.isSystem && (
-                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={disabling} onClick={() => void handleDisable(selectedRole.id)}>
+                    <button type="button" className={`${dangerClass} h-9 px-3`} disabled={disabling} aria-busy={Boolean(disabling)} onClick={() => void handleDisable(selectedRole.id)}>
                       <TrashIcon className="h-4 w-4" />
                       {disabling ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
                     </button>

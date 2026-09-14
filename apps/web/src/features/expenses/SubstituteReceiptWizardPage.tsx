@@ -451,7 +451,7 @@ function SignatureFields({
             <span className="mb-1 block">{t('expenses.substitute_wizard.signature_file', locale)}{!savedSignatureUsed && <RequiredMark />}</span>
             <ThemedFile file={signatureFile} aria-required={!savedSignatureUsed} accept={IMAGE_UPLOAD_ACCEPT} aria-label={t('expenses.substitute_wizard.signature_file', locale)} onChange={onSelect} />
           </div>
-          <button type="button" className={ghostClass} disabled={busy || !signatureFile} onClick={onClean}>
+          <button type="button" className={ghostClass} disabled={busy || !signatureFile} aria-busy={Boolean(busy)} onClick={onClean}>
             {t('expenses.substitute_wizard.clean_signature', locale)}
           </button>
         </>
@@ -1565,7 +1565,7 @@ export function SubstituteReceiptWizardPage({
             return <li key={id} className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 p-3">
               {attachment ? <>
                 <span className="min-w-0 flex-1 break-words">{attachment.originalFileName}</span>
-                <button type="button" className={cx(ghostClass, 'shrink-0 gap-2')} disabled={busy}
+                <button type="button" className={cx(ghostClass, 'shrink-0 gap-2')} disabled={busy} aria-busy={Boolean(busy)}
                   aria-label={`${t('expenses.substitute_wizard.open_document', locale)} ${attachment.originalFileName}`}
                   onClick={() => void run(() => openEvidenceAttachment(attachment))}>
                   {ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}
@@ -1775,7 +1775,7 @@ export function SubstituteReceiptWizardPage({
                       const candidateEligible = isSubstituteReceiptCandidateEligible(item);
                       const renderabilityIssue = substituteReceiptRenderabilityIssue(item);
                       return (
-                      <button key={item.id} type="button" disabled={!canReview || busy} onClick={() => void run(() => selectExpense(item))}
+                      <button key={item.id} type="button" disabled={!canReview || busy} aria-busy={Boolean(busy)} onClick={() => void run(() => selectExpense(item))}
                         aria-label={`${t('expenses.substitute_wizard.select_action', locale)}: ${item.vendorNameSnapshot || item.lines[0]?.description || t('expenses.substitute_wizard.not_specified', locale)}, ${t('expenses.substitute_wizard.item_count', locale).replace('{count}', String(item.lines.length))}, ${item.expenseNumber}, ${baht(item.grandTotalAmount)}`}
                         className={cx(
                           'group rounded-xl border p-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500',
@@ -1954,7 +1954,7 @@ export function SubstituteReceiptWizardPage({
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
             {!canCreate && <p className="text-xs text-warning-700">{t('expenses.manual_read_only', locale)}</p>}
             {canCreate && manualMissingCount > 0 && <p className="text-xs font-medium text-gray-500">{t('expenses.substitute_wizard.manual_missing', locale).replace('{count}', String(manualMissingCount))}</p>}
-            <button type="button" className={cx(btnClass, 'ml-auto')} disabled={!createBranchId || !canCreate || !canReview || busy || categoriesLoading || Boolean(categoriesError) || categories.length === 0} onClick={() => void run(createManualExpense)}>
+            <button type="button" className={cx(btnClass, 'ml-auto')} disabled={!createBranchId || !canCreate || !canReview || busy || categoriesLoading || Boolean(categoriesError) || categories.length === 0} aria-busy={Boolean(busy || categoriesLoading)} onClick={() => void run(createManualExpense)}>
               {t('expenses.substitute_wizard.create_and_select', locale)}
             </button>
           </div>
@@ -2007,7 +2007,7 @@ export function SubstituteReceiptWizardPage({
               </div>
             </MangmeeCard>
             <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-3 sm:flex-row-reverse sm:items-center sm:justify-start">
-              <button type="button" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy || expenseStepBlockers.length > 0} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue_to_details', locale)}</button>
+              <button type="button" className={cx(btnClass, 'w-full sm:w-auto')} disabled={busy || expenseStepBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => void run(continueFromExpense)}>{t('expenses.substitute_wizard.continue_to_details', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={expenseStepBlockers} />
             </div>
           </div>
@@ -2191,7 +2191,7 @@ export function SubstituteReceiptWizardPage({
           {navigation && <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => { setActiveStep('expense'); requestWorkflowFocus('selection'); }}>{t('expenses.substitute_wizard.back', locale)}</button>
             <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
-              <button type="button" className={btnClass} disabled={busy || detailsStepBlockers.length > 0} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
+              <button type="button" className={btnClass} disabled={busy || detailsStepBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => void run(continueFromDetails)}>{t('expenses.substitute_wizard.continue_to_evidence', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={detailsStepBlockers} />
             </div>
           </div>}
@@ -2270,7 +2270,7 @@ export function SubstituteReceiptWizardPage({
                 <button
                   type="button"
                   className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-lg px-2.5 text-xs font-bold text-brand-700 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                  disabled={busy}
+                  disabled={busy} aria-busy={Boolean(busy)}
                   aria-label={`${t('expenses.substitute_wizard.open_document', locale)} ${attachment.originalFileName}`}
                   onClick={() => void run(() => openEvidenceAttachment(attachment))}
                 >
@@ -2291,20 +2291,20 @@ export function SubstituteReceiptWizardPage({
             accept={ATTACHMENT_UPLOAD_ACCEPT}
             placeholder={t('expenses.substitute_wizard.file_types', locale)}
             aria-label={t(titleKey, locale)}
-            disabled={busy}
+            disabled={busy} loading={Boolean(busy)}
             onChange={(next) => {
               setFile(next);
               if (next) void run(() => uploadEvidence(purpose, next));
             }}
           />
           {file && (
-            <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
+            <button type="button" className={cx(ghostClass, 'mt-3 w-full justify-center')} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(() => uploadEvidence(purpose))}>{t('expenses.substitute_wizard.add_file', locale)}</button>
           )}
         </div> : <p className="rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-500">{t('expenses.substitute_wizard.upload_forbidden', locale)}</p>}
         {purpose === 'expense.payment.evidence' && paymentMethod === 'CASH' && (
           <div className="rounded-xl bg-gray-50 p-3">
             <p className="text-sm text-gray-500">{t('expenses.substitute_wizard.payment_voucher_help', locale)}</p>
-            <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy} onClick={() => void run(downloadPaymentVoucher)}>
+            <button type="button" className={cx(ghostClass, 'mt-3')} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(downloadPaymentVoucher)}>
               <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute_wizard.payment_voucher_action', locale)}</span>
             </button>
           </div>
@@ -2389,7 +2389,7 @@ export function SubstituteReceiptWizardPage({
           {navigation && <div className="flex flex-col gap-3 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
             <button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('details')}>{t('expenses.substitute_wizard.back', locale)}</button>
             <div className="flex flex-col items-stretch gap-2 sm:flex-row-reverse sm:items-center">
-              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} onClick={() => editingPrepared ? void run(prepare) : setActiveStep('method')}>{t('expenses.substitute_wizard.continue', locale)}</button>
+              <button type="button" className={btnClass} disabled={busy || evidenceStepBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => editingPrepared ? void run(prepare) : setActiveStep('method')}>{t('expenses.substitute_wizard.continue', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={evidenceStepBlockers} />
             </div>
           </div>}
@@ -2433,7 +2433,7 @@ export function SubstituteReceiptWizardPage({
     {signingMethod === 'PAPER' && fundingSource === 'PERSONAL_ADVANCE' && <p role="note" className="rounded-xl bg-amber-50 p-4 text-sm leading-6">ถ้าต้องการทำใบเบิกคืนเงินต่อจากใบแทนนี้ ให้เลือกลงนามออนไลน์และเลือกบัญชีพนักงานที่สำรองจ่ายก่อน ขณะนี้ใบแทนที่เซ็นบนกระดาษโดยไม่มีบัญชีผู้สำรองจ่ายยังนำไปทำใบเบิกในระบบไม่ได้</p>}
     {signingMethod === 'PAPER' && <p className="rounded-xl bg-sky-50 p-4 text-sm leading-6">กรอกชื่อและเซ็นทั้งผู้รับรองการจ่ายและผู้อนุมัติบนกระดาษให้ครบ ผู้จัดทำอัปโหลดแทนได้ ผู้มีสิทธิ์ของบริษัทจะตรวจรับอีกครั้งก่อนเป็นเอกสารฉบับสมบูรณ์</p>}
     <div className="flex flex-wrap gap-3"><button type="button" className={ghostClass} disabled={busy} onClick={() => setActiveStep('evidence')}>{t('expenses.substitute_wizard.back', locale)}</button>
-      <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.continue', locale)}</button></div>
+      <button type="button" className={btnClass} disabled={busy || !signingMethod || (signingMethod === 'DIGITAL' && (!payerId || payersLoading))} aria-busy={Boolean(busy)} onClick={() => void run(prepare)}>{t('expenses.substitute_wizard.continue', locale)}</button></div>
     <p className="text-xs text-gray-500">เมื่อเริ่มแล้ว ข้อมูลและวิธีลงนามจะถูกผูกกับเวอร์ชันนี้ หากต้องเปลี่ยนให้ยกเลิกและจัดทำเวอร์ชันใหม่</p>
   </MangmeeCard>;
 
@@ -2514,7 +2514,7 @@ export function SubstituteReceiptWizardPage({
                 </div>
                 <p className="mt-2 text-xs leading-5 text-gray-500">{t('expenses.substitute_wizard.preview_help', locale)}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className={previewChecksum ? ghostClass : btnClass} disabled={busy} onClick={() => void run(previewPrepared)}>
+                  <button type="button" className={previewChecksum ? ghostClass : btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(previewPrepared)}>
                     <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.preview_document', locale)}</span>
                   </button>
                 </div>
@@ -2524,7 +2524,7 @@ export function SubstituteReceiptWizardPage({
                 <span>{t('expenses.substitute_wizard.certify_acknowledgement', locale)}<RequiredMark /></span>
               </label>
               <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-4 sm:flex-row-reverse sm:items-center sm:justify-start">
-                <button type="button" className={btnClass} disabled={busy || certifyBlockers.length > 0} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
+                <button type="button" className={btnClass} disabled={busy || certifyBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => void run(certify)}>{t('expenses.substitute_wizard.certify_action', locale)}</button>
                 <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={certifyBlockers} />
               </div>
               <p className="text-xs font-medium leading-5 text-gray-500 sm:text-right">{t('expenses.substitute_wizard.next_step_approve', locale)}</p>
@@ -2594,7 +2594,7 @@ export function SubstituteReceiptWizardPage({
                 <p className="flex items-center gap-2 text-sm font-semibold text-gray-700"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">3</span>{t('expenses.substitute_wizard.open_certified', locale)}<RequiredMark /></p>
                 {certifiedPreviewed && <MangmeeBadge tone="brand">{t('expenses.substitute_wizard.reviewed_badge', locale)}</MangmeeBadge>}
               </div>
-              <button type="button" className={cx(certifiedPreviewed ? ghostClass : btnClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
+              <button type="button" className={cx(certifiedPreviewed ? ghostClass : btnClass, 'mt-3')} disabled={busy || !receiptEvidence.certifiedArtifactAttachmentId} aria-busy={Boolean(busy)} onClick={() => void run(() => openArtifact(receiptEvidence.certifiedArtifactAttachmentId, true))}>
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_certified', locale)}</span>
               </button>
               {!receiptEvidence.certifiedArtifactAttachmentId && (
@@ -2606,7 +2606,7 @@ export function SubstituteReceiptWizardPage({
               <span>{t('expenses.substitute_wizard.approve_acknowledgement', locale)}<RequiredMark /></span>
             </label>
             <div className="flex flex-col items-stretch gap-2 border-t border-gray-100 pt-4 sm:flex-row-reverse sm:items-center sm:justify-start">
-              <button type="button" className={btnClass} disabled={busy || approveBlockers.length > 0} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
+              <button type="button" className={btnClass} disabled={busy || approveBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => void run(approve)}>{t('expenses.substitute_wizard.approve_action', locale)}</button>
               <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={approveBlockers} />
             </div>
           </MangmeeCard>
@@ -2635,12 +2635,12 @@ export function SubstituteReceiptWizardPage({
           <p className="mx-auto mt-4 w-fit rounded-xl border border-brand-100 bg-white px-4 py-2 font-mono text-lg font-extrabold text-gray-900 shadow-sm">{receiptEvidence.documentNumber}</p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             {receiptEvidence.artifactAttachmentId && (
-              <button type="button" className={btnClass} disabled={busy} onClick={() => void run(() => downloadSubstituteReceiptPdf(companyId, detail.id, receiptEvidence.id, receiptEvidence.documentNumber))}>
+              <button type="button" className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(() => downloadSubstituteReceiptPdf(companyId, detail.id, receiptEvidence.id, receiptEvidence.documentNumber))}>
                 <span className="inline-flex items-center gap-2">{ICON.download}{t('expenses.substitute.download_pdf', locale)}</span>
               </button>
             )}
             {receiptEvidence.artifactAttachmentId && (
-              <button type="button" className={ghostClass} disabled={busy} onClick={() => void run(openIssuedPdf)}>
+              <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(openIssuedPdf)}>
                 <span className="inline-flex items-center gap-2">{ICON.eye}{t('expenses.substitute_wizard.open_document', locale)}</span>
               </button>
             )}
@@ -2691,7 +2691,7 @@ export function SubstituteReceiptWizardPage({
               <textarea className={inputClass} maxLength={500} value={supersedeReason} onChange={event => setSupersedeReason(stripDisallowed(event.target.value))} />
             </label>
             <p className="text-xs text-gray-600">คงเอกสารเดิม ยอดจ่าย และบัญชีไว้ ผู้ลงนามเดิมตรวจและลงนามฉบับแก้อีกครั้ง</p>
-            <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(async () => {
+            <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} aria-busy={Boolean(busy)} onClick={() => void run(async () => {
               const next = await correctSubstituteDocument(companyId, detail.id, receiptEvidence.id, { reason: supersedeReason.trim(), expectedEvidenceUpdatedAt: receiptEvidence.updatedAt });
               setReceiptEvidence(next); setActiveStep('certify'); setSignerPosition('');
               router.push(`/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(next.id)}`);
@@ -2704,7 +2704,7 @@ export function SubstituteReceiptWizardPage({
                 <span className="mb-1 block">{t('expenses.substitute_wizard.supersede_reason', locale)}<RequiredMark /></span>
                 <textarea ref={supersedeReasonRef} className={inputClass} required rows={3} maxLength={500} value={supersedeReason} onChange={(event) => setSupersedeReason(stripDisallowed(event.target.value))} />
               </label>
-              <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} onClick={() => void run(supersede)}>{t('expenses.substitute_wizard.supersede_action', locale)}</button>
+              <button type="button" className={ghostClass} disabled={busy || !supersedeReason.trim()} aria-busy={Boolean(busy)} onClick={() => void run(supersede)}>{t('expenses.substitute_wizard.supersede_action', locale)}</button>
             </div>
           )}
         </div>
@@ -2850,7 +2850,7 @@ export function SubstituteReceiptWizardPage({
               <MangmeeCard className="space-y-2 p-4">
                 <p className="font-bold text-gray-900">{t('expenses.substitute_wizard.payer', locale)}: {receiptEvidence.payerName}</p>
                 <p className="text-sm text-gray-600">{t('expenses.substitute_wizard.payer_help', locale)}</p>
-                {canChangePayer && <button type="button" className={ghostClass} disabled={busy} onClick={() => {
+                {canChangePayer && <button type="button" className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => {
                   if (versionHistoryRef.current) versionHistoryRef.current.open = true;
                   supersedeReasonRef.current?.scrollIntoView({ block: 'center' });
                   supersedeReasonRef.current?.focus({ preventScroll: true });
@@ -2872,7 +2872,7 @@ export function SubstituteReceiptWizardPage({
               {!factsDisabled && activeStep !== 'expense' && <BlockedReason prefix={t('expenses.substitute_wizard.blocked_prefix', locale)} labels={[...detailsStepBlockers, ...evidenceStepBlockers]} />}
               <nav aria-label="การนำทางข้อมูลใบแทน" className="flex justify-between gap-3">
                 {activeStep !== 'expense' && <button type="button" className={ghostClass} disabled={busy} onClick={() => navigatePreparedStep('expense')}>{t('expenses.substitute_wizard.back', locale)}</button>}
-                <button type="button" className={cx(btnClass, 'ml-auto')} disabled={busy || (!factsDisabled && activeStep !== 'expense' && (detailsStepBlockers.length > 0 || evidenceStepBlockers.length > 0))}
+                <button type="button" className={cx(btnClass, 'ml-auto')} disabled={busy || (!factsDisabled && activeStep !== 'expense' && (detailsStepBlockers.length > 0 || evidenceStepBlockers.length > 0))} aria-busy={Boolean(busy)}
                   onClick={() => activeStep === 'expense' ? void run(continuePreparedSource) : returnToSigning()}>{t('expenses.substitute_wizard.continue', locale)}</button>
               </nav>
               </div>

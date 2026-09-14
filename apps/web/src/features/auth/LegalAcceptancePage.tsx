@@ -434,7 +434,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
         </nav>
         <button
           type="button"
-          disabled={submitting || loggingOut}
+          disabled={submitting || loggingOut} aria-busy={Boolean(loggingOut)}
           onClick={() => void signOut()}
           className="doc-gate-signout"
         >

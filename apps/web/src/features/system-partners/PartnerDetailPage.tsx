@@ -224,7 +224,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
           <ThemedDate className={inputClass} value={effectiveFrom} disabled={disabled || busy}
             onChange={(e) => setEffectiveFrom(e.target.value)} />
         </div>
-        <button type="button" className={btnPrimary} disabled={disabled || busy || !status} onClick={() => void save()}>
+        <button type="button" className={btnPrimary} disabled={disabled || busy || !status} aria-busy={Boolean(busy)} onClick={() => void save()}>
           {busy ? 'Saving…' : 'Save VAT status'}
         </button>
         <span className="text-xs text-gray-400">v{value.version}</span>
@@ -304,7 +304,7 @@ function LifecycleConfirmModal({
           <button
             type="button"
             className={action === 'ARCHIVED' ? btnDanger : btnPrimary}
-            disabled={loading}
+            disabled={loading} aria-busy={Boolean(loading)}
             onClick={() => onConfirm(reason)}
           >
             {loading ? 'Applying…' : `Confirm ${action}`}
@@ -505,7 +505,7 @@ function MembersSection({
                           <div className="flex gap-1.5">
                             <button
                               type="button"
-                              disabled={busy}
+                              disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handleSaveContact()}
                               className="rounded bg-gray-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
                             >
@@ -552,7 +552,7 @@ function MembersSection({
                         </span>
                         <button
                           type="button"
-                          disabled={!canReveal || busy}
+                          disabled={!canReveal || busy} aria-busy={Boolean(busy)}
                           onClick={() => void toggleReveal(m)}
                           className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
                           title={
@@ -585,7 +585,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                          disabled={busy || !m.credential}
+                          disabled={busy || !m.credential} aria-busy={Boolean(busy)}
                           onClick={() => void handleResetPassword(m)}
                         >
                           Reset password
@@ -593,7 +593,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                          disabled={busy}
+                          disabled={busy} aria-busy={Boolean(busy)}
                           onClick={() => void handleIssueLineQr(m)}
                         >
                           Issue LINE QR
@@ -601,7 +601,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-                          disabled={busy || !m.lineLinked}
+                          disabled={busy || !m.lineLinked} aria-busy={Boolean(busy)}
                           onClick={() => void handleUnlinkLine(m)}
                         >
                           Unlink LINE
@@ -787,6 +787,7 @@ function PackageMenuSection({
               className="mangmee-btn mangmee-btn-primary min-h-11 min-w-11 disabled:opacity-50"
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => void saveChanges()}
+              aria-busy={saving}
             >
               {saving ? 'กำลังบันทึก...' : 'ยืนยันและบันทึก'}
             </button>
@@ -1209,6 +1210,7 @@ function PackageMenuSection({
               className="mangmee-btn mangmee-btn-primary min-h-11 min-w-11 disabled:opacity-50"
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => setReviewOpen(true)}
+              aria-busy={saving}
             >
               {saving ? 'กำลังบันทึก...' : 'ตรวจสอบและบันทึก'}
             </button>
@@ -1477,7 +1479,7 @@ function AiUsageBudgetSection({
             <button
               type="button"
               className={btnPrimary}
-              disabled={budgetLoading || fieldsLocked}
+              disabled={budgetLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
               {budgetLoading ? 'Saving…' : 'Save'}
@@ -1607,7 +1609,7 @@ function AiUsageBudgetSection({
               <button
                 type="button"
                 className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || fieldsLocked}
+                disabled={ocrLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 onClick={() => void handleOcrSave()}
               >
                 {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
@@ -1818,7 +1820,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                   <p className="flex-1 text-sm text-amber-900">
                     ช่วงอุ่นเครื่อง อ่านรูปได้ {term.warmupSlipLimit ?? '—'} ครั้ง จนถึง {formatThaiDateTime(term.warmupUntil!)}
                   </p>
-                  <button type="button" className={btnSecondary} onClick={handleEndWarmup} disabled={endingWarmup}>
+                  <button type="button" className={btnSecondary} onClick={handleEndWarmup} disabled={endingWarmup} aria-busy={Boolean(endingWarmup)}>
                     {endingWarmup ? 'กำลังปลด...' : 'ตรวจแล้ว'}
                   </button>
                 </div>
@@ -1918,7 +1920,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 <p className="mt-1 text-xs text-gray-500">สิทธิ์เมนูของบริษัทคงเดิม</p>
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
+                <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving} aria-busy={Boolean(saving)}>
                   {saving ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
                 <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving}>
@@ -1941,7 +1943,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <button type="button" className={btnSecondary} onClick={() => setRenewOpen(false)} disabled={renewing}>
                 ยกเลิก
               </button>
-              <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing}>
+              <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing} aria-busy={Boolean(renewing)}>
                 {renewing ? 'กำลังต่ออายุ...' : 'ต่ออายุ'}
               </button>
             </>
@@ -2094,7 +2096,7 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
           ระบบจะแนบชื่อผู้ส่งให้อัตโนมัติ ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
           ({text.trim().length}/{PARTNER_LINE_MESSAGE_MAX_LENGTH})
         </p>
-        <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()}>
+        <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()} aria-busy={Boolean(sending)}>
           {sending ? 'กำลังส่ง...' : 'ส่งข้อความ'}
         </button>
       </div>
@@ -2414,7 +2416,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
                 <input className={inputClass} type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} disabled={editLoading} />
               </div>
               <div className="col-span-full mt-1 flex items-center gap-2">
-                <button type="submit" className={btnPrimary} disabled={editLoading}>
+                <button type="submit" className={btnPrimary} disabled={editLoading} aria-busy={Boolean(editLoading)}>
                   {editLoading ? 'Saving…' : 'Save changes'}
                 </button>
                 <button type="button" className={btnSecondary} onClick={() => setEditMode(false)} disabled={editLoading}>
@@ -2497,7 +2499,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
             <button
               type="button"
               className={btnPrimary}
-              disabled={aiModelLoading || !aiModelInput || fieldsLocked}
+              disabled={aiModelLoading || !aiModelInput || fieldsLocked} aria-busy={Boolean(aiModelLoading)}
               onClick={handleAiModelSave}
             >
               {aiModelLoading ? 'Saving…' : 'Save'}

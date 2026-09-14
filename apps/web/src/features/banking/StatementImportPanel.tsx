@@ -203,7 +203,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
           onChange={(e) => { setRawText(e.target.value); setFileName(undefined); setPreview(null); setCommitResult(null); }}
         />
         <div className="flex gap-2 items-center">
-          <button className={btnClass} disabled={busy || !rawText.trim() || !bankAccountId} onClick={handlePreview}>ตรวจสอบตัวอย่าง</button>
+          <button className={btnClass} disabled={busy || !rawText.trim() || !bankAccountId} aria-busy={Boolean(busy)} onClick={handlePreview}>ตรวจสอบตัวอย่าง</button>
           {fileName && <span className="text-xs text-gray-500">ไฟล์: {fileName}</span>}
         </div>
       </div>
@@ -269,10 +269,10 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
               <input type="radio" checked={duplicatePolicy === 'flag'} onChange={() => setDuplicatePolicy('flag')} />
               นำเข้าแถวซ้ำพร้อมทำเครื่องหมาย
             </label>
-            <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy || preview.validRows === 0} onClick={handleCommit}>
+            <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy || preview.validRows === 0} aria-busy={Boolean(busy)} onClick={handleCommit}>
               ยืนยันนำเข้า {preview.validRows} แถว
             </button>
-            <button className={ghostClass} disabled={busy} onClick={resetInput}>เริ่มใหม่</button>
+            <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={resetInput}>เริ่มใหม่</button>
           </div>
         </div>
       )}
@@ -304,7 +304,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3 text-xs">{IMPORT_STATUS_LABELS[im.status] ?? im.status}</td>
                   <td className="px-4 py-3">
                     {im.status === 'COMMITTED' && (
-                      <button className={ghostClass + ' text-xs py-1 px-2 text-red-600'} disabled={busy} onClick={() => handleVoidImport(im.id)}>ยกเลิกการนำเข้า</button>
+                      <button className={ghostClass + ' text-xs py-1 px-2 text-red-600'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => handleVoidImport(im.id)}>ยกเลิกการนำเข้า</button>
                     )}
                   </td>
                 </tr>

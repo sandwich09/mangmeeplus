@@ -596,7 +596,7 @@ function ConsentTab({ companyId, customerId, customer, canErase }: { companyId: 
           ) : (
             <button
               onClick={onErase}
-              disabled={busy}
+              disabled={busy} aria-busy={Boolean(busy)}
               className="mt-3 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
             >
               {busy ? t('customers.erasing', locale) : t('customers.erase_button', locale)}
