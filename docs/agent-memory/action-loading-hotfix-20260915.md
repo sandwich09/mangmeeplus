@@ -1,6 +1,6 @@
 # Agent Memory: Action loading hotfix 2026-09-15
 
-Status: Implemented and locally verified; PR/CI/admin merge and UAT acceptance pending.
+Status: Loading implementation and develop/main admin merges complete; single UAT operation next.
 Owner: MangmeeDev; user authorizes admin merge into develop and main, then UAT hotfix.
 Scope: Visible in-flight feedback on asynchronous action controls throughout the existing web
 application, including menus/dialogs/file preparation, without changing API/permission/business
@@ -33,8 +33,8 @@ Artifacts:
   actual handler bodies with deferred/rejected promises, duplicates, retry and stale read responses.
 Verification:
 - Frozen-lock offline install and contracts build PASS; no package/lock/schema/API/workflow edits.
-- Full web suite PASS: 1,714 tests, zero failed/skipped. Final web typecheck PASS; production build
-  previously PASS and final reviewed clipboard/read additions build pending.
+- Full web suite PASS: 1,714 tests, zero failed/skipped. Final web typecheck and final production
+  build PASS on reviewed clipboard/read additions.
 - Coverage audit PASS: 395 pending controls, zero missing indicators; codemod idempotent.
 - git diff --check PASS. Maintenance pins current: exactFiles=45,
   validatorSha256=cee4f9e7e9a5a6d34e9d37b869f574844b6e0fd5318a96bb78c4e40a148a963d.
@@ -51,9 +51,31 @@ Verification:
   pending status. Clipboard/rejected AI/reconciliation handler checks added.
 - Live browser acceptance and signed/customer OPEN acceptance remain pending; static audit is
   not a claim that every product journey was browser-tested.
-Next: PR565 exact latest-head CI (old f0533a05 run34876324566 superseded by reviewed follow-up);
-merge exact passing heads into develop/main; read mandatory runbooks again before a single retained
+Next: Commit this docs-only operator checkpoint after fast-forwarding the owned worktree to
+accepted main f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9; keep the local controller clean.
+Its application/controller inputs must still equal fresh main.
+Build/deploy uses the independently pinned origin/main source, never the docs-only checkpoint.
+Read mandatory runbooks again before a single retained
 Kamal hotfix operation, then verify signature/readiness/public OPEN and browser read-only journey.
 
-Release ledger: candidate/controller pending; UAT_RUN_ID/READY_RUN_ID/PROD_RUN_ID NONE (no GitHub
-release workflows requested); local Kamal operation pending. No live mutation in this turn yet.
+Release ledger:
+- Reviewed candidate: c8800655a598e95ab8a2a1a7659b95ea9bd39854; superseded f0533a05 CI34876324566
+  cancelled after source changed (CI only, not a release).
+- PR565 actual full CI34876912709 PASS: real Typecheck and Test, PostgreSQL, workspace tests,
+  LINE whole-chain, image-security/maintenance/immutable identity and artifact checks ran.
+- PR565 admin MERGED into develop at 2026-09-14T18:07:57Z, merge commit
+  a852f06d748ce5508d16d51407ef26a97f02c4c7. Develop tree exactly equals reviewed candidate.
+- PR566 develop→main head a852f06d748ce5508d16d51407ef26a97f02c4c7; full CI34878949174 PASS,
+  real workspace/PostgreSQL/LINE/security checks ran. Admin MERGED at 2026-09-14T18:27:20Z,
+  main merge/source f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9. Main tree exactly equals c8800655.
+  No unrelated billing code in its tree. Billing PR558 is still open, not merged/modified here.
+- Functional controllerSha256: 1d3f408450f03d28c4406125b7ecf183b853d387c5fe867a3f9967090821efb2,
+  equal to reviewed main. Config contract unchanged; final serving source/digests pending.
+- UAT_RUN_ID/READY_RUN_ID/PROD_RUN_ID NONE (no GitHub release workflows dispatched);
+  local Kamal operation pending. No live release mutation this turn yet.
+- Fresh non-root account/EC2/enrollment/strict SSH checks PASS: retained UAT hosts running,
+  Dev stopped, same enrolled addresses/keys. Workstation IP matches owner-approved permanent
+  allowlist; scoped deploy role intentionally cannot DescribeSecurityGroups, existing non-root
+  reader exact-read confirms both /32 rules remain on both UAT groups. No IAM/SG change.
+- Zero active local UAT operations across 159 existing worktrees. No active UAT/READY/Production
+  workflow for this release; historical empty August12 READY ghost31611733340 is not this flow.
