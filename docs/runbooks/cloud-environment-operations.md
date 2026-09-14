@@ -39,7 +39,7 @@ stopped, and Production is unchanged. PR561/develop and PR562/main passed full e
 merge; owner explicitly authorized admin merge for main's missing reviewer approval only. See the
 linked release ledger for exact immutable image digests and signed artifact hash.
 
-Latest serving UAT loading hotfix: operation `20260914T182800Z-e3b8bc63`, main source
+Previous serving UAT loading hotfix: operation `20260914T182800Z-e3b8bc63`, main source
 `f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9`, accepted 2026-09-14T18:34:03.090095Z,
 `ACCEPTED_LINE_DEFERRED`,364.651s, all eleven phases PASSED and KMS signature verified, customer
 `OPEN`. Exact API/DB, AI and Workers/Redis/internal API configs/readiness passed. AgentCore
@@ -51,6 +51,24 @@ before owner-authorized admin merges. [Loading scope, exact digests and signed e
 Login/logout is NOT_REQUIRED_BY_OWNER, live LINE DEFERRED_BY_OWNER under retained UAT smoke
 authorization; CI LINE fixture acceptance is separate. Earlier serving-operation entries below
 are historical, not the currently deployed source.
+
+Latest serving UAT preview-cover/performance hotfix: operation `20260914T192255Z-e036fe7a`, main
+source `5b2fd63bf82a2917bb47dd0c9a75e2d50edf324c`, finished2026-09-14T19:30:05.252048Z,
+`ACCEPTED_LINE_DEFERRED`,429.541s; all11 phases PASSED, KMS signature verified, customer `OPEN`.
+Exact API/DB, AI and workers/Redis/internal API source/config/readiness passed; AgentCore now
+`kamal_uat_a` version7. Fresh Drtb View shows an immediate centered document-area cover, disabled
+print, then a readable page and enabled print; early-close prevents late response reopening.
+The PDF.js RGB-tail offset patch removes repeated prior-chunk work: paired isolated serving-image
+synthetic pipeline median5.688s→1.609s (~72% faster), with identical page size/encoding quality.
+No source/checksum/tenant permission change. PR569/develop CI34884275830 and PR570/main CI34884441376
+passed full actual checks before owner-authorized admin merges; main reviewer waiver only.
+Both UAT hosts retain enrolled addresses and permanent SSH rules, Dev is stopped and Production
+unchanged. [Exact digests, signed artifact and verification](../agent-memory/preview-cover-performance-hotfix-20260915.md).
+Login/logout and live LINE remain covered only by the retained UAT smoke exception above.
+Old zero-phase `RUNNING` shell `20260911T164143Z-49739d4d` has two historical snapshot copies,
+unchanged since Sep11 with no active lock or mutation phase; targeted process check finds no old
+controller. Do not count stale receipt labels/snapshot duplicates as live queued/running operations,
+or rewrite/delete historical evidence; verify active lock, process and mutation evidence instead.
 
 Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
 are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule

@@ -1,6 +1,6 @@
 # Agent Memory: Preview cover and performance hotfix 2026-09-15
 
-Status: Both full exact-head CIs PASS; admin merged develop/main, preparing one retained UAT hotfix.
+Status: Hotfix admin merged and UAT accepted, signed and OPEN; browser acceptance PASS. Evidence docs merges pending.
 Owner: MangmeeDev; user requests cover loading, measured optimization and the same admin merge /
 UAT deployment workflow. Production is out of scope.
 Scope: Substitute document preview UX and the shared PDF-to-preview rendering bottleneck;
@@ -55,13 +55,12 @@ Verification:
   allowlists PASS; complete production-image-security fixtures PASS.
   Security audit PASS at existing high threshold: zero high/critical, existing13 moderate/1 low remain.
   Root patch registration, lock hash and dependency set remain unchanged after frozen install.
-Next: One retained UAT hotfix, signed/customer OPEN acceptance and fresh browser cover verification;
-then docs-only evidence merges to develop/main. Production remains out of scope.
+Next: Docs-only evidence merges to develop/main; no second deploy for non-runtime docs. Production unchanged.
 
 Release ledger:
 - Existing serving source f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9,
-  prior accepted operation20260914T182800Z-e3b8bc63. Current task has no deploy yet.
-- UAT_RUN_ID / READY_RUN_ID / PROD_RUN_ID NONE; local Kamal operation pending.
+  prior accepted operation20260914T182800Z-e3b8bc63 is now historical.
+- UAT_RUN_ID / READY_RUN_ID / PROD_RUN_ID NONE; standalone Kamal operation20260914T192255Z-e036fe7a.
 - Reviewed candidate f3f5ff4561e5e2b0875ff97e9ed80db000b0d6db.
   PR569→develop CI34884275830 and PR570→main CI34884441376 (same hotfix head, independent PR refs)
   run full application checks in parallel; neither is merged until both exact-head CIs actually pass.
@@ -87,3 +86,42 @@ Release ledger:
   Functional controller digest remains1d3f408450f03d28c4406125b7ecf183b853d387c5fe867a3f9967090821efb2.
 - Cloud runbook read completely before isolated synthetic compute/read-only AWS instance inspection.
   UAT API t3.large x86_64 and AI/workers t3.medium x86_64; no architecture emulation mismatch.
+
+## Accepted UAT release
+
+- Exactly one dispatch, no error/retry: operation20260914T192255Z-e036fe7a, started19:22:55.709062Z,
+  finished19:30:05.252048Z (2026-09-14 UTC),429.541s; all11 phases PASSED,
+  terminal ACCEPTED_LINE_DEFERRED, productionMutated=false.
+- Serving source5b2fd63bf82a2917bb47dd0c9a75e2d50edf324c; reviewed candidatef3f5ff45 is an ancestor
+  of develop/main and its tree equals serving main. Operator checkpointcb9940913190b302a93ae7b26c777d034d5b825e
+  changes memory only; functional controller SHA1d3f408450f03d28c4406125b7ecf183b853d387c5fe867a3f9967090821efb2
+  equals reviewed main. Config contract5b1853730bb96bc33b4ee962add22d01b47a181dd3a7b233b7c2096966553d1b.
+- Release ID95f62d5a95821f8a7b9028b97550c4ff2bb4946ade1b7e9ab4776c8f128db7da.
+  accepted.json SHA256ad5eea6de787e199e2de888f9c299dbd6ca2aa0e2e0c0bd479c0d9c4c5cca687;
+  ECDSA_SHA_256 KMS keycb315bdc-b5ab-42fb-be32-fe9cee2a2d44, signature verified=true.
+- Exact immutable image digests:
+  - api-web sha256:81ce5169575737a55b9231c96bbd26ff72c65250266710eccf801173b7966269
+  - ai-gateway sha256:d38d57d6fb36fef7bfe16743c34df98cbf9951c81c9d127ab1ad1612a316ff6d
+  - workers sha256:7aab89fba00779164f0108fdd142bd2db6543289b03c92547b661f4ac4547049
+  - tools sha256:3dcf7fce8762fc796b20a83b1e07411b80af013a201d6dbe81e5f48b77a8307c
+- Exact source/config/runtime checks PASS for all3 services. API/DB, AI, workers/Redis/internal API
+  readiness passed. AgentCore now kamal_uat_a version7 (previousB6), UPDATED_PINNED.
+- customerAcceptance.passed=true, allServiceConfigAndReadinessPassed=true; public platform-access
+  GET200 stateOPEN and login GET200 data-platform-access="open" separately rechecked.
+  Login/logout NOT_REQUIRED_BY_OWNER, live LINE DEFERRED_BY_OWNER under retained UAT smoke exception;
+  actual CI LINE fixtures are not live LINE acceptance or Production readiness.
+- Fresh Chrome Drtb reload and existing SRC-202609-00002 read-only View: modal/large centered cover
+  already observed~281ms after click; screenshot shows clearly visible cover, readable label,
+  close available and print disabled. Complete page and enabled print observed3156ms after click
+  (browser observation including transport/screenshot, not precise HTTP duration).
+  Early-close during loading PASS; old response did not reopen modal; both hub row states retained.
+  No sign/approve/upload/cancel/payment mutation was performed. The Sun coffee inaccessible original
+  record was not re-tested through another tenant or permission bypass.
+- New-container bounded logs for API, AI and workers: zero missing-renderer/DOMMatrix, explicit HTTP5xx,
+  or timed-out patterns. Fresh EC2 verifies both UAT hosts keep enrolled public/private addresses,
+  Dev stopped; permanent SSH rules preserved. Production, Cloudflare and IAM untouched.
+- Broad receipt scan found two copies of old zero-phase RUNNING shell20260911T164143Z-49739d4d,
+  unchanged since Sep11, productionMutated=false, no active lock/source/mutation phases. Targeted process
+  check found only the current release controller, no old operation reference. Retain these historical
+  artifacts; their stale label is not an active deploy. No recovery or duplicate dispatch was needed.
+- Private artifacts remain in .env.kamal/uat/runs/20260914T192255Z-e036fe7a; no secrets committed.
