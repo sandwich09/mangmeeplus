@@ -1,6 +1,6 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
-Latest checkpoint: **133 combined browser/HTTP scenario groups PASS**, [result](browser-result.json). Actual Next/Nest/PostgreSQL/auth/CSRF/legal gates and the isolated marketing bundle execute with simulated Stripe, Postmark and LINE transports. The complete spec/plan remains **IN PROGRESS**. No CI, push, merge or deployment has occurred.
+Latest checkpoint: **133 combined browser/HTTP scenario groups PASS**, [result](browser-result.json). Actual Next/Nest/PostgreSQL/auth/CSRF/legal gates and the isolated marketing bundle execute with simulated Stripe, Postmark and LINE transports. The complete spec/plan remains **IN PROGRESS**. These local results do not certify GitHub CI, merge or deployment; see the implementation memory for current delivery state.
 
 ## Current verified scope
 
