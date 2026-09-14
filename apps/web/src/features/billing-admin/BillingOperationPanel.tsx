@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { BillingRepairOperation } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
+import { apiErrorMessage } from '@/common/api/api-error-message';
 const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
 const labels: Record<string, string> = { PREVIEW: 'ตรวจสอบก่อนส่งคำสั่ง', QUEUED: 'รอระบบตรวจสอบ', RUNNING: 'กำลังตรวจสอบ', SUCCEEDED: 'ตรวจสอบสถานะล่าสุดแล้ว',
   UNKNOWN: 'ยังยืนยันผลไม่ได้', BLOCKED: 'ต้องตรวจสอบสิทธิ์หรือเงื่อนไข', FAILED: 'ดำเนินการไม่สำเร็จ', CANCELLED: 'ยกเลิกคำสั่งตรวจสอบแล้ว' };
@@ -52,7 +53,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
         action === 'submit' ? await api<BillingRepairOperation>('', { previewId: operation!.id, previewHash: operation!.previewHash, expectedVersion: operation!.version }, `billing-op-${operation!.id}`) :
           await api<BillingRepairOperation>(`/${operation!.id}/${action}`, { expectedVersion: operation!.version });
       accept(value); setPollEnded(false); setReload(v => v + 1);
-    } catch { setError('ยังยืนยันคำสั่งไม่ได้ กรุณาโหลดรายการเดิมหรือข้อมูลบริษัทล่าสุดก่อนดำเนินการต่อ'); }
+    } catch (error) { setError(apiErrorMessage(error)); }
     finally { setBusy(false); }
   }
   return <section className="space-y-4 rounded-xl border bg-white p-5" aria-label="คำสั่งตรวจสอบการชำระเงิน">

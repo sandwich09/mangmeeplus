@@ -7,6 +7,15 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  LINE_CHANNEL_MIGRATION_REQUIRED: 'ใช้ Channel ID ปัจจุบัน การเปลี่ยนบัญชีทางการ LINE ต้องให้ผู้ดูแลระบบตรวจแผนย้ายบัญชีที่เชื่อมไว้ก่อน',
+  LINE_CREDENTIAL_CHANGED: 'มีผู้แก้การตั้งค่า LINE แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนยืนยันใหม่',
+  LINE_CREDENTIAL_KIND_UNSUPPORTED: 'หน้านี้รองรับเฉพาะข้อมูลรับรอง Messaging ของบัญชี LINE ปัจจุบัน กรุณากลับไปเลือกการตั้งค่าที่รองรับ',
+  LINE_CREDENTIAL_RATE_LIMIT: 'ตรวจข้อมูลรับรอง LINE ถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
+  LINE_CREDENTIAL_UNAVAILABLE: 'อ่านการตั้งค่า LINE ไม่ได้ ให้ผู้ดูแลระบบตรวจการเชื่อมต่อแล้วลองรายการเดิมอีกครั้ง',
+  LINE_REAUTH_FAILED: 'ยืนยันรหัสผ่านปัจจุบันไม่สำเร็จ กรุณาตรวจรหัสผ่านแล้วลองอีกครั้ง',
+  LINE_TOKEN_CHANNEL_OR_EXPIRY: 'Token ไม่ตรงกับ Channel ปัจจุบันหรือใกล้หมดอายุ กรุณาใช้ Token ใหม่ของ Channel นี้จาก LINE Developers',
+  LINE_TOKEN_CHECK_UNAVAILABLE: 'ยังตรวจ Token กับ LINE ไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
+  LINE_TOKEN_REJECTED: 'LINE ไม่ยอมรับ Token นี้ กรุณาใช้ short-lived หรือ long-lived token ของ Channel ปัจจุบันจาก LINE Developers',
   EMPLOYEE_BRANCH_SCOPE_UNAVAILABLE: 'กรุณาแก้สาขาที่พนักงานมีสิทธิ์และสาขาเริ่มต้นให้ใช้งานได้ ก่อนเปิดสิทธิ์อีกครั้ง',
   BILLING_RATE_LIMIT: 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
   CONTROL_ACTION_NOT_SUPPORTED: 'เปลี่ยนแพ็กเกจผ่านหน้ามั่งมี โดยใช้ตัวเลือกซื้อซ้ำและเปลี่ยนแพ็กเกจ',

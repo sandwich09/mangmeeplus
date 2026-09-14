@@ -77,7 +77,7 @@ export class BillingNotificationsService {
     else if(!['FAILED','SKIPPED'].includes(row.status))blockedReason=row.status==='SENT'?'ALREADY_ACCEPTED':'DELIVERY_NOT_RETRYABLE';
     else if(row.recipient.event.status!=='OPEN'||!owner)blockedReason='RECIPIENT_OR_EVENT_INACTIVE';
     else if(!channels.includes('line')||!triggers.includes(row.recipient.event.triggerKey))blockedReason='PREFERENCE_SUPPRESSED';
-    else if(!channelId||!(await this.lineCredentials.get(tx)).accessToken)blockedReason='LINE_CONFIGURATION_MISSING';
+    else if(!channelId||!await this.lineCredentials.get(tx).then(credentials=>Boolean(credentials.accessToken),()=>false))blockedReason='LINE_CONFIGURATION_MISSING';
     else if(!identity)blockedReason='NO_LINE_DELIVERY_TARGET';
     if(identity)try{
       const message=buildLineMessage({companyId,title:row.recipient.event.title,body:row.recipient.event.body,severity:row.recipient.event.severity.toLowerCase(),deepLinkHref:this.billingHref(companyId)});

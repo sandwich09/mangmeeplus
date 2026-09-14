@@ -11,7 +11,7 @@ import { BillingService } from '../modules/billing/application/billing.service';
 /** Full compiled AppModule + HTTP + PostgreSQL. Only external provider transports are simulated. */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { NestFactory } from '@nestjs/core';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -51,6 +51,7 @@ async function main() {
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',
     POSTMARK_WEBHOOK_USERNAME: 'synthetic-billing', POSTMARK_WEBHOOK_PASSWORD: randomUUID(),
     LINE_MESSAGING_CHANNEL_SECRET: 's'.repeat(32), LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
+    CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
     STRIPE_ACCOUNT_ID: accountId, STRIPE_SECRET_KEY: `sk_test_${run}`, STRIPE_WEBHOOK_SECRET: webhookSecret,
     WATCHDOG_JWT_SECRET_ARN: secret, WATCHDOG_JWT_ISSUER: DEFAULT_JWT_ISSUER, WATCHDOG_JWT_AUDIENCE: DEFAULT_JWT_AUDIENCE,
     WORKER_INTERNAL_TOKEN: workerToken, WEB_BASE_URL: 'https://app.example.test', REQUEST_LOG_ENABLED: 'false', LOG_LEVEL: 'error', AWS_EC2_METADATA_DISABLED: 'true' });

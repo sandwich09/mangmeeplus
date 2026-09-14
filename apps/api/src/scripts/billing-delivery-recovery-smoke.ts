@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingCases} from './billing-cases-smoke';
 import {checkBillingMailRecovery} from './billing-mail-recovery-smoke';
+import {AppConfigService} from '../common/config/app-config.service';
+import {encryptCredential} from '../modules/system-partner-management/domain/logic/credential-cipher.logic';
 
 export async function checkBillingDeliveryRecovery(input:Parameters<typeof checkBillingCases>[0]){
   const {request,delegated,companyId,stripeAccountId,browser,targetId,targetRoleId,otherCompanyId,notificationFixture}=input,db=input.prisma.client,run=randomUUID();
@@ -24,10 +26,39 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
   const submit=(op:any,actor=delegated)=>actor(`${base}/operations`,'POST',{previewId:op.id,previewHash:op.previewHash,expectedVersion:op.version},{'idempotency-key':`notice-repair-${op.id}`});
   const state=()=>db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),beforeAccount=await state(),beforeGrants=await db.billingReceiptGrant.findMany({where:{companyId},orderBy:{id:'asc'}});
   const viewport=browser?.page.viewportSize();
+  let credentialId:string|undefined;
   try{
     const row=await queue(),view=await get(row.id);assert.equal(view.status,200,JSON.stringify(view));assert.equal(view.body.canRetry,true);
     assert.doesNotMatch(JSON.stringify(view.body),/@example\.test|providerUserId|channelAccessToken|"metadataJson"/);
     assert.equal((await delegated(`${base}/companies/${otherCompanyId}/deliveries/${row.id}`)).status,404);
+    // Fault injection is confined to the isolated smoke DB; publication authorization has its own real HTTP proof.
+    assert.equal(await db.platformLineCredential.count({where:{credentialKind:'LINE_MESSAGING_API'}}),0);
+    const config=new AppConfigService(),publishedToken=`synthetic-repaired-${run}`;
+    const encrypted=(expiresAt:Date)=>encryptCredential(JSON.stringify({schemaVersion:1,channelId:config.lineMessagingChannelId,
+      channelSecret:'b'.repeat(32),accessToken:publishedToken,tokenExpiresAt:expiresAt.toISOString()}),config.credentialEncryptionKey);
+    const publication=await db.platformLineCredential.create({data:{credentialKind:'LINE_MESSAGING_API',encryptedSecretJson:'synthetic-corrupt',runtimePublishedAt:new Date()}});
+    credentialId=publication.id;
+    const beforeReadSends=notificationFixture.line.length;
+    for(const fault of ['corrupt','expired']){
+      if(fault==='expired')await db.platformLineCredential.update({where:{id:publication.id},data:{encryptedSecretJson:encrypted(new Date(0)),secretVersion:{increment:1}}});
+      const unavailable=await get(row.id);assert.equal(unavailable.status,200,JSON.stringify(unavailable));assert.equal(unavailable.body.recoveryBlockedReason,'LINE_CONFIGURATION_MISSING');assert.equal(unavailable.body.canRetry,false);
+      const list=await delegated(deliveryBase);assert.equal(list.status,200,JSON.stringify(list));assert.ok(list.body.items.some((item:any)=>item.id===row.id&&item.recoveryBlockedReason==='LINE_CONFIGURATION_MISSING'));
+      assert.doesNotMatch(JSON.stringify([unavailable.body,list.body]),/synthetic-repaired|synthetic-corrupt|encryptedSecretJson|channelSecret|accessToken/);
+      const refused=await delegated(`${base}/operations/preview`,'POST',{type:'RETRY_NOTIFICATION',companyId,expectedVersion:account.version,referenceId:row.id,reason:'ตรวจรายการเดิมขณะข้อมูลรับรองไม่พร้อม'});
+      assert.equal(refused.body.code,'CONTROL_NOTIFICATION_REVIEW');assert.ok(refused.status>=400&&refused.status<500);
+      if(browser){
+        const page=browser.page;await page.setViewportSize({width:390,height:844});
+        await page.goto(`${browser.origin}/system/billing/companies/${companyId}/deliveries/${row.id}`,{waitUntil:'domcontentloaded'});
+        await page.getByRole('heading',{name:'TEST · LINE · SKIPPED',exact:true}).waitFor();await page.getByText(/ให้ผู้ดูแลระบบตรวจการเชื่อมต่อ LINE/).first().waitFor();
+        assert.equal(await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).count(),0);
+        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+        if(fault==='expired')await page.screenshot({path:`${browser.evidenceDir}/admin-delivery-config-unavailable-mobile.png`,fullPage:true});
+      }
+    }
+    assert.equal(notificationFixture.line.length,beforeReadSends);assert.deepEqual(await db.notificationDelivery.findUniqueOrThrow({where:{id:row.id}}),row,'read/denied preview must preserve the original journal');
+    await db.platformLineCredential.update({where:{id:publication.id},data:{encryptedSecretJson:encrypted(new Date(Date.now()+86400000)),secretVersion:{increment:1}}});
+    assert.equal((await get(row.id)).body.canRetry,true);
+    if(browser){await browser.page.getByRole('button',{name:'โหลดรายการส่งล่าสุด',exact:true}).click();await browser.page.getByText('พร้อมให้ตรวจสอบก่อนนำรายการเดิมกลับเข้าคิว',{exact:true}).waitFor();}
     const op=await preview(row.id),rival=await preview(row.id,request);const queued=await submit(op);assert.equal(queued.status,202,JSON.stringify(queued));
     assert.equal((await submit(op)).body.id,op.id);assert.equal((await submit(rival,request)).status,409);
     await input.drainOperations();assert.equal((await delegated(`${base}/operations/${op.id}`)).body.state,'SUCCEEDED');
@@ -36,6 +67,7 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
     await db.notificationDelivery.update({where:{id:row.id},data:{nextAttemptAt:new Date(0)}});await input.drainNotifications();
     sent=await db.notificationDelivery.findUniqueOrThrow({where:{id:row.id}});assert.equal(sent.status,'SENT');assert.equal(sends().length,beforeSends+2);
     assert.equal(sends()[beforeSends]!.key,sends()[beforeSends+1]!.key);
+    assert.equal(sends()[beforeSends]!.authorization,`Bearer ${publishedToken}`);assert.equal(sends()[beforeSends+1]!.authorization,`Bearer ${publishedToken}`);
     assert.equal((await get(row.id)).body.recoveryBlockedReason,'ALREADY_ACCEPTED');
     assert.deepEqual((await delegated(`${base}/operations?companyId=${companyId}&referenceId=${row.id}`)).body.items.map((r:any)=>r.referenceId),[row.id,row.id]);
     assert.equal((await submit(op)).body.id,op.id);assert.equal((await db.notificationDelivery.findUniqueOrThrow({where:{id:row.id}})).status,'SENT');
@@ -80,9 +112,10 @@ export async function checkBillingDeliveryRecovery(input:Parameters<typeof check
     }
     const mailCases=await checkBillingMailRecovery({...input,invoiceId:invoice.id});
     assert.deepEqual(await state(),beforeAccount);assert.deepEqual(await db.billingReceiptGrant.findMany({where:{companyId},orderBy:{id:'asc'}}),beforeGrants);
-    return ['admin-delivery-scoped-source-preview-concurrency-replay-and-lost-line-response','admin-delivery-revoked-operator-before-send-parks-original-and-new-review-recovers',
+    return ['admin-delivery-corrupt-expired-published-credentials-readable-blocked-and-original-recovery','admin-delivery-scoped-source-preview-concurrency-replay-and-lost-line-response','admin-delivery-revoked-operator-before-send-parks-original-and-new-review-recovers',
       'admin-delivery-content-preference-accepted-budget-and-aged-key-fences',...(browser?['browser-admin-original-delivery-preview-command-reload-return-and-mobile']:[]),...mailCases];
   }finally{
+    if(credentialId)await db.platformLineCredential.delete({where:{id:credentialId}});
     if(browser&&viewport)await browser.page.setViewportSize(viewport);
     await db.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:scope.expiresAt}});await db.rolePermission.delete({where:{roleId_permissionId:rolePermission}});
     const deliveries=await db.notificationDelivery.findMany({where:{recipientId:recipient.id},select:{id:true}}),ids=deliveries.map(d=>d.id);

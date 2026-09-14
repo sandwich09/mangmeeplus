@@ -20,7 +20,7 @@ export async function checkBillingProviderEvents(input: {
   const invoiceId=`in_event${run}`,customerId=`cus_event${run}`,eventIds:string[]=[];
   const member=await db.companyMembership.findUniqueOrThrow({where:{id:membershipId}});
   const originalTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:member.companyId}});
-  let adminId:string|undefined,createdAdmin=false;
+  let adminId:string|undefined,createdAdmin=false,browserRateLimit=false;
   const read=(id:string)=>request(`${base}/provider-events/${id}`);
   const preview=async(id:string)=>{const event=await read(id);assert.equal(event.status,200,JSON.stringify(event));
     return request(`${base}/provider-events/${id}/preview`,'POST',{sourceHash:event.body.sourceHash,reason:'ตรวจหลักฐานเดิมก่อนดำเนินการ'});};
@@ -120,7 +120,19 @@ export async function checkBillingProviderEvents(input: {
       await page.getByRole('region',{name:'รายละเอียด event',exact:true}).getByText(/PROCESSED/).waitFor();
       await page.goto(`${browser.origin}/system/billing/provider-events/${cancelled.id}`,{waitUntil:'domcontentloaded'});
       await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).fill('ตรวจรายการเดิมจากหน้าจอ');
-      await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
+      const beforePreview=await db.billingOperation.count({where:{referenceId:cancelled.id}});
+      for(let attempt=0;attempt<2;attempt++){
+        const previewResponse=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(`/system/billing/provider-events/${cancelled.id}/preview`)&&response.request().method()==='POST');
+        await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
+        const reviewed=await previewResponse,result=await reviewed.json();
+        if(reviewed.status()!==429||attempt===1){assert.equal(reviewed.status(),200,JSON.stringify({status:reviewed.status(),body:result}));break;}
+        assert.equal(result.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(result.retryAfterSeconds)&&result.retryAfterSeconds>=1&&result.retryAfterSeconds<=60);
+        await page.getByRole('alert').filter({hasText:`กรุณารอ ${result.retryAfterSeconds} วินาที`}).waitFor();
+        assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),beforePreview);
+        assert.equal(await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).inputValue(),'ตรวจรายการเดิมจากหน้าจอ');
+        await new Promise(resolve=>setTimeout(resolve,Math.min(60,result.retryAfterSeconds+1)*1000));browserRateLimit=true;
+      }
+      assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),beforePreview+1);
       await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();
       await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
       await operations.drain();await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
@@ -135,7 +147,8 @@ export async function checkBillingProviderEvents(input: {
     }
     return ['provider-event-platform-scope-mode-redaction-pagination','provider-event-preview-stale-lease-dedupe-and-cancel',
       'provider-event-reauthorization-unavailable-unmapped-same-command-recovery','provider-event-shared-worker-lease-loss-and-processed-replay',
-      'provider-event-evidenced-case-resolution-audit-and-no-manual-grant',...(browser?['browser-provider-event-case-preview-command-reload-and-return']:[])];
+      'provider-event-evidenced-case-resolution-audit-and-no-manual-grant',...(browser?['browser-provider-event-case-preview-command-reload-and-return']:[]),
+      ...(browserRateLimit?['browser-provider-event-real-rate-limit-wait-preserves-input-and-no-command-on-refusal']:[])];
   } finally {
     input.interceptRead();
     await db.companyPlanTerm.update({where:{companyId:member.companyId},data:{termEndsAt:originalTerm.termEndsAt}});

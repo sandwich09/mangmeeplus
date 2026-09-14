@@ -5,7 +5,7 @@ import type { EmailDeliveryService } from '../modules/auth/application/email-del
 
 /** Only provider transport is simulated. Delivery claims, permissions and journals use PostgreSQL. */
 export function billingNotificationFixture() {
-  const mail: Array<Record<string, any>> = [], line: Array<{ key: string; body: string }> = [];
+  const mail: Array<Record<string, any>> = [], line: Array<{ key: string; body: string; authorization: string | null }> = [];
   const accepted = new Map<string, string>();
   let loseLine = true, loseMail = false, mailSuppressed = false,lineFailureText:string|undefined,mailFailureAttempt:string|undefined;
   const response = (body: unknown, status = 200, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), {
@@ -16,7 +16,7 @@ export function billingNotificationFixture() {
       if (url.origin === 'https://api.line.me') {
         assert.equal(url.pathname, '/v2/bot/message/push');
         const key = new Headers(init?.headers).get('x-line-retry-key')!, body = String(init?.body);
-        assert.match(key, /^[a-f0-9-]{36}$/); line.push({ key, body });
+        assert.match(key, /^[a-f0-9-]{36}$/); line.push({ key, body, authorization: new Headers(init?.headers).get('authorization') });
         if (accepted.has(key)) { assert.equal(accepted.get(key), body); return response({}, 409, { 'x-line-accepted-request-id': key }); }
         accepted.set(key, body);
         if (loseLine&&(!lineFailureText||body.includes(lineFailureText))) { loseLine = false;lineFailureText=undefined; throw new Error('Synthetic LINE accepted, response lost'); }
