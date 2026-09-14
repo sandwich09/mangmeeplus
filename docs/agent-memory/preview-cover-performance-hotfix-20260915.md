@@ -1,6 +1,6 @@
 # Agent Memory: Preview cover and performance hotfix 2026-09-15
 
-Status: Hotfix admin merged and UAT accepted, signed and OPEN; browser acceptance PASS. Evidence docs merges pending.
+Status: Application/UAT complete: hotfix admin merged, accepted, signed and OPEN; browser acceptance PASS. Evidence recorded; no runtime work remains.
 Owner: MangmeeDev; user requests cover loading, measured optimization and the same admin merge /
 UAT deployment workflow. Production is out of scope.
 Scope: Substitute document preview UX and the shared PDF-to-preview rendering bottleneck;
@@ -55,7 +55,7 @@ Verification:
   allowlists PASS; complete production-image-security fixtures PASS.
   Security audit PASS at existing high threshold: zero high/critical, existing13 moderate/1 low remain.
   Root patch registration, lock hash and dependency set remain unchanged after frozen install.
-Next: Docs-only evidence merges to develop/main; no second deploy for non-runtime docs. Production unchanged.
+Next: Owner can refresh UAT and use preview. Evidence PR571/develop and PR572/main are docs-only; no second deploy for non-runtime docs. Production unchanged.
 
 Release ledger:
 - Existing serving source f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9,
