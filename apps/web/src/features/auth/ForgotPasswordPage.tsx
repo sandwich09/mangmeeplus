@@ -18,6 +18,7 @@ function remainingCooldown(cooldownUntil: number | null): number {
 
 export default function ForgotPasswordPage() {
   const [locale, setLocale] = useLocale();
+  const [channel,setChannel]=useState<'EMAIL'|'LINE'>('EMAIL');
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -38,8 +39,8 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     setError(null);
     try {
-      await requestPasswordReset(trimmed(username));
-      setSubmitted(true);
+      await requestPasswordReset(trimmed(username),channel);
+      setSubmitted(true);setCooldownUntil(Date.now()+60000);
     } catch (error) {
       const apiError = error as ApiError;
       if (apiError?.kind === 'rate_limited') {
@@ -53,73 +54,33 @@ export default function ForgotPasswordPage() {
     }
   };
 
-  if (submitted) {
-    return (
-      <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
-        <div className="w-full max-w-md space-y-5 rounded-xl border border-gray-200 bg-white p-8">
-          <div className="space-y-2">
-            <h1 className="text-xl font-semibold text-gray-900">{t('auth.forgot.submitted.title', locale)}</h1>
-            <p className="text-sm text-gray-600">{t('auth.forgot.submitted.body', locale)}</p>
-          </div>
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {t('auth.forgot.support_line', locale)}
-          </div>
-          <Link href="/login" className="inline-flex text-sm font-medium text-brand-700 hover:text-brand-800">
-            {t('auth.forgot.back_to_login', locale)}
-          </Link>
-        </div>
+  const text=(th:string,en:string)=>locale==='th'?th:en;
+  return <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
+    <main className="w-full max-w-md space-y-5 rounded-xl border border-gray-200 bg-white p-6 text-base sm:p-8 [&_label]:text-base">
+      <div className="flex items-start justify-between gap-3">
+        <h1 className="text-2xl font-semibold text-gray-900">{submitted?(channel==='EMAIL'?text('ตรวจสอบอีเมลของคุณ','Check your email'):t('auth.forgot.submitted.title',locale)):t('auth.forgot.title',locale)}</h1>
+        <button type="button" className="min-h-11 min-w-11 rounded-lg border p-2" aria-label={t('shell.language',locale)} onClick={()=>setLocale(locale==='th'?'en':'th')}>{locale==='th'?'EN':'ไทย'}</button>
       </div>
-    );
-  }
-
-  return (
-    <div className="flex min-h-dvh items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md space-y-6 rounded-xl border border-gray-200 bg-white p-8">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-2">
-            <h1 className="text-xl font-semibold text-gray-900">{t('auth.forgot.title', locale)}</h1>
-            <p className="text-sm text-gray-600">{t('auth.forgot.subtitle', locale)}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setLocale(locale === 'th' ? 'en' : 'th')}
-            className="rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50"
-            aria-label={t('shell.language', locale)}
-          >
-            {locale === 'th' ? 'EN' : 'ไทย'}
-          </button>
-        </div>
-
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          {t('auth.forgot.support_line', locale)}
-        </div>
-
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-            {cooldownSeconds > 0 ? ` ${formatMessage(t('auth.forgot.retry_in', locale), { seconds: cooldownSeconds })}` : ''}
-          </div>
-        )}
-
+      {submitted?<>
+        <p role="status">{channel==='EMAIL'?text('หากบัญชีนี้มีอีเมลที่ยืนยันไว้ ระบบจะส่งลิงก์สำหรับตั้งรหัสผ่านใหม่ให้','If this account has a verified email, we will send a password reset link.'):t('auth.forgot.submitted.body',locale)}</p>
+        <p>{channel==='EMAIL'?text('ลิงก์ใช้ได้ 30 นาที ตรวจโฟลเดอร์สแปมด้วย หากยังไม่ได้รับ รอ 1 นาทีแล้วขอใหม่ หรือติดต่อผู้ดูแลบริษัท','The link expires in 30 minutes. Check spam. Wait 1 minute before requesting another, or contact your administrator.'):t('auth.forgot.support_line',locale)}</p>
+        <button className="min-h-11 underline disabled:opacity-50" disabled={cooldownSeconds>0} onClick={()=>setSubmitted(false)}>{cooldownSeconds>0?formatMessage(t('auth.forgot.retry_in',locale),{seconds:cooldownSeconds}):text('ขอลิงก์ใหม่หรือเปลี่ยนช่องทาง','Request again or change method')}</button>
+      </>:<>
+        <p>{text('กรอกชื่อผู้ใช้หรืออีเมล แล้วเลือกช่องทางกู้รหัสผ่าน','Enter your username or email and choose a recovery method.')}</p>
+        {error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}{cooldownSeconds>0?' '+formatMessage(t('auth.forgot.retry_in',locale),{seconds:cooldownSeconds}):''}</p>}
         <form className="space-y-4" onSubmit={handleSubmit}>
-          <TextField
-            label={t('auth.forgot.username', locale)}
-            name="username"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            onBlur={(event) => setUsername(trimmed(event.target.value))}
-            autoComplete="username"
-            required
-          />
-          <Button type="submit" className="w-full" loading={loading} disabled={cooldownSeconds > 0}>
-            {t('auth.forgot.submit', locale)}
-          </Button>
+          <fieldset className="space-y-2"><legend>{text('รับคำแนะนำทางไหน','Recovery method')}</legend>
+            {(['EMAIL','LINE'] as const).map(value=><label key={value} className="flex min-h-11 items-center gap-3 rounded-lg border px-3">
+              <input type="radio" name="channel" value={value} checked={channel===value} disabled={loading} onChange={()=>setChannel(value)}/>
+              {value==='EMAIL'?text('รับลิงก์ทางอีเมล','Email link'):text('รับรหัสชั่วคราวทาง LINE','Temporary password via LINE')}
+            </label>)}
+          </fieldset>
+          <p>{channel==='EMAIL'?text('ส่งไปที่อีเมลที่ยืนยันไว้กับบัญชีนี้','Sent only to the email verified for this account.'):text('ส่งไปที่ LINE ที่ผูกไว้กับบัญชีนี้','Sent only to the LINE identity linked to this account.')}</p>
+          <TextField label={t('auth.forgot.username',locale)} name="username" value={username} onChange={event=>setUsername(event.target.value)} onBlur={event=>setUsername(trimmed(event.target.value))} className="sm:h-11 sm:text-base" maxLength={254} autoComplete="username" required/>
+          <Button type="submit" className="min-h-11 w-full text-base" loading={loading} disabled={cooldownSeconds>0}>{channel==='EMAIL'?text('ส่งลิงก์กู้รหัสผ่าน','Send reset link'):t('auth.forgot.submit',locale)}</Button>
         </form>
-
-        <Link href="/login" className="inline-flex text-sm font-medium text-brand-700 hover:text-brand-800">
-          {t('auth.forgot.back_to_login', locale)}
-        </Link>
-      </div>
-    </div>
-  );
+      </>}
+      <Link href="/login" className="inline-flex min-h-11 items-center font-medium text-brand-700 underline">{t('auth.forgot.back_to_login',locale)}</Link>
+    </main>
+  </div>;
 }

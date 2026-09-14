@@ -1,6 +1,9 @@
 # Email Delivery และ Claim Account — Spec P11
 
-> **Postmark decision 2026-09-11:** Owner เลือก Postmark แล้ว; [provider spec](mangmee-transactional-email-provider-spec-th.md), [API reference](../research/postmark-developer-reference-th.md) และ [M0–M4 plan](../plans/mangmee-transactional-email-provider-plan-th.md) กำหนด transport/config/Basic Auth webhook/attempt migration. SES ด้านล่างเป็นฐานและหลักฐานเดิม; ไม่ต้องเปิด SES ก่อนทำ Postmark. รักษา hash-only/mint-at-send/atomic claim/legacy Flow B และแยก Postmark MessageID จาก claimEmailSesMessageId. Postmark ยังไม่ implement/activate. Invoice/Receipt ฝั่งลูกค้าใช้ Stripe; ไม่เพิ่ม tax payload หรือ duplicate receipt mail ใน auth claim.
+> **Owner decision2026-09-15:** verified-email password recovery through Postmark is approved, including users without LINE. The authoritative new routes, eligibility, fragment proof, current binding, atomic reset/session revocation, no-auto-login and replay contract are in [Postmark spec](mangmee-transactional-email-provider-spec-th.md#email-recovery-implementation-contract--owner-approval2026-09-15). Existing LINE recovery remains available. Earlier sections saying email routes must stay404/parked or email reset should auto-login are historical and superseded for this feature. Current implementation/evidence status: [task memory](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md); no deployment is authorized.
+
+
+> **Postmark decision 2026-09-11:** Owner เลือก Postmark แล้ว; [provider spec](mangmee-transactional-email-provider-spec-th.md), [API reference](../research/postmark-developer-reference-th.md) และ [M0–M4 plan](../plans/mangmee-transactional-email-provider-plan-th.md) กำหนด transport/config/Basic Auth webhook/attempt migration. SES ด้านล่างเป็นฐานและหลักฐานเดิม; ไม่ต้องเปิด SES ก่อนทำ Postmark. รักษา hash-only/mint-at-send/atomic claim/legacy Flow B และแยก Postmark MessageID จาก claimEmailSesMessageId. Postmark transport/claim/verification/delivery recovery มี implementation และหลักฐานทดสอบในเครื่องแล้วตาม [สถานะล่าสุด](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md); ยังไม่ใช่การ deploy หรือเปิดส่งจริง. Invoice/Receipt ฝั่งลูกค้าใช้ Stripe; ไม่เพิ่ม tax payload หรือ duplicate receipt mail ใน auth claim.
 
 สถานะ: **PARTIAL — Phase 0 disabled-safe provider foundation MERGED DEVELOP `d8d9808e` ผ่าน PR #290** (2026-08-27T05:08:55Z); exact-head CI `33040896057` SUCCESS บน `6f85339d`. Phase 1 durable claim send ปลดล็อกแล้ว (secret-lifecycle ตัดสินเป็น mint-at-send — §5 ข้อ 3, 2026-08-30) และปรับเข้า P10 Flow B; live delivery ยังรอ Owner/operations §5 ข้อ 1–2. ดู [แผน P11](../plans/mangmee-email-delivery-claim-plan-th.md); ไม่ใช่การเปิด email/claim หรือปิด EMAIL-01.
 
@@ -8,7 +11,7 @@
 
 หลักฐานฐานโค้ดสำรวจ 2026-08-26; ผลส่ง Phase 0 ยืนยัน 2026-08-27
 
-## 1. Current truth
+## 1. Historical baseline — 2026-08-26/27
 
 | ข้อเท็จจริง | หลักฐาน |
 |---|---|
@@ -81,3 +84,8 @@ SES delivery ถึง inbox ทดสอบ, DKIM ผ่าน, bounce/complain
 - [AWS SES — configuring identities](https://docs.aws.amazon.com/en_en/ses/latest/dg/configure-identities.html): sender authentication ครอบ SPF, DKIM และ DMARC
 - [AWS SES — configuration sets](https://docs.aws.amazon.com/en_en/ses/latest/dg/using-configuration-sets.html): ผูก configuration set กับ identity/header และ event destinations
 - [AWS SES — account-level suppression](https://docs.aws.amazon.com/ses/latest/APIReference-V2/API_PutAccountSuppressionAttributes.html): suppression reason เป็น `BOUNCE`/`COMPLAINT`; config production ต้องมี test ยืนยัน policy จริง
+
+
+### Owner amendment — email password recovery approved2026-09-15
+
+Owner approved Postmark password-recovery links for verified email users, including users without LINE. This supersedes the earlier parked email-reset decision for this work; keep existing LINE recovery and eligibility/security holds. Implement an explicit request and confirmation flow with generic account-existence response, bounded request/send limits, verified current email/ACTIVE user and credential binding, fragment proof, single use/expiry, reissue revocation, atomic password update/session revocation/audit and safe lost-response recovery. Opening a link alone must not change a password. Retain old LINE Login/self-link restrictions unrelated to recovery. Test real HTTP/PG/browser with provider simulation and plain Thai mobile UX; no native customer email sends in synthetic tests. Runtime remains pending until implementation and evidence are recorded.

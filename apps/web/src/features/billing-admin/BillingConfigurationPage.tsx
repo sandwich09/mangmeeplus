@@ -5,8 +5,8 @@ import BillingSalesCohortPicker from './BillingSalesCohortPicker';
 import { BILLING_ACTIONS, BILLING_PAID_TIERS, type BillingAction, type BillingConfiguration, type BillingConfigurationOperation, type BillingPolicy } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
-const field = 'mt-1 block w-full rounded-lg border bg-white p-2';
+const button = 'inline-flex min-h-11 items-center rounded-xl border border-gray-300 px-4 py-2 text-base font-semibold disabled:opacity-50';
+const field = 'mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const gateNames: Record<BillingAction, string> = { new_sales: 'รับรายการซื้อใหม่', plan_changes: 'ซื้อซ้ำและเปลี่ยนแพ็กเกจ',
   portal_payment_method: 'เปิดหน้าแก้บัตร', portal_change_plan: 'เปลี่ยนแพ็กเกจผ่าน Portal', portal_cancel_subscription: 'ยกเลิกหรือกลับมาต่ออายุ', notification_delivery: 'ส่งข้อความแจ้งสถานะ' };
 const stateNames: Record<string, string> = { DRAFT: 'ฉบับร่างที่บันทึกไว้', PREVIEW: 'ตรวจผลกระทบก่อนส่ง', AWAITING_APPROVAL: 'รอผู้อนุมัติอีกคน', SCHEDULED:'อนุมัติแล้ว รอถึงกำหนด',RUNNING:'กำลังตรวจและใช้ค่าตามกำหนด',BLOCKED:'ต้องตรวจคำขอตามกำหนดใหม่', SUCCEEDED: 'การตั้งค่านี้มีผลแล้ว', CANCELLED: 'ยกเลิกคำขอนี้แล้ว' };
@@ -74,6 +74,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
     <h1 className="text-2xl font-bold">ตั้งค่าการชำระเงิน</h1>
     <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">กลับหน้าดูแลการชำระเงิน</Link>
+      <Link className={button} href="/system/billing/configuration-checks">ตรวจการเชื่อมต่อ Stripe</Link>
       {operationId && <Link className={button} href="/system/billing/settings">สร้างคำขอตั้งค่าใหม่</Link>}
       <button className={button} disabled={busy || loading} onClick={() => setReload(v => v + 1)}>โหลดการตั้งค่าล่าสุด</button></nav>
     {loading && <p role="status">กำลังโหลด…</p>}{error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}

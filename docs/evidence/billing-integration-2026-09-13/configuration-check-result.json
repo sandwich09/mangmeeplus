@@ -1,0 +1,110 @@
+{
+  "status": "PASS",
+  "slice": "configuration-check",
+  "baseCommit": "2e065cced20160a8d6eada5118c532f8b6cdfcfa",
+  "sourceSha256": {
+    ".github/workflows/ci.yml": "db1ecf4acb7af6e00e0af359fb826b1fd116d4a1d6eef33641c03fca825e1192",
+    ".github/workflows/deploy-production.yml": "5b7ad1a4de529c27dbd1827ed24e2579ff800367e5bcfd72e38e92aaaff6981f",
+    "apps/api/src/modules/auth/application/email-recovery-lock.ts": "3df22de328c5a8ec13121d20716c327248f8dd721d2f19a2e552004c146570a9",
+    "apps/api/src/modules/auth/application/use-cases/confirm-password-reset.use-case.ts": "b7276560bce6337a5c744d7c65c479131bb5e7c7b861e6cb953efd75b1f3aaa9",
+    "apps/api/src/modules/auth/application/use-cases/forgot-password-reset.use-case.spec.ts": "07b5231219fbd055f88b0b755873f1b4014e3f64707a7eeaedc4c368e9224d4b",
+    "apps/api/src/modules/auth/application/use-cases/request-password-reset.use-case.ts": "87efe4e5b9376624ec2c3d237515ae682a51fd62e98c7a5e0bdc7401e8bb2873",
+    "apps/api/src/modules/auth/auth-endpoints.spec.ts": "bcd517de351bd7ae63a63b5073ab505ffb071ae713c551bc3994358659b6f59b",
+    "apps/api/src/modules/auth/auth.module.ts": "863a93d904e373d6247144d61e468380df50e3dd4f2dade4e7cff310f51adba6",
+    "apps/api/src/modules/auth/domain/logic/secure-token.logic.ts": "a98ecad7c734d78d4b6142c9162757aa0a4dafed12db15a0038faf78980e820f",
+    "apps/api/src/modules/auth/infrastructure/auth-email.templates.ts": "a42ebf2b9901f5ebed46a3c30a0f086ec1ea9272b382f9a1ea5abbbf8bfa1d39",
+    "apps/api/src/modules/auth/presentation/email-password-reset.controller.ts": "86da4c63a523b510fd635472a51238b14f28922fc8b4c686c79c4f10504564ee",
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "4d9261b9324d1fa5bbad38044db914eb86f42b5111347bab19cc00a5c886a059",
+    "apps/api/src/modules/billing/application/billing-provider-configuration.ts": "79adedd75e4f11ab97d0f76c9e520d1ed30a306bd48ece16052007f2531b892a",
+    "apps/api/src/modules/billing/application/billing-readiness.service.ts": "0d0bbaaaf75956fea620fe5a76fe667056ea862dd9f8913f4d8f7c8d7c75e5a3",
+    "apps/api/src/modules/billing/application/billing.service.ts": "e0a8d5be52ca14bba6d6c8ed9a354eea33ef0d9e5fb52781b30fbd815353672d",
+    "apps/api/src/modules/billing/billing.module.ts": "72de38c5f63cc8f6183a7b95cb761e3ca151ebf58bc233c99eb131e607e827b1",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "f0b473efa75f36912307340fedc455480a0140a6159621ebcfe21e81cdbe62c0",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "7e98ccdf4aaabd7137a9c93db1845752b352258fb2eff31c2374b252b78f23b0",
+    "apps/api/src/scripts/billing-configuration-smoke.ts": "bebc54beded9f0aeaf6b095864b87166ca4d23f95905a06f1d9ed364323f06d2",
+    "apps/api/src/scripts/billing-http-smoke.ts": "caabc58cf4662686388e7ea8a72d73029eed2fda6d0838a01fa7368e0fb61340",
+    "apps/api/src/scripts/billing-readiness-smoke.ts": "93205c4e68f9c15c19f6e9e75cb0218d12b79596a9c2dabae5be2516a90882ec",
+    "apps/api/src/scripts/email-password-reset-smoke.ts": "9b0f981a58a5df0d01fea3e9ea92ed462608be602393f067c2dec8666a304d21",
+    "apps/web/app/reset-password/page.tsx": "6aa085b2b687d9f72cc2e90fcd4eec6f1497e1850d9537bea302f776a2a012ba",
+    "apps/web/app/system/billing/configuration-checks/[id]/page.tsx": "869163c45d39f0e5e9a549df286baaaabe92d9bb93c91e1ea6e030fea7b25acd",
+    "apps/web/app/system/billing/configuration-checks/page.tsx": "ae98490d74e06d8d45cbf58afa3a200699aa97c37fa61ac63f18b65a9fc2ca34",
+    "apps/web/proxy.ts": "d5e2eaf81c5a476ea5d75b8134d408047c34843c7686d9b081dc223e2fe9dc88",
+    "apps/web/src/common/api/api-error-message.ts": "3d2e07cbf93186902c25c14622d293e79f03e88562726e27edfcf7d2fee1b5ee",
+    "apps/web/src/features/auth/ForgotPasswordPage.tsx": "6451a9a6950b7ff753b3d3a123d6d9e7816e8cfeca31c0f733e062bfef1bd85a",
+    "apps/web/src/features/auth/ResetPasswordPage.tsx": "9867966ccf501fb22ada5d9fda85d145ac04ceb324f8878f308202ef83d5d4d9",
+    "apps/web/src/features/auth/auth.api.ts": "0056f90bc826090ca5826956528068106600a1625c2e1a6b27efe93f7e3a88f6",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "390d54543b02290524ab6d0b7166765bffe4800b61cf38e9cd03412edb6ae65e",
+    "apps/web/src/features/billing-admin/BillingConfigurationChecksPage.tsx": "6b052be6dcae49e81fe5c1c5bc11c8aa99e3ac6a1df35e152eafbd2c9292a2a0",
+    "apps/web/src/features/billing-admin/BillingConfigurationPage.tsx": "9ceed95421f311c74d58548b9bd781c0aad805ef590ccd8bd4067a36dc090b8b",
+    "infra/security/validate-production-maintenance-release.sh": "59be4030fbf8974a7582a70e3941e35a60ec695073fc71ffa1777fbd487b95bb",
+    "packages/contracts/src/billing.ts": "afdbd06f42c5baf86bd18fc4b6a3a981e1807e7132db6b96e13d01a2c8211ea7"
+  },
+  "focusedBrowser": {
+    "command": "BILLING_CONFIG_ONLY=1 BILLING_READINESS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "groups": 11,
+    "result": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "original-request-idempotency-strict-input-single-active-cursor-binding-and-current-match",
+        "provider-unavailable-versus-wrong-account-no-cross-account-reads-and-deduplicated-review-case",
+        "paid-price-mode-prepaid-product-and-portal-mode-drift",
+        "source-version-fences-before-and-after-provider-read-retain-review-and-cancel-blocked",
+        "current-platform-permission-rechecked-after-provider-read",
+        "single-live-lease-expired-writer-refused-manual-reclaim-and-current-match-resolves-case",
+        "queued-cancellation-and-bounded-worker-drain",
+        "audit-failure-rolls-back-observation-and-case-resolution",
+        "corrupt-policy-closes-sales-keeps-admin-repair-and-observation-available",
+        "browser-lost-create-response-original-link-reload-run-history-mobile-44px-and-failed-refresh-clears-result",
+        "configuration-observation-never-mutates-provider-money-or-customer-rights"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "log": "/tmp/mangmee-readiness-browser-final.log"
+  },
+  "checks": {
+    "apiTypecheck": "PASS /tmp/mangmee-email-reset-api-typecheck-final.log",
+    "webTypecheck": "PASS /tmp/mangmee-email-reset-web-typecheck-final.log",
+    "authRegression": "76 PASS, 0 skipped: email-reset-auth-regression.tap",
+    "webErrorGuards": "13 PASS /tmp/mangmee-email-reset-web-errors.tap",
+    "maintenancePins": "PASS 59be4030fbf8974a7582a70e3941e35a60ec695073fc71ffa1777fbd487b95bb"
+  },
+  "limitations": [
+    "Provider transports are simulated; no real payment, mail/LINE delivery, provider-account change, merge or deployment.",
+    "Source hashes identify this local checkpoint; later corrections require their own evidence. Counts overlap with other suites and are not a full-scope percentage.",
+    "Normal application authentication, permissions and rate limits remain unchanged. Final combined acceptance and required CI remain pending under the owner cost instruction."
+  ],
+  "scheduledPolicyRegression": {
+    "groups": 12,
+    "result": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "browser-schedule-timezone-draft-reload-hash-independent-approval-mobile",
+        "schedule-strict-date-range-self-approval-idempotence-future-refusal-and-no-early-publication",
+        "schedule-worker-off-late-manual-apply-after-preview-expiry-result-reload-exactly-once",
+        "schedule-original-approver-cancel-preserves-policy-and-prevents-worker-publication",
+        "schedule-concurrent-workers-publish-once-with-service-audit",
+        "schedule-emergency-close-stale-source-deduplicated-case-copy-new-review-cancel-return",
+        "schedule-current-requester-approver-system-role-and-credential-version-revocation",
+        "schedule-provider-readiness-failure-blocks-without-changing-active-settings",
+        "schedule-authority-rechecked-after-provider-io-before-publication",
+        "schedule-running-cancel-race-lease-expiry-old-worker-fence-and-manual-reclaim",
+        "schedule-audit-failure-rolls-back-revision-settings-and-success-before-retained-case",
+        "schedule-material-impact-change-expired-approval-immediate-compatibility-and-no-financial-writes"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "log": "/tmp/mangmee-readiness-schedule-regression.log"
+  }
+}

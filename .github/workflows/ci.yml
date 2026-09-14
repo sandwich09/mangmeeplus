@@ -587,6 +587,7 @@ jobs:
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_VERIFICATION_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_EMAIL_RESET_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_APPLY_RETRY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_SIGNUP_JOURNEY_ONLY=0 BILLING_REPEAT_APPLY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test shared LINE credential publication without restart
@@ -639,7 +640,7 @@ jobs:
           BILLING_INVOICE_IMPORT_ONLY: '1'
           BILLING_BROWSER_E2E: '1'
         run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
-      - name: Test approved cohorts, case deadlines and scheduled policy with browser recovery
+      - name: Test approved cohorts, case deadlines, policy schedule and Stripe configuration with browser recovery
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         timeout-minutes: 7
         env:
@@ -652,6 +653,7 @@ jobs:
           node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
           BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+          BILLING_CONFIG_ONLY=1 BILLING_READINESS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test invoice adjustment observations and privileged documents with browser
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         timeout-minutes: 7

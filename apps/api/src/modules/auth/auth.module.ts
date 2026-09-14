@@ -1,3 +1,4 @@
+import { EmailPasswordResetController } from './presentation/email-password-reset.controller';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { SESClient } from '@aws-sdk/client-ses';
@@ -90,7 +91,7 @@ export function selectAuthMailer(
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
   imports: [JwtModule.register({}), AccessControlModule, AuditModule],
-  controllers: [PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
+  controllers: [EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,

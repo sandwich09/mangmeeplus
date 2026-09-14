@@ -1,5 +1,8 @@
 # Self-service Password Recovery via LINE — Build Plan
 
+> **Owner decision2026-09-15:** verified-email password recovery through Postmark is approved, including users without LINE. The authoritative new routes, eligibility, fragment proof, current binding, atomic reset/session revocation, no-auto-login and replay contract are in [Postmark spec](../specs/mangmee-transactional-email-provider-spec-th.md#email-recovery-implementation-contract--owner-approval2026-09-15). Existing LINE recovery remains available. Earlier sections saying email routes must stay404/parked or email reset should auto-login are historical and superseded for this feature. Current implementation/evidence status: [task memory](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md); no deployment is authorized.
+
+
 Spec: `docs/specs/password-reset-line-self-service-spec.md`.
 Branch: `codex/line-self-service-recovery` from `origin/develop`.
 

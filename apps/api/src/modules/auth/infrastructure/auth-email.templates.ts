@@ -21,7 +21,7 @@ function formatExpiry(value: Date): string {
 function link(baseUrl: string, pathname: string, token: string, signupRequestId?: string): string {
   const url = new URL(pathname, baseUrl);
   // Active email proofs stay out of HTTP request URLs; legacy mail stays readable.
-  if (pathname === '/claim-account' || pathname === '/verify-email') url.hash = new URLSearchParams({ token }).toString();
+  if (pathname === '/claim-account' || pathname === '/verify-email' || pathname === '/reset-password') url.hash = new URLSearchParams({ token }).toString();
   else url.searchParams.set('token', token);
   // R12: the claim page's non-secret recovery reference.
   if (signupRequestId) url.searchParams.set('r', signupRequestId);

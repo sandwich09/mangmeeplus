@@ -140,9 +140,15 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
+export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
+  state:'MATCH'|'DIFFERENT'|'UNAVAILABLE'|'NOT_CONFIGURED'; reason:'MATCH'|'NOT_CONNECTED'|'POLICY_NOT_READY'|'MAPPING_DIFFERENT'|'PROVIDER_UNAVAILABLE'|'ACCOUNT_DIFFERENT' };
+export type BillingConfigurationCheck = { id:string; mode:BillingMode; state:'QUEUED'|'RUNNING'|'SUCCEEDED'|'BLOCKED'|'CANCELLED'; version:number;
+  sourceVersion:number; isCurrent:boolean; reason:string; createdAt:string; observedAt:string|null; errorCode:string|null; reviewCaseId:string|null;
+  result:BillingConfigurationCheckItem['state']|null; items:BillingConfigurationCheckItem[]; canRun:boolean; canCancel:boolean };
+export type BillingConfigurationCheckHistory = {items:BillingConfigurationCheck[];nextCursor:string|null;activeCheck:BillingConfigurationCheck|null;canCreate:boolean;mode:BillingMode|'DISABLED';settingsVersion:number};
 export type BillingOperationView = { id: string; type: BillingOperationType; state: BillingOperationState; scope: BillingScope;
   version: number; reason: string; initiatorUserId: string; approverUserId: string | null; errorCode: string | null;
   createdAt: string; observedAt: string | null; expiresAt: string; referenceId: string | null };

@@ -6,6 +6,7 @@ import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { checkSignupJourney } from './signup-journey-smoke';
 import { checkBillingProviderScans } from './billing-provider-scans-smoke';
+import { checkEmailPasswordReset } from './email-password-reset-smoke';
 import { checkEmailVerification } from './email-verification-smoke';
 import { checkBillingApplyRetry } from './billing-apply-retry-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
@@ -94,7 +95,7 @@ async function main() {
     if (path.startsWith('/prices/')) return response({ id: path.split('/').at(-1), object: 'price', livemode: false, active: true, type: 'recurring',
       product: path.includes('Starter') ? 'prod_Starter' : path.includes('Basic') ? 'prod_Basic' : 'prod_Pro', currency: 'thb', unit_amount: path.includes('Zero') ? 0 : path.includes('Starter') ? 249000 : path.includes('Basic') ? 499000 : 999000, recurring: { interval: 'year', interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit',
       tax_behavior: path.includes('Exclusive') ? 'exclusive' : 'inclusive' });
-    if (path.startsWith('/billing_portal/configurations/')) return response({ id: path.split('/').at(-1), active: true,
+    if (path.startsWith('/billing_portal/configurations/')) return response({ id: path.split('/').at(-1), object: 'billing_portal.configuration', livemode: false, active: true,
       features: { payment_method_update: { enabled: true }, subscription_update: { enabled: false }, subscription_cancel: { enabled: false } } });
     if (path.startsWith('/tax_rates/')) return response({ id: path.split('/').at(-1), active: true, country: 'TH', percentage: 7, inclusive: !path.includes('Exclusive') });
     if (path.startsWith('/tax_ids/')) return response({ id: path.split('/').at(-1), object: 'tax_id', type: 'th_vat', value: '0105567123456', owner: { type: 'self' }, customer: null });
@@ -206,9 +207,9 @@ async function main() {
       cases.push(...await checkLineRuntimeCredentials({app,prisma,origin,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['LINE'],realProviderDelivery:false}));return;
     }
-    if(process.env.BILLING_EMAIL_VERIFICATION_ONLY==='1'){
+    if(process.env.BILLING_EMAIL_RESET_ONLY==='1'||process.env.BILLING_EMAIL_VERIFICATION_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
-      cases.push(...await checkEmailVerification({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
+      cases.push(...await (process.env.BILLING_EMAIL_RESET_ONLY==='1'?checkEmailPasswordReset:checkEmailVerification)({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE'],realProviderDelivery:false}));return;
     }
     if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'||process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'||process.env.BILLING_INVOICE_SCANS_ONLY==='1'||process.env.BILLING_INVOICE_IMPORT_ONLY==='1'){
@@ -508,7 +509,7 @@ async function main() {
       signToken: (sid, userId) => new JwtService().sign({ sub: userId ?? userIds[1], sid }, { secret, algorithm: 'HS256', issuer: DEFAULT_JWT_ISSUER, audience: DEFAULT_JWT_AUDIENCE, expiresIn: 3600 }),
       recordLegal: (userId, membershipId) => client.$transaction(tx => app.get(LegalAcceptanceService).recordFromEvidence(tx, { userId, companyId: companyIds[0]!, membershipId,
         requestId: run, evidence: { ...release, locale: 'th', legalAcceptedAt: new Date() } })).then(() => {}) }));
-    if (process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-Next-Chromium', passed: cases, browserE2E: Boolean(browser), simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false })); return;
     }
     if (process.env.BILLING_CONFIG_ONLY !== '1') cases.push(...await checkBillingRestart({ request, prisma, companyId: companyIds[1]!, sourceCompanyId: companyIds[0]!, extraUserId: userIds[1]!,

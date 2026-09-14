@@ -26,7 +26,7 @@ function scheduledTime(value:unknown,review=false):string|undefined {
   return new Date(at).toISOString();
 }
 // PostgreSQL JSONB may reorder object keys; compare semantic snapshots, not insertion order.
-function configurationHash(value: unknown): string {
+export function configurationHash(value: unknown): string {
   const canonical = (item: unknown): unknown => Array.isArray(item) ? item.map(canonical) : item && typeof item === 'object'
     ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)])) : item;
   return hashBilling(canonical(value));
@@ -302,7 +302,7 @@ export class BillingConfigurationService {
     const value=await tx.userCredential.findUnique({where:{userId}});
     if(!value||value.status!=='ACTIVE'||value.mustChangePassword||(value.expiresAt&&value.expiresAt<=new Date()))throw new ForbiddenException();return value;
   }
-  private async scheduledActor(row:BillingOperation,userId:string,membershipId:string,companyId:string,key:string,tx:Prisma.TransactionClient){
+  async operationActor(row:BillingOperation,userId:string,membershipId:string,companyId:string,key:string,tx:Prisma.TransactionClient){
     if(!userId||!membershipId||!companyId)throw stale();
     if(tx!==this.prisma.client)await tx.$queryRaw`SELECT m.id FROM "CompanyMembership" m JOIN "User" u ON u.id=m."userId"
       JOIN "MembershipRole" mr ON mr."membershipId"=m.id JOIN "Role" r ON r.id=mr."roleId"
@@ -318,9 +318,9 @@ export class BillingConfigurationService {
     if(row.requestHash!==configurationHash([row.type,row.sourceVersion,p,row.reason,row.referenceId??null])||
       !Number.isFinite(Date.parse(a.approvedAt))||Date.parse(a.approvedAt)>=row.scheduledFor.getTime())throw stale();
     if(tx!==this.prisma.client)await tx.$queryRaw(Prisma.sql`SELECT "userId" FROM "UserCredential" WHERE "userId" IN (${Prisma.join([row.initiatorUserId,row.approverUserId].sort())}) ORDER BY "userId" FOR SHARE`);
-    const initiator=await this.scheduledActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,permission(row.type),tx);
+    const initiator=await this.operationActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,permission(row.type),tx);
     if(configurationHash(effectiveBillingGates(p.gates))!==configurationHash(state.gates))await this.platform(initiator,'system.billing.gate.manage',tx);
-    const approver=await this.scheduledActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx);
+    const approver=await this.operationActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx);
     if((await this.activeCredential(tx,row.initiatorUserId)).updatedAt.toISOString()!==a.initiatorCredentialVersion||
       (await this.activeCredential(tx,row.approverUserId)).updatedAt.toISOString()!==a.credentialVersion)throw new ForbiddenException();
     return approver;

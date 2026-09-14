@@ -1,6 +1,6 @@
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
-import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
   type BillingCheckoutBody, type BillingCheckoutResult, type BillingStatus, type BillingAction, type BillingInvoiceItem, type BillingAttemptView } from '@watchdog-bms/contracts';
@@ -66,8 +66,10 @@ export class BillingService {
     const settings = await tx.billingSettings.upsert({ where: { stripeAccountId_livemode: { stripeAccountId, livemode } },
       create: { id: `${stripeAccountId}:${livemode ? 'live' : 'test'}`, stripeAccountId, livemode, gatesJson: CLOSED_GATES }, update: {} });
     const revision = settings.policyRevisionId ? await tx.billingPolicyRevision.findUnique({ where: { id: settings.policyRevisionId } }) : null;
-    const policy = revision && revision.stripeAccountId === stripeAccountId && revision.livemode === livemode && revision.state === 'ACTIVE'
-      ? parseBillingPolicy(revision.policyJson) : null;
+    let policy:BillingPolicy|null=null;
+    if(revision&&revision.stripeAccountId===stripeAccountId&&revision.livemode===livemode&&revision.state==='ACTIVE') {
+      try{policy=parseBillingPolicy(revision.policyJson);}catch(error){if(!(error instanceof BadRequestException))throw error;}
+    }
     return { settings, revision: policy ? revision : null, policy, gates: effectiveBillingGates(settings.gatesJson) };
   }
 

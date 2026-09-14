@@ -5,6 +5,9 @@ import { Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsU
 export class BillingVersionDto {
   @IsInt() @Min(0) expectedVersion!: number;
 }
+export class BillingConfigurationCheckDto extends BillingVersionDto {
+  @IsString() @MinLength(1) @MaxLength(500) reason!:string;
+}
 export class BillingScanScheduleDto extends BillingVersionDto {
   @IsBoolean() enabled!:boolean;
   @IsInt() @Min(1) intervalHours!:number;

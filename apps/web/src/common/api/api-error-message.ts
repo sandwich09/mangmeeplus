@@ -7,6 +7,9 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  email_reset_invalid: 'ลิงก์นี้หมดอายุ ถูกใช้แล้ว หรือข้อมูลบัญชีเปลี่ยน กรุณาขอลิงก์กู้รหัสผ่านใหม่',
+  CONTROL_CONFIGURATION_CHECK_ACTIVE: 'มีรายการตรวจที่กำลังทำอยู่ โหลดประวัติแล้วเปิดรายการเดิมเพื่อดูผล',
+  CONTROL_CONFIGURATION_CHECK_REVIEW: 'ยังบันทึกผลตรวจไม่ได้ โหลดการตั้งค่าล่าสุด ยกเลิกรายการเดิม แล้วเริ่มตรวจใหม่',
   LINE_CHANNEL_MIGRATION_REQUIRED: 'ใช้ Channel ID ปัจจุบัน การเปลี่ยนบัญชีทางการ LINE ต้องให้ผู้ดูแลระบบตรวจแผนย้ายบัญชีที่เชื่อมไว้ก่อน',
   LINE_CREDENTIAL_CHANGED: 'มีผู้แก้การตั้งค่า LINE แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนยืนยันใหม่',
   LINE_CREDENTIAL_KIND_UNSUPPORTED: 'หน้านี้รองรับเฉพาะข้อมูลรับรอง Messaging ของบัญชี LINE ปัจจุบัน กรุณากลับไปเลือกการตั้งค่าที่รองรับ',

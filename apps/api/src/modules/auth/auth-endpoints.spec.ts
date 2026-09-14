@@ -1219,7 +1219,7 @@ describe('P11 SES auth mailer provider boundary', () => {
     }
     assert.deepEqual(inputs.map((input) => input.Tags[0].Value), ['email_verification', 'password_reset', 'account_claim']);
     assert.match(inputs[0].Message.Body.Text.Data, /verify-email#token=verify%2B%2F%3D/);
-    assert.match(inputs[1].Message.Body.Text.Data, /reset-password\?token=reset%2B%2F%3D/);
+    assert.match(inputs[1].Message.Body.Text.Data, /reset-password#token=reset%2B%2F%3D/);
     assert.doesNotMatch(inputs[2].Message.Body.Text.Data, /claim-account\?token=/);
     // R12: the request id rides beside the token so a spent or expired link still knows which
     // status page to offer. It is not a secret — the status endpoint answers a coarse state only.
