@@ -1,3 +1,4 @@
+import { invoiceFindingSource } from './billing-invoice-finding';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
 import { BadRequestException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
@@ -289,6 +290,61 @@ export class BillingReconcilerService {
     }
   }
 
+  async importDiscoveredInvoice(accountId:string,findingId:string,sourceHash:string,guard:(tx:Prisma.TransactionClient)=>Promise<void>) {
+    const lease=randomUUID(),now=new Date();
+    const acquired=await this.prisma.client.billingAccount.updateMany({where:{id:accountId,stripeAccountId:this.stripe.accountId,livemode:this.stripe.livemode,
+      OR:[{leaseUntil:null},{leaseUntil:{lte:now}}]},data:{leaseToken:lease,leaseUntil:new Date(now.getTime()+120_000)}});
+    if(!acquired.count)throw new Error('billing.reconciliation_busy');
+    try{
+      const account=await this.prisma.client.billingAccount.findUniqueOrThrow({where:{id:accountId}});
+      const source=await invoiceFindingSource(this.prisma.client,account,findingId);
+      const authorize=async(tx:Prisma.TransactionClient=this.prisma.client)=>{
+        await guard(tx);const current=await tx.billingAccount.findUniqueOrThrow({where:{id:account.id}}),fresh=await invoiceFindingSource(tx,current,findingId);
+        if(!fresh.bound||fresh.sourceHash!==sourceHash)throw new Error('billing.finding_source_changed');
+      };
+      await authorize();
+      const existing=await this.prisma.client.billingInvoice.findUnique({where:{billingAccountId_providerInvoiceId:{billingAccountId:account.id,providerInvoiceId:source.observation.providerInvoiceId}}});
+      if(existing?.evidenceHash&&existing.providerStatus==='paid'&&existing.paidSatang>0&&existing.paidSatang===existing.totalSatang)return;
+      await this.stripe.assertAccount();await authorize();
+      const invoice=await this.stripe.request('GET',`/invoices/${source.observation.providerInvoiceId}`);
+      if(invoice.id!==source.observation.providerInvoiceId||invoice.object!=='invoice'||invoice.livemode!==account.livemode||stripeId(invoice.customer)!==account.customerId||invoice.created!==source.observation.created)throw new Error('billing.invoice_binding');
+      const subscriptionId=stripeId(invoice.parent?.subscription_details?.subscription);
+      await authorize();
+      const subscription=subscriptionId?await this.stripe.request('GET',`/subscriptions/${subscriptionId}`):null;
+      const attemptId=subscription?.metadata?.billingAttemptId??invoice.metadata?.billingAttemptId;
+      const attempt=typeof attemptId==='string'?await this.prisma.client.billingAttempt.findFirst({where:{id:attemptId,billingAccountId:account.id}}):null;
+      const snapshot=attempt?.quoteSnapshot as unknown as BillingSnapshot|undefined;
+      if(!attempt?.checkoutSessionId||!snapshot||attempt.consentRevision!==snapshot.quote.consentRevision||!Number.isFinite(attempt.consentAt.getTime())||attempt.consentAt>new Date()||
+        snapshot.quote.companyId!==account.companyId||attempt.policyRevisionId!==snapshot.quote.policyRevision||Math.floor(attempt.consentAt.getTime()/1000)>invoice.created)throw new Error('billing.original_consent_missing');
+      const session=await this.stripe.request('GET',`/checkout/sessions/${attempt.checkoutSessionId}`);
+      if(session.id!==attempt.checkoutSessionId||session.object!=='checkout.session'||session.livemode!==account.livemode||session.status!=='complete'||
+        stripeId(session.customer)!==account.customerId||session.client_reference_id!==attempt.id||session.metadata?.billingAccountId!==account.id||session.metadata?.billingAttemptId!==attempt.id)throw new Error('billing.session_binding');
+      const siblings=await this.stripe.list('/subscriptions',{customer:account.customerId,status:'all'});
+      if(siblings.filter(s=>!['canceled','incomplete_expired'].includes(s.status)).length>1)throw new Error('billing.duplicate_subscription');
+      const attemptHash=hashBilling([attempt.quoteSnapshot,attempt.checkoutSessionId,attempt.consentRevision,attempt.consentAt,attempt.policyRevisionId]);
+      const recordOnly=async(tx:Prisma.TransactionClient)=>{
+        await authorize(tx);const current=await tx.billingAttempt.findFirst({where:{id:attempt.id,billingAccountId:account.id}});
+        if(!current||hashBilling([current.quoteSnapshot,current.checkoutSessionId,current.consentRevision,current.consentAt,current.policyRevisionId])!==attemptHash)throw new Error('billing.original_contract_changed');
+      };
+      await authorize();
+      if(snapshot.repeat){
+        if(subscription||session.mode!=='payment'||stripeId(session.invoice)!==invoice.id)throw new Error('billing.original_invoice_changed');
+        await this.billing.repeater.importPayment(account,attempt,session,invoice,lease,recordOnly);return;
+      }
+      if(!subscription||subscription.id!==subscriptionId||subscription.object!=='subscription'||subscription.livemode!==account.livemode||stripeId(subscription.customer)!==account.customerId||
+        subscription.metadata?.billingAccountId!==account.id||session.mode!=='subscription'||stripeId(session.subscription)!==subscription.id||
+        (attempt.subscriptionId&&attempt.subscriptionId!==subscription.id))throw new Error('billing.subscription_binding');
+      const lines=await this.stripe.list(`/invoices/${invoice.id}/lines`,{}),start=lines[0]?.period?.start;
+      if(!Number.isSafeInteger(start))throw new Error('billing.invoice_period_missing');
+      // An old subscription uses its original consent; never fall back to a newer restarted contract.
+      const contracts=await this.prisma.client.billingSubscriptionContract.findMany({where:{billingAccountId:account.id,effectiveAt:{lte:new Date(start*1000)}},orderBy:[{effectiveAt:'desc'},{revision:'desc'}],take:1});
+      const effective=contracts[0]?.snapshotJson as unknown as BillingSnapshot|undefined;
+      const contractSnapshot=invoice.billing_reason==='subscription_create'?snapshot:effective??snapshot;
+      if(contractSnapshot.quote.companyId!==account.companyId||(!account.baseSubscriptionId||account.baseSubscriptionId!==subscription.id)&&contractSnapshot.quote.quoteId!==snapshot.quote.quoteId)throw new Error('billing.original_contract_changed');
+      await this.verifyAndApplyInvoice(account,attempt,invoice,subscription,lines,contractSnapshot,lease,recordOnly);
+    }finally{await this.prisma.client.billingAccount.updateMany({where:{id:accountId,leaseToken:lease},data:{leaseToken:null,leaseUntil:null}});}
+  }
+
   private async reconcileOriginalInvoice(account:BillingAccount,id:string,lease:string) {
     const source=await this.prisma.client.billingInvoice.findFirstOrThrow({where:{id,billingAccountId:account.id}});
     if(source.applyStatus==='APPLIED'&&source.appliedAt)return;
@@ -314,12 +370,12 @@ export class BillingReconcilerService {
     const snapshot=(source.contractSnapshot as unknown as BillingSnapshot|null)??await this.contractSnapshot(account.id,source.periodStart,contract.quoteSnapshot as unknown as BillingSnapshot);
     await this.verifyAndApplyInvoice(account,contract,invoice,subscription,lines,snapshot,lease);
   }
-  private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string) {
+  private async verifyAndApplyInvoice(account:BillingAccount,contract:BillingAttempt,invoice:StripeObject,subscription:StripeObject,lines:StripeObject[],snapshot:BillingSnapshot,lease:string,recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>) {
     const payments=await this.stripe.list('/invoice_payments',{invoice:invoice.id}),payment=payments.find(p=>p.status==='paid'&&p.payment?.type==='payment_intent');
     if(!payment)throw new Error('billing.card_payment_missing');
     const intent=await this.stripe.request('GET',`/payment_intents/${stripeId(payment.payment.payment_intent)}`,{expand:['latest_charge.balance_transaction']});
     const charge=typeof intent.latest_charge==='object'?intent.latest_charge:await this.stripe.request('GET',`/charges/${stripeId(intent.latest_charge)}`,{expand:['balance_transaction']});
-    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot,lease);
+    await this.applyInvoice(account,contract,paidInvoiceEvidence(invoice,subscription,lines,payments,intent,charge,snapshot,this.stripe.livemode),snapshot,lease,recordOnly);
   }
 
   private async contractSnapshot(accountId: string, at: Date, fallback: BillingSnapshot): Promise<BillingSnapshot> {
@@ -427,11 +483,12 @@ export class BillingReconcilerService {
     }
   }
 
-  private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string): Promise<void> {
+  private async applyInvoice(account: BillingAccount, contract: BillingAttempt, evidence: PaidInvoiceEvidence, snapshot: BillingSnapshot, leaseToken: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>): Promise<void> {
     await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${account.companyId}`}))`;
       await lockPlanTermCompany(tx, account.companyId);
       await this.assertLease(tx, account.id, leaseToken);
+      if(recordOnly)await recordOnly(tx);
       const existing = await tx.billingInvoice.findUnique({ where: { billingAccountId_providerInvoiceId: { billingAccountId: account.id, providerInvoiceId: evidence.invoiceId } } });
       if (existing?.evidenceHash && existing.evidenceHash !== evidence.evidenceHash) throw new Error('billing.invoice_evidence_changed');
       const invoice = await tx.billingInvoice.upsert({ where: { billingAccountId_providerInvoiceId: { billingAccountId: account.id, providerInvoiceId: evidence.invoiceId } },
@@ -445,14 +502,22 @@ export class BillingReconcilerService {
         update: { feeSatang: evidence.feeSatang,
           ...(existing?.contractSnapshot ? {} : { contractSnapshot: snapshot as unknown as Prisma.InputJsonValue }) } });
       await recordBillingFinancials(tx,account,invoice,{refundedSatang:evidence.refundedSatang,disputed:evidence.disputed});
-      if (evidence.kind === 'INITIAL') await tx.billingSubscriptionContract.upsert({ where: {
+      if(recordOnly){
+        if(!invoice.appliedAt){await tx.billingInvoice.update({where:{id:invoice.id},data:{applyStatus:'HELD',errorCode:'access_review_required'}});
+          await detectBillingIssue(tx,{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,kind:'PAID_HELD',referenceId:invoice.id});}
+        await tx.auditLog.create({data:{companyId:account.companyId,action:'billing.invoice.imported',targetType:'BillingInvoice',targetId:invoice.id,requestId:invoice.id,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{sourceAttemptId:contract.id,rightsChanged:false}}});return;
+      }
+      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      const restarting = evidence.kind === 'INITIAL' ? snapshot.restart : undefined;
+      const currentContract = restarting ? current.baseSubscriptionId === restarting.subscriptionId && current.activeAttemptId === contract.id &&
+        current.contractAttemptId === restarting.contractAttemptId && current.paidThrough?.toISOString() === restarting.paidThrough :
+        current.baseSubscriptionId === evidence.subscriptionId || (evidence.kind === 'INITIAL' && current.baseSubscriptionId === null && current.activeAttemptId === contract.id);
+      if (evidence.kind === 'INITIAL' && currentContract) await tx.billingSubscriptionContract.upsert({ where: {
         billingAccountId_sourceAttemptId: { billingAccountId: account.id, sourceAttemptId: contract.id },
       }, create: { billingAccountId: account.id, sourceAttemptId: contract.id, effectiveAt: evidence.periodStart,
         snapshotJson: snapshot as unknown as Prisma.InputJsonValue }, update: {} });
       if (invoice.appliedAt) return;
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
-      const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-      const restarting = evidence.kind === 'INITIAL' ? snapshot.restart : undefined;
       const planChange = snapshot.planChangeId ? await tx.billingOperation.findUnique({ where: { id: snapshot.planChangeId } }) : null;
       const applyingChange = evidence.kind === 'RENEWAL' && !!planChange && planChange.state !== 'APPLIED';
       const proposedChange = planChange?.proposedJson as unknown as ScheduledChange | undefined;
@@ -463,7 +528,8 @@ export class BillingReconcilerService {
         await attemptCapacity(tx, account.id, { id: planChange!.id, quoteSnapshot: { ...snapshot, capacity: proposedChange.change.selection } as unknown as Prisma.JsonValue }) : undefined;
       const capacityReady = changeBound && ((evidence.kind !== 'INITIAL' && !applyingChange) || (capacity ?
         capacityValid(await capacityOptions(tx, company.id, snapshot.quote.offer), capacity) : await restartFits(tx, company.id, snapshot.quote.offer)));
-      const held = (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) ||
+      // Historical evidence cannot replace a newer customer contract merely because its paid end is later.
+      const held = !currentContract || (current.paidThrough !== null && evidence.periodEnd <= current.paidThrough) || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt)) ||
         evidence.disputed || evidence.refundedSatang > 0 || evidence.periodEnd <= new Date() || evidence.periodStart > new Date() ||
         termProjectionHash(company.planTerm) !== (current.termProjectionHash ?? snapshot.termHash) || !capacityReady ||
         (restarting && (current.baseSubscriptionId !== restarting.subscriptionId || current.activeAttemptId !== contract.id ||

@@ -209,13 +209,16 @@ export class BillingAdminController {
   operation(@Req() req: AuthedRequest, @Param('id') id: string) { return this.operations.get(req.context, uuid(id)); }
   @Post('operations/preview') @HttpCode(200) @RequirePermissions('system.billing.read')
   async preview(@Req() req: AuthedRequest, @Body() body: BillingRepairPreviewDto) {
-    const fields = bodyFields(body, ['type', 'companyId', 'reason', 'expectedVersion','referenceId','invoiceSourceHash']);
-    if ((fields.type!=='RECONCILE'&&fields.type!=='RETRY_APPLY'&&fields.type!=='RETRY_NOTIFICATION'&&fields.type!=='RECONCILE_NOTIFICATION') || !Number.isInteger(fields.expectedVersion)) invalid();
+    const fields = bodyFields(body, ['type', 'companyId', 'reason', 'expectedVersion','referenceId','invoiceSourceHash','findingSourceHash']);
+    if ((fields.type!=='RECONCILE'&&fields.type!=='IMPORT_INVOICE'&&fields.type!=='RETRY_APPLY'&&fields.type!=='RETRY_NOTIFICATION'&&fields.type!=='RECONCILE_NOTIFICATION') || !Number.isInteger(fields.expectedVersion)) invalid();
     await this.operationLimit(req);
     return this.operations.preview(req.context, { type: fields.type, companyId: textField(fields.companyId, 128),
       reason: textField(fields.reason, 500), expectedVersion: fields.expectedVersion as number,...fields.referenceId===undefined?{}:{referenceId:textField(fields.referenceId,128)},
-      ...fields.invoiceSourceHash===undefined?{}:{invoiceSourceHash:textField(fields.invoiceSourceHash,64)} });
+      ...fields.invoiceSourceHash===undefined?{}:{invoiceSourceHash:textField(fields.invoiceSourceHash,64)},
+      ...fields.findingSourceHash===undefined?{}:{findingSourceHash:textField(fields.findingSourceHash,64)} });
   }
+  @Get('companies/:id/invoice-findings/:findingId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  invoiceFinding(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('findingId') findingId:string) {return this.operations.finding(req.context,textField(companyId,128),uuid(findingId));}
   @Get('companies/:targetCompanyId/apply-invoices') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   applyInvoices(@Req() req:AuthedRequest,@Param('targetCompanyId') companyId:string,@Query() query:unknown) {
     const fields=bodyFields(query,['cursor']);return this.operations.applyInvoices(req.context,companyId,fields.cursor===undefined?undefined:uuid(fields.cursor));

@@ -187,6 +187,7 @@ async function main() {
         second:{userId:userIds[1]!,signToken:sid=>new JwtService().sign({sub:userIds[1],sid},{secret,algorithm:'HS256',issuer:DEFAULT_JWT_ISSUER,audience:DEFAULT_JWT_AUDIENCE,expiresIn:3600}),
           recordLegal:membershipId=>client.$transaction(tx=>app.get(LegalAcceptanceService).recordFromEvidence(tx,{userId:userIds[1]!,companyId:companyIds[0]!,membershipId,
             requestId:run,evidence:{...release,locale:'th',legalAcceptedAt:new Date()}})).then(()=>{})},
+        drainOperations:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
     if(process.env.BILLING_SUPPORT_OUTCOMES_ONLY==='1'){
@@ -209,7 +210,7 @@ async function main() {
       cases.push(...await checkEmailVerification({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE'],realProviderDelivery:false}));return;
     }
-    if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'||process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'||process.env.BILLING_INVOICE_SCANS_ONLY==='1'){
+    if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'||process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'||process.env.BILLING_INVOICE_SCANS_ONLY==='1'||process.env.BILLING_INVOICE_IMPORT_ONLY==='1'){
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       }

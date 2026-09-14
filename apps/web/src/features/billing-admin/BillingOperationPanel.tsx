@@ -7,13 +7,13 @@ import { apiErrorMessage } from '@/common/api/api-error-message';
 const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
 const labels: Record<string, string> = { PREVIEW: 'ตรวจสอบก่อนส่งคำสั่ง', QUEUED: 'รอระบบตรวจสอบ', RUNNING: 'กำลังตรวจสอบ', SUCCEEDED: 'ตรวจสอบสถานะล่าสุดแล้ว',
   UNKNOWN: 'ยังยืนยันผลไม่ได้', BLOCKED: 'ต้องตรวจสอบสิทธิ์หรือเงื่อนไข', FAILED: 'ดำเนินการไม่สำเร็จ', CANCELLED: 'ยกเลิกคำสั่งตรวจสอบแล้ว' };
-const label=(operation:BillingRepairOperation)=>operation.type==='RETRY_NOTIFICATION'&&operation.state==='SUCCEEDED'?'นำรายการเดิมกลับเข้าคิวแล้ว':labels[operation.state]??operation.state;
+const label=(operation:BillingRepairOperation)=>operation.type==='IMPORT_INVOICE'&&operation.state==='SUCCEEDED'?'บันทึกใบแจ้งหนี้เดิมแล้ว':operation.type==='RETRY_NOTIFICATION'&&operation.state==='SUCCEEDED'?'นำรายการเดิมกลับเข้าคิวแล้ว':labels[operation.state]??operation.state;
 const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T>(`/system/billing/operations${path}`, {
   cache: 'no-store', suppressErrorToast: true, ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body),
     headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) } }),
 });
-export default function BillingOperationPanel({ operationId, companyId, companyVersion, canReconcile = false,deliveryId,canRetry=false,canCheckDelivery=false,eventId,eventSourceHash,invoiceId,invoiceSourceHash }: {
-  operationId?: string; companyId?: string; companyVersion?: number; canReconcile?: boolean;deliveryId?:string;canRetry?:boolean;canCheckDelivery?:boolean;eventId?:string;eventSourceHash?:string;invoiceId?:string;invoiceSourceHash?:string;
+export default function BillingOperationPanel({ operationId, companyId, companyVersion, canReconcile = false,deliveryId,canRetry=false,canCheckDelivery=false,eventId,eventSourceHash,invoiceId,invoiceSourceHash,findingId,findingSourceHash }: {
+  operationId?: string; companyId?: string; companyVersion?: number; canReconcile?: boolean;deliveryId?:string;canRetry?:boolean;canCheckDelivery?:boolean;eventId?:string;eventSourceHash?:string;invoiceId?:string;invoiceSourceHash?:string;findingId?:string;findingSourceHash?:string;
 }) {
   const [operation, setOperation] = useState<BillingRepairOperation | null>(null), [reason, setReason] = useState('');
   const accept=(value:BillingRepairOperation)=>setOperation(current=>current?.id===value.id&&current.version>value.version?current:value);
@@ -23,11 +23,11 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
   useEffect(() => {
     let active = true;
     const load = operationId ? api<BillingRepairOperation>(`/${encodeURIComponent(operationId)}`).then(value => { if (active) accept(value); }) :
-      api<{ items: BillingRepairOperation[]; nextCursor: string | null }>(`?${eventId?`referenceId=${encodeURIComponent(eventId)}`:`companyId=${encodeURIComponent(companyId!)}`}${deliveryId||invoiceId?`&referenceId=${encodeURIComponent(deliveryId??invoiceId!)}`:''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+      api<{ items: BillingRepairOperation[]; nextCursor: string | null }>(`?${eventId?`referenceId=${encodeURIComponent(eventId)}`:`companyId=${encodeURIComponent(companyId!)}`}${deliveryId||invoiceId||findingId?`&referenceId=${encodeURIComponent(deliveryId??invoiceId??findingId!)}`:''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
         .then(value => { if (active) setList(value); });
     load.catch(() => { if (active) { setOperation(null); setList(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสอบสิทธิ์และลองใหม่'); } });
     return () => { active = false; };
-  }, [operationId, companyId, deliveryId, eventId, invoiceId, cursor, reload]);
+  }, [operationId, companyId, deliveryId, eventId, invoiceId, findingId, cursor, reload]);
   const inlineOperationId = operationId ? undefined : operation?.id;
   useEffect(() => {
     if (!inlineOperationId) return;
@@ -49,7 +49,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
   async function act(action: 'preview' | 'submit' | 'retry' | 'cancel') {
     if (busy) return; setBusy(true); setError('');
     try {
-      const value = action === 'preview' && eventId ? await authedApiFetch<BillingRepairOperation>(`/system/billing/provider-events/${eventId}/preview`,{method:'POST',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceHash:eventSourceHash,reason})}) : action === 'preview' ? await api<BillingRepairOperation>('/preview', { type: invoiceId?'RETRY_APPLY':deliveryId?(canCheckDelivery?'RECONCILE_NOTIFICATION':'RETRY_NOTIFICATION'):'RECONCILE', companyId, expectedVersion: companyVersion, reason,...invoiceId?{referenceId:invoiceId,invoiceSourceHash}:deliveryId?{referenceId:deliveryId}:{} }) :
+      const value = action === 'preview' && eventId ? await authedApiFetch<BillingRepairOperation>(`/system/billing/provider-events/${eventId}/preview`,{method:'POST',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceHash:eventSourceHash,reason})}) : action === 'preview' ? await api<BillingRepairOperation>('/preview', { type: findingId?'IMPORT_INVOICE':invoiceId?'RETRY_APPLY':deliveryId?(canCheckDelivery?'RECONCILE_NOTIFICATION':'RETRY_NOTIFICATION'):'RECONCILE', companyId, expectedVersion: companyVersion, reason,...findingId?{referenceId:findingId,findingSourceHash}:invoiceId?{referenceId:invoiceId,invoiceSourceHash}:deliveryId?{referenceId:deliveryId}:{} }) :
         action === 'submit' ? await api<BillingRepairOperation>('', { previewId: operation!.id, previewHash: operation!.previewHash, expectedVersion: operation!.version }, `billing-op-${operation!.id}`) :
           await api<BillingRepairOperation>(`/${operation!.id}/${action}`, { expectedVersion: operation!.version });
       accept(value); setPollEnded(false); setReload(v => v + 1);
@@ -60,6 +60,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
     <h2 className="text-lg font-bold">ตรวจสอบและกู้คืนรายการเดิม</h2>
     <p>ระบบตรวจหลักฐานล่าสุดและดำเนินการรายการที่มีอยู่ตามนโยบาย ผลการตรวจแยกจากการปิดเคสและการชำระเงินสำเร็จ</p>
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
+    {findingId&&<p>ตรวจหลักฐานการจ่ายฉบับเต็มแล้วบันทึกใบแจ้งหนี้เดิมไว้ให้ตรวจสิทธิ์ต่อ คำสั่งนี้ไม่เรียกเก็บเงินและไม่เพิ่มสิทธิ์</p>}
     {deliveryId&&(canRetry||canCheckDelivery)&&<p>{canCheckDelivery?'ตรวจสอบผลอีเมลเดิมกับ Postmark คำสั่งนี้ไม่ส่งอีเมลใหม่':'นำรายการแจ้งเตือนเดิมกลับเข้าคิว โดยคงผู้รับ ข้อความ และประวัติเดิม ไม่มีการเรียกเก็บเงินหรือเพิ่มสิทธิ์'}</p>}
     {(companyId||eventId) && (canReconcile||canRetry||canCheckDelivery) && <div className="space-y-3"><label className="block">เหตุผลการตรวจสอบ<input className="mt-2 block w-full rounded-lg border p-3" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} /></label>
       <button className={button} disabled={busy || !reason.trim()} onClick={() => void act('preview')}>ตรวจสอบผลกระทบ</button></div>}
@@ -67,6 +68,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       <h3 className="font-bold" role="status">{label(operation)}</h3>
       <p className="break-all">{operation.scope.mode} · บริษัท {operation.scope.kind === 'COMPANY' ? operation.scope.companyId : 'ระดับระบบ'}</p>
       <p>{operation.reason}</p><p className="break-all text-sm">เลขคำสั่ง {operation.id} · เวอร์ชัน {operation.version}</p>
+      {operation.findingImpact&&<p>ตรวจผลเดิม {operation.findingImpact.findingId} · สถานะตอนพบ {operation.findingImpact.beforeState} · สร้างเมื่อ {new Date(operation.findingImpact.invoiceCreatedAt).toLocaleString('th-TH')} · บันทึกหลักฐานอย่างเดียว แล้วตรวจการให้สิทธิ์แยกอีกขั้น</p>}
       {operation.invoiceImpact&&<p>ใบเสร็จเดิม {operation.invoiceImpact.id} · ก่อนตรวจ {operation.invoiceImpact.beforeState} · {new Date(operation.invoiceImpact.periodStart).toLocaleString('th-TH')} ถึง {new Date(operation.invoiceImpact.periodEnd).toLocaleString('th-TH')}</p>}
       {operation.observed?.invoiceApplyState&&<p>ผลของใบเสร็จเดิม: {operation.observed.invoiceApplyState} · สิทธิ์ปัจจุบันและเงื่อนไขอื่นตรวจได้ที่ข้อมูลบริษัท</p>}
       {operation.type==='RETRY_APPLY'&&!operation.invoiceImpact&&<p>คำสั่งเก่ายังไม่ได้ผูกใบเสร็จ ยกเลิกคำสั่งนี้แล้วเลือกใบเสร็จเดิมเพื่อตรวจใหม่</p>}
@@ -83,6 +85,8 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       <div className="flex flex-wrap gap-2">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>{action === 'submit' ? 'ยืนยันส่งคำสั่งตรวจสอบ' : action === 'retry' ? 'ตรวจสอบคำสั่งเดิมอีกครั้ง' : 'ยกเลิกคำสั่งตรวจสอบ'}</button>)}</div>
       <div className="flex flex-wrap gap-3"><Link className="underline" href={`/system/billing/operations/${operation.id}`}>เปิดลิงก์คำสั่งนี้</Link>
         {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/deliveries/${operation.referenceId}`}>เปิดรายการส่งเดิม</Link>}
+        {operation.type==='IMPORT_INVOICE'&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<><Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/invoice-findings/${operation.referenceId}`}>กลับผลตรวจใบแจ้งหนี้เดิม</Link>
+          {operation.observed?.invoiceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices/${operation.observed.invoiceId}`}>ตรวจการให้สิทธิ์จากใบแจ้งหนี้ที่บันทึก</Link>}</>}
         {operation.type==='RETRY_APPLY'&&operation.scope.kind==='COMPANY'&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices${operation.referenceId?`/${operation.referenceId}`:''}`}>กลับไปใบเสร็จเดิมหรือเลือกรายการ</Link>}
         {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไป event เดิม</Link>}
         {operation.scope.kind === 'COMPANY' && <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>

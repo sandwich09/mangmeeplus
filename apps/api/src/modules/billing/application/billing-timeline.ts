@@ -51,6 +51,6 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
   return { items: rows.slice(0,25).map(row => ({ ...row, recordedAt:row.recordedAt.toISOString(), occurredAt:row.occurredAt?.toISOString() ?? null,
     updatedAt:row.updatedAt?.toISOString() ?? null, observedAt:row.observedAt?.toISOString() ?? null,
     href: (row.kind==='OPERATION'&&row.type==='SCAN_PROVIDER_INVOICES'?`/system/billing/companies/${encodeURIComponent(scope.companyId)}/invoice-scans/${encodeURIComponent(row.reference.slice(10))}`:outcomeLinks.get(row.reference)) ?? (row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
-      row.kind==='OPERATION' && ['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null) })),
+      row.kind==='OPERATION' && ['RECONCILE','IMPORT_INVOICE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null) })),
     nextCursor: rows.length>25 ? rows[24]!.reference : null, auditIncluded:scope.audit, financialIncluded:scope.financial };
 }

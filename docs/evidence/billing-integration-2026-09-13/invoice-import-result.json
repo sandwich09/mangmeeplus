@@ -1,0 +1,66 @@
+{
+  "baseCommit": "dff509a8b1b0149e79578c2399b1a7ce15766715",
+  "capturedAt": "2026-09-14T15:12:25.002769+00:00",
+  "sourceHashScope": "Changed runtime/contracts/harness/CI relative to baseCommit; transitive unchanged files are identified by that commit.",
+  "checks": {
+    "invoiceImportHttpPostgresqlBrowser": {
+      "command": "BILLING_INVOICE_IMPORT_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js",
+      "passedGroups": 9,
+      "scenarios": [
+        "invoice-import-scoped-nonmember-read-only-strict-input-and-old-subscription-verified-held-without-rights-or-current-contract-change",
+        "invoice-import-follow-on-exact-apply-holds-old-subscription-with-future-paid-end-instead-of-replacing-current-contract",
+        "invoice-import-follow-on-apply-does-not-certify-an-unapplied-overlapping-period-as-granted",
+        "invoice-import-original-repeat-verified-service-period-and-refund-dispute-remain-held-with-no-provider-mutation",
+        "invoice-import-foreign-customer-contract-price-and-incomplete-payment-chain-refused-with-reachable-original-review",
+        "invoice-import-customer-change-before-submit-and-revoked-operator-during-payment-read-prevent-commit",
+        "invoice-import-real-postgresql-audit-failure-rolls-back-ledger-and-review-original-command-retry-once",
+        "invoice-import-account-operation-lease-and-customer-change-fences-concurrent-workers-and-verified-local-replay-with-no-provider-io",
+        "browser-invoice-import-lost-submit-response-same-command-unknown-retry-reload-and-original-invoice-finding-scan-company-return"
+      ]
+    },
+    "postgresqlAndPackageRegression": {
+      "passedTests": 36,
+      "skipped": 0,
+      "files": [
+        "billing-receipts.pg.spec.ts",
+        "billing-grace.pg.spec.ts",
+        "billing-caps.pg.spec.ts",
+        "domain/paid-checkout-invoice.spec.ts",
+        "domain/billing-package.spec.ts"
+      ]
+    },
+    "apiTypecheck": "PASS",
+    "webTypecheck": "PASS",
+    "webErrorCoverageAndRawDisplayGuards": "13 PASS; 0 skips",
+    "maintenancePins": "PASS",
+    "diffCheck": "PASS"
+  },
+  "limits": [
+    "Actual local HTTP/PostgreSQL/Next/Chromium with synthetic Stripe GET responses; no live payment/provider mutation/native message.",
+    "Import begins from explicitly seeded immutable discovery findings. Actual invoice-scan endpoint pagination is a separate regression, not claimed by this helper.",
+    "SUCCEEDED means original paid ledger exists; import creates no grant, term, subscription/collection change or paid notification. Expired/refunded/disputed/overlapping evidence remains reviewable and may require C08 resolution.",
+    "Counts are bounded overlapping scenarios. The ordered signup/event/email/original-apply/repeat/invoice-history/combined browser regression is running separately, not yet claimed complete.",
+    "Base dff509a8 CI34856635603 failed existing original-apply navigation with actual Next404. Required route exists; exact cause was not proved from retained output. Shared readiness/shutdown gaps are corrected, with no route retries or timeout relaxation. New source requires fresh CI.",
+    "Both repositories still need full implementation and authorized develop/main merges. No deployment."
+  ],
+  "sourceHashes": {
+    ".github/workflows/ci.yml": "3aa7f8d1a045161e6c3dc8580a2d3394b49e18a18a8d9f5d37073f1be9ab761c",
+    "apps/api/src/modules/billing/application/billing-invoice-finding.ts": "333a1ffb71399686870222d8308332c755cb46c39bcc84fc6ef55cddde79d310",
+    "apps/api/src/modules/billing/application/billing-operations.service.ts": "0d7f0045bac9f841f4dac9b888112b6df7d93c81e96e54209a2ba3d277174ab6",
+    "apps/api/src/modules/billing/application/billing-provider-scans.service.ts": "3f036b5311224b358dbcc0342c0784da99532b0c32292800d9672fdb15badcf8",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "ae5c576ad88c932d33d013a3c2e545497941b522dae84bbba4cad29ead5e9103",
+    "apps/api/src/modules/billing/application/billing-repeat.ts": "0c6bdf207dcb72b8902e9d6982c09126289d90f4d392a342c7520ab4819ce729",
+    "apps/api/src/modules/billing/application/billing-timeline.ts": "a656ea004a42a8fd1a9057faae4b9815f6c95c773bb8ff509278c1b456de96ec",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "50821f3e6e59206d5b00990da3fcf7c809a4f7a73165e21668d298f371778233",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "f27c23548c426a5e6336576db2fbbfdff312849b4f0c28232d031338e5d9b5b5",
+    "apps/api/src/scripts/billing-browser-smoke.ts": "78c155030b1e3bec05828a9a87d9cad56bcfc5d690aad9b8aa7978bc3fa92ba0",
+    "apps/api/src/scripts/billing-http-smoke.ts": "bb5427eb675ed1ff9173cddb6c33776fbd9361491b4ef2f4dff24721295f5b12",
+    "apps/api/src/scripts/billing-invoice-import-smoke.ts": "05d675e9ff479dcf4e7f476ba56257eba41ec5a34303bf557d39e694b9434b49",
+    "apps/api/src/scripts/billing-provider-scans-smoke.ts": "67af65b014e188681900cc7438a66a9db123fbbea134c72acd2effb5e5029813",
+    "apps/web/app/system/billing/companies/[id]/invoice-findings/[findingId]/page.tsx": "1880dedc9404b31633a2ad49c3502123cc9743c7586f184b255e7ee03adb83e7",
+    "apps/web/src/features/billing-admin/BillingInvoiceFindingPage.tsx": "8e44c4e4b47f4f8a8fc2174ea7b5c2d6ef0228eaadbeae0f2db42c25e1979fff",
+    "apps/web/src/features/billing-admin/BillingInvoiceFindings.tsx": "b20d9ac3f6e22c12160a6fe4f5388e78bbe738f5c58e6b6e416cd39a64f4043f",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "e8876fa92edcd8382581b7df30c88b778b64c953f2c3630c2cae2f45dfa74d60",
+    "packages/contracts/src/billing.ts": "cfb490208c54c4ff1fa11e946e9aa8b1461af82a58a8632800bfcc42cfe4b284"
+  }
+}

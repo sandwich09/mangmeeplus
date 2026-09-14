@@ -9,6 +9,7 @@ import { StripeClient, stripeId, safeStripeUrl, type StripeObject } from '../inf
 import { assertStripePrice, billingError, hashBilling, quoteTotals } from '../domain/billing-policy';
 import { appendPackageInterval, fullPackagePurchaseImpact } from '../domain/billing-package';
 import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domain/paid-checkout-invoice';
+import { detectBillingIssue } from './billing-issues';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { grantPaidPackageReceipts, paidReceiptBalance } from './billing-receipt-grants';
 import { assertMappedCharge, recordBillingFinancials } from './billing-financial';
@@ -133,11 +134,11 @@ export class BillingRepeat {
       if (charge.amount_refunded !== 0 || charge.disputed !== false) throw review();
     }
   }
-  private async fence(tx: Prisma.TransactionClient, account: BillingAccount, attempt: BillingAttempt, lease: string) {
+  private async fence(tx: Prisma.TransactionClient, account: BillingAccount, attempt: BillingAttempt, lease: string, requireActive = true) {
     await lockPlanTermCompany(tx, account.companyId);
     await tx.$queryRaw`SELECT "id" FROM "BillingAccount" WHERE "id" = ${account.id} FOR UPDATE`;
     const current = await tx.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-    if (current.leaseToken !== lease || !current.leaseUntil || current.leaseUntil <= new Date() || current.activeAttemptId !== attempt.id) throw new Error('billing.repeat_lost_lease');
+    if (current.leaseToken !== lease || !current.leaseUntil || current.leaseUntil <= new Date() || (requireActive && current.activeAttemptId !== attempt.id)) throw new Error('billing.repeat_lost_lease');
     return current;
   }
   private async sourceFence(tx: Prisma.TransactionClient, account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot) {
@@ -269,15 +270,7 @@ export class BillingRepeat {
       if (session.status === 'open') return { attemptId: attempt.id, state: 'OPEN', checkoutUrl: safeStripeUrl(session.url, 'checkout') };
       if (session.status !== 'complete' || session.payment_status !== 'paid' || !stripeId(session.invoice)) throw review();
       const invoice = await this.stripe.request('GET', `/invoices/${stripeId(session.invoice)}`);
-      const payments = await this.stripe.list('/invoice_payments', { invoice: invoice.id });
-      const intent = await this.stripe.request('GET', `/payment_intents/${stripeId(session.payment_intent)}`, { expand: ['latest_charge.balance_transaction'] });
-      const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : await this.stripe.request('GET', `/charges/${stripeId(intent.latest_charge)}`);
-      const evidence = paidPackageCheckoutEvidence({ session, invoice, payments, intent, charge, snapshot, attemptId: attempt.id,
-        billingAccountId: account.id, customerId: account.customerId, productId: source.productId, livemode: account.livemode,
-        checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}), invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
-      const impact = snapshot.upgrade ? { paidThrough: new Date(source.paidThrough), serviceStartsAt: new Date(snapshot.upgrade.prorationAt) } :
-        fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
-          verifiedPaidAt: evidence.paidAt, paidThrough: new Date(source.paidThrough), remainingPaidReceipts: 0, anchorDay: source.anchorDay });
+      const {evidence,impact}=await this.checkoutPayment(account,attempt,session,invoice);
       if (journal.paidThrough && journal.paidThrough !== impact.paidThrough.toISOString()) throw review();
       journal.paidThrough = impact.paidThrough.toISOString(); journal.serviceStart = impact.serviceStartsAt.toISOString(); await save();
       // Preserve paid evidence immediately so status/documents survive a later scheduling failure.
@@ -392,9 +385,29 @@ export class BillingRepeat {
     });
   }
 
-  private async recordPayment(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, evidence: PaidCheckoutEvidence, journal: Journal, lease: string) {
+  private async checkoutPayment(account:BillingAccount,attempt:BillingAttempt,session:StripeObject,invoice:StripeObject) {
+    const snapshot=attempt.quoteSnapshot as unknown as BillingSnapshot,source=snapshot.repeat!;
+    const payments = await this.stripe.list('/invoice_payments', { invoice: invoice.id });
+    const intent = await this.stripe.request('GET', `/payment_intents/${stripeId(session.payment_intent)}`, { expand: ['latest_charge.balance_transaction'] });
+    const charge = typeof intent.latest_charge === 'object' ? intent.latest_charge : await this.stripe.request('GET', `/charges/${stripeId(intent.latest_charge)}`);
+    const evidence = paidPackageCheckoutEvidence({ session, invoice, payments, intent, charge, snapshot, attemptId: attempt.id,
+      billingAccountId: account.id, customerId: account.customerId!, productId: source.productId, livemode: account.livemode,
+      checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}), invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
+    const impact = snapshot.upgrade ? { paidThrough: new Date(source.paidThrough), serviceStartsAt: new Date(snapshot.upgrade.prorationAt) } :
+      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+        verifiedPaidAt: evidence.paidAt, paidThrough: new Date(source.paidThrough), remainingPaidReceipts: 0, anchorDay: source.anchorDay });
+    return {evidence,impact};
+  }
+  async importPayment(account:BillingAccount,attempt:BillingAttempt,session:StripeObject,invoice:StripeObject,lease:string,guard:(tx:Prisma.TransactionClient)=>Promise<void>) {
+    const {evidence,impact}=await this.checkoutPayment(account,attempt,session,invoice);
+    const journal:Journal={commands:{},paidThrough:impact.paidThrough.toISOString(),serviceStart:impact.serviceStartsAt.toISOString()};
+    await this.recordPayment(account,attempt,attempt.quoteSnapshot as unknown as BillingSnapshot,evidence,journal,lease,guard);
+  }
+
+  private async recordPayment(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, evidence: PaidCheckoutEvidence, journal: Journal, lease: string, recordOnly?:(tx:Prisma.TransactionClient)=>Promise<void>) {
     await this.prisma.client.$transaction(async tx => {
-      await this.fence(tx, account, attempt, lease);
+      await this.fence(tx, account, attempt, lease, !recordOnly);
+      if(recordOnly)await recordOnly(tx);
       const existing = await tx.billingInvoice.findUnique({ where: { sourceAttemptId: attempt.id } });
       if (existing && existing.evidenceHash !== evidence.evidenceHash) throw review();
       const invoice=await tx.billingInvoice.upsert({ where: { sourceAttemptId: attempt.id }, update: { feeSatang: evidence.feeSatang },
@@ -404,6 +417,9 @@ export class BillingRepeat {
           refundedSatang: evidence.refundedSatang, disputed: evidence.disputed, financialObservedAt: new Date(), feeSatang: evidence.feeSatang, providerChargeId: evidence.chargeId,
           periodStart: new Date(journal.serviceStart!), periodEnd: new Date(journal.paidThrough!), providerStatus: 'paid', evidenceHash: evidence.evidenceHash } });
       await recordBillingFinancials(tx,account,invoice,{refundedSatang:evidence.refundedSatang,disputed:evidence.disputed});
+      if(recordOnly&&!invoice.appliedAt){await tx.billingInvoice.update({where:{id:invoice.id},data:{applyStatus:'HELD',errorCode:'access_review_required'}});
+        await detectBillingIssue(tx,{companyId:account.companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,kind:'PAID_HELD',referenceId:invoice.id});}
+      if(recordOnly)await tx.auditLog.create({data:{companyId:account.companyId,action:'billing.invoice.imported',targetType:'BillingInvoice',targetId:invoice.id,requestId:invoice.id,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{sourceAttemptId:attempt.id,rightsChanged:false}}});
     });
   }
   private async apply(account: BillingAccount, attempt: BillingAttempt, snapshot: BillingSnapshot, evidence: PaidCheckoutEvidence, journal: Journal, lease: string) {

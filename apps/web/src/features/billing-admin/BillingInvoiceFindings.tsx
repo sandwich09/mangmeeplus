@@ -24,6 +24,7 @@ export function BillingInvoiceFindings({companyId,scanId,version}:{companyId:str
       <p>สร้างใบแจ้งหนี้ {time(row.invoiceCreatedAt)} · ตรวจพบ {time(row.observedAt)}</p><p className="break-all text-xs">อ้างอิงผลตรวจ {row.id}</p>
       {row.localInvoiceId?<><p>ปัจจุบันมีใบแจ้งหนี้ในระบบ · {row.localApplyState==='APPLIED'?'บันทึกการให้สิทธิ์แล้ว':'ยังต้องตรวจการให้สิทธิ์'}</p>
         <Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(companyId)}/apply-invoices/${encodeURIComponent(row.localInvoiceId)}`}>ตรวจใบแจ้งหนี้เดิมและผลให้สิทธิ์</Link></>:<p>ยังไม่มีใบแจ้งหนี้ที่ผูกกับรายการนี้ ให้ผู้ดูแลตรวจเคสก่อนดำเนินการ ไม่ให้ลูกค้าซื้อซ้ำเพื่อแก้ปัญหานี้</p>}
+      <Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(companyId)}/invoice-findings/${row.id}`}>ตรวจหลักฐานใบแจ้งหนี้รายการนี้</Link>
       {row.reviewCaseId&&<Link className="block underline" href={`/system/billing/issues/${row.reviewCaseId}`}>เปิดเคสตรวจใบแจ้งหนี้ของบริษัท</Link>}
     </article>)}
     <div className="flex flex-wrap gap-2"><button className={button} onClick={()=>setReload(v=>v+1)}>โหลดผลตรวจใบแจ้งหนี้ล่าสุด</button>

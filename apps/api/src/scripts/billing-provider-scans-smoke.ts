@@ -7,6 +7,7 @@ import type { StripeClient } from '../modules/billing/infrastructure/stripe.clie
 
 export type ProviderScansSmokeInput={prisma:PrismaService;stripe:StripeClient;userId:string;membershipId:string;stripeAccountId:string;
   request:(path:string,method?:string,body?:unknown,headers?:Record<string,string>)=>Promise<{status:number;body:any}>;
+  drainOperations?:()=>Promise<{status:number;body:any}>;
   drain:()=>Promise<{status:number;body:any}>;browser?:Awaited<ReturnType<typeof startBillingBrowser>>;
   transport:(hook?:((url:URL,init?:RequestInit)=>Promise<Response|undefined>|Response|undefined))=>void;
   second?:{userId:string;signToken:(sid:string)=>string;recordLegal:(membershipId:string)=>Promise<void>};
@@ -42,6 +43,10 @@ export async function checkBillingProviderScans(input:ProviderScansSmokeInput) {
     Object.defineProperty(input.stripe,'enabled',{get:()=>false,configurable:true});
     try{assert.equal((await request(base)).body.canCreate,false);assert.equal((await create()).status,409);}
     finally{if(enabledDescriptor)Object.defineProperty(input.stripe,'enabled',enabledDescriptor);else Reflect.deleteProperty(input.stripe,'enabled');}
+    if(process.env.BILLING_INVOICE_IMPORT_ONLY==='1'){
+      const {checkBillingInvoiceImport}=await import('./billing-invoice-import-smoke');
+      return await checkBillingInvoiceImport({...input,roleId,adminId:admin.id});
+    }
     if(process.env.BILLING_INVOICE_SCANS_ONLY==='1'){
       const {checkBillingInvoiceScans}=await import('./billing-invoice-scans-smoke');
       try{return await checkBillingInvoiceScans({...input,roleId,adminId:admin.id});}

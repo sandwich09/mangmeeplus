@@ -1,7 +1,8 @@
+import { invoiceFindingSource } from './billing-invoice-finding';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { BillingAccount, BillingInvoice, BillingOperation, Prisma } from '../../../generated/prisma/client';
-import type { BillingApplyInvoiceView, BillingRepairOperation, BillingRepairPreview } from '@watchdog-bms/contracts';
+import type { BillingInvoiceFindingReview, BillingApplyInvoiceView, BillingRepairOperation, BillingRepairPreview } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
@@ -12,10 +13,10 @@ import { BillingNotificationsService } from './billing-notifications.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 
-const types=['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION','RETRY_PROVIDER_EVENT'];
+const types=['RECONCILE','IMPORT_INVOICE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION','RETRY_PROVIDER_EVENT'];
 const isDelivery=(type:string)=>['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(type);
-const permission = (type: string) => (type === 'RECONCILE' || type === 'RETRY_PROVIDER_EVENT') ? 'system.billing.reconcile.run' : type === 'RETRY_APPLY' ? 'system.billing.apply.retry' : isDelivery(type)?'system.billing.notification.retry':null;
-type Proposed = { accountId: string; membershipId: string; actorCompanyId: string; deliverySourceHash?:string;mailAttemptId?:string;deliveryImpact?:BillingRepairOperation['deliveryImpact'];eventSourceHash?:string;eventImpact?:BillingRepairOperation['eventImpact'];invoiceSourceHash?:string;invoiceImpact?:BillingRepairOperation['invoiceImpact'] };
+const permission = (type: string) => (type === 'RECONCILE' || type === 'RETRY_PROVIDER_EVENT') ? 'system.billing.reconcile.run' : ['RETRY_APPLY','IMPORT_INVOICE'].includes(type) ? 'system.billing.apply.retry' : isDelivery(type)?'system.billing.notification.retry':null;
+type Proposed = { findingSourceHash?:string;findingImpact?:BillingRepairOperation['findingImpact']; accountId: string; membershipId: string; actorCompanyId: string; deliverySourceHash?:string;mailAttemptId?:string;deliveryImpact?:BillingRepairOperation['deliveryImpact'];eventSourceHash?:string;eventImpact?:BillingRepairOperation['eventImpact'];invoiceSourceHash?:string;invoiceImpact?:BillingRepairOperation['invoiceImpact'] };
 @Injectable()
 export class BillingOperationsService {
   constructor(private readonly prisma: PrismaService, private readonly admin: BillingAdminService,
@@ -54,18 +55,35 @@ export class BillingOperationsService {
     const account=await this.billing.account(companyId);if(!account)throw new NotFoundException();
     return this.invoiceView(await this.invoiceRow(account,id),account,access.capabilities.includes('system.billing.apply.retry'));
   }
+  async finding(context:RequestContext,companyId:string,id:string):Promise<BillingInvoiceFindingReview> {
+    await this.authorize(context,companyId,'system.billing.read');const access=await this.admin.access(context,'system.billing.read');
+    const account=await this.billing.account(companyId);if(!account)throw new NotFoundException();
+    const source=await invoiceFindingSource(this.prisma.client,account,id),o=source.observation;
+    const local=await this.prisma.client.billingInvoice.findUnique({where:{billingAccountId_providerInvoiceId:{billingAccountId:account.id,providerInvoiceId:o.providerInvoiceId}}});
+    const issue=await this.prisma.client.billingIssue.findFirst({where:{companyId,stripeAccountId:account.stripeAccountId,livemode:account.livemode,kind:'PROVIDER_INVOICE_REVIEW',referenceId:account.id}});
+    return {id,scanId:source.scanId,companyId,observedAt:(source.row.observedAt??source.row.createdAt).toISOString(),invoiceCreatedAt:new Date(o.created*1000).toISOString(),
+      providerStatus:o.status,classification:o.classification,localInvoiceId:local?.id??null,localApplyState:local?.applyStatus??null,reviewCaseId:issue?.id??null,
+      accountVersion:account.version,sourceHash:source.sourceHash,canImport:source.bound&&!local&&o.status==='paid'&&o.paid>0&&o.paid===o.total&&this.billing.stripe.enabled&&access.capabilities.includes('system.billing.apply.retry')};
+  }
+  private async importSource(account:BillingAccount,row:Pick<BillingOperation,'referenceId'|'proposedJson'>,tx:Prisma.TransactionClient=this.prisma.client) {
+    if(!row.referenceId)throw billingError('CONTROL_INVOICE_TARGET_REQUIRED','เลือกผลตรวจใบแจ้งหนี้เดิมก่อน');
+    const source=await invoiceFindingSource(tx,account,row.referenceId);
+    if(!source.bound||source.sourceHash!==(row.proposedJson as Proposed).findingSourceHash)throw billingError('CONTROL_INVOICE_SOURCE_CHANGED','บัญชีหรือผลตรวจต้นทางเปลี่ยนแล้ว ยกเลิกคำสั่งเดิมและตรวจใหม่');
+    return source;
+  }
   private view(row: BillingOperation, actorId: string): BillingRepairOperation {
     if ((!row.companyId && row.type !== 'RETRY_PROVIDER_EVENT') || !permission(row.type)) throw new NotFoundException();
     const owned = row.initiatorUserId === actorId, fresh = row.expiresAt > new Date();
-    const apply=row.type==='RETRY_APPLY',targeted=!apply||Boolean(row.referenceId&&(row.proposedJson as Proposed).invoiceSourceHash);
+    const apply=['RETRY_APPLY','IMPORT_INVOICE'].includes(row.type),targeted=!apply||Boolean(row.referenceId&&(row.proposedJson as Proposed)[row.type==='IMPORT_INVOICE'?'findingSourceHash':'invoiceSourceHash']);
     return { id: row.id, type: row.type as BillingRepairOperation['type'], state: row.state as BillingRepairOperation['state'],
       scope: row.companyId ? { kind: 'COMPANY', companyId: row.companyId, mode: row.livemode ? 'LIVE' : 'TEST' } : { kind: 'PLATFORM', mode: row.livemode ? 'LIVE' : 'TEST' }, version: row.version,
       reason: row.reason, initiatorUserId: row.initiatorUserId, approverUserId: null, errorCode: row.errorCode,
       createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null, expiresAt: row.expiresAt.toISOString(),
       referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
-      allowedActions: !owned ? [] : row.state === 'PREVIEW' ? [...(fresh&&targeted ? ['submit' as const] : []), 'cancel'] :
+      allowedActions: !owned ? (row.type==='IMPORT_INVOICE'&&['PREVIEW','QUEUED','UNKNOWN','FAILED','BLOCKED'].includes(row.state)?['cancel']:[]) : row.state === 'PREVIEW' ? [...(fresh&&targeted ? ['submit' as const] : []), 'cancel'] :
         row.state === 'QUEUED' ? ['cancel'] : ['UNKNOWN', 'FAILED', 'BLOCKED'].includes(row.state) ? [...(targeted?['retry' as const]:[]),...(apply?['cancel' as const]:[])] : [],
-      ...apply?{invoiceImpact:(row.proposedJson as Proposed).invoiceImpact}:{},
+      ...row.type==='RETRY_APPLY'?{invoiceImpact:(row.proposedJson as Proposed).invoiceImpact}:{},
+      ...row.type==='IMPORT_INVOICE'?{findingImpact:(row.proposedJson as Proposed).findingImpact}:{},
       ...row.type==='RETRY_PROVIDER_EVENT'?{eventImpact:(row.proposedJson as Proposed).eventImpact}:{},
       ...isDelivery(row.type)?{deliveryImpact:(row.proposedJson as Proposed).deliveryImpact}:{},observed: row.resultJson as BillingRepairOperation['observed'] };
   }
@@ -114,8 +132,13 @@ export class BillingOperationsService {
         !input.reason.trim() || input.reason.length > 500) throw new BadRequestException('Invalid repair preview');
     await this.authorize(context, input.companyId, key);
     const account = await this.billing.account(input.companyId);
-    if (!account || account.version !== input.expectedVersion) throw billingError('CONTROL_PREVIEW_STALE', 'ข้อมูลเปลี่ยนแล้ว กรุณาโหลดบริษัทและตรวจสอบใหม่');
+    if (!account || (input.type!=='IMPORT_INVOICE'&&account.version !== input.expectedVersion)) throw billingError('CONTROL_PREVIEW_STALE', 'ข้อมูลเปลี่ยนแล้ว กรุณาโหลดบริษัทและตรวจสอบใหม่');
     const proposed: Proposed = { accountId: account.id, membershipId: context.membershipId, actorCompanyId: context.companyId };
+    if(input.type==='IMPORT_INVOICE'){
+      const view=await this.finding(context,input.companyId,input.referenceId??'');
+      if(!view.canImport||input.findingSourceHash!==view.sourceHash)throw billingError('CONTROL_PREVIEW_STALE','โหลดผลตรวจเดิมและตรวจสิทธิ์ล่าสุดก่อน');
+      proposed.findingSourceHash=view.sourceHash;proposed.findingImpact={scanId:view.scanId,findingId:view.id,beforeState:view.providerStatus,invoiceCreatedAt:view.invoiceCreatedAt};
+    }else if(input.findingSourceHash!==undefined)throw new BadRequestException();
     if(input.type==='RETRY_APPLY'){
       const invoice=await this.invoiceRow(account,input.referenceId??null),view=this.invoiceView(invoice,account,true);
       if(!view.canRetry||input.invoiceSourceHash!==view.sourceHash)throw billingError('CONTROL_PREVIEW_STALE','ใบเสร็จหรือสิทธิ์เปลี่ยนแล้ว กรุณาโหลดใบเสร็จเดิมและตรวจใหม่');
@@ -130,7 +153,7 @@ export class BillingOperationsService {
       const first=(source.row.metadataJson as {billing?:{firstStartedAt?:string}}).billing?.firstStartedAt;
       proposed.deliveryImpact={channel:source.row.channel,recipientUserId:source.row.recipient.userId,beforeState:source.row.status,afterState:input.type==='RECONCILE_NOTIFICATION'?'OBSERVED':'QUEUED',attemptCount:source.row.attemptCount,
         retryUntil:first?new Date(Date.parse(first)+23*3600000).toISOString():null,possibleDuplicate:source.kind==='EMAIL'&&source.possibleDuplicate};
-    }else if(input.type!=='RETRY_APPLY'&&input.referenceId!==undefined)throw new BadRequestException();
+    }else if(!['RETRY_APPLY','IMPORT_INVOICE'].includes(input.type)&&input.referenceId!==undefined)throw new BadRequestException();
     const row = await this.prisma.client.billingOperation.create({ data: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
       livemode: account.livemode, type: input.type, state: 'PREVIEW', proposedJson: proposed, sourceVersion: account.version,
       referenceId:input.referenceId,reason: input.reason.trim(), initiatorUserId: context.userId, requestHash: hashBilling([input.type, account.id, account.version, input.reason.trim(), proposed,input.referenceId??null]),
@@ -151,6 +174,8 @@ export class BillingOperationsService {
       }
       const proposed = preview.proposedJson as unknown as Proposed;
       const account = preview.companyId ? await tx.billingAccount.findUniqueOrThrow({ where: { id: proposed.accountId } }) : null;
+      await this.authorize(context,preview.companyId,permission(preview.type)!,tx);
+      if(preview.type==='IMPORT_INVOICE')await this.importSource(account!,preview,tx);
       if(preview.type==='RETRY_APPLY'){
         const invoice=await this.invoiceRow(account!,preview.referenceId,tx);
         if(!proposed.invoiceSourceHash||this.invoiceHash(invoice)!==proposed.invoiceSourceHash||!this.invoiceView(invoice,account!,true).canRetry)throw billingError('CONTROL_PREVIEW_STALE','ใบเสร็จเดิมเปลี่ยนแล้ว กรุณาตรวจผลกระทบใหม่');
@@ -165,7 +190,7 @@ export class BillingOperationsService {
         if(blocked||source.sourceHash!==proposed.deliverySourceHash)throw billingError('CONTROL_PREVIEW_STALE','ข้อมูลรายการส่งเปลี่ยนแล้ว กรุณาตรวจสอบใหม่');
       }
       if (preview.state !== 'PREVIEW' || preview.initiatorUserId !== context.userId || preview.requestHash !== input.previewHash ||
-          preview.version !== input.expectedVersion || preview.expiresAt <= new Date() || (account && account.version !== preview.sourceVersion)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการหรือสิทธิ์เปลี่ยนแล้ว กรุณาตรวจสอบใหม่');
+          preview.version !== input.expectedVersion || preview.expiresAt <= new Date() || (account && preview.type!=='IMPORT_INVOICE'&&account.version !== preview.sourceVersion)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการหรือสิทธิ์เปลี่ยนแล้ว กรุณาตรวจสอบใหม่');
       const pending = await tx.billingOperation.findFirst({ where: { companyId: preview.companyId, stripeAccountId: preview.stripeAccountId,
         livemode: preview.livemode, ...preview.companyId?{}:{referenceId:preview.referenceId}, type: { in: types }, state: { in: ['QUEUED', 'RUNNING', 'UNKNOWN'] } } });
       if (pending) throw billingError('CONTROL_OPERATION_IN_PROGRESS', 'มีคำสั่งเดิมกำลังตรวจสอบ เปิดประวัติคำสั่งของบริษัทเพื่อดำเนินการต่อ');
@@ -181,8 +206,10 @@ export class BillingOperationsService {
       const row = await this.row(context, id, 'system.billing.read', tx);
       await this.authorize(context, row.companyId!, permission(row.type)!, tx);
       await this.lockOperation(tx, row);
-      if (row.initiatorUserId !== context.userId || row.version !== expectedVersion ||
-          !(action === 'cancel' ? ['PREVIEW', 'QUEUED',...(row.type==='RETRY_APPLY'?['UNKNOWN','FAILED','BLOCKED']:[])] : ['UNKNOWN', 'FAILED', 'BLOCKED']).includes(row.state)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาตรวจสอบสถานะเดิม');
+      if ((row.initiatorUserId !== context.userId && !(action==='cancel'&&row.type==='IMPORT_INVOICE')) || row.version !== expectedVersion ||
+          !(action === 'cancel' ? ['PREVIEW', 'QUEUED',...(['RETRY_APPLY','IMPORT_INVOICE'].includes(row.type)?['UNKNOWN','FAILED','BLOCKED']:[])] : ['UNKNOWN', 'FAILED', 'BLOCKED']).includes(row.state)) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาตรวจสอบสถานะเดิม');
+      await this.authorize(context,row.companyId,permission(row.type)!,tx);
+      if(action==='retry'&&row.type==='IMPORT_INVOICE'){const account=await this.billing.account(row.companyId!,tx);if(!account)throw new NotFoundException();await this.importSource(account,row,tx);}
       if(action==='retry'&&row.type==='RETRY_APPLY'){
         const proposed=row.proposedJson as Proposed,account=await this.billing.account(row.companyId!,tx);
         if(!account||!proposed.invoiceSourceHash)throw billingError('CONTROL_INVOICE_TARGET_REQUIRED','เลือกใบเสร็จเดิมและตรวจใหม่');
@@ -197,8 +224,8 @@ export class BillingOperationsService {
         state: next, leaseToken: null, leaseUntil: null, errorCode: null, version: { increment: 1 },
       } });
       if (!changed.count) throw billingError('CONTROL_PREVIEW_STALE', 'รายการเปลี่ยนแล้ว กรุณาโหลดใหม่');
-      if(action==='cancel'&&row.type==='RETRY_APPLY')await resolveBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,
-        kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id},'INVOICE_APPLY_COMMAND_CANCELLED');
+      if(action==='cancel'&&['RETRY_APPLY','IMPORT_INVOICE'].includes(row.type))await resolveBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,
+        kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id},row.type==='IMPORT_INVOICE'?'INVOICE_IMPORT_COMMAND_CANCELLED':'INVOICE_APPLY_COMMAND_CANCELLED');
       await this.audit(tx, context, row, action, row.state, next);
       return this.view(await tx.billingOperation.findUniqueOrThrow({ where: { id } }), context.userId);
     });
@@ -235,6 +262,30 @@ export class BillingOperationsService {
           });processed++;continue;
         }
         const account = await this.prisma.client.billingAccount.findFirstOrThrow({ where: { id: proposed.accountId, companyId: row.companyId!, stripeAccountId: row.stripeAccountId, livemode: row.livemode } });
+        if(row.type==='IMPORT_INVOICE'){
+          applyError='CONTROL_INVOICE_SOURCE_CHANGED';await this.importSource(account,row);
+          const guard=async(tx:Prisma.TransactionClient)=>{
+            await this.admin.authorizeOperation(row,'system.billing.apply.retry',tx).catch(error=>{authorized=false;throw error;});
+            const locked=tx!==this.prisma.client;
+            if(locked)await tx.$queryRaw`SELECT "id" FROM "BillingOperation" WHERE "id" = ${row.id} FOR UPDATE`;
+            if(!await tx.billingOperation.findFirst({where:{id:row.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()}}}))throw new Error('billing.operation_lost_lease');
+            const current=await tx.billingAccount.findUniqueOrThrow({where:{id:account.id}});await this.importSource(current,row,tx);
+          };
+          applyError='CONTROL_OBSERVED_MISMATCH';
+          await this.reconciler.importDiscoveredInvoice(account.id,row.referenceId!,proposed.findingSourceHash!,guard);
+          await this.prisma.client.$transaction(async tx=>{
+            await lockPlanTermCompany(tx,account.companyId);await tx.$queryRaw`SELECT "id" FROM "BillingAccount" WHERE "id" = ${account.id} FOR SHARE`;await guard(tx);
+            const current=await tx.billingAccount.findUniqueOrThrow({where:{id:account.id}}),source=await this.importSource(current,row,tx);
+            const invoice=await tx.billingInvoice.findUniqueOrThrow({where:{billingAccountId_providerInvoiceId:{billingAccountId:account.id,providerInvoiceId:source.observation.providerInvoiceId}}});
+            if(!invoice.evidenceHash||invoice.providerStatus!=='paid'||invoice.paidSatang<=0||invoice.paidSatang!==invoice.totalSatang)throw new Error('billing.import_unconfirmed');
+            const changed=await tx.billingOperation.updateMany({where:{id:row.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()}},data:{state:'SUCCEEDED',observedAt:new Date(),
+              leaseToken:null,leaseUntil:null,errorCode:null,version:{increment:1},resultJson:{pendingAttemptId:current.activeAttemptId,invoiceId:invoice.id,invoiceApplyState:invoice.applyStatus,
+                issueCount:await tx.billingIssue.count({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,state:{not:'RESOLVED'}}})}}});
+            if(!changed.count)throw new Error('billing.operation_lost_lease');
+            await resolveBillingIssue(tx,{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id},'ORIGINAL_INVOICE_IMPORTED');
+            await this.audit(tx,context,row,'observed','RUNNING','SUCCEEDED');
+          });processed++;continue;
+        }
         if(row.type==='RETRY_APPLY'){
           if(!row.referenceId||!proposed.invoiceSourceHash){applyError='CONTROL_INVOICE_TARGET_REQUIRED';throw new Error();}
           applyError='CONTROL_INVOICE_SOURCE_CHANGED';
