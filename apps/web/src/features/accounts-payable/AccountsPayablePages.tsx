@@ -762,7 +762,7 @@ function SupplierPaymentList({ companyId, permissions }: { companyId: string; pe
   return (
     <div className="space-y-4">
       <CreateSupplierPaymentForm companyId={companyId} canCreate={permissions.includes('procurement.supplier_payment.create') && permissions.includes('procurement.supplier_payment.release')} onCreated={() => void load()} />
-      <div className="flex justify-end"><button className={ghostClass} onClick={load}>รีเฟรช</button></div>
+      <div className="flex justify-end"><button className={ghostClass} onClick={load} disabled={loading} aria-busy={loading}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
@@ -903,7 +903,7 @@ function WhtHandoffPanel({ companyId, permissions }: { companyId: string; permis
       <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         ระบบจะออกหนังสือรับรองหัก ณ ที่จ่ายให้ภายนอก แล้วแนบเข้ามาได้ — ข้อมูลการจ่ายและภาษีถูกบันทึกไว้แล้ว ไม่ต้องกรอกซ้ำ
       </div>
-      <div className="flex justify-end"><button type="button" className={`${ghostClass} min-h-11 min-w-11`} onClick={load}>รีเฟรช</button></div>
+      <div className="flex justify-end"><button type="button" className={`${ghostClass} min-h-11 min-w-11`} onClick={load} disabled={loading} aria-busy={loading}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">

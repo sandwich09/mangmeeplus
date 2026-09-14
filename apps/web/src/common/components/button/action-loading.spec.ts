@@ -81,6 +81,47 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+test('clipboard actions stay busy while permission/write waits and settle after rejection or retry', async () => {
+  for (const [file, name] of [['crm-inbox/LineOaSettingsPage.tsx', 'copyWebhook'], ['expenses/SubstituteReceiptWizardPage.tsx', 'copyWizardLink'], ['external-signup/SignupStatusPage.tsx', 'copyLink']]) {
+    let busy = false;
+    let wait = deferred<void>();
+    const action = handlers(file, [name], {
+      copying: false, webhookUrl: 'https://example.test/webhook',
+      navigator: { clipboard: { writeText: () => wait.promise } }, window: { location: { href: 'https://example.test' } },
+      setCopying: (value: boolean) => { busy = value; }, setCopied: () => {}, setLinkCopied: () => {},
+      setError: () => {}, apiErrorMessage: String, t: String, locale: 'th', setTimeout: () => {},
+    })[name];
+    const first = action(); assert.equal(busy, true, file);
+    wait.reject(new Error('clipboard denied')); await first; assert.equal(busy, false, file);
+    wait = deferred<void>(); const retry = action(); assert.equal(busy, true, file);
+    wait.resolve(); await retry; assert.equal(busy, false, file);
+  }
+});
+
+test('AI usage retry has visible pending and releases after a rejected read', async () => {
+  let busy = false;
+  const wait = deferred<unknown>();
+  const { loadUsage } = handlers('system-partners/PartnerDetailPage.tsx', ['loadUsage'], {
+    companyId: 'company', getPartnerAiUsage: () => wait.promise,
+    setUsageLoading: (value: boolean) => { busy = value; }, setUsageError: () => {}, apiErrorMessage: String,
+  });
+  const first = loadUsage(); assert.equal(busy, true);
+  wait.reject(new Error('read failed')); await first; assert.equal(busy, false);
+  assert.match(readFileSync(new URL('../../../features/system-partners/PartnerDetailPage.tsx', import.meta.url), 'utf8'), /usageLoading && <p role="status" aria-busy="true"/);
+});
+
+test('opening an existing reconciliation marks the selected run and releases on read failure', async () => {
+  let busy = false, runId: string | null = null;
+  const wait = deferred<unknown>();
+  const { loadRun } = handlers('tax/TaxReconciliationPage.tsx', ['loadRun'], {
+    companyId: 'company', busy: false, getTaxReconciliation: () => wait.promise,
+    setBusy: (value: boolean) => { busy = value; }, setOpeningRunId: (value: string | null) => { runId = value; },
+    setError: () => {}, transactionTaxErrorMessage: String,
+  });
+  const first = loadRun({ id: 'run', formType: 'PP36' }); assert.equal(busy, true); assert.equal(runId, 'run');
+  wait.reject(new Error('read failed')); await first; assert.equal(busy, false); assert.equal(runId, null);
+});
+
 test('period checks show busy before waiting, reject duplicate clicks, and clear on failure/retry', async () => {
   let busy: unknown, result: unknown, calls = 0;
   let wait = deferred<string>();

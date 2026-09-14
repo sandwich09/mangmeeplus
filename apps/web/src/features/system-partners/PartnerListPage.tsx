@@ -156,6 +156,7 @@ export default function PartnerListPage() {
             <button
               type="button"
               className="ml-3 underline"
+              disabled={loading} aria-busy={loading}
               onClick={() => void load(page, statusFilter)}
             >
               Retry

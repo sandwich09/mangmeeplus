@@ -821,7 +821,7 @@ export default function SignupQueuePage() {
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
-            <button type="button" className="ml-3 underline" onClick={() => void load()}>
+            <button type="button" className="ml-3 underline" disabled={loading} aria-busy={loading} onClick={() => void load()}>
               ลองใหม่
             </button>
           </div>

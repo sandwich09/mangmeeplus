@@ -259,6 +259,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotateForm, setRotateForm] = useState({ channelSecret: '', accessToken: '' });
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
 
   const status = channelStatusLabel(channel.status);
   const lastError = displayedChannelError(channel.lastErrorCode);
@@ -278,10 +279,14 @@ function ChannelCard({ companyId, channel, onChanged }: {
   };
 
   const copyWebhook = async () => {
-    if (!webhookUrl) return;
-    await navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (!webhookUrl || copying) return;
+    setCopying(true);
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (cause) { setError(apiErrorMessage(cause)); }
+    finally { setCopying(false); }
   };
 
   return (
@@ -310,7 +315,7 @@ function ChannelCard({ companyId, channel, onChanged }: {
             <dt className="text-gray-500">Webhook URL (วางใน LINE Developers Console แล้วเปิด Use webhook)</dt>
             <dd className="mt-1 flex flex-wrap items-center gap-2">
               <code className="break-all rounded bg-gray-100 px-2 py-1 text-xs text-gray-800">{webhookUrl}</code>
-              <button className={secondaryBtn} onClick={copyWebhook}>{copied ? 'คัดลอกแล้ว ✓' : 'คัดลอก'}</button>
+              <button className={secondaryBtn} disabled={copying} aria-busy={copying} onClick={copyWebhook}>{copied ? 'คัดลอกแล้ว ✓' : 'คัดลอก'}</button>
             </dd>
           </div>
         ) : null}

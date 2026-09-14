@@ -1273,6 +1273,7 @@ function AiUsageBudgetSection({
 }) {
   const [usage, setUsage] = useState<PartnerAiUsageDto | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(true);
@@ -1281,6 +1282,7 @@ function AiUsageBudgetSection({
   const { confirm, confirmDialog } = useConfirm();
 
   const loadUsage = async () => {
+    setUsageLoading(true);
     try {
       const result = await getPartnerAiUsage(companyId);
       setUsage(result);
@@ -1291,7 +1293,7 @@ function AiUsageBudgetSection({
     } catch (err) {
       const e = err as Error & { status?: number };
       setUsageError(e.status === 403 ? 'You do not have permission to view AI usage.' : apiErrorMessage(err));
-    }
+    } finally { setUsageLoading(false); }
   };
 
   useEffect(() => {
@@ -1388,12 +1390,14 @@ function AiUsageBudgetSection({
 
   return (
     <SectionCard title="AI Usage & Budget">
+      {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
           <p className="text-sm leading-6 text-red-800">{usageError}</p>
           <button
             type="button"
             className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+            disabled={usageLoading} aria-busy={usageLoading}
             onClick={() => { setUsageError(null); void loadUsage(); }}
           >
             ลองโหลดข้อมูลอีกครั้ง
@@ -1783,7 +1787,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>
-          <button type="button" className={btnSecondary} onClick={() => void load()}>
+          <button type="button" className={btnSecondary} disabled={term === undefined} aria-busy={term === undefined} onClick={() => void load()}>
             ลองโหลดแพ็กเกจอีกครั้ง
           </button>
         </div>
@@ -2273,7 +2277,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Error</h1>
           <p className="text-sm text-gray-500 mt-1">{error}</p>
-          <button type="button" className="mt-3 text-sm text-brand-700 hover:underline" onClick={() => void load()}>
+          <button type="button" className="mt-3 text-sm text-brand-700 hover:underline" disabled={loading} aria-busy={loading} onClick={() => void load()}>
             Retry
           </button>
         </div>

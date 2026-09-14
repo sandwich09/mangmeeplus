@@ -602,6 +602,7 @@ export function SubstituteReceiptWizardPage({
   const previewRequestRef = useRef(0);
   const previewUrlRef = useRef<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [supersedeReason, setSupersedeReason] = useState('');
   const candidateHeadingRef = useRef<HTMLHeadingElement>(null);
   const manualHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -1502,12 +1503,14 @@ export function SubstituteReceiptWizardPage({
   };
 
   const copyWizardLink = async () => {
+    if (copying) return;
+    setCopying(true);
     try {
       await navigator.clipboard.writeText(window.location.href);
       setCopied(true);
     } catch {
       setError(t('expenses.substitute_wizard.copy_failed', locale));
-    }
+    } finally { setCopying(false); }
   };
 
   const mayApprove = receiptEvidence ? mayApproveSubstituteReceipt({
@@ -2442,7 +2445,7 @@ export function SubstituteReceiptWizardPage({
       <MangmeeCard className="border-warning-100 bg-warning-50 p-5">
         <h2 className="font-bold text-warning-700">{message}</h2>
         <p className="mt-2 text-sm text-gray-600">{t('expenses.substitute_wizard.waiting_help', locale)}</p>
-        <button type="button" className={cx(ghostClass, 'mt-4')} onClick={() => void copyWizardLink()}>{copied ? t('expenses.substitute_wizard.link_copied', locale) : t('expenses.substitute_wizard.copy_link', locale)}</button>
+        <button type="button" className={cx(ghostClass, 'mt-4')} disabled={copying} aria-busy={copying} onClick={() => void copyWizardLink()}>{copied ? t('expenses.substitute_wizard.link_copied', locale) : t('expenses.substitute_wizard.copy_link', locale)}</button>
       </MangmeeCard>
       {detail && <DetailSummary detail={detail} title={t('expenses.substitute_wizard.selected_expense', locale)} categories={categories} />}
       {receiptEvidence && (

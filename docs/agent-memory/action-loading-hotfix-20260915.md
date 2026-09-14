@@ -29,20 +29,29 @@ Artifacts:
 - Shared Button/IconButton/ThemedFile plus native CSS spinner and route/loading states.
 - Explicit read/preview/close-check pending guards in vendor bills, reimbursements, signature
   background preparation and period-close checks; receipt preview stays busy until images load.
-- apps/web/src/common/components/button/action-loading.spec.ts: eight focused tests exercising
+- apps/web/src/common/components/button/action-loading.spec.ts: eleven focused tests exercising
   actual handler bodies with deferred/rejected promises, duplicates, retry and stale read responses.
 Verification:
 - Frozen-lock offline install and contracts build PASS; no package/lock/schema/API/workflow edits.
-- Full web suite PASS: 1,711 tests, zero failed/skipped. Web typecheck and production build PASS.
-- Coverage audit PASS: 385 pending controls, zero missing indicators; codemod idempotent.
+- Full web suite PASS: 1,714 tests, zero failed/skipped. Final web typecheck PASS; production build
+  previously PASS and final reviewed clipboard/read additions build pending.
+- Coverage audit PASS: 395 pending controls, zero missing indicators; codemod idempotent.
 - git diff --check PASS. Maintenance pins current: exactFiles=45,
   validatorSha256=cee4f9e7e9a5a6d34e9d37b869f574844b6e0fd5318a96bb78c4e40a148a963d.
 - Local full image-security chain initially reached migration tests without a generated Prisma
   client in this fresh worktree. Generated the unchanged schema client using CI's preparation
-  command; prepared-chain rerun pending. No database connection/migration/live write involved.
-- Browser acceptance and live signed/customer OPEN acceptance remain pending; static audit is
+  command; prepared full-chain rerun PASS (including 26 migration/unit fixture tests). No live
+  database connection/migration/write involved.
+- Chrome read-only synthetic SSR of actual shared Button/IconButton/ThemedFile and native controls
+  with production CSS PASS at default desktop and 390x844: visible single spinner, native icon
+  replacement, filename/label retained, no mobile overflow, permission locks without spinner.
+  Temporary viewport reset and preview server/tab stopped/closed.
+- Final async-call audit found refresh/retry, CRM selection, reconciliation read and clipboard
+  waits outside disabled-state scanning; wired those explicitly, AI usage retry now has real
+  pending status. Clipboard/rejected AI/reconciliation handler checks added.
+- Live browser acceptance and signed/customer OPEN acceptance remain pending; static audit is
   not a claim that every product journey was browser-tested.
-Next: Review exact diff and final focused check after company-switch loading reset;
+Next: PR565 exact latest-head CI (old f0533a05 run34876324566 superseded by reviewed follow-up);
 merge exact passing heads into develop/main; read mandatory runbooks again before a single retained
 Kamal hotfix operation, then verify signature/readiness/public OPEN and browser read-only journey.
 

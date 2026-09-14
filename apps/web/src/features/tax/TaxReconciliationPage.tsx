@@ -42,6 +42,7 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
   const [boxes, setBoxes] = useState<Pp30BoxesDto | null>(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [openingRunId, setOpeningRunId] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const loadHistory = useCallback(async () => {
@@ -56,15 +57,17 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
   useEffect(() => { void loadHistory(); }, [loadHistory]);
 
   async function loadRun(run: TaxReconciliationRunDto) {
+    if (busy) return;
     if (!['PP30', 'PP36', 'CUSTOMS_SUPPORT'].includes(run.formType)) return;
     setBusy(true); setError('');
+    setOpeningRunId(run.id);
     try {
       const [nextDetail, nextBoxes] = await Promise.all([
         getTaxReconciliation(companyId, run.id, { page: 1, pageSize: 100 }),
         run.formType === 'PP30' ? getPp30Boxes(companyId, run.periodKey, run.branchId || undefined) : Promise.resolve(null),
       ]);
       setFormType(run.formType as 'PP30' | 'PP36' | 'CUSTOMS_SUPPORT'); setPeriodKey(run.periodKey); setDetail(nextDetail); setBoxes(nextBoxes);
-    } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); }
+    } catch (cause) { setError(transactionTaxErrorMessage(cause)); } finally { setBusy(false); setOpeningRunId(null); }
   }
 
   async function generate() {
@@ -95,12 +98,12 @@ export function TaxReconciliationPage({ companyId, permissions }: { companyId: s
           <label className="text-xs font-bold text-gray-600">แบบ<ThemedSelect value={formType} onChange={(event) => setFormType(event.target.value as 'PP30' | 'PP36' | 'CUSTOMS_SUPPORT')}><option value="PP30">ภ.พ.30</option><option value="PP36">ภ.พ.36</option><option value="CUSTOMS_SUPPORT">Customs / Excise support</option></ThemedSelect></label>
           <label className="text-xs font-bold text-gray-600">รอบภาษี<ThemedDate mode="month" value={periodKey} onChange={(event) => setPeriodKey(event.target.value)} className="mangmee-input w-full" /></label>
           <div className="text-xs text-gray-500">สาขา: {branch?.branchId || 'ทุกสาขาในขอบเขต'}</div>
-          {capability.canRecomputeReports && <button disabled={busy || !periodKey} aria-busy={Boolean(busy)} onClick={() => void generate()} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? 'กำลังประมวลผล...' : 'สร้าง Reconciliation'}</button>}
+          {capability.canRecomputeReports && <button disabled={busy || !periodKey} aria-busy={busy && openingRunId === null} onClick={() => void generate()} className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy && openingRunId === null ? 'กำลังประมวลผล...' : 'สร้าง Reconciliation'}</button>}
         </div>
       </MangmeeCard>
       <MangmeeCard className="mb-5 overflow-hidden">
         <div className="border-b border-gray-100 p-4"><strong>ผล Reconciliation ล่าสุด</strong><p className="text-xs text-gray-500">ผู้มีสิทธิ์อ่านรายงานเปิดผลเดิมได้โดยไม่ต้อง recompute</p></div>
-        {historyLoading ? <LoadingState label="กำลังโหลด..." /> : !history.length ? <div className="p-6 text-center text-sm text-gray-500">ยังไม่มีผลในตัวกรองนี้</div> : <div className="divide-y divide-gray-100">{history.map((run) => <button key={run.id} type="button" onClick={() => void loadRun(run)} className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-gray-50"><span><strong>{run.formType} · {run.periodKey}</strong><span className="ml-2 text-xs text-gray-500">{formatThaiDateTime(run.createdAt)}</span></span><span className={`rounded-full px-2 py-1 text-xs font-bold ${run.blockingIssueCount ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{run.status} · {run.blockingIssueCount}</span></button>)}</div>}
+        {historyLoading ? <LoadingState label="กำลังโหลด..." /> : !history.length ? <div className="p-6 text-center text-sm text-gray-500">ยังไม่มีผลในตัวกรองนี้</div> : <div className="divide-y divide-gray-100">{history.map((run) => <button key={run.id} type="button" disabled={busy} aria-busy={openingRunId === run.id} onClick={() => void loadRun(run)} className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-gray-50 disabled:opacity-50"><span><strong>{run.formType} · {run.periodKey}</strong><span className="ml-2 text-xs text-gray-500">{formatThaiDateTime(run.createdAt)}</span></span><span className={`rounded-full px-2 py-1 text-xs font-bold ${run.blockingIssueCount ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>{run.status} · {run.blockingIssueCount}</span></button>)}</div>}
       </MangmeeCard>
       {boxes && !pp30SalesSideRecorded(boxes) && <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"><strong>ระบบบันทึกเฉพาะฝั่งภาษีซื้อ (box 6–7)</strong> — งวดนี้ยังไม่มีเอกสารฝั่งขายในระบบ ยอด box 8/9 จึงยังไม่ใช่ยอดยื่นจริง กรุณารวมยอดขายจากระบบขายของกิจการก่อนยื่น ภ.พ.30</div>}
       {boxes && <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{(Object.entries(boxes) as Array<[keyof Pp30BoxesDto, string]>).map(([key, value]) => <MangmeeCard key={key} className="p-4"><div className="text-xs font-bold text-gray-500">{boxLabels[key]}</div>{(key === 'box8TaxPayable' || key === 'box9TaxOverpaid') && !pp30SalesSideRecorded(boxes)
