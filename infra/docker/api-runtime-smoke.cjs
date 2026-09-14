@@ -1,10 +1,14 @@
 // Run against the production-only API graph, never the build stage's dependencies.
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
 const { createRequire } = require('node:module');
 const { resolve } = require('node:path');
 const api = createRequire(resolve(process.argv[2], 'package.json'));
 
 async function main() {
+  const pdfjsSource = readFileSync(api.resolve('pdfjs-dist/legacy/build/pdf.mjs'), 'utf8');
+  assert.equal(pdfjsSource.split('for (let j = srcPos + i * 4, jj = srcPos + len;').length - 1, 2,
+    'production PDF.js must include the bounded RGB chunk patch in both endian paths');
   for (const name of Object.keys(api('./package.json').dependencies)) {
     // Prisma's configured generator has a custom output; the default client is not used.
     if (name !== '@prisma/client' && name !== 'pdfjs-dist') api(name);
