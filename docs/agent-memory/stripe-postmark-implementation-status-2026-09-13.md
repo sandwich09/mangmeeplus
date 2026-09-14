@@ -19,12 +19,12 @@ Scope: Implement approved package/payment/Postmark/Admin C01–C08/web/LINE spec
 ## Current repositories / CI
 
 - Root: /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus, branch codex/stripe-postmark-implementation-20260912, draft PR558 to develop.
-- Root HEAD6da65148 (explicit email verification). CI34803284452 FAILED in signup browser fixture: click raced the actual account-security legal redirect. The corrected fixture now lets the gate finish, accepts legal, then skips LINE; local signup8 PASS. Do not rerun the known old revision as a fix.
+- Root HEADd3ac0c83 (original invoice recovery) pushed; CI34805765742 IN PROGRESS. Previous CI34803284452 at6da65148 FAILED in signup browser fixture: click raced the actual account-security legal redirect. The corrected fixture now lets the gate finish, accepts legal, then skips LINE; local signup8 PASS. Do not rerun the known old revision as a fix.
 - Previous root7ca2d7a8 C07 missing-event discovery: CI34801493799 PASS.
-- Isolated marketing: /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912, same branch, draft PR2 to develop. HEAD0cd88eb; CI34802725764 PASS.
+- Isolated marketing: /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912, same branch, draft PR2 to develop. HEADfc5ff19; CI34805765619 PASS.
 - Both drafts remain open; authorized develop/main merges are still owed after full implementation/review/green CI. Read-only no-deploy GitHub surface preflight is recorded; refresh before eventual merges.
 
-## Current C03 uncommitted increment
+## C03 verified checkpoint d3ac0c83
 
 Exact original-invoice apply retry is implemented in contracts/DTOs/Admin safe25+1 list/detail, source-bound preview/submit/worker, original operation retry/cancel and UI result→invoice→company return. It reuses the existing account lease, strict paid evidence and entitlement writer. Another applied invoice or COMPLETED attempt cannot certify a HELD target. Already-applied targets require no provider I/O. Legacy targetless commands can be read/cancelled and lead to original invoice selection.
 
@@ -32,7 +32,11 @@ Operation result/review-case/audit commit with the live operation lease. Indepen
 
 Found and fixed: Next dynamic-slug conflict, new Admin route accidentally selecting the target company as actor membership, stale list capability buttons, malformed financial defaulting, and signup browser fixture navigation race. No security gate or timeout was relaxed.
 
-Verification: focused8 new HTTP/PG/390px browser groups PASS (15 with existing purchase prefix); billing/DTO29 and actual PostgreSQL35 PASS; API typecheck PASS; pins/check regression PASS. Full current combined158 HTTP/PG/Next/Chromium/isolated-marketing PASS, including the final list-capability guard. Signup8 local rerun PASS after the CI fixture fix. Final web/API typechecks PASS; evidence recorded. Commit/push/new CI pending.
+Verification: focused8 new HTTP/PG/390px browser groups PASS (15 with existing purchase prefix); billing/DTO29 and actual PostgreSQL35 PASS; API typecheck PASS; pins/check regression PASS. Full current combined158 HTTP/PG/Next/Chromium/isolated-marketing PASS, including the final list-capability guard. Signup8 local rerun PASS after the CI fixture fix. Final web/API typechecks PASS; evidence recorded. Committed/pushed asd3ac0c83; new CI34805765742 pending.
+
+## C03 repeat recovery increment (locally verified)
+
+Spec+plan updated first. Added billing-repeat-apply-smoke.ts and wired the original one-time paid repeat journal after lost schedule update into real Admin invoice preview/submit/UNKNOWN/retry. The helper tests mismatched Checkout invoice refusal, lost resume response, exact original grant/time, preserved purchase/invoice counts and mobile permanent-operation→invoice→company return. Main flag BILLING_REPEAT_APPLY_ONLY exits after repeat and existing generic Admin command checks; CI browser line added. Generic RECONCILE case detection/resolution/result/audit now share the final operation lease/CAS transaction. Repeat smoke64 overlapping groups (3additional repeat recovery groups), API typecheck and billing/DTO20 PASS; mobile capture inspected. Inspect /tmp/mangmee-billing-http-smoke.log and /tmp/mangmee-repeat-apply-api-typecheck.log. Primary158/source atd3ac remains historical for this WIP. Evidence in repeat-apply-result.json; ready for scoped diff review/commit/new CI. Frontend source unchanged fromd3ac; generated next-env restored. No merge/deploy.
 
 ## Earlier verified coverage
 
@@ -48,7 +52,7 @@ Owner has not answered the earlier question whether to add verified-email Postma
 
 ## Remaining implementation
 
-- C03 aged UNKNOWN/compensation and recorded support outcomes. Review the generic RECONCILE UNKNOWN case detection still outside its final CAS transaction; targeted invoice recovery already commits its case atomically.
+- C03 aged UNKNOWN/compensation and recorded support outcomes. Generic RECONCILE case transaction correction is locally verified in the increment above.
 - C05/C06 detailed capacity rollouts/cohorts/scheduling, global SLA/escalation publication and complete runtime provider readiness/configuration.
 - C07 daily automatic scans, durable historical invoice coverage, configuration/settlement drift and bounded bulk recovery.
 - C08 exceptions/debt/refund/temporary override/revoke/expiry/compensation/export/privileged documents under approved policies.
@@ -63,6 +67,6 @@ Owner has not answered the earlier question whether to add verified-email Postma
 - Local database only localhost15432/mangmee_billing_20260912 and Redis6379. Load .env +0600 /tmp/mangmee-billing-local.env via Node parseEnv without printing credentials.
 - /tmp/mangmee-run-billing-smoke.mjs asserts that DB, runs compiled /tmp/mangmee-postmark-api-build/scripts/billing-http-smoke.js and writes private /tmp/mangmee-billing-http-smoke.log. Compile SWC only after the prior smoke ends. Full browser: BILLING_BROWSER_E2E=1 and MANGMEE_MARKETING_DIR=isolated path. Focus: BILLING_APPLY_RETRY_ONLY=1. Separate signup/verification/discovery flags remain available.
 - /tmp/mangmee-apply-retry-focused.log, /tmp/mangmee-signup-ci-race-fixed.log, /tmp/mangmee-apply-billing-regression.tap, /tmp/mangmee-apply-pg.tap; screenshots in /tmp/mangmee-billing-browser-evidence. Do not copy whole Next log: legacy proof URLs can be present.
-- /tmp/mangmee-invoice-retry-api-typecheck.log; final web typecheck pending. Once Next stops, restore only generated apps/web/next-env.d.ts. No smoke process remains active.
+- /tmp/mangmee-invoice-retry-api-typecheck.log; final web typecheck pending. Once Next stops, restore only generated apps/web/next-env.d.ts. No smoke/typecheck process remains active.
 
-Next: commit/push the verified invoice recovery/signup fixture slice and follow new CI. Continue remaining independent implementation while CI runs; do not ready/merge the draft solely because a checkpoint passes.
+Next: review/commit/push the locally verified repeat recovery increment, then follow its CI and CI34805765742 for the prior slice. Continue remaining independent implementation while CI runs; do not ready/merge the draft solely because a checkpoint passes.

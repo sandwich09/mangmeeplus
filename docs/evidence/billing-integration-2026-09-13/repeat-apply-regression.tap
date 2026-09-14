@@ -1,0 +1,137 @@
+TAP version 13
+# Subtest: request body validation coverage (audit H-23)
+    # Subtest: does not grow the unvalidated-body backlog
+    ok 1 - does not grow the unvalidated-body backlog
+      ---
+      duration_ms: 32.815375
+      type: 'test'
+      ...
+    # Subtest: reports when the backlog has shrunk so the recorded total can be lowered
+    ok 2 - reports when the backlog has shrunk so the recorded total can be lowered
+      ---
+      duration_ms: 12.179667
+      type: 'test'
+      ...
+    # Subtest: keeps the worst-offending controllers on the record
+    ok 3 - keeps the worst-offending controllers on the record
+      ---
+      duration_ms: 13.650542
+      type: 'test'
+      ...
+    # Subtest: never lets a bare type alias impersonate a DTO class on a request body
+    ok 4 - never lets a bare type alias impersonate a DTO class on a request body
+      ---
+      duration_ms: 13.240708
+      type: 'test'
+      ...
+    1..4
+ok 1 - request body validation coverage (audit H-23)
+  ---
+  duration_ms: 72.626042
+  type: 'suite'
+  ...
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 2 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 0.619042
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 3 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.153958
+  type: 'test'
+  ...
+# Subtest: overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+ok 4 - overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+  ---
+  duration_ms: 2.611667
+  type: 'test'
+  ...
+# Subtest: a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+ok 5 - a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+  ---
+  duration_ms: 0.335
+  type: 'test'
+  ...
+# Subtest: old ambiguous command never posts again without an observed result
+ok 6 - old ambiguous command never posts again without an observed result
+  ---
+  duration_ms: 0.455958
+  type: 'test'
+  ...
+# Subtest: a hold or closed action gate appearing after confirmation prevents external mutation
+ok 7 - a hold or closed action gate appearing after confirmation prevents external mutation
+  ---
+  duration_ms: 1.285833
+  type: 'test'
+  ...
+# Subtest: a stale worker lease cannot mutate the provider or release another command reservation
+ok 8 - a stale worker lease cannot mutate the provider or release another command reservation
+  ---
+  duration_ms: 0.334334
+  type: 'test'
+  ...
+# Subtest: financial observations reject malformed or differently owned money evidence
+ok 9 - financial observations reject malformed or differently owned money evidence
+  ---
+  duration_ms: 0.503125
+  type: 'test'
+  ...
+# Subtest: a stale financial observer cannot update an invoice or open a case
+ok 10 - a stale financial observer cannot update an invoice or open a case
+  ---
+  duration_ms: 0.242334
+  type: 'test'
+  ...
+# Subtest: future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+ok 11 - future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+  ---
+  duration_ms: 0.972625
+  type: 'test'
+  ...
+# Subtest: completed historical phases do not block normal management of the current final paid phase
+ok 12 - completed historical phases do not block normal management of the current final paid phase
+  ---
+  duration_ms: 0.125917
+  type: 'test'
+  ...
+# Subtest: latest equal-boundary consent uses monotonic database revision and validates pending account binding
+ok 13 - latest equal-boundary consent uses monotonic database revision and validates pending account binding
+  ---
+  duration_ms: 0.638
+  type: 'test'
+  ...
+# Subtest: lost scheduling response can be observed after the future phase starts, with exact economics
+ok 14 - lost scheduling response can be observed after the future phase starts, with exact economics
+  ---
+  duration_ms: 0.264208
+  type: 'test'
+  ...
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 15 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 0.593333
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 16 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 0.916459
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 17 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.650667
+  type: 'test'
+  ...
+1..17
+# tests 20
+# suites 1
+# pass 20
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 576.41775

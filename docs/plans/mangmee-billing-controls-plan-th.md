@@ -32,6 +32,8 @@ Current next C05 increment: paginated inspection of the five existing configurat
 
 C01–C08 ต้องส่งเป็น vertical slices ที่ทดสอบได้. ห้ามสร้างปุ่มที่มีแต่ mock success หรือ disabledโดยไม่มีเหตุผล/ทางต่อแล้วนับว่าครบ. ทุก slice ส่ง UI + shared contracts + permission check + mutation/read model + error/recovery + audit + E2E พร้อมกัน. UI ของงานที่รอ dependency แสดง readiness/owner ตามจริง.
 
+C03 verification increment (local PASS64/3additional groups; API typecheck and billing/DTO20 PASS): run exact original-invoice Admin recovery against the existing full-package repeat journal after lost schedule/resume responses. Prove wrong Checkout invoice refusal, same-operation reload/retry, no new purchase and one quota/time extension, then return to the actual customer status. Also move generic RECONCILE review-case transitions inside its final operation lease/CAS transaction. Primary158 is the preceding checkpoint; new evidence is recorded in repeat-apply-result.json; current revision CI remains pending.
+
 ## 2. Acceptance matrix ที่ต้องรันเมื่อ implementation พร้อม
 
 ชื่อ CT เป็น full acceptance targets. **ยังไม่ยืนยันแต่ละ CT ครบทุกเงื่อนไข**; vertical-slice evidence ที่ผ่านแล้วให้อ้าง implementation checkpoint และรายงานย่อยด้านบน ไม่ถือว่าทั้ง matrix ยังไม่เคยทดสอบหรือผ่านครบแล้ว. ใช้ provider fixture เฉพาะ adapter/SDK, ไม่ intercept control API เพื่อทำให้ผลผ่าน. หนึ่งแถวอาจแยกหลาย test ตาม parameterization; ต้องรายงานจำนวน test จริง ไม่ตีความจำนวนแถวเป็น pass count.

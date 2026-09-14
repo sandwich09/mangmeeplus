@@ -281,18 +281,17 @@ export class BillingOperationsService {
         const attempt = current.activeAttemptId ? await this.prisma.client.billingAttempt.findUnique({ where: { id: current.activeAttemptId } }) : null;
         const state = attempt?.status === 'UNKNOWN' ? 'UNKNOWN' : 'SUCCEEDED';
         await this.prisma.client.$transaction(async tx => {
-          if (state === 'SUCCEEDED') await tx.billingIssue.updateMany({ where: { companyId: row.companyId, stripeAccountId: row.stripeAccountId,
-            livemode: row.livemode, kind: 'CONTROL_OPERATION_REVIEW', referenceId: row.id, state: { not: 'RESOLVED' } },
-            data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
-          const issueCount = await tx.billingIssue.count({ where: { companyId: row.companyId, stripeAccountId: row.stripeAccountId, livemode: row.livemode, state: { not: 'RESOLVED' } } });
           const changed = await tx.billingOperation.updateMany({ where: { id: row.id, state: 'RUNNING', leaseToken: lease, leaseUntil: { gt: new Date() } }, data: {
-            state, observedAt: new Date(), resultJson: { pendingAttemptId: current.activeAttemptId, issueCount },
+            state, observedAt: new Date(),
             leaseToken: null, leaseUntil: null, errorCode: state === 'UNKNOWN' ? 'CONTROL_OBSERVED_MISMATCH' : null, version: { increment: 1 },
           } });
           if (!changed.count) throw new Error('billing.operation_lost_lease');
+          const identity={companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id};
+          if(state==='SUCCEEDED')await resolveBillingIssue(tx,identity,'ACCOUNT_RECONCILIATION_OBSERVED');else await detectBillingIssue(tx,identity);
+          const issueCount=await tx.billingIssue.count({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,state:{not:'RESOLVED'}}});
+          await tx.billingOperation.update({where:{id:row.id},data:{resultJson:{pendingAttemptId:current.activeAttemptId,issueCount}}});
           await this.audit(tx, context, row, 'observed', 'RUNNING', state);
         });
-        if (state === 'UNKNOWN') await this.billing.issue(row.companyId, 'CONTROL_OPERATION_REVIEW', row.id);
         processed++;
       } catch {
         await this.prisma.client.$transaction(async tx=>{

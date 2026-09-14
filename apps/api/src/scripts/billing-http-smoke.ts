@@ -452,10 +452,14 @@ async function main() {
     (reconciler as any).prisma = { client: { billingProviderEvent: { upsert: async () => { throw new Error('synthetic database fault'); } } } };
     try { assert.equal((await webhook(`evt_fault${run}`)).status, 503); } finally { (reconciler as any).prisma = savedPrisma; }
     cases.push('callback-persistence-failure-is-retryable');
-    cases.push(...await checkRepeatPurchase({ request, base, companyId: companyIds[0]!, prisma, reconciler, provider, fixture: repeatFixture, browser }));
+    cases.push(...await checkRepeatPurchase({ request, base, companyId: companyIds[0]!, prisma, reconciler, provider, fixture: repeatFixture, browser,
+      operations:app.get(BillingOperationsService),userId:userIds[0]!,membershipId:memberId }));
     cases.push(...await checkBillingCollection({ ...collectionInput, prepaid: true }));
     cases.push(...await checkBillingAdmin({ request, prisma, companyIds, userId: userIds[0]!, membershipId: memberId, stripeAccountId: accountId, browser, failNextRead: repeatFixture.failNextRead,
       drain: () => request('/v1/internal/billing/drain', 'POST', {}, { 'x-worker-token': workerToken }) }));
+    if(process.env.BILLING_REPEAT_APPLY_ONLY==='1'){
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false}));return;
+    }
     }
     } else {
       await client.companyPlanTerm.update({ where: { companyId: companyIds[0]! }, data: { termEndsAt: new Date(Date.now() + 86400000) } });

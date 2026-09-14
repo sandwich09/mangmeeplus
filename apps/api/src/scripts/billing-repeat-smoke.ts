@@ -4,6 +4,8 @@ import type { PrismaService } from '../common/database/prisma.service';
 import type { BillingReconcilerService } from '../modules/billing/application/billing-reconciler.service';
 import type { startBillingBrowser } from './billing-browser-smoke';
 import { appendPackageInterval } from '../modules/billing/domain/billing-package';
+import { checkRepeatApply } from './billing-repeat-apply-smoke';
+import type { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 
 type ObjectValue = Record<string, any>;
 export function repeatProviderFixture(run: string, provider: Record<string, ObjectValue[]>) {
@@ -133,6 +135,7 @@ export async function checkRepeatPurchase(input: {
   request: (path: string, method?: string, body?: unknown, extra?: Record<string, string>) => Promise<{ status: number; body: any }>;
   base: string; companyId: string; prisma: PrismaService; reconciler: BillingReconcilerService; provider: Record<string, ObjectValue[]>;
   fixture: ReturnType<typeof repeatProviderFixture>; browser?: Awaited<ReturnType<typeof startBillingBrowser>>;
+  operations:BillingOperationsService;userId:string;membershipId:string;
 }): Promise<string[]> {
   const { base, companyId, prisma, reconciler, provider, fixture, browser } = input, client = prisma.client;
   const request: typeof input.request = async (...args) => {
@@ -190,9 +193,8 @@ export async function checkRepeatPurchase(input: {
   const paidPending = (await request(`${base}/attempts/${pending.body.attemptId}`)).body;
   assert.equal(paidPending.paymentState, 'PAID'); assert.equal(paidPending.applyState, 'PENDING');
   assert.equal((await request(base)).body.usage.remaining, before.usage.remaining);
-  fixture.lose('resume'); await reconciler.reconcileAccount(account.id);
-  assert.equal((await request(base)).body.usage.remaining, before.usage.remaining);
-  await reconciler.reconcileAccount(account.id);
+  const applyCases=await checkRepeatApply({...input,request,invoiceId:paidPending.invoiceReference,session:provider.sessions!.at(-1)!,
+    loseResume:()=>fixture.lose('resume'),purchaseCount:fixture.checkoutCalls,invoiceCount:()=>provider.invoices!.length});
   const after = (await request(base)).body;
   assert.equal(after.usage.remaining, before.usage.remaining + 1200, JSON.stringify(after));
   const expectedEnd = appendPackageInterval(oldEnd, 'year');
@@ -229,5 +231,5 @@ export async function checkRepeatPurchase(input: {
   assert.equal(await client.billingSubscriptionContract.count({ where: { billingAccountId: account.id } }), 3);
   return ['repeat-renewal-race-blocks-checkout-and-restores-original-collection', 'repeat-exact-held-renewal-finalized-without-charge-and-voided', 'repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases', 'repeat-concurrent-intent-reservation', 'repeat-expired-checkout-restores-collection-without-quota', 'repeat-lost-checkout-response-reuses-single-session',
     'repeat-paid-schedule-and-unpause-crash-recovery-grants-once', 'repeat-calendar-extension-old-quota-carry-and-invoice-receipt',
-    ...(browser ? ['browser-repeat-quote-and-verified-return'] : [])];
+    ...(browser ? ['browser-repeat-quote-and-verified-return'] : []),...applyCases];
 }
