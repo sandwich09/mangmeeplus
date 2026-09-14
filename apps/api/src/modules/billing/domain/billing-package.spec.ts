@@ -2,8 +2,28 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { billingOffer, BILLING_DRAFT_POLICY } from '@watchdog-bms/contracts';
 import { appendPackageInterval, fullPackagePurchaseImpact, proratedReceiptIncrease } from './billing-package';
-import { parseBillingPolicy } from './billing-policy';
+import { assertStripePrice, assertStripePortalConfiguration, parseBillingPolicy } from './billing-policy';
 import { BillingService } from '../application/billing.service';
+
+test('provider prices require exact requested identity, product and recurring contract', () => {
+  const price = { id: 'price_ProYear', object: 'price', livemode: false, active: true, type: 'recurring', product: 'prod_Pro',
+    currency: 'thb', unit_amount: 999000, recurring: { interval: 'year', interval_count: 1, usage_type: 'licensed' }, billing_scheme: 'per_unit', tax_behavior: 'inclusive' };
+  const validate = (value: object) => assertStripePrice(value, billingOffer('PRO_999', 'year'), BILLING_DRAFT_POLICY, false, price.id);
+  validate(price); validate({ ...price, product: { id: 'prod_Pro' } });
+  for (const override of [{ id: 'price_other' }, { product: null }, { product: '' }, { object: undefined }, { active: false },
+    { livemode: true }, { unit_amount: 0 }, { currency: 'usd' }, { recurring: { interval: 'month', interval_count: 1, usage_type: 'licensed' } }])
+    assert.throws(() => validate({ ...price, ...override }));
+});
+
+test('provider Portal configuration requires explicit safe flags and exact native binding', () => {
+  const portal = { id: 'bpc_Test', object: 'billing_portal.configuration', livemode: false, active: true,
+    features: { payment_method_update: { enabled: true }, subscription_update: { enabled: false }, subscription_cancel: { enabled: false } } };
+  assertStripePortalConfiguration(portal, portal.id, false);
+  for (const override of [{ id: 'bpc_other' }, { object: undefined }, { livemode: undefined }, { active: 1 },
+    { features: {} }, { features: { ...portal.features, subscription_update: { enabled: true } } },
+    { features: { ...portal.features, subscription_cancel: { enabled: true } } }])
+    assert.throws(() => assertStripePortalConfiguration({ ...portal, ...override }, portal.id, false));
+});
 
 test('HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe', async () => {
   const tiers = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;

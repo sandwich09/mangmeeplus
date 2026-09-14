@@ -8,7 +8,7 @@ import type { RequestContext } from '../../auth/domain/models/request-context.mo
 import { verifyPassword } from '../../auth/domain/logic/password-credential.logic';
 import { BillingAdminService } from './billing-admin.service';
 import { BillingService } from './billing.service';
-import { assertKeys, assertPolicyReady, assertStripePrice, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { assertKeys, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, effectiveBillingGates, hashBilling, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 import { stripeId } from '../infrastructure/stripe.client';
 import { configurationImpact } from './billing-configuration-impact';
 import { randomUUID } from 'node:crypto';
@@ -121,16 +121,15 @@ export class BillingConfigurationService {
       if (zeroId && !priceId) throw new BadRequestException('Prepaid price needs its paid price');
       if (!priceId) continue;
       const offer = billingOffer(tier, interval), price = await this.billing.stripe.request('GET', `/prices/${priceId}`);
-      assertStripePrice(price, offer, policy, this.billing.stripe.livemode);
+      assertStripePrice(price, offer, policy, this.billing.stripe.livemode, priceId);
       if (zeroId) {
         const zero = await this.billing.stripe.request('GET', `/prices/${zeroId}`);
-        assertStripePrice(zero, { ...offer, priceSatang: 0 }, policy, this.billing.stripe.livemode);
+        assertStripePrice(zero, { ...offer, priceSatang: 0 }, policy, this.billing.stripe.livemode, zeroId);
         if (!stripeId(price.product) || stripeId(zero.product) !== stripeId(price.product)) throw billingError('BILLING_PRICE_MISMATCH', 'ราคาเก็บเงินและราคาสำหรับช่วงที่จ่ายล่วงหน้าต้องเป็นสินค้าเดียวกัน');
       }
     }
     const portal = await this.billing.stripe.request('GET', `/billing_portal/configurations/${policy.portalConfigurationId}`);
-    if (!portal.active || !portal.features?.payment_method_update?.enabled || portal.features?.subscription_update?.enabled || portal.features?.subscription_cancel?.enabled)
-      throw billingError('BILLING_PORTAL_CONFIG_MISMATCH', 'ตั้งค่า Portal ให้แก้บัตรได้ ส่วนเปลี่ยนและยกเลิกแพ็กเกจใช้คำสั่งของมั่งมี');
+    assertStripePortalConfiguration(portal, policy.portalConfigurationId!, this.billing.stripe.livemode);
     await this.billing.assertTaxSettings(policy);
   }
   private async view(row: BillingOperation, context: RequestContext): Promise<BillingConfigurationOperation> {

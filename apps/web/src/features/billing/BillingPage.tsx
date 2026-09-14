@@ -11,7 +11,7 @@ import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
 const date = (value: string | null) => value ? new Date(value).toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
-const button = 'rounded-xl border border-gray-300 px-4 py-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50';
+const button = 'min-h-11 rounded-xl border border-gray-300 px-4 py-3 text-base font-semibold disabled:cursor-not-allowed disabled:opacity-50';
 function errorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== 'object') return undefined;
   const value = error as { status?: unknown; statusCode?: unknown };
@@ -29,6 +29,9 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_RESTART_REVIEW') return 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท';
   if (code === 'BILLING_CAP_SELECTION_REQUIRED') return 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาจัดการสิทธิ์หรือติดต่อทีมงานก่อนยืนยัน';
   if (code === 'BILLING_DOCUMENT_PENDING') return 'Stripe กำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง';
+  if (code === 'BILLING_PORTAL_UNAVAILABLE') return 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง';
+  if (code === 'BILLING_PORTAL_CONFIG_MISMATCH') return 'ทีมงานต้องตรวจการตั้งค่าหน้าแก้บัตรก่อน กรุณาติดต่อทีมมั่งมี';
+  if (code === 'BILLING_COMPANY_HELD') return 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมมั่งมี';
   if (code === 'BILLING_SALES_CLOSED' || code === 'BILLING_NOT_READY') return 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน';
   return 'ยังยืนยันผลรายการไม่ได้ กรุณาตรวจสอบสถานะหรือติดต่อทีมงานพร้อมเลขอ้างอิง';
 }
@@ -52,6 +55,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [catalogUnavailable, setCatalogUnavailable] = useState(false);
   const [returnAttempt, setReturnAttempt] = useState<BillingAttemptView | null>(null), [returnError, setReturnError] = useState('');
   const key = useRef(''), running = useRef(false), intervalInitialized = useRef(false);
+  const generation = useRef(0);
+  useEffect(() => { generation.current++; return () => { generation.current++; }; }, [companyId]);
   const returnComplete = returnAttempt?.paymentState === 'PAID' && returnAttempt.applyState === 'APPLIED';
   useEffect(() => {
     if (data && !intervalInitialized.current) {
@@ -108,11 +113,13 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     }, 4000);
     return () => { active = false; window.clearInterval(timer); };
   }, [api, returning, returnAttemptId, returnComplete, returnError, returnAttempt?.paymentState]);
-  async function action(work: () => Promise<void>) {
+  async function action(work: (navigate: typeof navigateProvider) => Promise<void>) {
     if (running.current) return;
     running.current = true; setBusy(true); setError('');
-    try { await work(); } catch (e) { if ([401, 403].includes(errorStatus(e) ?? 0)) setData(null); setError(errorText(e)); }
-    finally { running.current = false; setBusy(false); }
+    const current = generation.current;
+    try { await work((url, kind) => { if (current === generation.current) navigateProvider(url, kind); }); }
+    catch (e) { if (current === generation.current) { if ([401, 403].includes(errorStatus(e) ?? 0)) setData(null); setError(errorText(e)); } }
+    finally { if (current === generation.current) { running.current = false; setBusy(false); } }
   }
   async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection) {
     try {
@@ -127,7 +134,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const confirmed = status?.accessState === 'ACTIVE' && (returning ? returnComplete : status.paymentState === 'PAID' && status.applyState === 'APPLIED');
   return <main className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
     <header><p className="text-sm text-gray-500">{status?.companyName ?? 'มั่งมี'}</p><h1 className="mt-1 text-2xl font-bold">แพ็กเกจและการชำระเงิน</h1></header>
-    <a className="inline-block text-sm underline" href="/billing/companies">เลือกบริษัทอื่น</a>
+    <Link className="inline-flex min-h-11 items-center text-base underline" href="/billing/companies">เลือกบริษัทอื่น</Link>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
@@ -146,8 +153,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
         <div className="flex flex-wrap gap-2">
           <button className={button} disabled={busy} onClick={() => action(async () => { await api.refresh(); setReload(value => value + 1); })}>ตรวจสอบสถานะ</button>
-          {status.attemptId && <button className={button} disabled={busy} onClick={() => action(async () => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigateProvider(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
-          {status.allowedActions.includes('portal_payment_method') && <button className={button} disabled={busy} onClick={() => action(async () => navigateProvider((await api.portal()).url, 'portal'))}>จัดการบัตรชำระเงิน</button>}
+          {status.attemptId && <button className={button} disabled={busy} onClick={() => action(async navigate => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
+          {status.allowedActions.includes('portal_payment_method') && <button className={button} disabled={busy} onClick={() => action(async navigate => navigate((await api.portal()).url, 'portal'))}>จัดการบัตรชำระเงิน</button>}
           {status.accessState === 'ACTIVE' && <a className={button} href={`/companies/${companyId}/dashboard`}>กลับไปใช้งาน</a>}
         </div>
       </section>
@@ -190,10 +197,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p>คงผู้ใช้: {quote.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {quote.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p>
           {quote.capacity.defaults.map((item,index) => <p key={index}>สาขาเริ่มต้นของ {item.member}: {item.branch ?? 'เลือกเมื่อเข้าใช้งาน'}</p>)}<p>ข้อมูลและประวัติยังอยู่ครบ ระบบตรวจสิทธิ์อีกครั้งก่อนเปิดใช้งาน</p></div>}
         <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 size-5" checked={accepted} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขการชำระเงินและต่ออายุอัตโนมัติ</label>
-        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} onClick={() => action(async () => {
+        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} onClick={() => action(async navigate => {
           const params = new URLSearchParams(window.location.search);
           const result = await api.checkout({ quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: params.get('channel') === 'line' ? 'line' : 'web' }, key.current);
-          if (result.checkoutUrl) navigateProvider(result.checkoutUrl, 'checkout'); else { setQuote(null); setReload(value => value + 1); }
+          if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else { setQuote(null); setReload(value => value + 1); }
         })}>{busy ? 'กำลังตรวจสอบ…' : 'ยืนยันและไปชำระที่ Stripe'}</button><button className={button} disabled={busy} onClick={() => setQuote(null)}>ย้อนกลับ</button></div>
       </section>}
       <section aria-label="ประวัติการชำระเงิน" className="space-y-3"><h2 className="text-lg font-bold">ประวัติและเอกสารการชำระเงิน</h2>
@@ -201,7 +208,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {data.history.items.map(invoice => <article key={invoice.id} className="space-y-2 rounded-xl border bg-white p-4"><p>{invoice.number ?? 'รายการชำระเงิน'} · {money(invoice.amountSatang)} · {date(invoice.createdAt)}</p>
           {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `ยอดคืนเงินที่ Stripe บันทึก ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}
           <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing/invoices/${encodeURIComponent(invoice.id)}`}>ตรวจการคืนเงินและเอกสารปรับยอด</Link>
-          {invoice.hasDocuments && <div className="flex flex-wrap gap-2">{(['invoice', 'receipt', 'pdf'] as const).map(kind => <button key={kind} className={button} disabled={busy} onClick={() => action(async () => navigateProvider((await api.document(invoice.id, kind)).url, 'document'))}>{kind === 'invoice' ? 'เปิด Invoice' : kind === 'receipt' ? 'เปิดใบเสร็จ' : 'ดาวน์โหลด PDF'}</button>)}</div>}
+          {invoice.hasDocuments && <div className="flex flex-wrap gap-2">{(['invoice', 'receipt', 'pdf'] as const).map(kind => <button key={kind} className={button} disabled={busy} onClick={() => action(async navigate => navigate((await api.document(invoice.id, kind)).url, 'document'))}>{kind === 'invoice' ? 'เปิดใบแจ้งหนี้' : kind === 'receipt' ? 'เปิดใบเสร็จ' : 'ดาวน์โหลด PDF'}</button>)}</div>}
         </article>)}
         {data.history.nextCursor && <button className={button} disabled={busy} onClick={() => action(async () => { const page = await api.history(data.history.nextCursor!); setData(current => current && ({ ...current, history: { items: [...current.history.items, ...page.items], nextCursor: page.nextCursor } })); })}>รายการก่อนหน้า</button>}
       </section>

@@ -114,7 +114,16 @@ export async function checkEmailPasswordReset(input:Parameters<typeof checkEmail
     assert.ok(!urls.some(value=>value.includes(webRaw)));assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     await page.screenshot({path:`${browser.evidenceDir}/email-password-reset-success-mobile.png`,fullPage:true});
     await page.getByRole('link',{name:'กลับไปหน้าเข้าสู่ระบบ',exact:true}).click();await page.waitForURL('**/login');
-    const login=await request('/v1/auth/password/login','POST',{username:web.username,password:'Browser-New-Password-42'});assert.equal(login.status,200,JSON.stringify(login));
+    await page.locator('#login-identifier').fill(web.username!);await page.locator('#login-password').fill('Browser-New-Password-42');
+    const loginResponse=page.waitForResponse(r=>r.url().endsWith('/api/auth/login')&&r.request().method()==='POST');
+    await page.getByRole('button',{name:/^(เข้าสู่ระบบ|Sign in)$/i}).click();const login=await loginResponse;assert.equal(login.status(),200);
+    // Full-page login navigation may discard Chrome's response body; the real gate and session are the evidence.
+    await page.waitForURL('**/legal-acceptance?**');
+    assert.ok((await visitor.cookies(browser.origin)).some(cookie=>cookie.name.startsWith('watchdog_token')&&cookie.httpOnly));
+    assert.equal(await db.authSession.count({where:{userId:web.id,status:'ACTIVE'}}),1,'only explicit login creates a session');
+    for(const name of ['termsAccepted','privacyAcknowledged','deletionAcknowledged'])await page.locator(`input[name="${name}"]`).check();
+    await page.getByRole('button',{name:/ยืนยันและเริ่มใช้งาน|Confirm and start/i}).click();await page.waitForURL(url=>url.pathname.startsWith(`/companies/${companyId}/`));
+    assert.equal(await db.externalIdentity.count({where:{userId:web.id,provider:'LINE'}}),0);
     await page.goto(`${browser.origin}/reset-password#token=expired`,{waitUntil:'domcontentloaded'});await page.getByLabel('รหัสผ่านใหม่',{exact:true}).fill('Browser-New-Password-42');await page.getByLabel('ยืนยันรหัสผ่านใหม่',{exact:true}).fill('Browser-New-Password-42');
     await page.getByRole('button',{name:'บันทึกรหัสผ่านใหม่',exact:true}).click();await page.getByRole('link',{name:'ขอลิงก์กู้รหัสผ่านใหม่',exact:true}).click();await page.getByLabel('ชื่อผู้ใช้หรืออีเมลบัญชี',{exact:true}).waitFor();
     cases.push('browser-email-choice-fragment-scanner-get-mismatch-lost-response-same-intent-retry-mobile-login-and-recovery-return');

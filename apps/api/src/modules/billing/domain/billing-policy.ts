@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { BILLING_ACTIONS, BILLING_PAID_TIERS, billingOffer, type BillingAction, type BillingPolicy, type BillingOffer, type BillingQuote, type PaidTier, type BillingInterval } from '@watchdog-bms/contracts';
 import { createHash } from 'node:crypto';
-import type { StripeObject } from '../infrastructure/stripe.client';
+import { stripeId, type StripeObject } from '../infrastructure/stripe.client';
 
 export function billingError(code: string, message: string): ConflictException { return new ConflictException({ code, message }); }
 export function hashBilling(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
@@ -78,13 +78,21 @@ export function assertPolicyReady(policy: BillingPolicy): void {
   }
 }
 
-export function assertStripePrice(price: StripeObject, offer: BillingOffer, policy: BillingPolicy, livemode: boolean): void {
+export function assertStripePrice(price: StripeObject, offer: BillingOffer, policy: BillingPolicy, livemode: boolean, expectedId: string): void {
   const behavior = policy.taxTreatment === 'EXCLUSIVE_VAT_7' ? 'exclusive' : 'inclusive';
-  if (price.object !== 'price' || price.livemode !== livemode || price.active !== true || price.type !== 'recurring' ||
+  if (price.id !== expectedId || !stripeId(price.product) || price.object !== 'price' || price.livemode !== livemode || price.active !== true || price.type !== 'recurring' ||
       price.currency !== 'thb' || price.unit_amount !== offer.priceSatang || price.recurring?.interval !== offer.interval ||
       price.recurring?.interval_count !== 1 || price.recurring?.usage_type !== 'licensed' || price.billing_scheme !== 'per_unit' ||
       (policy.taxTreatment !== 'NOT_VAT_REGISTERED' && price.tax_behavior !== behavior)) {
     throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาไม่ตรงกัน กรุณาติดต่อทีมงาน');
+  }
+}
+
+export function assertStripePortalConfiguration(portal: StripeObject, expectedId: string, livemode: boolean): void {
+  if (portal.id !== expectedId || portal.object !== 'billing_portal.configuration' || portal.livemode !== livemode || portal.active !== true ||
+      portal.features?.payment_method_update?.enabled !== true || portal.features?.subscription_update?.enabled !== false ||
+      portal.features?.subscription_cancel?.enabled !== false) {
+    throw billingError('BILLING_PORTAL_CONFIG_MISMATCH', 'กำลังตรวจสอบการตั้งค่าหน้าแก้บัตร กรุณาลองใหม่หรือติดต่อทีมงาน');
   }
 }
 

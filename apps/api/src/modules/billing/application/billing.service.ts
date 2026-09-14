@@ -10,7 +10,7 @@ import type { BillingAccount, Prisma } from '../../../generated/prisma/client';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { StripeClient, StripeRequestError, safeStripeUrl, stripeId } from '../infrastructure/stripe.client';
-import { assertCompanyCanBuy, companyCanBuy, assertPolicyReady, assertStripePrice, billingError, billingMonth, effectiveBillingGates, hashBilling, paidVariant, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
+import { assertCompanyCanBuy, companyCanBuy, assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError, billingMonth, effectiveBillingGates, hashBilling, paidVariant, parseBillingPolicy, quoteTotals } from '../domain/billing-policy';
 
 import { BillingRepeat, type RepeatSource } from './billing-repeat';
 import { BillingCollection } from './billing-collection';
@@ -208,7 +208,7 @@ export class BillingService {
     if (existing?.activeAttemptId) throw billingError('BILLING_EXISTING_SUBSCRIPTION', 'มีรายการเดิมอยู่แล้ว กรุณาตรวจสถานะหรือจัดการสมาชิก');
     await this.stripe.assertAccount();
     const price = await this.stripe.request('GET', `/prices/${priceId}`);
-    assertStripePrice(price, offer, state.policy, this.stripe.livemode);
+    assertStripePrice(price, offer, state.policy, this.stripe.livemode, priceId);
     await this.assertTaxSettings(state.policy);
     const restart = existing?.baseSubscriptionId && existing.paidThrough && existing.paidThrough <= new Date() ? await restartSource(this.prisma, this.stripe, existing) : undefined;
     const capacity = body.capacity === undefined ? undefined : parseCapacitySelection(body.capacity);
@@ -229,7 +229,7 @@ export class BillingService {
         const targetZero = state.policy.zeroPriceIds?.[`${tier}:${interval}`];
         if (!targetZero) throw billingError('BILLING_REPEAT_NOT_READY', 'การเปลี่ยนแพ็กเกจยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน');
         const zero = await this.stripe.request('GET', `/prices/${targetZero}`);
-        assertStripePrice(zero, { ...offer, priceSatang: 0 }, state.policy, existing.livemode);
+        assertStripePrice(zero, { ...offer, priceSatang: 0 }, state.policy, existing.livemode, targetZero);
         const productId = stripeId(price.product);
         if (!productId || stripeId(zero.product) !== productId) throw billingError('BILLING_PRICE_MISMATCH', 'ข้อมูลราคาไม่ตรงกัน กรุณาติดต่อทีมงาน');
         const history = await upgradeHistory(this.prisma.client, existing, offer, state.policy, new Date(Math.floor(Date.now()/1000)*1000).toISOString());
@@ -454,21 +454,42 @@ export class BillingService {
     await this.assertOwner(context);
     const account = await this.account(context.companyId), state = await this.settings();
     if (!account?.customerId || !state.policy?.portalConfigurationId || !state.gates.portal_payment_method) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาติดต่อทีมงานเพื่อจัดการการชำระเงิน');
+    const assertCurrent = async (tx: Prisma.TransactionClient) => {
+      await lockPlanTermCompany(tx, context.companyId);
+      await this.assertOwner(context, tx);
+      const company = await tx.company.findUniqueOrThrow({ where: { id: context.companyId }, include: { planTerm: true } });
+      if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))
+        throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
+      await tx.$queryRaw`SELECT id FROM "BillingSettings" WHERE id = ${state.settings.id} FOR UPDATE`;
+      const current = await this.settings(tx), bound = await this.account(context.companyId, tx);
+      if (!current.gates.portal_payment_method || current.settings.version !== state.settings.version || current.revision?.id !== state.revision?.id ||
+          hashBilling(current.policy) !== hashBilling(state.policy) || bound?.id !== account.id || bound.version !== account.version || bound.customerId !== account.customerId)
+        throw billingError('BILLING_PORTAL_UNAVAILABLE', 'ข้อมูลเปลี่ยนแล้ว กรุณาโหลดสถานะล่าสุดและลองใหม่');
+    };
+    await this.prisma.client.$transaction(assertCurrent);
     await this.stripe.assertAccount();
     const config = await this.stripe.request('GET', `/billing_portal/configurations/${state.policy.portalConfigurationId}`);
     // Use a narrowly configured portal. Subscription changes/cancel go through explicit commands.
-    if (!config.active || config.features?.subscription_update?.enabled || config.features?.subscription_cancel?.enabled || !config.features?.payment_method_update?.enabled) {
+    try { assertStripePortalConfiguration(config, state.policy.portalConfigurationId, this.stripe.livemode); } catch (error) {
       await this.issue(context.companyId, 'CONFIG_DRIFT', state.policy.portalConfigurationId);
-      throw billingError('BILLING_PORTAL_CONFIG_MISMATCH', 'กำลังตรวจสอบการตั้งค่าการชำระเงิน');
+      throw error;
     }
-    await this.assertOwner(context);
-    const current = await this.settings();
-    if (!current.gates.portal_payment_method || current.revision?.id !== state.revision?.id) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'การตั้งค่าเปลี่ยน กรุณาลองใหม่');
+    await this.prisma.client.$transaction(assertCurrent);
+    const returnUrl = new URL(`/companies/${context.companyId}/billing`, this.config.sesWebBaseUrl).toString();
     const session = await this.stripe.request('POST', '/billing_portal/sessions', { customer: account.customerId,
-      configuration: state.policy.portalConfigurationId, return_url: new URL(`/companies/${context.companyId}/billing`, this.config.sesWebBaseUrl).toString(),
+      configuration: state.policy.portalConfigurationId, return_url: returnUrl,
       flow_data: { type: 'payment_method_update' } });
     const url = safeStripeUrl(session.url, 'portal');
-    if (!url) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาลองใหม่หรือติดต่อทีมงาน');
+    if (!url || session.object !== 'billing_portal.session' || typeof session.id !== 'string' || !/^bps_[a-zA-Z0-9]+$/.test(session.id) ||
+        session.livemode !== this.stripe.livemode || session.customer !== account.customerId ||
+        stripeId(session.configuration) !== state.policy.portalConfigurationId || session.return_url !== returnUrl)
+      throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาลองใหม่หรือติดต่อทีมงาน');
+    await this.prisma.client.$transaction(async tx => {
+      await assertCurrent(tx);
+      await tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.portal.opened',
+        targetType: 'BillingAccount', targetId: account.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'LOW',
+        metadataJson: { action: 'portal_payment_method' } } });
+    });
     return { url };
   }
 

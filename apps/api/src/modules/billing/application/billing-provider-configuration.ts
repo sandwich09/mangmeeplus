@@ -1,6 +1,6 @@
 import { HttpException } from '@nestjs/common';
 import { BILLING_PAID_TIERS, billingOffer, type BillingConfigurationCheckItem as Item, type BillingPolicy } from '@watchdog-bms/contracts';
-import { assertPolicyReady, assertStripePrice, billingError } from '../domain/billing-policy';
+import { assertPolicyReady, assertStripePrice, assertStripePortalConfiguration, billingError } from '../domain/billing-policy';
 import { stripeId, StripeRequestError } from '../infrastructure/stripe.client';
 import type { BillingService } from './billing.service';
 
@@ -24,21 +24,18 @@ export async function inspectBillingConfiguration(billing:BillingService, policy
     const offerKey=`${tier}:${interval}` as const,priceId=policy.priceIds[offerKey],zeroId=policy.zeroPriceIds?.[offerKey],offer=billingOffer(tier,interval);
     let product:string|null=null;
     const paid:Item=priceId?await check('PRICE',async()=>{const price=await billing.stripe.request('GET',`/prices/${priceId}`);
-      if(price.id!==priceId)throw billingError('BILLING_PRICE_MISMATCH','ข้อมูลราคาไม่ตรงกัน');
-      assertStripePrice(price,offer,policy,billing.stripe.livemode);product=stripeId(price.product);if(!product)throw billingError('BILLING_PRICE_MISMATCH','ไม่พบสินค้าที่ผูกราคา');},offerKey):
+      assertStripePrice(price,offer,policy,billing.stripe.livemode,priceId);product=stripeId(price.product);},offerKey):
       {kind:'PRICE',offerKey,state:'NOT_CONFIGURED',reason:'NOT_CONNECTED'};
     const prepaid:Item=!zeroId?{kind:'PREPAID_PRICE',offerKey,state:'NOT_CONFIGURED',reason:'NOT_CONNECTED'}:paid.state!=='MATCH'?
       {kind:'PREPAID_PRICE',offerKey,state:paid.state==='UNAVAILABLE'?'UNAVAILABLE':'DIFFERENT',reason:paid.state==='UNAVAILABLE'?'PROVIDER_UNAVAILABLE':'MAPPING_DIFFERENT'}:
       await check('PREPAID_PRICE',async()=>{const zero=await billing.stripe.request('GET',`/prices/${zeroId}`);
-        if(zero.id!==zeroId||stripeId(zero.product)!==product)throw billingError('BILLING_PRICE_MISMATCH','ข้อมูลราคาไม่ตรงกัน');
-        assertStripePrice(zero,{...offer,priceSatang:0},policy,billing.stripe.livemode);},offerKey);
+        if(stripeId(zero.product)!==product)throw billingError('BILLING_PRICE_MISMATCH','ข้อมูลราคาไม่ตรงกัน');
+        assertStripePrice(zero,{...offer,priceSatang:0},policy,billing.stripe.livemode,zeroId);},offerKey);
     return [paid,prepaid];
   })));
   items.push(...prices.flat());
   items.push(await check('PORTAL',async()=>{const portal=await billing.stripe.request('GET',`/billing_portal/configurations/${policy.portalConfigurationId}`);
-    if(portal.id!==policy.portalConfigurationId||portal.object!=='billing_portal.configuration'||portal.livemode!==billing.stripe.livemode||portal.active!==true||
-      portal.features?.payment_method_update?.enabled!==true||portal.features?.subscription_update?.enabled!==false||portal.features?.subscription_cancel?.enabled!==false)
-      throw billingError('BILLING_PORTAL_CONFIG_MISMATCH','การตั้งค่าหน้าแก้บัตรไม่ตรงกัน');}));
+    assertStripePortalConfiguration(portal,policy.portalConfigurationId!,billing.stripe.livemode);}));
   items.push(await check('TAX',()=>billing.assertTaxSettings(policy)));
   return items;
 }

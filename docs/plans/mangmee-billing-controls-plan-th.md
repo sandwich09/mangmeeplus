@@ -261,3 +261,9 @@ Next C07 check: implement the detailed approved-configuration observation contra
 
 
 Local evidence2026-09-15: C07 configuration checks11, owner-approved email recovery7 and scheduled-policy regression12 real HTTP/PG/Next/Chromium groups PASS with simulated providers. Auth76, API/web typechecks,13 web error guards and maintenance pins PASS. See configuration-check-result.json and email-password-reset-result.json under docs/evidence/billing-integration-2026-09-13. Counts are separate and overlapping; remaining controls/mail/LINE/full acceptance and final CI/merges stay open. No native send/payment, CI dispatch, merge or deploy.
+### Provider boundary consistency implementation — 2026-09-15
+
+Reuse billing-policy validation across all Price callers and Portal inspection/publication/use. Add current company/account/settings fences before session creation and final URL release, validate native session identity and audit safely. Extend existing C07 HTTP/PostgreSQL/browser proof with malformed/missing provider fields, wrong session binding, source/permission/lifecycle changes during I/O, audit rollback, error retry and Portal-to-original-billing return. Keep money/quota untouched and normal auth limits. Run focused proof plus relevant policy/package regression locally; include it in the existing final CI batch only.
+
+
+Next owner UX implementation: reuse plan labels and one small context-specific billing display helper across Admin company, delivery, original command and timeline. Add company/recipient/invoice display fields from already-loaded source rows, with no new recipient mapping or provider call. Move references into native disclosure controls, retain original links, and increase shared control sizes. Update existing browser assertions for the intended visible Thai wording, verify acceptance is not portrayed as delivery/payment, then inspect mobile captures. No new dependency/package scripts, CI dispatch or deployment.

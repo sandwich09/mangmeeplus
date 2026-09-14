@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { checkBillingPortal } from './billing-portal-smoke';
 import { randomUUID } from 'node:crypto';
 import type { checkBillingConfigurationDrafts } from './billing-configuration-drafts-smoke';
 
@@ -119,7 +120,7 @@ export async function checkBillingReadiness(input:Parameters<typeof checkBilling
       cases.push('browser-lost-create-response-original-link-reload-run-history-mobile-44px-and-failed-refresh-clears-result');
     }
     assert.deepEqual(await financial(),before);assert.equal(writes,0);cases.push('configuration-observation-never-mutates-provider-money-or-customer-rights');
-    return cases;
+    cases.push(...await checkBillingPortal(input)); return cases;
   }catch(error){if(browser){console.error(JSON.stringify({readinessBrowserUrl:browser.page.url(),alerts:await browser.page.getByRole('alert').allTextContents()}));await browser.page.screenshot({path:`${browser.evidenceDir}/admin-configuration-check-failure.png`,fullPage:true});}throw error;}finally{input.transport();if(browser&&viewport)await browser.page.setViewportSize(viewport);
     await db.billingSettings.update({where:{id:settings.id},data:{version:settings.version,updatedAt:settings.updatedAt}});}
 }

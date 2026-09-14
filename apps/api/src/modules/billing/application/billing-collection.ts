@@ -76,7 +76,7 @@ export class BillingCollection {
         if (!isUpgrade(offer, accepted.current.quote.offer) || state.policy.planChanges !== 'UPGRADE_PRORATED_DOWNGRADE_PERIOD_END') throw review();
         const priceId = state.policy.priceIds[`${tier}:${interval}`];
         if (!priceId) throw review();
-        assertStripePrice(await this.stripe.request('GET', `/prices/${priceId}`), offer, state.policy, account.livemode);
+        assertStripePrice(await this.stripe.request('GET', `/prices/${priceId}`), offer, state.policy, account.livemode, priceId);
         await this.billing.assertTaxSettings(state.policy);
         const selection = parseCapacitySelection(targetInput.capacity), options = await capacityOptions(this.prisma.client, context.companyId, offer);
         if (!capacityValid(options, selection)) throw capacityReview();

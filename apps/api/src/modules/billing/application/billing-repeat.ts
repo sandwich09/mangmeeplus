@@ -44,7 +44,7 @@ export class BillingRepeat {
     const zeroPriceId = policy.zeroPriceIds?.[`${offer.offerKey as 'STARTER_249' | 'BASIC_499' | 'PRO_999'}:${offer.interval}`];
     if (!zeroPriceId) throw billingError('BILLING_REPEAT_NOT_READY', 'การซื้อแพ็กเกจซ้ำยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน');
     const zero = await this.stripe.request('GET', `/prices/${zeroPriceId}`);
-    assertStripePrice(zero, { ...offer, priceSatang: 0 }, policy, account.livemode);
+    assertStripePrice(zero, { ...offer, priceSatang: 0 }, policy, account.livemode, zeroPriceId);
     const productId = stripeId(price.product);
     if (!productId || stripeId(zero.product) !== productId) throw review();
     const siblings = await this.stripe.list('/subscriptions', { customer: account.customerId, status: 'all' });
