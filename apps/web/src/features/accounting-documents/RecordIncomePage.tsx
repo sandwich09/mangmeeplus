@@ -361,7 +361,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
             <ErrorBanner message={`บันทึกรายรับและออกใบเสร็จแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${error ?? 'เกิดข้อผิดพลาด'}`} />
             <p className="text-base leading-relaxed text-gray-800">รายการไม่สูญหายและระบบจะไม่บันทึกซ้ำ ลองแนบไฟล์เดิมอีกครั้ง หรือเปิดเอกสารที่บันทึกแล้ว</p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" className={`${btnClass} h-12`} disabled={busy} onClick={() => void submit()}>
+              <button type="button" className={`${btnClass} h-12`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void submit()}>
                 {busy ? 'กำลังแนบไฟล์...' : 'ลองแนบไฟล์อีกครั้ง'}
               </button>
               <a className={`${ghostClass} flex h-12 items-center justify-center`} href={`/companies/${companyId}/sales-documents?documentId=${encodeURIComponent(savedReceived.invoice.id)}`}>
@@ -377,7 +377,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
               {failedStep === 'attachment' ? ' ลองแนบไฟล์อีกครั้ง หรือเปิดร่างเพื่อตรวจสอบ' : ' ลองออกบิลอีกครั้ง หรือเปิดร่างเพื่อตรวจและออกบิลจากหน้าเอกสารขาย'}
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" className={`${btnClass} h-12`} disabled={busy} onClick={() => void submit()}>
+              <button type="button" className={`${btnClass} h-12`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void submit()}>
                 {busy ? 'กำลังทำรายการ...' : failedStep === 'attachment' ? 'ลองแนบไฟล์อีกครั้ง' : 'ลองออกบิลอีกครั้ง'}
               </button>
               <a className={`${ghostClass} flex h-12 items-center justify-center`} href={`/companies/${companyId}/sales-documents?documentId=${encodeURIComponent(failedDraft.id)}`}>
@@ -625,7 +625,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
                 </>
               )}
             </dl>
-            <button type="button" className={`${btnClass} mt-3 h-14 w-full text-base`} disabled={busy || !!blocker} onClick={() => void submit()}>
+            <button type="button" className={`${btnClass} mt-3 h-14 w-full text-base`} disabled={busy || !!blocker} aria-busy={Boolean(busy)} onClick={() => void submit()}>
               {busy ? 'กำลังบันทึก...' : cta}
             </button>
             {blocker && !busy && <p role="status" className="mt-2 text-center text-base font-medium text-gray-600">{blocker}</p>}

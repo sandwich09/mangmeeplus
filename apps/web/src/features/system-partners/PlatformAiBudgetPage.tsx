@@ -149,7 +149,7 @@ export default function PlatformAiBudgetPage() {
                 <SourceNote source={budget.source.ceilingSatang} />
               </div>
 
-              <button type="button" className={btnPrimary} disabled={saving} onClick={() => void handleSave()}>
+              <button type="button" className={btnPrimary} disabled={saving} aria-busy={Boolean(saving)} onClick={() => void handleSave()}>
                 {saving ? 'Saving…' : 'Save settings'}
               </button>
             </div>

@@ -144,6 +144,7 @@ function ReceiptPrintPreview({ target, onClose }: { target: PreviewTarget; onClo
     <p className="modal-print-hide mb-4 text-sm font-semibold text-gray-700">{target.item.status === 'PREPARED'
       ? target.item.paperSubmission ? 'ฉบับลงนามรอตรวจรับ' : target.item.signatureMode === 'PAPER' ? 'แบบฟอร์มสำหรับกรอกและลงนามบนกระดาษ' : 'ฉบับรอลงนาม'
       : target.item.status === 'PAYER_CERTIFIED' ? 'ฉบับลงนามแล้ว รออนุมัติ' : target.item.status === 'ISSUED' ? 'ฉบับสมบูรณ์' : 'ฉบับประวัติที่ยกเลิกหรือถูกแทนที่'}</p>
+    {!failed && loaded.length !== pages.length && <div className="modal-print-hide"><LoadingState label="กำลังเปิดเอกสาร..." size="sm" /></div>}
     {pages.map((page, index) => <div key={index} className="mb-4 last:mb-0 print:mb-0 print:break-after-page print:last:break-after-auto">
       {/* Generated page images preserve every page on paper, including uploaded scans. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -177,6 +178,7 @@ export function SubstituteReceiptHubPage({
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const previewRequestRef = useRef(0);
+  const previewPendingRef = useRef(false);
   const [cancelTarget, setCancelTarget] = useState<SubstituteReceiptListItem | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
@@ -222,13 +224,15 @@ export function SubstituteReceiptHubPage({
   const wizardHref = (evidenceId: string) => `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidenceId)}`;
 
   async function openDocument(item: SubstituteReceiptListItem) {
+    if (previewPendingRef.current || cancelPendingRef.current) return;
+    previewPendingRef.current = true;
     const requestId = ++previewRequestRef.current;
     setPreviewLoadingId(item.evidenceId); setActionError(null);
     try {
       const data = await previewIssuedSubstitutePaper(companyId, item.expenseId, item.evidenceId);
       if (requestId === previewRequestRef.current) setPreview({ item, data });
     } catch (error) { if (requestId === previewRequestRef.current) setActionError(err(error)); }
-    finally { if (requestId === previewRequestRef.current) setPreviewLoadingId(null); }
+    finally { previewPendingRef.current = false; if (requestId === previewRequestRef.current) setPreviewLoadingId(null); }
   }
 
   async function confirmCancellation() {
@@ -276,7 +280,8 @@ export function SubstituteReceiptHubPage({
       ) : result ? (
         <div className="space-y-5">
           {actionError && <ErrorBanner message={actionError} />}
-          {previewLoadingId && <p role="status" className="text-sm text-gray-600">กำลังเปิดเอกสาร...</p>}
+          {previewLoadingId && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังเปิดเอกสาร...</p>}
+          {cancelling && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังยกเลิกเอกสาร...</p>}
 
           {hasWaitingWork && (
             <section>
@@ -425,7 +430,7 @@ export function SubstituteReceiptHubPage({
       <Modal open={cancelTarget !== null} title={`ยกเลิกเอกสาร ${cancelTarget?.documentNumber ?? ''}`} onClose={() => setCancelTarget(null)} size="sm"
         footer={<>
           <button type="button" className={ghostClass} onClick={() => setCancelTarget(null)}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={!cancelReason.trim() || cancelling} onClick={() => void confirmCancellation()}>ดำเนินการยกเลิก</button>
+          <button type="button" className={dangerClass} disabled={!cancelReason.trim() || cancelling} aria-busy={Boolean(cancelling)} onClick={() => void confirmCancellation()}>ดำเนินการยกเลิก</button>
         </>}>
         <p className="mb-4 text-sm text-gray-600">เอกสารจะถูกยกเลิกและเก็บไว้ในประวัติ การยกเลิกเอกสารไม่ลบรายการค่าใช้จ่ายและไม่ย้อนรายการจ่ายเงิน</p>
         <label className="block text-sm font-semibold text-gray-700">เหตุผลที่ยกเลิก <span className="text-error-700">*</span>

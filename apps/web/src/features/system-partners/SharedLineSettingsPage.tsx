@@ -142,7 +142,7 @@ function CredentialCard({ kind, onSaved }: { kind: CredentialKind; onSaved: (kin
             </div>
           )}
           <div className="flex gap-2">
-            <button type="submit" className={btnPrimary} disabled={loading}>
+            <button type="submit" className={btnPrimary} disabled={loading} aria-busy={Boolean(loading)}>
               {loading ? 'Saving…' : 'Save credentials'}
             </button>
             <button type="button" className={btnSecondary} onClick={() => setOpen(false)} disabled={loading}>

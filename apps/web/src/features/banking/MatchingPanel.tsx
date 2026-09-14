@@ -130,7 +130,7 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
           </ThemedSelect>
         </div>
         <div className="flex items-end">
-          <button className={ghostClass} disabled={loading} onClick={load}>รีเฟรช</button>
+          <button className={ghostClass} disabled={loading} aria-busy={Boolean(loading)} onClick={load}>รีเฟรช</button>
         </div>
       </div>
 
@@ -176,7 +176,7 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
                                     <span>{SOURCE_TYPE_LABELS[m.sourceType] ?? m.sourceType}</span>
                                     {m.sourceDisplayNumber && <span className="text-gray-500 text-xs">{m.sourceDisplayNumber}</span>}
                                     <span className="font-medium">{money(m.allocatedAmount)}</span>
-                                    <button className={ghostClass + ' text-xs py-0.5 px-2 text-red-600 ml-auto'} disabled={busy} onClick={() => handleUnmatch(m.id)}>ยกเลิกการจับคู่</button>
+                                    <button className={ghostClass + ' text-xs py-0.5 px-2 text-red-600 ml-auto'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => handleUnmatch(m.id)}>ยกเลิกการจับคู่</button>
                                   </div>
                                 ))}
                               </div>
@@ -200,13 +200,13 @@ export function MatchingPanel({ companyId }: { companyId: string }) {
                                       value={allocations[key] ?? prefill}
                                       onChange={(e) => setAllocations((a) => ({ ...a, [key]: e.target.value }))}
                                     />
-                                    <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} onClick={() => handleConfirm(line, c)}>จับคู่</button>
+                                    <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => handleConfirm(line, c)}>จับคู่</button>
                                   </div>
                                 </div>
                               );
                             })}
                             <div>
-                              <button className={ghostClass + ' text-xs py-1 px-2'} disabled={busy} onClick={() => handleIgnore(line.id)}>ข้ามรายการนี้ (ระบุเหตุผล)</button>
+                              <button className={ghostClass + ' text-xs py-1 px-2'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => handleIgnore(line.id)}>ข้ามรายการนี้ (ระบุเหตุผล)</button>
                             </div>
                           </div>
                         </td>

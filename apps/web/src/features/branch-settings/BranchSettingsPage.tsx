@@ -164,7 +164,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
           <div className="sm:col-span-2 lg:col-span-4">
             <button
               className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
-              disabled={busy || Boolean(createTaxError) || !form.code.trim() || !form.name.trim()}
+              disabled={busy || Boolean(createTaxError) || !form.code.trim() || !form.name.trim()} aria-busy={Boolean(busy)}
               onClick={() => void submitCreate()}
             >
               บันทึกสาขาใหม่
@@ -240,7 +240,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
           <div className="flex gap-2 sm:col-span-2 lg:col-span-4">
             <button
               className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
-              disabled={busy || Boolean(editTaxError) || !editing.name.trim()}
+              disabled={busy || Boolean(editTaxError) || !editing.name.trim()} aria-busy={Boolean(busy)}
               onClick={() => void submitEdit()}
             >
               บันทึก

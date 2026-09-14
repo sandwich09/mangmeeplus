@@ -233,7 +233,7 @@ export function ChartOfAccountsSettingsPage({
       title="ผังบัญชี Master Data"
       description="ตรวจผังบัญชีของบริษัท เทียบกับ Template มาตรฐาน และแก้เฉพาะรายการที่ตรวจสอบผลกระทบแล้ว"
       actions={(
-        <button type="button" className={secondaryButton} onClick={() => void load()} disabled={loading || applying}>
+        <button type="button" className={secondaryButton} onClick={() => void load()} disabled={loading || applying} aria-busy={Boolean(loading)}>
           {loading ? 'กำลังโหลด...' : 'รีเฟรช'}
         </button>
       )}
@@ -339,7 +339,7 @@ export function ChartOfAccountsSettingsPage({
                 type="button"
                 className={secondaryButton}
                 onClick={() => void runPreview()}
-                disabled={!templateKey || previewing || applying}
+                disabled={!templateKey || previewing || applying} aria-busy={Boolean(previewing)}
               >
                 {previewing ? 'กำลังตรวจ...' : 'Preview ผลกระทบ'}
               </button>
@@ -448,7 +448,7 @@ export function ChartOfAccountsSettingsPage({
                     type="button"
                     className={primaryButton}
                     onClick={() => void applyTemplate()}
-                    disabled={Boolean(applyBlocker) || previewing || applying || loading}
+                    disabled={Boolean(applyBlocker) || previewing || applying || loading} aria-busy={Boolean(applying)}
                   >
                     {applying ? 'กำลังนำ Template มาใช้...' : 'ยืนยันนำ Template มาใช้'}
                   </button>

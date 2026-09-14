@@ -246,7 +246,7 @@ export function CrmReportsPrototypePage({ companyId, permissions }: { companyId:
         <button
           type="button"
           onClick={handleDownload}
-          disabled={!summary || loading || storedPeriod !== period}
+          disabled={!summary || loading || storedPeriod !== period} aria-busy={Boolean(loading)}
           className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-[10px] border border-gray-200 bg-white px-[17px] py-[9px] text-[15px] font-bold text-gray-600 shadow-[var(--shadow-theme-sm)] disabled:opacity-60"
         >
           <DesignIcons.doc className="h-4 w-4" />

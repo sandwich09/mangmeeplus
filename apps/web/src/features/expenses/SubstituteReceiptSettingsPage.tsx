@@ -210,7 +210,7 @@ export function SubstituteReceiptSettingsPage({ companyId }: { companyId: string
                 onClick={() => void save()}
                 disabled={Boolean(validationError) || saving}
                 aria-busy={saving}
-                className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-extrabold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-5 inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-brand-700 px-4 text-sm font-extrabold text-white hover:bg-brand-800 disabled:cursor-not-allowed disabled:opacity-50" data-loading-indicator
               >
                 {saving ? <span aria-hidden="true" className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" /> : null}
                 {saving ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}
