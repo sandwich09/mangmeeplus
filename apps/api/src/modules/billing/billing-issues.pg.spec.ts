@@ -1,3 +1,5 @@
+import {BillingAdminService} from './application/billing-admin.service';
+import type {RequestContext} from '../auth/domain/models/request-context.model';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -68,9 +70,44 @@ test('billing case detection and ownership on real PostgreSQL',{skip:!databaseUr
       await client.role.update({where:{id:roleId},data:{companyId:null,scopeKey:'system',isSystem:true}});
       await client.user.update({where:{id:userId},data:{status:'SUSPENDED'}});assert.equal((await list()).items.length,0);
     });
+    await t.test('support outcome transaction rolls back on audit failure and cannot change payment or case state',async()=>{
+      await client.user.update({where:{id:userId},data:{status:'ACTIVE'}});
+      const member=await client.companyMembership.findFirstOrThrow({where:{userId,companyId}});
+      const context:RequestContext={userId,companyId,membershipId:member.id,authSubject:userId,authProvider:'system',requestId:run,roles:[],scopes:{},permissions:['system.billing.read','system.billing.issue.manage']};
+      const billing={stripe:{accountId:stripeAccountId,livemode:false,enabled:true}};
+      const admin=new BillingAdminService({client} as never,billing as never);
+      const source=await client.billingIssue.findUniqueOrThrow({where:{id:issueId}});
+      let reached!:()=>void,release!:()=>void;
+      const entered=new Promise<void>(resolve=>{reached=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+      const waitingClient=new Proxy(client,{get(target,key){if(key==='$transaction')return (fn:any)=>target.$transaction(tx=>fn(new Proxy(tx,{get(inner,prop){
+        if(prop==='$executeRaw')return async(...args:any[])=>{reached();await gate;return (inner.$executeRaw as any)(...args);};return Reflect.get(inner,prop);}})));return Reflect.get(target,key);}});
+      const waiting=new BillingAdminService({client:waitingClient} as never,billing as never);
+      const oldCount=await client.billingOperation.count({where:{stripeAccountId,type:'RECORD_SUPPORT_OUTCOME'}});
+      const pending=waiting.previewSupportOutcome(context,issueId,{expectedVersion:source.version,kind:'REVIEW_REQUESTED',note:'revoked during wait'},randomUUID());
+      await entered;await client.user.update({where:{id:userId},data:{status:'SUSPENDED'}});release();
+      await assert.rejects(pending);assert.equal(await client.billingOperation.count({where:{stripeAccountId,type:'RECORD_SUPPORT_OUTCOME'}}),oldCount);
+      await client.user.update({where:{id:userId},data:{status:'ACTIVE'}});
+      const preview=await admin.previewSupportOutcome(context,issueId,{expectedVersion:source.version,kind:'REVIEW_REQUESTED',note:'ต้องตรวจหลักฐานเดิมก่อน ห้ามถือว่าชำระแล้ว'},randomUUID());
+      const failingClient=new Proxy(client,{get(target,key){if(key==='$transaction')return (fn:any)=>target.$transaction(tx=>fn(new Proxy(tx,{get(inner,prop){
+        if(prop==='auditLog')return new Proxy(inner.auditLog,{get(log,method){if(method==='create')return ()=>{throw new Error('synthetic audit persistence failure');};return Reflect.get(log,method);}});
+        return Reflect.get(inner,prop);}})));return Reflect.get(target,key);}});
+      const failing=new BillingAdminService({client:failingClient} as never,billing as never);
+      const command={expectedVersion:preview.version,previewHash:preview.previewHash};
+      await assert.rejects(failing.commitSupportOutcome(context,issueId,preview.id,command),/synthetic audit/);
+      assert.deepEqual(await client.billingIssue.findUnique({where:{id:issueId}}),source);
+      assert.equal((await admin.supportOutcome(context,issueId,preview.id)).state,'PREVIEW');
+      const results=await Promise.all([admin.commitSupportOutcome(context,issueId,preview.id,command),admin.commitSupportOutcome(context,issueId,preview.id,command)]);
+      assert.ok(results.every(r=>r.state==='SUCCEEDED'&&r.id===preview.id));
+      const after=await client.billingIssue.findUniqueOrThrow({where:{id:issueId}});
+      assert.equal(after.version,source.version+1);assert.equal(after.state,source.state);assert.equal(after.episode,source.episode);assert.equal(after.note,source.note);
+      assert.equal(await client.auditLog.count({where:{targetId:issueId,action:'billing.support_outcome.recorded'}}),1);
+      assert.equal((await admin.supportOutcomes(context,issueId)).items[0]?.id,preview.id);
+      await assert.rejects(admin.previewSupportOutcome(context,issueId,{expectedVersion:source.version,kind:'REPLY_RECORDED',note:'stale'},randomUUID()));
+    });
     assert.equal(await client.billingAccount.count({where:{stripeAccountId}}),0,'case operations create no billing account');
   }finally{
     await client.billingOperatorScope.deleteMany({where:{stripeAccountId}});await client.auditLog.deleteMany({where:{companyId:{in:[companyId,other]}}});
+    await client.billingOperation.deleteMany({where:{stripeAccountId,type:'RECORD_SUPPORT_OUTCOME'}});
     await client.billingIssue.deleteMany({where:{stripeAccountId}});await client.companyMembership.deleteMany({where:{companyId:{in:[companyId,other]}}});
     if(roleId)await client.role.delete({where:{id:roleId}});await client.user.deleteMany({where:{id:userId}});await client.company.deleteMany({where:{id:{in:[companyId,other]}}});await client.$disconnect();
   }

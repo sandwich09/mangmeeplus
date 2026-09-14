@@ -6,17 +6,20 @@ import { hashLineRecoveryPassword } from '../../domain/logic/secure-token.logic'
 
 const GENERIC_MESSAGE = 'If the account is eligible, a temporary password has been sent to its linked LINE.';
 const ACTIVE_USER = { id: 'user-1', status: 'ACTIVE', credential: { status: 'ACTIVE', passwordHash: 'synthetic-credential-hash' } };
-const TOKEN_CONFIG = { lineMessagingChannelAccessToken: 'system-oa-token', passwordResetResponseMinMs: 0 } as any;
+const TOKEN_CONFIG = { lineMessagingChannelId:'synthetic-messaging', lineMessagingChannelAccessToken: 'system-oa-token', passwordResetResponseMinMs: 0 } as any;
 
 function makePrisma(options: {
   user?: Record<string, unknown> | null;
   users?: Array<Record<string, any>>;
   identities?: Record<string, string>;
   onIdentityQuery?: (args: any) => void;
+  identityChannelId?:string;
+  identityUnavailableAfter?:number;
   membership?: { companyId: string } | null;
   identity?: { providerUserId: string } | null;
   onUserQuery?: (args: any) => void;
 }) {
+  let identityQueries=0;
   const tokens: Array<{ id: string; userId: string; tokenHash: string; expiresAt: Date; status: string }> = [];
   const tx = {
     $queryRaw: async () => [{ id: 'credential-1' }],
@@ -58,8 +61,9 @@ function makePrisma(options: {
       externalIdentity: {
         findFirst: async (args: any) => {
           options.onIdentityQuery?.(args);
-          if (options.identities) return options.identities[args.where.userId] ? { providerUserId: options.identities[args.where.userId] } : null;
-          return options.identity === undefined ? { providerUserId: 'line-user-1' } : options.identity;
+          if(args.where.providerChannelId!==(options.identityChannelId??'synthetic-messaging')||++identityQueries>(options.identityUnavailableAfter??Infinity))return null;
+          const identity=options.identities?(options.identities[args.where.userId]?{providerUserId:options.identities[args.where.userId]}:null):options.identity===undefined?{providerUserId:'line-user-1'}:options.identity;
+          return identity&&(!args.where.providerUserId||args.where.providerUserId===identity.providerUserId)?identity:null;
         },
       },
       passwordResetToken: tx.passwordResetToken,
@@ -166,7 +170,7 @@ describe('NotifyPasswordResetRequestUseCase', () => {
       assert.equal((await run(prisma, TOKEN_CONFIG, `  ${email.toUpperCase()}  `)).result.message, GENERIC_MESSAGE);
       await flushDetached();
       assert.deepEqual(queried.where, { OR: [{ username: email }, { email }] });
-      assert.deepEqual(destinationQuery.where, { userId: user.id, provider: 'LINE', status: 'ACTIVE' });
+      assert.deepEqual(destinationQuery.where, { userId: user.id, provider: 'LINE', providerChannelId:'synthetic-messaging',providerUserId:'line-email-owner',status: 'ACTIVE' });
       assert.equal(line.pushes.length, 1);
       assert.equal(line.pushes[0]!.to, 'line-email-owner');
       assert.equal(tokens[0]!.userId, user.id);
@@ -303,7 +307,7 @@ describe('NotifyPasswordResetRequestUseCase', () => {
     try {
       const startedAt = Date.now();
       const { result, audits } = await run(prisma, {
-        lineMessagingChannelAccessToken: 'system-oa-token',
+        ...TOKEN_CONFIG,
         passwordResetResponseMinMs: floorMs,
       } as any);
       assert.equal(result.message, GENERIC_MESSAGE);
@@ -316,4 +320,13 @@ describe('NotifyPasswordResetRequestUseCase', () => {
       globalThis.fetch = original;
     }
   });
+  it('refuses legacy recipients and revokes a token if its current binding disappears before push',async()=>{
+    for(const options of [{identityChannelId:'legacy-login'},{identityUnavailableAfter:1}]){
+      const line=captureLinePush(),{prisma,tokens}=makePrisma(options);
+      try{assert.equal((await run(prisma)).result.message,GENERIC_MESSAGE);await flushDetached();assert.equal(line.pushes.length,0);
+        if('identityChannelId' in options)assert.equal(tokens.length,0);else assert.equal(tokens[0]?.status,'REVOKED');
+      }finally{line.restore();}
+    }
+  });
+
 });

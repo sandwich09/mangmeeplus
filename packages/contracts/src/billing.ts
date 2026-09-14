@@ -136,6 +136,11 @@ export type BillingOperatorIssue = { id: string; companyId: string | null; kind:
   state: string; assigneeUserId: string | null; note: string | null; version: number; createdAt: string; updatedAt: string;
   assigneeName: string | null; assigneeAvailable: boolean; backupUserId: string | null; backupName: string | null; backupAvailable: boolean;
   priority: 'NORMAL' | 'HIGH' | 'CRITICAL'; followUpAt: string | null; overdue: boolean; episode: number; lastSeenAt: string };
+export type BillingSupportOutcomeKind = 'CUSTOMER_CONTACTED' | 'PROVIDER_CONTACTED' | 'REPLY_RECORDED' | 'REVIEW_REQUESTED';
+export type BillingSupportOutcomeInput = { expectedVersion:number; kind:BillingSupportOutcomeKind; note:string };
+export type BillingSupportOutcome = { id:string;issueId:string;companyId:string|null;mode:BillingMode;episode:number;sourceVersion:number;
+  kind:BillingSupportOutcomeKind;note:string;actorUserId:string;createdAt:string;recordedAt:string|null;expiresAt:string;version:number;
+  state:'PREVIEW'|'SUCCEEDED'|'CANCELLED';previewHash:string;canSubmit:boolean;canCancel:boolean };
 export type BillingOperatorOverview = { mode: BillingMode | 'DISABLED'; capabilities: string[]; platformScope: boolean; canManageScopes?: boolean;
   companies: BillingOperatorCompany[]; nextCursor: string | null };
 export type BillingOperatorCompanyDetail = BillingOperatorCompany & { usage: BillingReceiptUsage;

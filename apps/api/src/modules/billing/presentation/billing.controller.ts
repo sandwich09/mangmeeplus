@@ -1,4 +1,5 @@
-import { BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
+import { BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -221,6 +222,28 @@ export class BillingAdminController {
     return this.admin.issues(req.context, { ...(fields.cursor === undefined ? {} : { cursor: uuid(fields.cursor) }),
       ...(fields.companyId === undefined ? {} : { companyId: textField(fields.companyId, 128) }),
       ...(fields.state === undefined ? {} : { state: textField(fields.state, 40) }),...(fields.queue===undefined?{}:{queue:fields.queue as 'UNASSIGNED'|'OVERDUE'}) });
+  }
+  @Get('issues/:id/outcomes') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  supportOutcomes(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);return this.admin.supportOutcomes(req.context,uuid(id),fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('issues/:id/outcomes/:outcomeId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  supportOutcome(@Req() req:AuthedRequest,@Param('id') id:string,@Param('outcomeId') outcomeId:string) {
+    return this.admin.supportOutcome(req.context,uuid(id),uuid(outcomeId));
+  }
+  @Post('issues/:id/outcomes/preview') @RequirePermissions('system.billing.issue.manage')
+  async previewSupportOutcome(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingSupportOutcomeDto,@Headers('idempotency-key') key?:string) {
+    await this.operationLimit(req);
+    const fields=bodyFields(body,['expectedVersion','kind','note']);
+    return this.admin.previewSupportOutcome(req.context,uuid(id),{expectedVersion:fields.expectedVersion as number,
+      kind:textField(fields.kind,40) as BillingSupportOutcomeKind,note:textField(fields.note,1000)},textField(key,120));
+  }
+  @Post('issues/:id/outcomes/:outcomeId/:action') @RequirePermissions('system.billing.issue.manage')
+  async commitSupportOutcome(@Req() req:AuthedRequest,@Param('id') id:string,@Param('outcomeId') outcomeId:string,@Param('action') action:string,@Body() body:BillingCommandDto) {
+    if(!['submit','cancel'].includes(action))invalid();await this.operationLimit(req);
+    const fields=bodyFields(body,['expectedVersion','previewHash']);
+    return this.admin.commitSupportOutcome(req.context,uuid(id),uuid(outcomeId),{expectedVersion:fields.expectedVersion as number,
+      ...(fields.previewHash===undefined?{}:{previewHash:textField(fields.previewHash,120)})},action==='cancel');
   }
   @Get('issues/:id/operators') @RequirePermissions('system.billing.issue.manage') @Header('Cache-Control','no-store')
   assignees(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown) {

@@ -51,6 +51,10 @@ export class BillingSubmitDto extends BillingVersionDto {
   @IsUUID() previewId!: string;
   @IsString() @MinLength(1) @MaxLength(120) previewHash!: string;
 }
+export class BillingSupportOutcomeDto extends BillingVersionDto {
+  @IsString() @MinLength(1) @MaxLength(40) kind!: string;
+  @IsString() @MinLength(1) @MaxLength(1000) note!: string;
+}
 export class BillingIssueDto extends BillingVersionDto {
   @IsString() @MaxLength(40) state!: string;
   @IsString() @MinLength(1) @MaxLength(1000) note!: string;

@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
+import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
@@ -196,4 +196,81 @@ export class BillingAdminService {
       return this.issueView(await tx.billingIssue.findUniqueOrThrow({ where: { id } }),tx);
     });
   }
+  private async outcomeIssue(context:RequestContext,id:string,permission:string,tx:Prisma.TransactionClient=this.prisma.client) {
+    const access=await this.access(context,permission,tx);
+    const row=await tx.billingIssue.findFirst({where:{id,stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,
+      ...(access.platformScope?{}:{companyId:{in:access.companyIds}})}});
+    if(!row)throw new NotFoundException();return row;
+  }
+  private outcomeView(row:BillingOperation,issue:BillingIssue,actorId:string,canManage:boolean):BillingSupportOutcome {
+    const source=row.proposedJson as {episode:number;kind:BillingSupportOutcomeInput['kind'];note:string};
+    const owned=canManage&&row.initiatorUserId===actorId, pending=row.state==='PREVIEW';
+    return {id:row.id,issueId:issue.id,companyId:row.companyId,mode:row.livemode?'LIVE':'TEST',episode:source.episode,sourceVersion:row.sourceVersion,
+      kind:source.kind,note:source.note,actorUserId:row.initiatorUserId,createdAt:row.createdAt.toISOString(),recordedAt:row.observedAt?.toISOString()??null,
+      expiresAt:row.expiresAt.toISOString(),version:row.version,state:row.state as BillingSupportOutcome['state'],previewHash:row.requestHash,
+      canSubmit:owned&&pending&&row.expiresAt>new Date()&&row.sourceVersion===issue.version&&source.episode===issue.episode,canCancel:owned&&pending};
+  }
+  private async outcomeRow(tx:Prisma.TransactionClient,issue:BillingIssue,id:string) {
+    const row=await tx.billingOperation.findFirst({where:{id,type:'RECORD_SUPPORT_OUTCOME',referenceId:issue.id,companyId:issue.companyId,
+      stripeAccountId:issue.stripeAccountId,livemode:issue.livemode}});
+    if(!row)throw new NotFoundException();return row;
+  }
+  async supportOutcomes(context:RequestContext,issueId:string,cursor?:string) {
+    const issue=await this.outcomeIssue(context,issueId,'system.billing.read');
+    const access=await this.access(context,'system.billing.read');
+    const anchor=cursor?await this.outcomeRow(this.prisma.client,issue,cursor):null;
+    const rows=await this.prisma.client.billingOperation.findMany({where:{type:'RECORD_SUPPORT_OUTCOME',referenceId:issue.id,companyId:issue.companyId,
+      stripeAccountId:issue.stripeAccountId,livemode:issue.livemode,...anchor?{OR:[{createdAt:{lt:anchor.createdAt}},{createdAt:anchor.createdAt,id:{lt:anchor.id}}]}:{}},
+      orderBy:[{createdAt:'desc'},{id:'desc'}],take:26});
+    return {items:rows.slice(0,25).map(row=>this.outcomeView(row,issue,context.userId,access.capabilities.includes('system.billing.issue.manage'))),nextCursor:rows.length>25?rows[24]!.id:null};
+  }
+  async supportOutcome(context:RequestContext,issueId:string,id:string) {
+    const issue=await this.outcomeIssue(context,issueId,'system.billing.read'),access=await this.access(context,'system.billing.read');
+    return this.outcomeView(await this.outcomeRow(this.prisma.client,issue,id),issue,context.userId,access.capabilities.includes('system.billing.issue.manage'));
+  }
+  async previewSupportOutcome(context:RequestContext,issueId:string,input:BillingSupportOutcomeInput,key:string) {
+    if(!Number.isInteger(input.expectedVersion)||input.expectedVersion<0||!['CUSTOMER_CONTACTED','PROVIDER_CONTACTED','REPLY_RECORDED','REVIEW_REQUESTED'].includes(input.kind)||
+      typeof input.note!=='string'||!input.note.trim()||input.note.length>1000||!key||!/^[A-Za-z0-9:_-]{8,120}$/.test(key))throw new BadRequestException();
+    const note=input.note.trim(),requestHash=hashBilling([issueId,context.userId,input.expectedVersion,input.kind,note]);
+    const idempotencyKey=`support:${issueId}:${key}`;
+    return this.prisma.client.$transaction(async tx=>{
+      const issue=await this.outcomeIssue(context,issueId,'system.billing.issue.manage',tx);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${idempotencyKey},0))`;
+      await this.outcomeIssue(context,issueId,'system.billing.issue.manage',tx);
+      const existing=await tx.billingOperation.findUnique({where:{stripeAccountId_livemode_idempotencyKey:{stripeAccountId:issue.stripeAccountId,livemode:issue.livemode,idempotencyKey}}});
+      if(existing){
+        if(existing.type!=='RECORD_SUPPORT_OUTCOME'||existing.referenceId!==issue.id||existing.companyId!==issue.companyId||existing.initiatorUserId!==context.userId||existing.requestHash!==requestHash)throw billingError('CONTROL_PREVIEW_STALE','คำขอนี้มีข้อมูลต่างจากรายการเดิม กรุณาเปิดรายการเดิม');
+        return this.outcomeView(existing,issue,context.userId,true);
+      }
+      if(issue.version!==input.expectedVersion)throw billingError('CONTROL_PREVIEW_STALE','เคสเปลี่ยนแล้ว กรุณาโหลดเคสและตรวจข้อมูลใหม่');
+      const row=await tx.billingOperation.create({data:{type:'RECORD_SUPPORT_OUTCOME',referenceId:issue.id,companyId:issue.companyId,stripeAccountId:issue.stripeAccountId,
+        livemode:issue.livemode,sourceVersion:issue.version,reason:note,initiatorUserId:context.userId,idempotencyKey,requestHash,expiresAt:new Date(Date.now()+600000),
+        proposedJson:{episode:issue.episode,kind:input.kind,note,membershipId:context.membershipId,actorCompanyId:context.companyId}}});
+      await tx.auditLog.create({data:{companyId:issue.companyId,actorUserId:context.userId,action:'billing.support_outcome.previewed',targetType:'BillingIssue',
+        targetId:issue.id,requestId:context.requestId,result:'SUCCESS',riskLevel:'MEDIUM',metadataJson:{operationId:row.id,episode:issue.episode,kind:input.kind,caseVersion:issue.version}}});
+      return this.outcomeView(row,issue,context.userId,true);
+    });
+  }
+  async commitSupportOutcome(context:RequestContext,issueId:string,id:string,input:{expectedVersion:number;previewHash?:string},cancel=false) {
+    if(!Number.isInteger(input.expectedVersion)||input.expectedVersion<0||(!cancel&&typeof input.previewHash!=='string'))throw new BadRequestException();
+    return this.prisma.client.$transaction(async tx=>{
+      const issue=await this.outcomeIssue(context,issueId,'system.billing.issue.manage',tx);
+      await tx.$queryRaw`SELECT id FROM "BillingOperation" WHERE id=${id} FOR UPDATE`;
+      await this.outcomeIssue(context,issueId,'system.billing.issue.manage',tx);
+      const row=await this.outcomeRow(tx,issue,id),source=row.proposedJson as {episode:number;kind:string};
+      if(row.initiatorUserId!==context.userId)throw new ForbiddenException();
+      if(!cancel&&input.previewHash!==row.requestHash)throw billingError('CONTROL_PREVIEW_STALE','ข้อมูลตรวจสอบไม่ตรงกับรายการเดิม');
+      if(row.state===(cancel?'CANCELLED':'SUCCEEDED'))return this.outcomeView(row,issue,context.userId,true);
+      if(row.state!=='PREVIEW'||row.version!==input.expectedVersion||(!cancel&&(row.expiresAt<=new Date()||row.sourceVersion!==issue.version||source.episode!==issue.episode)))throw billingError('CONTROL_PREVIEW_STALE','เคสหรือคำขอเปลี่ยนแล้ว กรุณาตรวจข้อมูลใหม่');
+      if(!cancel){const changed=await tx.billingIssue.updateMany({where:{id:issue.id,version:row.sourceVersion,episode:source.episode},data:{version:{increment:1}}});
+        if(changed.count!==1)throw billingError('CONTROL_PREVIEW_STALE','เคสเปลี่ยนแล้ว กรุณาตรวจข้อมูลใหม่');}
+      const result=await tx.billingOperation.update({where:{id:row.id,version:row.version,state:'PREVIEW'},data:{state:cancel?'CANCELLED':'SUCCEEDED',version:{increment:1},observedAt:new Date(),
+        resultJson:{issueId:issue.id,episode:source.episode,caseState:issue.state,financialMutation:false}}});
+      await tx.auditLog.create({data:{companyId:issue.companyId,actorUserId:context.userId,action:cancel?'billing.support_outcome.cancelled':'billing.support_outcome.recorded',
+        targetType:'BillingIssue',targetId:issue.id,requestId:context.requestId,result:'SUCCESS',riskLevel:'MEDIUM',
+        metadataJson:{operationId:row.id,episode:source.episode,kind:source.kind,caseVersion:issue.version,caseState:issue.state,financialMutation:false}}});
+      return this.outcomeView(result,issue,context.userId,true);
+    });
+  }
+
 }

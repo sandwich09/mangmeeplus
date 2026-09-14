@@ -1,4 +1,5 @@
 'use client';
+import BillingSupportOutcomesPanel from './BillingSupportOutcomesPanel';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import BillingOperationPanel from './BillingOperationPanel';
@@ -143,6 +144,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
         <p className="text-sm text-gray-600">สถานะเคสแยกจากผลชำระเงินและการเปิดสิทธิ์ การปิดเคสต้องมีผลตรวจยืนยัน</p>
       </div>}
     </section>}
+    {issue&&<BillingSupportOutcomesPanel key={issue.id} issue={issue} canManage={Boolean(overview?.capabilities.includes('system.billing.issue.manage'))} onRecorded={()=>setReload(v=>v+1)}/>}
     {nextCursor && <button className={button} disabled={loading} onClick={() => setCursor(nextCursor)}>หน้าถัดไป</button>}
     {cursor && <button className={button} disabled={loading} onClick={() => setCursor(null)}>หน้าแรก</button>}
     <footer className="border-t pt-4 text-sm"><a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อผู้ดูแลพร้อมเลขอ้างอิง</a></footer>

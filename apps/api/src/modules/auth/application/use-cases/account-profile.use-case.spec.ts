@@ -109,7 +109,8 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
         return { count: matching.length };
       },
     },
-    externalIdentity: { findFirst: async ({ where }: any) => lineIdentities.find((row) => match(row, where)) ?? null },
+    externalIdentity: { findFirst: async ({ where }: any) => lineIdentities.find((row) => match(row, where)) ?? null,
+      findMany: async ({where}:any) => lineIdentities.filter(row=>match(row,where)) },
     // Only `PasswordLoginUseCase` reads this; one active OWNER membership is enough for it.
     companyMembership: {
       findFirst: async () => ({ id: 'mem-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }] }),

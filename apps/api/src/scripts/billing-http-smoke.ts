@@ -1,3 +1,4 @@
+import { checkBillingSupportOutcomes } from './billing-support-outcomes-smoke';
 import { checkLineBinding } from './line-binding-smoke';
 import { checkLineRuntimeCredentials } from './line-runtime-credentials-smoke';
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
@@ -185,6 +186,11 @@ async function main() {
       return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_SUPPORT_OUTCOMES_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkBillingSupportOutcomes({prisma,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,stripeAccountId:accountId,request,browser}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:[],realProviderDelivery:false}));return;
+    }
     if(process.env.BILLING_LINE_BINDING_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkLineBinding({app,prisma,origin,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));

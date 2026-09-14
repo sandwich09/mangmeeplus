@@ -1,0 +1,71 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+  "passed": [
+    "support-outcome-current-global-capability-company-mode-scope-and-closed-input-boundaries",
+    "support-outcome-stable-preview-concurrent-submit-one-record-one-audit-unknown-case-preserved",
+    "support-outcome-episode-version-expiry-cancel-and-role-withdrawal-refuse-without-case-resolution",
+    "support-outcome-25-plus-one-history-timestamp-ties-permanent-reference-and-foreign-cursor-refusal",
+    "browser-support-expired-preview-copy-retains-notes-fresh-review-cancel-and-unreadable-reference-return",
+    "browser-support-preview-confirm-committed-response-loss-original-retry-reload-mobile-case-company-return"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [],
+  "realProviderDelivery": false,
+  "status": "PASS_FOR_SCOPED_INCREMENT",
+  "baseCommit": "679490d0b734130e0f5fb049990f6761535c9e82",
+  "capturedAt": "2026-09-14T13:19:37.574614+00:00",
+  "checks": {
+    "browserHttpPostgresql": {
+      "passedGroups": 6,
+      "command": "BILLING_SUPPORT_OUTCOMES_ONLY=1 node <compiled-api>/scripts/billing-http-smoke.js"
+    },
+    "actualPostgresql": {
+      "passed": 9,
+      "failed": 0,
+      "skipped": 0,
+      "command": "BILLING_TEST_DATABASE_URL=<isolated local DB> pnpm --dir apps/api exec tsx --test src/modules/billing/billing-issues.pg.spec.ts",
+      "covers": "case detection/ownership plus support record authorization during wait, audit rollback and concurrent commit"
+    },
+    "precedingLineFixtureCorrection": {
+      "passed": 82,
+      "failed": 0,
+      "skipped": 0,
+      "command": "pnpm --dir apps/api exec tsx --test src/modules/auth/application/use-cases/account-profile.use-case.spec.ts src/modules/auth/application/use-cases/notify-password-reset-request.use-case.spec.ts src/modules/external-signup/application/signup-claim-email.service.spec.ts src/spec-suite-coverage.spec.ts"
+    },
+    "apiTypecheck": "PASS",
+    "webTypecheck": "PASS",
+    "maintenancePins": "PASS",
+    "diffCheck": "PASS",
+    "fullDefaultApiSuite": {
+      "status": "NOT_PASS_LOCAL_FIXTURE_LIMITATIONS",
+      "details": "The older root-env local database lacks ExpenseRecord.draftIdempotencyKey. The owned migrated billing database resolves that failure, but existing feature-launch retirement/command PostgreSQL tests require canonical gate fixtures absent there. Serial test-file scheduling reproduced the missing-row/precondition failures. Those modules/guards were not changed. Fresh CI with its configured test fixtures remains required."
+    }
+  },
+  "boundaries": [
+    "Support operations use actual Nest HTTP/auth, PostgreSQL transactions/constraints, Next and Chromium. They issue no provider call, financial mutation, entitlement change, or external message.",
+    "A support reply is an immutable operator statement, not verified payment evidence. The UNKNOWN case stays open; aged financial-command recovery and compensation remain separate work.",
+    "Six scenario groups include current scope/permission, invalid input, stable preview replay, concurrent commit, source/episode/expiry, read-only permission, cancel, 25+1 timestamp ties/foreign cursors, expired-copy, unreadable-reference return and committed response loss/original retry.",
+    "The PostgreSQL fault test simulates an audit persistence failure and a permission withdrawal during a lock wait; the rollback and row results use the actual database.",
+    "Counts overlap. This is not a new combined161 rerun or exhaustive C01-C08/LINE/Postmark acceptance. Native provider acceptance remains separate.",
+    "Root679490d0 CI34845055466 failed outdated LINE profile/recovery/signup fixtures. Corrected maintained fixtures pass82 locally. New source CI remains required; no merge/deployment."
+  ],
+  "sources": {
+    ".github/workflows/ci.yml": "01bf51e4eb6fb9649271674b53bc86818825c08a460e369861834c8734a36c3a",
+    "apps/api/src/modules/auth/application/use-cases/account-profile.use-case.spec.ts": "bdf046ee4a45e04a0600632287a15b92d74fd943a2ef3a19eb3d713872189759",
+    "apps/api/src/modules/auth/application/use-cases/notify-password-reset-request.use-case.spec.ts": "b6fef31019fb2eeb31a48c02fa6c7b36939ec073416114ae38ebd5cb8d8fd2c7",
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "7575cc34a567765122a40ff4e9e263bb13248fae9e345abe780873fa00eb7cc0",
+    "apps/api/src/modules/billing/application/billing-timeline.ts": "209a18a9ddefe20da81bbc90caf892de93220c655abf2008951589b62a33410d",
+    "apps/api/src/modules/billing/billing-issues.pg.spec.ts": "7c884e81a1e2fbb68a1dca9c6d314d08407be23ed45daf42fbb3463c213d07d6",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "27b015fbd5828fd092ca01be3dc342a8f4e195a17a15a5588d87225ce695a979",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "5dafb3b2e01b10b14a7df2d92f1982ca9c6d9d8b807f2b8a9d49aa9f4c7bef1c",
+    "apps/api/src/modules/external-signup/application/signup-claim-email.service.spec.ts": "a170535addb45cc89d8e98af919fba954977ad00030c3a6daa0c2041bdb7ee0f",
+    "apps/api/src/scripts/billing-http-smoke.ts": "ea29451fd3fb1e485d3c35d48d4674722e4ac492a3e9b4b8e06c4809fcec79b6",
+    "apps/api/src/scripts/billing-support-outcomes-smoke.ts": "49898a7f4507fefdf22ca86c5c9b2dd436da2d8b2d022314f636c95e0a9f0ae4",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "31d78e5d8de85a252da7fb0056162708b00ec672dd866a790cb10700870dc423",
+    "apps/web/src/features/billing-admin/BillingSupportOutcomesPanel.tsx": "f2c7564a3a0ac26f81e40f1795c699279bdff56b2e72e0cef37b7e29ce464097",
+    "apps/web/src/features/billing-admin/BillingTimelinePanel.tsx": "bc5a9e0e56c866592803036828a036fbf8929566d0d32c2c6017f3c03dc1a270",
+    "docs/plans/mangmee-billing-controls-plan-th.md": "ac204305628cfd6e4cce46b0c913a812d04faf9ddf8467cbabea55aa678e1dd1",
+    "docs/specs/mangmee-billing-controls-spec-th.md": "c0c3e7c60f3a364e4832fb825308c48159117e7e66e2a2ce4499a0eade78598e",
+    "packages/contracts/src/billing.ts": "fc20c63819db78d90041a2e59fcfdb58a128fdd636dade7b70ec5a94217f1cd2"
+  }
+}

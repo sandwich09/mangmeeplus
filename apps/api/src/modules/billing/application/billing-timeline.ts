@@ -45,9 +45,12 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
   const rows = await tx.$queryRaw<Entry[]>(Prisma.sql`${sources} SELECT * FROM events
     ${cursor ? Prisma.sql`WHERE ("recordedAt",reference COLLATE "C") < (${cursor.recordedAt},${cursor.reference} COLLATE "C")` : Prisma.empty}
     ORDER BY "recordedAt" DESC,reference COLLATE "C" DESC LIMIT 26`);
+  const outcomes=await tx.billingOperation.findMany({where:{id:{in:rows.slice(0,25).filter(row=>row.kind==='OPERATION'&&row.type==='RECORD_SUPPORT_OUTCOME').map(row=>row.reference.slice(10))},
+    type:'RECORD_SUPPORT_OUTCOME',companyId:scope.companyId,stripeAccountId:scope.stripeAccountId??'',livemode:scope.livemode},select:{id:true,referenceId:true}});
+  const outcomeLinks=new Map(outcomes.filter(row=>row.referenceId).map(row=>[`OPERATION:${row.id}`,`/system/billing/issues/${encodeURIComponent(row.referenceId!)}?outcome=${encodeURIComponent(row.id)}`]));
   return { items: rows.slice(0,25).map(row => ({ ...row, recordedAt:row.recordedAt.toISOString(), occurredAt:row.occurredAt?.toISOString() ?? null,
     updatedAt:row.updatedAt?.toISOString() ?? null, observedAt:row.observedAt?.toISOString() ?? null,
-    href: row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
-      row.kind==='OPERATION' && ['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null })),
+    href: outcomeLinks.get(row.reference) ?? (row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
+      row.kind==='OPERATION' && ['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null) })),
     nextCursor: rows.length>25 ? rows[24]!.reference : null, auditIncluded:scope.audit, financialIncluded:scope.financial };
 }

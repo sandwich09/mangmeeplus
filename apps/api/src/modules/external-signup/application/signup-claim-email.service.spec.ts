@@ -662,6 +662,7 @@ describe('SignupAdminNotifyService', () => {
       execute: async (input: any) => { events.push({ notification: input }); return { skipped: options.skipped === true }; },
     } as any;
     const config = {
+      lineMessagingChannelId:'synthetic-messaging',
       lineMessagingChannelAccessToken: 'token' in options ? options.token : 'channel-token',
     } as any;
     const logger = { warn: (fields: any) => logs.push(fields), error: (fields: any) => logs.push(fields) } as any;
@@ -711,6 +712,7 @@ describe('SignupAdminNotifyService', () => {
       assert.equal(notification.severity, 'action');
       assert.match(notification.title, /ร้านมั่งมี/);
 
+      assert.equal(h.events.find(e=>e.identityQuery).identityQuery.providerChannelId,'synthetic-messaging');
       assert.deepEqual(h.pushes.map((p) => p.to), ['U-admin-1', 'U-admin-2']);
       assert.ok(h.pushes[0]!.body.startsWith(signupPendingReviewMessage('ร้านมั่งมี')));
       assert.match(h.pushes[0]!.body, /\/system\/signup-requests/);
