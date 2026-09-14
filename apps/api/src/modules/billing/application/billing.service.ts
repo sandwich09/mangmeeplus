@@ -1,3 +1,5 @@
+import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
+import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { BILLING_ACTIONS, BILLING_DRAFT_POLICY, billingOffer, type BillingCatalog, type BillingPolicy, type BillingQuote,
@@ -519,26 +521,26 @@ export class BillingService {
       createdAt: row.createdAt.toISOString(), hasDocuments: row.providerStatus === 'paid' })), nextCursor: rows.length > input.limit ? page.at(-1)!.id : null };
   }
 
-  async document(context: RequestContext, id: string, kind: 'invoice' | 'receipt' | 'pdf'): Promise<{ url: string }> {
+  private async ownedInvoice(context: RequestContext, id: string) {
     await this.assertOwner(context);
-    const account = await this.account(context.companyId);
-    const row = account ? await this.prisma.client.billingInvoice.findFirst({ where: { id, billingAccountId: account.id } }) : null;
-    if (!row || !account?.customerId) throw new NotFoundException();
-    await this.stripe.assertAccount();
-    const invoice = await this.stripe.request('GET', `/invoices/${row.providerInvoiceId}`);
-    if (invoice.id !== row.providerInvoiceId || stripeId(invoice.customer) !== account.customerId || stripeId(invoice.parent?.subscription_details?.subscription) !== row.subscriptionId) throw billingError('BILLING_DOCUMENT_BINDING', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
-    let value = kind === 'pdf' ? invoice.invoice_pdf : invoice.hosted_invoice_url;
-    if (kind === 'receipt') {
-      if (!row.providerChargeId) throw billingError('BILLING_DOCUMENT_PENDING', 'กำลังเตรียมใบเสร็จ กรุณาลองใหม่');
-      const charge = await this.stripe.request('GET', `/charges/${row.providerChargeId}`);
-      if (charge.id !== row.providerChargeId || stripeId(charge.customer) !== account.customerId || charge.paid !== true || charge.currency !== 'thb' || charge.amount !== row.paidSatang) throw billingError('BILLING_DOCUMENT_BINDING', 'กรุณาติดต่อทีมงานพร้อมเลขอ้างอิง');
-      value = charge.receipt_url;
-    }
-    const url = safeStripeUrl(value, 'document');
-    if (!url) throw billingError('BILLING_DOCUMENT_PENDING', 'กำลังเตรียมเอกสาร กรุณาลองใหม่');
-    await this.assertOwner(context);
-    await this.prisma.client.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.document.opened',
-      targetType: 'BillingInvoice', targetId: id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'LOW', metadataJson: { kind } } });
-    return { url };
+    const company=await this.prisma.client.company.findUnique({where:{id:context.companyId},select:{status:true,planTerm:{select:{termDisabledAt:true}}}});
+    if(!company||(company.status!=='ACTIVE'&&!(company.status==='DISABLED'&&company.planTerm?.termDisabledAt)))throw new ForbiddenException();
+    const account=await this.account(context.companyId);
+    const row=account?await this.prisma.client.billingInvoice.findFirst({where:{id,billingAccountId:account.id}}):null;
+    if(!row||!account)throw new NotFoundException();return {account,row};
+  }
+  async adjustments(context: RequestContext, id: string, kind: BillingAdjustmentKind, cursor?: string) {
+    const {account,row}=await this.ownedInvoice(context,id);
+    const result=await readInvoiceAdjustments(this.stripe,account,row,kind,cursor);
+    const current=await this.ownedInvoice(context,id);sameInvoiceSource(account,row,current.account,current.row);
+    return {...result,canOpenDocuments:true};
+  }
+  async document(context: RequestContext, id: string, kind: 'invoice'|'receipt'|'pdf'|'credit-note', creditNoteId?: string): Promise<{url:string}> {
+    const {account,row}=await this.ownedInvoice(context,id);
+    const result=await readInvoiceDocument(this.stripe,account,row,kind,creditNoteId);
+    const current=await this.ownedInvoice(context,id);sameInvoiceSource(account,row,current.account,current.row);
+    await this.prisma.client.auditLog.create({data:{companyId:context.companyId,actorUserId:context.userId,action:'billing.document.opened',
+      targetType:'BillingInvoice',targetId:id,requestId:context.requestId,result:'SUCCESS',riskLevel:'LOW',metadataJson:{kind,...creditNoteId?{creditNoteId}:{}}}});
+    return result;
   }
 }

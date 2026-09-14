@@ -54,10 +54,10 @@ export async function checkBillingFinancial(input: {
     if (browser) {
       const { page, origin, evidenceDir } = browser;
       await page.goto(`${origin}/companies/${companyId}/billing`, { waitUntil: 'domcontentloaded' });
-      await page.getByRole('region', { name: 'ประวัติการชำระเงิน' }).getByText(/คืนเงินแล้ว.*50/).waitFor();
+      await page.getByRole('region', { name: 'ประวัติการชำระเงิน' }).getByText(/ยอดคืนเงินที่ Stripe บันทึก.*50/).waitFor();
       await page.screenshot({ path: `${evidenceDir}/customer-financial-observation-mobile.png`, fullPage: true });
       await page.goto(`${origin}/system/billing/companies/${companyId}`, { waitUntil: 'domcontentloaded' });
-      await page.getByText(/คืนเงินแล้ว.*50.*มีข้อพิพาท/).waitFor();
+      await page.getByText(/ยอดคืนเงินที่ Stripe บันทึก.*50.*มีข้อพิพาท/).waitFor();
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
       await page.screenshot({ path: `${evidenceDir}/admin-financial-observation-mobile.png`, fullPage: true });
       cases.push('browser-customer-and-scoped-finance-see-observed-refund-dispute-and-case');

@@ -65,7 +65,7 @@ const TERM_RECOVERY_ROUTES = new Set([
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
   const prefix = '/v1/companies/[^/]+/billing';
-  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/attempts/[^/]+|/collection/[^/]+)?$`).test(clean)
+  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
     : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);
 }
 

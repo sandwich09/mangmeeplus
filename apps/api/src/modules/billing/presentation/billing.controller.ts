@@ -35,6 +35,15 @@ function uuid(value: unknown): string {
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(text)) invalid();
   return text;
 }
+function adjustmentKind(value: string): 'refunds'|'credit-notes' {
+  if(value!=='refunds'&&value!=='credit-notes')invalid();return value;
+}
+function documentFields(body: BillingDocumentDto): {kind:'invoice'|'receipt'|'pdf'|'credit-note';creditNoteId:string|undefined} {
+  const {kind,creditNoteId}=bodyFields(body,['kind','creditNoteId']);
+  if(kind!=='invoice'&&kind!=='receipt'&&kind!=='pdf'&&kind!=='credit-note')invalid();
+  if(kind!=='credit-note'&&creditNoteId!==undefined)invalid();
+  return {kind,creditNoteId:kind==='credit-note'?textField(creditNoteId,124):undefined};
+}
 
 @Controller('billing')
 export class BillingCatalogController {
@@ -46,6 +55,16 @@ export class BillingCatalogController {
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
     private readonly configuration: BillingConfigurationService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService) {}
+  @Get('companies/:id/invoices/:invoiceId/adjustments/:kind') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async adjustments(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') id:string,@Param('kind') kind:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);await this.operationLimit(req);
+    return this.admin.adjustments(req.context,textField(companyId,128),textField(id,128),adjustmentKind(kind),fields.cursor===undefined?undefined:textField(fields.cursor,124));
+  }
+  @Post('companies/:id/documents/:invoiceId/open') @HttpCode(200) @RequirePermissions('system.billing.document.read') @Header('Cache-Control','no-store')
+  async document(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') id:string,@Body() body:BillingDocumentDto) {
+    const {kind,creditNoteId}=documentFields(body);await this.operationLimit(req);
+    return this.admin.document(req.context,textField(companyId,128),textField(id,128),kind,creditNoteId);
+  }
   @Get('provider-scans') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   providerScans(@Req() req: AuthedRequest, @Query() query: unknown) {
     const fields=bodyFields(query,['cursor']);return this.scans.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));
@@ -392,11 +411,15 @@ export class BillingController {
     const input = { limit, ...(fields.cursor === undefined ? {} : { cursor: uuid(fields.cursor) }) };
     return this.billing.history(req.context, input);
   }
-  @Post('documents/:documentId/open') @HttpCode(200)
+  @Get('invoices/:documentId/adjustments/:kind') @Header('Cache-Control','no-store')
+  async adjustments(@Req() req:AuthedRequest,@Param('documentId') id:string,@Param('kind') kind:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);await this.limit(req);
+    return this.billing.adjustments(req.context,textField(id,128),adjustmentKind(kind),fields.cursor===undefined?undefined:textField(fields.cursor,124));
+  }
+  @Post('documents/:documentId/open') @HttpCode(200) @Header('Cache-Control','no-store')
   async document(@Req() req: AuthedRequest, @Param('documentId') id: string, @Body() body: BillingDocumentDto) {
-    const { kind } = bodyFields(body, ['kind']);
-    if (kind !== 'invoice' && kind !== 'receipt' && kind !== 'pdf') invalid();
-    await this.limit(req); return this.billing.document(req.context, id, kind);
+    const {kind,creditNoteId}=documentFields(body);
+    await this.limit(req); return this.billing.document(req.context, id, kind,creditNoteId);
   }
 }
 

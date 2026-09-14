@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
@@ -198,7 +199,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       <section aria-label="ประวัติการชำระเงิน" className="space-y-3"><h2 className="text-lg font-bold">ประวัติและเอกสารการชำระเงิน</h2>
         {data.history.items.length === 0 && <p>ยังไม่มีรายการชำระเงิน</p>}
         {data.history.items.map(invoice => <article key={invoice.id} className="space-y-2 rounded-xl border bg-white p-4"><p>{invoice.number ?? 'รายการชำระเงิน'} · {money(invoice.amountSatang)} · {date(invoice.createdAt)}</p>
-          {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `คืนเงินแล้ว ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}
+          {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `ยอดคืนเงินที่ Stripe บันทึก ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}
+          <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing/invoices/${encodeURIComponent(invoice.id)}`}>ตรวจการคืนเงินและเอกสารปรับยอด</Link>
           {invoice.hasDocuments && <div className="flex flex-wrap gap-2">{(['invoice', 'receipt', 'pdf'] as const).map(kind => <button key={kind} className={button} disabled={busy} onClick={() => action(async () => navigateProvider((await api.document(invoice.id, kind)).url, 'document'))}>{kind === 'invoice' ? 'เปิด Invoice' : kind === 'receipt' ? 'เปิดใบเสร็จ' : 'ดาวน์โหลด PDF'}</button>)}</div>}
         </article>)}
         {data.history.nextCursor && <button className={button} disabled={busy} onClick={() => action(async () => { const page = await api.history(data.history.nextCursor!); setData(current => current && ({ ...current, history: { items: [...current.history.items, ...page.items], nextCursor: page.nextCursor } })); })}>รายการก่อนหน้า</button>}

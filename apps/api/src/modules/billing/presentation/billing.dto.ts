@@ -97,4 +97,5 @@ export class BillingPortalDto {
 }
 export class BillingDocumentDto {
   @IsString() @MaxLength(40) kind!: string;
+  @IsOptional() @IsString() @MaxLength(124) creditNoteId?: string;
 }

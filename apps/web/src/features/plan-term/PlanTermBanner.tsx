@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { usePathname, useRouter } from 'next/navigation';
 import { fetchPlanTermNotice, type PlanTermNotice } from './plan-term.api';
 import { isRenewalPath, planTermView } from './plan-term.logic';
@@ -26,7 +27,7 @@ export function PlanTermBanner({ companyId }: { companyId: string }) {
     };
   }, [companyId]);
 
-  const view = planTermView(notice, isRenewalPath(pathname ?? '') || /^\/companies\/[^/]+\/billing(?:\/return)?\/?$/.test(pathname ?? ''));
+  const view = planTermView(notice, isRenewalPath(pathname ?? '') || isBillingCustomerRecoveryPath(pathname??'',companyId));
 
   useEffect(() => {
     if (view === 'renewal-page') router.replace(`/companies/${companyId}/renew`);

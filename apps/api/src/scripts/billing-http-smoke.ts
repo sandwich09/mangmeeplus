@@ -1,3 +1,4 @@
+import { checkBillingAdjustments } from './billing-adjustments-smoke';
 import { checkBillingSupportOutcomes } from './billing-support-outcomes-smoke';
 import { checkLineBinding } from './line-binding-smoke';
 import { checkLineRuntimeCredentials } from './line-runtime-credentials-smoke';
@@ -387,6 +388,11 @@ async function main() {
     assert.equal(historical.body.failed, 0, JSON.stringify(historical));
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
     cases.push('historical-paid-invoice-survives-replaced-subscription-item');
+    if(process.env.BILLING_ADJUSTMENTS_ONLY==='1') {
+      cases.push(...await checkBillingAdjustments({prisma,request,companyId:companyIds[0]!,foreignCompanyId:companyIds[1]!,userId:userIds[0]!,membershipId:memberId,provider,browser,
+        transport:hook=>{journeyTransport=hook;},intercept:hook=>{providerCallHook=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false}));return;
+    }
     if (process.env.BILLING_PLAN_CHANGE_ONLY === '1') {
       cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, browser, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false,browserE2E:Boolean(browser)}));return;

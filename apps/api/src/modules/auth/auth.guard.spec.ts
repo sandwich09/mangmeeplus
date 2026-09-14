@@ -638,6 +638,9 @@ describe('billing recovery boundaries', () => {
   it('bounds recovery to implemented methods and preserves business and legal gates', async () => {
     for (const path of ['quote', 'checkout', 'portal', 'refresh', 'attempts/a/resume', 'attempts/a/capacity', 'collection/a/capacity', 'documents/d/open']) assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), true);
     assert.equal(isBillingRecoveryRoute('GET', '/v1/companies/c1/billing/capacity?offerKey=STARTER_249&interval=year'), true);
+    for(const kind of ['refunds','credit-notes'])assert.equal(isBillingRecoveryRoute('GET',`/v1/companies/c1/billing/invoices/i1/adjustments/${kind}?cursor=re_1`),true);
+    for(const method of ['GET','POST'])assert.equal(isBillingRecoveryRoute(method,'/v1/companies/c1/billing/invoices/i1/adjustments/admin'),false);
+    assert.equal(isBillingRecoveryRoute('POST','/v1/companies/c1/billing/invoices/i1/adjustments/refunds'),false);
     for (const [method, path] of [['DELETE', '/v1/companies/c1/billing'], ['POST', '/v1/companies/c1/billing/admin'], ['GET', '/v1/companies/c1/billing/quote'], ['GET', '/v1/companies/c1/expenses']]) assert.equal(isBillingRecoveryRoute(method!, path!), false);
     let recovery = false;
     const resolver = { execute: async (...args: any[]) => { recovery = args[4]; return noopResolve.execute(args[0], args[1]); } } as any;

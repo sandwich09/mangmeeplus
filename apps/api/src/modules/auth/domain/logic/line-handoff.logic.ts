@@ -2,6 +2,7 @@
 // LINE link owes the tokens already sent to it.
 // Spec: docs/specs/line-web-deeplink-handoff-spec.md §9, §11.
 import { generateLineLinkToken, hashLineLinkToken } from '../../../employee-access/domain/logic/employee-access.logic';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 
 /**
  * Owner decision 2026-08-29 (spec §17 Q3): 15 minutes for assistant replies, matching
@@ -145,8 +146,7 @@ export function resolveLineHandoffTarget(
   if (!isSafeHandoffPath(targetPath, companyId)) return null;
   const renewal = `/companies/${companyId}/renew`;
   const path = new URL(targetPath, 'https://relative.invalid').pathname;
-  const billing = `/companies/${encodeURIComponent(companyId)}/billing`;
-  const recoveryTarget = path === renewal || path === billing || path === `${billing}/return` ? targetPath : renewal;
+  const recoveryTarget = path === renewal || isBillingCustomerRecoveryPath(path,companyId) ? targetPath : renewal;
   if (company.status === 'ACTIVE') {
     return company.planTerm?.termEndsAt && company.planTerm.termEndsAt <= now ? recoveryTarget : targetPath;
   }

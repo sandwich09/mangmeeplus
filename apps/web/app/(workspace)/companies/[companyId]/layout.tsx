@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
@@ -54,9 +55,7 @@ export default async function CompanyWorkspaceLayout({
   // Those correctly reject an expired term and would redirect the owner away from checkout.
   // The session, company, password and legal gates above still apply, with fresh OWNER checks
   // on every billing API request below.
-  const billingPath = `/companies/${companyId}/billing`;
-  const requestPath = returnTo.split('?')[0];
-  if (requestPath === billingPath || requestPath === `${billingPath}/return`) return <>{children}</>;
+  if (isBillingCustomerRecoveryPath(returnTo,companyId)) return <>{children}</>;
 
   return (
     <WorkspaceLayoutClient companyId={companyId} session={sessionResult.session}>

@@ -198,6 +198,16 @@ USED QR recovery is read-only: within the original expiry, accept only its store
 
 ### C08 — Audit, approval และสิทธิ์ชั่วคราว
 
+#### Refund observations and privileged documents (2026-09-14)
+
+Customer OWNER and scoped Finance can open the original local invoice's refund/credit-note history from web or the shared LINE billing entry. Verify the current Stripe account and original paid Invoice/customer/mode/currency/amount/subscription, plus Charge for refunds. Return 25-item pages with separate cursors: verify each cursor against the original Charge or Invoice/customer/mode. Reject malformed, foreign, duplicated or incomplete pages. Reads never create financial commands or alter grants, terms, cases or collection.
+
+Return only IDs, number, amount, created time, allowlisted status and observation time. No provider payload, metadata, email, card details or document URLs in lists. Refund status: pending/requires_action/succeeded/failed/canceled/unknown. Succeeded means Stripe processed the refund, not confirmed bank receipt. A credit note adjusts an invoice; it does not prove a refund settled. Label the existing charge aggregate “ยอดคืนเงินที่ Stripe บันทึก”, without inferring individual completion. This does not assert undocumented amount_refunded behavior for pending refunds.
+
+Invoice/Receipt/PDF and credit-note PDF open on demand. Admin requires current document.read separately from financial.read; OWNER retains its existing permission. Recheck membership, scope and original invoice binding after provider reads; audit only safe document references and kind before returning an allowlisted HTTPS URL. Error/permission/provider failure clears displayed results, offers retry and company/history/support return. Browser back/reload keeps the original invoice route. LINE uses the same permission boundary and does not activate parked login/self-link paths. Active-but-expired and expiry-disabled OWNER can still read this exact invoice page and its GET adjustments; the shared web/LINE recovery-path allowlist and API recovery allowlist must include only implemented paths. Business operations and administrative holds remain denied.
+
+This slice covers observations and existing documents. Creation/approval/refund/compensation, customer-credit adjustments and entitlement changes remain separate C08 commands.
+
 ทุก mutation เก็บ actor/approver, company/account mode, command/request/reference, reason/case, before/desired/observed after, versions, timestamps และผล. Audit append-only, ห้ามลบ errorเพื่อให้คิวสะอาด; secrets/บัตร/full provider payloadไม่อยู่ใน general audit/export.
 
 Approval บังคับกับ operation categories ที่กำหนดว่า high-impact; configurable monetary/cohort thresholds ต้องมี approved valuesก่อนเปิด. Approval ผูก payloadHash/preview/source version และ expiry. ผู้อนุมัติเป็นผู้ขอ/สิทธิ์ถูกถอน/targetเปลี่ยน/หมดอายุ → ไม่ execute, มีทางขอ review ใหม่. No approver ต้องมี fallback assignment/supportและสถานะรอ ไม่ auto-approve.

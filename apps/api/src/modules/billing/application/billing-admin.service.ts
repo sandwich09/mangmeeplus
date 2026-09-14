@@ -1,3 +1,5 @@
+import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
+import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingSupportOutcome, BillingSupportOutcomeInput, BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
@@ -116,6 +118,26 @@ export class BillingAdminService {
     if (!company) throw new NotFoundException();
     const account = this.billing.stripe.enabled ? await this.billing.account(companyId) : null;
     return { access, company, account };
+  }
+  private async scopedInvoice(context:RequestContext,companyId:string,id:string,permission:string) {
+    await this.access(context,permission);
+    const {account,access}=await this.scopedCompany(context,companyId);
+    const row=account?await this.prisma.client.billingInvoice.findFirst({where:{id,billingAccountId:account.id}}):null;
+    if(!row||!account)throw new NotFoundException();return {account,row,access};
+  }
+  async adjustments(context:RequestContext,companyId:string,id:string,kind:BillingAdjustmentKind,cursor?:string) {
+    const {account,row}=await this.scopedInvoice(context,companyId,id,'system.billing.financial.read');
+    const result=await readInvoiceAdjustments(this.billing.stripe,account,row,kind,cursor);
+    const current=await this.scopedInvoice(context,companyId,id,'system.billing.financial.read');sameInvoiceSource(account,row,current.account,current.row);
+    return {...result,canOpenDocuments:current.access.capabilities.includes('system.billing.document.read')};
+  }
+  async document(context:RequestContext,companyId:string,id:string,kind:'invoice'|'receipt'|'pdf'|'credit-note',creditNoteId?:string) {
+    const {account,row}=await this.scopedInvoice(context,companyId,id,'system.billing.document.read');
+    const result=await readInvoiceDocument(this.billing.stripe,account,row,kind,creditNoteId);
+    const current=await this.scopedInvoice(context,companyId,id,'system.billing.document.read');sameInvoiceSource(account,row,current.account,current.row);
+    await this.prisma.client.auditLog.create({data:{companyId,actorUserId:context.userId,action:'billing.operator_document.opened',targetType:'BillingInvoice',
+      targetId:id,requestId:context.requestId,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{kind,...creditNoteId?{creditNoteId}:{}}}});
+    return result;
   }
   async timeline(context: RequestContext, companyId: string, cursor?: string) {
     const { access, account } = await this.scopedCompany(context,companyId);

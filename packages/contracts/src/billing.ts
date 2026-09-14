@@ -123,6 +123,17 @@ export type BillingAttemptView = {
 export type BillingInvoiceItem = { id: string; number: string | null; currency: 'THB'; amountSatang: number;
   refundedSatang: number; disputed: boolean; financialObservedAt: string | null;
   paymentState: string; applyState: string; periodStart: string; periodEnd: string; createdAt: string; hasDocuments: boolean };
+export type BillingAdjustmentKind = 'refunds' | 'credit-notes';
+/** Implemented customer recovery pages only; this never grants business or Admin access. */
+export function isBillingCustomerRecoveryPath(path: string, companyId: string): boolean {
+  const pathname=path.split(/[?#]/,1)[0]??'',prefix=`/companies/${encodeURIComponent(companyId)}/billing`;
+  if(!pathname.startsWith(prefix))return false;
+  return /^(?:\/(?:return|invoices\/[A-Za-z0-9_-]{1,128}))?\/?$/.test(pathname.slice(prefix.length));
+}
+export type BillingAdjustmentItem = { id: string; number: string | null; amountSatang: number; createdAt: string;
+  status: 'pending' | 'requires_action' | 'succeeded' | 'failed' | 'canceled' | 'unknown' | 'issued' | 'void' };
+export type BillingAdjustments = { invoiceId: string; invoiceNumber: string | null; kind: BillingAdjustmentKind; mode: BillingMode;
+  items: BillingAdjustmentItem[]; nextCursor: string | null; observedAt: string; canOpenDocuments: boolean };
 export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };

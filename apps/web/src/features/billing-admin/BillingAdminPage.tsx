@@ -103,7 +103,8 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {company.financial === null ? <p>ขอบเขตนี้ไม่มีสิทธิ์ดูรายละเอียดจำนวนเงิน</p> : <div className="space-y-3" aria-label="ประวัติการเงิน">
         {company.financial.invoices.map(i => <article className="rounded-lg bg-gray-50 p-3" key={i.id}><p>{i.number ?? i.id} · {money(i.amountSatang)}</p>
           <p>{i.paymentState} · เปิดสิทธิ์ {i.applyState} · {time(i.createdAt)}</p>
-          <p>คืนเงินแล้ว {money(i.refundedSatang)} · {i.disputed ? 'มีข้อพิพาท ต้องตรวจรายกรณี' : i.financialObservedAt ? 'ไม่พบข้อพิพาทจากผลตรวจล่าสุด' : 'ยังไม่ได้ตรวจสถานะการเงิน'} · ตรวจการเงิน {time(i.financialObservedAt)}</p></article>)}
+          <p>ยอดคืนเงินที่ Stripe บันทึก {money(i.refundedSatang)} · {i.disputed ? 'มีข้อพิพาท ต้องตรวจรายกรณี' : i.financialObservedAt ? 'ไม่พบข้อพิพาทจากผลตรวจล่าสุด' : 'ยังไม่ได้ตรวจสถานะการเงิน'} · ตรวจการเงิน {time(i.financialObservedAt)}</p>
+          <Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/invoices/${encodeURIComponent(i.id)}`}>ตรวจการคืนเงินและเอกสารปรับยอด</Link></article>)}
       </div>}
     </section>}
     {!loading && company?.accountId && <Link className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/apply-invoices`}>ตรวจสิทธิ์จากใบเสร็จเดิม</Link>}
