@@ -58,7 +58,7 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
     assert.ok((await request(`${base}/issues?queue=OVERDUE`)).body.items.some((i:any)=>i.id===issue.id));
     if(browser) {
       const page=browser.page;await page.getByRole('link',{name:'คิวตรวจสอบ',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/issues`);
-      await page.getByLabel('กรองคิว',{exact:true}).selectOption('OVERDUE');await page.getByRole('link',{name:'CASE_FOLLOWUP',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/issues/${issue.id}`);
+      await page.getByLabel('กรองคิว',{exact:true}).selectOption('OVERDUE');await page.locator(`a[href="/system/billing/issues/${issue.id}?queue=OVERDUE"]`).click();await page.waitForURL(`${browser.origin}/system/billing/issues/${issue.id}?queue=OVERDUE`);
       await page.getByText(/เลยเวลาติดตาม/).waitFor();assert.equal(await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).count(),0);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:`${browser.evidenceDir}/admin-case-followup-mobile.png`,fullPage:true});

@@ -10,6 +10,7 @@ import { billingError, hashBilling } from '../domain/billing-policy';
 import { billingState } from '../domain/billing-state';
 import { billingTimeline } from './billing-timeline';
 import { issueOperators } from './billing-issue-ownership';
+import { effectiveIssueFollowUp, issuePriorityDeadline } from './billing-issues';
 
 @Injectable()
 export class BillingAdminService {
@@ -58,7 +59,9 @@ export class BillingAdminService {
       createdAt:row.createdAt.toISOString(),updatedAt:row.updatedAt.toISOString(),episode:row.episode,lastSeenAt:row.lastSeenAt.toISOString(),
       assigneeName:users.find(u=>u.id===row.assigneeUserId)?.displayName??row.assigneeUserId,assigneeAvailable:available.items.some(u=>u.id===row.assigneeUserId),
       backupUserId:row.backupUserId,backupName:users.find(u=>u.id===row.backupUserId)?.displayName??row.backupUserId,backupAvailable:available.items.some(u=>u.id===row.backupUserId),
-      priority:row.priority as BillingOperatorIssue['priority'],followUpAt:row.followUpAt?.toISOString()??null,overdue:row.state!=='RESOLVED'&&Boolean(row.followUpAt&&row.followUpAt<=new Date())};
+      priority:row.priority as BillingOperatorIssue['priority'],followUpAt:row.followUpAt?.toISOString()??null,
+      slaDueAt:row.slaDueAt?.toISOString()??null,slaStartedAt:row.slaStartedAt?.toISOString()??null,slaPolicyRevisionId:row.slaPolicyRevisionId,
+      effectiveFollowUpAt:effectiveIssueFollowUp(row)?.toISOString()??null,overdue:row.state!=='RESOLVED'&&Boolean(effectiveIssueFollowUp(row)&&effectiveIssueFollowUp(row)!<=new Date())};
   }
 
   async access(context: RequestContext, permission: string, tx: Prisma.TransactionClient = this.prisma.client) {
@@ -171,7 +174,7 @@ export class BillingAdminService {
     const where: Prisma.BillingIssueWhereInput = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode,
       ...(!access.platformScope ? { companyId: { in: access.companyIds } } : {}), ...(input.companyId ? { companyId: input.companyId } : {}),
       state: input.state ?? { not: 'RESOLVED' }, ...(input.queue==='UNASSIGNED'?{assigneeUserId:null}:{}),
-      ...(input.queue==='OVERDUE'?{followUpAt:{lte:new Date()},state:{not:'RESOLVED'}}:{}) };
+      ...(input.queue==='OVERDUE'?{OR:[{followUpAt:{lte:new Date()}},{followUpAt:null,slaDueAt:{lte:new Date()}}],state:{not:'RESOLVED'}}:{}) };
     if (input.cursor && !await this.prisma.client.billingIssue.findFirst({ where: { ...where, id: input.cursor } })) throw new NotFoundException();
     const rows = await this.prisma.client.billingIssue.findMany({ where: { ...where, ...(input.cursor ? { id: { gt: input.cursor } } : {}) }, orderBy: { id: 'asc' }, take: 26 });
     return { items: await Promise.all(rows.slice(0, 25).map(i=>this.issueView(i))), nextCursor: rows.length > 25 ? rows[24]!.id : null };
@@ -207,14 +210,16 @@ export class BillingAdminService {
       const targets=[...new Set([input.assigneeUserId,backupUserId].filter((value):value is string=>Boolean(value)))];
       const eligible=await issueOperators(tx,row,{ids:targets});
       if(eligible.items.length!==targets.length)throw billingError('CONTROL_ASSIGNEE_REVIEW','ผู้รับงานหรือผู้สำรองไม่มีสิทธิ์ดูแลบริษัทนี้แล้ว กรุณาเลือกใหม่หรือคืนเคสเข้าคิว');
+      const slaDueAt=await issuePriorityDeadline(tx,row,input.priority??row.priority,Boolean(input.followUpAt===undefined?row.followUpAt:input.followUpAt));
       const changed = await tx.billingIssue.updateMany({ where: { id, version: input.expectedVersion, state: { not: 'RESOLVED' } },
-        data: { state: input.state, note: input.note.trim(), assigneeUserId: input.assigneeUserId,backupUserId,
+        data: { state: input.state, note: input.note.trim(), assigneeUserId: input.assigneeUserId,backupUserId,slaDueAt,
           ...(input.priority===undefined?{}:{priority:input.priority}),...(input.followUpAt===undefined?{}:{followUpAt:input.followUpAt?new Date(input.followUpAt):null}),version: { increment: 1 } } });
       if (changed.count !== 1) throw billingError('CONTROL_PREVIEW_STALE', 'เคสเปลี่ยนแล้ว กรุณาโหลดข้อมูลใหม่ก่อนบันทึก');
       await tx.auditLog.create({ data: { companyId: row.companyId ?? context.companyId, actorUserId: context.userId, action: 'billing.issue.updated',
         targetType: 'BillingIssue', targetId: id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
         metadataJson: { before: { state: row.state, assigneeUserId: row.assigneeUserId,backupUserId:row.backupUserId,priority:row.priority,followUpAt:row.followUpAt?.toISOString()??null, version: row.version },
-          after: { state: input.state, assigneeUserId: input.assigneeUserId,backupUserId,priority:input.priority??row.priority,followUpAt:input.followUpAt===undefined?row.followUpAt?.toISOString()??null:input.followUpAt, version: row.version + 1 }, reason: input.note.trim() } } });
+          after: { state: input.state, assigneeUserId: input.assigneeUserId,backupUserId,priority:input.priority??row.priority,followUpAt:input.followUpAt===undefined?row.followUpAt?.toISOString()??null:input.followUpAt, version: row.version + 1 },
+          sla:{policyRevisionId:row.slaPolicyRevisionId,startedAt:row.slaStartedAt?.toISOString()??null,before:row.slaDueAt?.toISOString()??null,after:slaDueAt?.toISOString()??null},reason: input.note.trim() } } });
       return this.issueView(await tx.billingIssue.findUniqueOrThrow({ where: { id } }),tx);
     });
   }

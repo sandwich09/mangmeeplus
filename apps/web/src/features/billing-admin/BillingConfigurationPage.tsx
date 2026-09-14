@@ -105,6 +105,12 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
             <label className="block">Stripe Tax Rate ID<input className={field} value={policy.taxRateId ?? ''} onChange={e => setPolicy({ ...policy, taxRateId: e.target.value || null })} /></label>
           </div>}
           <label className="block">ระยะผ่อนผันเมื่อต่ออายุไม่ผ่าน (วัน)<input className={field} type="number" min={0} max={30} value={policy.graceDays ?? ''} onChange={e => setPolicy({ ...policy, graceDays: e.target.value === '' ? null : Number(e.target.value) })} /></label>
+          <section aria-label="กำหนดเวลาติดตามเคสส่วนกลาง" className="space-y-3 rounded-xl border p-3">
+            <label className="flex items-center gap-2"><input type="checkbox" checked={policy.supportSlaMinutes!=null} onChange={e=>setPolicy({...policy,supportSlaMinutes:e.target.checked?{NORMAL:0,HIGH:0,CRITICAL:0}:null})}/>ใช้กำหนดเวลาติดตามเคสส่วนกลาง</label>
+            <p className="text-sm">ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาของเคสเดิมยังคงอยู่ เวลาที่ระบุเองในเคสมีผลก่อนเกณฑ์อัตโนมัติ</p>
+            {policy.supportSlaMinutes&&([['NORMAL','ปกติ'],['HIGH','สูง'],['CRITICAL','วิกฤต']] as const).map(([key,label])=><label className="block" key={key}>ติดตามระดับ{label}ภายใน (นาที)<input className={field} type="number" min={1} max={525600} value={policy.supportSlaMinutes![key]||''}
+              onChange={e=>setPolicy({...policy,supportSlaMinutes:{...policy.supportSlaMinutes!,[key]:Number(e.target.value)}})}/></label>)}
+          </section>
           <p className="text-sm">0 วันคือไม่ผ่อนผัน · เริ่มและจ่ายทันที · ยกเลิกสิ้นรอบ · คืนเงินและหนี้ค้างให้เจ้าหน้าที่ตรวจ</p>
           <label className="block">เวอร์ชันข้อความยินยอม<input className={field} value={policy.consentRevision} maxLength={80} onChange={e => setPolicy({ ...policy, consentRevision: e.target.value })} /></label>
           <details className="rounded-lg border p-3"><summary className="cursor-pointer font-semibold">เชื่อมราคาและ Portal ของ Stripe</summary><div className="mt-3 space-y-3">
@@ -134,6 +140,10 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {operation.impact&&<p>สมาชิกเดิม {operation.impact.subscriptions} · รายการชำระที่กำลังดำเนินการ {operation.impact.inFlightAttempts} · ใบเสนอราคาที่ยังไม่ใช้ {operation.impact.unusedQuotes} · คำสั่งลดแพ็กเกจ {operation.impact.pendingPlanChanges} · คำสั่งต่ออายุที่ยังดำเนินการ {operation.impact.collectionCommands}</p>}
         {operation.impact&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.id}/affected`}>เปิดดูรายการที่เกี่ยวข้อง</Link>}
         <p>ภาษี {operation.proposed.policy.taxTreatment} · ผ่อนผัน {operation.proposed.policy.graceDays} วัน</p>
+        {operation.impact?.supportSla&&<section aria-label="ผลต่อกำหนดเวลาติดตามเคส" className="space-y-2 rounded-xl border p-3">
+          <p>ใช้กับเคสใหม่หรือรอบที่เปิดอีกครั้ง กำหนดเวลาเดิมไม่เปลี่ยน</p>
+          {(['before','after'] as const).map(key=><p key={key}>{key==='before'?'เดิม':'หลังอนุมัติ'}: {operation.impact!.supportSla![key]?`ปกติ ${operation.impact!.supportSla![key]!.NORMAL} · สูง ${operation.impact!.supportSla![key]!.HIGH} · วิกฤต ${operation.impact!.supportSla![key]!.CRITICAL} นาที`:'ปิดเกณฑ์อัตโนมัติ'}</p>)}
+        </section>}
         {operation.proposed.policy.issuer && <p>{operation.proposed.policy.issuer.legalName} · {operation.proposed.policy.issuer.address} · เลขภาษี {operation.proposed.policy.issuer.thaiTaxId}</p>}
         {operation.impact&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><caption className="text-left font-semibold">ยอดชำระก่อนและหลัง</caption><thead><tr><th>แพ็กเกจ</th><th>เดิม</th><th>ใหม่</th></tr></thead><tbody>
           {operation.impact.prices.map(p => <tr key={p.offerKey}><td className="py-2">{p.offerKey}</td><td>{money(p.beforeTotalSatang)}</td><td>{money(p.afterTotalSatang)}</td></tr>)}

@@ -59,7 +59,8 @@ export async function checkBillingNotifications(input: { prisma: PrismaService; 
   } });
   const run = async () => { const result = await drain(); assert.equal(result.status, 200, JSON.stringify(result)); return result.body; };
   const queueLine = async () => db.notificationDelivery.create({ data: { companyId, recipientId: recipient.id, channel: 'LINE', nextAttemptAt: new Date(0) } });
-  const queueEmail = async () => db.outboxEvent.create({ data: { companyId, aggregateType: 'BillingInvoice', aggregateId: invoice.id,
+  // These rows exercise authorization/replay after eligibility, not the scheduler's timestamp boundary.
+  const queueEmail = async () => db.outboxEvent.create({ data: { companyId, aggregateType: 'BillingInvoice', aggregateId: invoice.id, availableAt:new Date(0),
     eventType: 'billing.status.email', eventKey: `synthetic-notice:${randomUUID()}`, payloadJson: { data: { recipientUserId: userId } } } });
 
   assert.equal(parent.status, 'PUBLISHED'); assert.equal(fixture.mail.length, 1);
@@ -100,9 +101,13 @@ export async function checkBillingNotifications(input: { prisma: PrismaService; 
   const revokedLine = await queueLine(), revokedMail = await queueEmail(), mailCount = fixture.mail.length;
   const membershipRoles = await db.membershipRole.findMany({ where: { membershipId } });
   await db.membershipRole.deleteMany({ where: { membershipId } });
-  await run(); assert.equal(fixture.line.length, sends); assert.equal(fixture.mail.length, mailCount);
+  const revokedDrain=await run(); assert.equal(fixture.line.length, sends); assert.equal(fixture.mail.length, mailCount);
   assert.equal((await db.notificationDelivery.findUniqueOrThrow({ where: { id: revokedLine.id } })).status, 'SUPPRESSED');
-  assert.equal((await db.outboxEvent.findUniqueOrThrow({ where: { id: revokedMail.id } })).status, 'PUBLISHED');
+  const revokedResult=await db.outboxEvent.findUniqueOrThrow({where:{id:revokedMail.id}});
+  if(revokedResult.status!=='PUBLISHED')console.error(JSON.stringify({stage:'revoked-billing-notice',drain:revokedDrain,status:revokedResult.status,
+    availableAt:revokedResult.availableAt,createdAt:revokedResult.createdAt,lockedAt:revokedResult.lockedAt,lastError:revokedResult.lastError,
+    databaseClock:await db.$queryRaw`SELECT now() AS now, clock_timestamp() AS clock`}));
+  assert.equal(revokedResult.status, 'PUBLISHED');
   await db.membershipRole.createMany({ data: membershipRoles });
   await db.user.update({ where: { id: userId }, data: { emailVerifiedAt: null } }); await queueEmail(); await run();
   assert.equal(fixture.mail.length, mailCount);

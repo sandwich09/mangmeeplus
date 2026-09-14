@@ -2,10 +2,12 @@
 import BillingSupportOutcomesPanel from './BillingSupportOutcomesPanel';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import BillingOperationPanel from './BillingOperationPanel';
 import BillingTimelinePanel from './BillingTimelinePanel';
 import type { BillingOperatorOverview, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingScopeDirectory } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
+import { apiErrorCode } from '@/common/api/api-error-message';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
 
 const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
@@ -13,18 +15,23 @@ const issueKind=(kind:string)=>({PROVIDER_INVOICE_REVIEW:'ต้องตรว�
 const time = (value: string | null) => value ? new Date(value).toLocaleString('th-TH') : 'ยังไม่มี';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
 const get = <T,>(path: string) => authedApiFetch<T>(`/system/billing${path}`, { cache: 'no-store', suppressErrorToast: true });
+const effectiveFollowUp=(issue:BillingOperatorIssue)=>issue.effectiveFollowUpAt??issue.followUpAt;
 const states: Record<string, string> = { OPEN: 'รอรับงาน', ASSIGNED: 'รับงานแล้ว', IN_PROGRESS: 'กำลังดำเนินการ', WAITING_PROVIDER: 'รอผู้ให้บริการ',
   WAITING_APPROVAL: 'รออนุมัติ', WAITING_CUSTOMER: 'รอลูกค้า', VERIFYING: 'ตรวจผล', RESOLVED: 'แก้ไขแล้ว' };
 export default function BillingAdminPage({ companyId, issueId, issuesOnly = false, userId }: {
   companyId?: string; issueId?: string; issuesOnly?: boolean; userId: string;
 }) {
+  const router=useRouter(),params=useSearchParams(),queuePage=Boolean(issuesOnly||issueId);
+  const queue=queuePage&&['UNASSIGNED','OVERDUE'].includes(params.get('queue')??'')?params.get('queue')!:'';
+  const queueCursor=queuePage&&/^[a-f0-9-]{36}$/i.test(params.get('cursor')??'')?params.get('cursor'):null;
+  const queueQuery=(value=queue,page=queueCursor)=>{const q=new URLSearchParams({...value?{queue:value}:{},...page?{cursor:page}:{}});return q.size?`?${q}`:'';};
   const [overview, setOverview] = useState<BillingOperatorOverview | null>(null);
   const [company, setCompany] = useState<BillingOperatorCompanyDetail | null>(null);
   const [issues, setIssues] = useState<{ items: BillingOperatorIssue[]; nextCursor: string | null } | null>(null);
   const [issue, setIssue] = useState<BillingOperatorIssue | null>(null);
-  const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0);
+  const [pageCursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0);
+  const cursor=queuePage?queueCursor:pageCursor;
   const [search,setSearch]=useState(''),[query,setQuery]=useState('');
-  const [queue,setQueue]=useState('');
   const [error, setError] = useState(''), [loading, setLoading] = useState(true), [saving, setSaving] = useState(false);
   const [note, setNote] = useState(''), [state, setState] = useState('IN_PROGRESS');
   const [assignee,setAssignee]=useState(''),[backup,setBackup]=useState(''),[priority,setPriority]=useState('NORMAL'),[followUp,setFollowUp]=useState(''),[followUpChanged,setFollowUpChanged]=useState(false);
@@ -61,7 +68,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
           note: note.trim(), assigneeUserId: action==='take' ? userId : action==='return'?null:assignee||null,
           backupUserId:action==='return'?null:backup||null,priority,...followUpChanged?{followUpAt:followUp?new Date(followUp).toISOString():null}:{} }) });
       setIssue(updated); setNote(''); setReload(v => v + 1);
-    } catch { setError('ยังบันทึกไม่ได้ กรุณาโหลดข้อมูลล่าสุดและตรวจสอบเคสก่อนบันทึกอีกครั้ง'); }
+    } catch(error) { setError(apiErrorCode(error)==='CONTROL_SLA_REVIEW'?'ไม่พบเกณฑ์เวลาเดิม กรุณาระบุเวลาติดตามก่อนเปลี่ยนระดับความสำคัญ':'ยังบันทึกไม่ได้ กรุณาโหลดข้อมูลล่าสุดและตรวจสอบเคสก่อนบันทึกอีกครั้ง'); }
     finally { setSaving(false); }
   }
   const issueList = issues?.items ?? company?.issues;
@@ -69,7 +76,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
     <header><p className="text-sm text-gray-600">{overview?.mode ?? 'กำลังตรวจสอบโหมด'} · {overview?.platformScope ? 'ระดับระบบ' : 'เฉพาะบริษัทที่ได้รับสิทธิ์'}</p>
       <h1 className="text-2xl font-bold">{issueId ? 'เคสการชำระเงิน' : companyId ? 'การชำระเงินของบริษัท' : issuesOnly ? 'คิวตรวจสอบการชำระเงิน' : 'ดูแลแพ็กเกจและการชำระเงิน'}</h1></header>
-    <nav className="flex flex-wrap gap-3"><Link href="/system/billing" className={button}>บริษัท</Link><Link href="/system/billing/issues" className={button}>คิวตรวจสอบ</Link>
+    <nav className="flex flex-wrap gap-3"><Link href="/system/billing" className={button}>บริษัท</Link><Link href={`/system/billing/issues${queueQuery()}`} className={button}>คิวตรวจสอบ</Link>
       {overview?.platformScope && overview.mode!=='DISABLED' && <Link href="/system/billing/provider-events" className={button}>เหตุการณ์จาก Stripe</Link>}
       {overview?.canManageScopes && <Link href="/system/billing/operator-scopes" className={button}>ขอบเขตเจ้าหน้าที่</Link>}
       {overview?.platformScope && <Link href="/system/billing/settings" className={button}>ตั้งค่าการชำระเงิน</Link>}</nav>
@@ -80,7 +87,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     {!companyId&&!issueId&&!issuesOnly&&<form className="flex flex-wrap gap-3" onSubmit={e=>{e.preventDefault();setCursor(null);setQuery(search.trim());setReload(v=>v+1);}}>
       <label>ค้นหาบริษัทในขอบเขต<input className="ml-2 rounded-lg border p-2" value={search} maxLength={100} onChange={e=>setSearch(e.target.value)}/></label><button className={button} disabled={loading}>ค้นหาบริษัท</button>
     </form>}
-    {issuesOnly&&<label className="block">กรองคิว<select className="ml-2 rounded-lg border p-2" aria-label="กรองคิว" value={queue} onChange={e=>{setCursor(null);setQueue(e.target.value);}}>
+    {issuesOnly&&<label className="block">กรองคิว<select className="ml-2 rounded-lg border p-2" aria-label="กรองคิว" disabled={loading} value={queue} onChange={e=>router.replace(`/system/billing/issues${queueQuery(e.target.value,null)}`,{scroll:false})}>
       <option value="">เคสที่ยังเปิดทั้งหมด</option><option value="UNASSIGNED">ยังไม่มีผู้รับผิดชอบ</option><option value="OVERDUE">เลยเวลาติดตาม</option></select></label>}
     {!loading && !companyId && !issueId && !issuesOnly && overview && <section className="space-y-3" aria-label="บริษัทในขอบเขต">
       {overview.companies.length === 0 && <p>ไม่พบบริษัทในขอบเขตและคำค้นนี้</p>}
@@ -113,9 +120,9 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     {!loading&&company?.accountId&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/deliveries`}>รายการแจ้งเตือนแพ็กเกจ</Link>}
     {!loading && company && <BillingTimelinePanel key={`timeline-${company.companyId}`} companyId={company.companyId}/>}
     {!loading && issueList && <section aria-label="รายการเคส" className="space-y-3">{issueList.length === 0 && <p>ไม่พบเคสที่ยังเปิดในหน้านี้</p>}
-      {issueList.map(i => <article key={i.id} className="rounded-xl border bg-white p-4"><Link className="font-semibold underline" href={`/system/billing/issues/${i.id}`}>{issueKind(i.kind)}</Link>
+      {issueList.map(i => <article key={i.id} className="rounded-xl border bg-white p-4"><Link className="font-semibold underline" href={`/system/billing/issues/${i.id}${queueQuery()}`}>{issueKind(i.kind)}</Link>
         <p>{states[i.state] ?? i.state} · {i.assigneeUserId ? `${i.assigneeName}${i.assigneeAvailable?'':' · ผู้รับผิดชอบเดิมไม่มีสิทธิ์แล้ว'}` : 'ยังไม่มีผู้รับผิดชอบ'}</p>
-        <p>{i.priority} · รอบปัญหา {i.episode} · {i.overdue?'เลยเวลาติดตาม':i.followUpAt?`ติดตาม ${time(i.followUpAt)}`:'ยังไม่ได้กำหนดเวลาติดตาม'}</p><p className="break-all text-sm">อ้างอิง {i.reference}</p></article>)}
+        <p>{i.priority} · รอบปัญหา {i.episode} · {i.overdue?'เลยเวลาติดตาม':effectiveFollowUp(i)?`ติดตาม ${time(effectiveFollowUp(i))}`:'ยังไม่ได้กำหนดเวลาติดตาม'}</p><p className="break-all text-sm">อ้างอิง {i.reference}</p></article>)}
       {company && <Link href="/system/billing/issues" className="inline-block underline">เปิดคิวทั้งหมด</Link>}
     </section>}
     {!loading && issue && <section className="space-y-4 rounded-xl border bg-white p-5" aria-label="รายละเอียดเคส">
@@ -123,7 +130,8 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <p className="break-all">อ้างอิง {issue.reference}</p><p>อัปเดต {time(issue.updatedAt)}</p>{issue.note && <p className="whitespace-pre-wrap">{issue.note}</p>}
       <p>รอบปัญหา {issue.episode} · ตรวจพบล่าสุด {time(issue.lastSeenAt)} · {issue.priority}</p>
       <p>{issue.assigneeUserId?`ผู้รับผิดชอบ ${issue.assigneeName}${issue.assigneeAvailable?'':' (ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว)'}`:'ยังไม่มีผู้รับผิดชอบ'}</p>
-      <p>{issue.backupUserId?`ผู้สำรอง ${issue.backupName}${issue.backupAvailable?'':' (ไม่มีสิทธิ์แล้ว)'}`:'ยังไม่ได้กำหนดผู้สำรอง'} · {issue.overdue?'เลยเวลาติดตาม · ':''}{issue.followUpAt?time(issue.followUpAt):'ยังไม่ได้กำหนดเวลาติดตาม'}</p>
+      <p>{issue.backupUserId?`ผู้สำรอง ${issue.backupName}${issue.backupAvailable?'':' (ไม่มีสิทธิ์แล้ว)'}`:'ยังไม่ได้กำหนดผู้สำรอง'} · {issue.overdue?'เลยเวลาติดตาม · ':''}{effectiveFollowUp(issue)?time(effectiveFollowUp(issue)):'ยังไม่ได้กำหนดเวลาติดตาม'}</p>
+      {issue.slaDueAt&&<p>กำหนดจากเกณฑ์ส่วนกลาง {time(issue.slaDueAt)} · เริ่มรอบ {time(issue.slaStartedAt??null)}{issue.followUpAt?' · ใช้เวลาที่ผู้ดูแลกำหนดทับอยู่':''}</p>}
       {issue.kind==='PROVIDER_EVENT_FAILED'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-events/${encodeURIComponent(issue.reference)}`}>ตรวจ event เดิมของเคสนี้</Link>}
       {['PROVIDER_SCAN_SCHEDULE_BLOCKED','PROVIDER_SCAN_COVERAGE_GAP'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href="/system/billing/provider-scans">ตรวจการตั้งค่าและช่วงเวลาที่ตกหล่น</Link>}
       {['PROVIDER_SCAN_FAILED','PROVIDER_SCAN_VERSION_UNSUPPORTED'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-scans/${encodeURIComponent(issue.reference)}`}>เปิดงานค้นหาเหตุการณ์ของเคสนี้</Link>}
@@ -141,6 +149,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
         {operators?.nextCursor&&<button className={button} disabled={saving} onClick={()=>void findOperators(operators.nextCursor!)}>รายชื่อผู้รับผิดชอบหน้าถัดไป</button>}
         <label className="block">ความเร่งด่วน<select aria-label="ความเร่งด่วน" className="ml-2 rounded-lg border p-2" value={priority} onChange={e=>setPriority(e.target.value)}><option value="NORMAL">ปกติ</option><option value="HIGH">สูง</option><option value="CRITICAL">เร่งด่วนมาก</option></select></label>
         <label className="block">เวลาติดตามภายใน<input type="datetime-local" className="mt-2 block rounded-lg border p-3" value={followUp} onChange={e=>{setFollowUp(e.target.value);setFollowUpChanged(true);}}/></label>
+        {issue.slaDueAt&&<p className="text-sm">เว้นว่างเพื่อใช้เกณฑ์ส่วนกลางของรอบนี้ การเปลี่ยนระดับความสำคัญคำนวณจากเวลาเริ่มรอบเดิม</p>}
         <p className="text-sm text-gray-600">ใช้ติดตามงานภายใน ไม่ใช่การเปลี่ยนระยะผ่อนผันหรือสัญญา SLA กับลูกค้า</p>
         <label className="block">สถานะ<select aria-label="สถานะ" className="ml-3 rounded-lg border p-2" value={state} onChange={e => setState(e.target.value)}>{Object.entries(states).filter(([key]) => key !== 'RESOLVED').map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>
         <label className="block">บันทึกการดำเนินการ<textarea className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e => setNote(e.target.value)} /></label>
@@ -150,8 +159,8 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       </div>}
     </section>}
     {issue&&<BillingSupportOutcomesPanel key={issue.id} issue={issue} canManage={Boolean(overview?.capabilities.includes('system.billing.issue.manage'))} onRecorded={()=>setReload(v=>v+1)}/>}
-    {nextCursor && <button className={button} disabled={loading} onClick={() => setCursor(nextCursor)}>หน้าถัดไป</button>}
-    {cursor && <button className={button} disabled={loading} onClick={() => setCursor(null)}>หน้าแรก</button>}
+    {nextCursor && <button className={button} disabled={loading} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,nextCursor)}`,{scroll:false}):setCursor(nextCursor)}>หน้าถัดไป</button>}
+    {cursor && !issueId && <button className={button} disabled={loading} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,null)}`,{scroll:false}):setCursor(null)}>หน้าแรก</button>}
     <footer className="border-t pt-4 text-sm"><a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อผู้ดูแลพร้อมเลขอ้างอิง</a></footer>
   </main>;
 }

@@ -63,6 +63,8 @@ export type BillingPolicy = {
   consentRevision: string;
   /** New purchase admission only. Absent/null: all; []: closed; otherwise explicit existing companies. */
   salesCompanyIds?: string[] | null;
+  /** Internal case follow-up defaults in minutes; absent/null is OFF. */
+  supportSlaMinutes?: { NORMAL:number; HIGH:number; CRITICAL:number } | null;
   issuer?: { legalName: string; address: string; thaiTaxId: string; stripeTaxId: string };
 };
 export const BILLING_DRAFT_POLICY: BillingPolicy = {
@@ -157,7 +159,8 @@ export type BillingOperatorCompany = {
 export type BillingOperatorIssue = { id: string; companyId: string | null; kind: string; reference: string;
   state: string; assigneeUserId: string | null; note: string | null; version: number; createdAt: string; updatedAt: string;
   assigneeName: string | null; assigneeAvailable: boolean; backupUserId: string | null; backupName: string | null; backupAvailable: boolean;
-  priority: 'NORMAL' | 'HIGH' | 'CRITICAL'; followUpAt: string | null; overdue: boolean; episode: number; lastSeenAt: string };
+  priority: 'NORMAL' | 'HIGH' | 'CRITICAL'; followUpAt: string | null; overdue: boolean; episode: number; lastSeenAt: string;
+  slaDueAt?:string|null; slaStartedAt?:string|null; slaPolicyRevisionId?:string|null; effectiveFollowUpAt?:string|null };
 export type BillingSupportOutcomeKind = 'CUSTOMER_CONTACTED' | 'PROVIDER_CONTACTED' | 'REPLY_RECORDED' | 'REVIEW_REQUESTED';
 export type BillingSupportOutcomeInput = { expectedVersion:number; kind:BillingSupportOutcomeKind; note:string };
 export type BillingSupportOutcome = { id:string;issueId:string;companyId:string|null;mode:BillingMode;episode:number;sourceVersion:number;
@@ -196,6 +199,7 @@ export type BillingConfigurationInput = { type: 'PUBLISH_POLICY' | 'SET_ACTION_G
 export type BillingConfigurationDraftInput = Omit<BillingConfigurationInput,'draftVersion'>;
 export type BillingConfigurationImpact = { subscriptions: number; inFlightAttempts: number; unusedQuotes: number; pendingPlanChanges: number; collectionCommands: number;
   sourceHash?: string;
+  supportSla?: {before:NonNullable<BillingPolicy['supportSlaMinutes']>|null;after:NonNullable<BillingPolicy['supportSlaMinutes']>|null};
   salesCohort?: { before: string[] | null; after: string[] | null; companies: BillingSalesCompany[] };
   prices: { offerKey: BillingOfferKey; beforeTotalSatang: number; afterTotalSatang: number }[] };
 export const BILLING_CONFIGURATION_IMPACT_KINDS = ['SUBSCRIPTION', 'ATTEMPT', 'QUOTE', 'PLAN_CHANGE', 'COLLECTION'] as const;

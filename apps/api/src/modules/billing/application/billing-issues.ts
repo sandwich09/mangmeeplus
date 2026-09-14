@@ -1,6 +1,30 @@
 import type { BillingIssue, Prisma } from '../../../generated/prisma/client';
+import { billingError, validSupportSla } from '../domain/billing-policy';
 
 type Identity=Pick<BillingIssue,'stripeAccountId'|'livemode'|'companyId'|'kind'|'referenceId'>;
+export function effectiveIssueFollowUp(row:Pick<BillingIssue,'followUpAt'|'slaDueAt'>) {return row.followUpAt??row.slaDueAt;}
+async function issueSlaPolicy(tx:Prisma.TransactionClient,identity:Identity,id:string) {
+  const revision=await tx.billingPolicyRevision.findFirst({where:{id,stripeAccountId:identity.stripeAccountId,livemode:identity.livemode,state:'ACTIVE'}});
+  const value=revision?.policyJson;
+  const minutes=value&&typeof value==='object'&&!Array.isArray(value)?value.supportSlaMinutes:undefined;
+  return validSupportSla(minutes)?minutes:null;
+}
+async function episodeSla(tx:Prisma.TransactionClient,identity:Identity,priority:string,now:Date) {
+  const empty={slaPolicyRevisionId:null,slaStartedAt:null,slaDueAt:null};
+  const settings=await tx.billingSettings.findUnique({where:{stripeAccountId_livemode:{stripeAccountId:identity.stripeAccountId,livemode:identity.livemode}}});
+  if(!settings?.policyRevisionId||!['NORMAL','HIGH','CRITICAL'].includes(priority))return empty;
+  const minutes=await issueSlaPolicy(tx,identity,settings.policyRevisionId);if(!minutes)return empty;
+  return {slaPolicyRevisionId:settings.policyRevisionId,slaStartedAt:now,slaDueAt:new Date(now.getTime()+minutes[priority as keyof typeof minutes]*60000)};
+}
+export async function issuePriorityDeadline(tx:Prisma.TransactionClient,row:BillingIssue,priority:string,hasManualDeadline:boolean) {
+  if(priority===row.priority||(!row.slaStartedAt&&!row.slaDueAt&&!row.slaPolicyRevisionId))return row.slaDueAt;
+  const minutes=row.slaPolicyRevisionId?await issueSlaPolicy(tx,row,row.slaPolicyRevisionId):null;
+  if(!minutes||!row.slaStartedAt) {
+    if(hasManualDeadline)return row.slaDueAt;
+    throw billingError('CONTROL_SLA_REVIEW','ไม่พบเกณฑ์เวลาเดิม กรุณาระบุเวลาติดตามก่อนเปลี่ยนระดับความสำคัญ');
+  }
+  return new Date(row.slaStartedAt.getTime()+minutes[priority as keyof typeof minutes]*60000);
+}
 async function lockIssue(tx:Prisma.TransactionClient,identity:Identity) {
   const {companyId,...unique}=identity;
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify([identity.stripeAccountId,identity.livemode,identity.kind,identity.referenceId])},0))`;
@@ -20,11 +44,14 @@ export async function resolveBillingIssue(tx:Prisma.TransactionClient,identity:I
 export async function detectBillingIssue(tx:Prisma.TransactionClient,identity:Identity,reopen=true) {
   const before=await lockIssue(tx,identity),now=new Date(),companyId=identity.companyId;
   const recurring=before?.state==='RESOLVED'&&reopen;
+  const priority=before?.priority??(['PAID_HELD','PAID_NOT_APPLIED','FINANCIAL_REVIEW','DUPLICATE_SUBSCRIPTION'].includes(identity.kind)?'HIGH':'NORMAL');
+  const sla=!before||recurring?await episodeSla(tx,identity,priority,now):{};
   const row=before ? await tx.billingIssue.update({where:{id:before.id},data:{lastSeenAt:now,...(recurring?{
-    state:'OPEN',resolvedAt:null,assigneeUserId:null,followUpAt:null,episode:{increment:1},version:{increment:1}}:{})}}) :
-    await tx.billingIssue.create({data:{...identity,lastSeenAt:now,priority:['PAID_HELD','PAID_NOT_APPLIED','FINANCIAL_REVIEW','DUPLICATE_SUBSCRIPTION'].includes(identity.kind)?'HIGH':'NORMAL'}});
+    state:'OPEN',resolvedAt:null,assigneeUserId:null,followUpAt:null,...sla,episode:{increment:1},version:{increment:1}}:{})}}) :
+    await tx.billingIssue.create({data:{...identity,lastSeenAt:now,priority,...sla}});
   if(!before||recurring)await tx.auditLog.create({data:{companyId,actorType:'SERVICE',actorRefId:'billing-issue-detector',action:recurring?'billing.issue.reopened':'billing.issue.detected',
     targetType:'BillingIssue',targetId:row.id,requestId:`billing-issue:${row.id}:${row.episode}`,result:'SUCCESS',riskLevel:'MEDIUM',
-    metadataJson:{episode:row.episode,previousState:before?.state??null,previousAssignee:before?.assigneeUserId??null,kind:row.kind,mode:row.livemode?'LIVE':'TEST'}}});
+    metadataJson:{episode:row.episode,previousState:before?.state??null,previousAssignee:before?.assigneeUserId??null,kind:row.kind,mode:row.livemode?'LIVE':'TEST',
+      slaPolicyRevisionId:row.slaPolicyRevisionId,slaStartedAt:row.slaStartedAt?.toISOString()??null,slaDueAt:row.slaDueAt?.toISOString()??null}}});
   return row;
 }

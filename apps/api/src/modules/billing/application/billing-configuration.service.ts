@@ -93,7 +93,8 @@ export class BillingConfigurationService {
     const where = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode };
     const { cursorValid: _cursor, items: _items, ...counts } = await configurationImpact(tx, where);
     const cohort = policy.salesCompanyIds !== undefined || before?.salesCompanyIds !== undefined;
-    return { ...counts, ...(cohort ? { salesCohort: { before: before?.salesCompanyIds ?? null, after: policy.salesCompanyIds ?? null,
+    return { ...counts, ...(policy.supportSlaMinutes!==undefined||before?.supportSlaMinutes!==undefined?{supportSla:{before:before?.supportSlaMinutes??null,after:policy.supportSlaMinutes??null}}:{}),
+      ...(cohort ? { salesCohort: { before: before?.salesCompanyIds ?? null, after: policy.salesCompanyIds ?? null,
       companies: await this.salesCompanies([...new Set([...(before?.salesCompanyIds ?? []), ...(policy.salesCompanyIds ?? [])])], tx) } } : {}),
       prices: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ offerKey: `${tier}:${interval}` as const,
         beforeTotalSatang: quoteTotals(billingOffer(tier, interval).priceSatang, before?.taxTreatment ?? null).totalSatang,

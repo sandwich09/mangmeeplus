@@ -21,7 +21,7 @@ export function paidVariant(tier: unknown, interval: unknown): { tier: PaidTier;
 }
 
 export function parseBillingPolicy(value: unknown): BillingPolicy {
-  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds']);
+  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes']);
   const p = value as unknown as BillingPolicy;
   if (p.schemaVersion !== 1 || ![null, 'IMMEDIATE', 'AFTER_TRIAL'].includes(p.paidStart) ||
       ![null, 'INCLUSIVE_VAT_7', 'EXCLUSIVE_VAT_7', 'NOT_VAT_REGISTERED'].includes(p.taxTreatment) ||
@@ -52,7 +52,15 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
   if (p.salesCompanyIds != null && (!Array.isArray(p.salesCompanyIds) || p.salesCompanyIds.length > 100 ||
       p.salesCompanyIds.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(id)) ||
       new Set(p.salesCompanyIds).size !== p.salesCompanyIds.length)) throw new BadRequestException('Invalid sales companies');
-  return p.salesCompanyIds ? { ...p, salesCompanyIds: [...p.salesCompanyIds].sort() } : p;
+  if(p.supportSlaMinutes!=null&&!validSupportSla(p.supportSlaMinutes))throw new BadRequestException('Invalid case follow-up minutes');
+  return {...p,...p.salesCompanyIds?{salesCompanyIds:[...p.salesCompanyIds].sort()}:{},...p.supportSlaMinutes?{supportSlaMinutes:{
+    NORMAL:p.supportSlaMinutes.NORMAL,HIGH:p.supportSlaMinutes.HIGH,CRITICAL:p.supportSlaMinutes.CRITICAL}}:{}};
+}
+
+export function validSupportSla(value:unknown): value is NonNullable<BillingPolicy['supportSlaMinutes']> {
+  if(!value||typeof value!=='object'||Array.isArray(value))return false;
+  const row=value as Record<string,unknown>;
+  return Object.keys(row).length===3&&['NORMAL','HIGH','CRITICAL'].every(key=>Number.isInteger(row[key])&&(row[key] as number)>=1&&(row[key] as number)<=525600);
 }
 
 export function companyCanBuy(policy: BillingPolicy | null, companyId: string): boolean {

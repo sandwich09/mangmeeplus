@@ -1,6 +1,6 @@
 # Agent Memory: Stripe / Postmark implementation
 
-Status: IN PROGRESS. C08 current refund/credit-note observations and privileged documents are implemented and verified locally, ready for a local commit. Full authorized implementation and develop/main merges in BOTH repositories remain owed. Do not stop at this checkpoint or call the old70% estimate measured coverage.
+Status: IN PROGRESS. C02 optional approved follow-up deadlines and retained queue navigation are implemented and verified locally (8 focused/163 combined; uncommitted pending local commit). C08 current refund/credit-note observations and privileged documents are implemented and verified locally, committed locally at b0fa7a17; marketing alignment fbdbde1. Full authorized implementation and develop/main merges in BOTH repositories remain owed. Do not stop at this checkpoint or call the old70% estimate measured coverage.
 Owner: Codex / repository owner.
 Scope: Stripe packages/Postmark/Admin C01–C08/web/LINE, simulated E2E, gap fixes and green-CI develop/main merges. NO DEPLOY.
 
@@ -24,8 +24,8 @@ Preserve all unrelated tracked/untracked work, including cloud runbook/UAT, mark
 
 ## Current repositories
 
-- Root `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus`, branch codex/stripe-postmark-implementation-20260912, HEADdef8470215f587632136d67288c2b38d199ac9f8 before local C08 commit. DraftPR558→develop remains open. C08 code/docs/evidence ready for local commit only. Prior5c54 CI failed historical invoice navigation; def CI passed that formerly failing step but was cancelled as obsolete while later invoice-import step was running. This does not establish the prior failure's root cause or a green current revision.
-- Isolated marketing `/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912`, same branch, HEAD4169ea219b2b4c0163bdd747e05b6d1ffea44343 before local C08 docs commit. DraftPR2→develop. Runtime remains969e4c0; three matching alignment docs are modified. Do not touch original dirty mangmee_web checkout.
+- Root `/Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus`, branch codex/stripe-postmark-implementation-20260912, HEADb0fa7a179f8d6fccba8613346b7a539b53e8ca62, local only. DraftPR558→develop remains open. C08 code/docs/evidence committed locally; no push. Prior5c54 CI failed historical invoice navigation; def CI passed that formerly failing step but was cancelled as obsolete while later invoice-import step was running. This does not establish the prior failure's root cause or a green current revision.
+- Isolated marketing `/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912`, same branch, HEADfbdbde11a4ae023e32afdcecf6d4dea3fbbbe703, local only. DraftPR2→develop. Runtime remains969e4c0; three matching alignment docs committed locally. Do not touch original dirty mangmee_web checkout.
 - No merge/deploy. Refresh read-only GitHub no-deploy workflow preflight before eventual authorized merges. Both PR descriptions were updated at prior C06 checkpoint; update again at final readiness without causing redundant CI.
 
 ## Implemented checkpoints
@@ -48,19 +48,20 @@ Expiry gap fixed: old API/web/LINE recovery allowlists omitted new invoice detai
 
 ## Current processes / next
 
-All local wrappers/compilers finished. Session7695 final chain:25 then163 PASS. API51050 PASS. Generated next-env and overwritten old downgrade screenshot restored after browsers exited. No local browser/compiler remains running.
+C02 final frozen-source local session73929 finished:8 focused then163 combined PASS. API85901 and web63185 typechecks PASS;13 error guards/pins PASS. No browser/compiler remains running. Restore only generated next-env and the overwritten old tracked downgrade screenshot after browser exit. Preserve unrelated work. Review and commit scoped C02 files in both repositories LOCAL ONLY.
 
-1. Review/stage only the scoped C08 files and source-bound receipts, then commit locally in both repositories. Do not push or dispatch CI. Preserve unrelated user work.
-2. Continue remaining authorized controls below. Official refund API notes now also cover GET credit_notes/preview and single-command amount/refund_amount creation, but monetary creation/approval/compensation is NOT implemented. Keep refunds manual and never issue independent duplicate refunds/credit notes after a lost response.
-3. C02 global SLA/escalation remains a separate documented requirement. Existing case priority/follow-up/backup is done; global policy is not. No new SLA spec/code was written during C08 verification; discussion in model reasoning was not an approved implementation choice.
-4. Eventually complete current acceptance/review and required batched CI, then authorized develop/main merges in BOTH repos, NO DEPLOY.
+C02 introduced optional supportSlaMinutes, three nullable BillingIssue provenance fields and one index (local migration applied), original-episode timing with manual precedence, unavailable-policy/manual recovery, current scope/CAS/audit, read-time OVERDUE and URL queue filter/cursor return. The browser exposed a filter usable before hydration/loading; it now waits for loaded state. New source receipt has16 matching hashes and two inspected390px screenshots. The first combined notification fixture saw PENDING after one drain. Non-browser diagnostic26 did not reproduce it; exact cause is not proven. Immediate-delivery fixtures now explicitly start due like their LINE rows; production scheduler/permissions were not changed. Diagnostic-only selector/metadata retained; final163 passes.
 
-Local-only runner: localhost:15432/mangmee_billing_20260912 and Redis6379. `/tmp/mangmee-run-billing-smoke.mjs` loads root.env +0600local env, validates exact DB, never prints secrets. Compile `corepack pnpm --dir apps/api exec swc src -d /tmp/mangmee-postmark-api-build --strip-leading-paths --copy-files -q`; contracts build with corepack pnpm filter. Focus `BILLING_ADJUSTMENTS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs`; full `BILLING_BROWSER_E2E=1 MANGMEE_MARKETING_DIR=/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912 node /tmp/mangmee-run-billing-smoke.mjs`. Copy wrapper log immediately after each run. Do not edit runtime while a final-source browser proof is running.
+No push/CI dispatch or PR edits during C02. Both workflows were inspected locally: automatic CI is pull_request into develop/main, including updates to draft PR branches. This explains why prior frequent pushes cost runs. Existing cohort CI step now includes the small configuration-only SLA proof for the eventual required batch; no new CI was run.
+
+Continue remaining authorized controls/mail/LINE work below; do not treat this local commit as full task completion. Current C03 recovery and C05 scheduled-publication code were read for next planning, but no new C03/C05 decisions, spec or code were added in this C02 slice. Read the exact applicable contract before the next edit. Aged monetary replay remains forbidden; financial approvals/compensation require their own reviewed boundaries. Eventually run required batched CI and merge develop/main in BOTH repositories, NO DEPLOY.
+
+Local runner: `/tmp/mangmee-run-billing-smoke.mjs` validates localhost:15432/mangmee_billing_20260912 and uses Redis6379. Compile with `corepack pnpm --dir apps/api exec swc src -d /tmp/mangmee-postmark-api-build --strip-leading-paths --copy-files -q`; build contracts with corepack pnpm filter. C02: `BILLING_CONFIG_ONLY=1 BILLING_SUPPORT_SLA_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs`. Full: `BILLING_BROWSER_E2E=1 MANGMEE_MARKETING_DIR=/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912 node /tmp/mangmee-run-billing-smoke.mjs`. Do not edit runtime during final browser proof. Copy logs immediately after each run.
 
 ## Remaining implementation
 
 - C03 aged UNKNOWN/provider-mutation recovery and compensation; historical financial exceptions beyond record-only import.
-- C02 global SLA/escalation policy; C05/C06 scheduled policy publication, detailed capacity rollouts and remaining runtime configuration/readiness. Explicit company sales cohort is now implemented locally.
+- C05/C06 scheduled policy publication, detailed capacity rollouts and remaining runtime configuration/readiness. C02 optional global SLA and existing manual backup/unassigned/overdue escalation, plus explicit company sales cohort, are implemented locally; do not relist them as missing.
 - C07 configuration/settlement drift, bounded bulk recovery and financial resolution. Daily event schedule and historical invoice discovery/import are already implemented; do not relist them as missing.
 - C08 debt/refund monetary commands, temporary override/revoke/expiry/compensation/export with approved boundaries and independent approval. Current refund/credit-note observation and scoped Invoice/Receipt/PDF/credit-note document opening are implemented locally, pending final regression/CI; do not relist them as unimplemented.
 - Postmark monitoring/retention/EM09 and remaining mail recovery. Preserve owner decisions below.

@@ -9151,6 +9151,9 @@ model BillingIssue {
   backupUserId      String?
   priority          String @default("NORMAL")
   followUpAt        DateTime?
+  slaStartedAt      DateTime?
+  slaDueAt          DateTime?
+  slaPolicyRevisionId String?
   episode           Int @default(1)
   lastSeenAt        DateTime @default(now())
   note              String?
@@ -9161,6 +9164,7 @@ model BillingIssue {
   @@unique([stripeAccountId, livemode, kind, referenceId])
   @@index([state, createdAt])
   @@index([stripeAccountId, livemode, state, followUpAt], map: "BillingIssue_scope_followUpAt_idx")
+  @@index([stripeAccountId, livemode, state, slaDueAt], map: "BillingIssue_scope_slaDueAt_idx")
 }
 
 model BillingOperation {
