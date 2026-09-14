@@ -28,6 +28,18 @@ Substitute artifact-preview500 was reproduced in the exact serving API image: PD
 extraction silently returned `unreadable` for the same omission. It is image packaging, not a missing
 running host. [Hotfix/audit and release ledger](../agent-memory/runtime-dependency-hotfix-20260914.md).
 
+The hotfix and shared HEIC/HEIF upload-source consistency are now deployed: operation
+`20260914T165647Z-f9ecf83a`, main source `038eb55409cf18db587c4e93b93d91492a20bf2e`, terminal
+`ACCEPTED_LINE_DEFERRED`,298.538s, all config/readiness checks and KMS signature verified, customer
+`OPEN`. Existing previously failing Drtb paper-form preview renders its PDF page after fresh reload;
+the original The sun coffee item was not re-tested with the Drtb account. API/DB, AI, Workers/Redis/
+internal API passed; new-container bounded logs show no missing-module/DOMMatrix/5xx/timeout pattern.
+AgentCore is now `kamal_uat_a` version5. Both UAT hosts retain the enrolled addresses above, Dev is
+stopped, and Production is unchanged. PR561/develop and PR562/main passed full exact-head CI before
+merge; owner explicitly authorized admin merge for main's missing reviewer approval only. See the
+linked release ledger for exact immutable image digests and signed artifact hash. Earlier September11
+serving-operation entries below are historical, not the currently deployed source.
+
 Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
 are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule
 `sgr-0a12dbd8f66e96575` was removed and absence verified. Preserve the original allowlist.
