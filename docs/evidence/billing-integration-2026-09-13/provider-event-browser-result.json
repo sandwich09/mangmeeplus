@@ -1,0 +1,16 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "provider-event-platform-scope-mode-redaction-pagination",
+    "provider-event-preview-stale-lease-dedupe-and-cancel",
+    "provider-event-reauthorization-unavailable-unmapped-same-command-recovery",
+    "provider-event-shared-worker-lease-loss-and-processed-replay",
+    "provider-event-evidenced-case-resolution-audit-and-no-manual-grant",
+    "browser-provider-event-case-preview-command-reload-and-return"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Stripe"
+  ],
+  "realProviderPayment": false
+}

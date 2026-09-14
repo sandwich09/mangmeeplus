@@ -11,7 +11,7 @@
 
 > **Authorized closure audit 2026-09-11 — existing runtime repaired; integration remains open:** User requested Mangmee-owned design/spec and full web/LINE round-trip bug/gap/impact review and fixes. Track [GW01–GW10 and evidence](../research/stripe-line-web-gap-closure-2026-09-11.md); existing runtime repairs proceed first. This does not mark LB/provider/device tests PASS or select B01–B10.
 
-สถานะ: **OWNED DESIGN COMPLETE / current-entry repairs locally verified / full billing LB01–LB20 NOT RUN (partial local evidence below)**.
+สถานะ: **IMPLEMENTATION IN PROGRESS / actual local browser-API checkpoints PASS / full LB01–LB20 native acceptance incomplete**.
 
 ใช้ [UI spec](../specs/mangmee-line-web-billing-ui-spec-th.md), [P26](../specs/mangmee-billing-subscription-spec-th.md) และ [แผน Stripe หลัก](mangmee-stripe-billing-implementation-and-test-plan-th.md). นี่เป็นรายละเอียด S2/S4/S5 ของแผนเดิม ไม่ใช่ payment backend อีกชุด. ผล S-pre manual renew และ marketing pre-LIVE ที่ผ่านแล้วคงขอบเขตเดิม.
 
@@ -20,10 +20,10 @@
 | งาน | ขอบเขตที่ต้องส่งมอบ | Exit / สถานะ |
 |---|---|---|
 | L0 Design | ตรวจ current LINE command/LIFF/handoff/renew/layout/marketing; U01–U12, route/API target, wireframe, state/permission, refs | DONE docs; ไม่ได้เลือก B01–B10 แทน Owner |
-| L1 Contract + recovery (S1/S2) | shared DTO/error/action, company picker projection, billing purpose ใน LIFF, expiry-scoped handoff/session/guards, exact safe next ตลอด login/legal | PARTIAL: existing /renew + LIFF start/handoff repaired; billing DTO/purpose not implemented. Exit: LB01–LB05/LB09–LB11 ผ่าน local API/DB; default start และ business hold ไม่ regress |
-| L2 App screens (S4) | U02/U04–U06/U08–U09/U11/U12 ใช้ components เดิม; state projection/quote review/consent/status/Portal entry/documents | NOT STARTED; U01–U12 ทุก state มี fixture + browser evidence; B01/B02/B06/B09 ที่กระทบ new sales ต้องปิดก่อน live-capable quote |
+| L1 Contract + recovery (S1/S2) | shared DTO/error/action, company picker projection, billing purpose ใน LIFF, expiry-scoped handoff/session/guards, exact safe next ตลอด login/legal | PARTIAL IMPLEMENTED: billing DTO, authenticated company picker, return context และ OWNER recovery มี local proof; complete LINE external-browser/device chain ยังต้องตรวจ. Exit: LB01–LB05/LB09–LB11 ผ่าน local API/DB; default start และ business hold ไม่ regress |
+| L2 App screens (S4) | U02/U04–U06/U08–U09/U11/U12 ใช้ components เดิม; state projection/quote review/consent/status/Portal entry/documents | PARTIAL IMPLEMENTED: actual purchase/repeat/change/cancel/return/documents และ Admin pages ผ่าน local browser/HTTP checkpoint; full U01–U12/state coverage ยังไม่ครบ และ LIVE ต้องผ่าน provider readiness |
 | L3 LINE + marketing entries (S2/S4) | U01/U03, LIFF billing bridge/external browser, company selection, generic OA links, existing support command coexistence | PARTIAL: rich-menu/webhook/marketing correctness repaired; official paid handoff และ LINE expired recovery ใช้ backend เดียว; ไม่มี raw tokens ใน chat/analytics |
-| L4 Stripe integration (S2/S3) | เชื่อม Checkout/Portal/verified event/paid apply ที่แผนหลักสร้างเข้าหน้าจอ; no-return recovery, documents, notifications | NOT STARTED; card/3DS/decline/renewal/apply/duplicate tests ผ่าน sandbox และ protected API ใช้ได้จริง |
+| L4 Stripe integration (S2/S3) | เชื่อม Checkout/Portal/verified event/paid apply ที่แผนหลักสร้างเข้าหน้าจอ; no-return recovery, documents, notifications | PARTIAL IMPLEMENTED: signed events/exact financial verification/atomic grant/protected documents และ recovery ผ่าน simulated provider E2E; native 3DS/card/provider email acceptance ยังแยกตรวจ |
 | L5 Device/ops acceptance (S5) | native LINE iOS/Android, desktop browser, billing emails/documents, policy-aware cancellation/support, evidence register | NOT RUN; applicable P0 ผ่าน, deferred actions ปิด API/Portal จริง, ไม่เรียก LIVE พร้อมจน release gate ผ่าน |
 
 ห้ามเปลี่ยน package-change request เป็นคำสั่งซื้อโดยเปลี่ยนชื่อปุ่มอย่างเดียว. ก่อน LIVE คง support flow เดิม; เมื่อ billing พร้อมเพิ่ม “แพ็กเกจและการชำระเงิน” เป็นทาง self-service และคง “ติดต่อเรื่องแพ็กเกจ” สำหรับ support/enterprise. ต้องแก้ handler ที่เคยหยิบบริษัท ACTIVE แรกไม่ให้คัดลอกพฤติกรรมนั้นมาใน billing.

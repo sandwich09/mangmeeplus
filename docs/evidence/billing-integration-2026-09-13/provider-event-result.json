@@ -1,0 +1,31 @@
+{
+  "status": "PASS for bounded original-event recovery, DTO boundary and inline reload",
+  "browserGroups": 6,
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "apiTypecheck": "PASS",
+  "webTypecheck": "PASS",
+  "contractsBuild": "PASS",
+  "coverageGuardTests": 7,
+  "newlyRegisteredBillingTests": 16,
+  "skipped": 0,
+  "limitation": "Full139 combined browser PASS predates DTO/inline reload. Latest combined attempt reached the final reload check but its test raced Next navigation; focused6 now waits for the command URL and passes. Full current139 rerun pending. This is original-event recovery, not provider-to-local missing-event discovery or native Stripe acceptance.",
+  "sources": {
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "e7d2f2c4cd56106743c2188e8b0ead52dcb89b39f8c10d2a4cc84d2d1bc6221f",
+    "apps/api/src/modules/billing/application/billing-operations.service.ts": "32c1f5cb7a5b15716f4cf4881d33295115969a975dea19ec55f7c8a44e214e87",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "12eb7b04e65f888c85edb835d90922313541effe19005f99539a39d876d93ca7",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "ef9f51f685127cf8978b344de95c994f7dc729963c74d37d431770ef62d9a6cc",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "70d99e0adeee054538ccf2f8a374f9d9bf68c884ebc04295556a54a690282099",
+    "apps/api/src/scripts/billing-http-smoke.ts": "968939da062b5c4f5e62e8ec86c259020e1c04aaf4ec978afb9e132e26d29aae",
+    "apps/api/src/scripts/billing-provider-events-smoke.ts": "63555083723148cc9a1e26b8611a5238e568ef2de90e82fd63854424ffcec846",
+    "apps/web/app/system/billing/provider-events/[id]/page.tsx": "170ac245cc9c597ad221c8fa0e3f1d23a8555255a5a17958df5d7971f7783d67",
+    "apps/web/app/system/billing/provider-events/page.tsx": "5ebe22b93d14163d11fff517255f69194ac090bed260027509c5e66aa773986d",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "16d8f55c1ab1fd3f54b0c1a5513ec84316535c1d0b50461df271d7ae0eeff5e4",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "156cf6b9f89f25a98583923237cbcd87e18e69d24f3474fc287b4a9c6d93fa8e",
+    "apps/web/src/features/billing-admin/BillingProviderEventsPage.tsx": "b0eb771253ad0d4889a648818e51e21a5a81b47fe204b151536284880698f94c",
+    "packages/contracts/src/billing.ts": "dbe765cc4cabe715c90e574891cfd2db48f6c5f7c6a4a0f6c40becd4e706008b",
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "cbb6d043c79776db0550401b9acc864e06720e4d2ecf0f4ec5c275513cd4be50"
+  }
+}

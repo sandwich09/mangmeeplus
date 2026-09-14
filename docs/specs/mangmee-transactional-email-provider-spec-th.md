@@ -23,9 +23,9 @@ Source of truth: [Postmark developer reference](../research/postmark-developer-r
 
 ## 2. ฐานโค้ดและ migration ที่จำเป็น
 
-- Config ปัจจุบันรองรับ `disabled|local-console|ses`; `AuthMailerPort`/factory อยู่ใน auth module. `selectAuthMailer` หลัง disabled/console ยังตกเข้า SES โดยตรง จึงต้องทำ branch postmark ชัดเจน ไม่เพิ่ม enum อย่างเดียว.
+- Config ปัจจุบันรองรับ `disabled|local-console|ses|postmark`; `AuthMailerPort`/factory อยู่ใน auth module และเลือก Postmark อย่างชัดเจน พร้อมตรวจ missing config โดยไม่ fall through ไป SES.
 - `SignupClaimEmailService` รันใน API Nest container; workers เป็น timer เรียก internal drain. Reuse `OutboxEvent` lease/claimToken/eventKey/availableAt และรายการ event ที่ generic workflow drain ต้อง exclude; ไม่สร้างคิวหรือ worker service ใหม่.
-- Claim sender ปัจจุบันเขียน ID ไป `CompanySignupRequest.claimEmailSesMessageId` หลังส่ง; SES/SNS event handler ค้นด้วยช่องนี้. **ห้ามใส่ Postmark MessageID ลงช่อง SES** หรือส่ง Postmark JSON เข้า SNS verifier. Schema/consumer migration อยู่ §4.
+- Legacy SES claim sender เขียน ID ไป `CompanySignupRequest.claimEmailSesMessageId` หลังส่ง; SES/SNS event handler ค้นด้วยช่องนี้. **ห้ามใส่ Postmark MessageID ลงช่อง SES** หรือส่ง Postmark JSON เข้า SNS verifier. Schema/consumer migration อยู่ §4.
 - Auth port มี verify/reset/claim/rejection/support และ notice บางชนิดยัง no-op. Sender ใหม่ต้องรักษาสัญญาเดิมและ opt-in ของแต่ละ method; ไม่ทำให้ทุก notice ส่งจริงเพียงเพราะเปลี่ยน provider. Dashboard notification มี WEB/LINE ไม่ใช่ email foundation สำหรับ auth ที่อาจไม่มี company.
 
 ไฟล์หลัก: `packages/config/src/index.ts`, `apps/api/src/common/config/app-config.service.ts`, `apps/api/src/modules/auth/auth.module.ts`, `auth/domain/ports/auth-mailer.port.ts`, auth infrastructure/templates, `external-signup/application/signup-claim-email.service.ts`, `external-signup/application/ses-event.use-case.ts` และ Prisma schema/migrations/tests.
@@ -83,7 +83,7 @@ Callback ใช้ sanitized `OutboxEvent` ที่ reserve event type เช�
 2. POST ผ่าน selected adapter. Write result ด้วย expected generation/lease/latest pointer; response เก่าไม่ทับ current state. Metadata attempt ID เป็น correlation เท่านั้น; callback ต้องผ่าน auth และตรวจ server/stream/recipient/message binding ก่อนผูก ID ที่ยังว่าง.
 
 การผูก callback ที่ไม่มี MessageID ใน attempt ยังต้อง serialize ที่แถว attempt แล้วอ่าน binding ใหม่; callback สองข้อความห้ามแข่งกันเขียน ID คนละค่า. JSON parser ของ provider endpoint จำกัด 256 KiB ครอบคลุม case/trailing slash ที่ router รับ และห้ามคืน/บันทึก parser error ที่ยก raw content มาอ้าง; ใช้ข้อความกลาง 400/413.
-3. หลัง accepted update `claimEmailLastSentAt` เฉพาะ current attempt; success/callback/replay ไม่ทำ provision เอง. เมื่อ resend/retry ต้อง revoke proof เก่าตาม mint-at-send และไม่ขยาย activation window. Claim เดิม TTL 72 ชั่วโมงตาม P11 ไม่ยืมไปเป็น OTP/login TTL.
+3. หลัง accepted update `claimEmailLastSentAt` เฉพาะ current attempt; success/callback/replay ไม่ทำ provision เอง. เมื่อ automatic resend/retry ต้อง revoke proof เก่าตาม mint-at-send และไม่ขยาย activation window. การ reissue โดย Admin เป็นคำสั่งเดิมตาม P11 ที่เริ่ม claimWindowStartedAt ใหม่โดยไม่แก้ approvedAt; ไม่ใช่ผลจาก callback/transport retry. Claim เดิม TTL 72 ชั่วโมงตาม P11 ไม่ยืมไปเป็น OTP/login TTL.
 4. Hard bounce ของ latest pending claim เปลี่ยน EMAIL_PENDING→EMAIL_FAILED ด้วย CAS + audit transaction; late bounce ของ attempt เก่าหรือคำขอ READY ไม่ย้อน business state. Callback-before-response ที่ terminal แล้วต้องไม่ถูก accepted response ลบผล bounce.
 5. Raw proof ที่ส่งอาจค้างในอีเมลรุ่นเก่า; UI ชี้ฉบับล่าสุดและมี resend/recovery. App log/outbox/hash-only ยังรักษาเดิม แต่ Postmark เป็นผู้ประมวลผลเนื้อหาและมี provider retention; อย่าอ้างว่าไม่มีสำเนา secret นอก memory ของแอปเลย.
 
@@ -91,7 +91,7 @@ Verify/reset ที่ยังเป็น direct send ให้บันทึ
 
 ## 5. Webhook, suppression และการติดตาม
 
-ใช้ proposed backend route `POST /public/postmark-events` แยกจาก `/public/ses-events`. ไม่มี user session requirement แต่ **ต้องตรวจ Basic Auth ผ่าน HTTPS**, constant-time secret comparison และ trusted proxy/IP allowlist ตามเครือข่ายจริง; ไม่เชื่อ X-Forwarded-For ตรง ๆ. Postmark ไม่ sign webhook จึงไม่มี HMAC/timestamp signature requirement ที่ implement ไม่ได้. เก็บ credentials ใน HttpAuth settings ไม่ฝัง URL และไม่ log Authorization. [Webhook auth/config](../research/postmark-developer-reference-th.md)
+ใช้ backend route `POST /public/postmark-events` แยกจาก `/public/ses-events`. ไม่มี user session requirement แต่ **ต้องตรวจ Basic Auth ผ่าน HTTPS**, constant-time secret comparison และ trusted proxy/IP allowlist ตามเครือข่ายจริง; ไม่เชื่อ X-Forwarded-For ตรง ๆ. Postmark ไม่ sign webhook จึงไม่มี HMAC/timestamp signature requirement ที่ implement ไม่ได้. เก็บ credentials ใน HttpAuth settings ไม่ฝัง URL และไม่ log Authorization. [Webhook auth/config](../research/postmark-developer-reference-th.md)
 
 - รับ JSON จำกัด 256 KiB ก่อน parse; schema allowlist RecordType, ServerID, MessageStream และ field ของแต่ละ event. เปิด Delivery/Bounce/SpamComplaint, IncludeContent=false; Open/Click/Broadcast ไม่เปิด.
 - ผูก attempt ด้วย provider/environment/server/stream/MessageID และ recipient; ถ้า callback มาก่อน result ใช้ opaque metadata ID ที่มีใน DB แล้ว และต้องตรง expected fields ทั้งหมด. Unknown authenticated event ไม่ให้สิทธิ์; persist sanitized pending/quarantine แล้ว 200 (รองรับ provider verification fixtures โดยไม่สร้างคำขอ).

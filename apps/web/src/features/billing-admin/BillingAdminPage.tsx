@@ -68,6 +68,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     <header><p className="text-sm text-gray-600">{overview?.mode ?? 'กำลังตรวจสอบโหมด'} · {overview?.platformScope ? 'ระดับระบบ' : 'เฉพาะบริษัทที่ได้รับสิทธิ์'}</p>
       <h1 className="text-2xl font-bold">{issueId ? 'เคสการชำระเงิน' : companyId ? 'การชำระเงินของบริษัท' : issuesOnly ? 'คิวตรวจสอบการชำระเงิน' : 'ดูแลแพ็กเกจและการชำระเงิน'}</h1></header>
     <nav className="flex flex-wrap gap-3"><Link href="/system/billing" className={button}>บริษัท</Link><Link href="/system/billing/issues" className={button}>คิวตรวจสอบ</Link>
+      {overview?.platformScope && overview.mode!=='DISABLED' && <Link href="/system/billing/provider-events" className={button}>เหตุการณ์จาก Stripe</Link>}
       {overview?.canManageScopes && <Link href="/system/billing/operator-scopes" className={button}>ขอบเขตเจ้าหน้าที่</Link>}
       {overview?.platformScope && <Link href="/system/billing/settings" className={button}>ตั้งค่าการชำระเงิน</Link>}</nav>
     {loading && <p role="status">กำลังโหลดข้อมูล…</p>}
@@ -118,6 +119,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <p>รอบปัญหา {issue.episode} · ตรวจพบล่าสุด {time(issue.lastSeenAt)} · {issue.priority}</p>
       <p>{issue.assigneeUserId?`ผู้รับผิดชอบ ${issue.assigneeName}${issue.assigneeAvailable?'':' (ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว)'}`:'ยังไม่มีผู้รับผิดชอบ'}</p>
       <p>{issue.backupUserId?`ผู้สำรอง ${issue.backupName}${issue.backupAvailable?'':' (ไม่มีสิทธิ์แล้ว)'}`:'ยังไม่ได้กำหนดผู้สำรอง'} · {issue.overdue?'เลยเวลาติดตาม · ':''}{issue.followUpAt?time(issue.followUpAt):'ยังไม่ได้กำหนดเวลาติดตาม'}</p>
+      {issue.kind==='PROVIDER_EVENT_FAILED'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-events/${encodeURIComponent(issue.reference)}`}>ตรวจ event เดิมของเคสนี้</Link>}
       {issue.kind === 'CONTROL_OPERATION_REVIEW' && <Link className="inline-block underline" href={`/system/billing/operations/${encodeURIComponent(issue.reference)}`}>เปิดคำสั่งเดิมของเคสนี้</Link>}
       {issue.companyId && <Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}`}>กลับไปบริษัทนี้</Link>}
       {issue.companyId&&issue.kind.startsWith('NOTIFICATION_')&&<Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/deliveries`}>ตรวจรายการแจ้งเตือนเดิม</Link>}

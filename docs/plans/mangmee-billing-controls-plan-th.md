@@ -58,6 +58,7 @@ C01–C08 ต้องส่งเป็น vertical slices ที่ทดส�
 | CT22 C06 | pause/resumecollectionที่มีexistinginvoiceและresumeAt | previewinvoicebehavior; providerobserved≠localgate; ไม่อ้างหยุดเก็บจากปิดขายใหม่ |
 | CT23 C06 | provider/DB/workerunhealthyระหว่างเปิดกลับ | blocked/pending+incident; ไม่มีgreenจาก202; recoveryงานจ่ายแล้วไม่ถูกปิดตามcheckout |
 | CT24 C07 | providerมีpaidinvoiceแต่localไม่มีevent / localpendingแต่providerterminal | bidirectionalrunหาmissingทั้งสองฝั่ง; mapidentityก่อนrepair; issueunmappedไม่grantผิดคน |
+| CT24a C07 original-event recovery | local DEAD/RETRY event, source change, worker race, operator revoked, unavailable provider | scoped/redacted list→case→preview→durable command→actual shared reconciler→observed result→original event/back; preserve attempt history and quota; stale/active lease/wrong mode/delegated scope denied; exact event case resolves only after verified completion; PostgreSQL/HTTP/mobile browser proof required, not equivalent to full CT24 |
 | CT25 C07 | 429/page2ล้ม/workercrashกลางbulk | checkpoint/coverage/lease; resumeonlyunfinished; partialresultsไม่รวมเป็นmatched |
 | CT26 C07 | refund/dispute/cancelจากproviderdashboardขณะlocalpreviewค้าง | observedstateชนะstalecommand; reconcileไม่overwritehumanmoneyaction; review/compensate |
 | CT27 C07 | configdrift/credentialrotation/settingอ่านAPIไม่ได้ | approved≠observed, readinessblocked; manualverificationtaskกลับมาcheckได้; secretไม่อยู่response/log |

@@ -1,10 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import type { BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview } from '@watchdog-bms/contracts';
+import type { BillingOperatorCompany, BillingOperatorCompanyDetail, BillingOperatorIssue, BillingOperatorOverview, BillingProviderEventView } from '@watchdog-bms/contracts';
 import type { BillingAccount, BillingIssue, BillingOperation, Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../../common/database/prisma.service';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { BillingService } from './billing.service';
-import { billingError } from '../domain/billing-policy';
+import { billingError, hashBilling } from '../domain/billing-policy';
 import { billingState } from '../domain/billing-state';
 import { billingTimeline } from './billing-timeline';
 import { issueOperators } from './billing-issue-ownership';
@@ -20,9 +20,32 @@ export class BillingAdminService {
     const context:RequestContext={userId:row.initiatorUserId,membershipId:member.id,companyId:proposed.actorCompanyId,requestId:row.id,
       authSubject:row.initiatorUserId,authProvider:'system',scopes:{},roles:[],permissions:member.roles.flatMap(r=>r.role.permissions.map(p=>p.permission.key))};
     const access=await this.access(context,permission,tx);
-    if(!row.companyId||row.stripeAccountId!==this.billing.stripe.accountId||row.livemode!==this.billing.stripe.livemode||
-      (!access.platformScope&&!access.companyIds.includes(row.companyId)))throw new ForbiddenException();
+    if(row.stripeAccountId!==this.billing.stripe.accountId||row.livemode!==this.billing.stripe.livemode||
+      (row.companyId ? !access.platformScope&&!access.companyIds.includes(row.companyId) : row.type!=='RETRY_PROVIDER_EVENT'||!access.platformScope))throw new ForbiddenException();
     return context;
+  }
+
+  async providerEvent(context: RequestContext, id: string, tx: Prisma.TransactionClient = this.prisma.client): Promise<BillingProviderEventView> {
+    const access = await this.access(context, 'system.billing.read', tx);
+    if (!access.platformScope) throw new NotFoundException();
+    const row = await tx.billingProviderEvent.findFirst({ where: { id, stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode } });
+    if (!row) throw new NotFoundException();
+    const issue = await tx.billingIssue.findFirst({ where: { stripeAccountId: row.stripeAccountId, livemode: row.livemode,
+      companyId: null, kind: 'PROVIDER_EVENT_FAILED', referenceId: id } });
+    return { id, mode: row.livemode ? 'LIVE' : 'TEST', eventType: row.eventType, state: row.status, attempts: row.attempts,
+      receivedAt: row.receivedAt.toISOString(), processedAt: row.processedAt?.toISOString() ?? null, retryAt: row.retryAt.toISOString(),
+      leaseUntil: row.leaseUntil?.toISOString() ?? null, errorCode: row.errorCode ? 'reconciliation_required' : null, issueId: issue?.id ?? null,
+      sourceHash: hashBilling([row.id, row.status, row.attempts, row.leaseToken, row.leaseUntil, row.retryAt, row.processedAt, row.evidenceHash]),
+      canRetry: access.capabilities.includes('system.billing.reconcile.run') && ['DEAD', 'RETRY', 'PROCESSING'].includes(row.status) && (!row.leaseUntil || row.leaseUntil <= new Date()) };
+  }
+  async providerEvents(context: RequestContext, cursor?: string, all = false) {
+    const access = await this.access(context, 'system.billing.read');
+    if (!access.platformScope) throw new NotFoundException();
+    const where: Prisma.BillingProviderEventWhereInput = { stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode,
+      ...all ? {} : { status: { not: 'PROCESSED' } } };
+    if (cursor && !await this.prisma.client.billingProviderEvent.findFirst({ where: { ...where, id: cursor } })) throw new NotFoundException();
+    const rows = await this.prisma.client.billingProviderEvent.findMany({ where: { ...where, ...cursor ? { id: { gt: cursor } } : {} }, orderBy: { id: 'asc' }, take: 26 });
+    return { items: await Promise.all(rows.slice(0, 25).map(row => this.providerEvent(context, row.id))), nextCursor: rows.length > 25 ? rows[24]!.id : null };
   }
 
   private async issueView(row:BillingIssue,tx:Prisma.TransactionClient=this.prisma.client):Promise<BillingOperatorIssue> {

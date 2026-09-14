@@ -1,3 +1,5 @@
+import { checkBillingProviderEvents } from './billing-provider-events-smoke';
+import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 /** Full compiled AppModule + HTTP + PostgreSQL. Only external provider transports are simulated. */
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
@@ -46,6 +48,7 @@ async function main() {
   const provider = { customers: [] as ProviderObject[], sessions: [] as ProviderObject[], subscriptions: [] as ProviderObject[], invoices: [] as ProviderObject[], lines: [] as ProviderObject[], payments: [] as ProviderObject[], intents: [] as ProviderObject[], charges: [] as ProviderObject[] };
   const repeatFixture = repeatProviderFixture(run, provider);
   const notificationFixture = billingNotificationFixture();
+  let providerReadHook: ((path:string)=>Promise<void>) | undefined;
   let checkoutCalls = 0, badDocument = false, loseSubscriptionCheckout = false;
   const subscriptionCheckouts = new Map<string, ProviderObject>();
   const nativeFetch = globalThis.fetch;
@@ -58,6 +61,7 @@ async function main() {
     const headers = new Headers(init?.headers);
     assert.equal(headers.get('stripe-version'), STRIPE_API_VERSION);
     const form = new URLSearchParams(String(init?.body ?? '')), path = url.pathname.slice(3);
+    if(providerReadHook && (!init?.method || init.method==='GET'))await providerReadHook(path);
     const list = (data: ProviderObject[]) => ({ object: 'list', data, has_more: false });
     const response = (value: unknown) => new Response(JSON.stringify(value), { status: 200, headers: { 'content-type': 'application/json' } });
     const repeatResponse = repeatFixture.request(path, init?.method ?? 'GET', form, headers.get('idempotency-key'));
@@ -154,6 +158,15 @@ async function main() {
       const value = await response.json(); return { status: response.status, body: value };
     };
     const drainNotifications = () => request('/v1/internal/billing/notifications/drain', 'POST', {}, { 'x-worker-token': workerToken });
+    const checkProviderEvents=()=>checkBillingProviderEvents({request,prisma,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,
+      reconciler:app.get(BillingReconcilerService),operations:app.get(BillingOperationsService),provider,browser,interceptRead:hook=>{providerReadHook=hook;}});
+    if (process.env.BILLING_PROVIDER_EVENTS_ONLY === '1') {
+      if(process.env.BILLING_BROWSER_E2E==='1'){
+        const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      }
+      cases.push(...await checkProviderEvents());
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe'],realProviderPayment:false}));return;
+    }
     if (process.env.BILLING_RECEIPT_QUOTA_ONLY === '1') {
       if (process.env.BILLING_BROWSER_E2E === '1') {
         const { startBillingBrowser } = await import('./billing-browser-smoke');
@@ -415,6 +428,7 @@ async function main() {
     if (process.env.BILLING_CONFIG_ONLY !== '1' && process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingUpgrade({ request, prisma, companyIds, userId: userIds[0]!, provider, fixture: repeatFixture, browser, reconcile: id => app.get(BillingReconcilerService).reconcileAccount(id) }));
     if (process.env.BILLING_CONFIG_ONLY !== '1' && process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, browser, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
     cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser }));
+    cases.push(...await checkProviderEvents());
     console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
       simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false, browserE2E: Boolean(browser) }));
   } finally {

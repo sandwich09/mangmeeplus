@@ -1,3 +1,4 @@
+import { BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -16,7 +17,10 @@ import { BillingNotificationsService } from '../application/billing-notification
 
 type AuthedRequest = Request & { context: RequestContext; rawBody?: Buffer };
 function bodyFields(value: unknown, fields: string[]): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !fields.includes(key))) invalid();
+  // Runtime DTO constructors declare optional fields with undefined values. JSON callers
+  // cannot send undefined; unknown submitted fields still fail the global whitelist/parser.
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key =>
+    (value as Record<string, unknown>)[key] !== undefined && !fields.includes(key))) invalid();
   return value as Record<string, unknown>;
 }
 function invalid(): never { throw new BadRequestException({ code: 'BILLING_INPUT_INVALID', message: 'กรุณาตรวจสอบข้อมูลรายการ' }); }
@@ -40,6 +44,18 @@ export class BillingCatalogController {
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
     private readonly configuration: BillingConfigurationService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService) {}
+  @Get('provider-events') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  providerEvents(@Req() req: AuthedRequest, @Query() query: unknown) {
+    const fields=bodyFields(query,['cursor','all']);if(fields.all!==undefined&&fields.all!=='true')invalid();
+    return this.admin.providerEvents(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor),fields.all==='true');
+  }
+  @Get('provider-events/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
+  providerEvent(@Req() req: AuthedRequest, @Param('id') id: string) { return this.admin.providerEvent(req.context,uuid(id)); }
+  @Post('provider-events/:id/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run')
+  async previewEvent(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: BillingEventPreviewDto) {
+    const fields=bodyFields(body,['sourceHash','reason']);await this.operationLimit(req);
+    return this.operations.previewEvent(req.context,{referenceId:uuid(id),sourceHash:textField(fields.sourceHash,64),reason:textField(fields.reason,500)});
+  }
   @Get('companies/:id/deliveries') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   deliveries(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.notifications.deliveries(req.context,textField(id,128),fields.cursor===undefined?undefined:textField(fields.cursor,128));
@@ -62,13 +78,13 @@ export class BillingAdminController {
   @Get('scope-changes/:id') @RequirePermissions('admin.role.manage') @Header('Cache-Control', 'no-store')
   scopeChange(@Req() req: AuthedRequest, @Param('id') id: string) { return this.scopes.get(req.context,uuid(id)); }
   @Post('scope-changes/preview') @HttpCode(200) @RequirePermissions('admin.role.manage')
-  async scopePreview(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async scopePreview(@Req() req: AuthedRequest, @Body() body: BillingScopePreviewDto) {
     const fields = bodyFields(body,['type','userId','companyId','expiresAt','reason']);
     await this.operationLimit(req); return this.scopes.preview(req.context,{type:textField(fields.type),userId:textField(fields.userId,128),companyId:textField(fields.companyId,128),
       expiresAt:fields.expiresAt === null ? null : textField(fields.expiresAt,40),reason:textField(fields.reason,500)});
   }
   @Post('scope-changes/:id/:action') @HttpCode(200) @RequirePermissions('admin.role.manage')
-  async scopeAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: unknown, @Headers('idempotency-key') key?: string) {
+  async scopeAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingCommandDto, @Headers('idempotency-key') key?: string) {
     const fields=bodyFields(body,['expectedVersion','previewHash']);
     if (!Number.isInteger(fields.expectedVersion) || !['submit','approve','cancel'].includes(action)) invalid();
     await this.operationLimit(req);return this.scopes.act(req.context,uuid(id),action as 'submit'|'approve'|'cancel',fields.expectedVersion as number,textField(fields.previewHash),key);
@@ -76,7 +92,7 @@ export class BillingAdminController {
   @Get('settings') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   settings(@Req() req: AuthedRequest) { return this.configuration.settings(req.context); }
   @Post('reauthenticate') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async reauthenticate(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async reauthenticate(@Req() req: AuthedRequest, @Body() body: BillingReauthenticateDto) {
     const fields = bodyFields(body, ['password']);
     await this.admin.access(req.context, 'system.billing.read');
     const limit = await this.limits.consume('billing-reauthenticate', req.context.userId, 5, 300);
@@ -97,7 +113,7 @@ export class BillingAdminController {
       fields.sourceHash===undefined?undefined:textField(fields.sourceHash,64));
   }
   @Post('configuration-changes/preview') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async configurationPreview(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async configurationPreview(@Req() req: AuthedRequest, @Body() body: BillingConfigurationDto) {
     const fields = bodyFields(body, ['type', 'expectedVersion', 'policy', 'gates', 'reason','draftId','draftVersion']);
     if(fields.draftId!==undefined)uuid(fields.draftId);
     if(fields.draftVersion!==undefined&&(!Number.isInteger(fields.draftVersion)||Number(fields.draftVersion)<0))invalid();
@@ -105,12 +121,12 @@ export class BillingAdminController {
     return this.configuration.preview(req.context, fields as unknown as BillingConfigurationInput);
   }
   @Post('configuration-drafts') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async configurationDraft(@Req() req:AuthedRequest,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async configurationDraft(@Req() req:AuthedRequest,@Body() body: BillingConfigurationDto,@Headers('idempotency-key') key?:string){
     const fields=bodyFields(body,['type','expectedVersion','policy','gates','reason','draftId']);if(fields.draftId!==undefined)uuid(fields.draftId);
     await this.operationLimit(req);return this.configuration.saveDraft(req.context,fields as unknown as BillingConfigurationDraftInput,key??'');
   }
   @Post('configuration-changes/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async configurationAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: unknown,
+  async configurationAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingCommandDto,
     @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'previewHash']);
     if (!Number.isInteger(fields.expectedVersion) || !['submit', 'approve', 'cancel'].includes(action)) invalid();
@@ -120,7 +136,7 @@ export class BillingAdminController {
     return this.configuration.submit(req.context, uuid(id), fields.expectedVersion as number, textField(fields.previewHash), key ?? '');
   }
   @Post('settings/emergency-close') @HttpCode(200) @RequirePermissions('system.billing.gate.manage')
-  async configurationClose(@Req() req: AuthedRequest, @Body() body: unknown, @Headers('idempotency-key') key?: string) {
+  async configurationClose(@Req() req: AuthedRequest, @Body() body: BillingCloseDto, @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'gates', 'reason']);
     await this.operationLimit(req);
     return this.configuration.close(req.context, { expectedVersion: fields.expectedVersion as number, gates: fields.gates,
@@ -134,12 +150,12 @@ export class BillingAdminController {
   @Get('operations') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   operationsList(@Req() req: AuthedRequest, @Query() query: unknown) {
     const fields = bodyFields(query, ['companyId', 'cursor','referenceId']);
-    return this.operations.list(req.context, textField(fields.companyId, 128), fields.cursor === undefined ? undefined : uuid(fields.cursor),fields.referenceId===undefined?undefined:textField(fields.referenceId,128));
+    return this.operations.list(req.context, fields.companyId===undefined?null:textField(fields.companyId, 128), fields.cursor === undefined ? undefined : uuid(fields.cursor),fields.referenceId===undefined?undefined:textField(fields.referenceId,128));
   }
   @Get('operations/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   operation(@Req() req: AuthedRequest, @Param('id') id: string) { return this.operations.get(req.context, uuid(id)); }
   @Post('operations/preview') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async preview(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async preview(@Req() req: AuthedRequest, @Body() body: BillingRepairPreviewDto) {
     const fields = bodyFields(body, ['type', 'companyId', 'reason', 'expectedVersion','referenceId']);
     if ((fields.type!=='RECONCILE'&&fields.type!=='RETRY_APPLY'&&fields.type!=='RETRY_NOTIFICATION'&&fields.type!=='RECONCILE_NOTIFICATION') || !Number.isInteger(fields.expectedVersion)) invalid();
     await this.operationLimit(req);
@@ -147,7 +163,7 @@ export class BillingAdminController {
       reason: textField(fields.reason, 500), expectedVersion: fields.expectedVersion as number,...fields.referenceId===undefined?{}:{referenceId:textField(fields.referenceId,128)} });
   }
   @Post('operations') @HttpCode(202) @RequirePermissions('system.billing.read')
-  async submit(@Req() req: AuthedRequest, @Body() body: unknown, @Headers('idempotency-key') key: string | undefined) {
+  async submit(@Req() req: AuthedRequest, @Body() body: BillingSubmitDto, @Headers('idempotency-key') key: string | undefined) {
     const fields = bodyFields(body, ['previewId', 'previewHash', 'expectedVersion']);
     if (!Number.isInteger(fields.expectedVersion)) invalid();
     await this.operationLimit(req);
@@ -155,7 +171,7 @@ export class BillingAdminController {
       expectedVersion: fields.expectedVersion as number }, key ?? '');
   }
   @Post('operations/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.read')
-  async transition(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: unknown) {
+  async transition(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingVersionDto) {
     const fields = bodyFields(body, ['expectedVersion']);
     if ((action !== 'retry' && action !== 'cancel') || !Number.isInteger(fields.expectedVersion)) invalid();
     await this.operationLimit(req);
@@ -192,7 +208,7 @@ export class BillingAdminController {
   @Get('issues/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   issue(@Req() req: AuthedRequest, @Param('id') id: string) { return this.admin.issue(req.context, uuid(id)); }
   @Patch('issues/:id') @RequirePermissions('system.billing.issue.manage')
-  async updateIssue(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: unknown) {
+  async updateIssue(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: BillingIssueDto) {
     const fields = bodyFields(body, ['expectedVersion', 'state', 'note', 'assigneeUserId','backupUserId','priority','followUpAt']);
     if (!Number.isInteger(fields.expectedVersion) || (fields.assigneeUserId !== null && typeof fields.assigneeUserId !== 'string')) invalid();
     await this.admin.access(req.context, 'system.billing.issue.manage');
@@ -220,20 +236,20 @@ export class BillingController {
   @Get('collection/:id')
   collectionGet(@Req() req: AuthedRequest, @Param('id') id: string) { return this.billing.collection.get(req.context, uuid(id)); }
   @Post('collection/preview') @HttpCode(200)
-  async collectionPreview(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async collectionPreview(@Req() req: AuthedRequest, @Body() body: BillingCollectionPreviewDto) {
     const fields = bodyFields(body, ['action', 'offerKey', 'interval', 'capacity']);
     if (!['CANCEL_RENEWAL', 'RESUME_RENEWAL', 'SCHEDULE_DOWNGRADE', 'CANCEL_DOWNGRADE'].includes(fields.action as string)) invalid();
     await this.limit(req); return this.billing.collection.preview(req.context, fields.action as import('@watchdog-bms/contracts').BillingCollectionAction,
       fields.action === 'SCHEDULE_DOWNGRADE' ? { offerKey: textField(fields.offerKey), interval: textField(fields.interval), capacity: fields.capacity } : undefined);
   }
   @Post('collection/:id/capacity') @HttpCode(200)
-  async planCapacityRepair(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: unknown, @Headers('idempotency-key') key?: string) {
+  async planCapacityRepair(@Req() req: AuthedRequest, @Param('id') id: string, @Body() body: BillingCapacityRepairDto, @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'selection', 'accepted']);
     if (!Number.isInteger(fields.expectedVersion) || fields.accepted !== true) invalid();
     await this.limit(req); return this.billing.repairPlanCapacity(req.context, uuid(id), fields.expectedVersion as number, fields.selection, key ?? '');
   }
   @Post('collection/:id/:action') @HttpCode(200)
-  async collectionCommand(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: unknown,
+  async collectionCommand(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingCommandDto,
     @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'previewHash', 'accepted']);
     if (!Number.isInteger(fields.expectedVersion) || !['submit', 'withdraw'].includes(action)) invalid();
@@ -243,7 +259,7 @@ export class BillingController {
     return this.billing.collection.submit(req.context, uuid(id), fields.expectedVersion as number, textField(fields.previewHash), key ?? '');
   }
   @Post('quote') @HttpCode(200)
-  async quote(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async quote(@Req() req: AuthedRequest, @Body() body: BillingQuoteDto) {
     const fields = bodyFields(body, ['offerKey', 'interval', 'billingEmail', 'capacity']);
     const input = { offerKey: textField(fields.offerKey, 40), interval: textField(fields.interval, 10), billingEmail: textField(fields.billingEmail, 320), capacity: fields.capacity };
     await this.limit(req);
@@ -255,14 +271,14 @@ export class BillingController {
     return this.billing.capacity(req.context, textField(fields.offerKey, 40), textField(fields.interval, 10));
   }
   @Post('attempts/:attemptId/capacity') @HttpCode(202)
-  async repairCapacity(@Req() req: AuthedRequest, @Param('attemptId') attemptId: string, @Body() body: unknown, @Headers('idempotency-key') key?: string) {
+  async repairCapacity(@Req() req: AuthedRequest, @Param('attemptId') attemptId: string, @Body() body: BillingCapacityRepairDto, @Headers('idempotency-key') key?: string) {
     const fields = bodyFields(body, ['expectedVersion', 'selection', 'accepted']);
     if (!Number.isInteger(fields.expectedVersion) || fields.accepted !== true) invalid();
     await this.limit(req);
     return this.billing.repairCapacity(req.context, uuid(attemptId), fields.expectedVersion as number, fields.selection, key ?? '');
   }
   @Post('checkout') @HttpCode(200)
-  async checkout(@Req() req: AuthedRequest, @Body() body: unknown, @Headers('idempotency-key') key: string | undefined) {
+  async checkout(@Req() req: AuthedRequest, @Body() body: BillingCheckoutDto, @Headers('idempotency-key') key: string | undefined) {
     const fields = bodyFields(body, ['quoteId', 'consentRevision', 'accepted', 'channel']);
     if (fields.accepted !== true || (fields.channel !== 'web' && fields.channel !== 'line')) invalid();
     const input: BillingCheckoutBody = { quoteId: uuid(fields.quoteId), consentRevision: textField(fields.consentRevision), accepted: true as const, channel: fields.channel };
@@ -278,7 +294,7 @@ export class BillingController {
   @Post('refresh') @HttpCode(202)
   async refresh(@Req() req: AuthedRequest) { await this.limit(req); return this.billing.refresh(req.context); }
   @Post('portal') @HttpCode(200)
-  async portal(@Req() req: AuthedRequest, @Body() body: unknown) {
+  async portal(@Req() req: AuthedRequest, @Body() body: BillingPortalDto) {
     if (bodyFields(body, ['action']).action !== 'portal_payment_method') invalid();
     await this.limit(req); return this.billing.portal(req.context);
   }
@@ -292,7 +308,7 @@ export class BillingController {
     return this.billing.history(req.context, input);
   }
   @Post('documents/:documentId/open') @HttpCode(200)
-  async document(@Req() req: AuthedRequest, @Param('documentId') id: string, @Body() body: unknown) {
+  async document(@Req() req: AuthedRequest, @Param('documentId') id: string, @Body() body: BillingDocumentDto) {
     const { kind } = bodyFields(body, ['kind']);
     if (kind !== 'invoice' && kind !== 'receipt' && kind !== 'pdf') invalid();
     await this.limit(req); return this.billing.document(req.context, id, kind);

@@ -15,7 +15,7 @@
 
 > **Postmark / Stripe document decision 2026-09-11:** Owner เลือก Postmark สำหรับ app transactional mail และใช้ Receipt ค่า Postmarkลงบัญชีบริษัทเรา. **Invoice/Receipt ให้ลูกค้ามั่งมีใช้ Stripe สร้างและส่งโดยตรง** ตาม [provider spec §7](mangmee-transactional-email-provider-spec-th.md) และ [M3/EM10–EM17](../plans/mangmee-transactional-email-provider-plan-th.md). ไม่สร้าง PDF/เลขเอกสารคู่ขนานหรือส่ง receipt ซ้ำผ่าน Postmark; paid unlock ไม่รอ email. B06 ส่วนภาษี/ข้อมูลผู้ขายผู้ซื้อยัง OPEN; custom Thai tax/e-Tax deferred. Provider selectionปิดแล้ว แต่ Postmark/Stripe runtime acceptanceยังไม่ผ่าน.
 
-สถานะ: **S-pre + pre-LIVE marketing IMPLEMENTED / LOCAL PASS 2026-09-11; Stripe collection ยัง NOT IMPLEMENTED**. Owner เลือก Stripe card auto-renew แทน K BIZ + EasySlip. ราคา paid 249/499/999/1,999 บาทต่อเดือนและ trial `FREE_TRIAL_15` ตาม §8 คงเดิม; paid offers disabled. B01/B02/B09 อัปเดตเฉพาะขอบเขต package amendment; ส่วนที่ยัง OPEN ต้องตัดสินก่อนเปิด behavior นั้น. งานรอบนี้แก้ความถูกต้องของฐานเดิมและพิสูจน์ simulation ไม่เปิดรับเงินจริงหรือ deploy.
+สถานะปัจจุบัน: **STRIPE IMPLEMENTATION IN PROGRESS / LOCAL SIMULATION CHECKPOINTS PASS 2026-09-14**. รายละเอียด exact source, CI และงานค้างอยู่ใน implementation notice/agent memory; บันทึก S-pre ด้านล่างเป็นประวัติวันที่2026-09-11. Owner เลือก Stripe card auto-renew แทน K BIZ + EasySlip. ราคา paid 249/499/999/1,999 บาทต่อเดือนและ trial `FREE_TRIAL_15` ตาม §8 คงเดิม; paid offers disabled. B01/B02/B09 อัปเดตเฉพาะขอบเขต package amendment; ส่วนที่ยัง OPEN ต้องตัดสินก่อนเปิด behavior นั้น. งานรอบนี้แก้ความถูกต้องของฐานเดิมและพิสูจน์ simulation ไม่เปิดรับเงินจริงหรือ deploy.
 
 ข้อกำหนดฝั่งเว็บไซต์ทางการ: [mangmee_web — Stripe billing](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md). เอกสารนี้เป็น source of truth ของ billing; ทั้งสอง repo ต้องเปลี่ยนราคา/สถานะขาย/ข้อความต่ออายุให้ตรงกันก่อนเปิดใช้.
 
@@ -25,7 +25,7 @@
 
 **Historical red run 2026-09-11:** ทดสอบ existing web/API/DB จริงโดยจำลองผลจ่ายและใช้ manual-renew driver: browser ผ่าน 6/8, PostgreSQL recovery probes ผ่าน 1/4. พบ blockers R01/R02/R03/R05/R06; ยังไม่พร้อม reuse โดยตรงและไม่ใช่ Stripe E2E. ดู [ผลและคำสั่งรันซ้ำ](../evidence/stripe-readiness-2026-09-11/README.md).
 
-**Executed repair 2026-09-11:** Owner ให้ลงมือและปิด proof loop. R01/R02/R03/R05/R06 แก้แล้ว; R07 มี fault-injection proof; R04 pricing bundle แก้แล้ว. [หลักฐานล่าสุด](../evidence/stripe-repair-2026-09-11/README.md): browser 20/20, PG 15/15, focused 198/198, marketing desktop/mobile ผ่าน. §14–15 และแผน §9 สอดคล้องกับ runtime ปัจจุบัน. ยังไม่มี Stripe Checkout/webhook/paid-period adapter จึงไม่ถือว่า Stripe E2E ผ่าน.
+**Executed repair 2026-09-11:** Owner ให้ลงมือและปิด proof loop. R01/R02/R03/R05/R06 แก้แล้ว; R07 มี fault-injection proof; R04 pricing bundle แก้แล้ว. [หลักฐานล่าสุด](../evidence/stripe-repair-2026-09-11/README.md): browser 20/20, PG 15/15, focused 198/198, marketing desktop/mobile ผ่าน. §14–15 และแผน §9 สอดคล้องกับ runtime ปัจจุบัน. ขณะ checkpoint S-pre นี้ยังไม่มี Stripe adapter; implementation และหลักฐานหลัง2026-09-12อยู่ใน integration evidence แยกต่างหาก.
 
 ที่มา: การตัดสินใจ Owner 2026-08-25 — จำกัดการใช้ใบเสร็จต่อบริษัท ใช้ต่อต้อง subscribe; กติกาแม่อยู่ [แผนหลัก P26 + §13.8](../plans/mangmee-brain-2-5-day-priority-plan-th.md)
 
@@ -210,28 +210,28 @@ Source ของราคา paid: เว็บ official commit `9d51823` (2026-
 - S2 เลือกแพ็กเกจ → ตรวจยอด/เงื่อนไข → Stripe hosted Checkout → กลับแอปรอ backend ยืนยัน; ไม่เปิดจ่ายก่อน LIVE. สำรวจ routing แล้ว 2026-09-11: ใช้ [LINE + web UI spec](mangmee-line-web-billing-ui-spec-th.md) เป็น target routes/contracts, U01–U12 และ wireframes; endpoints ยังไม่ได้ implement
 - S3 quota ใน upload/review/LINE และ S4 partner override ใช้ขอบเขตเดิม; หน้า term-expired ต้องมีทางเข้า billing สำหรับ OWNER เมื่อ integration เปิดแล้ว
 
-## 10. คำถามที่ Owner ต้องตอบก่อนเริ่ม implement
+## 10. มติที่ใช้ implement และเงื่อนไขเปิดใช้งาน
 
-1. **ตอบแล้วบางส่วน — trial conversion:** สมัคร trial ไม่ผูกบัตร/ไม่คิดเงิน; starter7เมนู/15ใบ/default30วันตาม package amendment. **ยัง OPEN:** opt-in paid คิดเงินทันทีหรือเมื่อครบ trial และรักษาวันทดลองที่เหลืออย่างไร
-2. **ตอบแล้ว 2026-09-08 — provider:** Stripe Payments + Billing + hosted Checkout สำหรับ card auto-renew; Customer Portal สำหรับจัดการสมาชิก. Paid tiers ยัง disabled; PromptPay deferred
-3. **ยังเปิด — ภาษี/ต้นทุน:** ราคาใน §8 รวมภาษีหรือยัง, ออกเอกสารในนามนิติบุคคลใด, ผู้รับผิดชอบบัญชี/เอกสาร และงบ AI ของ paid tiers; ใบเรียกเก็บของ Stripe ไม่ตอบข้อนี้แทน Mangmee
-4. **ตอบแล้ว 2026-08-26 — คิวเดิม 2026-08-26:** P14→P26 อยู่ท้ายคิวตามแผนหลัก; Owner สั่ง S-pre/runtime proof เพิ่มเมื่อ 2026-09-11 โดยไม่เปิด paid integration
-5. **ยังเปิด — collection/access:** จำนวนวัน grace, retry policy, สิทธิ์ระหว่างค้างจ่ายและเมื่อ retry หมด, การกู้คืนหลังชำระล่าช้า; ห้ามนำ free fallback เก่ากลับมาแทน P29 โดยเดา
-6. **ยังเปิด — เปลี่ยน/จบสมาชิก:** ยกเลิกทันทีหรือสิ้นรอบ, upgrade/downgrade/proration, refund และ custom ENTERPRISE; ตั้ง Portal ตามคำตอบก่อนเปิดฟังก์ชันนั้น
+1. สมัคร trial ไม่ผูกบัตร: starter7เมนู/15ใบต่อเดือน/30วันตาม default. ยืนยันซื้อให้เริ่มและจ่ายทันที ไม่ทบวัน trial.
+2. Stripe Payments/Billing + hosted Checkout สำหรับ card collection; Portal เปิดเฉพาะ payment-method update. แอปควบคุมซื้อซ้ำ/upgrade/downgrade/cancel/resume ตาม pack amendment; PromptPay deferred.
+3. VAT ปัจจุบัน OFF เพราะบริษัทยังไม่จด VAT. Admin เปิดภายหลังด้วย inclusive/exclusive, issuer และ preview/independent approval; เอกสารเก่าไม่ถูกเปลี่ยน. รายละเอียดนิติบุคคล/บัญชี provider ต้องพร้อมก่อน LIVE.
+4. Owner อนุญาต implement และ merge develop/main เมื่อ CI ผ่าน โดย **ไม่ deploy**. การเปิด customer gate/live rollout ต้องเป็นงานที่อนุญาตแยกตาม runbook.
+5. Grace เริ่มต้น7วันสำหรับ renewal ลูกค้าที่เคยจ่าย พร้อมสิทธิ์เดิม/โควตาที่เหลือ ไม่ให้โควตาจาก unpaid invoice. หมด grace พักใช้และหยุด Stripe future debt; หนี้เก่า/refund/dispute ให้เจ้าหน้าที่ตรวจ.
+6. ยกเลิกสิ้นรอบที่ซื้อไว้; ซื้อแพ็กเดิมซ้ำให้โควตาทันทีและต่อวันจาก expiry เดิม. รายปีได้12เท่าทันที; upgrade คิดส่วนต่างทุกช่วงที่เหลือและไม่ขยาย expiry, downgrade สิ้นรอบพร้อมเลือกสาขา/ผู้ใช้ที่จะคงไว้. Receipt-only HIDDEN; Enterprise/ภ.ง.ด.53/50ทวิ Coming soon และห้ามจ่าย.
 
-ก่อน implementation: ปิด policy ที่เกี่ยวข้องและใช้ [แผน P26 + test matrix](../plans/mangmee-stripe-billing-implementation-and-test-plan-th.md), revalidate current contracts/meter/plan-term เมื่อเริ่มแต่ละ slice. ก่อน LIVE: มีหลักฐานทดสอบ §7/§11–13 และตรวจราคา/ข้อความ/CTA ทั้งสอง repo พร้อมกัน; ห้าม deploy/เปิด customer gate จากการอนุมัติ spec เพียงอย่างเดียว.
+ใช้ [pack amendment](mangmee-billing-pack-amendment-2026-09-12.md) และ [B01–B10/implementation plan](../plans/mangmee-stripe-billing-implementation-and-test-plan-th.md) สำหรับสูตรและขอบเขตที่เหลือ. New easy-signup/passwordless E0 เป็นงานแยก; รักษา eligibility/approval ของ signup เดิม. ก่อน LIVE ต้องมี provider readiness/acceptance และตรวจราคา/CTA ทั้งสอง repo; การอนุมัติ spec ไม่ใช่การอนุญาต deploy.
 
 ## 11. จ่ายสำเร็จแล้วเปิดสิทธิ์อัตโนมัติ — acceptance ที่ต้องเกิดจริง
 
 1. เปิดสิทธิ์ **บริษัทที่ซื้อและแพ็กเกจที่จ่าย** ให้สมาชิกที่มีสิทธิ์อยู่แล้ว; ไม่เปิด user ทั้งระบบ ไม่เพิ่มบทบาท และไม่แตะบริษัทอื่นของผู้จ่าย. การซื้อไม่ข้าม platform/customer gate, admin/security hold หรือ feature deny ที่แอดมินตั้งไว้.
 2. แยกหลักฐาน `paid` ออกจากผล `access applied`: invoice/amount/currency/service period/offer/company ต้องตรวจแล้ว และ entitlement + plan term + lifecycle + cache/epoch ต้องเห็นผลครบก่อนบอก “ใช้งานแพ็กเกจแล้ว”. ชื่อสถานะเหล่านี้เป็น semantics ที่ต้องรองรับ ไม่บังคับเพิ่มตารางซ้ำกับของเดิม.
 3. Persist inbox/verified invoice และคำสั่ง apply แบบ idempotent; การเปลี่ยนสิทธิ์/term/lifecycle ต้อง atomic หรือมี durable continuation ที่ resume ได้. ห้ามเขียน SUCCESS ที่ทำให้ replay ข้ามงานที่ยังไม่เสร็จ. Notification/เอกสารส่งไม่สำเร็จต้อง retry แยกโดยไม่เก็บเงินใหม่หรือปิดสิทธิ์ที่ apply แล้ว.
-4. ห้ามเอา `RenewCompanyPlanTermUseCase` มาเรียกตรงทุก invoice: การบวกจำนวนวันคงที่ไม่แทน billing period. ช่องว่าง manual renew ที่เคย commit term/audit ก่อน lifecycle activation แก้และผ่าน S-pre แล้วตามหลักฐาน 2026-09-11; paid invoice adapter ยังไม่ได้ implement. ใช้ logic เดิมเท่าที่ถูกต้องและเพิ่ม transaction/fence/recovery ของ paid apply; ไม่เพิ่ม endpoint ปลดล็อกที่ client สั่งเอง.
+4. ห้ามเอา `RenewCompanyPlanTermUseCase` มาเรียกตรงทุก invoice: การบวกจำนวนวันคงที่ไม่แทน billing period. ช่องว่าง manual renew ที่เคย commit term/audit ก่อน lifecycle activation แก้และผ่าน S-pre แล้วตามหลักฐาน 2026-09-11; ปัจจุบัน paid invoice adapter ใช้ verified evidence/atomic grant และมี local simulation proof แยกจาก S-pre แล้ว. ใช้ logic เดิมเท่าที่ถูกต้องและเพิ่ม transaction/fence/recovery ของ paid apply; ไม่เพิ่ม endpoint ปลดล็อกที่ client สั่งเอง.
 5. Renewal ต้องชนกับ expiry sweep/admin edit ได้อย่างปลอดภัย: recheck deadline/version/status ใน transaction/CAS ก่อน disable หรือ activate. Sweep ที่อ่านวันเก่าต้องไม่ปิดบริษัทที่เพิ่งจ่าย; payment เก่าต้องไม่ย้อนการยกเลิก/hold/แพ็กเกจใหม่.
 6. หน้า return poll สถานะจาก backend แบบ bounded และแสดง “รับชำระแล้ว กำลังเปิดใช้งาน” เมื่อ paid แต่ apply ค้าง; มี reference และทางติดตาม ห้ามชวนจ่ายซ้ำ. Backend สามารถตรวจ Stripe ซ้ำด้วย mapping ที่ยืนยันตัวตนแล้วและเข้าทาง apply เดียวกับ webhook; ไม่เชื่อ browser claim.
 7. ไม่รอเงิน payout เข้าธนาคารเพื่อเปิดสิทธิ์จาก invoice ที่ยืนยันแล้ว; แยก payment, fulfillment, tax document และ payout reconciliation. เปิดคืนหลัง term expiry ได้เมื่อ paid period ครอบเวลาปัจจุบันและไม่มีเหตุห้ามอื่น; invoice เก่าที่หมด service period แล้วไม่ให้เดือนใหม่ฟรี.
 8. ต้องพิสูจน์ผ่าน browser/API จริงว่า business action ที่ถูกบล็อกก่อนจ่ายกลับทำได้หลัง paid apply, limits/feature ตรง offer, web session/LINE เห็นสถานะใหม่โดยไม่ต้องให้แอดมินกด. Screenshot “ชำระสำเร็จ” หรือ Stripe `active` อย่างเดียวไม่พอ: `active` อาจยังมี invoice เก่าค้าง และ `invoice.paid` อาจมาจาก credit/out-of-band; ช่องทางดังกล่าวต้องมี policy/หลักฐานที่อนุมัติ ไม่ถือเป็น card payment เงียบ ๆ. [Stripe lifecycle](https://docs.stripe.com/billing/subscriptions/overview)
-9. Portal ต้องไม่จบ trial/ตัดเงินทันทีจาก default ของการเปลี่ยนแผนโดยขัด B01; ถ้าอนุมัติรักษา trial ต้องตั้ง `trial_update_behavior=continue_trial` หรือปิดการเปลี่ยนแผนระหว่าง trial. หากใช้ scheduled changes ต้องมีทางยกเลิกที่แอปจัดการได้แม้ Portal ไม่รองรับ. ใช้ hosted navigation ไม่ฝัง Portal ใน iframe. ข้อจำกัดและ test mapping อยู่ [แผน §4E](../plans/mangmee-stripe-billing-implementation-and-test-plan-th.md#stripe-docs-review) และ [Stripe Portal](https://docs.stripe.com/customer-management#limitations).
+9. B01กำหนดเริ่ม/จ่ายทันทีเมื่อยืนยันซื้อ ไม่มี Stripe trial carry. Portal ต้องปิด subscription_update และ subscription_cancel; แอปใช้ owned commands เพื่อรักษาวัน/โควตาที่ซื้อสะสมและมีทางยกเลิก scheduled downgrade/cancellation ตามสิทธิ์. ใช้ hosted navigation ไม่ฝัง Portal ใน iframe. ข้อจำกัดและ test mapping อยู่ [แผน §4E](../plans/mangmee-stripe-billing-implementation-and-test-plan-th.md#stripe-docs-review) และ [Stripe Portal](https://docs.stripe.com/customer-management#limitations).
 
 ## 12. Failure/recovery ที่ต้องส่งมอบ
 

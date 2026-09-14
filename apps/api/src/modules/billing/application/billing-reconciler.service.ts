@@ -1,4 +1,4 @@
-import { detectBillingIssue } from './billing-issues';
+import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
 import { BadRequestException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -53,27 +53,47 @@ export class BillingReconcilerService {
       orderBy: { receivedAt: 'asc' }, take: Math.min(25, batchSize) });
     let processed = 0, failed = 0;
     for (const row of rows) {
-      const leaseToken = randomUUID();
-      const claimed = await this.prisma.client.billingProviderEvent.updateMany({ where: { id: row.id, status: row.status,
-        OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { status: 'PROCESSING', leaseToken,
-          leaseUntil: new Date(Date.now() + 120_000), attempts: { increment: 1 } } });
-      if (!claimed.count) continue;
-      try {
-        await this.handle(row.eventType, row.objectId);
-        await this.prisma.client.billingProviderEvent.updateMany({ where: { id: row.id, leaseToken },
-          data: { status: 'PROCESSED', processedAt: new Date(), leaseToken: null, leaseUntil: null } });
-        processed += 1;
-      } catch {
-        const dead = row.attempts >= 9;
-        await this.prisma.client.billingProviderEvent.updateMany({ where: { id: row.id, leaseToken }, data: {
+      const result = await this.reconcileEvent(row.id);
+      if (result === 'PROCESSED') processed++;
+      else if (result === 'FAILED') failed++;
+    }
+    return { processed, failed };
+  }
+
+  async reconcileEvent(id: string, operatorRetry = false): Promise<'PROCESSED' | 'FAILED' | 'BUSY'> {
+    const row = await this.prisma.client.billingProviderEvent.findFirstOrThrow({ where: { id,
+      stripeAccountId: this.stripe.accountId, livemode: this.stripe.livemode } });
+    if (row.status === 'PROCESSED') return 'PROCESSED';
+    const now = new Date(), leaseToken = randomUUID();
+    if (!['PENDING', 'RETRY', 'PROCESSING', ...(operatorRetry ? ['DEAD'] : [])].includes(row.status) ||
+        (!operatorRetry && row.retryAt > now)) return 'BUSY';
+    const claimed = await this.prisma.client.billingProviderEvent.updateMany({ where: { id, status: row.status, attempts: row.attempts,
+      OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] }, data: { status: 'PROCESSING', leaseToken,
+        leaseUntil: new Date(now.getTime() + 120_000), attempts: { increment: 1 } } });
+    if (!claimed.count) return 'BUSY';
+    try {
+      await this.handle(row.eventType, row.objectId);
+      return await this.prisma.client.$transaction(async tx => {
+        const changed = await tx.billingProviderEvent.updateMany({ where: { id, status: 'PROCESSING', leaseToken, leaseUntil: { gt: new Date() } },
+          data: { status: 'PROCESSED', processedAt: new Date(), errorCode: null, leaseToken: null, leaseUntil: null } });
+        if (!changed.count) return 'BUSY';
+        await resolveBillingIssue(tx, { stripeAccountId: row.stripeAccountId, livemode: row.livemode,
+          companyId: null, kind: 'PROVIDER_EVENT_FAILED', referenceId: id }, 'PROVIDER_EVENT_PROCESSED');
+        return 'PROCESSED';
+      });
+    } catch {
+      const dead = row.attempts >= 9;
+      return this.prisma.client.$transaction(async tx => {
+        const changed = await tx.billingProviderEvent.updateMany({ where: { id, status: 'PROCESSING', leaseToken, leaseUntil: { gt: new Date() } }, data: {
           status: dead ? 'DEAD' : 'RETRY', leaseToken: null, leaseUntil: null, errorCode: 'reconciliation_required',
           retryAt: new Date(Date.now() + Math.min(3600, 30 * 2 ** Math.min(row.attempts, 7)) * 1000),
         } });
-        if (dead) await this.billing.issue(null, 'PROVIDER_EVENT_FAILED', row.id);
-        failed += 1;
-      }
+        if (!changed.count) return 'BUSY';
+        if (dead) await detectBillingIssue(tx, { companyId: null, stripeAccountId: row.stripeAccountId,
+          livemode: row.livemode, kind: 'PROVIDER_EVENT_FAILED', referenceId: id });
+        return 'FAILED';
+      });
     }
-    return { processed, failed };
   }
 
   private async handle(type: string, objectId: string): Promise<void> {
