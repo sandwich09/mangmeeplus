@@ -16,7 +16,7 @@ export default function BillingTimelinePanel({companyId}:{companyId:string}) {
     <p className="text-sm text-gray-600">เรียงตามเวลาบันทึกในระบบ สถานะเป็นผลล่าสุดของแต่ละรายการ เวลาเกิดเหตุจากผู้ให้บริการจะแสดงเมื่อมีหลักฐานเท่านั้น</p>
     {error&&<p role="alert">{error}</p>}{!timeline&&!error&&<p role="status">กำลังโหลดประวัติ…</p>}
     {timeline?.items.map(entry=><article className="space-y-1 rounded-lg bg-gray-50 p-3" key={entry.reference}>
-      <p className="font-semibold">{entry.type==='RECORD_SUPPORT_OUTCOME'?'บันทึกผลติดต่อ':entry.type} · {entry.type==='RECORD_SUPPORT_OUTCOME'?({PREVIEW:'รอยืนยัน',SUCCEEDED:'บันทึกแล้ว',CANCELLED:'ยกเลิกฉบับตรวจสอบ'}[entry.state]??entry.state):entry.state}</p><p>บันทึก {time(entry.recordedAt)}{entry.origin?` · ${entry.origin}`:''}</p>
+      <p className="font-semibold">{entry.type==='RECORD_SUPPORT_OUTCOME'?'บันทึกผลติดต่อ':entry.type==='SCAN_PROVIDER_INVOICES'?'ตรวจประวัติใบแจ้งหนี้ Stripe':entry.type} · {entry.type==='RECORD_SUPPORT_OUTCOME'?({PREVIEW:'รอยืนยัน',SUCCEEDED:'บันทึกแล้ว',CANCELLED:'ยกเลิกฉบับตรวจสอบ'}[entry.state]??entry.state):entry.type==='SCAN_PROVIDER_INVOICES'?({QUEUED:'รอตรวจต่อ',RUNNING:'กำลังตรวจ',SUCCEEDED:'ตรวจครบช่วงที่เลือก',UNKNOWN:'ต้องตรวจสอบก่อนทำต่อ',BLOCKED:'ติดเงื่อนไข',CANCELLED:'ยกเลิกแล้ว'}[entry.state]??entry.state):entry.state}</p><p>บันทึก {time(entry.recordedAt)}{entry.origin?` · ${entry.origin}`:''}</p>
       {entry.occurredAt&&<p>เกิดเหตุ {time(entry.occurredAt)}</p>}{entry.observedAt&&<p>ตรวจผล/รับผล {time(entry.observedAt)}</p>}
       {entry.updatedAt&&<p>อัปเดตรายการ {time(entry.updatedAt)}</p>}
       {entry.amountSatang!==null&&<p>{new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(entry.amountSatang/100)}</p>}

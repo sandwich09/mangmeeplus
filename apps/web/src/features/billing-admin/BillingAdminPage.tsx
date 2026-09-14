@@ -9,7 +9,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
 
 const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
-const issueKind=(kind:string)=>({PROVIDER_SCAN_SCHEDULE_BLOCKED:'ต้องตรวจการตั้งค่ารอบตรวจ Stripe',PROVIDER_SCAN_COVERAGE_GAP:'มีช่วงเหตุการณ์ Stripe ที่ยังตรวจไม่ครบ',PROVIDER_SCAN_FAILED:'งานตรวจ Stripe ยังไม่สำเร็จ',PROVIDER_SCAN_VERSION_UNSUPPORTED:'เหตุการณ์ Stripe ใช้รุ่นข้อมูลที่ยังไม่รองรับ'}[kind]??kind);
+const issueKind=(kind:string)=>({PROVIDER_INVOICE_REVIEW:'ต้องตรวจความต่างของใบแจ้งหนี้ Stripe',PROVIDER_INVOICE_SCAN_FAILED:'งานตรวจใบแจ้งหนี้ยังไม่สำเร็จ',PROVIDER_SCAN_SCHEDULE_BLOCKED:'ต้องตรวจการตั้งค่ารอบตรวจ Stripe',PROVIDER_SCAN_COVERAGE_GAP:'มีช่วงเหตุการณ์ Stripe ที่ยังตรวจไม่ครบ',PROVIDER_SCAN_FAILED:'งานตรวจ Stripe ยังไม่สำเร็จ',PROVIDER_SCAN_VERSION_UNSUPPORTED:'เหตุการณ์ Stripe ใช้รุ่นข้อมูลที่ยังไม่รองรับ'}[kind]??kind);
 const time = (value: string | null) => value ? new Date(value).toLocaleString('th-TH') : 'ยังไม่มี';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
 const get = <T,>(path: string) => authedApiFetch<T>(`/system/billing${path}`, { cache: 'no-store', suppressErrorToast: true });
@@ -107,6 +107,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       </div>}
     </section>}
     {!loading && company?.accountId && <Link className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/apply-invoices`}>ตรวจสิทธิ์จากใบเสร็จเดิม</Link>}
+    {!loading&&company?.accountId&&<Link className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/invoice-scans`}>ตรวจประวัติใบแจ้งหนี้ Stripe</Link>}
     {!loading && company?.accountId && <BillingOperationPanel key={`operation-${company.companyId}`} companyId={company.companyId} companyVersion={company.version} canReconcile={overview?.capabilities.includes('system.billing.reconcile.run')} />}
     {!loading&&company?.accountId&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/deliveries`}>รายการแจ้งเตือนแพ็กเกจ</Link>}
     {!loading && company && <BillingTimelinePanel key={`timeline-${company.companyId}`} companyId={company.companyId}/>}
@@ -125,6 +126,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {issue.kind==='PROVIDER_EVENT_FAILED'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-events/${encodeURIComponent(issue.reference)}`}>ตรวจ event เดิมของเคสนี้</Link>}
       {['PROVIDER_SCAN_SCHEDULE_BLOCKED','PROVIDER_SCAN_COVERAGE_GAP'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href="/system/billing/provider-scans">ตรวจการตั้งค่าและช่วงเวลาที่ตกหล่น</Link>}
       {['PROVIDER_SCAN_FAILED','PROVIDER_SCAN_VERSION_UNSUPPORTED'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-scans/${encodeURIComponent(issue.reference)}`}>เปิดงานค้นหาเหตุการณ์ของเคสนี้</Link>}
+      {issue.companyId&&['PROVIDER_INVOICE_REVIEW','PROVIDER_INVOICE_SCAN_FAILED'].includes(issue.kind)&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/invoice-scans${issue.kind==='PROVIDER_INVOICE_SCAN_FAILED'?`/${encodeURIComponent(issue.reference)}`:''}`}>เปิดงานตรวจใบแจ้งหนี้ของบริษัท</Link>}
       {issue.kind === 'CONTROL_OPERATION_REVIEW' && <Link className="inline-block underline" href={`/system/billing/operations/${encodeURIComponent(issue.reference)}`}>เปิดคำสั่งเดิมของเคสนี้</Link>}
       {issue.companyId && <Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}`}>กลับไปบริษัทนี้</Link>}
       {issue.companyId&&issue.kind.startsWith('NOTIFICATION_')&&<Link className="block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/deliveries`}>ตรวจรายการแจ้งเตือนเดิม</Link>}

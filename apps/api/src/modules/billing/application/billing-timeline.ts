@@ -13,7 +13,7 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
       AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}
   ), attempts AS (SELECT a.* FROM "BillingAttempt" a JOIN accounts b ON a."billingAccountId"=b.id),
   invoices AS (SELECT i.* FROM "BillingInvoice" i JOIN accounts b ON i."billingAccountId"=b.id),
-  operations AS (SELECT * FROM "BillingOperation" WHERE "companyId"=${scope.companyId} AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}),
+  operations AS (SELECT * FROM "BillingOperation" WHERE type<>'OBSERVE_PROVIDER_INVOICE' AND "companyId"=${scope.companyId} AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}),
   issues AS (SELECT * FROM "BillingIssue" WHERE "companyId"=${scope.companyId} AND "stripeAccountId"=${scope.stripeAccountId} AND livemode=${scope.livemode}),
   events AS (
     SELECT 'PLAN_TERM:'||id AS reference,'PLAN_TERM'::text AS kind,'CURRENT_PLAN_TERM'::text AS type,"tierKey" AS state,"createdAt" AS "recordedAt",
@@ -50,7 +50,7 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
   const outcomeLinks=new Map(outcomes.filter(row=>row.referenceId).map(row=>[`OPERATION:${row.id}`,`/system/billing/issues/${encodeURIComponent(row.referenceId!)}?outcome=${encodeURIComponent(row.id)}`]));
   return { items: rows.slice(0,25).map(row => ({ ...row, recordedAt:row.recordedAt.toISOString(), occurredAt:row.occurredAt?.toISOString() ?? null,
     updatedAt:row.updatedAt?.toISOString() ?? null, observedAt:row.observedAt?.toISOString() ?? null,
-    href: outcomeLinks.get(row.reference) ?? (row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
+    href: (row.kind==='OPERATION'&&row.type==='SCAN_PROVIDER_INVOICES'?`/system/billing/companies/${encodeURIComponent(scope.companyId)}/invoice-scans/${encodeURIComponent(row.reference.slice(10))}`:outcomeLinks.get(row.reference)) ?? (row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
       row.kind==='OPERATION' && ['RECONCILE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null) })),
     nextCursor: rows.length>25 ? rows[24]!.reference : null, auditIncluded:scope.audit, financialIncluded:scope.financial };
 }

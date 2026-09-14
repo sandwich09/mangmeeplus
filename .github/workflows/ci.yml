@@ -619,6 +619,16 @@ jobs:
           BILLING_SCAN_SCHEDULE_ONLY: '1'
           BILLING_BROWSER_E2E: '1'
         run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
+      - name: Test scoped historical invoice discovery with real browser
+        if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
+        timeout-minutes: 7
+        env:
+          DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          BILLING_TEST_DATABASE_URL: postgresql://watchdog:watchdog_ci@127.0.0.1:5432/watchdog_postmark_ci
+          REDIS_URL: redis://127.0.0.1:6379
+          BILLING_INVOICE_SCANS_ONLY: '1'
+          BILLING_BROWSER_E2E: '1'
+        run: node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
       - name: Test legal release evidence gates
         if: needs.resolve-source.outputs.recovery_only != 'true' && needs.resolve-source.outputs.release_controller_only != 'true'
         run: |

@@ -42,6 +42,11 @@ export async function checkBillingProviderScans(input:ProviderScansSmokeInput) {
     Object.defineProperty(input.stripe,'enabled',{get:()=>false,configurable:true});
     try{assert.equal((await request(base)).body.canCreate,false);assert.equal((await create()).status,409);}
     finally{if(enabledDescriptor)Object.defineProperty(input.stripe,'enabled',enabledDescriptor);else Reflect.deleteProperty(input.stripe,'enabled');}
+    if(process.env.BILLING_INVOICE_SCANS_ONLY==='1'){
+      const {checkBillingInvoiceScans}=await import('./billing-invoice-scans-smoke');
+      try{return await checkBillingInvoiceScans({...input,roleId,adminId:admin.id});}
+      finally{ids.push(...(await db.billingOperation.findMany({where:{stripeAccountId:input.stripeAccountId,type:{in:['SCAN_PROVIDER_EVENTS','SCAN_PROVIDER_INVOICES','OBSERVE_PROVIDER_INVOICE']}}})).map(row=>row.id));}
+    }
     if(process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'){
       const {checkBillingScanSchedule}=await import('./billing-scan-schedule-smoke');
       try{return await checkBillingScanSchedule({...input,roleId,adminId:admin.id});}

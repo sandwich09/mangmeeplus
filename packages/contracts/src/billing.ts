@@ -8,8 +8,10 @@ export type BillingProviderScanView = {
   id: string; mode: BillingMode; state: string; version: number; reason: string;
   windowStart: string; windowEnd: string; createdAt: string; checkpointAt: string | null;
   pages: number; seen: number; imported: number; known: number; ignored: number; incompatible: number;
-  retryAt: string | null; errorCode: string | null; canCancel: boolean; canResume: boolean; automatic?:boolean;
+  retryAt: string | null; errorCode: string | null; canCancel: boolean; canResume: boolean; automatic?:boolean;kind?:'EVENTS'|'INVOICES';companyId?:string;invoiceFindings?:{matched:number;missing:number;different:number};
 };
+export type BillingInvoiceFinding = {id:string;scanId:string;companyId:string;observedAt:string;invoiceCreatedAt:string;providerStatus:string;
+  classification:'MATCHED'|'LOCAL_MISSING'|'DIFFERENT';localInvoiceId:string|null;localApplyState:string|null;reviewCaseId:string|null};
 export type BillingScanScheduleInput = { enabled:boolean;intervalHours:number;initialLookbackHours:number;expectedVersion:number;reason:string };
 export type BillingScanScheduleOperation = {id:string;mode:BillingMode;state:'PREVIEW'|'SUCCEEDED'|'CANCELLED';version:number;sourceRevision:number;previewHash:string;
   enabled:boolean;intervalHours:number;initialLookbackHours:number;reason:string;initiatorUserId:string;createdAt:string;expiresAt:string;publishedAt:string|null;

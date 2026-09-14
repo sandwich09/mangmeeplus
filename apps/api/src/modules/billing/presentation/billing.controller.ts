@@ -78,6 +78,25 @@ export class BillingAdminController {
   async providerScanAction(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string, @Body() body: BillingVersionDto) {
     bodyFields(body,['expectedVersion']);await this.operationLimit(req);return this.scans.act(req.context,uuid(id),action,body.expectedVersion);
   }
+  // Admin targets use :id; :companyId would select the target as the caller's membership context.
+  @Get('companies/:id/invoice-scans') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  invoiceScans(@Req() req:AuthedRequest,@Param('id') companyId:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);return this.scans.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor),textField(companyId,128));
+  }
+  @Get('companies/:id/invoice-scans/:scanId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  invoiceScan(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('scanId') id:string) {return this.scans.get(req.context,uuid(id),textField(companyId,128));}
+  @Get('companies/:id/invoice-scans/:scanId/findings') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  invoiceScanFindings(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('scanId') id:string,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);return this.scans.invoiceFindings(req.context,textField(companyId,128),uuid(id),fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Post('companies/:id/invoice-scans') @RequirePermissions('system.billing.reconcile.run')
+  async createInvoiceScan(@Req() req:AuthedRequest,@Param('id') companyId:string,@Body() body:BillingProviderScanDto,@Headers('idempotency-key') key?:string) {
+    bodyFields(body,['windowStart','windowEnd','reason']);await this.operationLimit(req);return this.scans.create(req.context,body,key??'',textField(companyId,128));
+  }
+  @Post('companies/:id/invoice-scans/:scanId/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run')
+  async invoiceScanAction(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('scanId') id:string,@Param('action') action:string,@Body() body:BillingVersionDto) {
+    bodyFields(body,['expectedVersion']);await this.operationLimit(req);return this.scans.act(req.context,uuid(id),action,body.expectedVersion,textField(companyId,128));
+  }
   @Get('provider-events') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   providerEvents(@Req() req: AuthedRequest, @Query() query: unknown) {
     const fields=bodyFields(query,['cursor','all']);if(fields.all!==undefined&&fields.all!=='true')invalid();
