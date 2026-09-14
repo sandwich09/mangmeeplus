@@ -4,6 +4,13 @@ export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
 export type PaidTier = typeof BILLING_PAID_TIERS[number];
 export type BillingMode = 'TEST' | 'LIVE';
+export type BillingSettlementTotals = {grossCharges:string;knownTax:string;unknownTaxCharges:number;fees:string;netMovement:string;payouts:string;payoutReversals:string;excluded:number};
+export type BillingSettlementRun = {id:string;mode:BillingMode;state:string;version:number;reason:string;windowStart:string;windowEnd:string;createdAt:string;observedAt:string|null;
+  pages:number;seen:number;matched:number;different:number;manual:number;missing:number;totals:BillingSettlementTotals;errorCode:string|null;retryAt:string|null;canCancel:boolean;canResume:boolean;canRun:boolean};
+export type BillingSettlementFinding = {id:string;runId:string;classification:'MATCHED'|'DIFFERENT'|'MANUAL'|'LOCAL_MISSING';companyId:string|null;companyName:string|null;invoiceId:string|null;
+  observedAt:string;createdAt:string;availableAt:string;refundState:string|null;kind:string;currency:string;amountSatang:number;feeSatang:number;netSatang:number;taxSatang:number|null;availability:'pending'|'available';
+  payout:{status:'paid'|'pending'|'in_transit'|'canceled'|'failed';expectedArrivalAt:string;automatic:boolean;reconciliation:'MATCHED'|'PENDING'|'MANUAL'|'INCOMPLETE'|'FAILED';constituentCount:number|null}|null};
+export type BillingSettlementFindings = {items:BillingSettlementFinding[];nextCursor:string|null;caseIds:string[]};
 export type BillingProviderScanView = {
   id: string; mode: BillingMode; state: string; version: number; reason: string;
   windowStart: string; windowEnd: string; createdAt: string; checkpointAt: string | null;

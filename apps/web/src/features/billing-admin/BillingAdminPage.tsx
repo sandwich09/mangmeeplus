@@ -79,6 +79,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <h1 className="text-2xl font-bold">{issueId ? 'เคสการชำระเงิน' : companyId ? 'การชำระเงินของบริษัท' : issuesOnly ? 'คิวตรวจสอบการชำระเงิน' : 'ดูแลแพ็กเกจและการชำระเงิน'}</h1></header>
     <nav className="flex flex-wrap gap-3"><Link href="/system/billing" className={button}>บริษัท</Link><Link href={`/system/billing/issues${queueQuery()}`} className={button}>คิวตรวจสอบ</Link>
       {overview?.platformScope && overview.mode!=='DISABLED' && <Link href="/system/billing/provider-events" className={button}>เหตุการณ์จาก Stripe</Link>}
+      {overview?.platformScope && overview.capabilities.includes('system.billing.financial.read') && overview.mode!=='DISABLED' && <Link href="/system/billing/settlements" className={button}>ตรวจยอดและเงินโอน</Link>}
       {overview?.canManageScopes && <Link href="/system/billing/operator-scopes" className={button}>ขอบเขตเจ้าหน้าที่</Link>}
       {overview?.platformScope && <Link href="/system/billing/settings" className={button}>ตั้งค่าการชำระเงิน</Link>}</nav>
     {loading && <p role="status">กำลังโหลดข้อมูล…</p>}
@@ -139,6 +140,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {['PROVIDER_SCAN_SCHEDULE_BLOCKED','PROVIDER_SCAN_COVERAGE_GAP'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href="/system/billing/provider-scans">ตรวจการตั้งค่าและช่วงเวลาที่ตกหล่น</Link>}
       {['PROVIDER_SCAN_FAILED','PROVIDER_SCAN_VERSION_UNSUPPORTED'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-scans/${encodeURIComponent(issue.reference)}`}>เปิดงานค้นหาเหตุการณ์ของเคสนี้</Link>}
       {issue.companyId&&['PROVIDER_INVOICE_REVIEW','PROVIDER_INVOICE_SCAN_FAILED'].includes(issue.kind)&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/invoice-scans${issue.kind==='PROVIDER_INVOICE_SCAN_FAILED'?`/${encodeURIComponent(issue.reference)}`:''}`}>เปิดงานตรวจใบแจ้งหนี้ของบริษัท</Link>}
+      {['SETTLEMENT_REVIEW','SETTLEMENT_SCAN_FAILED'].includes(issue.kind)&&overview?.platformScope&&overview.capabilities.includes('system.billing.financial.read')&&<Link className="inline-block underline" href={`/system/billing/settlements/${encodeURIComponent(issue.reference)}`}>เปิดงานตรวจยอดของเคสนี้</Link>}
       {issue.kind === 'CONTROL_OPERATION_REVIEW' && <Link className="inline-block underline" href={`/system/billing/${issue.operationType==='REFUND'?'refunds':'operations'}/${encodeURIComponent(issue.reference)}`}>เปิดคำสั่งเดิมของเคสนี้</Link>}
       {issue.kind==='CONFIGURATION_DRIFT'&&overview?.platformScope&&<Link className="inline-block underline" href="/system/billing/configuration-checks">ตรวจการเชื่อมต่อ Stripe และประวัติ</Link>}
       {issue.kind==='CONFIGURATION_SCHEDULE_REVIEW'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/configuration-changes/${encodeURIComponent(issue.reference)}`}>ตรวจคำขอตั้งค่าที่รอแก้ไข</Link>}

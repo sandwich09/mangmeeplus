@@ -63,6 +63,7 @@ const issueKinds: Record<string,string> = {
   CONFIG_DRIFT:'การตั้งค่าหน้าแก้บัตรต้องตรวจสอบ', CONFIGURATION_DRIFT:'การตั้งค่า Stripe ต้องตรวจสอบ', CONFIGURATION_SCHEDULE_REVIEW:'คำขอตั้งค่าตามกำหนดต้องตรวจใหม่',
   PROVIDER_INVOICE_REVIEW:'ต้องตรวจความต่างของใบแจ้งหนี้ Stripe', PROVIDER_INVOICE_SCAN_FAILED:'งานตรวจใบแจ้งหนี้ยังไม่สำเร็จ',
   PROVIDER_SCAN_SCHEDULE_BLOCKED:'ต้องตรวจการตั้งค่ารอบตรวจ Stripe', PROVIDER_SCAN_COVERAGE_GAP:'มีช่วงเหตุการณ์ Stripe ที่ยังตรวจไม่ครบ',
+  SETTLEMENT_REVIEW:'ยอด Stripe มีรายการที่ต้องตรวจแยก',SETTLEMENT_SCAN_FAILED:'งานตรวจยอด Stripe ยังไม่จบ',
   PROVIDER_SCAN_FAILED:'งานตรวจ Stripe ยังไม่สำเร็จ', PROVIDER_SCAN_VERSION_UNSUPPORTED:'เหตุการณ์ Stripe ใช้รุ่นข้อมูลที่ยังไม่รองรับ',
   CONTROL_OPERATION_REVIEW:'คำสั่งเดิมต้องตรวจสอบ', CUSTOMER_COLLECTION_REVIEW:'ต้องตรวจคำสั่งต่ออายุ', DUPLICATE_SUBSCRIPTION:'พบสมาชิก Stripe ซ้ำ',
   FINANCIAL_REVIEW:'ต้องตรวจยอดเงินหรือข้อพิพาท', GRACE_CANCELLATION_UNKNOWN:'ยังยืนยันการหยุดต่ออายุหลังผ่อนผันไม่ได้',

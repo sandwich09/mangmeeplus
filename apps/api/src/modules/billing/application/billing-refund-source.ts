@@ -33,12 +33,8 @@ async function completeList(stripe:StripeClient,path:string,params:Record<string
   throw refundReviewRequired();
 }
 
-export async function refundSource(stripe:StripeClient,account:BillingAccount,row:BillingInvoice) {
-  if(row.currency!=='THB'||row.providerStatus!=='paid'||!integer(row.paidSatang)||row.paidSatang===0||row.paidSatang!==row.totalSatang||!nativeId(row.providerChargeId,'ch'))throw refundReviewRequired();
-  const invoice=await originalInvoice(stripe,account,row),charge=await stripe.request('GET',`/charges/${row.providerChargeId}`);
-  assertMappedCharge(charge,account,row);
-  if(invoice.object!=='invoice'||invoice.amount_remaining!==0||invoice.starting_balance!==0||invoice.paid_out_of_band===true||
-    (invoice.pre_payment_credit_notes_amount??0)!==0||!integer(invoice.post_payment_credit_notes_amount??0)||(invoice.amount_overpaid??0)!==0)throw refundReviewRequired();
+/** Verify the native invoice-payment-intent-charge chain shared by refund and settlement reads. */
+export async function assertOriginalInvoiceCharge(stripe:StripeClient,account:BillingAccount,row:BillingInvoice,charge:StripeObject){
   const payments=await completeList(stripe,'/invoice_payments',{invoice:row.providerInvoiceId},'inpay');
   if(payments.length!==1)throw refundReviewRequired();const payment=payments[0]!,intentId=stripeId(payment.payment?.payment_intent);
   if(payment.object!=='invoice_payment'||payment.livemode!==account.livemode||payment.status!=='paid'||stripeId(payment.invoice)!==row.providerInvoiceId||
@@ -47,6 +43,15 @@ export async function refundSource(stripe:StripeClient,account:BillingAccount,ro
   if(intent.id!==intentId||intent.object!=='payment_intent'||intent.livemode!==account.livemode||intent.currency!=='thb'||intent.status!=='succeeded'||
     stripeId(intent.customer)!==account.customerId||intent.amount_received!==row.paidSatang||stripeId(intent.latest_charge)!==row.providerChargeId||
     stripeId(charge.payment_intent)!==intent.id||charge.payment_method_details?.type!=='card')throw refundReviewRequired();
+}
+
+export async function refundSource(stripe:StripeClient,account:BillingAccount,row:BillingInvoice) {
+  if(row.currency!=='THB'||row.providerStatus!=='paid'||!integer(row.paidSatang)||row.paidSatang===0||row.paidSatang!==row.totalSatang||!nativeId(row.providerChargeId,'ch'))throw refundReviewRequired();
+  const invoice=await originalInvoice(stripe,account,row),charge=await stripe.request('GET',`/charges/${row.providerChargeId}`);
+  assertMappedCharge(charge,account,row);
+  if(invoice.object!=='invoice'||invoice.amount_remaining!==0||invoice.starting_balance!==0||invoice.paid_out_of_band===true||
+    (invoice.pre_payment_credit_notes_amount??0)!==0||!integer(invoice.post_payment_credit_notes_amount??0)||(invoice.amount_overpaid??0)!==0)throw refundReviewRequired();
+  await assertOriginalInvoiceCharge(stripe,account,row,charge);
   const notes=await completeList(stripe,'/credit_notes',{invoice:row.providerInvoiceId},'cn'),refunds=await completeList(stripe,'/refunds',{charge:row.providerChargeId},'re');
   const adjustments=[...notes.map(n=>adjustment(n,'credit-notes',account,row)),...refunds.map(r=>adjustment(r,'refunds',account,row))].sort((a,b)=>a.id.localeCompare(b.id));
   const issued=notes.filter(n=>n.status==='issued');

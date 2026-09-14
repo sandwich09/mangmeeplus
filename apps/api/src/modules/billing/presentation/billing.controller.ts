@@ -1,3 +1,4 @@
+import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
@@ -57,7 +58,23 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService) {}
+  @Get('settlements') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  settlementList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.settlement.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('settlements') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
+  async settlementCreate(@Req() req:AuthedRequest,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+    const fields=bodyFields(body,['windowStart','windowEnd','reason']);await this.operationLimit(req);
+    return this.settlement.create(req.context,{windowStart:textField(fields.windowStart,30),windowEnd:textField(fields.windowEnd,30),reason:textField(fields.reason,500)},key??'');
+  }
+  @Get('settlements/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  settlementGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.settlement.get(req.context,uuid(id));}
+  @Get('settlements/:id/findings') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  settlementFindings(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.settlement.findings(req.context,uuid(id),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('settlements/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
+  async settlementAction(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown){
+    const fields=bodyFields(body,['expectedVersion']);if(action!=='run'&&action!=='resume'&&action!=='cancel')invalid();await this.operationLimit(req);
+    return this.settlement.action(req.context,uuid(id),action,fields.expectedVersion as number);
+  }
   @Get('companies/:id/invoices/:invoiceId/refund-review') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   async refundReview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Query() query:unknown){
     bodyFields(query,[]);await this.operationLimit(req);return this.refunds.review(req.context,textField(companyId,128),uuid(invoiceId));
@@ -490,9 +507,9 @@ export class StripeEventsController {
 @Public() @Controller('internal/billing')
 export class BillingInternalController {
   constructor(private readonly reconciler: BillingReconcilerService, private readonly operations: BillingOperationsService,
-    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService) {}
+    private readonly notifications: BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly configuration:BillingConfigurationService, private readonly readiness:BillingReadinessService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService) {}
   @Post('provider-scans/drain') @HttpCode(200)
-  drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); return this.scans.drain(); }
+  async drainProviderScans(@Headers('x-worker-token') token: string | undefined) { assertWorkerToken(token); const discovery=await this.scans.drain(),settlement=await this.settlement.drain();return {processed:discovery.processed+settlement.processed,failed:discovery.failed+settlement.failed}; }
   @Post('drain') @HttpCode(200)
   async drain(@Headers('x-worker-token') token: string | undefined) {
     assertWorkerToken(token);
