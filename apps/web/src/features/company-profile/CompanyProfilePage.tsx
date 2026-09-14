@@ -561,13 +561,13 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 </p>
                 <p className="text-sm text-gray-600">
                   {account?.hasPassword
-                    ? 'ใช้อีเมลนี้คู่กับรหัสผ่านเพื่อเข้าเว็บได้ แต่อีเมลยังใช้กู้บัญชีไม่ได้จนกว่าจะยืนยัน'
+                    ? 'ใช้อีเมลนี้คู่กับรหัสผ่านเพื่อเข้าเว็บได้ และยืนยันเพื่อรับการแจ้งเตือนของบัญชี'
                     : 'อีเมลนี้ใช้เข้าเว็บได้หลังจากตั้งรหัสผ่านสำรองด้านล่าง'}
                 </p>
                 <button type="button" className={LINK_BUTTON} onClick={startEmailEdit}>แก้ไขอีเมลบัญชี</button>
                 {account && account.emailDeliveryEnabled !== false && (
                   <div className="mt-1 grid gap-3 rounded-lg border border-gray-200 p-3">
-                    <p className="text-sm font-semibold text-gray-900">ยืนยันอีเมลเพื่อกู้บัญชี</p>
+                    <p className="text-sm font-semibold text-gray-900">ยืนยันอีเมลสำหรับบัญชีนี้</p>
                     {account.pendingEmail ? (
                       <>
                         <Banner tone={emailSent ? 'ok' : 'note'}>

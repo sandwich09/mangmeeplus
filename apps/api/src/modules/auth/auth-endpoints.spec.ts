@@ -1168,7 +1168,7 @@ describe('P11 SES auth mailer provider boundary', () => {
       } else {
         assert.equal(selectAuthMailer(actual, disabled, local, ses), ses);
         await send();
-        assert.match(commands[0].input.Message.Body.Text.Data, /https:\/\/frontend\.example\.com\/verify-email\?token=token/);
+        assert.match(commands[0].input.Message.Body.Text.Data, /https:\/\/frontend\.example\.com\/verify-email#token=token/);
         assert.doesNotMatch(JSON.stringify(commands), /https:\/\/api\.example\.com/);
       }
     }
@@ -1197,7 +1197,7 @@ describe('P11 SES auth mailer provider boundary', () => {
       assert.equal(input.Message.Body.Html.Charset, 'UTF-8');
     }
     assert.deepEqual(inputs.map((input) => input.Tags[0].Value), ['email_verification', 'password_reset', 'account_claim']);
-    assert.match(inputs[0].Message.Body.Text.Data, /verify-email\?token=verify%2B%2F%3D/);
+    assert.match(inputs[0].Message.Body.Text.Data, /verify-email#token=verify%2B%2F%3D/);
     assert.match(inputs[1].Message.Body.Text.Data, /reset-password\?token=reset%2B%2F%3D/);
     assert.doesNotMatch(inputs[2].Message.Body.Text.Data, /claim-account\?token=/);
     // R12: the request id rides beside the token so a spent or expired link still knows which

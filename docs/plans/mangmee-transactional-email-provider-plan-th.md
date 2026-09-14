@@ -6,7 +6,7 @@
 สถานะ: **POSTMARK IMPLEMENTATION IN PROGRESS 2026-09-12; LOCAL TRANSPORT/PG/HTTP CHECKS PASS; FULL EM01–EM18 NOT COMPLETE**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
 
 
-Next EM05 verification increment: follow the verification-link recovery contract in the mail spec. Reuse the existing template/parser/public confirmation and account resend routes. Add explicit browser confirmation, fragment/legacy handling, token-bound loading/error/retry, and final transaction expiry/ACTIVE-user checks with a meaningful concurrency test. Record actual browser and focused regression evidence before marking this increment PASS. This is independent of the still-pending Owner choice for email password recovery; keep that new recovery channel closed.
+EM05 verification increment2026-09-14: implemented and passed6 actual HTTP/PG/Next/390px browser groups. Explicit confirm, fragment/legacy handling, current-token loading/error/retry, profile return after lost response, proof purpose/expiry/single-use and transactional ACTIVE-user/resend-source races are verified. Auth93/web1703 and final API/web typechecks PASS; exact sources/mobile captures in email-verification-result.json. Independent of the primary150 and signup8 checkpoints. New CI pending; full EM05/EM09 recovery/retention/identity coverage remains open. Owner email password-recovery decision still pending; routes remain closed.
 
 ## 1. ลำดับงาน
 

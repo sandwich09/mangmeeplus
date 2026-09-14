@@ -2,6 +2,7 @@ import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { checkSignupJourney } from './signup-journey-smoke';
 import { checkBillingProviderScans } from './billing-provider-scans-smoke';
+import { checkEmailVerification } from './email-verification-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 import { BillingService } from '../modules/billing/application/billing.service';
@@ -177,6 +178,11 @@ async function main() {
       return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_EMAIL_VERIFICATION_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkEmailVerification({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE'],realProviderDelivery:false}));return;
+    }
     if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'){
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});

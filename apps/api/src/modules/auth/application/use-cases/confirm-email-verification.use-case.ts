@@ -60,8 +60,12 @@ export class ConfirmEmailVerificationUseCase {
     let verifiedAt = now;
     const claimed = await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${token.userId}`}))`;
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${token.userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: token.userId }, select: { status: true } });
+      if (current?.status !== 'ACTIVE') return false;
+      verifiedAt = new Date();
       const claim = await tx.emailVerificationToken.updateMany({
-        where: { id: token.id, status: 'PENDING' },
+        where: { id: token.id, status: 'PENDING', expiresAt: { gt: verifiedAt } },
         data: { status: 'USED', usedAt: verifiedAt },
       });
       if (claim.count !== 1) return false;
@@ -78,9 +82,14 @@ export class ConfirmEmailVerificationUseCase {
         data: { status: 'REVOKED' },
       });
       return true;
+    }).catch((error: unknown) => {
+      if ((error as { code?: string })?.code === 'P2002') {
+        throw new ConflictException('This email is already being used by another account.');
+      }
+      throw error;
     });
 
-    if (!claimed) return fail('token_already_claimed');
+    if (!claimed) return fail('token_or_account_changed');
 
     await this.audit?.log({
       action: AuditAction.AUTH_EMAIL_VERIFIED,

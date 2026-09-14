@@ -178,9 +178,9 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1">
-                    <h2 className="text-base font-semibold text-gray-900">Recovery email</h2>
+                    <h2 className="text-base font-semibold text-gray-900">Account email</h2>
                     <p className="text-sm text-gray-500">
-                      Add or update the email used for self-service password recovery.
+                      Add or update your verified email for account notifications.
                     </p>
                   </div>
                   <StatusBadge verified={state?.emailVerified ?? false} />

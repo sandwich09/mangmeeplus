@@ -87,7 +87,8 @@ export class LocalConsoleAuthMailerAdapter implements AuthMailerPort {
   private buildUrl(pathname: string, token: string, signupRequestId?: string): string {
     const baseUrl = this.config.webBaseUrl ?? 'http://localhost:3000';
     const url = new URL(pathname, baseUrl);
-    url.searchParams.set('token', token);
+    if (pathname === '/claim-account' || pathname === '/verify-email') url.hash = new URLSearchParams({ token }).toString();
+    else url.searchParams.set('token', token);
     // R12: same recovery param the SES letter carries, so a local run exercises the real link.
     if (signupRequestId) url.searchParams.set('r', signupRequestId);
     return url.toString();
