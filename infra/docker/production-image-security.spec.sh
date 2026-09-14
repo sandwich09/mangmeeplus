@@ -7,6 +7,11 @@ python3 - "$repo_root" <<'PY'
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 lock = (root / 'pnpm-lock.yaml').read_text()
+assert 'path: patches/pdfjs-dist@6.2.108.patch' in lock, 'missing exact PDF.js dependency patch'
+for path in ['infra/api-web/Dockerfile.api-web', 'apps/api/Dockerfile', 'apps/ai-gateway/Dockerfile',
+             'apps/workers/Dockerfile', 'apps/web/Dockerfile', 'apps/web/Dockerfile.lambda']:
+    dockerfile = (root / path).read_text()
+    assert 0 <= dockerfile.find('COPY patches ./patches') < dockerfile.find('RUN pnpm install'), f'{path}: patch must be copied before frozen installation'
 for path in ['apps/api/Dockerfile', 'apps/ai-gateway/Dockerfile', 'infra/api-web/Dockerfile.api-web']:
     dockerfile = (root / path).read_text()
     for name in ['sharp-linux-x64', 'sharp-libvips-linux-x64']:
