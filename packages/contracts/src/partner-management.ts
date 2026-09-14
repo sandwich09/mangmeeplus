@@ -18,6 +18,14 @@ export type SharedLineCredentialMetadataDto = {
   updatedAt: string;
 };
 
+export type SharedLineMessagingSettings = {
+  kind: 'LINE_MESSAGING_API'; version: number; channelId: string | null;
+  runtimeStatus: 'AVAILABLE' | 'INCOMPLETE' | 'UNAVAILABLE';
+  source: 'ENVIRONMENT' | 'DATABASE'; publishedAt: string | null;
+  tokenValidatedAt: string | null; inboundVerifiedAt: string | null;
+  canReplace: boolean; updatedAt: string | null;
+};
+
 /** @deprecated per-partner LINE credentials replaced by shared-OA platform credentials */
 export type LineCredentialMetadataDto = SharedLineCredentialMetadataDto;
 

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../common/config/line-messaging-credentials.fixture';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { ServiceUnavailableException, type INestApplication } from '@nestjs/common';
@@ -56,7 +57,10 @@ export async function checkEmailVerification(input:{app:INestApplication;prisma:
     await open(next.raw);service.execute=async args=>{await originalExecute.call(service,args);throw new ServiceUnavailableException('Synthetic response lost after commit');};
     assert.equal((await confirm()).status(),503);service.execute=originalExecute;await page.locator('main').getByRole('alert').getByText(/ยังไม่ทราบผล/).waitFor();
     assert.equal((await pending(next.raw)).status,'USED');assert.equal((await db.user.findUniqueOrThrow({where:{id:user.id}})).email,nextEmail);
-    await page.getByRole('link',{name:'ไปหน้าเข้าสู่ระบบ',exact:true}).click();await page.waitForURL('**/login');
+    await page.getByRole('link',{name:'ไปหน้าเข้าสู่ระบบ',exact:true}).click();
+    // /login is transient for this signed-in account. Let its server/client redirect finish
+    // before navigating again, or that pending redirect can overwrite the profile visit in CI.
+    await page.waitForURL(`${browser.origin}/companies/${member.companyId}/dashboard`);
     await page.goto(`${browser.origin}/companies/${member.companyId}/settings/profile`,{waitUntil:'domcontentloaded'});await page.getByText(nextEmail,{exact:true}).first().waitFor();
     assert.equal((await request('/v1/auth/account/security')).body.email,nextEmail);
     await open(next.raw);assert.equal((await confirm()).status(),403);await page.locator('main').getByRole('alert').waitFor();assert.equal(await page.getByRole('button',{name:'ลองยืนยันอีกครั้ง',exact:true}).count(),0);
@@ -79,12 +83,12 @@ export async function checkEmailVerification(input:{app:INestApplication;prisma:
         if(fault==='revoke')await db.emailVerificationToken.update({where:{tokenHash:hashToken(raw)},data:{status:'REVOKED'}});
         if(fault==='duplicate'){const other=`${id}-other`;subjectIds.push(other);await db.user.create({data:{id:other,displayName:'Synthetic contender',email:newEmail}});}
       };
-      await assert.rejects(new ConfirmEmailVerificationUseCase(delayed(before)).execute({token:raw}),error=>(error as any).getStatus?.()===(fault==='duplicate'?409:403));
+      await assert.rejects(new ConfirmEmailVerificationUseCase(lineMessagingCredentialsFixture(undefined), delayed(before)).execute({token:raw}),error=>(error as any).getStatus?.()===(fault==='duplicate'?409:403));
       assert.equal((await db.user.findUniqueOrThrow({where:{id}})).email,null);assert.notEqual((await pending(raw)).status,'USED');
     }
     const raceId=`verify-double-${tag}`,raceRaw=`proof-${raceId}`;subjectIds.push(raceId);await db.user.create({data:{id:raceId,displayName:'Synthetic double confirmation'}});
     await db.emailVerificationToken.create({data:{userId:raceId,newEmail:`${raceId}@example.test`,tokenHash:hashToken(raceRaw),expiresAt:new Date(Date.now()+60000)}});
-    const doubleService=new ConfirmEmailVerificationUseCase(prisma),double=await Promise.allSettled([doubleService.execute({token:raceRaw}),doubleService.execute({token:raceRaw})]);
+    const doubleService=new ConfirmEmailVerificationUseCase(lineMessagingCredentialsFixture(undefined), prisma),double=await Promise.allSettled([doubleService.execute({token:raceRaw}),doubleService.execute({token:raceRaw})]);
     assert.equal(double.filter(result=>result.status==='fulfilled').length,1);assert.equal((await pending(raceRaw)).status,'USED');
     assert.equal((double.find(result=>result.status==='rejected') as PromiseRejectedResult).reason.getStatus(),403);
     for(const fault of ['new-request','confirmed','suspend'] as const){

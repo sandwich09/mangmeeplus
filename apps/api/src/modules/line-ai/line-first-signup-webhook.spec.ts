@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
@@ -35,7 +36,7 @@ function webhookRequest(events: unknown[]) {
 
 function makeWebhookController() {
   const enqueued: any[] = [];
-  const controller = new LineWebhookController(
+  const controller = new LineWebhookController(lineMessagingCredentialsFixture({ lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: 'msg-channel-1' } as any),
     { lineMessagingChannelSecret: 'line-secret', lineMessagingChannelId: 'msg-channel-1' } as any,
     { enqueue: async (envelope: unknown) => { enqueued.push(envelope); } } as any,
   );
@@ -294,7 +295,14 @@ function harness(options: {
     },
   } as any;
 
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({
+      lineLiffId: 'liffId' in options ? options.liffId : '1234567890-abcdef',
+      lineMessagingChannelId: 'channelId' in options ? options.channelId : 'msg-channel-1',
+      lineSignupBusinessDays: 'MON-SAT',
+      lineSignupBusinessHours: '09:00-18:00',
+      webBaseUrl: 'https://app.example.test',
+      sesWebBaseUrl: 'https://app.example.test',
+    } as any),
     prisma,
     {
       lineLiffId: 'liffId' in options ? options.liffId : '1234567890-abcdef',

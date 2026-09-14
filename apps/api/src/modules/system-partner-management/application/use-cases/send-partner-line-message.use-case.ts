@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { PartnerLineMessageResultDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -24,7 +25,7 @@ export const PARTNER_LINE_MESSAGE_ACTION = 'system.partner.line_message_sent';
  */
 @Injectable()
 export class SendPartnerLineMessageUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
   ) {}
@@ -69,7 +70,7 @@ export class SendPartnerLineMessageUseCase {
       throw new UnprocessableEntityException('partner_line_message_external_link');
     }
 
-    const token = this.config.lineMessagingChannelAccessToken;
+    const token = (await this.lineCredentials.get()).accessToken;
     if (!token) throw new UnprocessableEntityException('line_messaging_channel_not_configured');
 
     const sender = await this.prisma.client.user.findUnique({

@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 /**
  * Processes a verified LINE text message event end-to-end:
  * 1. Dedup webhook event id
@@ -1409,7 +1410,7 @@ export class ProcessLineWebhookUseCase {
   private readonly intermediateDeliveries = new WeakSet<object>();
   @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
     private readonly permissionResolver: PermissionResolverService,
@@ -7056,7 +7057,7 @@ ${link}`, ctx.companyId, access);
   }
 
   private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number): Promise<DownloadedLineMedia | null> {
-    const accessToken = this.config.lineMessagingChannelAccessToken;
+    const accessToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
     if (!accessToken) return null;
     if (fileSize !== undefined && (fileSize <= 0 || fileSize > this.config.uploadMaxBytes)) return null;
     const response = await fetch(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(lineMessageId)}/content`, {

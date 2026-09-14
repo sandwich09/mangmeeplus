@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import 'reflect-metadata';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -60,7 +61,7 @@ describe('LINE delivery actor access on isolated PostgreSQL', { skip: !databaseU
     const resolver = new PermissionResolverService(new PrismaPermissionResolverRepository(prisma));
     const requests: any[] = [], deliveries: any[] = [];
     let duringModel = async () => {};
-    const useCase = new ProcessLineWebhookUseCase(prisma,
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://synthetic.example.test', lineAiTerminalOutcomeReplayEnabled: true } as any), prisma,
       { webBaseUrl: 'https://synthetic.example.test', lineAiTerminalOutcomeReplayEnabled: true } as any,
       resolver, new AuditService(new PrismaAuditRepository(prisma), quiet as any),
       { requestLineIntakeRoute: async (request: unknown) => { requests.push(request); return { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }; },

@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { lineMessagePreview } from '../../../line-ai/domain/logic/line-message-preview.logic';
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
@@ -302,7 +303,7 @@ export class CreateDailyOwnerSummaryUseCase {
 
 @Injectable()
 export class ProcessQueuedDeliveryUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly deliveries: PrismaNotificationDeliveryRepository,
     private readonly audit: AuditService,
@@ -349,25 +350,13 @@ export class ProcessQueuedDeliveryUseCase {
     // Employee notifications ride the shared WatchDog OA. LINE userIds are
     // channel-scoped, so the identity MUST be resolved on the same channel the
     // config token belongs to — never on a per-company binding row.
-    const token = this.config.lineMessagingChannelAccessToken;
+    const token = (await this.lineCredentials.get()).accessToken;
     const configuredChannelId = this.config.lineMessagingChannelId;
-    let identity = token && configuredChannelId
+    const identity = token && configuredChannelId
       ? await this.prisma.client.externalIdentity.findFirst({
         where: { userId: delivery.recipient.userId, provider: 'LINE', providerChannelId: configuredChannelId, status: 'ACTIVE' },
       })
       : null;
-
-    // Identities linked before LINE_MESSAGING_CHANNEL_ID was configured carry a different
-    // (or null) providerChannelId, so the channel-scoped lookup misses even though the user
-    // does chat with this OA. Same looser query the password-reset notifier uses.
-    if (!identity && token && configuredChannelId) {
-      identity = await this.prisma.client.externalIdentity.findFirst({
-        where: { userId: delivery.recipient.userId, provider: 'LINE', status: 'ACTIVE' },
-      });
-      if (identity) {
-        console.warn(`[notification-delivery] LINE identity resolved by channel-agnostic fallback userId=${delivery.recipient.userId} deliveryId=${deliveryId}`);
-      }
-    }
 
     if (!identity || !token || !configuredChannelId) {
       return this.deliveries.update(companyId, deliveryId, {

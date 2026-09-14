@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 /**
  * Review R08/R09. Both are "the answer was success and the work was not done": a submit replay that
  * short-circuits on any non-RECEIVED state, an approve that writes state, approval metadata and the
@@ -88,7 +89,7 @@ function fakeCore(row: Record<string, unknown>) {
 function submitHarness(row: Record<string, unknown>, outbox: ReturnType<typeof fakeOutbox>) {
   const core = fakeCore(row);
   const prisma = { client: { companySignupRequest: { update: async () => ({}) } } } as never;
-  const adminNotify = new SignupAdminNotifyService(
+  const adminNotify = new SignupAdminNotifyService(lineMessagingCredentialsFixture(null as never),
     prisma, outbox.repository, null as never, null as never, null as never,
   );
   return {

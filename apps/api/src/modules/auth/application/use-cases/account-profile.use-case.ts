@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
@@ -27,7 +28,7 @@ const USERNAME_PATTERN = /^[a-z0-9._-]{4,64}$/;
  */
 @Injectable()
 export class AccountProfileUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
@@ -201,7 +202,7 @@ export class AccountProfileUseCase {
 
     // Out of band and after the commit: LINE is the only channel a LINE-first owner has, so this
     // is the only way they can find out that a password now exists on their account.
-    await notifyAccountSecurityChange(this.prisma, this.config?.lineMessagingChannelAccessToken, userId, PASSWORD_SET_NOTICE);
+    await notifyAccountSecurityChange(this.prisma, this.lineCredentials, userId, PASSWORD_SET_NOTICE);
 
     // The stored form, which is what they must type at the login box — it is lower-cased here and
     // `PasswordLoginUseCase` matches the username case-sensitively.

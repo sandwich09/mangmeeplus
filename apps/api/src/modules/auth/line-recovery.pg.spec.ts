@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -34,7 +35,9 @@ describe('LINE recovery PostgreSQL lifecycle and concurrency', { skip: !database
       messages.push(payload.messages[0].contents.footer.contents[0].action.clipboardText);
       return { ok: delivered, status: delivered ? 200 : 500 } as Response;
     }) as typeof fetch;
-    const requester = new NotifyPasswordResetRequestUseCase(prisma, {
+    const requester = new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture({
+      lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
+    } as any), prisma, {
       lineMessagingChannelAccessToken: 'synthetic-not-a-real-token', passwordResetResponseMinMs: 0,
     } as any);
     const issueToken = { execute: async () => ({ accessToken: 'synthetic', refreshToken: 'synthetic', expiresIn: 900 }) } as any;

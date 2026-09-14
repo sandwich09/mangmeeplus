@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -123,7 +124,7 @@ function harness(options: Options = {}) {
   const controller = Object.create(PartnerController.prototype) as any;
   controller.endWarmup = new EndPlanTermWarmupUseCase(prisma);
   controller.timeline = new GetPartnerTimelineUseCase(prisma, config);
-  controller.lineMessage = new SendPartnerLineMessageUseCase(prisma, config);
+  controller.lineMessage = new SendPartnerLineMessageUseCase(lineMessagingCredentialsFixture(config), prisma, config);
 
   return {
     controller: controller as PartnerController, audits, planTermUpdates, supportAnswered, supportLookups,

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -303,7 +304,17 @@ function makeHarness(opts: {
     { append: async () => undefined } as any,
   );
 
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({
+      webBaseUrl: 'https://app.example.com',
+      lineMessagingChannelAccessToken: 'line-token',
+      lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
+      lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
+      lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
+      lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
+      // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
+      // never heard of the flag, which must still resolve to the legacy advisor-off capability.
+      lineAiAdvisorMode: opts.lineAiAdvisorMode,
+    } as any),
     prisma,
     {
       webBaseUrl: 'https://app.example.com',

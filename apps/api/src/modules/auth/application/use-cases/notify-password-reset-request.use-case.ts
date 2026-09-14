@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -17,7 +18,7 @@ const GENERIC_MESSAGE = 'If the account is eligible, a temporary password has be
 export class NotifyPasswordResetRequestUseCase {
   private readonly logger = new Logger(NotifyPasswordResetRequestUseCase.name);
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
@@ -74,7 +75,7 @@ export class NotifyPasswordResetRequestUseCase {
     });
     if (!membership) return deny('no_active_company', user.id);
 
-    const lineToken = this.config.lineMessagingChannelAccessToken;
+    const lineToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
     if (!lineToken) return deny('line_channel_unavailable', user.id, membership.companyId);
 
     // The destination comes only from the identity already bound to this exact account.

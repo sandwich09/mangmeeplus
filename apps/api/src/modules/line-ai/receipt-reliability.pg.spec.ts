@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /** Local PostgreSQL proof for receipt identity, reservation races and exactly-once customer credit. */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -194,7 +195,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
         if (calls.length === 1) throw new TypeError('synthetic response loss after LINE accepted');
         return new Response('', { status: 409, headers: { 'x-line-accepted-request-id': 'synthetic-accepted' } });
       }) as typeof fetch;
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'synthetic' } as any);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), { lineMessagingChannelAccessToken: 'synthetic' } as any);
       assert.equal(await adapter.sendPush('U-synthetic', messages, eventId), 'failed_other');
       await client.lineWebhookEventLog.create({ data: { webhookEventId: eventId, companyId, lineUserIdHash: 'synthetic', eventType: 'message',
         status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER', createdAt: new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1000),

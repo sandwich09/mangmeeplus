@@ -1,3 +1,4 @@
+import { checkLineRuntimeCredentials } from './line-runtime-credentials-smoke';
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
 import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { checkSignupJourney } from './signup-journey-smoke';
@@ -49,7 +50,7 @@ async function main() {
     ...(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?{EXTERNAL_SIGNUP_ENABLED:'true',AI_GATEWAY_INTERNAL_URL:'https://synthetic-ai.example.test'}:{}),
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',
     POSTMARK_WEBHOOK_USERNAME: 'synthetic-billing', POSTMARK_WEBHOOK_PASSWORD: randomUUID(),
-    LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
+    LINE_MESSAGING_CHANNEL_SECRET: 's'.repeat(32), LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
     STRIPE_ACCOUNT_ID: accountId, STRIPE_SECRET_KEY: `sk_test_${run}`, STRIPE_WEBHOOK_SECRET: webhookSecret,
     WATCHDOG_JWT_SECRET_ARN: secret, WATCHDOG_JWT_ISSUER: DEFAULT_JWT_ISSUER, WATCHDOG_JWT_AUDIENCE: DEFAULT_JWT_AUDIENCE,
     WORKER_INTERNAL_TOKEN: workerToken, WEB_BASE_URL: 'https://app.example.test', REQUEST_LOG_ENABLED: 'false', LOG_LEVEL: 'error', AWS_EC2_METADATA_DISABLED: 'true' });
@@ -134,7 +135,7 @@ async function main() {
   const { BillingReconcilerService } = await import('../modules/billing/application/billing-reconciler.service');
   const { admitCompanyOcr } = await import('../modules/line-ai/application/company-ocr-governance');
   const app = await NestFactory.create(AppModule, { abortOnError: false, bodyParser: false, logger: process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?['error']:false });
-  app.use(PROVIDER_EVENTS_PATH, providerEventsJson); app.use(json({ limit: '5mb' })); app.use(cookieParser());
+  app.use(PROVIDER_EVENTS_PATH, providerEventsJson); app.use(json({ limit: '5mb', verify: (req, _res, buf) => { if(buf.length) (req as typeof req & {rawBody?:Buffer}).rawBody=Buffer.from(buf); } })); app.use(cookieParser());
   app.setGlobalPrefix('v1', { exclude: [{ path: 'local-storage/(.*)', method: RequestMethod.ALL }] });
   app.useGlobalPipes(new TrimStringsPipe(), new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS));
   const prisma = app.get(PrismaService), client = prisma.client, cases: string[] = [];
@@ -181,6 +182,11 @@ async function main() {
       return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_LINE_CREDENTIALS_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkLineRuntimeCredentials({app,prisma,origin,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['LINE'],realProviderDelivery:false}));return;
+    }
     if(process.env.BILLING_EMAIL_VERIFICATION_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkEmailVerification({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));

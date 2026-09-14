@@ -114,9 +114,23 @@ async function checkOperations(input: Parameters<typeof checkBillingAdmin>[0] & 
     await page.getByRole('textbox', { name: 'เหตุผลการตรวจสอบ', exact: true }).fill('ตรวจสอบจากหน้าเว็บ');
     await page.getByRole('button', { name: 'ตรวจสอบผลกระทบ', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'ตรวจสอบก่อนส่งคำสั่ง' }).waitFor();
-    await page.getByRole('link', { name: 'เปิดลิงก์คำสั่งนี้', exact: true }).click();
-    await page.getByRole('button', { name: 'ยืนยันส่งคำสั่งตรวจสอบ', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'รอระบบตรวจสอบ' }).waitFor();
+    const permanentLink=page.getByRole('link', { name: 'เปิดลิงก์คำสั่งนี้', exact: true });
+    const permanentPath=await permanentLink.getAttribute('href');assert.ok(permanentPath);
+    await permanentLink.click();await page.waitForURL(`${browser.origin}${permanentPath}`);
+    // Both pages contain the same controls. Wait for the destination's unique heading, not
+    // a still-visible submit button on the departing company page.
+    await page.getByRole('heading',{name:'คำสั่งตรวจสอบการชำระเงิน',exact:true}).waitFor();
+    await page.getByRole('status').filter({ hasText: 'ตรวจสอบก่อนส่งคำสั่ง' }).waitFor();
+    const submit = async () => {
+      const response = page.waitForResponse(r => r.url().endsWith('/system/billing/operations') && r.request().method() === 'POST');
+      await page.getByRole('button', { name: 'ยืนยันส่งคำสั่งตรวจสอบ', exact: true }).click();
+      return response;
+    };
+    const submitted = await submit(),accepted=await submitted.json();assert.equal(submitted.status(),202,JSON.stringify(accepted));assert.equal(accepted.state,'QUEUED');
+    try{await page.getByRole('status').filter({ hasText: 'รอระบบตรวจสอบ' }).waitFor();}
+    catch(error){await page.screenshot({path:`${browser.evidenceDir}/admin-operation-failure.png`,fullPage:true});
+      console.error(JSON.stringify({stage:'admin-submit-display',pathname:new URL(page.url()).pathname,acceptedState:accepted.state,acceptedVersion:accepted.version,
+        current:(await request(`${base}/operations/${accepted.id}`)).body.state,visible:await page.getByRole('region',{name:'คำสั่งตรวจสอบการชำระเงิน',exact:true}).innerText()}));throw error;}
     await drain(); await page.getByRole('button', { name: 'โหลดคำสั่งล่าสุด', exact: true }).click();
     await page.getByRole('status').filter({ hasText: 'ตรวจสอบสถานะล่าสุดแล้ว' }).waitFor();
     await page.screenshot({ path: `${browser.evidenceDir}/admin-operation-mobile.png`, fullPage: true });

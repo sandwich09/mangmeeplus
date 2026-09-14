@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { claimTokenExpiresAt, CLAIM_EXPIRY_AFTER_APPROVAL_DAYS } from '../domain/account-claim.logic';
@@ -675,7 +676,7 @@ describe('SignupAdminNotifyService', () => {
     const restore = () => { globalThis.fetch = realFetch; };
 
     return {
-      service: new SignupAdminNotifyService(prisma, outbox, notifications, config, logger),
+      service: new SignupAdminNotifyService(lineMessagingCredentialsFixture(config), prisma, outbox, notifications, config, logger),
       appended, events, pushes, logs, restore,
     };
   }

@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
@@ -78,7 +79,7 @@ export function requestedInfoMessageTh(companyName: string, requestedInformation
  */
 @Injectable()
 export class LineSignupNotifyService {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly outbox: PrismaOutboxRepository,
     private readonly config: AppConfigService,
@@ -146,7 +147,7 @@ export class LineSignupNotifyService {
         || request.version !== reviewVersion || !request.resolutionNote) return;
     } else if (kind === 'rejected' ? request.state !== 'REJECTED' : request.state !== 'COMPLETED') return;
 
-    const token = this.config.lineMessagingChannelAccessToken;
+    const token = (await this.lineCredentials.get()).accessToken;
     if (!token) {
       // Not a failure to retry — an unconfigured channel will still be unconfigured next time.
       this.logger.warn({ event: 'signup.line.push_skipped_no_token', riskLevel: 'LOW' }, 'signup.line.push_skipped_no_token');

@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingDeliveryView } from '@watchdog-bms/contracts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -24,7 +25,7 @@ const defer = (code: string) => new PostmarkSendError('RETRY', code, 60);
 
 @Injectable()
 export class BillingNotificationsService {
-  constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly billing: BillingService,
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly billing: BillingService,
     private readonly outbox: PrismaOutboxRepository, private readonly events: CreateOrUpdateNotificationEventUseCase,
     private readonly email: EmailDeliveryService, private readonly admin:BillingAdminService) {}
 
@@ -76,7 +77,7 @@ export class BillingNotificationsService {
     else if(!['FAILED','SKIPPED'].includes(row.status))blockedReason=row.status==='SENT'?'ALREADY_ACCEPTED':'DELIVERY_NOT_RETRYABLE';
     else if(row.recipient.event.status!=='OPEN'||!owner)blockedReason='RECIPIENT_OR_EVENT_INACTIVE';
     else if(!channels.includes('line')||!triggers.includes(row.recipient.event.triggerKey))blockedReason='PREFERENCE_SUPPRESSED';
-    else if(!channelId||!this.config.lineMessagingChannelAccessToken)blockedReason='LINE_CONFIGURATION_MISSING';
+    else if(!channelId||!(await this.lineCredentials.get(tx)).accessToken)blockedReason='LINE_CONFIGURATION_MISSING';
     else if(!identity)blockedReason='NO_LINE_DELIVERY_TARGET';
     if(identity)try{
       const message=buildLineMessage({companyId,title:row.recipient.event.title,body:row.recipient.event.body,severity:row.recipient.event.severity.toLowerCase(),deepLinkHref:this.billingHref(companyId)});
@@ -347,7 +348,7 @@ export class BillingNotificationsService {
         await tx.notificationDelivery.update({ where: { id }, data: { status: 'QUEUED', nextAttemptAt: new Date(Date.now() + 1800000), errorCode: 'QUIET_HOURS' } });
         return null;
       }
-      const channelId = this.config.lineMessagingChannelId, token = this.config.lineMessagingChannelAccessToken;
+      const channelId = this.config.lineMessagingChannelId, token = (await this.lineCredentials.get(tx)).accessToken;
       if (!channelId || !token) return finish('SKIPPED', 'LINE_CONFIGURATION_MISSING');
       const identity = await tx.externalIdentity.findFirst({ where: { userId: row.recipient.userId, provider: 'LINE', providerChannelId: channelId, status: 'ACTIVE' } });
       if (!identity) return finish('SKIPPED', 'NO_LINE_DELIVERY_TARGET');

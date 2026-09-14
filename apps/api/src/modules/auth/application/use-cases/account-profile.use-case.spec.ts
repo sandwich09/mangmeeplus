@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -153,7 +154,7 @@ function captureLinePush() {
   return { pushes, restore: () => { globalThis.fetch = original; } };
 }
 
-const lineConfig = { lineMessagingChannelAccessToken: 'synthetic-channel-token' } as any;
+const lineConfig = { lineMessagingChannelId: 'synthetic-channel', lineMessagingChannelAccessToken: 'synthetic-channel-token' } as any;
 
 const audit = { log: async () => undefined } as any;
 const mailer = { sendEmailVerification: async () => undefined } as any;
@@ -163,7 +164,7 @@ const LINE_ONLY_USER = { id: 'user-line', status: 'ACTIVE', username: null, emai
 describe('AccountProfileUseCase — first password', () => {
   it('creates an ACTIVE credential that does not force a change, for an account that has none', async () => {
     const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
-    await new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
+    await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
 
     assert.equal(credentials.length, 1);
     assert.equal(credentials[0]!['status'], 'ACTIVE');
@@ -178,7 +179,7 @@ describe('AccountProfileUseCase — first password', () => {
       credentials: [{ userId: 'user-line', passwordHash: 'scrypt$a$b', status: 'ACTIVE', mustChangePassword: false }],
     });
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'attacker-password', undefined, 'req-1'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'attacker-password', undefined, 'req-1'),
       (error: unknown) => error instanceof ConflictException
         && (error.getResponse() as Row)['code'] === 'password_already_set',
     );
@@ -188,7 +189,7 @@ describe('AccountProfileUseCase — first password', () => {
   // F1: the whole point of a backup password is being able to log in with it afterwards.
   it('lets the LINE-first owner log in with the username they just set', async () => {
     const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
-    const result = await new AccountProfileUseCase(prisma, audit)
+    const result = await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit)
       .setInitialPassword('user-line', 'backup-password', ' MangMee.Shop ', 'req-1', 'session-current');
     assert.deepEqual(result, { username: 'mangmee.shop' }, 'the caller must be told the stored form');
     assert.equal(users[0]!['username'], 'mangmee.shop');
@@ -205,7 +206,7 @@ describe('AccountProfileUseCase — first password', () => {
   it('refuses a password that nothing could ever log in with', async () => {
     const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current'),
       (error: unknown) => error instanceof BadRequestException && (error.getResponse() as Row)['code'] === 'username_required',
     );
     assert.equal(credentials.length, 0, 'a dead credential must never be stored');
@@ -215,7 +216,7 @@ describe('AccountProfileUseCase — first password', () => {
     const { prisma, credentials } = makePrisma({
       users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: new Date() }],
     });
-    await new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
+    await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
     assert.equal(credentials.length, 1);
   });
 
@@ -228,14 +229,14 @@ describe('AccountProfileUseCase — first password', () => {
       users: [{ ...LINE_ONLY_USER }, { id: 'user-other', status: 'ACTIVE', username: 'SomChai', email: 'boss@example.com' }],
     });
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'somchai', 'req-1', 'session-current'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', 'somchai', 'req-1', 'session-current'),
       (error: unknown) => error instanceof ConflictException && (error.getResponse() as Row)['code'] === 'username_taken',
       'a case-sensitive read would let two people hold one login name',
     );
     // The login lookup accepts an address as the identifier, so a username may not be one. The
     // character set refuses it before the uniqueness read does — hence 400, not 409.
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'boss@example.com', 'req-1', 'session-current'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', 'boss@example.com', 'req-1', 'session-current'),
       BadRequestException,
     );
   });
@@ -254,7 +255,7 @@ describe('AccountProfileUseCase — first password', () => {
       return rows;
     };
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', 'somchai', 'req-1', 'session-current'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', 'somchai', 'req-1', 'session-current'),
       (error: unknown) => error instanceof ConflictException && (error.getResponse() as Row)['code'] === 'username_taken',
       'the loser of the race must get username_taken, never a raw driver error',
     );
@@ -269,11 +270,11 @@ describe('AccountProfileUseCase — first password', () => {
         { id: 's2', userId: 'user-line', tokenId: 'session-other', status: 'ACTIVE' },
         { id: 's3', userId: 'user-other', tokenId: 'session-elsewhere', status: 'ACTIVE' },
       ],
-      lineIdentities: [{ userId: 'user-line', provider: 'LINE', status: 'ACTIVE', providerUserId: 'line-user-1' }],
+      lineIdentities: [{ userId: 'user-line', provider: 'LINE', providerChannelId: 'synthetic-channel', status: 'ACTIVE', providerUserId: 'line-user-1' }],
     });
     const line = captureLinePush();
     try {
-      await new AccountProfileUseCase(prisma, audit, lineConfig)
+      await new AccountProfileUseCase(lineMessagingCredentialsFixture(lineConfig), prisma, audit, lineConfig)
         .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
     } finally {
       line.restore();
@@ -296,7 +297,7 @@ describe('AccountProfileUseCase — first password', () => {
     });
     const line = captureLinePush();
     try {
-      await new AccountProfileUseCase(prisma, audit, lineConfig)
+      await new AccountProfileUseCase(lineMessagingCredentialsFixture(lineConfig), prisma, audit, lineConfig)
         .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
     } finally {
       line.restore();
@@ -309,7 +310,7 @@ describe('AccountProfileUseCase — first password', () => {
     const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
     const line = captureLinePush();
     try {
-      await new AccountProfileUseCase(prisma, audit, lineConfig)
+      await new AccountProfileUseCase(lineMessagingCredentialsFixture(lineConfig), prisma, audit, lineConfig)
         .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
     } finally {
       line.restore();
@@ -323,7 +324,7 @@ describe('AccountProfileUseCase — first password', () => {
     const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
     for (const bad of ['สมชาย', 'ก ข', 'ab', 'som chai', 'somchai@gmail.com']) {
       await assert.rejects(
-        () => new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', bad, 'req-1', 'session-current'),
+        () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', bad, 'req-1', 'session-current'),
         (error: unknown) => error instanceof BadRequestException
           && (error.getResponse() as Row)['code'] === 'invalid_username',
         bad,
@@ -336,7 +337,7 @@ describe('AccountProfileUseCase — first password', () => {
     const { prisma, credentials, users } = makePrisma({
       users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: null }],
     });
-    await new AccountProfileUseCase(prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
+    await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
     assert.equal(credentials.length, 1);
     assert.equal(users[0]!.emailVerifiedAt, null);
     assert.equal(users[0]!.username, null);
@@ -362,7 +363,7 @@ describe('owner email HTTP contract', () => {
 describe('AccountProfileUseCase — recovery phone', () => {
   it('stores a Thai mobile however the owner spaced it, and clears it when blank', async () => {
     const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
-    const useCase = new AccountProfileUseCase(prisma, audit);
+    const useCase = new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit);
 
     assert.deepEqual(await useCase.setPhoneNumber('user-line', '081-234-5678', 'req-1'), { phoneNumber: '0812345678' });
     assert.equal(users[0]!['phoneNumber'], '0812345678');
@@ -375,7 +376,7 @@ describe('AccountProfileUseCase — recovery phone', () => {
   it('refuses to write the number of a user who is not active', async () => {
     const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER, status: 'DISABLED' }] });
     await assert.rejects(
-      () => new AccountProfileUseCase(prisma, audit).setPhoneNumber('user-line', '0812345678', 'req-1'),
+      () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setPhoneNumber('user-line', '0812345678', 'req-1'),
       NotFoundException,
     );
     assert.equal(users[0]!['phoneNumber'], null);
@@ -385,7 +386,7 @@ describe('AccountProfileUseCase — recovery phone', () => {
     const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER, phoneNumber: '0812345678' }] });
     for (const bad of ['12345', '0812345', '66812345678', '081234567890']) {
       await assert.rejects(
-        () => new AccountProfileUseCase(prisma, audit).setPhoneNumber('user-line', bad, 'req-1'),
+        () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setPhoneNumber('user-line', bad, 'req-1'),
         (error: unknown) => error instanceof BadRequestException
           && (error.getResponse() as Row)['code'] === 'invalid_phone_number',
         bad,
@@ -495,7 +496,7 @@ describe('recovery email for an account with no password', () => {
         tokenHash: hashToken(raw), status: 'PENDING', expiresAt: new Date(Date.now() + 60_000),
       }],
     });
-    const useCase = new ConfirmEmailVerificationUseCase(prisma, audit);
+    const useCase = new ConfirmEmailVerificationUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit);
 
     const first = await useCase.execute({ token: raw, requestId: 'req-1' });
     assert.equal(first.email, 'owner@example.com');

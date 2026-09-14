@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -87,7 +88,7 @@ function harness(options: {
     sesWebBaseUrl: 'https://app.mangmeeplus.com',
   } as any;
   const logs: any[] = [];
-  const useCase = new PackageChangeDecisionUseCase(prisma, setPlanTerm, config, {
+  const useCase = new PackageChangeDecisionUseCase(lineMessagingCredentialsFixture(config), prisma, setPlanTerm, config, {
     warn: (fields: any) => logs.push(fields),
     error: (fields: any) => logs.push(fields),
   } as any);

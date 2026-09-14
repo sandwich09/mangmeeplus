@@ -3542,6 +3542,8 @@ model PlatformLineCredential {
   health               CompanyCredentialHealth @default(UNKNOWN)
   lastValidatedAt      DateTime?
   rotatedAt            DateTime?
+  runtimePublishedAt   DateTime?
+  inboundVerifiedAt    DateTime?
   updatedByAdminUserId String?
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt

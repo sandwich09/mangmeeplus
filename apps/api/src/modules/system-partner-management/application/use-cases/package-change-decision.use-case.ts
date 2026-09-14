@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   PLAN_TIER_PRESETS,
@@ -41,7 +42,7 @@ export function packageChangeRejectedMessageTh(note?: string): string {
  */
 @Injectable()
 export class PackageChangeDecisionUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly setPlanTerm: SetCompanyPlanTermUseCase,
     private readonly config: AppConfigService,
@@ -185,7 +186,7 @@ export class PackageChangeDecisionUseCase {
     requestedTierKey: string,
     note: string | undefined,
   ): Promise<void> {
-    const token = this.config.lineMessagingChannelAccessToken;
+    const token = (await this.lineCredentials.get().catch(() => null))?.accessToken;
     if (!token) return;
     const text = body.action === 'APPROVE'
       ? packageChangeApprovedMessageTh(requestedTierKey, note)

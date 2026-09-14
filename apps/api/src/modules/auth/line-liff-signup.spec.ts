@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
@@ -15,7 +16,7 @@ const CHANNEL = '2001';
 
 function makeController(config: Record<string, unknown> = {}): AuthController {
   const stub = {} as any;
-  return new AuthController(
+  return new AuthController(lineMessagingCredentialsFixture({ lineLiffId: '1234567890-test', isLocal: false, sesWebBaseUrl: WEB_BASE, ...config } as any),
     { lineLiffId: '1234567890-test', isLocal: false, sesWebBaseUrl: WEB_BASE, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
@@ -200,7 +201,7 @@ describe('POST /v1/auth/line/liff/session (the surface)', () => {
   it('passes the token through and omits companyId until the picker answers', async () => {
     const calls: any[] = [];
     const stub = {} as any;
-    const controller = new AuthController(
+    const controller = new AuthController(lineMessagingCredentialsFixture({ lineLiffId: '1234567890-test', sesWebBaseUrl: WEB_BASE } as any),
       { lineLiffId: '1234567890-test', sesWebBaseUrl: WEB_BASE } as any,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,

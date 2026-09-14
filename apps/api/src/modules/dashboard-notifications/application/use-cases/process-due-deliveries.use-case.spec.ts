@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LAUNCH_SHADOW_READ_FAILED_EVENT, LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
@@ -174,7 +175,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }) as any;
-      const useCase = new ProcessQueuedDeliveryUseCase(
+      const useCase = new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         deliveries,
         { log: async () => undefined } as any,
@@ -231,7 +232,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
         status: 409,
         headers: { 'x-line-accepted-request-id': 'accepted-request-1', 'Content-Type': 'application/json' },
       }) as any;
-      await new ProcessQueuedDeliveryUseCase(
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async (_companyId: string, _deliveryId: string, data: any) => { updates.push(data); return data; } } as any,
         { log: async () => undefined } as any,
@@ -268,7 +269,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = async () => new Response('{}', { status: 409, headers: { 'Content-Type': 'application/json' } }) as any;
-      await new ProcessQueuedDeliveryUseCase(
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async (_companyId: string, _deliveryId: string, data: any) => { updates.push(data); return data; } } as any,
         { log: async () => undefined } as any,
@@ -325,7 +326,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
         await new Promise((resolve) => setTimeout(resolve, 5));
         return new Response(JSON.stringify({ sentMessages: [{ id: 'line-once' }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }) as any;
-      const make = () => new ProcessQueuedDeliveryUseCase(
+      const make = () => new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async () => { throw new Error('must settle in claim transaction'); } } as any,
         { log: async () => undefined } as any,
@@ -393,7 +394,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
         providerCalls += 1;
         return new Response('{}', { status: 200 });
       }) as any;
-      await new ProcessQueuedDeliveryUseCase(
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         deliveries,
         { log: async () => undefined } as any,
@@ -442,7 +443,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = (async () => { providerCalls += 1; return new Response('{}', { status: 200 }); }) as any;
-      await new ProcessQueuedDeliveryUseCase(
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async () => { throw new Error('must not update outside the CRM transaction'); } } as any,
         { log: async () => undefined } as any,
@@ -514,7 +515,7 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }) as any;
-      await new ProcessQueuedDeliveryUseCase(
+      await new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         deliveries,
         { log: async () => undefined } as any,
@@ -607,13 +608,13 @@ describe('ProcessQueuedDeliveryUseCase LINE target resolution', () => {
           headers: { 'Content-Type': 'application/json' },
         });
       }) as any;
-      const first = new ProcessQueuedDeliveryUseCase(
+      const first = new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async () => { throw new Error('must not use repository update'); } } as any,
         { log: async () => undefined } as any,
         { lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any,
       );
-      const second = new ProcessQueuedDeliveryUseCase(
+      const second = new ProcessQueuedDeliveryUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'shared-token', lineMessagingChannelId: 'shared-channel' } as any),
         prisma,
         { update: async () => { throw new Error('must not use repository update'); } } as any,
         { log: async () => undefined } as any,

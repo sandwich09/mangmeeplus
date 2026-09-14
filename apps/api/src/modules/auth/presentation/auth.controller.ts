@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
   Body,
   Controller,
@@ -223,7 +224,7 @@ function extractSid(req: Request): string | undefined {
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
     private readonly issueToken: IssueTokenUseCase,
@@ -667,9 +668,9 @@ export class AuthController {
 
   private async getOaAddFriendUrl(): Promise<string> {
     if (this.oaAddFriendUrl !== undefined) return this.oaAddFriendUrl;
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return '';
     try {
+      const token = (await this.lineCredentials.get()).accessToken;
+      if (!token) return '';
       const res = await fetch('https://api.line.me/v2/bot/info', {
         headers: { authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(5000),

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { RegenerateEmployeeCredentialUseCase } from './regenerate-employee-credential.use-case';
@@ -66,7 +67,7 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
       authSession: { updateMany: async () => { writes++; } },
       auditLog: { create: async () => { writes++; } },
     });
-    await assert.rejects(() => new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND),
+    await assert.rejects(() => new RegenerateEmployeeCredentialUseCase(lineMessagingCredentialsFixture(CONFIG), prisma, CONFIG).execute(COMMAND),
       (error: any) => error.getResponse().code === 'employee_draft_not_found');
     assert.equal(writes, 0);
     assert.equal(state.identityLookupAfterCommit, false);
@@ -76,7 +77,7 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
     const line = captureLinePushes();
     const { prisma, state } = makePrisma({ providerUserId: 'line-staff-1' });
     try {
-      const handoff = await new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND);
+      const handoff = await new RegenerateEmployeeCredentialUseCase(lineMessagingCredentialsFixture(CONFIG), prisma, CONFIG).execute(COMMAND);
 
       assert.equal(handoff.lineNotified, true);
       assert.equal(state.identityLookupAfterCommit, true, 'LINE work must run after the transaction commits');
@@ -97,7 +98,7 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
     const line = captureLinePushes();
     const { prisma } = makePrisma(null);
     try {
-      const handoff = await new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND);
+      const handoff = await new RegenerateEmployeeCredentialUseCase(lineMessagingCredentialsFixture(CONFIG), prisma, CONFIG).execute(COMMAND);
       assert.equal(handoff.lineNotified, false);
       assert.equal(line.pushes.length, 0);
       assert.ok(handoff.temporaryPassword.length > 0);
@@ -110,7 +111,7 @@ describe('RegenerateEmployeeCredentialUseCase', () => {
     const line = captureLinePushes('reject');
     const { prisma } = makePrisma({ providerUserId: 'line-staff-1' });
     try {
-      const handoff = await new RegenerateEmployeeCredentialUseCase(prisma, CONFIG).execute(COMMAND);
+      const handoff = await new RegenerateEmployeeCredentialUseCase(lineMessagingCredentialsFixture(CONFIG), prisma, CONFIG).execute(COMMAND);
       assert.equal(handoff.lineNotified, false);
       assert.equal(handoff.username, 'staff.one');
     } finally {

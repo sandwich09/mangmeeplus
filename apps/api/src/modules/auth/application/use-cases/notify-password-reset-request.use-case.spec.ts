@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotifyPasswordResetRequestUseCase } from './notify-password-reset-request.use-case';
@@ -87,7 +88,7 @@ function flushDetached(): Promise<void> {
 async function run(prisma: any, config: any = TOKEN_CONFIG, username = 'owner.one') {
   const audits: any[] = [];
   const audit = { log: async (entry: unknown) => { audits.push(entry); } } as any;
-  const result = await new NotifyPasswordResetRequestUseCase(prisma, config, audit)
+  const result = await new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture(config), prisma, config, audit)
     .execute({ username, requestId: 'req-1' });
   return { result, audits };
 }

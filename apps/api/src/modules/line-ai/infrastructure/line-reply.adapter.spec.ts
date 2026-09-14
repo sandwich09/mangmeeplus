@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LineReplyAdapter, linePushRetryKey, parseOutcomeMessages, repairLegacyOutcomePreview } from './line-reply.adapter';
@@ -42,7 +43,7 @@ describe('LineReplyAdapter rich payload delivery', () => {
         bodies.push(JSON.parse(String(init?.body))); return new Response('', { status: 200 });
       }) as typeof fetch;
       assert.deepEqual(parseOutcomeMessages(JSON.parse(JSON.stringify([message]))), [message]);
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'synthetic' } as any);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), { lineMessagingChannelAccessToken: 'synthetic' } as any);
       await adapter.sendReply('token', [message]);
       await adapter.sendPush('U-test', [message], 'operation');
       assert.ok(bodies.every((body) => !Object.hasOwn(body.messages[0], 'canonicalText')));
@@ -64,7 +65,7 @@ describe('LineReplyAdapter rich payload delivery', () => {
         assert.equal(body.messages[1].type, 'flex');
         return new Response('', { status: 200 });
       }) as typeof fetch;
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), { lineMessagingChannelAccessToken: 'secret' } as any);
       const context = { displayName: 'พิม', roleLabel: 'แอดมิน', branchScopeLabel: 'ทุกสาขา', companyId: 'company-1', webBaseUrl: 'https://app.example.com', permissions: [], entitledFeatureKeys: null };
       assert.equal(await adapter.sendReply('reply-token', [buildStaffMainMenu(context), buildPendingApprovalCard(context)]), 'ok');
       assert.ok(signal instanceof AbortSignal, 'LINE delivery must be time-bounded');
@@ -87,8 +88,8 @@ describe('LineReplyAdapter 400 discrimination (§14.3 Flex failure fallback)', (
     const originalFetch = globalThis.fetch;
     try {
       globalThis.fetch = (async () => new Response(body, { status })) as typeof fetch;
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
-      return kind === 'reply' ? adapter.sendReply('reply-token', messages) : adapter.sendPush('U1', messages);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), { lineMessagingChannelAccessToken: 'secret' } as any);
+      return await (kind === 'reply' ? adapter.sendReply('reply-token', messages) : adapter.sendPush('U1', messages));
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -124,9 +125,9 @@ describe('LINE push delivery retry identity', () => {
         return new Response('', { status: 409, headers: { 'x-line-accepted-request-id': 'accepted-original' } });
       }) as typeof fetch;
       const messages = [{ type: 'text' as const, text: 'เก็บรูปและร่างแล้ว ยังไม่ยืนยันรายการ' }];
-      const first = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
+      const first = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), { lineMessagingChannelAccessToken: 'secret' } as any);
       assert.equal(await first.sendPush('U-recipient', messages, 'receipt-event'), 'failed_other');
-      const afterRestart = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
+      const afterRestart = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), { lineMessagingChannelAccessToken: 'secret' } as any);
       assert.equal(await afterRestart.sendPush('U-recipient', messages, 'receipt-event'), 'ok');
       const key = calls[0]!.headers.get('X-Line-Retry-Key');
       assert.match(key!, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
@@ -149,7 +150,7 @@ describe('LINE push delivery retry identity', () => {
     const originalFetch = globalThis.fetch;
     const entries: unknown[] = [];
     try {
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'secret' } as any);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'secret' } as any), { lineMessagingChannelAccessToken: 'secret' } as any);
       (adapter as any).logger = { warn: (entry: unknown) => entries.push(entry), error: (entry: unknown) => entries.push(entry) };
       for (const status of [408, 429, 500, 503]) {
         globalThis.fetch = (async () => new Response('raw-receipt private-token', { status })) as typeof fetch;

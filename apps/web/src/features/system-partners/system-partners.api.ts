@@ -1,3 +1,4 @@
+import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
   PaginatedPartnersDto,
   PartnerCompanyDetailDto,
@@ -322,14 +323,16 @@ export async function renewPartnerPlanTerm(
   });
 }
 
-export async function setSharedLineCredential(
-  credentialKind: 'LINE_MESSAGING_API' | 'LINE_LOGIN' | 'LINE_LIFF',
-  dto: SetSharedLineCredentialDto,
-): Promise<SharedLineCredentialMetadataDto> {
-  return apiFetch<SharedLineCredentialMetadataDto>(
-    `/v1/system/line/shared-credentials/${credentialKind}`,
-    { method: 'PUT', body: JSON.stringify(dto) },
-  );
+export function getSharedLineMessagingSettings() {
+  return apiFetch<SharedLineMessagingSettings>('/v1/system/line/shared-credentials', { suppressErrorToast: true });
+}
+export function setSharedLineMessagingSettings(dto: {
+  channelId: string; channelSecret: string; accessToken: string; expectedVersion: number;
+  rotationId: string; reason: string; password: string;
+}) {
+  return apiFetch<SharedLineMessagingSettings>('/v1/system/line/shared-credentials/LINE_MESSAGING_API', {
+    method: 'PUT', body: JSON.stringify(dto), suppressErrorToast: true,
+  });
 }
 
 /** Answer or correct a partner company's VAT registration. `expectedVersion` comes from the

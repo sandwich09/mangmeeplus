@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import 'reflect-metadata';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -128,7 +129,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         const accepted: unknown[] = [];
         let privateAttempts = 0, modelCalls = 0;
         const changeSource = () => client.expenseRecord.update({ where: { id: expense.id }, data: race === 'amount' ? { grandTotalAmount: '999.9900' } : { branchId: otherBranch.id } });
-        const useCase = new ProcessLineWebhookUseCase(prisma, { webBaseUrl: 'https://synthetic.example.test', lineAiTerminalOutcomeReplayEnabled: race !== 'handoff' } as any,
+        const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://synthetic.example.test', lineAiTerminalOutcomeReplayEnabled: race !== 'handoff' } as any), prisma, { webBaseUrl: 'https://synthetic.example.test', lineAiTerminalOutcomeReplayEnabled: race !== 'handoff' } as any,
           resolver, audit,
           { requestLineIntakeRoute: async () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
             requestLineTurn: async (request: any) => {
@@ -230,7 +231,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
               const result = await tool.execute(readCtx, input); assert.equal(result.status, 'ok'); await service.record(readCtx, input, result);
               return { requestId: request.requestId, replyText: 'Synthetic queued vendor 123.45 บาท', sourceRefs: result.sourceRefs, sourceLabels: [], webLinks: [],
                 intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: [tool.toolName], durationMs: 1 };
-            } } as any, new LineReplyAdapter(config), { startSweep: () => ({ record: async () => {}, flush: async () => {} }) } as any);
+            } } as any, new LineReplyAdapter(lineMessagingCredentialsFixture(config), config), { startSweep: () => ({ record: async () => {}, flush: async () => {} }) } as any);
           (drain as any).readEvidence = service; (drain as any).deliveryStore = new LineLedgerDeliveryService(prisma);
           (drain as any).logger = { log() {}, warn() {}, error() {}, debug() {} };
           await drain.execute();

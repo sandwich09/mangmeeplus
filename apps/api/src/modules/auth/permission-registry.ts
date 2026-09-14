@@ -66,6 +66,7 @@ export const PERMISSIONS: PermissionDef[] = [
   { key: 'system.company_onboarding.read', description: 'Read customer company onboarding',   riskLevel: 'MEDIUM' },
   { key: 'system.company_onboarding.regenerate_temporary_password', description: 'Regenerate customer owner temporary password', riskLevel: 'CRITICAL' },
   { key: 'system.line_binding.manage',  description: 'Manage customer LINE channel bindings', riskLevel: 'HIGH' },
+  { key: 'system.shared_line_credential.manage', description: 'Read and replace shared Messaging credentials for the existing OA', riskLevel: 'CRITICAL' },
   // Item 10A partner management permissions
   { key: 'system.partner_dashboard.read',           description: 'Read partner company list and detail (metadata only)', riskLevel: 'MEDIUM' },
   { key: 'system.partner_company.create',           description: 'Create new partner company',                          riskLevel: 'HIGH' },
@@ -470,6 +471,7 @@ const STAFF_ROLE_GRANTS = [
 export const ROLE_GRANTS: Record<string, string[]> = {
   OWNER: COMPANY_PERMISSION_KEYS,
   SYSTEM_ADMIN: [
+    'system.shared_line_credential.manage',
     ...BILLING_PERMISSIONS,
     'account.session.read',
     'account.password.change',

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -20,7 +21,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(url.pathname, '/watchdog_bms');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `owner-email-${randomUUID()}`, userId = `${tag}-owner`, otherId = `${tag}-other`;
-    const profile = new AccountProfileUseCase({ client } as any);
+    const profile = new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), { client } as any);
     let reachable = false;
     const edit = (newEmail: string, expectedEmail: string | null, currentPassword?: string) => profile.setUnverifiedEmail({
       userId, newEmail, expectedEmail, currentPassword, requestId: tag, currentTokenId: 'current',
@@ -71,7 +72,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
         });
         const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
       } }) } as any;
-      const passwordWrite = new AccountProfileUseCase(passwordPrisma).setInitialPassword(userId, 'owner-password', undefined, tag, 'current');
+      const passwordWrite = new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), passwordPrisma).setInitialPassword(userId, 'owner-password', undefined, tag, 'current');
       await inserted.promise;
       let firstCredentialRead = true;
       const correctingPrisma = { client: new Proxy(client, { get(target, property) {
@@ -88,7 +89,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
         } })));
         const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
       } }) } as any;
-      const withoutPassword = assert.rejects(new AccountProfileUseCase(correctingPrisma).setUnverifiedEmail({
+      const withoutPassword = assert.rejects(new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), correctingPrisma).setUnverifiedEmail({
         userId, newEmail: firstEmail, expectedEmail: corrected, requestId: tag, currentTokenId: 'current',
       }), errorCode('current_password_incorrect'));
       await credentialMiss.promise;
@@ -107,7 +108,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
         });
         const value = Reflect.get(target, property); return typeof value === 'function' ? value.bind(target) : value;
       } }) } as any;
-      const verification = new ConfirmEmailVerificationUseCase(verifyingPrisma).execute({ token: verificationToken });
+      const verification = new ConfirmEmailVerificationUseCase(lineMessagingCredentialsFixture(undefined), verifyingPrisma).execute({ token: verificationToken });
       await verifiedWritten.promise;
       const obsoleteCorrection = assert.rejects(edit(firstEmail, firstEmail, 'owner-password'), errorCode('account_email_verified'));
       commitVerification.resolve();

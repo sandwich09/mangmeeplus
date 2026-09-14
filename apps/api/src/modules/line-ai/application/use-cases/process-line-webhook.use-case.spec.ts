@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
@@ -540,7 +541,7 @@ function makeUseCase(
 	  const aiGatewayRequests: any[] = [];
 	  const intakeRequests: any[] = [];
 
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any),
     prisma,
     { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({
@@ -3305,7 +3306,7 @@ describe('ProcessLineWebhookUseCase', () => {
   it('receipt upload errors reply and mark webhook instead of hanging received', async () => {
     const { prisma, updates } = makePrisma();
     const replies: string[] = [];
-    const useCase = new ProcessLineWebhookUseCase(
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
       prisma,
       { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
       {
@@ -3373,7 +3374,7 @@ describe('ProcessLineWebhookUseCase', () => {
     // invisible in the audit log and the failure cause is unattributable.
     const { prisma } = makePrisma();
     const audits: any[] = [];
-    const useCase = new ProcessLineWebhookUseCase(
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
       prisma,
       { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
       {
@@ -3437,7 +3438,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const { prisma } = makePrisma();
     const replies: string[] = [];
     let receiptOcrCalls = 0;
-    const useCase = new ProcessLineWebhookUseCase(
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
       prisma,
       { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
       { resolveAccess: async () => ({
@@ -3489,7 +3490,7 @@ describe('ProcessLineWebhookUseCase', () => {
     const replies: any[] = [];
     const initInputs: any[] = [];
     const completeInputs: any[] = [];
-    const useCase = new ProcessLineWebhookUseCase(
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
       prisma,
       { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
       {
@@ -3582,7 +3583,7 @@ describe('ProcessLineWebhookUseCase', () => {
         create: async (args: any) => { lineCreates.push(args); return args; },
       },
     });
-    const useCase = new ProcessLineWebhookUseCase(
+    const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
       prisma,
       { webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any,
       {
@@ -3833,7 +3834,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   const aiGatewayRequests: any[] = [];
   const intakeRequests: any[] = [];
   const sentMessages: any[] = [];
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any),
     prisma,
     { webBaseUrl: 'https://app.example.com', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions ?? ['line.ai.query'], scopes: {} }) } as any,
@@ -5281,7 +5282,7 @@ function makeIntakeStateUseCase(prisma: any, opts: {
     coverageToSubRequests: () => [],
     ack: async () => undefined,
   } as any;
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off', ...(opts.config ?? {}) } as any),
     prisma,
     { webBaseUrl: 'https://app.example.com', lineAiIntakeStateMode: opts.mode ?? 'off', ...(opts.config ?? {}) } as any,
     { resolveAccess: async () => ({
