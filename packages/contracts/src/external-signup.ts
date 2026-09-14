@@ -265,6 +265,13 @@ export type AdminSignupDecisionDto = {
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
 
+export type AdminSignupClaimHistoryDto = { requestId: string; state: string; version: number; latestAttemptId: string | null;
+  lastClaimSentAt: string | null; hasLegacySesReference: boolean;
+  items: Array<{ id: string; provider: string; generation: number; state: string; latest: boolean; possibleDuplicate: boolean;
+    createdAt: string; submittedAt: string | null; deliveredAt: string | null; suppressedAt: string | null;
+    deadlineAt: string | null; nextRecoveryAt: string | null; needsReview: boolean }>;
+  nextCursor: string | null };
+
 // ── Spec §4F account merge — what a merge would do, shown before it is confirmed ──
 
 /**

@@ -1,4 +1,5 @@
 import { checkBillingProviderEvents } from './billing-provider-events-smoke';
+import { checkSignupClaimHistory } from './signup-claim-history-smoke';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 /** Full compiled AppModule + HTTP + PostgreSQL. Only external provider transports are simulated. */
 import 'reflect-metadata';
@@ -160,6 +161,14 @@ async function main() {
     const drainNotifications = () => request('/v1/internal/billing/notifications/drain', 'POST', {}, { 'x-worker-token': workerToken });
     const checkProviderEvents=()=>checkBillingProviderEvents({request,prisma,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,
       reconciler:app.get(BillingReconcilerService),operations:app.get(BillingOperationsService),provider,browser,interceptRead:hook=>{providerReadHook=hook;}});
+    const checkClaimHistory=()=>checkSignupClaimHistory({request,prisma,userId:userIds[0]!,membershipId:memberId,browser});
+    if (process.env.BILLING_CLAIM_HISTORY_ONLY === '1') {
+      if(process.env.BILLING_BROWSER_E2E==='1'){
+        const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      }
+      cases.push(...await checkClaimHistory());
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL',passed:cases,browserE2E:Boolean(browser),providerCalls:false}));return;
+    }
     if (process.env.BILLING_PROVIDER_EVENTS_ONLY === '1') {
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
@@ -429,6 +438,7 @@ async function main() {
     if (process.env.BILLING_CONFIG_ONLY !== '1' && process.env.BILLING_RESTART_ONLY !== '1') cases.push(...await checkBillingPlanChange({ request, prisma, companyIds, userId:userIds[0]!, provider, fixture:repeatFixture, browser, reconcile:id=>app.get(BillingReconcilerService).reconcileAccount(id) }));
     cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser }));
     cases.push(...await checkProviderEvents());
+    cases.push(...await checkClaimHistory());
     console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
       simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false, browserE2E: Boolean(browser) }));
   } finally {

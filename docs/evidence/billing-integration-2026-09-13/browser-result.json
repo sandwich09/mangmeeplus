@@ -133,7 +133,17 @@
     "runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation",
     "runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion",
     "runtime-receipt-quota-paid-grants-cannot-bypass",
-    "browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock"
+    "browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock",
+    "provider-event-platform-scope-mode-redaction-pagination",
+    "provider-event-preview-stale-lease-dedupe-and-cancel",
+    "provider-event-reauthorization-unavailable-unmapped-same-command-recovery",
+    "provider-event-shared-worker-lease-loss-and-processed-replay",
+    "provider-event-evidenced-case-resolution-audit-and-no-manual-grant",
+    "browser-provider-event-case-preview-command-reload-and-return",
+    "claim-history-current-global-role-and-revocation",
+    "claim-history-request-purpose-cursor-redaction-and-recorded-delivery-facts",
+    "claim-history-read-only-no-provision-send-proof-or-window-change",
+    "browser-claim-history-queue-pagination-reload-expired-and-return-mobile"
   ],
   "simulatedProviders": [
     "Stripe",

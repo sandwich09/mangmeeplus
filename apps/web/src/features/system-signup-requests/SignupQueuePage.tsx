@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   COMPANY_BUSINESS_CATEGORIES,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
@@ -106,6 +107,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
 
   return (
     <div className="flex flex-wrap gap-2">
+      {!isLineSignup(item)&&<Link className={`${rowActionClass} border-gray-300 bg-white text-gray-700`} href={`/system/signup-requests/${encodeURIComponent(item.requestId)}/mail`}>ประวัติอีเมลรับบัญชี</Link>}
       {approve && (
         <button
           type="button"
