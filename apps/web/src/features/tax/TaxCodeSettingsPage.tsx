@@ -206,8 +206,8 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                   </button>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold">{profile.status}</span>
-                    {capability.canManageProfiles && capability.canManageConfig && profile.status === 'DRAFT' && <button disabled={busy} className="text-xs font-bold text-emerald-700" onClick={() => void activateProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'activate' ? 'กำลังเปิดใช้งาน...' : 'Activate'}</button>}
-                    {capability.canManageProfiles && profile.status === 'ACTIVE' && <button disabled={busy} className="text-xs font-bold text-red-700" onClick={() => void retireProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'retire' ? 'กำลังเลิกใช้งาน...' : 'Retire'}</button>}
+                    {capability.canManageProfiles && capability.canManageConfig && profile.status === 'DRAFT' && <button disabled={busy} aria-busy={Boolean(busy)} className="text-xs font-bold text-emerald-700" onClick={() => void activateProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'activate' ? 'กำลังเปิดใช้งาน...' : 'Activate'}</button>}
+                    {capability.canManageProfiles && profile.status === 'ACTIVE' && <button disabled={busy} aria-busy={Boolean(busy)} className="text-xs font-bold text-red-700" onClick={() => void retireProfile(profile.id)}>{profileBusy?.id === profile.id && profileBusy.action === 'retire' ? 'กำลังเลิกใช้งาน...' : 'Retire'}</button>}
                   </div>
                 </div>
               ))}
@@ -222,7 +222,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
               <div className="mt-3 space-y-3">
                 {templates.map((template) => {
                   const installed = profiles.some((profile) => profile.sourceSystem === template.sourceSystem && profile.sourceProfileKey === template.key && profile.status !== 'RETIRED');
-                  return <div key={template.key} className="rounded-lg border border-gray-200 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>{template.name}</strong><div className="mt-1 text-xs text-gray-500">{template.definitionCount} codes · {template.key}</div></div>{capability.canManageProfiles && capability.canManageConfig && <button type="button" className={button} disabled={busy || installed || !templateEffectiveFrom} onClick={() => void bootstrapTemplate(template.key)}>{installed ? 'ติดตั้งแล้ว' : 'สร้าง Draft จาก template'}</button>}</div><p className="mt-2 text-xs text-amber-700">{template.warning}</p></div>;
+                  return <div key={template.key} className="rounded-lg border border-gray-200 p-3"><div className="flex flex-wrap items-start justify-between gap-3"><div><strong>{template.name}</strong><div className="mt-1 text-xs text-gray-500">{template.definitionCount} codes · {template.key}</div></div>{capability.canManageProfiles && capability.canManageConfig && <button type="button" className={button} disabled={busy || installed || !templateEffectiveFrom} aria-busy={Boolean(busy)} onClick={() => void bootstrapTemplate(template.key)}>{installed ? 'ติดตั้งแล้ว' : 'สร้าง Draft จาก template'}</button>}</div><p className="mt-2 text-xs text-amber-700">{template.warning}</p></div>;
                 })}
               </div>
             </MangmeeCard>
@@ -243,7 +243,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                 <p className="text-xs text-gray-500 sm:col-span-2">นโยบายนี้ถูก snapshot ไปกับ source, Tax Event และ journal เพื่อให้การคำนวณและ reconciliation ใช้กติกาเดียวกันย้อนหลัง</p>
                 <input name="sourceUrl" type="url" placeholder="แหล่งอ้างอิง" className={`${field} sm:col-span-2`} />
                 <label className="flex items-center gap-2 text-sm"><input name="isDefault" type="checkbox" /> ใช้เป็นค่าเริ่มต้น</label>
-                <button disabled={busy} className={button}>สร้าง Profile</button>
+                <button disabled={busy} aria-busy={Boolean(busy)} className={button}>สร้าง Profile</button>
               </form>
             </MangmeeCard>
           )}
@@ -254,7 +254,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
               <div className="mt-3 grid gap-3">
                 <ThemedSelect value={importFormat} onChange={(event) => { setImportFormat(event.target.value as 'CSV' | 'JSON'); setImportPreview(null); }}><option value="CSV">CSV</option><option value="JSON">JSON</option></ThemedSelect>
                 <textarea className={`${field} min-h-40 font-mono text-xs`} value={importContent} onChange={(event) => { setImportContent(event.target.value); setImportPreview(null); }} placeholder="externalCode,displayName,taxRegime,direction,treatment,transactionContexts,rate,calculationMethod,claimabilityDefault,effectiveFrom" />
-                <div className="flex gap-2"><button type="button" disabled={busy || !importContent.trim()} onClick={() => void previewImport()} className={button}>Preview import</button><button type="button" disabled={busy || !importPreview?.canApply} onClick={() => void applyImport()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Apply reviewed rows</button></div>
+                <div className="flex gap-2"><button type="button" disabled={busy || !importContent.trim()} aria-busy={Boolean(busy)} onClick={() => void previewImport()} className={button}>Preview import</button><button type="button" disabled={busy || !importPreview?.canApply} aria-busy={Boolean(busy)} onClick={() => void applyImport()} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Apply reviewed rows</button></div>
                 {importPreview && <div className={`rounded-lg p-3 text-xs ${importPreview.canApply ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800'}`}><strong>{importPreview.rows.length} แถว · {importPreview.canApply ? 'พร้อมนำเข้า' : 'ต้องแก้ข้อมูลก่อนนำเข้า'}</strong><div className="mt-2 space-y-1">{importPreview.rows.filter((row) => row.errors.length).map((row) => <div key={row.rowNumber}>แถว {row.rowNumber}: {row.errors.map(taxCodeImportDiagnosticMessage).join('; ')}</div>)}</div><div className="mt-2 break-all font-mono text-[10px]">checksum {importPreview.checksum}</div></div>}
               </div>
             </MangmeeCard>
@@ -287,7 +287,7 @@ export function TaxCodeSettingsPage({ companyId, permissions }: { companyId: str
                 <ThemedDate required name="effectiveFrom" className={field} />
                 <ThemedDate name="effectiveTo" className={field} />
                 <fieldset className="sm:col-span-2"><legend className="mb-2 text-xs font-bold text-gray-600">บริบทธุรกรรม</legend><div className="grid gap-2 sm:grid-cols-2">{contexts.map((context) => <label key={context} className="flex gap-2 text-sm"><input type="checkbox" name={`context:${context}`} /> {TAX_CONTEXT_LABELS[context]}</label>)}</div></fieldset>
-                <button disabled={busy || !profileId} className={`${button} sm:col-span-2`}>บันทึก Tax Code</button>
+                <button disabled={busy || !profileId} aria-busy={Boolean(busy)} className={`${button} sm:col-span-2`}>บันทึก Tax Code</button>
               </form>
             </MangmeeCard>
           )}

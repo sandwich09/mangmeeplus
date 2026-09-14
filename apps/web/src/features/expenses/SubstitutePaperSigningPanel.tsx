@@ -50,7 +50,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
       <p className="text-sm leading-6">แบบฟอร์มเว้นชื่อ ตำแหน่ง ลายเซ็น และวันที่ของผู้รับรองการจ่ายและผู้อนุมัติ ให้กรอกและเซ็นจริงได้ทั้งผู้มีบัญชีและไม่มีบัญชีในระบบ ตำแหน่งเว้นว่างได้หากไม่มี</p>
       <p className="text-sm text-gray-600">ผู้รับรองต้องทราบข้อเท็จจริงของการจ่าย หากพนักงานสำรองเงินส่วนตัว ให้พนักงานผู้จ่ายเป็นผู้รับรอง ผู้อนุมัติต้องมีอำนาจตามที่บริษัทกำหนด</p>
       {canPrepare ? <>
-        <button className={ghostClass} type="button" disabled={busy} onClick={() => void run(async () => {
+        <button className={ghostClass} type="button" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(async () => {
           await downloadSubstituteReceiptFormPdf(companyId, evidence.expenseId, evidence.id, evidence.documentNumber);
           const history = await listSubstituteReceiptHistory(companyId, evidence.expenseId);
           const current = history.find((item) => item.id === evidence.id);
@@ -63,7 +63,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         <div className="grid gap-4 md:grid-cols-2">{signerFields('ผู้รับรองการจ่าย', payer, setPayer)}{signerFields('ผู้อนุมัติ', approver, setApprover)}</div>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={samePerson} onChange={(event) => setSamePerson(event.target.checked)} /><span>ผู้ลงนามทั้งสองส่วนเป็นคนเดียวกัน (ต้องผ่านนโยบายบริษัท)</span></label>
         <label className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" checked={matches} onChange={(event) => setMatches(event.target.checked)} /><span>ยืนยันว่าไฟล์เป็นเอกสารเลขที่ {evidence.documentNumber} ข้อมูลตรงกับแบบฟอร์ม และมีชื่อ วันที่ ลายเซ็นครบทั้งสองส่วน โดยตำแหน่ง (ถ้ามี) ตรงกับกระดาษ</span></label>
-        <button className={btnClass} type="button" disabled={busy || !ready || !evidence.paperFormPrepared} onClick={() => void run(async () => {
+        <button className={btnClass} type="button" disabled={busy || !ready || !evidence.paperFormPrepared} aria-busy={Boolean(busy)} onClick={() => void run(async () => {
           if (!file) return;
           onChange(await submitSubstitutePaperFile(companyId, evidence.expenseId, evidence.id, file, { payer, approver, samePerson, formMatchesAcknowledged: true, expectedEvidenceUpdatedAt: evidence.updatedAt }));
         })}>ยื่นฉบับลงนามเพื่อตรวจรับ</button>
@@ -77,7 +77,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
       <p className="text-sm">{submission.samePerson ? 'ลงนามทั้งสองฐานะโดยคนเดียว' : 'ผู้รับรองและผู้อนุมัติเป็นคนละคน'} · ชื่อข้างต้นถอดจากกระดาษ ไม่ใช่ตัวตนบัญชีผู้อัปโหลด</p>
       <h3 className="font-bold">1. เปิดตรวจเอกสารและยืนยันว่าอ่านครบทุกหน้า</h3>
       <p className="text-sm text-gray-600">ในหน้าต่างเอกสาร ให้เปิดทุกหน้าด้วยปุ่ม “หน้าถัดไป” แล้วกด “อ่านครบทุกหน้าและตรวจเทียบข้อมูลแล้ว” การกดปิดอย่างเดียวยังไม่ถือว่ายืนยันการตรวจ</p>
-      <button className={viewedHash ? ghostClass : btnClass} type="button" disabled={busy} onClick={() => void run(async () => {
+      <button className={viewedHash ? ghostClass : btnClass} type="button" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void run(async () => {
         setViewedHash(null); setChecks([false, false, false]);
         const currentRevision = revision;
         const result = await previewSubstitutePaper(companyId, evidence.expenseId, evidence.id);
@@ -92,7 +92,7 @@ export function SubstitutePaperSigningPanel({ companyId, evidence, canPrepare, c
         {['ข้อมูลตรงกันและมีชื่อ วันที่ และลายเซ็นครบทั้งสองส่วน โดยตำแหน่ง (ถ้ามี) ตรงกับกระดาษ', 'ตรวจแล้วว่าผู้รับรองทราบข้อเท็จจริง และผู้อนุมัติบนกระดาษมีอำนาจตามนโยบายบริษัท', 'บริษัทเก็บต้นฉบับกระดาษไว้เพื่อตรวจสอบและใช้เป็นหลักฐานประกอบ'].map((label, index) => <label key={label} className="flex cursor-pointer items-start gap-3 text-sm leading-6"><input className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-brand-600)]" type="checkbox" disabled={!viewedHash || busy} checked={checks[index]} onChange={(event) => setChecks((current) => current.map((value, item) => item === index ? event.target.checked : value))} /><span>{label}</span></label>)}
         {viewedHash && !checks.every(Boolean) && <p role="status" className="text-sm text-warning-700">ยังขาดคำยืนยันอีก {checks.filter((checked) => !checked).length} ข้อ จึงจะตรวจรับและจัดเก็บฉบับสมบูรณ์ได้</p>}
         {submission.samePerson && !allowSamePerson && <ErrorBanner message="นโยบายบริษัทหรือสิทธิ์ของคุณไม่อนุญาตให้ตรวจรับฉบับที่ลงนามสองฐานะโดยคนเดียว" />}
-        <button className={btnClass} type="button" disabled={busy || !viewedHash || !checks.every(Boolean) || (submission.samePerson && !allowSamePerson)} onClick={() => void run(async () => {
+        <button className={btnClass} type="button" disabled={busy || !viewedHash || !checks.every(Boolean) || (submission.samePerson && !allowSamePerson)} aria-busy={Boolean(busy)} onClick={() => void run(async () => {
           if (!viewedHash) return;
           onChange(await acceptSubstitutePaper(companyId, evidence.expenseId, evidence.id, { previewChecksumSha256: viewedHash, expectedEvidenceUpdatedAt: evidence.updatedAt, factsAndSignaturesAcknowledged: true, approverAuthorityAcknowledged: true, originalRetainedAcknowledged: true }));
         })}>ตรวจรับและจัดเก็บฉบับสมบูรณ์</button>

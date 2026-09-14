@@ -176,7 +176,7 @@ export function NotificationCenterPage({ companyId, permissions }: { companyId: 
         <div className="flex gap-2">
           <button
             onClick={handleMarkAllRead}
-            disabled={loading || markAllBusy || busyRow !== null || !items.some((item) => !item.read)}
+            disabled={loading || markAllBusy || busyRow !== null || !items.some((item) => !item.read)} aria-busy={Boolean(markAllBusy)}
             className="inline-flex min-h-11 items-center rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 sm:min-h-0"
           >
             {markAllBusy ? 'กำลังทำเครื่องหมาย...' : 'อ่านทั้งหมด'}
@@ -306,7 +306,7 @@ export function NotificationPreferencesPage({ companyId, permissions }: { compan
               {(['web', 'line'] as const).map((channel) => (
                 <button
                   key={channel}
-                  disabled={saving || channel === 'web'}
+                  disabled={saving || channel === 'web'} aria-busy={Boolean(saving)}
                   onClick={() => toggleChannel(channel)}
                   className={`inline-flex min-h-11 items-center rounded-md px-3 py-1.5 text-sm font-medium sm:min-h-0 ${pref.enabledChannels.includes(channel) ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700'} disabled:opacity-60`}
                 >
@@ -397,7 +397,7 @@ export function NotificationRulesPage({ companyId, permissions }: { companyId: s
             {rule.status !== 'system' && (
               <button
                 onClick={() => toggleRule(rule)}
-                disabled={busyRuleId !== null}
+                disabled={busyRuleId !== null} aria-busy={Boolean(busyRuleId === rule.id)}
                 className={`inline-flex min-h-11 items-center rounded-full px-3 py-1 text-xs font-medium disabled:opacity-40 sm:min-h-0 ${rule.status === 'enabled' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}
               >
                 {busyRuleId === rule.id ? (rule.status === 'enabled' ? 'กำลังปิด...' : 'กำลังเปิด...') : rule.status === 'enabled' ? 'เปิดใช้งาน' : 'ปิดใช้งาน'}

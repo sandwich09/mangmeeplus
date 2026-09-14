@@ -198,7 +198,7 @@ function MaintenanceCard({ prefillRunId }: { prefillRunId: string }) {
           <button
             type="button"
             className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
-            disabled={busy !== null}
+            disabled={busy !== null} aria-busy={Boolean(busy !== null)}
             onClick={() => void callMaintenance('qr')}
           >
             {busy === 'qr' ? 'Reissuing…' : 'Reissue owner LINE QR'}
@@ -211,7 +211,7 @@ function MaintenanceCard({ prefillRunId }: { prefillRunId: string }) {
           <button
             type="button"
             className="mangmee-btn mangmee-btn-danger disabled:opacity-50"
-            disabled={busy !== null}
+            disabled={busy !== null} aria-busy={Boolean(busy !== null)}
             onClick={() => void callMaintenance('password')}
           >
             {busy === 'password' ? 'Regenerating…' : 'Regenerate temporary password'}
@@ -537,7 +537,7 @@ export default function SystemOnboardingNewPage() {
                   <input className={inputClass} required value={ownerUsername} onChange={(e) => setOwnerUsername(e.target.value)} />
                 </div>
               )}
-              <button type="submit" className={btnClass} disabled={loading}>
+              <button type="submit" className={btnClass} disabled={loading} aria-busy={Boolean(loading)}>
                 {loading ? 'Creating…' : 'Create Onboarding'}
               </button>
             </form>

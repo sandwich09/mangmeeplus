@@ -12,8 +12,8 @@ import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 // `name` — the native input keeps the FileList and native `required` validation applies.
 
 const LABELS = {
-  th: { pick: 'เลือกไฟล์', change: 'เปลี่ยนไฟล์', empty: 'ยังไม่ได้เลือกไฟล์', clear: 'นำไฟล์ออก' },
-  en: { pick: 'Choose file', change: 'Change file', empty: 'No file selected', clear: 'Remove file' },
+  th: { pick: 'เลือกไฟล์', change: 'เปลี่ยนไฟล์', empty: 'ยังไม่ได้เลือกไฟล์', clear: 'นำไฟล์ออก', loading: 'กำลังเตรียม/อัปโหลดไฟล์...' },
+  en: { pick: 'Choose file', change: 'Change file', empty: 'No file selected', clear: 'Remove file', loading: 'Preparing/uploading file...' },
 } as const;
 
 export type ThemedFileProps = {
@@ -24,6 +24,7 @@ export type ThemedFileProps = {
   /** `capture="environment"` opens the rear camera straight away on a phone. */
   capture?: boolean | 'user' | 'environment';
   disabled?: boolean;
+  loading?: boolean;
   className?: string;
   placeholder?: string;
   /** FormData forms: the native input keeps the FileList under this name. */
@@ -34,7 +35,8 @@ export type ThemedFileProps = {
   'aria-required'?: boolean;
 };
 
-export function ThemedFile({ file, onChange, accept, capture, disabled = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-required': ariaRequired }: ThemedFileProps) {
+export function ThemedFile({ file, onChange, accept, capture, disabled: disabledProp = false, loading = false, className, placeholder, name, required, id, 'aria-label': ariaLabel, 'aria-required': ariaRequired }: ThemedFileProps) {
+  const disabled = disabledProp || loading;
   const locale = useWorkspaceLocale();
   const labels = LABELS[locale] ?? LABELS.th;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -69,6 +71,7 @@ export function ThemedFile({ file, onChange, accept, capture, disabled = false, 
     // A <label> so a click anywhere opens the dialog natively (the clear <button> is
     // interactive content, which the label activation behavior skips by spec).
     <label
+      aria-busy={loading}
       className={cx(
         'mangmee-input flex items-center gap-2',
         disabled
@@ -110,10 +113,10 @@ export function ThemedFile({ file, onChange, accept, capture, disabled = false, 
         </button>
       )}
       <span className={cx('inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold', disabled ? 'bg-gray-100 text-gray-400' : 'bg-brand-50 text-brand-700')}>
-        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
+        {loading ? <span aria-hidden="true" className="action-loading-spinner h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent" /> : <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" className="h-3.5 w-3.5">
           <path d="M10 13V4m0 0 3.5 3.5M10 4 6.5 7.5M4 13.5v1a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-        {shownName ? labels.change : labels.pick}
+        </svg>}
+        <span role={loading ? 'status' : undefined}>{loading ? labels.loading : shownName ? labels.change : labels.pick}</span>
       </span>
     </label>
   );

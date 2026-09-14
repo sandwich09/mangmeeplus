@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { MangmeeCard, MangmeePage } from '@/common/components/mangmee';
@@ -66,6 +66,8 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
   const [journalTotal, setJournalTotal] = useState(0);
   const [closeRun, setCloseRun] = useState<PeriodCloseRun | null>(null);
   const [loading, setLoading] = useState(false);
+  const [busyAction, setBusyAction] = useState<'checks' | 'close' | null>(null);
+  const actionPendingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedPeriod = useMemo(() => periods.find((p) => p.periodKey === periodKey), [periodKey, periods]);
@@ -102,28 +104,38 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
   useEffect(() => { void load(); }, [load]);
 
   async function checks() {
-    if (!selectedPeriod) return;
+    if (!selectedPeriod || loading || actionPendingRef.current) return;
+    actionPendingRef.current = true;
+    setBusyAction('checks');
     setError(null);
     try {
       setCloseRun(await runCloseChecks(companyId, selectedPeriod.id));
     } catch (e) {
       setError(err(e));
+    } finally {
+      actionPendingRef.current = false;
+      setBusyAction(null);
     }
   }
 
   async function close() {
-    if (!selectedPeriod) return;
-    if (!(await confirm({
-      title: 'ปิดงวดบัญชี',
-      message: 'เมื่อปิดงวดแล้วจะไม่สามารถบันทึกหรือแก้ไขรายการในงวดนี้ได้ ยืนยันการปิดงวดใช่หรือไม่',
-    }))) return;
+    if (!selectedPeriod || loading || actionPendingRef.current) return;
+    actionPendingRef.current = true;
     setError(null);
     try {
+      if (!(await confirm({
+        title: 'ปิดงวดบัญชี',
+        message: 'เมื่อปิดงวดแล้วจะไม่สามารถบันทึกหรือแก้ไขรายการในงวดนี้ได้ ยืนยันการปิดงวดใช่หรือไม่',
+      }))) return;
+      setBusyAction('close');
       await closePeriod(companyId, selectedPeriod.id, `ปิดงวดจากหน้าสมุดรายวัน ${new Date().toISOString()}`);
       await load();
       toast.success('ปิดงวดเรียบร้อยแล้ว');
     } catch (e) {
       setError(err(e));
+    } finally {
+      actionPendingRef.current = false;
+      setBusyAction(null);
     }
   }
 
@@ -134,10 +146,10 @@ export function LedgerReportsPage({ companyId }: { companyId: string }) {
       description="บันทึกรายการที่ผ่านรายการแล้ว งบทดลอง งบการเงิน และการปิดงวด"
       actions={(
         <div className="flex flex-wrap items-center gap-2">
-          <ThemedDate mode="month" aria-label="งวด" className={inputClass} value={periodKey} onChange={(e) => setPeriodKey(e.target.value)} />
-          <button className={ghostClass} onClick={() => void load()} disabled={loading}>{loading ? 'กำลังโหลด...' : 'รีเฟรช'}</button>
-          <button className={ghostClass} onClick={() => void checks()} disabled={!selectedPeriod}>ตรวจสอบก่อนปิดงวด</button>
-          <button className={btnClass} onClick={() => void close()} disabled={!selectedPeriod || selectedPeriod.status === 'CLOSED'}>ปิดงวด</button>
+          <ThemedDate mode="month" aria-label="งวด" className={inputClass} disabled={loading || busyAction !== null} value={periodKey} onChange={(e) => setPeriodKey(e.target.value)} />
+          <button className={ghostClass} onClick={() => void load()} disabled={loading || busyAction !== null} aria-busy={loading}>{loading ? 'กำลังโหลด...' : 'รีเฟรช'}</button>
+          <button className={ghostClass} onClick={() => void checks()} disabled={loading || busyAction !== null || !selectedPeriod} aria-busy={busyAction === 'checks'}>{busyAction === 'checks' ? 'กำลังตรวจสอบ...' : 'ตรวจสอบก่อนปิดงวด'}</button>
+          <button className={btnClass} onClick={() => void close()} disabled={loading || busyAction !== null || !selectedPeriod || selectedPeriod.status === 'CLOSED'} aria-busy={busyAction === 'close'}>{busyAction === 'close' ? 'กำลังปิดงวด...' : 'ปิดงวด'}</button>
         </div>
       )}
     >

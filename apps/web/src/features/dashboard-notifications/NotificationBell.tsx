@@ -101,7 +101,7 @@ export function NotificationBell({ companyId, locale }: { companyId: string; loc
         <div className="fixed inset-x-3 top-[calc(var(--app-header-h)+8px)] z-50 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-[var(--shadow-theme-md)] sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(360px,calc(100vw-2rem))]">
           <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
             <span className="text-sm font-bold text-gray-900">{t('shell.notifications', locale)}</span>
-            <button type="button" className="text-xs font-semibold text-brand-700 hover:underline disabled:opacity-40" onClick={handleMarkAllRead} disabled={unread === 0 || markAllBusy || loading || error}>
+            <button type="button" className="text-xs font-semibold text-brand-700 hover:underline disabled:opacity-40" onClick={handleMarkAllRead} disabled={unread === 0 || markAllBusy || loading || error} aria-busy={Boolean(markAllBusy || loading)}>
               อ่านทั้งหมดแล้ว
             </button>
           </div>

@@ -109,7 +109,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
       {approve && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onApprove}
           className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
         >
@@ -121,7 +121,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
       {reject && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onReject}
           className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
         >
@@ -131,7 +131,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
       {reissue && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onReissue}
           className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
         >
@@ -141,7 +141,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
       {retryIntake && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onRetryIntake}
           className={`${rowActionClass} border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100`}
         >
@@ -151,7 +151,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
       {suspend && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onSuspend}
           className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
         >
@@ -532,7 +532,7 @@ export default function SignupQueuePage() {
               type="button"
               variant="primary"
               onClick={() => void handleApprove()}
-              disabled={busyId !== null || approveBlocked}
+              disabled={busyId !== null || approveBlocked} loading={Boolean(busyId !== null)}
             >
               {busyId !== null ? 'กำลังบันทึก...' : approveDialogConfirmLabel}
             </Button>
@@ -727,7 +727,7 @@ export default function SignupQueuePage() {
             <Button type="button" variant="secondary" onClick={() => setRejecting(null)} disabled={busyId !== null}>
               ยกเลิก
             </Button>
-            <Button type="button" variant="danger" onClick={handleReject} disabled={busyId !== null}>
+            <Button type="button" variant="danger" onClick={handleReject} disabled={busyId !== null} loading={Boolean(busyId !== null)}>
               {busyId !== null ? 'กำลังบันทึก...' : 'ปฏิเสธคำขอ'}
             </Button>
           </>
@@ -821,7 +821,7 @@ export default function SignupQueuePage() {
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
-            <button type="button" className="ml-3 underline" onClick={() => void load()}>
+            <button type="button" className="ml-3 underline" disabled={loading} aria-busy={loading} onClick={() => void load()}>
               ลองใหม่
             </button>
           </div>
@@ -885,7 +885,7 @@ export default function SignupQueuePage() {
                           <div className="flex flex-wrap gap-2">
                             <button
                               type="button"
-                              disabled={busy}
+                              disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handlePackageDecision(item, 'APPROVE')}
                               className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                             >
@@ -893,7 +893,7 @@ export default function SignupQueuePage() {
                             </button>
                             <button
                               type="button"
-                              disabled={busy}
+                              disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handlePackageDecision(item, 'REJECT')}
                               className={`${rowActionClass} border-red-200 bg-red-50 text-red-600 hover:bg-red-100`}
                             >

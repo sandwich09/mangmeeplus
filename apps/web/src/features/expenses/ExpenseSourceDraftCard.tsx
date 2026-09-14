@@ -223,7 +223,7 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
           </div>
           {sourceDraft.canEdit && (
             <button type="button" className="mangmee-btn mangmee-btn-secondary mt-3"
-              disabled={saving || values.items.length >= 40} onClick={addItem}>
+              disabled={saving || values.items.length >= 40} aria-busy={Boolean(saving)} onClick={addItem}>
               {t('expenses.add_line', locale)}
             </button>
           )}
@@ -235,7 +235,7 @@ export function ExpenseSourceDraftCard({ companyId, expenseId, expectedUpdatedAt
       {notice && <p role="status" className="rounded-xl bg-success-50 p-3 text-sm font-bold text-success-700">{notice}</p>}
       {sourceDraft.canEdit && (
         <button type="button" className="mangmee-btn mangmee-btn-primary w-full sm:w-auto"
-          disabled={!changes || issues.length > 0 || saving} onClick={() => void save()}>
+          disabled={!changes || issues.length > 0 || saving} aria-busy={Boolean(saving)} onClick={() => void save()}>
           {saving ? t('expenses.source_draft_saving', locale) : t('expenses.source_draft_save', locale)}
         </button>
       )}

@@ -23,7 +23,7 @@ const scopeClass: Record<CoverLoaderScope, string> = {
 
 function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3">
+    <div role="status" aria-busy="true" className="flex flex-col items-center justify-center gap-3">
       <span className="h-8 w-8 rounded-full border-4 border-gray-200 border-t-brand-600 animate-spin" />
       {label && <p className="text-sm text-gray-500">{label}</p>}
     </div>

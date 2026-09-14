@@ -642,7 +642,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
                   <div className="mt-2 rounded-[10px] border border-brand-100 bg-brand-50 p-3">
                     <div className="text-sm font-bold text-brand-800">สร้างลูกค้าใหม่: {draftCust.trim()}</div>
                     <input value={draftCustomerPhone} onChange={(e) => { setDraftCustomerPhone(e.target.value); setCustomerDuplicateMatches([]); }} placeholder="เบอร์โทร (แนะนำเพื่อป้องกันลูกค้าซ้ำ)" className="mt-2 w-full rounded-[9px] border border-brand-100 bg-white px-3 py-2 text-sm outline-none" />
-                    {customerDuplicateMatches.length > 0 && <div className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3"><div className="text-sm font-bold text-amber-900">พบลูกค้าที่อาจเป็นคนเดียวกัน</div>{customerDuplicateMatches.map((match) => <button key={match.customer.id} type="button" className="flex w-full items-center justify-between rounded-lg bg-white px-3 py-2 text-left text-sm" onClick={() => { setDraftCustomerId(match.customer.id); setDraftCust(match.customer.displayName); setCreateNewCustomer(false); setCustomerDuplicateMatches([]); }}><span><strong>{match.customer.displayName}</strong><span className="ml-2 text-xs text-gray-500">{match.customer.primaryPhone ?? 'ไม่มีเบอร์'}</span></span><span className="font-bold text-brand-700">ใช้ข้อมูลนี้</span></button>)}<button type="button" className="text-sm font-bold text-amber-800 underline" disabled={saving} onClick={() => void saveBooking(true)}>ยืนยันสร้างลูกค้าใหม่และจองต่อ</button></div>}
+                    {customerDuplicateMatches.length > 0 && <div className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3"><div className="text-sm font-bold text-amber-900">พบลูกค้าที่อาจเป็นคนเดียวกัน</div>{customerDuplicateMatches.map((match) => <button key={match.customer.id} type="button" className="flex w-full items-center justify-between rounded-lg bg-white px-3 py-2 text-left text-sm" onClick={() => { setDraftCustomerId(match.customer.id); setDraftCust(match.customer.displayName); setCreateNewCustomer(false); setCustomerDuplicateMatches([]); }}><span><strong>{match.customer.displayName}</strong><span className="ml-2 text-xs text-gray-500">{match.customer.primaryPhone ?? 'ไม่มีเบอร์'}</span></span><span className="font-bold text-brand-700">ใช้ข้อมูลนี้</span></button>)}<button type="button" className="text-sm font-bold text-amber-800 underline" disabled={saving} aria-busy={Boolean(saving)} onClick={() => void saveBooking(true)}>ยืนยันสร้างลูกค้าใหม่และจองต่อ</button></div>}
                     <button type="button" onClick={() => setCreateNewCustomer(false)} className="mt-2 text-xs font-semibold text-gray-500">ย้อนกลับไปเลือกลูกค้าเดิม</button>
                   </div>
                 )}
@@ -714,7 +714,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
             </div>
             <div className="flex gap-2.5 border-t border-gray-100 px-6 py-4">
               <button type="button" onClick={() => setCreate(null)} className="flex-1 rounded-[11px] bg-gray-100 p-3 text-center text-[15px] font-semibold text-gray-600">ยกเลิก</button>
-              <button type="button" onClick={() => void saveBooking()} disabled={!canSave || saving} className={cx('flex-1 rounded-[11px] p-3 text-center text-[15px] font-bold text-white', canSave && !saving ? 'cursor-pointer bg-brand-500' : 'cursor-not-allowed bg-gray-300')}>
+              <button type="button" onClick={() => void saveBooking()} disabled={!canSave || saving} aria-busy={Boolean(saving)} className={cx('flex-1 rounded-[11px] p-3 text-center text-[15px] font-bold text-white', canSave && !saving ? 'cursor-pointer bg-brand-500' : 'cursor-not-allowed bg-gray-300')}>
                 {saving ? 'กำลังบันทึก...' : 'บันทึกคิว'}
               </button>
             </div>
@@ -835,19 +835,19 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
                 <div className="grid gap-2.5">
                   {canUpdate && (
                     <>
-                      <button type="button" disabled={actionSaving} onClick={openReschedule} className="rounded-[11px] border border-gray-200 px-4 py-3 text-left text-sm font-bold text-gray-700 disabled:opacity-50">
+                      <button type="button" disabled={actionSaving} aria-busy={Boolean(actionSaving)} onClick={openReschedule} className="rounded-[11px] border border-gray-200 px-4 py-3 text-left text-sm font-bold text-gray-700 disabled:opacity-50">
                         เลื่อนนัด
                       </button>
-                      <button type="button" disabled={actionSaving} onClick={() => void handleTerminalStatus('DONE')} className="rounded-[11px] border border-green-200 bg-green-50 px-4 py-3 text-left text-sm font-bold text-green-700 disabled:opacity-50">
+                      <button type="button" disabled={actionSaving} aria-busy={Boolean(actionSaving)} onClick={() => void handleTerminalStatus('DONE')} className="rounded-[11px] border border-green-200 bg-green-50 px-4 py-3 text-left text-sm font-bold text-green-700 disabled:opacity-50">
                         เสร็จสิ้น
                       </button>
-                      <button type="button" disabled={actionSaving} onClick={() => void handleTerminalStatus('NO_SHOW')} className="rounded-[11px] border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm font-bold text-amber-700 disabled:opacity-50">
+                      <button type="button" disabled={actionSaving} aria-busy={Boolean(actionSaving)} onClick={() => void handleTerminalStatus('NO_SHOW')} className="rounded-[11px] border border-amber-200 bg-amber-50 px-4 py-3 text-left text-sm font-bold text-amber-700 disabled:opacity-50">
                         ไม่มาตามนัด
                       </button>
                     </>
                   )}
                   {canCancel && (
-                    <button type="button" disabled={actionSaving} onClick={() => void handleCancel(selectedBooking.id)} className="rounded-[11px] border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-bold text-red-700 disabled:opacity-50">
+                    <button type="button" disabled={actionSaving} aria-busy={Boolean(actionSaving)} onClick={() => void handleCancel(selectedBooking.id)} className="rounded-[11px] border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-bold text-red-700 disabled:opacity-50">
                       ยกเลิกนัด
                     </button>
                   )}
@@ -865,7 +865,7 @@ export function BookingsPrototypePage({ companyId, permissions }: { companyId: s
                   <button type="button" disabled={actionSaving} onClick={() => setReschedule(null)} className="flex-1 rounded-[11px] bg-gray-100 p-3 text-[15px] font-semibold text-gray-600 disabled:opacity-50">กลับ</button>
                   <button
                     type="button"
-                    disabled={actionSaving || !reschedule.date || !reschedule.time}
+                    disabled={actionSaving || !reschedule.date || !reschedule.time} aria-busy={Boolean(actionSaving)}
                     onClick={() => void saveReschedule()}
                     className="flex-1 rounded-[11px] bg-brand-500 p-3 text-[15px] font-bold text-white disabled:bg-gray-300"
                   >
