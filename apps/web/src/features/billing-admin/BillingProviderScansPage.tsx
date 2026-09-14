@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { BillingScanSchedulePanel } from './BillingScanSchedulePanel';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import type { BillingProviderScanView } from '@watchdog-bms/contracts';
@@ -53,6 +54,7 @@ export default function BillingProviderScansPage({scanId}:{scanId?:string}) {
       {scanId&&<Link className={button} href={base}>กลับรายการงานตรวจ</Link>}</nav>
     <button className={button} disabled={loading||busy} onClick={()=>setReload(v=>v+1)}>โหลดงานล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
+    {!scanId&&<BillingScanSchedulePanel/>}
     {!scanId&&list?.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-4 rounded-xl border p-4">
       <h2 className="text-lg font-bold">เริ่มงานตรวจ</h2><p>เลือกย้อนหลังได้ไม่เกิน29วัน และสิ้นสุดก่อนปัจจุบันอย่างน้อย1นาที เวลาตามเครื่องนี้</p>
       <label className="block">เริ่มช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></label>

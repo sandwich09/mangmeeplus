@@ -8,8 +8,14 @@ export type BillingProviderScanView = {
   id: string; mode: BillingMode; state: string; version: number; reason: string;
   windowStart: string; windowEnd: string; createdAt: string; checkpointAt: string | null;
   pages: number; seen: number; imported: number; known: number; ignored: number; incompatible: number;
-  retryAt: string | null; errorCode: string | null; canCancel: boolean; canResume: boolean;
+  retryAt: string | null; errorCode: string | null; canCancel: boolean; canResume: boolean; automatic?:boolean;
 };
+export type BillingScanScheduleInput = { enabled:boolean;intervalHours:number;initialLookbackHours:number;expectedVersion:number;reason:string };
+export type BillingScanScheduleOperation = {id:string;mode:BillingMode;state:'PREVIEW'|'SUCCEEDED'|'CANCELLED';version:number;sourceRevision:number;previewHash:string;
+  enabled:boolean;intervalHours:number;initialLookbackHours:number;reason:string;initiatorUserId:string;createdAt:string;expiresAt:string;publishedAt:string|null;
+  canPublish:boolean;canCancel:boolean};
+export type BillingScanSchedule = {mode:BillingMode|'DISABLED';revision:number;publicationId:string|null;ownerUserId:string|null;enabled:boolean;intervalHours:number;
+  initialLookbackHours:number;canManage:boolean;blockedReason:string|null;nextDueAt:string|null;lastRun:BillingProviderScanView|null;lastCompletedWindowEnd:string|null};
 export type BillingInterval = 'month' | 'year';
 export type BillingOfferKey = `${PaidTier}:${BillingInterval}`;
 export type BillingTaxTreatment = 'INCLUSIVE_VAT_7' | 'EXCLUSIVE_VAT_7' | 'NOT_VAT_REGISTERED';

@@ -1,5 +1,5 @@
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import { BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -49,6 +49,24 @@ export class BillingAdminController {
   @Get('provider-scans') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   providerScans(@Req() req: AuthedRequest, @Query() query: unknown) {
     const fields=bodyFields(query,['cursor']);return this.scans.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('provider-scans/schedule') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  scanSchedule(@Req() req:AuthedRequest) { return this.scans.schedule(req.context); }
+  @Get('provider-scans/schedule/history') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  scanScheduleHistory(@Req() req:AuthedRequest,@Query() query:unknown) {
+    const fields=bodyFields(query,['cursor']);return this.scans.scheduleHistory(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));
+  }
+  @Get('provider-scans/schedule/operations/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  scanScheduleOperation(@Req() req:AuthedRequest,@Param('id') id:string) { return this.scans.scheduleOperation(req.context,uuid(id)); }
+  @Post('provider-scans/schedule/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run')
+  async scanSchedulePreview(@Req() req:AuthedRequest,@Body() body:BillingScanScheduleDto,@Headers('idempotency-key') key?:string) {
+    bodyFields(body,['enabled','intervalHours','initialLookbackHours','expectedVersion','reason']);await this.operationLimit(req);
+    return this.scans.previewSchedule(req.context,body,key??'');
+  }
+  @Post('provider-scans/schedule/operations/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run')
+  async scanScheduleAction(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto) {
+    bodyFields(body,['expectedVersion','previewHash']);await this.operationLimit(req);
+    return this.scans.actSchedule(req.context,uuid(id),action,body.expectedVersion,textField(body.previewHash));
   }
   @Get('provider-scans/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control', 'no-store')
   providerScan(@Req() req: AuthedRequest, @Param('id') id: string) { return this.scans.get(req.context,uuid(id)); }

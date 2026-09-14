@@ -5,10 +5,13 @@ import type { PrismaService } from '../common/database/prisma.service';
 import type { startBillingBrowser } from './billing-browser-smoke';
 import type { StripeClient } from '../modules/billing/infrastructure/stripe.client';
 
-export async function checkBillingProviderScans(input:{prisma:PrismaService;stripe:StripeClient;userId:string;membershipId:string;stripeAccountId:string;
+export type ProviderScansSmokeInput={prisma:PrismaService;stripe:StripeClient;userId:string;membershipId:string;stripeAccountId:string;
   request:(path:string,method?:string,body?:unknown,headers?:Record<string,string>)=>Promise<{status:number;body:any}>;
   drain:()=>Promise<{status:number;body:any}>;browser?:Awaited<ReturnType<typeof startBillingBrowser>>;
-  transport:(hook?:((url:URL,init?:RequestInit)=>Promise<Response|undefined>|Response|undefined))=>void}) {
+  transport:(hook?:((url:URL,init?:RequestInit)=>Promise<Response|undefined>|Response|undefined))=>void;
+  second?:{userId:string;signToken:(sid:string)=>string;recordLegal:(membershipId:string)=>Promise<void>};
+};
+export async function checkBillingProviderScans(input:ProviderScansSmokeInput) {
   const {prisma,request,browser}=input,db=prisma.client,tag=randomUUID().replaceAll('-',''),prefix=`evt_scan${tag}`,base='/v1/system/billing/provider-scans';
   const member=await db.companyMembership.findUniqueOrThrow({where:{id:input.membershipId}}),term=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:member.companyId}});
   const roleId=randomUUID(),ids:string[]=[];let adminId:string|undefined,createdAdmin=false;
@@ -39,6 +42,11 @@ export async function checkBillingProviderScans(input:{prisma:PrismaService;stri
     Object.defineProperty(input.stripe,'enabled',{get:()=>false,configurable:true});
     try{assert.equal((await request(base)).body.canCreate,false);assert.equal((await create()).status,409);}
     finally{if(enabledDescriptor)Object.defineProperty(input.stripe,'enabled',enabledDescriptor);else Reflect.deleteProperty(input.stripe,'enabled');}
+    if(process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'){
+      const {checkBillingScanSchedule}=await import('./billing-scan-schedule-smoke');
+      try{return await checkBillingScanSchedule({...input,roleId,adminId:admin.id});}
+      finally{ids.push(...(await db.billingOperation.findMany({where:{stripeAccountId:input.stripeAccountId,type:{in:['SCAN_PROVIDER_EVENTS','CONFIGURE_PROVIDER_SCANS']}}})).map(row=>row.id));}
+    }
     input.transport(async(url,init)=>{
       if(url.origin!=='https://api.stripe.com'||url.pathname!=='/v1/events')return;
       assert.equal(init?.method,'GET');assert.equal(new Headers(init?.headers).get('stripe-version'),STRIPE_API_VERSION);

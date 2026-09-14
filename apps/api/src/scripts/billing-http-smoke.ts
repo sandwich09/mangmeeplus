@@ -184,6 +184,9 @@ async function main() {
       const budget=await app.get(RedisRateLimitService).inspect('billing-operator-commands',userIds[0]!,30,60);
       if(budget.count)await new Promise(resolve=>setTimeout(resolve,Math.min(60,budget.retryAfterSeconds+1)*1000));
       return checkBillingProviderScans({prisma,stripe:app.get(BillingService).stripe,request,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,browser,
+        second:{userId:userIds[1]!,signToken:sid=>new JwtService().sign({sub:userIds[1],sid},{secret,algorithm:'HS256',issuer:DEFAULT_JWT_ISSUER,audience:DEFAULT_JWT_AUDIENCE,expiresIn:3600}),
+          recordLegal:membershipId=>client.$transaction(tx=>app.get(LegalAcceptanceService).recordFromEvidence(tx,{userId:userIds[1]!,companyId:companyIds[0]!,membershipId,
+            requestId:run,evidence:{...release,locale:'th',legalAcceptedAt:new Date()}})).then(()=>{})},
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
     if(process.env.BILLING_SUPPORT_OUTCOMES_ONLY==='1'){
@@ -206,7 +209,7 @@ async function main() {
       cases.push(...await checkEmailVerification({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE'],realProviderDelivery:false}));return;
     }
-    if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'){
+    if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'||process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'){
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       }

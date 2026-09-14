@@ -5,6 +5,12 @@ import { Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsU
 export class BillingVersionDto {
   @IsInt() @Min(0) expectedVersion!: number;
 }
+export class BillingScanScheduleDto extends BillingVersionDto {
+  @IsBoolean() enabled!:boolean;
+  @IsInt() @Min(1) intervalHours!:number;
+  @IsInt() @Min(1) initialLookbackHours!:number;
+  @IsString() @MinLength(1) @MaxLength(500) reason!:string;
+}
 export class BillingProviderScanDto {
   @IsISO8601({strict:true,strictSeparator:true}) @MaxLength(40) windowStart!: string;
   @IsISO8601({strict:true,strictSeparator:true}) @MaxLength(40) windowEnd!: string;

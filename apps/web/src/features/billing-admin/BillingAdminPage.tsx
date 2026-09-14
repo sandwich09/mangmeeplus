@@ -9,6 +9,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
 
 const button = 'inline-block rounded-xl border border-gray-300 px-4 py-2 text-sm font-semibold disabled:opacity-50';
+const issueKind=(kind:string)=>({PROVIDER_SCAN_SCHEDULE_BLOCKED:'ต้องตรวจการตั้งค่ารอบตรวจ Stripe',PROVIDER_SCAN_COVERAGE_GAP:'มีช่วงเหตุการณ์ Stripe ที่ยังตรวจไม่ครบ',PROVIDER_SCAN_FAILED:'งานตรวจ Stripe ยังไม่สำเร็จ',PROVIDER_SCAN_VERSION_UNSUPPORTED:'เหตุการณ์ Stripe ใช้รุ่นข้อมูลที่ยังไม่รองรับ'}[kind]??kind);
 const time = (value: string | null) => value ? new Date(value).toLocaleString('th-TH') : 'ยังไม่มี';
 const money = (value: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(value / 100);
 const get = <T,>(path: string) => authedApiFetch<T>(`/system/billing${path}`, { cache: 'no-store', suppressErrorToast: true });
@@ -110,18 +111,19 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     {!loading&&company?.accountId&&<Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/deliveries`}>รายการแจ้งเตือนแพ็กเกจ</Link>}
     {!loading && company && <BillingTimelinePanel key={`timeline-${company.companyId}`} companyId={company.companyId}/>}
     {!loading && issueList && <section aria-label="รายการเคส" className="space-y-3">{issueList.length === 0 && <p>ไม่พบเคสที่ยังเปิดในหน้านี้</p>}
-      {issueList.map(i => <article key={i.id} className="rounded-xl border bg-white p-4"><Link className="font-semibold underline" href={`/system/billing/issues/${i.id}`}>{i.kind}</Link>
+      {issueList.map(i => <article key={i.id} className="rounded-xl border bg-white p-4"><Link className="font-semibold underline" href={`/system/billing/issues/${i.id}`}>{issueKind(i.kind)}</Link>
         <p>{states[i.state] ?? i.state} · {i.assigneeUserId ? `${i.assigneeName}${i.assigneeAvailable?'':' · ผู้รับผิดชอบเดิมไม่มีสิทธิ์แล้ว'}` : 'ยังไม่มีผู้รับผิดชอบ'}</p>
         <p>{i.priority} · รอบปัญหา {i.episode} · {i.overdue?'เลยเวลาติดตาม':i.followUpAt?`ติดตาม ${time(i.followUpAt)}`:'ยังไม่ได้กำหนดเวลาติดตาม'}</p><p className="break-all text-sm">อ้างอิง {i.reference}</p></article>)}
       {company && <Link href="/system/billing/issues" className="inline-block underline">เปิดคิวทั้งหมด</Link>}
     </section>}
     {!loading && issue && <section className="space-y-4 rounded-xl border bg-white p-5" aria-label="รายละเอียดเคส">
-      <h2 className="font-bold">{issue.kind}</h2><p>{states[issue.state] ?? issue.state} · เวอร์ชัน {issue.version}</p>
+      <h2 className="font-bold">{issueKind(issue.kind)}</h2><p>{states[issue.state] ?? issue.state} · เวอร์ชัน {issue.version}</p>
       <p className="break-all">อ้างอิง {issue.reference}</p><p>อัปเดต {time(issue.updatedAt)}</p>{issue.note && <p className="whitespace-pre-wrap">{issue.note}</p>}
       <p>รอบปัญหา {issue.episode} · ตรวจพบล่าสุด {time(issue.lastSeenAt)} · {issue.priority}</p>
       <p>{issue.assigneeUserId?`ผู้รับผิดชอบ ${issue.assigneeName}${issue.assigneeAvailable?'':' (ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว)'}`:'ยังไม่มีผู้รับผิดชอบ'}</p>
       <p>{issue.backupUserId?`ผู้สำรอง ${issue.backupName}${issue.backupAvailable?'':' (ไม่มีสิทธิ์แล้ว)'}`:'ยังไม่ได้กำหนดผู้สำรอง'} · {issue.overdue?'เลยเวลาติดตาม · ':''}{issue.followUpAt?time(issue.followUpAt):'ยังไม่ได้กำหนดเวลาติดตาม'}</p>
       {issue.kind==='PROVIDER_EVENT_FAILED'&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-events/${encodeURIComponent(issue.reference)}`}>ตรวจ event เดิมของเคสนี้</Link>}
+      {['PROVIDER_SCAN_SCHEDULE_BLOCKED','PROVIDER_SCAN_COVERAGE_GAP'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href="/system/billing/provider-scans">ตรวจการตั้งค่าและช่วงเวลาที่ตกหล่น</Link>}
       {['PROVIDER_SCAN_FAILED','PROVIDER_SCAN_VERSION_UNSUPPORTED'].includes(issue.kind)&&overview?.platformScope&&<Link className="inline-block underline" href={`/system/billing/provider-scans/${encodeURIComponent(issue.reference)}`}>เปิดงานค้นหาเหตุการณ์ของเคสนี้</Link>}
       {issue.kind === 'CONTROL_OPERATION_REVIEW' && <Link className="inline-block underline" href={`/system/billing/operations/${encodeURIComponent(issue.reference)}`}>เปิดคำสั่งเดิมของเคสนี้</Link>}
       {issue.companyId && <Link className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}`}>กลับไปบริษัทนี้</Link>}
