@@ -89,6 +89,66 @@ with browser acceptance. Production still follows the [V2 protocol](../../docs/r
 
 ## Once per environment
 
+### Isolated database and runtime rehearsal
+
+`rehearse-database.py` exercises the actual DB controller against an empty PostgreSQL bootstrapped
+from a supplied exact deployed-source migration catalog, followed by the candidate image's normal
+upgrade and hotfix checks. Optional runtime checks start the three actual images on an internal
+Docker network, regenerate every secret, compare complete container environments and run the shared
+deep-readiness probes in deploy order. They reject runtime error logs and remove only their own test
+containers/network. They never publish a host port or pass cloud credentials into containers.
+
+```sh
+python3 infra/kamal/rehearse-database.py \
+  --manifest <validated-private-inventory.json> \
+  --baseline-ref <exact-deployed-source-sha> \
+  --postgres-image postgres:18.3-alpine \
+  --runtime-baseline <private-capture-config-directory> \
+  --redis-image <existing-local-redis-image> \
+  --tls \
+  --output <new-private-output-directory>
+```
+
+Use the engine observed in Production, not an assumed local default. `--tls` uses a disposable CA,
+the same `verify-full` database URL options, and authenticated `rediss`; plaintext database TCP is
+rejected. The actual database client reads its session's TLS state. The CA replacement is test-only;
+this does not prove the AWS certificate chain, managed Redis version, cloud connectivity or HA.
+Omit the two runtime options
+for DB-only checks. The source-based schema is not a live migration ledger/data snapshot. Local
+containers do not prove ECR, IAM, AgentCore, native multi-host rollout, AWS TLS/HA, storage or customer
+acceptance. [Observed results and remaining gaps](../../docs/agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+### Isolated AWS core rehearsal
+
+`rehearse-cloud.py` runs the existing shared Release build/config/ECR/migration/native rollout and
+readback methods on the exact enrolled disposable Dev. It captures fresh Production config, replaces
+every secret and external data route, uses synthetic PostgreSQL18.3/TLS plus authenticated Redis TLS,
+and validates all candidate environment keys. The baseline catalog must match the observed live ledger.
+The private target, existing bootstrap tools image and official dependency digests are explicit inputs:
+
+```sh
+python3 infra/kamal/rehearse-cloud.py \
+  --target <enrolled-private-dev-target.json> --profile <dev-deploy-profile> \
+  --baseline-ref <verified-production-source-sha> \
+  --bootstrap-tools-image <existing-dev-tools-image> \
+  --postgres-image <official-postgres-digest> --redis-image <official-redis-digest>
+```
+
+It only accepts the existing Dev instance/service and powers it off in `finally`. It parks previous Dev
+workloads without deleting their data. The operator must verify AWS stopped state and remove only any
+approved temporary ingress. Retained fixtures may restart with the host: inspect them before reuse.
+Do not rerun after failure until original logs, lock and cloud state are reconciled. Linux Redis fixtures
+run as their private config owner with a private writable data mount; do not make secret files public.
+
+Setup and deploy clocks are separate; all phases, errors and shutdown time are retained. This bypasses
+the full release orchestration for an explicitly scoped core experiment: no provider update, launch
+retirement, customer OPEN/signing or Production target acceptance. A passed result must never be
+called a Production release or stable full-deploy time. First AWS core proof passed507.797s with cache
+(whole command569.800s), gate CLOSED, then Dev was stopped and temporary ingress removed.
+[Evidence and parity gaps](../../docs/agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+### Target enrollment
+
 Enroll `.env.kamal/production/target.json` or `.env.kamal/uat/target.json`, mode `0600`. Do not commit
 private files. The `.env.*` paths are ignored by Git. The target must contain:
 
