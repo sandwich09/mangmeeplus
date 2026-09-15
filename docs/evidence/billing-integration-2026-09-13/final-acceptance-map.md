@@ -64,6 +64,10 @@
 | AP23 | รูป/PDF/draft/final action → permission/quota/current source | [line-media-source](line-media-source-result.json), [line-continuation-source](line-continuation-source-result.json), [receipt-upload-source](receipt-upload-source-result.json) |
 | AP24 | identity / กลุ่ม / เลือกบริษัท / unlink / กลับเว็บ | [line-canonical-binding](line-canonical-binding-result.json), [line-admin-qr-repair](line-admin-qr-repair-result.json), [line-queued-billing-browser](line-queued-billing-browser-result.json) |
 
+## Browser CI correction
+
+[Current browser correction](ci-browser-correction-result.json) covers CT03/CT31/CT32 and the overdue queue: exact API response, rendered rows, next-page cursor, case return and reload under normal/slow rendering. The remaining CI browser sequence and local tail contract checks pass.
+
 ## CI fixture correction
 
 [Current correction evidence](ci-correction-result.json) covers CT24a with real429, original preview/cancel and no provider dispatch, plus the complete non-browser CI path. Product source is unchanged from the333-group browser run.

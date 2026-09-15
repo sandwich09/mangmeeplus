@@ -6,6 +6,7 @@ import { detectBillingIssue, resolveBillingIssue } from '../modules/billing/appl
 export async function checkBillingSupportSla(input: Parameters<typeof checkBillingConfigurationDrafts>[0]) {
   const { request, approveRequest, browser, companyId, stripeAccountId } = input, db = input.prisma.client, base = '/v1/system/billing', run = randomUUID();
   const cases: string[] = [], issueIds: string[] = [], viewport = browser?.page.viewportSize();
+  let slowSession: import('@playwright/test').CDPSession | undefined;
   const settings = async () => (await request(`${base}/settings`)).body, initial = await settings();
   const firstMinutes = { NORMAL: 60, HIGH: 30, CRITICAL: 5 }, nextMinutes = { NORMAL: 30, HIGH: 20, CRITICAL: 10 };
   const identity = (reference: string, kind = 'SLA_FOLLOWUP') => ({ stripeAccountId, companyId, livemode: false, kind, referenceId: `${run}-${reference}` });
@@ -137,10 +138,32 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
     assert.equal(postponed.body.overdue, false); assert.equal((await queue(first.id)).status, 404, 'cursor outside effective overdue scope is refused');
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/system/billing/issues`, { waitUntil: 'domcontentloaded' });
-      const filtered = page.waitForResponse(r => r.url().includes('/system/billing/issues?queue=OVERDUE') && r.request().method() === 'GET');
-      await page.getByLabel('กรองคิว', { exact: true }).selectOption('OVERDUE'); assert.equal((await filtered).status(), 200);
-      await page.getByRole('region', { name: 'รายการเคส', exact: true }).getByRole('link').first().waitFor();
-      await page.getByRole('button', { name: 'หน้าถัดไป', exact: true }).click();
+      if (process.env.BILLING_SLA_SLOW_BROWSER === '1') {
+        slowSession = await page.context().newCDPSession(page);
+        await slowSession.send('Emulation.setCPUThrottlingRate', { rate: 6 });
+      }
+      const filtered = page.waitForResponse(r => {
+        const url = new URL(r.url()); return url.pathname === '/api/v1/system/billing/issues' && url.searchParams.get('queue') === 'OVERDUE' && !url.searchParams.has('cursor') && r.request().method() === 'GET';
+      });
+      await page.getByLabel('กรองคิว', { exact: true }).selectOption('OVERDUE');
+      const filteredResponse = await filtered; assert.equal(filteredResponse.status(), 200);
+      assert.equal(new URL(filteredResponse.url()).pathname, '/api/v1/system/billing/issues', JSON.stringify({ url: filteredResponse.url(), type: filteredResponse.headers()['content-type'] }));
+      const filteredPage = await filteredResponse.json(); assert.ok(filteredPage.nextCursor);
+      const renderedRows = (rows: { id: string }[]) => page.waitForFunction(ids => {
+        const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('section[aria-label="รายการเคส"] a'));
+        return links.length === ids.length && links.every((link, index) => new URL(link.href).pathname === `/system/billing/issues/${ids[index]}`);
+      }, rows.map(row => row.id));
+      await page.waitForURL(`${browser.origin}/system/billing/issues?queue=OVERDUE`);
+      await renderedRows(filteredPage.items);
+      const [nextResponse] = await Promise.all([
+        page.waitForResponse(r => {
+          const url = new URL(r.url()); return url.pathname === '/api/v1/system/billing/issues' && url.searchParams.get('queue') === 'OVERDUE' && url.searchParams.get('cursor') === filteredPage.nextCursor && r.request().method() === 'GET';
+        }),
+        page.waitForURL(`${browser.origin}/system/billing/issues?queue=OVERDUE&cursor=${filteredPage.nextCursor}`),
+        page.getByRole('button', { name: 'หน้าถัดไป', exact: true }).click(),
+      ]);
+      assert.equal(nextResponse.status(), 200);
+      await renderedRows((await nextResponse.json()).items);
       await page.getByRole('button', { name: 'หน้าแรก', exact: true }).waitFor();
       const link = page.getByRole('region', { name: 'รายการเคส', exact: true }).locator(`a[href^="/system/billing/issues/${overdueIds.at(-1)}?"]`);
       await link.waitFor(); const href = await link.getAttribute('href'); assert.ok(href); await link.click();
@@ -154,6 +177,7 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
       await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('button',{name:'หน้าแรก',exact:true}).waitFor();
       assert.equal(await page.getByLabel('กรองคิว',{exact:true}).inputValue(),'OVERDUE');
       cases.push('browser-sla-manual-clear-reload-overdue-pagination-case-return-mobile');
+      if (slowSession) cases.push('browser-sla-slow-rendering-api-response-bound-paging');
     }
     await db.$transaction(tx => resolveBillingIssue(tx, identity('overdue-0', 'SLA_OVERDUE_0'), 'SYNTHETIC_PROVIDER_RECOVERED'));
     const audits = await db.auditLog.findMany({ where: { targetId: normal.id, action: 'billing.issue.updated' } });
@@ -164,12 +188,15 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
   } catch (error) {
     if (browser) {
       console.error(JSON.stringify({ stage:'support-sla',path:new URL(browser.page.url()).pathname,completed:cases,
+        query:new URL(browser.page.url()).search,
+        controls:await browser.page.locator('main button').allTextContents(),
         alerts:await browser.page.locator('main [role="alert"]').allTextContents() }));
       await browser.page.screenshot({ path:`${browser.evidenceDir}/support-sla-failure.png`,fullPage:true });
     }
     throw error;
   } finally {
     input.transport();
+    if (slowSession) { await slowSession.send('Emulation.setCPUThrottlingRate', { rate: 1 }).catch(() => {}); await slowSession.detach().catch(() => {}); }
     await db.billingIssue.deleteMany({ where: { id: { in: issueIds } } });
     if (browser && viewport) await browser.page.setViewportSize(viewport);
   }

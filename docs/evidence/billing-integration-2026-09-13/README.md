@@ -1,5 +1,7 @@
 # Stripe/Postmark final local acceptance
 
+> **Browser CI correction — 2026-09-16:** ตัวทดสอบคิวเคสจับ response ของหน้า Next.js แทน API; ยืนยันด้วยกรณีจำลอง browser ช้าแล้ว แก้ให้รอ API/URL/แถวตรงกันและตรวจชุดท้ายของ CI บนเครื่องครบ ดู [หลักฐานแก้ browser CI](ci-browser-correction-result.json). โค้ดผลิตภัณฑ์ไม่เปลี่ยนจาก bcb11ae7; สถานะ merge ล่าสุดติดตามใน [PR558](https://github.com/MangmeeDev/mangmeeplus/pull/558).
+
 > **CI fixture correction — 2026-09-16:** แก้ตัวทดสอบที่ใช้ preview429 ต่อโดยไม่ตรวจผล; โค้ดผลิตภัณฑ์ไม่เปลี่ยนจากbcb11ae7. ตรวจ forced HTTP6, browser7 และชุด API เต็มแบบ CI256 กลุ่มผ่านแล้ว ดู [หลักฐานแก้ CI](ci-correction-result.json). Marketing merge develop/main แล้ว; core รอ CI ของ revision แก้ก่อน Admin merge. ผล333กลุ่มด้านล่างยังเป็นหลักฐาน source ที่ระบุไว้เดิม.
 
 สถานะ 2026-09-16: โค้ดตามขอบเขตที่อนุมัติและการตรวจภายในเครื่องผ่านแล้ว Marketing merge develop/main หลัง CI ผ่านแล้ว; ระบบหลักกำลังส่ง revision แก้ตัวทดสอบเข้า CI ก่อน Admin merge develop/main. ยังไม่ deploy หรือเปิดรับเงินจริง.
