@@ -1,6 +1,6 @@
 # Postmark transactional email และขอบเขตเอกสาร Stripe
 
-สถานะ: **POSTMARK SELECTED / IMPLEMENTATION SPEC READY 2026-09-11; runtime และ provider E2E ยัง NOT IMPLEMENTED / NOT RUN**.
+สถานะล่าสุด 2026-09-15: **POSTMARK SELECTED / NATIVE SERVERS AND MANUAL SMTP DELIVERY VERIFIED; APPLICATION E2E / ROLLOUT PENDING**. [หลักฐานการส่ง](../evidence/postmark-native-delivery-2026-09-15.md) แยกจาก source implementation ใน [PR #558](https://github.com/MangmeeDev/mangmeeplus/pull/558); การ merge เอกสารไม่รวมการนำ source นั้นขึ้น develop/main หรือเปิด runtime.
 
 Owner เลือก **Postmark** แล้ว เพราะมี Receipt ค่าบริการให้บริษัทมั่งมีเก็บลงบัญชี และยืนยันขอบเขตว่า **Invoice/Receipt ให้ลูกค้าที่จ่ายค่ามั่งมีใช้ Stripe**. การเปลี่ยนเอกสารนี้ไม่ใช่การเปิดบัญชี ซื้อบริการ activate provider หรือ deploy. Sender.net ถูกแทนที่ในแผนปัจจุบัน; ผลสำรวจเดิมเป็นประวัติเท่านั้น.
 
@@ -43,6 +43,8 @@ Source of truth: [Postmark developer reference](../research/postmark-developer-r
 | `WEB_BASE_URL` | explicit HTTPS frontend origin สำหรับ raw proof links; ไม่ fallback ไป API origin |
 
 เพิ่ม getters, config validation, DI branch และ `PostmarkAuthMailerAdapter` หลัง port เดิม. ใช้ native fetch/HTTP helper ที่มี โดย timeout 10 วินาที, ไม่ follow redirects ไป origin อื่น และไม่เพิ่ม SDK ถ้าไม่จำเป็น. L0 inject transport ใน test เท่านั้น; endpoint production fixed ที่ `https://api.postmarkapp.com/email`.
+
+**Environment sender decision — 2026-09-15:** ผู้ใช้ยืนยัน UAT From `developer@mangmeeplus.com` และ Production From `contact@mangmeeplus.com`. Dedicated Live servers ที่สร้างแล้วคือ UAT `20950027` และ Production `20950034`; ทั้งคู่ใช้ `outbound` Transactional. Server IDs และ From ต้องจับคู่ตาม environment ใน application configuration. การ verify domain หรือแยก Postmark server อย่างเดียวไม่จำกัดผู้ส่งใน native UI ซึ่งยังเลือก signature ข้าม environment ได้. [หลักฐาน native delivery](../evidence/postmark-native-delivery-2026-09-15.md) ยืนยันการรับโดย Gmail SMTP ของ From ที่ถูกต้อง แต่ไม่แทนการตรวจ deployed token/guard/webhook หรือ Inbox placement.
 
 ### 3.2 Request / result
 
