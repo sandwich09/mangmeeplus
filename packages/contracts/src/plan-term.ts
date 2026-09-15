@@ -6,6 +6,9 @@ export type PlanTierKey = 'FREE_TRIAL_15' | 'STARTER_249' | 'BASIC_499' | 'PRO_9
 /** Derived, never stored: ACTIVE (green) / WARNING (yellow) / EXPIRED (red). */
 export type PlanTermDerivedState = 'ACTIVE' | 'WARNING' | 'EXPIRED';
 
+export type CompanyPlanCapacity = { tierKey: PlanTierKey; branchLimit: number; employeeLimit: number;
+  temporary?: { operationId: string; effectiveAt: string; expiresAt: string } };
+
 export type CompanyPlanTermDto = {
   companyId: string;
   tierKey: PlanTierKey;
@@ -24,6 +27,9 @@ export type CompanyPlanTermDto = {
   warmupSlipLimit?: number;
   derivedState: PlanTermDerivedState;
   daysLeft: number;
+  /** Purchased fields above remain the financial baseline. Temporary capacity is separate. */
+  effectiveCapacity?: CompanyPlanCapacity;
+  paidPlan?: boolean;
 };
 
 /** null = company has no term row (legacy/grandfathered — unlimited until admin sets one). */

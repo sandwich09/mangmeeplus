@@ -1,4 +1,4 @@
-import { PLAN_TIER_PRESETS, type PlanTierKey } from './plan-term.js';
+import { PLAN_TIER_PRESETS, type PlanTierKey, type CompanyPlanCapacity } from './plan-term.js';
 
 export const STRIPE_API_VERSION = '2026-08-26.dahlia' as const;
 export const BILLING_PAID_TIERS = ['STARTER_249', 'BASIC_499', 'PRO_999'] as const;
@@ -120,6 +120,7 @@ export type BillingStatus = {
   tierKey: string | null; interval: BillingInterval | null; termEndsAt: string | null; paidThrough: string | null; nextChargeAt: string | null;
   cancelAtPeriodEnd: boolean; graceEndsAt: string | null; allowedActions: BillingAction[];
   usage: BillingReceiptUsage;
+  effectiveCapacity?: CompanyPlanCapacity|null;
   issues: { reference: string; code: string }[];
   collection?: BillingCollectionOperation | null;
   pendingPlanChange?: BillingCollectionOperation | null;
@@ -191,6 +192,7 @@ export type BillingOperatorCompany = {
   subscriptionState: string; paidThrough: string | null; nextChargeAt: string | null; observedAt: string | null;
   tierKey: string | null; termEndsAt: string | null; companyStatus: string; pendingAttemptId: string | null;
   source: 'TRIAL' | 'MANUAL' | 'STRIPE' | 'OTHER_BILLING' | 'NONE';
+  effectiveCapacity?: CompanyPlanCapacity|null;
   paymentState: BillingStatus['paymentState']; applyState: BillingStatus['applyState']; accessState: BillingStatus['accessState']; documentState: BillingStatus['documentState'];
   graceEndsAt: string | null; cancelEffectiveAt: string | null; origin: 'web' | 'line' | null;
   branchLimit: number | null; employeeLimit: number | null; pendingPlanChangeId: string | null; collectionOperationId: string | null;
@@ -278,3 +280,13 @@ export type BillingReceiptAdjustmentOperation = BillingOperationView & {companyN
   grant:BillingAdminReceiptGrant|null;readWarnings:BillingReceiptReadWarning[];allowedActions:('submit'|'approve'|'cancel')[]};
 export type BillingReceiptAdjustments = {companyId:string;companyName:string;sourceHash:string;paidThrough:string|null;maxGrantExpiresAt:string|null;
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
+
+export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number};
+export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE';tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
+  branchLimit?:number;employeeLimit?:number;expiresAt?:string;overrideId?:string;sourceHash:string;reason:string};
+export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;before:CompanyPlanCapacity;after:CompanyPlanCapacity;
+  overrideExpiresAt:string|null;activeBranches:number;activeMembers:number;requesterName:string|null;approverName:string|null;
+  current:CompanyPlanCapacity|null;unchanged:BillingPlanAdjustmentUnchanged|null;allowedActions:('submit'|'approve'|'cancel')[]};
+export type BillingPlanAdjustments = {companyId:string;companyName:string;sourceHash:string;baseline:CompanyPlanCapacity|null;current:CompanyPlanCapacity|null;
+  activeBranches:number;activeMembers:number;maxExpiresAt:string|null;canCreate:boolean;blockedReason:string|null;
+  unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};

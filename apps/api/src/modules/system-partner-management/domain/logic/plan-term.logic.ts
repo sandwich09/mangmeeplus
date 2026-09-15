@@ -8,6 +8,7 @@ import {
   type PlanTermDerivedState,
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
+import { effectivePlanCapacity } from './plan-capacity';
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -74,6 +75,8 @@ export function warningLadderPoint(termEndsAt: Date, now: Date): WarningLadderDa
 
 /** Row shape every reader needs — the Prisma model, structurally, so tests can hand-build one. */
 export type PlanTermRow = {
+  capacityOverride?: unknown;
+  billingReceiptAccountId?: string|null;
   companyId: string;
   tierKey: string;
   branchLimit: number;
@@ -112,6 +115,7 @@ export function toPlanTermDto(row: PlanTermRow, now: Date): CompanyPlanTermDto {
       : { warmupSlipLimit: row.warmupSlipLimit }),
     derivedState,
     daysLeft,
+    ...(row.billingReceiptAccountId ? {paidPlan:true,effectiveCapacity:effectivePlanCapacity(row,now)} : {}),
   };
 }
 

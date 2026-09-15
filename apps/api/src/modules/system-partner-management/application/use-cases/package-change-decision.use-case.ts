@@ -14,7 +14,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
 import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
-import { SetCompanyPlanTermUseCase } from './company-plan-term.use-cases';
+import { SetCompanyPlanTermUseCase, paidPlanReviewRequired } from './company-plan-term.use-cases';
 
 export const PACKAGE_CHANGE_DECIDED_ACTION = 'signup.line.package_change_decided';
 
@@ -55,7 +55,7 @@ export class PackageChangeDecisionUseCase {
       orderBy: { createdAt: 'asc' },
       take: 200,
       include: {
-        company: { select: { name: true, planTerm: { select: { tierKey: true } } } },
+        company: { select: { name: true, planTerm: { select: { tierKey: true, billingReceiptAccountId: true } } } },
       },
     });
     if (rows.length === 0) return { items: [] };
@@ -74,6 +74,7 @@ export class PackageChangeDecisionUseCase {
         companyId: row.companyId,
         companyName: row.company.name,
         requestedTierKey: row.requestedTierKey,
+        ...(row.company.planTerm?.billingReceiptAccountId ? {billingReviewPath:`/system/billing/companies/${encodeURIComponent(row.companyId)}/plan-adjustments`} : {}),
         ...(row.company.planTerm?.tierKey ? { currentTierKey: row.company.planTerm.tierKey } : {}),
         ...(nameByUserId.get(row.requestedByUserId)
           ? { requestedByDisplayName: nameByUserId.get(row.requestedByUserId)! }
@@ -106,6 +107,11 @@ export class PackageChangeDecisionUseCase {
     // message box is — and it was crossing it unchecked. Same fence, same codes, and checked BEFORE
     // the CAS claim so a refused note leaves the row exactly where the operator found it.
     const note = this.checkedNote(body.note);
+
+    if (body.action === 'APPROVE') {
+      const term = await this.prisma.client.companyPlanTerm.findUnique({where:{companyId:row.companyId},select:{billingReceiptAccountId:true}});
+      if (term?.billingReceiptAccountId) throw paidPlanReviewRequired();
+    }
 
     // Claim first. The loser of a race sees a decided row above on its next read and changes nothing.
     const claimed = await this.prisma.client.packageChangeRequest.updateMany({

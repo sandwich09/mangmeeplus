@@ -19,6 +19,7 @@ import {
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 
+export const paidPlanReviewRequired = () => new ConflictException({code:'paid_plan_review_required', message:'แพ็กเกจนี้มีรายการชำระเงิน กรุณาใช้หน้าปรับแพ็กเกจชั่วคราวเพื่อตรวจและอนุมัติ'});
 export const PLAN_TERM_SET_ACTION = 'system.company_plan_term.set';
 export const PLAN_TERM_RENEW_ACTION = 'system.company_plan_term.renew';
 /** P10-L §9: an operator looked at the shop and lifted its first-week ceiling early. */
@@ -27,6 +28,8 @@ export const PLAN_TERM_WARMUP_END_ACTION = 'system.company_plan_term.warmup_ende
 export const COMPANY_TERM_EXPIRED_CODE = 'company_term_expired';
 
 const TERM_SELECT = {
+  capacityOverride: true,
+  billingReceiptAccountId: true,
   companyId: true,
   tierKey: true,
   branchLimit: true,
@@ -109,6 +112,8 @@ export class SetCompanyPlanTermUseCase {
         where: { companyId: cmd.companyId },
         select: TERM_SELECT,
       });
+
+      if (existing?.billingReceiptAccountId) throw paidPlanReviewRequired();
 
       const termStartAt = parseDate(cmd.termStartAt, 'termStartAt', now);
       const termDays = cmd.termDays === undefined ? DEFAULT_TERM_DAYS : positiveInt(cmd.termDays, 'termDays');

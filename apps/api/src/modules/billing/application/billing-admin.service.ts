@@ -1,3 +1,4 @@
+import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { billingHistoryExport } from './billing-history-export';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
 import type { BillingAdjustmentKind } from '@watchdog-bms/contracts';
@@ -96,7 +97,7 @@ export class BillingAdminService {
       mode: this.billing.stripe.enabled ? (this.billing.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED', version: account?.version ?? 0,
       ...billingState(company,account,invoice,activeAttempt), subscriptionState: account?.subscriptionState ?? 'NONE',
       paidThrough: account?.paidThrough?.toISOString() ?? null, nextChargeAt: account?.nextChargeAt?.toISOString() ?? null,
-      observedAt: account?.observedAt?.toISOString() ?? null, tierKey: term?.tierKey ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null,
+      observedAt: account?.observedAt?.toISOString() ?? null, effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null,
       companyStatus: company.status, pendingAttemptId: account?.activeAttemptId ?? null,
       source: term?.billingReceiptAccountId ? (term.billingReceiptAccountId === account?.id ? 'STRIPE' : 'OTHER_BILLING') : term?.tierKey === 'FREE_TRIAL_15' ? 'TRIAL' : term ? 'MANUAL' : 'NONE',
       graceEndsAt: account?.graceEndsAt?.toISOString() ?? null, cancelEffectiveAt: account?.cancelAtPeriodEnd ? account.paidThrough?.toISOString() ?? null : null,

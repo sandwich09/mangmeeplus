@@ -36,6 +36,7 @@ afterEach(() => { globalThis.fetch = originalFetch; });
 
 function harness(options: {
   row?: any | null;
+  paid?: boolean;
   rows?: any[];
   /** Simulates losing the OPEN→decided race: the CAS matches nothing. */
   claimWins?: boolean;
@@ -50,6 +51,7 @@ function harness(options: {
 
   const prisma = {
     client: {
+      companyPlanTerm: {findUnique: async () => ({billingReceiptAccountId:options.paid?'paid-account':null})},
       packageChangeRequest: {
         findUnique: async () => (current ? { ...current } : null),
         findMany: async () => options.rows ?? [],
@@ -287,4 +289,10 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
     assert.equal(h.planTermCalls.length, 1, 'the tier change does not depend on LINE being up');
     assert.deepEqual(pushes, []);
   });
+});
+
+it('keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop', async()=>{
+  const h=harness({paid:true});
+  await assert.rejects(h.controller.decide('pcr-1',{action:'APPROVE'},REQ),(e:any)=>e.getStatus()===409&&e.getResponse().code==='paid_plan_review_required');
+  assert.equal(h.row().status,'OPEN');assert.equal(h.updates.length,0);assert.equal(h.planTermCalls.length,0);assert.equal(h.audits.length,0);assert.equal(pushes.length,0);
 });

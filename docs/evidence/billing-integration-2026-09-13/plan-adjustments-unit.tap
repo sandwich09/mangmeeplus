@@ -1,0 +1,592 @@
+TAP version 13
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 1 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 0.665125
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 2 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.188292
+  type: 'test'
+  ...
+# Subtest: GetCompanyPlanTermUseCase
+    # Subtest: returns { term: null } for a grandfathered company instead of 404
+    ok 1 - returns { term: null } for a grandfathered company instead of 404
+      ---
+      duration_ms: 2.044167
+      type: 'test'
+      ...
+    # Subtest: computes derivedState and daysLeft on read
+    ok 2 - computes derivedState and daysLeft on read
+      ---
+      duration_ms: 0.349208
+      type: 'test'
+      ...
+    1..2
+ok 3 - GetCompanyPlanTermUseCase
+  ---
+  duration_ms: 3.016625
+  type: 'suite'
+  ...
+# Subtest: SetCompanyPlanTermUseCase
+    # Subtest: 404s on an unknown company
+    ok 1 - 404s on an unknown company
+      ---
+      duration_ms: 0.521291
+      type: 'test'
+      ...
+    # Subtest: rejects an unknown tierKey
+    ok 2 - rejects an unknown tierKey
+      ---
+      duration_ms: 0.151583
+      type: 'test'
+      ...
+    # Subtest: rejects non-positive and fractional limits
+    ok 3 - rejects non-positive and fractional limits
+      ---
+      duration_ms: 0.305833
+      type: 'test'
+      ...
+    # Subtest: creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+    ok 4 - creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+      ---
+      duration_ms: 0.356417
+      type: 'test'
+      ...
+    # Subtest: creating defaults to 30 days from now when no dates are given
+    ok 5 - creating defaults to 30 days from now when no dates are given
+      ---
+      duration_ms: 0.378959
+      type: 'test'
+      ...
+    # Subtest: updating limits NEVER moves the dates
+    ok 6 - updating limits NEVER moves the dates
+      ---
+      duration_ms: 0.368042
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with before/after values
+    ok 7 - audits CRITICAL with before/after values
+      ---
+      duration_ms: 0.397084
+      type: 'test'
+      ...
+    # Subtest: records `from: null` when the row is created
+    ok 8 - records `from: null` when the row is created
+      ---
+      duration_ms: 0.3855
+      type: 'test'
+      ...
+    1..8
+ok 4 - SetCompanyPlanTermUseCase
+  ---
+  duration_ms: 3.208
+  type: 'suite'
+  ...
+# Subtest: applyPlanTermPreset
+    # Subtest: fills the row from the frozen catalog and is a no-op on an existing row
+    ok 1 - fills the row from the frozen catalog and is a no-op on an existing row
+      ---
+      duration_ms: 0.280792
+      type: 'test'
+      ...
+    # Subtest: carries the LINE-first trial preset without opening it to the public form
+    ok 2 - carries the LINE-first trial preset without opening it to the public form
+      ---
+      duration_ms: 0.131875
+      type: 'test'
+      ...
+    1..2
+ok 5 - applyPlanTermPreset
+  ---
+  duration_ms: 0.499166
+  type: 'suite'
+  ...
+# Subtest: RenewCompanyPlanTermUseCase
+    # Subtest: 404s when there is no term to renew
+    ok 1 - 404s when there is no term to renew
+      ---
+      duration_ms: 2.188167
+      type: 'test'
+      ...
+    # Subtest: BEFORE expiry: extends from the existing end date, not from now
+    ok 2 - BEFORE expiry: extends from the existing end date, not from now
+      ---
+      duration_ms: 0.507084
+      type: 'test'
+      ...
+    # Subtest: AFTER expiry: extends from now, never back-dated into the past
+    ok 3 - AFTER expiry: extends from now, never back-dated into the past
+      ---
+      duration_ms: 1.687083
+      type: 'test'
+      ...
+    # Subtest: re-activates a company the SWEEP disabled and clears termDisabledAt
+    ok 4 - re-activates a company the SWEEP disabled and clears termDisabledAt
+      ---
+      duration_ms: 0.357417
+      type: 'test'
+      ...
+    # Subtest: an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+    ok 5 - an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+      ---
+      duration_ms: 0.469083
+      type: 'test'
+      ...
+    # Subtest: never touches a SUSPENDED company status
+    ok 6 - never touches a SUSPENDED company status
+      ---
+      duration_ms: 1.854
+      type: 'test'
+      ...
+    # Subtest: resets the whole ladder so the next term can warn again
+    ok 7 - resets the whole ladder so the next term can warn again
+      ---
+      duration_ms: 0.523333
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with the date move and the renew count
+    ok 8 - audits CRITICAL with the date move and the renew count
+      ---
+      duration_ms: 1.305459
+      type: 'test'
+      ...
+    # Subtest: is idempotent on requestId: a replayed renew writes nothing
+    ok 9 - is idempotent on requestId: a replayed renew writes nothing
+      ---
+      duration_ms: 0.729375
+      type: 'test'
+      ...
+    # Subtest: rejects a non-positive day count
+    ok 10 - rejects a non-positive day count
+      ---
+      duration_ms: 0.179166
+      type: 'test'
+      ...
+    1..10
+ok 6 - RenewCompanyPlanTermUseCase
+  ---
+  duration_ms: 10.363625
+  type: 'suite'
+  ...
+# Subtest: GetPlanTermNoticeUseCase
+    # Subtest: returns null for a company with no term row
+    ok 1 - returns null for a company with no term row
+      ---
+      duration_ms: 0.2035
+      type: 'test'
+      ...
+    # Subtest: marks the OWNER, and only the OWNER
+    ok 2 - marks the OWNER, and only the OWNER
+      ---
+      duration_ms: 0.101458
+      type: 'test'
+      ...
+    # Subtest: carries state and deadline but never limits or tier
+    ok 3 - carries state and deadline but never limits or tier
+      ---
+      duration_ms: 0.166
+      type: 'test'
+      ...
+    1..3
+ok 7 - GetPlanTermNoticeUseCase
+  ---
+  duration_ms: 0.576083
+  type: 'suite'
+  ...
+# Subtest: GET /system/package-change-requests
+    # Subtest: shows the shop, the move and who asked for it
+    ok 1 - shows the shop, the move and who asked for it
+      ---
+      duration_ms: 1.440292
+      type: 'test'
+      ...
+    # Subtest: falls back to OPEN rather than trusting an unknown status from the query string
+    ok 2 - falls back to OPEN rather than trusting an unknown status from the query string
+      ---
+      duration_ms: 0.194083
+      type: 'test'
+      ...
+    1..2
+ok 8 - GET /system/package-change-requests
+  ---
+  duration_ms: 2.074083
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — APPROVE
+    # Subtest: moves the tier through the ONE plan-term writer, with that tier preset
+    ok 1 - moves the tier through the ONE plan-term writer, with that tier preset
+      ---
+      duration_ms: 1.387667
+      type: 'test'
+      ...
+    # Subtest: tells the shop, in the tier label it will recognise
+    ok 2 - tells the shop, in the tier label it will recognise
+      ---
+      duration_ms: 0.578708
+      type: 'test'
+      ...
+    # Subtest: is idempotent: repeating the decision buys no second tier change
+    ok 3 - is idempotent: repeating the decision buys no second tier change
+      ---
+      duration_ms: 0.260083
+      type: 'test'
+      ...
+    # Subtest: two operators on one row produce one tier change, not two
+    ok 4 - two operators on one row produce one tier change, not two
+      ---
+      duration_ms: 0.079333
+      type: 'test'
+      ...
+    # Subtest: puts the row back in the queue when the tier write fails
+    ok 5 - puts the row back in the queue when the tier write fails
+      ---
+      duration_ms: 0.220417
+      type: 'test'
+      ...
+    # Subtest: refuses a tier that is not in the catalog before touching anything
+    ok 6 - refuses a tier that is not in the catalog before touching anything
+      ---
+      duration_ms: 0.236125
+      type: 'test'
+      ...
+    # Subtest: 404s on a request that does not exist
+    ok 7 - 404s on a request that does not exist
+      ---
+      duration_ms: 0.321708
+      type: 'test'
+      ...
+    1..7
+ok 9 - POST /system/package-change-requests/:id/decision — APPROVE
+  ---
+  duration_ms: 3.32375
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — REJECT
+    # Subtest: closes the row without moving the tier, and says so politely
+    ok 1 - closes the row without moving the tier, and says so politely
+      ---
+      duration_ms: 0.22825
+      type: 'test'
+      ...
+    # Subtest: holds the note to the SEC-05 fence, before anything is claimed
+    ok 2 - holds the note to the SEC-05 fence, before anything is claimed
+      ---
+      duration_ms: 0.434792
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours in the note
+    ok 3 - refuses a second URL glued onto one of ours in the note
+      ---
+      duration_ms: 0.500542
+      type: 'test'
+      ...
+    # Subtest: refuses the same paragraph the message box refuses, with the same code
+    ok 4 - refuses the same paragraph the message box refuses, with the same code
+      ---
+      duration_ms: 0.090208
+      type: 'test'
+      ...
+    # Subtest: records the note text in the audit, not merely that one existed
+    ok 5 - records the note text in the audit, not merely that one existed
+      ---
+      duration_ms: 0.095625
+      type: 'test'
+      ...
+    # Subtest: stays silent when the shop has no linked LINE owner
+    ok 6 - stays silent when the shop has no linked LINE owner
+      ---
+      duration_ms: 0.110125
+      type: 'test'
+      ...
+    # Subtest: still decides when no LINE channel is configured at all
+    ok 7 - still decides when no LINE channel is configured at all
+      ---
+      duration_ms: 0.072834
+      type: 'test'
+      ...
+    1..7
+ok 10 - POST /system/package-change-requests/:id/decision — REJECT
+  ---
+  duration_ms: 1.61275
+  type: 'suite'
+  ...
+# Subtest: keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+ok 11 - keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+  ---
+  duration_ms: 0.130667
+  type: 'test'
+  ...
+# {"event":"plan_term_expiry_failed","companyId":"co-bad","error":"boom"}
+# Subtest: PlanTermSweepUseCase — expiry
+    # Subtest: disables an ACTIVE company past its deadline through the lifecycle use-case
+    ok 1 - disables an ACTIVE company past its deadline through the lifecycle use-case
+      ---
+      duration_ms: 2.860666
+      type: 'test'
+      ...
+    # Subtest: is idempotent: a second pass finds nothing and notifies nobody again
+    ok 2 - is idempotent: a second pass finds nothing and notifies nobody again
+      ---
+      duration_ms: 0.21425
+      type: 'test'
+      ...
+    # Subtest: SKIPS a company that is not ACTIVE — admin-disabled, suspended and archived are untouched
+    ok 3 - SKIPS a company that is not ACTIVE — admin-disabled, suspended and archived are untouched
+      ---
+      duration_ms: 2.199958
+      type: 'test'
+      ...
+    # Subtest: finishes a legacy half-done expiry and reconciles its durable notice
+    ok 4 - finishes a legacy half-done expiry and reconciles its durable notice
+      ---
+      duration_ms: 0.407625
+      type: 'test'
+      ...
+    # Subtest: one company failing never aborts the batch
+    ok 5 - one company failing never aborts the batch
+      ---
+      duration_ms: 1.221792
+      type: 'test'
+      ...
+    # Subtest: notifies the OWNER on WEB and LINE plus the System Admin dashboard, with the Thai copy
+    ok 6 - notifies the OWNER on WEB and LINE plus the System Admin dashboard, with the Thai copy
+      ---
+      duration_ms: 0.5655
+      type: 'test'
+      ...
+    1..6
+ok 12 - PlanTermSweepUseCase — expiry
+  ---
+  duration_ms: 8.695416
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep
+    # Subtest: omits it for a web-only company and includes it for a LINE-linked one
+    ok 1 - omits it for a web-only company and includes it for a LINE-linked one
+      ---
+      duration_ms: 0.917333
+      type: 'test'
+      ...
+    # Subtest: applies the same rule to the 7/3/1 warnings
+    ok 2 - applies the same rule to the 7/3/1 warnings
+      ---
+      duration_ms: 0.960834
+      type: 'test'
+      ...
+    1..2
+ok 13 - PlanTermSweepUseCase — the LINE hint follows the customer, not the sweep
+  ---
+  duration_ms: 2.097333
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — warning ladder
+    # Subtest: fires 7, then 3, then 1 — each exactly once
+    ok 1 - fires 7, then 3, then 1 — each exactly once
+      ---
+      duration_ms: 0.869583
+      type: 'test'
+      ...
+    # Subtest: a renew that clears the flags lets the next term warn again
+    ok 2 - a renew that clears the flags lets the next term warn again
+      ---
+      duration_ms: 0.521958
+      type: 'test'
+      ...
+    # Subtest: does not warn outside the 7-day window, and never warns a non-ACTIVE company
+    ok 3 - does not warn outside the 7-day window, and never warns a non-ACTIVE company
+      ---
+      duration_ms: 0.120959
+      type: 'test'
+      ...
+    # Subtest: warning copy carries the deadline and the days left
+    ok 4 - warning copy carries the deadline and the days left
+      ---
+      duration_ms: 0.219084
+      type: 'test'
+      ...
+    # Subtest: a company with an owner-less membership set still stamps, and only tells the admin
+    ok 5 - a company with an owner-less membership set still stamps, and only tells the admin
+      ---
+      duration_ms: 0.240125
+      type: 'test'
+      ...
+    1..5
+ok 14 - PlanTermSweepUseCase — warning ladder
+  ---
+  duration_ms: 2.123
+  type: 'suite'
+  ...
+# Subtest: PlanTermSweepUseCase — grandfathered companies
+    # Subtest: a company with no CompanyPlanTerm row is never selected by either pass
+    ok 1 - a company with no CompanyPlanTerm row is never selected by either pass
+      ---
+      duration_ms: 0.114167
+      type: 'test'
+      ...
+    1..1
+ok 15 - PlanTermSweepUseCase — grandfathered companies
+  ---
+  duration_ms: 0.159667
+  type: 'suite'
+  ...
+# Subtest: temporary capacity expires at the exact instant without changing purchased evidence or receipt allowance
+ok 16 - temporary capacity expires at the exact instant without changing purchased evidence or receipt allowance
+  ---
+  duration_ms: 1.590542
+  type: 'test'
+  ...
+# Subtest: expiry and revocation expose the latest paid baseline; repurchase never extends the gift
+ok 17 - expiry and revocation expose the latest paid baseline; repurchase never extends the gift
+  ---
+  duration_ms: 0.091167
+  type: 'test'
+  ...
+# Subtest: foreign, malformed, future, held and expired sources never activate temporary limits
+ok 18 - foreign, malformed, future, held and expired sources never activate temporary limits
+  ---
+  duration_ms: 0.403041
+  type: 'test'
+  ...
+# Subtest: plan-term derived state
+    # Subtest: is ACTIVE outside the warning window
+    ok 1 - is ACTIVE outside the warning window
+      ---
+      duration_ms: 2.2985
+      type: 'test'
+      ...
+    # Subtest: turns WARNING exactly at termEndsAt - warningDays
+    ok 2 - turns WARNING exactly at termEndsAt - warningDays
+      ---
+      duration_ms: 0.174
+      type: 'test'
+      ...
+    # Subtest: turns EXPIRED on the exact hour, not the next day
+    ok 3 - turns EXPIRED on the exact hour, not the next day
+      ---
+      duration_ms: 0.103417
+      type: 'test'
+      ...
+    # Subtest: daysLeft rounds up and never goes below zero
+    ok 4 - daysLeft rounds up and never goes below zero
+      ---
+      duration_ms: 0.784041
+      type: 'test'
+      ...
+    # Subtest: isExpired agrees with the derived state at the boundary
+    ok 5 - isExpired agrees with the derived state at the boundary
+      ---
+      duration_ms: 0.053875
+      type: 'test'
+      ...
+    # Subtest: addDays is exact 24h arithmetic, hour preserved
+    ok 6 - addDays is exact 24h arithmetic, hour preserved
+      ---
+      duration_ms: 0.154875
+      type: 'test'
+      ...
+    1..6
+ok 19 - plan-term derived state
+  ---
+  duration_ms: 8.785458
+  type: 'suite'
+  ...
+# Subtest: warning ladder
+    # Subtest: reports the deepest point entered, never a burst of the ones slept through
+    ok 1 - reports the deepest point entered, never a burst of the ones slept through
+      ---
+      duration_ms: 0.122458
+      type: 'test'
+      ...
+    # Subtest: stops at expiry — an expired term is the expiry notice’s business, not the ladder’s
+    ok 2 - stops at expiry — an expired term is the expiry notice’s business, not the ladder’s
+      ---
+      duration_ms: 0.158042
+      type: 'test'
+      ...
+    1..2
+ok 20 - warning ladder
+  ---
+  duration_ms: 0.399584
+  type: 'suite'
+  ...
+# Subtest: plan tier keys
+    # Subtest: accepts catalog keys and rejects anything else
+    ok 1 - accepts catalog keys and rejects anything else
+      ---
+      duration_ms: 0.153167
+      type: 'test'
+      ...
+    1..1
+ok 21 - plan tier keys
+  ---
+  duration_ms: 0.249958
+  type: 'suite'
+  ...
+# Subtest: DTO projection
+    # Subtest: omits optional timestamps when unset and carries the derived state
+    ok 1 - omits optional timestamps when unset and carries the derived state
+      ---
+      duration_ms: 0.100166
+      type: 'test'
+      ...
+    # Subtest: surfaces termDisabledAt so the console can tell a term-disable from an admin-disable
+    ok 2 - surfaces termDisabledAt so the console can tell a term-disable from an admin-disable
+      ---
+      duration_ms: 0.039375
+      type: 'test'
+      ...
+    1..2
+ok 22 - DTO projection
+  ---
+  duration_ms: 0.1685
+  type: 'suite'
+  ...
+# Subtest: Thai copy
+    # Subtest: renders the deadline in Bangkok time with a Buddhist year
+    ok 1 - renders the deadline in Bangkok time with a Buddhist year
+      ---
+      duration_ms: 0.118834
+      type: 'test'
+      ...
+    # Subtest: warning copy names the shop, the deadline and the days left
+    ok 2 - warning copy names the shop, the deadline and the days left
+      ---
+      duration_ms: 0.088666
+      type: 'test'
+      ...
+    # Subtest: expired copy promises the data is still there
+    ok 3 - expired copy promises the data is still there
+      ---
+      duration_ms: 0.107958
+      type: 'test'
+      ...
+    # Subtest: leaves the typed-command hint out of the reply that already has a button
+    ok 4 - leaves the typed-command hint out of the reply that already has a button
+      ---
+      duration_ms: 0.037291
+      type: 'test'
+      ...
+    # Subtest: limit copy states the cap and where to go
+    ok 5 - limit copy states the cap and where to go
+      ---
+      duration_ms: 0.036417
+      type: 'test'
+      ...
+    1..5
+ok 23 - Thai copy
+  ---
+  duration_ms: 0.4605
+  type: 'suite'
+  ...
+1..23
+# tests 77
+# suites 17
+# pass 77
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1199.449208

@@ -1,0 +1,150 @@
+TAP version 13
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 1 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 0.668584
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 2 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 1.271916
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 3 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.641459
+  type: 'test'
+  ...
+# Subtest: renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+    # Subtest: verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift
+    ok 1 - verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift
+      ---
+      duration_ms: 374.930292
+      type: 'test'
+      ...
+    # Subtest: mapped financial sweep rotates beyond one page without minting access or duplicate cases
+    ok 2 - mapped financial sweep rotates beyond one page without minting access or duplicate cases
+      ---
+      duration_ms: 155.928459
+      type: 'test'
+      ...
+    # Subtest: renewal after a restarted contract does not reapply its old-subscription admission fence
+    ok 3 - renewal after a restarted contract does not reapply its old-subscription admission fence
+      ---
+      duration_ms: 68.141708
+      type: 'test'
+      ...
+    # Subtest: historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+    ok 4 - historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+      ---
+      duration_ms: 94.994042
+      type: 'test'
+      ...
+    # Subtest: grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+    ok 5 - grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+      ---
+      duration_ms: 128.0415
+      type: 'test'
+      ...
+    # Subtest: grace and recovery preserve the fixed expiry of Admin-granted receipts
+    ok 6 - grace and recovery preserve the fixed expiry of Admin-granted receipts
+      ---
+      duration_ms: 60.628125
+      type: 'test'
+      ...
+    # Subtest: admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+    ok 7 - admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+      ---
+      duration_ms: 94.266167
+      type: 'test'
+      ...
+    # Subtest: grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+    ok 8 - grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+      ---
+      duration_ms: 78.66925
+      type: 'test'
+      ...
+    # Subtest: expired grace cancels collection once without new quota or deleting the unpaid invoice
+    ok 9 - expired grace cancels collection once without new quota or deleting the unpaid invoice
+      ---
+      duration_ms: 57.463041
+      type: 'test'
+      ...
+    # Subtest: a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+    ok 10 - a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+      ---
+      duration_ms: 55.692084
+      type: 'test'
+      ...
+    1..10
+ok 4 - renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+  ---
+  duration_ms: 1269.568958
+  type: 'test'
+  ...
+# Subtest: paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+    # Subtest: verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+    ok 1 - verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+      ---
+      duration_ms: 53.067292
+      type: 'test'
+      ...
+    # Subtest: all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+    ok 2 - all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+      ---
+      duration_ms: 6044.940583
+      type: 'test'
+      ...
+    # Subtest: failed OCR releases its exact reservation once; replay does not recharge
+    ok 3 - failed OCR releases its exact reservation once; replay does not recharge
+      ---
+      duration_ms: 15.639208
+      type: 'test'
+      ...
+    # Subtest: paid repeat never extends an Admin receipt grant expiry
+    ok 4 - paid repeat never extends an Admin receipt grant expiry
+      ---
+      duration_ms: 7.533458
+      type: 'test'
+      ...
+    # Subtest: full-package repeat grants 1200 now, extends valid balance and records future service separately
+    ok 5 - full-package repeat grants 1200 now, extends valid balance and records future service separately
+      ---
+      duration_ms: 15.163792
+      type: 'test'
+      ...
+    # Subtest: payment apply races OCR without deadlock; a failed transaction grants nothing
+    ok 6 - payment apply races OCR without deadlock; a failed transaction grants nothing
+      ---
+      duration_ms: 46.176125
+      type: 'test'
+      ...
+    # Subtest: expiry/hold and cross-company database references cannot bypass admission
+    ok 7 - expiry/hold and cross-company database references cannot bypass admission
+      ---
+      duration_ms: 34.427333
+      type: 'test'
+      ...
+    # Subtest: signup/legacy monthly allowance retains its existing behavior without a billing pointer
+    ok 8 - signup/legacy monthly allowance retains its existing behavior without a billing pointer
+      ---
+      duration_ms: 62.73475
+      type: 'test'
+      ...
+    1..8
+ok 5 - paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+  ---
+  duration_ms: 6523.960667
+  type: 'test'
+  ...
+1..5
+# tests 23
+# suites 0
+# pass 23
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7079.769125

@@ -12,6 +12,7 @@ import { observeBillingCharges } from './application/billing-financial';
 import { paidInvoiceEvidence, termProjectionHash } from './domain/paid-invoice';
 import { StripeRequestError, type StripeObject } from './infrastructure/stripe.client';
 import { admitCompanyOcr } from '../line-ai/application/company-ocr-governance';
+import { effectivePlanCapacity } from '../system-partner-management/domain/logic/plan-capacity';
 
 const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
 test('renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)', { skip: !databaseUrl }, async t => {
@@ -100,6 +101,22 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       run: () => reconciler.reconcileAccount(account.id), deletes: () => deleteCalls, loseResponse: () => { loseDeleteResponse = true; } };
   }
   try {
+    await t.test('verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift', async () => {
+      const f = await fixture(), before = await client.companyPlanTerm.findUniqueOrThrow({where:{companyId:f.companyId}});
+      const gift = {operationId:randomUUID(),accountId:f.accountId,tierKey:'PRO_999',branchLimit:5,employeeLimit:10,
+        effectiveAt:before.termStartAt.toISOString(),expiresAt:before.termEndsAt.toISOString()};
+      const adjusted = await client.companyPlanTerm.update({where:{companyId:f.companyId},data:{capacityOverride:gift}});
+      assert.equal(termProjectionHash(adjusted),termProjectionHash(before));
+      Object.assign(f.renewal,{status:'paid',amount_paid:49900,amount_remaining:0});f.subscription.status='active';
+      await f.run();await f.run();
+      const invoice = await client.billingInvoice.findFirstOrThrow({where:{billingAccountId:f.accountId,providerInvoiceId:f.renewal.id}});
+      assert.equal(invoice.applyStatus,'APPLIED');
+      const term = await client.companyPlanTerm.findUniqueOrThrow({where:{companyId:f.companyId}});
+      assert.deepEqual(term.capacityOverride,gift);assert.equal(effectivePlanCapacity(term).tierKey,'BASIC_499');
+      assert.equal(effectivePlanCapacity(term).temporary,undefined);assert.ok(term.termEndsAt>before.termEndsAt);
+      assert.equal(await client.billingReceiptGrant.count({where:{billingAccountId:f.accountId,kind:'RENEWAL'}}),1);
+      assert.equal((await paidReceiptBalance(client,f.companyId,f.accountId)).remaining,50);
+    });
     await t.test('mapped financial sweep rotates beyond one page without minting access or duplicate cases', async () => {
       const f = await fixture();
       const original = await client.billingInvoice.findFirstOrThrow({ where: { billingAccountId: f.accountId } });

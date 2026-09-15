@@ -1,3 +1,4 @@
+import { currentCapacityOverride } from '../../system-partner-management/domain/logic/plan-capacity';
 import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
 import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, isReceiptOcrRetryableFailure } from '@watchdog-bms/contracts';
@@ -77,12 +78,12 @@ export async function receiptQuotaSnapshot(
     countReceiptOcrAdmissions(prisma.client, companyId, monthKey),
     prisma.client.companyPlanTerm.findUnique({
       where: { companyId },
-      select: { tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
+      select: { capacityOverride: true, tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
     }),
   ]);
   if (term?.billingReceiptAccountId) {
     const balance = await paidReceiptBalance(prisma.client, companyId, term.billingReceiptAccountId, now);
-    return { usedCount: balance.used, planLimit: balance.limit, tierKey: term.tierKey,
+    return { usedCount: balance.used, planLimit: balance.limit, tierKey: currentCapacityOverride(term)?.tierKey ?? term.tierKey,
       cadence: 'PAID_GRANTS', expiresAt: balance.expiresAt?.toISOString() ?? null };
   }
   return {
@@ -272,14 +273,14 @@ export async function admitCompanyOcr(
       if (PLAN_QUOTA_ROUTES.has(input.sourceRoute)) {
         const term = await tx.companyPlanTerm.findUnique({
           where: { companyId: input.companyId },
-          select: { tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
+          select: { capacityOverride: true, tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
         });
         if (term?.billingReceiptAccountId) {
           const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { status: true } });
           const now = new Date();
           if (company?.status !== 'ACTIVE' || term.termDisabledAt || term.termEndsAt <= now) return { allowed: false, reason: 'plan_inactive' } as const;
           const balance = await paidReceiptBalance(tx, input.companyId, term.billingReceiptAccountId, now);
-          if (!balance.nextGrantId) return { allowed: false, reason: 'plan_exceeded', usedCount: balance.used, monthlyLimit: balance.limit, tierKey: term.tierKey } as const;
+          if (!balance.nextGrantId) return { allowed: false, reason: 'plan_exceeded', usedCount: balance.used, monthlyLimit: balance.limit, tierKey: currentCapacityOverride(term)?.tierKey ?? term.tierKey } as const;
           billingReceiptGrantId = balance.nextGrantId;
         } else {
           const planLimit = effectiveMonthlySlipLimit(term, new Date());

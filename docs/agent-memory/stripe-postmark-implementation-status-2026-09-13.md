@@ -1,6 +1,6 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: IN PROGRESS, approximately80% of overall scope (estimate, not a measured test percentage). Email-only Postmark password recovery is implemented and proven. Bounded batch LOCAL root e30bfd4e/marketing2b0099a. C05 configurable purchase price/receipt terms now locally accepted: combined28859 passed247 groups, offer-focused12 and refund regression17 PASS. Builder ran ONCE with18 frozen sources and3 inspected captures; both repo docs aligned for a scoped LOCAL checkpoint. Remaining controls/mail/LINE, legacy paid-term Admin boundary and final green-CI develop+main merges in BOTH repositories remain owed; NO DEPLOY or intermediate CI/push.
+Status: IN PROGRESS. Temporary paid package/capacity now has focused9 and combined276 local HTTP/PostgreSQL/Next/Chromium groups PASS with simulated providers. See plan-adjustments-result.json for31 source hashes and exact boundaries. Admin manual/trial audit/replay, paid free-day collection coordination, original LINE request closure, remaining C08/mail/LINE acceptance and final green-CI develop/main merges in BOTH repositories remain owed. NO DEPLOY or intermediate CI/push. Counts overlap; no fresh completion percentage inferred.
 Owner: Codex / repository owner.
 Scope: Stripe packages/Postmark/Admin C01–C08/web/LINE, simulated E2E, bug/gap/UX fixes, authorized green-CI merges.
 
@@ -24,8 +24,8 @@ Preserve all unrelated tracked/untracked work, including cloud runbook/UAT, mark
 
 ## Repositories
 
-- Root branch codex/stripe-postmark-implementation-20260912; local6b6ea2ff (Checkout expiry checkpoint). PR558 todevelop. Remote stilldef8470215f587632136d67288c2b38d199ac9f8.
-- Marketing isolated /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912; same branch, locale78b65a (Checkout expiry alignment), PR2 todevelop. Remote4169ea219b2b4c0163bdd747e05b6d1ffea44343; marketing runtime969e4c0 unchanged. Original dirty mangmee_web untouched.
+- Root branch codex/stripe-postmark-implementation-20260912; local79d3a7e4 (email monitoring checkpoint; package WIP). PR558 todevelop. Remote stilldef8470215f587632136d67288c2b38d199ac9f8.
+- Marketing isolated /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912; same branch, localff0685c (email monitoring alignment), PR2 todevelop. Remote4169ea219b2b4c0163bdd747e05b6d1ffea44343; marketing runtime969e4c0 unchanged. Original dirty mangmee_web untouched.
 - Prior local checkpoints: CSV/case namesa7137fef, refund-bound/scoped-proof87a9c5f2, owner UX36adec11, strict Portal/email loginf5c23b53, Postmark reset483fea8f. Resolve fresh hashes with git before future handoff.
 
 ## Implemented scope (not full completion)
@@ -50,9 +50,9 @@ Current owner UX: contextual Thai mode/payment/apply/access/subscription/deliver
 
 - C03 aged UNKNOWN recovery/compensation and historical financial exceptions beyond record-only import.
 - C05/C06 remaining typed runtime settings and capacity rollouts. Saved/immediate/scheduled publication, explicit cohort and optional SLA are done.
-- C07 current settlement proof; further bounded bulk/financial drift resolution. Existing event/manual/scheduled discovery, invoice find/import HELD and configuration checks are done.
-- C08 debt, temporary override/revoke/read-time expiry/compensation and bulk outcomes/export. Monetary refunds and bounded company history CSV are done. Business bounds stay unset/closed until independently approved Admin values; do not invent amounts/days.
-- Postmark monitoring/retention/remaining EM09 identity variants. Existing email password recovery is done, no LINE required. New signup OTP/self-link remain proposal, not an approved E0 choice.
+- C07 further financial drift resolution; settlement observation and bounded reconciliation batches already have local source-bound evidence. Existing event/manual/scheduled discovery, invoice find/import HELD and configuration checks are done.
+- C08 debt, manual/trial adjustments, paid access-day/collection coordination, original legacy request closure from reviewed outcomes and remaining compensation/bulk acceptance. Paid temporary package/capacity override has focused proof; broad paid-repeat/reconcile acceptance is still being completed. Monetary refunds and bounded company history CSV are done. Business bounds stay unset/closed until independently approved Admin values; do not invent amounts/days.
+- Postmark retention/remaining EM09 identity variants; scoped read-only monitoring is implemented with six local HTTP/browser groups. Existing email password recovery is done, no LINE required. New signup OTP/self-link remain proposal, not an approved E0 choice.
 - LINE intake/draft/live capture/AP21–24/full rich-menu/webhook/Login/LIFF matrix through permission-checked ERP APIs. Parked Login/self-link stays closed, existing OAuth flag unchanged; Admin IssueLINEQR/Unlink repair is done.
 - Final current CI/review then authorized bothrepo develop/main merges with NO DEPLOY. Refresh read-only workflow/no-deploy preflight before remote events.
 

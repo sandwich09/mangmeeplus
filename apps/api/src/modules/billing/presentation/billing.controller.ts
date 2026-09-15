@@ -1,3 +1,5 @@
+import { BillingPlanAdjustmentsService } from '../application/billing-plan-adjustments.service';
+import type { BillingPlanAdjustmentInput } from '@watchdog-bms/contracts';
 import { BillingReceiptAdjustmentsService } from '../application/billing-receipt-adjustments.service';
 import type { BillingReceiptAdjustmentInput } from '@watchdog-bms/contracts';
 import { BillingCheckoutExpiryService } from '../application/billing-checkout-expiry.service';
@@ -62,7 +64,20 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService,private readonly planAdjustments:BillingPlanAdjustmentsService) {}
+  @Get('companies/:id/plan-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  planAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
+    const fields=bodyFields(query,['cursor']);return this.planAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('companies/:id/plan-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  async planAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown){
+    await this.operationLimit(req);return this.planAdjustments.preview(req.context,textField(id,128),body as BillingPlanAdjustmentInput);}
+  @Get('plan-adjustments/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  planAdjustmentGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.planAdjustments.get(req.context,uuid(id));}
+  @Post('plan-adjustments/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async planAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+    if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
+    return this.planAdjustments.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
   @Get('companies/:id/receipt-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   receiptAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.receiptAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}

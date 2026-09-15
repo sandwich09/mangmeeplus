@@ -1848,9 +1848,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               </div>
 
               <p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
-              <p className="text-xs text-gray-500">
-                จำนวนสลิปเป็นค่าประกาศของแพ็กเกจ ยังไม่ตัดจริง
-              </p>
+              <p className="text-base text-gray-600">{term.paidPlan ? 'จำนวนใบเสร็จที่ใช้ได้จริง ดูจากหน้าการชำระเงินของบริษัท' : 'จำนวนใบเสร็จเป็นโควตาต่อเดือน การอ่านยังขึ้นกับการตั้งค่า AI ของร้าน'}</p>
+              {term.effectiveCapacity?.temporary&&<p className="rounded-lg border border-emerald-300 p-3 text-base">สิทธิ์ชั่วคราว: {PLAN_TIER_PRESETS[term.effectiveCapacity.tierKey].labelTh} · {term.effectiveCapacity.branchLimit} สาขา · {term.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {formatThaiDateTime(term.effectiveCapacity.temporary.expiresAt)}</p>}
 
               {warmupActive && (
                 <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2">
@@ -1875,9 +1874,9 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 
               {!editing && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked}>
+                  {term.paidPlan ? <Link className={btnSecondary} href={`/system/billing/companies/${encodeURIComponent(companyId)}/plan-adjustments`}>ปรับแพ็กเกจชั่วคราวและดูประวัติ</Link> : <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked}>
                     แก้ไขแพ็กเกจ
-                  </button>
+                  </button>}
                   {/* Deliberately not gated by fieldsLocked: renewing a company the expiry sweep
                       disabled is the recovery path (§4C), so it has to stay reachable while
                       DISABLED. The dialog warns when the disable came from an admin instead. */}

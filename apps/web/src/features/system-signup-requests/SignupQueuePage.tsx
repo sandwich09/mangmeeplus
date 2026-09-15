@@ -885,14 +885,14 @@ export default function SignupQueuePage() {
                         <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-2">
-                            <button
+                            {item.billingReviewPath ? <Link href={item.billingReviewPath} className={`${rowActionClass} border-green-300 bg-green-50 text-green-700`}>ตรวจแพ็กเกจที่ชำระเงิน</Link> : <button
                               type="button"
                               disabled={busy}
                               onClick={() => void handlePackageDecision(item, 'APPROVE')}
                               className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                             >
                               {busy ? 'กำลังทำรายการ...' : 'เปลี่ยนแพ็กเกจให้'}
-                            </button>
+                            </button>}
                             <button
                               type="button"
                               disabled={busy}

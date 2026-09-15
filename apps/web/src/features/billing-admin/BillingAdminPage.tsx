@@ -110,6 +110,8 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <p>ชำระเงิน {billingLabel('payment',company.paymentState)} · สิทธิ์จากยอดชำระ: {billingLabel('apply',company.applyState)} · {billingLabel('access',company.accessState)}</p>
       {company.graceEndsAt&&<p>ระยะผ่อนผันถึง {time(company.graceEndsAt)}</p>}{company.cancelEffectiveAt&&<p>ยกเลิกมีผล {time(company.cancelEffectiveAt)}</p>}
       <p>สูงสุด {company.branchLimit??'ยังไม่กำหนด'} สาขา · {company.employeeLimit??'ยังไม่กำหนด'} ผู้ใช้ · ใบเสร็จ{company.usage.cadence==='PAID_GRANTS'?'ตามแพ็กเกจที่จ่ายแล้ว':'รายเดือน'}{company.usage.expiresAt&&` · วันหมดอายุใบที่ใกล้ที่สุด ${time(company.usage.expiresAt)}`}</p>
+      {company.effectiveCapacity?.temporary&&<p className="rounded-lg border border-emerald-300 p-3">สิทธิ์ชั่วคราว: {billingPlanLabel(company.effectiveCapacity.tierKey)} · {company.effectiveCapacity.branchLimit} สาขา · {company.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {time(company.effectiveCapacity.temporary.expiresAt)}</p>}
+
       <p className="text-base text-gray-600">ตรวจล่าสุด {time(company.observedAt)}</p>
       <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงบริษัท</summary><p className="break-all">เลขบริษัท {company.companyId} · รุ่นข้อมูล {company.version}</p>{company.pendingAttemptId && <p className="break-all">รายการที่กำลังตรวจสอบ {company.pendingAttemptId}</p>}
       {company.pendingPlanChangeId&&<p className="break-all">คำสั่งลดแพ็กเกจ {company.pendingPlanChangeId}</p>}{company.collectionOperationId&&<p className="break-all">คำสั่งจัดการต่ออายุ {company.collectionOperationId}</p>}</details>
@@ -123,6 +125,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
     {!loading && company?.accountId && <Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/apply-invoices`}>ตรวจสิทธิ์จากใบเสร็จเดิม</Link>}
     {!loading&&company?.accountId&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/invoice-scans`}>ตรวจประวัติใบแจ้งหนี้ Stripe</Link>}
     {!loading&&company?.accountId&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/checkouts`}>ตรวจหน้าชำระและรายการค้าง</Link>}
+    {!loading&&company?.financial&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/plan-adjustments`}>ปรับแพ็กเกจชั่วคราวและดูประวัติ</Link>}
     {!loading&&company?.financial&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/receipt-adjustments`}>เพิ่มใบเสร็จและดูประวัติผู้ดูแล</Link>}
     {!loading && company?.accountId && <BillingOperationPanel key={`operation-${company.companyId}`} companyId={company.companyId} companyVersion={company.version} canReconcile={overview?.capabilities.includes('system.billing.reconcile.run')} />}
     {!loading&&company?.accountId&&<Link onClick={leaving} className="inline-block underline" href={`/system/billing/companies/${encodeURIComponent(company.companyId)}/deliveries`}>รายการแจ้งเตือนแพ็กเกจ</Link>}

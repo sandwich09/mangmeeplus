@@ -411,6 +411,8 @@ export type AdminPackageChangeItemDto = PackageChangeRequestDto & {
   companyName: string;
   /** What the shop is on today, so the operator sees the move rather than only the destination. */
   currentTierKey?: string;
+  /** Paid sources use the reviewed control; a legacy direct approval cannot change purchased fields. */
+  billingReviewPath?: string;
   requestedByDisplayName?: string;
 };
 

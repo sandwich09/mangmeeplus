@@ -3332,6 +3332,8 @@ model CompanyPlanTerm {
   branchLimit       Int
   employeeLimit     Int
   monthlySlipLimit  Int
+  /// Current approved temporary capacity only. Expiry derives the latest purchased baseline.
+  capacityOverride Json?
   /// Null preserves legacy/trial monthly quota. Set only by verified billing apply.
   billingReceiptAccountId String?
   billingReceiptAccount BillingAccount? @relation(fields: [billingReceiptAccountId, companyId], references: [id, companyId], onDelete: Restrict)
