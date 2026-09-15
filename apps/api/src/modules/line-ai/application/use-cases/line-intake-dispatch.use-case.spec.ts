@@ -502,7 +502,19 @@ function makeHarness(opts: {
         },
       }
       : undefined) as any,
-    opts.expenseDraftConversation,
+    opts.expenseDraftConversation ? {
+      ...opts.expenseDraftConversation,
+      ...(opts.expenseDraftConversation.execute ? { execute: async (ctx: any, input: any) => {
+        const result = await opts.expenseDraftConversation.execute(ctx, input);
+        if (!result.handled || ['STALE', 'NOT_FOUND'].includes(result.status) || Object.hasOwn(result, 'source')) return result;
+        // Presentation fixtures stand in for a committed producer. Store its original record
+        // so the production delivery guard still performs a real scoped read in this harness.
+        const saved = emptyMedia(result.expenseId ?? 'expense-continuation-1', { companyId: ctx.companyId,
+          createdByUserId: ctx.userId, sourceChannelMetadataJson: { chatKeyHash: input.chatKeyHash } });
+        capturedRows.set(saved.id, saved);
+        return { ...result, source: { records: [{ id: saved.id, updatedAt: saved.updatedAt }], categories: [] } };
+      } } : {}),
+    } as any : undefined,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
   // The dispatcher's own logger, so a test can assert what an operator sees at level 40.
@@ -1041,6 +1053,57 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.routeRequests.length, 0, 'stable ids do not require a model call');
     assert.equal(calls[0].webhookEventId, TEXT_EVENT.webhookEventId);
     assert.match(h.replies[0] ?? '', /I01-PRICE/u);
+  });
+
+  for (const fault of ['question', 'label', 'status', 'order', 'added', 'missing', 'unavailable', 'access'] as const) {
+    it(`refuses stale draft routing after ${fault} changes during intake without executing or recapturing`, async () => {
+      const contexts = ['one', 'two'].map(expenseId => ({ expenseId, label: expenseId, status: 'OPEN',
+        questions: [{ id: 'I01-QTY', prompt: 'จำนวนกระดาษ?', itemRef: 'I01' }] }));
+      let changed = false;
+      let executed = 0;
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'],
+        routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+        expenseDraftConversation: {
+          routeContexts: async () => {
+            if (!changed) return fault === 'added' ? [] : structuredClone(contexts);
+            if (fault === 'unavailable') throw new Error('source unavailable');
+            const next = structuredClone(contexts);
+            if (fault === 'question') next[0].questions[0].prompt = 'จำนวนคน?';
+            if (fault === 'label') next[0].label = 'คนละใบ';
+            if (fault === 'status') next[0].status = 'PAUSED';
+            return fault === 'order' ? next.reverse() : fault === 'missing' ? [] : next;
+          },
+          execute: async () => { executed += 1; return { handled: true, status: 'UPDATED', replyTexts: ['ข้อมูลลับจากร่างเก่า'], acceptedFields: [] }; },
+        },
+      });
+      const gateway = (h.useCase as any).aiGateway;
+      const route = gateway.requestLineIntakeRoute;
+      gateway.requestLineIntakeRoute = async (...args: any[]) => {
+        const result = await route(...args); changed = true;
+        if (fault === 'access') (h.useCase as any).permissionResolver.resolveAccess = async () => ({ membershipId: 'revoked', roles: [], permissions: [], scopes: {} });
+        return result;
+      };
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กระดาษเอา 5 รีม' });
+      assert.equal(executed, 0);
+      assert.equal(h.captured.length, 0);
+      assert.equal(h.createExpenseCalls.length, 0);
+      assert.equal(h.turnRequests.length, 0);
+      assert.doesNotMatch(h.replies.join(''), /ข้อมูลลับจากร่างเก่า/);
+      assert.ok(h.replies.length > 0, 'the user receives a recovery path');
+    });
+  }
+
+  it('refuses a numbered draft selection if the order changes before deterministic execution', async () => {
+    let reads = 0, executed = 0;
+    const contexts = ['one', 'two'].map(expenseId => ({ expenseId, label: expenseId, status: 'OPEN', questions: [] }));
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], expenseDraftConversation: {
+      routeContexts: async () => ++reads === 1 ? contexts : [...contexts].reverse(),
+      execute: async () => { executed += 1; return { handled: true, status: 'UPDATED', replyTexts: ['wrong draft'], acceptedFields: [] }; },
+    } });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ร่าง 1' });
+    assert.equal(executed, 0); assert.equal(h.routeRequests.length, 0); assert.equal(h.captured.length, 0);
+    assert.ok(h.replies.length > 0); assert.doesNotMatch(h.replies.join(''), /wrong draft/);
   });
 
   it('a passive draft rejected by the edit boundary does not turn unrelated chat into another questionnaire', async () => {
@@ -4436,4 +4499,62 @@ describe('LINE text capture confirms only its current committed source', () => {
       assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0); }
     assert.equal(h.captured.length, 1, 'delivery validation never invokes capture again');
   });
+});
+
+describe('LINE continuation replies retain their producing source', () => {
+  for (const lane of ['deterministic', 'routed'] as const) {
+    for (const fault of ['unchanged', 'revision', 'category', 'choices', 'missing', 'access', 'fallback'] as const) {
+      it(`${lane} continuation delivery validates ${fault} without replaying the update`, async () => {
+        let changed = false, executed = 0, privateAttempts = 0;
+        const accepted: unknown[] = [];
+        const contexts = [{ expenseId: 'expense-continuation-1', label: 'ร่างที่เลือก', status: 'OPEN', questions: [] }];
+        const h = makeHarness({ permissions: ['expense.receipt.line_upload'],
+          routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+          expenseDraftConversation: {
+            routeContexts: async () => changed && fault === 'choices' ? [] : contexts,
+            execute: async () => { executed += 1; return { handled: true, status: 'UPDATED',
+              replyTexts: ['ข้อมูลร่างที่บันทึก ค่าอาหาร'], acceptedFields: [] }; },
+          },
+        });
+        const uc = h.useCase as any, execute = uc.expenseDraftConversation.execute;
+        uc.expenseDraftConversation.execute = async (...args: unknown[]) => {
+          const result = await execute(...args);
+          if (fault === 'missing') return { ...result, source: undefined };
+          result.source.categories = [{ id: 'cat-meals', name: 'ค่าอาหาร' }];
+          if (fault === 'choices') result.source.choices = structuredClone(contexts);
+          return result;
+        };
+        const read = uc.expenseRepo.findByIdWithRelations, categories = uc.expenseRepo.listCategories;
+        uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+          const row = await read(...args);
+          return changed && row && ['revision', 'fallback'].includes(fault)
+            ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+        };
+        uc.expenseRepo.listCategories = async () => changed && fault === 'category'
+          ? [{ id: 'cat-meals', name: 'หมวดที่แก้แล้ว' }] : categories();
+        const access = uc.permissionResolver.resolveAccess;
+        uc.permissionResolver.resolveAccess = async (...args: unknown[]) => changed && fault === 'access'
+          ? { membershipId: 'revoked', roles: [], permissions: [], scopes: {} } : access(...args);
+        if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+          wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+        };
+        uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+          if (/ข้อมูลร่างที่บันทึก/.test(JSON.stringify(messages))) {
+            privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; }
+          }
+          accepted.push(messages); return 'ok';
+        };
+        uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+        const run = h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'deterministic' ? 'ต่อ' : 'เติมจำนวนกระดาษให้หน่อย' });
+        if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+        assert.equal(executed, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
+        if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /ข้อมูลร่างที่บันทึก/);
+        else {
+          assert.doesNotMatch(JSON.stringify(accepted), /ข้อมูลร่างที่บันทึก|ค่าอาหาร/);
+          assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+          assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+        }
+      });
+    }
+  }
 });

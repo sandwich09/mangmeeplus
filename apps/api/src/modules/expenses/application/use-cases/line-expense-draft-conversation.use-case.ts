@@ -33,7 +33,30 @@ export type LineExpenseDraftConversationResult = {
   workflowId?: string;
   acceptedFields: string[];
   resumeCapsule?: string;
+  source?: {
+    records: Array<{ id: string; updatedAt: Date }>;
+    categories: Array<{ id: string; name: string }>;
+    choices?: LineExpenseDraftRouteContext[];
+  };
 };
+
+function replySource(expense: { id: string; updatedAt: Date }, state: LineExpenseDraftContinuation,
+  categories: ExpenseCategorySummary[]): NonNullable<LineExpenseDraftConversationResult['source']> {
+  const ids = new Set(state.items.flatMap(item => [item.expenseCategoryId, item.suggestedCategoryId]));
+  return { records: [{ id: expense.id, updatedAt: expense.updatedAt }],
+    categories: categories.filter(category => ids.has(category.id)).map(({ id, name }) => ({ id, name })) };
+}
+
+function routeContexts(rows: ContinuationRow[]): LineExpenseDraftRouteContext[] {
+  const openRows = rows.filter((row) => row.state.status === 'OPEN');
+  const focusedExpenseId = rows.length === 1 ? rows[0]!.id : openRows.length === 1 ? openRows[0]!.id : undefined;
+  return rows.map((row) => ({
+    expenseId: row.id, label: label(row), status: row.state.status as LineExpenseDraftRouteContext['status'],
+    questions: (row.id === focusedExpenseId && row.state.status === 'OPEN' ? row.state.unresolvedQuestions : []).map((question) => ({
+      id: question.id, prompt: question.prompt.slice(0, 200), ...(question.itemRef ? { itemRef: question.itemRef } : {}),
+    })),
+  }));
+}
 
 function ordinal(text: string, count: number): number | null {
   const match = text.normalize('NFKC').trim().match(/^ร่าง\s*(\d{1,2})$/u);
@@ -54,6 +77,7 @@ function targetRequired(rows: ContinuationRow[]): LineExpenseDraftConversationRe
   return {
     handled: true,
     status: 'TARGET_REQUIRED',
+    source: { records: rows.map(({ id, updatedAt }) => ({ id, updatedAt })), categories: [], choices: routeContexts(rows) },
     acceptedFields: [],
     replyTexts: [[
       'มีร่างค่าใช้จ่ายมากกว่า 1 รายการ กรุณาเลือกก่อนเพื่อไม่ให้คำตอบไปผิดร่าง',
@@ -90,19 +114,7 @@ export class LineExpenseDraftConversationUseCase {
   }
 
   async routeContexts(ctx: RequestContext, chatKeyHash: string): Promise<LineExpenseDraftRouteContext[]> {
-    const rows = await this.rows(ctx, chatKeyHash);
-    const openRows = rows.filter((row) => row.state.status === 'OPEN');
-    const focusedExpenseId = rows.length === 1 ? rows[0]!.id : openRows.length === 1 ? openRows[0]!.id : undefined;
-    return rows.map((row) => ({
-      expenseId: row.id,
-      label: label(row),
-      status: row.state.status as LineExpenseDraftRouteContext['status'],
-      questions: (row.id === focusedExpenseId && row.state.status === 'OPEN' ? row.state.unresolvedQuestions : []).map((question) => ({
-        id: question.id,
-        prompt: question.prompt.slice(0, 200),
-        ...(question.itemRef ? { itemRef: question.itemRef } : {}),
-      })),
-    }));
+    return routeContexts(await this.rows(ctx, chatKeyHash));
   }
 
   async startFromReceipt(ctx: RequestContext, input: {
@@ -129,6 +141,7 @@ export class LineExpenseDraftConversationUseCase {
         handled: true,
         status: 'UPDATED',
         expenseId: expense.id,
+        source: replySource(expense, existing, categories),
         workflowId: existing.workflowId,
         acceptedFields: [],
         replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({
@@ -201,6 +214,7 @@ export class LineExpenseDraftConversationUseCase {
       handled: true,
       status: 'UPDATED',
       expenseId: expense.id,
+      source: replySource(updated, saved, categories),
       workflowId: state.workflowId,
       acceptedFields: [],
       replyTexts: splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state: saved, categories, label: expense.expenseNumber ?? expense.id })),
@@ -251,8 +265,10 @@ export class LineExpenseDraftConversationUseCase {
       return { handled: false, status: 'NOT_FOUND', replyTexts: [], acceptedFields: [] };
     }
     if (['INPUT_ENDED_COMPLETE', 'INPUT_ENDED_INCOMPLETE'].includes(selected.state.status) && control === 'end') {
-      const text = `${formatLineExpenseDraftReply({ state: selected.state, categories, label: label(selected) })}\n\nพิมพ์ “ต่อ” ก่อนหากต้องการแก้หรือเติมร่างนี้`;
-      return { handled: true, status: 'ENDED', replyTexts: splitLineExpenseDraftReply(text), expenseId: expense.id, workflowId: selected.state.workflowId, acceptedFields: [] };
+      const currentState = refreshExpenseSourceDraft(selected.state, expense, categories);
+      const text = `${formatLineExpenseDraftReply({ state: currentState, categories, label: label(selected) })}\n\nพิมพ์ “ต่อ” ก่อนหากต้องการแก้หรือเติมร่างนี้`;
+      return { handled: true, status: 'ENDED', replyTexts: splitLineExpenseDraftReply(text), expenseId: expense.id,
+        source: replySource(expense, currentState, categories), workflowId: selected.state.workflowId, acceptedFields: [] };
     }
 
     const changed = control
@@ -314,6 +330,7 @@ export class LineExpenseDraftConversationUseCase {
         status,
         replyTexts: splitLineExpenseDraftReply(reply),
         expenseId: expense.id,
+        source: replySource(updated, savedState, categories),
         workflowId: savedState.workflowId,
         acceptedFields: changed.acceptedFields,
       };

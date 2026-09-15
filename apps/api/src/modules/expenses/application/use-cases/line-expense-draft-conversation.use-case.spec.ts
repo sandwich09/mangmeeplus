@@ -49,6 +49,24 @@ function harness(count = 1, expenseNote?: string, passive = false) {
 }
 
 describe('LineExpenseDraftConversationUseCase', () => {
+  it('returns the exact committed revision and only referenced category identities with its reply', async () => {
+    const h = harness();
+    const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'I01-QTY 5', webhookEventId: 'source-proof' });
+    assert.equal(result.status, 'UPDATED');
+    assert.deepEqual(result.source?.records, [{ id: 'e1', updatedAt: h.updates[0].options.lineDraftCollection.nextUpdatedAt }]);
+    assert.deepEqual(result.source?.categories, [{ id: 'cat-office', name: 'อุปกรณ์สำนักงาน' }]);
+    assert.equal(h.updates.length, 1);
+  });
+
+  it('binds multiple draft choices to the original ordered records without writing', async () => {
+    const h = harness(2);
+    const result = await h.useCase.execute(ctx, { chatKeyHash: 'chat', messageText: 'ต่อ' });
+    assert.equal(result.status, 'TARGET_REQUIRED');
+    assert.deepEqual(result.source?.records.map(row => row.id), ['e1', 'e2']);
+    assert.deepEqual(result.source?.choices, await h.useCase.routeContexts(ctx, 'chat'));
+    assert.equal(h.updates.length, 0);
+  });
+
   it('initializes a passive draft from current saved facts when old OCR hints disagree', async () => {
     const h = harness();
     const repo = (h.useCase as any).repo;

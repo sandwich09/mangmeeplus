@@ -36,6 +36,42 @@ const databaseUrl = process.env['LINE_DRAFT_EDIT_TEST_DATABASE_URL'];
 const CHAT = 'chat-hash-abc';
 
 describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databaseUrl }, () => {
+  it('keeps equal-time draft choices stable and filters creator, chat and branch before the bounded window', async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(/^\/watchdog_bms(_[a-z0-9_]+)?$/.test(url.pathname)
+      || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const tag = `draft-order-${randomUUID()}`, companyId = `${tag}-co`, userId = `${tag}-user`, foreign = `${tag}-other`;
+    const repo = new PrismaExpenseRepository({ client } as never);
+    const at = new Date('2026-09-15T00:00:00Z');
+    try {
+      await client.company.create({ data: { id: companyId, name: 'Draft routing fixture' } });
+      await client.user.createMany({ data: [userId, foreign].map(id => ({ id, displayName: 'Draft routing fixture' })) });
+      const branch = await client.branch.create({ data: { companyId, code: 'ROUTE', name: 'Scoped branch', type: 'BRANCH' } });
+      const otherBranch = await client.branch.create({ data: { companyId, code: 'OTHER', name: 'Outside branch', type: 'BRANCH' } });
+      for (const suffix of ['z', 'y', 'x', 'c', 'b', 'a', '0-other-user', '0-other-chat', '0-other-branch']) {
+        const creator = suffix === '0-other-user' ? foreign : userId;
+        const chat = suffix === '0-other-chat' ? 'another-chat' : CHAT;
+        await client.expenseRecord.create({ data: { id: `${tag}-${suffix}`, companyId, createdByUserId: creator,
+          branchId: suffix === '0-other-branch' ? otherBranch.id : branch.id, expenseDate: at, updatedAt: at,
+          status: 'DRAFT', captureSource: 'LINE_UPLOAD', sourceChannelMetadataJson: { chatKeyHash: chat,
+            lineExpenseDraftContinuation: { userId: creator, chatKeyHash: chat, status: 'OPEN' } } } });
+      }
+      const input = { companyId, userId, chatKeyHash: CHAT, scopes: { branchIds: [branch.id] }, take: 5 };
+      const expected = ['a', 'b', 'c', 'x', 'y'].map(id => `${tag}-${id}`);
+      assert.deepEqual((await repo.listLineExpenseDraftContinuationRows(input)).map(row => row.id), expected);
+      assert.deepEqual((await repo.listLineExpenseDraftContinuationRows(input)).map(row => row.id), expected);
+      assert.deepEqual(await repo.listLineExpenseDraftContinuationRows({ ...input, scopes: { branchIds: [] } }), []);
+    } finally {
+      await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.branch.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.user.deleteMany({ where: { id: { in: [userId, foreign] } } });
+      await client.$disconnect();
+    }
+  });
+
   it('commits OCR and duplicates together and refuses stale follow-up summaries without losing human edits', async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));

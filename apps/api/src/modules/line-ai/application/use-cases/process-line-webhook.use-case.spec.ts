@@ -5100,14 +5100,17 @@ describe('ProcessLineWebhookUseCase – completed multi-part replies end in a Fl
   async function run(replyTexts: string[]) {
     const { prisma } = makePrisma();
     const delivered: any[][] = [];
+    const expense = savedMediaFixture('draft-1');
     const draft = {
       routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
-      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts, acceptedFields: [] }),
+      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts, acceptedFields: [],
+        source: { records: [{ id: expense.id, updatedAt: expense.updatedAt }], categories: [] } }),
     };
     const { useCase } = makeUseCase(prisma, {
       permissions: ['line.ai.query', 'expense.create'],
       config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true },
       expenseDraftConversation: draft,
+      expenseRepo: { findByIdWithRelations: async () => expense, listCategories: async () => [], listRecentLineCaptures: async () => [] },
       sendReplyFn: async (_token: string, messages: any[]) => { delivered.push(messages); return 'ok'; },
     });
     await useCase.execute({ ...BASE_EVENT, webhookEventId: `evt-draft-parts-${replyTexts.length}`, messageText: 'D-PURPOSE ค่าเดินทางไปหาลูกค้า' });
@@ -5159,6 +5162,7 @@ function makeDeliveryRun(opts: {
   const replyCalls: Array<{ messages: any[]; outcomeWritesBefore: number }> = [];
   const pushCalls: Array<{ to: string; messages: any[] }> = [];
   const results = [...(opts.replyResults ?? ['ok'])];
+  const expense = savedMediaFixture('draft-1');
   const { useCase } = makeUseCase(prisma, {
     permissions: ['line.ai.query', 'expense.create'],
     // Terminal Flex on, so the seam under test carries a real card — the payload class the fallback
@@ -5166,8 +5170,10 @@ function makeDeliveryRun(opts: {
     config: { lineExpenseDraftConversationEnabled: true, lineAiMultipartTerminalFlexEnabled: true, ...(opts.config ?? {}) },
     expenseDraftConversation: {
       routeContexts: async () => [{ status: 'OPEN', expenseId: 'draft-1' }],
-      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts: ['บันทึกวัตถุประสงค์แล้วค่ะ'], acceptedFields: [] }),
+      execute: async () => ({ handled: true, status: 'UPDATED', replyTexts: ['บันทึกวัตถุประสงค์แล้วค่ะ'], acceptedFields: [],
+        source: { records: [{ id: expense.id, updatedAt: expense.updatedAt }], categories: [] } }),
     },
+    expenseRepo: { findByIdWithRelations: async () => expense, listCategories: async () => [], listRecentLineCaptures: async () => [] },
     sendReplyFn: async (_token: string, messages: any[]) => {
       // Captured at SEND time: a non-zero count here is the proof that §8.3's "persist the outcome
       // BEFORE calling LINE" actually holds, not just that both happened during the turn.

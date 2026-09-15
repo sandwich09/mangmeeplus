@@ -6,10 +6,11 @@ Scope: approved Stripe packages, Postmark, Admin C01–C08, web and LINE access,
 
 ## Current checkpoint — 2026-09-15
 
-- Core checkpoint parent a86aada7; marketing checkpoint parent53725ae. Marketing runtime remains969e4c0.
+- Core checkpoint parent79872f74; marketing checkpoint parentf3219d3. Marketing runtime remains969e4c0.
 - Checkout source fix verified: null/missing/unknown Session status preserves UNKNOWN attempt/case until the original Session recovers. Focused restart74 and settlement83 HTTP/PG/Next/Chromium/marketing groups PASS (counts overlap; providers simulated). Full combined failed earlier at settlement browser create429; bounded real retry now verifies retained reason/window. No rate-limit change. Source/log details: checkout-observation-result.json.
 - LINE media source increment locally verified: atomic OCR/duplicate producing revision, web/LINE summary CAS, current saved photo/PDF facts, duplicate/actor/fallback checks and no repeated completed check-bill OCR. Focused735/module1320/PG75 PASS/0skip; API typecheck/SWC PASS. Exact sources and remaining limits: line-media-source-result.json.
-- Final source freeze: /tmp/mangmee-current-billing-source-freeze.json (core tracked runtime and marketing files; includes concurrent tracked environment/mail changes, which are not owned by this task). It is working-tree evidence, not clean-commit or CI proof.
+- Continuation input/result source increment locally verified:607 focused/1343 module/93 PG PASS/0skip, API typecheck/SWC PASS. Missing/changed source retains completed work. Full combined billing run in progress from /tmp/mangmee-continuation-source-freeze.json; log /tmp/mangmee-billing-http-smoke.log. See line-continuation-source-result.json for limits.
+- Earlier financial source freeze: /tmp/mangmee-current-billing-source-freeze.json (core tracked runtime and marketing files; includes concurrent tracked environment/mail changes, which are not owned by this task). It is working-tree evidence, not clean-commit or CI proof.
 
 ## Latest verified work
 
@@ -31,7 +32,7 @@ Initial/repeat/upgrade/downgrade/restart/cancel/resume packages; strict paid inv
 
 ## Remaining work
 
-1. LINE source boundaries: active questionnaire route context and returned continuation facts, pending-media partial attachment repair, substitute/correction result sources, later storage permission races, and stored clarification lineage. Candidate and text-capture increments above must not be listed as missing again. Use existing ERP domain/scoped readers and committed revisions; no mutation/model/OCR replay for validation.
+1. LINE source boundaries: pending-media partial attachment repair, substitute/correction result sources, later storage permission races, and stored clarification/original-choice lineage. Active questionnaire input and returned continuation source increments are now locally verified; this does not close historical clarification lineage. Candidate and text-capture increments above must not be listed as missing again. Use existing ERP domain/scoped readers and committed revisions; no mutation/model/OCR replay for validation.
 2. Current AP01–AP24 browser/API/PG cross-layer acceptance and remaining native device/LINE/LIFF/provider matrix. Historical sandbox proofs exist; they do not prove the final current tree. Fix actual failures without inventing a broader product policy.
 3. Review current financial reconciliation evidence and reconcile the exact implemented controls against C01–C08. Checkout-state regression and settlement browser retry are locally verified; a new full combined result remains pending. Existing old-debt/refund policy is manual review; no new debt forgiveness or arbitrary paid-state override is approved.
 4. Paid Admin free-day/next-collection behavior and local mail-history retention need the earlier Owner answers below before dependent implementation.

@@ -3012,7 +3012,7 @@ export class PrismaExpenseRepository {
         note: true, grandTotalAmount: true,
         updatedAt: true, sourceChannelMetadataJson: true,
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       take: Math.min(10, Math.max(1, input.take ?? 5)),
     });
     return rows.filter((row: any) =>

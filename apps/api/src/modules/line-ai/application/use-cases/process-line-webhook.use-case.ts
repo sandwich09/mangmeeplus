@@ -72,7 +72,7 @@ import {
   type LineSubstituteMediaScan,
   type LineSubstituteReceiptContinuationResult,
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
+import { LineExpenseDraftConversationUseCase, type LineExpenseDraftConversationResult } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
 import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
@@ -1407,7 +1407,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
-    records: Map<string, string | null>; categories: Map<string, string | null> }>();
+    records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
   private readonly deliveryCandidates = new WeakMap<object, { context: RequestContext; chatKeyHash: string; snapshot: string }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
@@ -2800,12 +2800,28 @@ export class ProcessLineWebhookUseCase {
   }
 
   private rememberReceiptDeliverySource(event: LineTextEvent | LineReceiptUploadEvent, context: RequestContext,
-    expense: ExpenseRecord, category?: { id: string; name: string }) {
+    expense: Pick<ExpenseRecord, 'id' | 'updatedAt'>, category?: { id: string; name: string }) {
     const proof = this.deliveryReceiptSources.get(event) ?? { context, chatKeyHash: chatKeyHashOf(event), records: new Map(), categories: new Map() };
     const revision = expense.updatedAt instanceof Date ? expense.updatedAt.toISOString() : null;
     proof.records.set(expense.id, proof.records.has(expense.id) && proof.records.get(expense.id) !== revision ? null : revision);
     if (category) proof.categories.set(category.id, proof.categories.has(category.id) && proof.categories.get(category.id) !== category.name ? null : category.name);
     this.deliveryReceiptSources.set(event, proof);
+  }
+
+  private rememberContinuationDeliverySource(event: LineTextEvent, context: RequestContext, result: LineExpenseDraftConversationResult) {
+    if (!result.handled || result.status === 'STALE' || result.status === 'NOT_FOUND') return;
+    const source = result.source;
+    if (!source?.records.length) {
+      // A legacy/unproven success must not be blessed by reading a newer revision now.
+      this.deliveryReceiptSources.set(event, { context, chatKeyHash: chatKeyHashOf(event),
+        records: new Map([[result.expenseId ?? 'unproven-draft', null]]), categories: new Map() });
+      return;
+    }
+    for (const record of source.records) {
+      this.rememberReceiptDeliverySource(event, context, record);
+      for (const category of source.categories) this.rememberReceiptDeliverySource(event, context, record, category);
+    }
+    if (source.choices) this.deliveryReceiptSources.get(event)!.draftChoices = source.choices;
   }
 
   private rememberCandidateDeliverySources(event: LineTextEvent, context: RequestContext, candidates: LineIntakeCorrectionCandidate[]) {
@@ -2836,6 +2852,8 @@ export class ProcessLineWebhookUseCase {
       const categories = await this.expenseRepo.listCategories(ctx.companyId);
       for (const [id, name] of proof.categories) if (!name || !categories.some(category => category.id === id && category.name === name)) return false;
     }
+    if (proof.draftChoices && (!this.expenseDraftConversation || JSON.stringify(proof.draftChoices)
+      !== JSON.stringify(await this.expenseDraftConversation.routeContexts(ctx, proof.chatKeyHash)))) return false;
     return true;
   }
 
@@ -3496,6 +3514,15 @@ export class ProcessLineWebhookUseCase {
     const activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
       : [];
+    const draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+    const draftRouteCurrent = async () => {
+      if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
+      try {
+        if (JSON.stringify(await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))) === draftRouteSnapshot) return true;
+      } catch { /* An unavailable source cannot authorize the retained route. */ }
+      await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+      return false;
+    };
     const statusQuestion = receiptStatusQuestion(normalizedText);
     if (statusQuestion && (statusQuestion === 'receipt' || openWaiting.length === 0)) {
       const listLink = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
@@ -3545,12 +3572,14 @@ export class ProcessLineWebhookUseCase {
       : undefined;
     if (activeExpenseDrafts.length > 0 && this.expenseDraftConversation
       && isDeterministicLineExpenseDraftInput(normalizedText)) {
+      if (!await draftRouteCurrent() || !await this.mayDeliverBusinessReply(event)) return;
       const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
       });
       if (result.handled) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -3863,13 +3892,15 @@ export class ProcessLineWebhookUseCase {
       busyWaitDeadlineMs,
     }));
 
+    if (!await draftRouteCurrent()) return;
     if (recentCapturedExpenses.length) {
       if (!await this.correctionCandidatesCurrent(expenseDraftCtx, chatKeyHashOf(event), JSON.stringify(recentCapturedExpenses))) {
         await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
         return;
       }
-      if (!await this.mayDeliverBusinessReply(event)) return;
     }
+    if ((recentCapturedExpenses.length || expenseDraftConversationEnabled && canCaptureExpense)
+      && !await this.mayDeliverBusinessReply(event)) return;
 
     // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
     // draft passes every delivery-time gate is answered HERE from the single intake call — no
@@ -4140,6 +4171,7 @@ export class ProcessLineWebhookUseCase {
         captureHints: routePlan.captureHints,
       });
       if (result.handled) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,

@@ -1,0 +1,56 @@
+{
+  "status": "LOCAL_CONTINUATION_SOURCE_PASS",
+  "recordedAt": "2026-09-15T11:23:46.993384+00:00",
+  "baseCommit": "79872f74527d2360a8cc7f17e1c84f9c887e56f8",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.ts": "f082644d26256d02b28c9164755ad6e7fd3f748dc7a22a2bacacc701fe2600d4",
+    "apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.spec.ts": "8971a4fb3f671c48628d6a8e0b6b72447c292ca49699ed753c11878497072dca",
+    "apps/api/src/modules/expenses/expense-source-draft.pg.spec.ts": "92c8597f09ff7f93fc6b54faf890210308efa35a3cdad2b6b4409665c7f159e2",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "6203029ab46fda7018e60f6d87d402914972ea2a34d6e45fa9e9929629dbaf70",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "953b0eb0f97b8722203b9d99aa4aaecd777b88eadb6afeb3af86e145f76b5385",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "2754a5891629782b7e38d9482cdf811f28cc713ba9b1f1fc0d035a93406cf37f",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "a6426eb1a831ca5a826c9030b19abfdf47eae88a500d8dd05d12fc773e1fef02",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "7eb09c9a6b83f73d2ab86774399bd326cd2326f66ab2c76394e15ce75135e16a"
+  },
+  "runs": {
+    "unit": {
+      "tests": 607,
+      "pass": 607,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-continuation-unit.tap",
+      "sha256": "8dfa7f008b0cdfc5a966d2d113575ce5e68a9654f819779e797a9f837899218b"
+    },
+    "module": {
+      "tests": 1343,
+      "pass": 1343,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-continuation-module.tap",
+      "sha256": "586d36c77b926e8814fca584b0a09c78e6de4c43254c9ed63fb07a1f1653083b"
+    },
+    "postgres": {
+      "tests": 93,
+      "pass": 93,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-continuation-postgres.tap",
+      "sha256": "2d6d8964e5f548b954846ced34851758b52dfb534ddfcb8463aa17a7c7f53597"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "Exact ordered IDs, labels, status and questions are re-read after routing and before deterministic selection. Changed, new, removed, unavailable sources and withdrawn actor access cause safe recovery without executing/capturing.",
+    "Equal-time ordering is stable by id; actual PostgreSQL filters creator/chat/branch before the bounded window.",
+    "Continuation replies return the actual producing update revision and referenced categories. The real source-draft use case and PostgreSQL preserve previous reply revisions across later writes.",
+    "Both deterministic and routed final replies reuse the receipt-source guard after link rendering and before fallback. Missing proof, record/category/access changes and changed choices refuse private delivery, preserving the completed update.",
+    "Legacy presentation doubles now store a synthetic producing record; guards are not disabled in fixtures."
+  ],
+  "limits": [
+    "607 focused,1343 module and93 PostgreSQL tests overlap. The PostgreSQL set includes17 existing source-draft cases; the final webhook transport is separately simulated in unit tests, not claimed as one end-to-end real mutation/send transaction.",
+    "The input projection check does not validate historical stored-question lineage or make a later bare ordinal safe after its original offered choices are lost.",
+    "Substitute/correction result sources, pending-media partial repair and later storage permission races remain separate. Native LINE/LIFF/provider and full AP01–AP24/browser acceptance remain open.",
+    "A full combined billing run is currently in progress against this compiled build. No CI/push/merge/deploy."
+  ]
+}
