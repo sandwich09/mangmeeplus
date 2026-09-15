@@ -1,3 +1,4 @@
+import {checkPartnerAiSupport} from './partner-ai-support-smoke';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
@@ -104,6 +105,7 @@ assert.equal(line.status,200,JSON.stringify(line));
       assert.equal(await page.getByLabel('เหตุผลที่ปรับแพ็กเกจ',{exact:true}).count(),0);
       cases.push('browser-manual-plan-immutable-response-loss-retry-once-reason-renew-history-reload-stale-recovery-and-mobile');
     }
+    cases.push(...await checkPartnerAiSupport(input,companyId,accountId!));
     assert.equal(await db.billingInvoice.count({where:{billingAccountId:accountId}}),0);assert.equal(await db.billingReceiptGrant.count({where:{companyId}}),0);
     return cases;
   }finally{

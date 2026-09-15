@@ -8,9 +8,9 @@ import {
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
-import { countReceiptOcrAdmissions } from '../../../line-ai/application/company-ocr-governance';
-import { bangkokMonthKey } from '../../../line-ai/application/company-ai-usage-meter';
-import { effectiveMonthlySlipLimit } from '../../domain/logic/receipt-quota.logic';
+import { receiptQuotaSnapshot } from '../../../line-ai/application/company-ocr-governance';
+import { bangkokMonthKey, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
+import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 
 /** The audit rows that mean "somebody actually got into the web app for this shop" (§8). */
 const WEB_ENTRY_ACTIONS = [AuditAction.AUTH_LINE_LIFF_SESSION, AuditAction.AUTH_LINE_HANDOFF_EXCHANGE];
@@ -133,7 +133,7 @@ export class GetPartnerTimelineUseCase {
     }
 
     const refusal = await this.currentAiRefusal(companyId, company.status, term, now);
-    if (refusal) entries.push({ kind: 'ai_refusal', label: 'ตอนนี้ AI จะไม่ตอบ', detail: refusal });
+    if (refusal) entries.push({ kind: 'ai_refusal', ...refusal });
 
     // Oldest first; the derived refusal has no time and belongs at the end, where it reads as
     // "and this is where the shop stands now".
@@ -153,42 +153,37 @@ export class GetPartnerTimelineUseCase {
       warmupSlipLimit: number | null; termEndsAt: Date;
     } | null,
     now: Date,
-  ): Promise<string | null> {
-    if (companyStatus !== 'ACTIVE') return `ร้านอยู่สถานะ ${companyStatus}`;
-    if (term && term.termEndsAt.getTime() <= now.getTime()) return 'แพ็กเกจหมดอายุแล้ว';
-
-    const linked = await this.prisma.client.externalIdentity.findFirst({
-      where: {
-        provider: 'LINE',
-        status: 'ACTIVE',
-        user: { memberships: { some: { companyId, status: 'ACTIVE' } } },
-      },
-      select: { id: true },
-    });
-    if (!linked) return 'ยังไม่มีสมาชิกคนไหนผูก LINE';
-
-    // The timeline's own clock, so a caller that passes `now` gets a coherent answer.
-    const monthKey = bangkokMonthKey(now);
-    const [ocrUsage, aiUsage, aiConfig] = await Promise.all([
-      countReceiptOcrAdmissions(this.prisma.client, companyId, monthKey),
-      this.prisma.client.companyAiMonthlyUsage.findUnique({
-        where: { companyId_monthKey: { companyId, monthKey } },
-        select: { costSatang: true },
-      }),
-      this.prisma.client.companyAiConfiguration.findUnique({
-        where: { companyId },
-        select: { monthlyBudgetSatang: true },
-      }),
+  ): Promise<{label:string;detail:string} | null> {
+    const all=(detail:string)=>({label:'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้',detail});
+    const receipt=(detail:string)=>({label:'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้',detail});
+    if(companyStatus!=='ACTIVE')return all(companyStatus==='DISABLED'?'ร้านถูกพักใช้งาน':companyStatus==='ARCHIVED'?'ร้านถูกเก็บเข้าประวัติแล้ว':'ร้านยังไม่พร้อมใช้งาน');
+    if(term&&term.termEndsAt<=now)return all('แพ็กเกจหมดอายุแล้ว');
+    const channelId=this.config.lineMessagingChannelId;
+    if(!channelId)return {label:'ยังใช้ AI ผ่าน LINE ไม่ได้',detail:'ยังไม่ได้ตั้งค่าการเชื่อมต่อ LINE ของระบบ'};
+    const linked=await this.prisma.client.externalIdentity.findFirst({where:{provider:'LINE',providerChannelId:channelId,status:'ACTIVE',
+      user:{status:'ACTIVE',memberships:{some:{companyId,status:'ACTIVE'}}}},select:{id:true}});
+    if(!linked)return {label:'ยังใช้ AI ผ่าน LINE ไม่ได้',detail:'ยังไม่มีสมาชิกคนไหนผูก LINE ปัจจุบัน'};
+    const entitled=await loadEntitledFeatureKeys(this.prisma,companyId);
+    if(entitled!==null&&!entitled.has('ai_line_assistant'))return {label:'ยังคุยกับ AI ผ่าน LINE ไม่ได้',detail:'ร้านยังไม่ได้เปิดสิทธิ์ผู้ช่วย AI'};
+    const monthKey=bangkokMonthKey(now);
+    const [quota,aiUsage,aiConfig,ocrUsage,platform]=await Promise.all([
+      receiptQuotaSnapshot(this.prisma,companyId,monthKey,now),
+      this.prisma.client.companyAiMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{costSatang:true}}),
+      this.prisma.client.companyAiConfiguration.findUnique({where:{companyId},select:{monthlyBudgetSatang:true,ocrEnabled:true,ocrMonthlyLimit:true,receiptQuotaEnforced:true}}),
+      this.prisma.client.companyOcrMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{usedCount:true}}),
+      resolvePlatformAiBudget(this.prisma,this.config,true),
     ]);
-
-    const limit = effectiveMonthlySlipLimit(term, now);
-    if (limit !== null && ocrUsage >= limit) {
-      return `ให้ AI อ่านรูปครบ ${limit} ครั้งของเดือนนี้แล้ว`;
-    }
-    const budget = aiConfig?.monthlyBudgetSatang ?? this.config.aiMonthlyBudgetSatang;
-    if ((aiUsage?.costSatang ?? 0) >= budget) return 'ใช้งบ AI ของเดือนนี้ครบแล้ว';
+    const budget=aiConfig?.monthlyBudgetSatang??platform.monthlyBudgetSatang;
+    if((aiUsage?.costSatang??0)>=budget)return all('ใช้งบ AI ของเดือนนี้ครบแล้ว');
+    if(entitled!==null&&!entitled.has('expenses.upload'))return receipt('ร้านยังไม่ได้เปิดสิทธิ์อัปโหลดใบเสร็จ');
+    if(aiConfig?.ocrEnabled===false)return receipt('ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
+    if(aiConfig?.ocrMonthlyLimit!=null&&(ocrUsage?.usedCount??0)>=aiConfig.ocrMonthlyLimit)return receipt('ใช้จำนวนครั้งอ่านเอกสารของเดือนนี้ครบแล้ว');
+    const enforced=quota.cadence==='PAID_GRANTS'||(aiConfig?.receiptQuotaEnforced??this.config.receiptQuotaEnforced)===true;
+    if(enforced&&quota.planLimit!==null&&quota.usedCount>=quota.planLimit)return receipt(quota.cadence==='PAID_GRANTS'
+      ?'ใช้จำนวนใบเสร็จที่มีอยู่ครบแล้ว':`อ่านใบเสร็จครบ ${quota.planLimit} ใบของเดือนนี้แล้ว`);
     return null;
   }
+
 }
 
 const PACKAGE_CHANGE_STATUS_TH: Record<string, string> = {

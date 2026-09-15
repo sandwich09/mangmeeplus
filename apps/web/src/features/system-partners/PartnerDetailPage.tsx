@@ -198,7 +198,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
     setBusy(true);
     try {
       await setPartnerVatRegistration(companyId, { status, effectiveFrom, expectedVersion: value.version });
-      showToast('VAT registration saved.', 'success');
+      showToast('บันทึกสถานะจด VAT ของร้านแล้ว', 'success');
       await onSaved();
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -209,30 +209,25 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-4">
-      <p className="text-xs text-gray-500 mb-2">
-        VAT Registration — decides whether this company is asked Thai VAT questions when recording
-        expenses, and whether it may claim input VAT. UNKNOWN is not &quot;not registered&quot;: it means nobody
-        has answered, and every reader keeps behaving as it does today.
-      </p>
+      <p className="text-base text-gray-600 mb-2">สถานะจด VAT ของร้าน — เลือกตามข้อมูลจริงของร้าน เว้นไว้ได้หากยังไม่มีข้อมูล</p>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Status</label>
-          <ThemedSelect className={inputClass} value={status} disabled={disabled || busy}
+          <label htmlFor={`partner-vat-status-${companyId}`} className="block text-base text-gray-600 mb-1">สถานะจด VAT</label>
+          <ThemedSelect id={`partner-vat-status-${companyId}`} className={inputClass} value={status} disabled={disabled || busy}
             onChange={(e) => setStatus(e.target.value as '' | 'REGISTERED' | 'NOT_REGISTERED')}>
-            <option value="">— UNKNOWN (unanswered) —</option>
-            <option value="REGISTERED">REGISTERED / จดทะเบียนแล้ว</option>
-            <option value="NOT_REGISTERED">NOT_REGISTERED / ยังไม่ได้จดทะเบียน</option>
+            <option value="">ยังไม่ระบุ</option>
+            <option value="REGISTERED">จด VAT แล้ว</option>
+            <option value="NOT_REGISTERED">ยังไม่ได้จด VAT</option>
           </ThemedSelect>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Effective From</label>
-          <ThemedDate className={inputClass} value={effectiveFrom} disabled={disabled || busy}
+          <label htmlFor={`partner-vat-from-${companyId}`} className="block text-base text-gray-600 mb-1">วันที่เริ่มมีผล</label>
+          <ThemedDate id={`partner-vat-from-${companyId}`} className={inputClass} value={effectiveFrom} disabled={disabled || busy}
             onChange={(e) => setEffectiveFrom(e.target.value)} />
         </div>
         <button type="button" className={btnPrimary} disabled={disabled || busy || !status} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save VAT status'}
+          {busy ? 'กำลังบันทึก…' : 'บันทึกสถานะ VAT'}
         </button>
-        <span className="text-xs text-gray-400">v{value.version}</span>
       </div>
     </div>
   );
@@ -2037,10 +2032,12 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
  */
 function ShopTimelineSection({ companyId }: { companyId: string }) {
   const [entries, setEntries] = useState<PartnerTimelineEntryDto[] | null>(null);
+  const [reload,setReload]=useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setEntries(null);setError(null);
     void (async () => {
       try {
         const result = await getPartnerTimeline(companyId);
@@ -2051,12 +2048,13 @@ function ShopTimelineSection({ companyId }: { companyId: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId,reload]);
 
   return (
     <SectionCard title="ประวัติร้าน">
+      <button type="button" className="mangmee-btn mangmee-btn-secondary mb-3 min-h-11 text-base" onClick={()=>{setEntries(null);setError(null);setReload(n=>n+1);}}>โหลดประวัติร้านล่าสุด</button>
       {error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <p role="alert" className="text-base text-red-600">{error}</p>
       ) : entries === null ? (
         <div className="h-16 animate-pulse rounded border border-gray-100" />
       ) : entries.length === 0 ? (
@@ -2068,10 +2066,10 @@ function ShopTimelineSection({ companyId }: { companyId: string }) {
               <span className="w-40 shrink-0 text-xs text-gray-500">
                 {entry.at ? formatThaiDateTime(entry.at) : 'ตอนนี้'}
               </span>
-              <span className={`text-sm ${entry.kind === 'ai_refusal' ? 'font-medium text-amber-700' : 'text-gray-900'}`}>
+              <span className={`text-base ${entry.kind === 'ai_refusal' ? 'font-medium text-amber-700' : 'text-gray-900'}`}>
                 {entry.label}
               </span>
-              {entry.detail && <span className="text-xs text-gray-500">{entry.detail}</span>}
+              {entry.detail && <span className="text-base text-gray-600">{entry.detail}</span>}
             </li>
           ))}
         </ol>
@@ -2598,7 +2596,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
           <div className="flex flex-wrap items-center justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">LINE Account Link Status</span>
+                <span className="text-sm text-gray-700">สถานะเชื่อมบัญชี LINE</span>
                 <LineContextBadge health={detail.lineContextHealth} />
               </div>
               <p className="text-xs text-gray-400">

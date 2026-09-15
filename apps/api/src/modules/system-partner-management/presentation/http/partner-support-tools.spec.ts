@@ -42,7 +42,11 @@ type Options = {
   memberIdentity?: any | null;
   ocrUsage?: { usedCount: number } | null;
   aiUsage?: { costSatang: number } | null;
-  aiConfig?: { monthlyBudgetSatang: number | null } | null;
+  aiConfig?: { monthlyBudgetSatang: number | null; ocrEnabled?: boolean; ocrMonthlyLimit?:number|null; receiptQuotaEnforced?:boolean|null } | null;
+  platformBudget?: {monthlyBudgetSatang:number;ceilingSatang:number}|null;
+  paidGrants?: any[];
+  features?: Array<{featureKey:string;enabled:boolean}>;
+  enforced?: boolean;
   token?: string | null;
   webBaseUrl?: string;
 };
@@ -89,6 +93,10 @@ function harness(options: Options = {}) {
         findMany: async () => options.ownerIdentities ?? [{ providerUserId: 'Uowner-1' }],
       },
       companyMembership: { findMany: async () => options.ownerMemberships ?? [{ userId: 'owner-1' }] },
+      companyFeatureEntitlement:{findMany:async()=>options.features??[]},
+      companyOcrMonthlyUsage:{findUnique:async()=>options.ocrUsage??null},
+      platformAiBudgetConfig:{findUnique:async()=>options.platformBudget??null},
+      billingReceiptGrant:{findMany:async()=>options.paidGrants??[]},
       companyAiMonthlyUsage: { findUnique: async () => options.aiUsage ?? null },
       companyAiConfiguration: { findUnique: async () => options.aiConfig ?? null },
       user: { findUnique: async () => ({ displayName: 'พี่แอดมิน' }) },
@@ -113,7 +121,7 @@ function harness(options: Options = {}) {
   } as any;
 
   const config = {
-    aiMonthlyBudgetSatang: 8000,
+    aiMonthlyBudgetSatang: 8000,receiptQuotaEnforced:options.enforced??true,
     lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
     sesWebBaseUrl: options.webBaseUrl ?? 'https://app.mangmeeplus.com',
   } as any;
@@ -203,7 +211,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       company: { id: 'co-1', name: 'ร้านนิด', status: 'DISABLED', createdAt: NOW },
       planTerm: liveTerm,
     });
-    assert.equal(detail, 'ร้านอยู่สถานะ DISABLED');
+    assert.equal(detail, 'ร้านถูกพักใช้งาน');
   });
 
   it('names an expired term', async () => {
@@ -214,7 +222,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
   });
 
   it('names an unlinked shop', async () => {
-    assert.equal(await refusalOf({ planTerm: liveTerm, memberIdentity: null }), 'ยังไม่มีสมาชิกคนไหนผูก LINE');
+    assert.equal(await refusalOf({ planTerm: liveTerm, memberIdentity: null }), 'ยังไม่มีสมาชิกคนไหนผูก LINE ปัจจุบัน');
   });
 
   it('uses the actual trial allowance during a legacy warmup-ten window', async () => {
@@ -222,7 +230,7 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       planTerm: { ...liveTerm, warmupUntil: new Date('2030-01-01T00:00:00.000Z'), warmupSlipLimit: 10 },
       ocrUsage: { usedCount: 15 },
     });
-    assert.equal(detail, 'ให้ AI อ่านรูปครบ 15 ครั้งของเดือนนี้แล้ว');
+    assert.equal(detail, 'อ่านใบเสร็จครบ 15 ใบของเดือนนี้แล้ว');
   });
 
   it('names the AI budget, against the shop own override', async () => {
@@ -238,6 +246,27 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       }),
       undefined,
     );
+  });
+});
+
+describe('current Admin AI support explanation',()=>{
+  const term={tierKey:'PRO_999',monthlySlipLimit:100,warmupUntil:null,warmupSlipLimit:null,termEndsAt:new Date('2030-01-01'),billingReceiptAccountId:'paid-account'};
+  const refusals=async(options:Options)=>(await harness(options).controller.partnerTimeline('co-1')).entries.filter(e=>e.kind==='ai_refusal');
+  it('uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal',async()=>{
+    assert.deepEqual(await refusals({planTerm:term,ocrUsage:{usedCount:150},paidGrants:[{id:'grant',units:1200,_count:{admissions:150},expiresAt:term.termEndsAt}]}),[]);
+    const result=await refusals({planTerm:term,paidGrants:[{id:'grant',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt}]});
+    assert.equal(result[0]?.label,'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');assert.equal(result[0]?.detail,'ใช้จำนวนใบเสร็จที่มีอยู่ครบแล้ว');
+    assert.deepEqual(await refusals({planTerm:term,paidGrants:[{id:'old',units:1200,_count:{admissions:1200},expiresAt:term.termEndsAt},{id:'repeat',units:1200,_count:{admissions:0},expiresAt:term.termEndsAt}]}),[]);
+  });
+  it('honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget',async()=>{
+    assert.deepEqual(await refusals({planTerm:{...term,billingReceiptAccountId:null},ocrUsage:{usedCount:150},enforced:false}),[]);
+    assert.match((await refusals({aiConfig:{monthlyBudgetSatang:null,ocrEnabled:false}}))[0]!.detail!,/ปิดการอ่าน/);
+    assert.match((await refusals({aiConfig:{monthlyBudgetSatang:null,ocrMonthlyLimit:10},ocrUsage:{usedCount:10}}))[0]!.detail!,/จำนวนครั้งอ่าน/);
+    assert.match((await refusals({features:[{featureKey:'ai_line_assistant',enabled:false}]}))[0]!.label,/คุยกับ AI ผ่าน LINE/);
+    const options:Options={aiUsage:{costSatang:9000},platformBudget:{monthlyBudgetSatang:20000,ceilingSatang:100000}},h=harness(options);
+    assert.equal((await h.controller.partnerTimeline('co-1')).entries.some(e=>e.kind==='ai_refusal'),false);
+    options.platformBudget={monthlyBudgetSatang:8000,ceilingSatang:100000};
+    assert.equal((await h.controller.partnerTimeline('co-1')).entries.find(e=>e.kind==='ai_refusal')?.detail,'ใช้งบ AI ของเดือนนี้ครบแล้ว');
   });
 });
 
