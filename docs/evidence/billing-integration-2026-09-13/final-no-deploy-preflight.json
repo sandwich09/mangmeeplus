@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-09-15T18:00:58.216252+00:00",
+  "authorization": "User authorized final green CI then Admin merge develop/main in both repositories, explicitly no deployment.",
+  "repositories": [
+    {
+      "repository": "MangmeeDev/mangmeeplus",
+      "repositoryWebhooks": [],
+      "ciTrigger": "pull_request main/develop; workflow_call/dispatch; no push CI",
+      "deployWorkflows": "Explicit dispatch/call; UAT completion readiness is separate."
+    },
+    {
+      "repository": "MangmeeDev/mangmee_web",
+      "repositoryWebhooks": [],
+      "hasPages": false,
+      "ciTrigger": "pull_request main/develop"
+    }
+  ],
+  "githubApps": "Earlier read-only settings evidence in github-no-deploy-preflight.json, dated 2026-09-14; not a fresh apps inventory.",
+  "limit": "Inspected repository workflow and hook surfaces; absence of arbitrary external polling is not asserted. No deploy, gate change or provider activation is authorized or performed."
+}

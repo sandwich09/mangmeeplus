@@ -1,208 +1,54 @@
-/**
- * Shared LINE credential console — HIDDEN, not deleted (audit H-14, owner decision 2026-08-10).
- *
- * Three things were wrong at once, and only the first is cheap to fix:
- *
- * 1. `system-line.controller.ts` requires `system.shared_line_credential.manage`, a key that is not
- *    in the permission registry. Nobody holds it, SYSTEM_ADMIN included — that role is granted an
- *    explicit list, not everything — so the endpoint answers 403 to every caller.
- * 2. Adding the row by hand does not survive: `sync-permissions.ts` revokes grants on system roles
- *    that the registry does not declare, deliberately, because system roles are code-defined.
- * 3. Even past both, saving here would change nothing. The webhook verifies signatures with
- *    `config.lineMessagingChannelSecret` — the value from AWS/env — and never reads the row this
- *    screen writes.
- *
- * So fixing only (1) would be the harmful move: the screen would report success and rotate nothing,
- * and an operator would believe a credential had been replaced when it had not. A 403 at least
- * tells the truth. Credential rotation stays where it works today: change the secret in AWS/env and
- * redeploy.
- *
- * To bring this back, both have to land together:
- *   - declare `system.shared_line_credential.manage` in the permission registry and grant it to
- *     SYSTEM_ADMIN, so the endpoint is reachable;
- *   - make the LINE webhook read the stored credential first and fall back to AWS/env, including
- *     cache invalidation on write, so a save actually takes effect.
- *
- * The route and this component stay so that work is a diff rather than a rewrite; only the two
- * links into it are commented out (SystemHeader, PartnerDetailPage).
- */
 'use client';
-
 import Link from 'next/link';
-import { useState } from 'react';
-import { BackLink } from '@/common/components/app-shell/BackLink';
-import { useToast } from '@/common/components/toast';
-import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { useEffect, useState } from 'react';
+import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { setSharedLineCredential } from './system-partners.api';
-import type { SharedLineCredentialMetadataDto } from './system-partners.api';
-
-type CredentialKind = 'LINE_MESSAGING_API' | 'LINE_LOGIN' | 'LINE_LIFF';
-
-const CREDENTIAL_KINDS: CredentialKind[] = ['LINE_MESSAGING_API', 'LINE_LOGIN', 'LINE_LIFF'];
-
-const KIND_DESCRIPTION: Record<CredentialKind, string> = {
-  LINE_MESSAGING_API: 'Used for sending and receiving messages via LINE Messaging API webhook.',
-  LINE_LOGIN: 'Used for LINE Login OAuth flow to link user accounts.',
-  LINE_LIFF: 'Used for LINE Front-end Framework (LIFF) mini-app.',
-};
-
-const inputClass = 'mangmee-input';
-const btnPrimary = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
-const btnSecondary = 'rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
-
-function CredentialCard({ kind, onSaved }: { kind: CredentialKind; onSaved: (kind: CredentialKind, meta: SharedLineCredentialMetadataDto) => void }) {
-  const [open, setOpen] = useState(false);
-  const [channelId, setChannelId] = useState('');
-  const [channelSecret, setChannelSecret] = useState('');
-  const [accessToken, setAccessToken] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      const meta = await setSharedLineCredential(kind, {
-        channelId,
-        channelSecret,
-        ...(accessToken ? { accessToken } : {}),
-      });
-      setChannelId('');
-      setChannelSecret('');
-      setAccessToken('');
-      setOpen(false);
-      onSaved(kind, meta);
-    } catch (err) {
-      setError(apiErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white px-5 py-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold font-mono text-gray-900">{kind}</p>
-          <p className="text-xs text-gray-500 mt-0.5">{KIND_DESCRIPTION[kind]}</p>
-        </div>
-        <button
-          type="button"
-          className="flex-shrink-0 text-xs text-brand-700 hover:underline"
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? 'Cancel' : 'Configure / Replace'}
-        </button>
-      </div>
-
-      {open && (
-        <form onSubmit={handleSubmit} className="border-t border-gray-100 pt-3 space-y-3">
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            Secrets are write-only and encrypted at rest. Values are never displayed after save.
-          </p>
-          {error && (
-            <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
-          )}
-          <div>
-            <label className="block text-xs text-gray-500 mb-0.5">Channel ID *</label>
-            <input
-              className={inputClass}
-              required
-              value={channelId}
-              onChange={(e) => setChannelId(e.target.value)}
-              disabled={loading}
-              autoComplete="off"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-0.5">Channel Secret *</label>
-            <input
-              className={inputClass}
-              type="password"
-              required
-              value={channelSecret}
-              onChange={(e) => setChannelSecret(e.target.value)}
-              disabled={loading}
-              autoComplete="new-password"
-            />
-          </div>
-          {(kind === 'LINE_MESSAGING_API' || kind === 'LINE_LIFF') && (
-            <div>
-              <label className="block text-xs text-gray-500 mb-0.5">Channel Access Token (optional)</label>
-              <input
-                className={inputClass}
-                type="password"
-                value={accessToken}
-                onChange={(e) => setAccessToken(e.target.value)}
-                disabled={loading}
-                autoComplete="new-password"
-              />
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button type="submit" className={btnPrimary} disabled={loading} aria-busy={Boolean(loading)}>
-              {loading ? 'Saving…' : 'Save credentials'}
-            </button>
-            <button type="button" className={btnSecondary} onClick={() => setOpen(false)} disabled={loading}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-    </div>
-  );
-}
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { getSharedLineMessagingSettings, setSharedLineMessagingSettings } from './system-partners.api';
 
 export default function SharedLineSettingsPage() {
-  const toast = useToast();
-  const [savedMeta, setSavedMeta] = useState<Partial<Record<CredentialKind, SharedLineCredentialMetadataDto>>>({});
-
-  const handleSaved = (kind: CredentialKind, meta: SharedLineCredentialMetadataDto) => {
-    setSavedMeta((prev) => ({ ...prev, [kind]: meta }));
-    toast.success(`${kind} credentials saved successfully.`);
-  };
-
-  return (
-    <div className="min-h-dvh bg-gray-50 p-6">
-      <div className="mx-auto max-w-2xl space-y-4">
-        <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
-
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/system/partners" className="hover:text-brand-700">Partners</Link>
-          <span>/</span>
-          <span className="text-gray-900 font-medium">Shared LINE Settings</span>
-        </div>
-
-        <div>
-          <h1 className="text-xl font-semibold text-gray-900">Platform Shared LINE Credentials</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            WatchDog uses a single shared LINE Official Account for all partner companies.
-            Credentials are stored encrypted and are write-only — values cannot be retrieved after save.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          <strong>How company context works:</strong> When a LINE user sends a message,
-          the platform resolves their company from their linked WatchDog identity.
-          Users with multiple active company memberships must select their active company
-          before the AI assistant can respond.
-        </div>
-
-        <div className="space-y-3">
-          {CREDENTIAL_KINDS.map((kind) => (
-            <div key={kind}>
-              <CredentialCard kind={kind} onSaved={handleSaved} />
-              {savedMeta[kind] && (
-                <p className="mt-1 px-1 text-xs text-gray-400">
-                  Last updated: {formatThaiDateTime(savedMeta[kind]!.updatedAt)}
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  const [current,setCurrent]=useState<SharedLineMessagingSettings|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+  const [secret,setSecret]=useState(''),[token,setToken]=useState(''),[password,setPassword]=useState(''),[reason,setReason]=useState(''),[ack,setAck]=useState(false);
+  const [rotationId,setRotationId]=useState(''),[reviewVersion,setReviewVersion]=useState<number|null>(null);
+  const load=async()=>{setBusy(true);setError('');try{setCurrent(await getSharedLineMessagingSettings());}catch(e){setError(apiErrorMessage(e));}finally{setBusy(false);}};
+  useEffect(()=>{void load();},[]);
+  const edit=()=>{setRotationId('');setReviewVersion(null);setAck(false);setNotice('');};
+  const save=async(e:React.FormEvent)=>{e.preventDefault();if(!current||!ack||reviewVersion===null)return;setBusy(true);setError('');setNotice('');
+    const id=rotationId||crypto.randomUUID();setRotationId(id);
+    try{const next=await setSharedLineMessagingSettings({channelId:current.channelId!,channelSecret:secret,accessToken:token,password,reason,expectedVersion:reviewVersion,rotationId:id});
+      setCurrent(next);setSecret('');setToken('');setPassword('');setReason('');setAck(false);setRotationId('');setReviewVersion(null);
+      setNotice('บันทึกกุญแจรุ่นใหม่แล้ว คำขอ LINE ครั้งถัดไปใช้รุ่นนี้ การรับ webhook ต้องตรวจแยก');
+    }catch(e){setError(apiErrorMessage(e));}finally{setBusy(false);}};
+  return <main className="mx-auto max-w-2xl space-y-5 p-4">
+    <Link href="/system/partners" className="underline">กลับไปรายชื่อบริษัท</Link>
+    <h1 className="text-xl font-semibold">การเชื่อมต่อ LINE ของระบบ</h1>
+    <p>เปลี่ยนกุญแจ Messaging ของ OA เดิม ใช้ร่วมกันสำหรับ webhook, AI, ใบเสร็จ และข้อความแจ้งเตือนของทุกบริษัท</p>
+    <button type="button" className="mangmee-btn" disabled={busy} aria-busy={busy} onClick={()=>void load()}>โหลดสถานะ LINE ล่าสุด</button>
+    {busy&&<p role="status">กำลังตรวจสอบ…</p>}{error&&<p role="alert" className="break-words text-red-700">{error} หากผลบันทึกไม่ชัดเจน ให้โหลดสถานะล่าสุดหรือลองคำขอเดิมอีกครั้ง</p>}
+    {notice&&<p role="status">{notice}</p>}
+    {current&&<>
+      <section aria-label="สถานะ LINE ปัจจุบัน" className="space-y-2 rounded border p-4">
+        <p>อ่านกุญแจปัจจุบัน: {current.runtimeStatus==='AVAILABLE'?'อ่านได้':current.runtimeStatus==='INCOMPLETE'?'ตั้งค่ายังไม่ครบ':'อ่านไม่ได้หรือ token หมดอายุ กรุณาบันทึกกุญแจปัจจุบันใหม่'}</p>
+        <p>Channel ID: {current.channelId??'ยังไม่ได้ตั้งค่า'}</p><p>รุ่นที่บันทึก: {current.version} · แหล่งที่ใช้: {current.source==='DATABASE'?'ค่าจากหน้า Admin':'ค่าตั้งต้นระบบ'}</p>
+        <p>เผยแพร่: {current.publishedAt?formatThaiDateTime(current.publishedAt):'ยังไม่เคยเผยแพร่จากหน้านี้'}</p>
+        <p>ตรวจ token กับ LINE: {current.tokenValidatedAt?formatThaiDateTime(current.tokenValidatedAt):'ยังไม่มีหลักฐานจากหน้านี้'}</p>
+        <p>รับลายเซ็น webhook ของรุ่นนี้: {current.inboundVerifiedAt?formatThaiDateTime(current.inboundVerifiedAt):'ยังไม่พบ'}</p>
+        <p>เวลาที่ตรวจ token และลายเซ็นเป็นหลักฐานคนละส่วน ไม่ยืนยันว่าผู้ใช้ได้รับหรืออ่านข้อความแล้ว</p>
+      </section>
+      {!current.canReplace?<p>ยังไม่มี Channel ID ตั้งต้น กรุณาตั้งค่า OA ของระบบก่อนเปิดใช้การเปลี่ยนกุญแจ</p>:<form onSubmit={save} className="space-y-4 rounded border p-4">
+        <h2 className="font-semibold">เปลี่ยนกุญแจของ OA เดิม</h2>
+        <p>คำขอครั้งถัดไปใช้กุญแจใหม่โดยไม่ restart งานที่ส่งไปแล้วอาจใช้กุญแจเดิม การออก Channel Secret ใหม่ที่ LINE ทำให้ secret เดิมใช้ไม่ได้ หน้านี้ไม่ออกหรือเพิกถอน token ให้</p>
+        <label className="block">Channel Secret ใหม่<input className="mangmee-input w-full" type="password" autoComplete="new-password" value={secret} minLength={16} maxLength={1024} required disabled={busy} onChange={e=>{setSecret(e.target.value);edit();}}/></label>
+        <label className="block">Channel Access Token ใหม่<input className="mangmee-input w-full" type="password" autoComplete="new-password" value={token} minLength={16} maxLength={4096} required disabled={busy} onChange={e=>{setToken(e.target.value);edit();}}/></label>
+        <p>รองรับ short-lived และ long-lived token จาก <a className="underline" href="https://developers.line.biz/console/" target="_blank" rel="noopener noreferrer">LINE Developers Console</a></p>
+        <label className="block">เหตุผลการเปลี่ยน<input className="mangmee-input w-full" value={reason} minLength={5} maxLength={500} required disabled={busy} onChange={e=>{setReason(e.target.value);edit();}}/></label>
+        <label className="block">รหัสผ่านปัจจุบันของผู้ดูแล<input className="mangmee-input w-full" type="password" autoComplete="current-password" value={password} required disabled={busy} onChange={e=>setPassword(e.target.value)}/></label>
+        <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={busy} onChange={e=>{setAck(e.target.checked);setReviewVersion(e.target.checked?current.version:null);setRotationId('');}}/>ยืนยันเปลี่ยนกุญแจรุ่น {current.version} ของ OA เดิมสำหรับทุกบริษัท และตรวจ webhook หลังบันทึก</label>
+        {reviewVersion!==null&&reviewVersion!==current.version&&<p role="status">สถานะเปลี่ยนจากที่ตรวจไว้ หากคำขอก่อนหน้าบันทึกแล้ว การลองซ้ำด้วยข้อมูลเดิมจะอ่านผลเดิมเท่านั้น</p>}
+        <button className="mangmee-btn mangmee-btn-primary" type="submit" disabled={busy||!ack} aria-busy={busy}>ตรวจ token และบันทึกกุญแจ LINE</button>
+        <p>กุญแจไม่ถูกเก็บใน URL หรือ storage ของเบราว์เซอร์ และไม่แสดงคืนหลังบันทึก</p>
+      </form>}
+      <p>LINE Login / LIFF และการเปลี่ยน OA ยังต้องดำเนินการแยก เพื่อรักษาบัญชีที่ผูกไว้ การแก้กุญแจในหน้านี้ไม่เปลี่ยนส่วนนั้น</p>
+    </>}
+  </main>;
 }

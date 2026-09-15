@@ -40,6 +40,15 @@ export class ResendEmailVerificationUseCase {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS);
 
     await this.prisma.client.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${input.userId}`}))`;
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${input.userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: input.userId }, select: { status: true } });
+      const original = await tx.emailVerificationToken.findFirst({
+        where: { id: pending.id, userId: input.userId, status: 'PENDING', expiresAt: { gt: new Date() } },
+      });
+      if (current?.status !== 'ACTIVE' || !original || original.newEmail !== pending.newEmail) {
+        throw new NotFoundException('No pending email verification request was found.');
+      }
       await tx.emailVerificationToken.updateMany({
         where: { userId: input.userId, status: 'PENDING' },
         data: { status: 'REVOKED' },

@@ -1,0 +1,21 @@
+{
+  "recordedAt": "2026-09-13T04:35:27.368313+00:00",
+  "kind": "LOCAL_SERVICE_REGRESSION",
+  "tests": 6,
+  "pass": 6,
+  "fail": 0,
+  "skipped": 0,
+  "newScenario": "Receipt-only remains absent with base sales closed/open; forged owner quote rejected before provider/quote persistence",
+  "source": {
+    "apps/api/src/modules/billing/domain/billing-package.spec.ts": "a7b379d70bc9d19f7c116da83305e6499d2c3b1c90a170c3cf05afb59f72f70e"
+  },
+  "priorReceipt": "receipt.json",
+  "priorRuntimeSourceHashes": "all unchanged; only test file expanded",
+  "logSha256": "4c52d49a09ab5aea650a72354419189696a4297c6ff453e876c03b0fa81e316e",
+  "logPath": "/tmp/mangmee-billing-hidden-offer.log",
+  "browserE2E": "NOT_RUN",
+  "stripeSandbox": "NOT_RUN",
+  "githubCI": "NOT_RUN",
+  "apiTypecheck": "PASS",
+  "bothWorktreeDiffChecks": "PASS"
+}

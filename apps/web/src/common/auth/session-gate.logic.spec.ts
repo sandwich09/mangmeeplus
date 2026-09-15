@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   companyGateReturnPath,
+  canOpenSystemBilling,
   isSystemAdmin,
   legalAcceptanceContextCompanyId,
   legalAcceptancePath,
@@ -29,6 +30,19 @@ function session(overrides: Partial<WebSession> = {}): WebSession {
     ...overrides,
   };
 }
+
+describe('billing delegate shell boundary', () => {
+  it('opens only billing paths with the exact read grant, without opening other system sections', () => {
+    const support = session({ roles: ['BILLING_SUPPORT'], permissions: ['system.billing.read'] });
+    for (const path of ['/system/billing', '/system/billing/issues/issue-1', '/system/billing/companies/c1?invoiceCursor=x']) {
+      assert.equal(canOpenSystemBilling(support, path), true);
+      assert.equal(canOpenSystemBilling(session(), path), false);
+    }
+    for (const path of ['/system/partners', '/system/platform-access', '/system/billing-other', '/companies/c1/billing', '/system/billing/../partners', '//evil.example/system/billing']) {
+      assert.equal(canOpenSystemBilling(support, path), false);
+    }
+  });
+});
 
 describe('mapAuthMeStatus', () => {
   it('keeps signed-out, forbidden, platform closure and unavailable distinct', () => {

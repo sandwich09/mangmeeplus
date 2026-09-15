@@ -79,6 +79,7 @@ export default function CompanyTermExpiredPage({ companyId }: { companyId: strin
               ครบกำหนดเมื่อวันที่ {formatThaiDate(notice.termEndsAt)}
             </p>
           ) : null}
+          <a className="mt-5 flex h-12 items-center justify-center rounded-xl bg-green-800 font-bold text-white" href={`/companies/${companyId}/billing`}>ดูแพ็กเกจและสถานะการชำระเงิน</a>
           <a
             href={`tel:${PLAN_TERM_RENEW_PHONE.replace(/-/g, '')}`}
             className="mt-5 flex h-12 w-full items-center justify-center rounded-xl bg-[#046B29] text-[16px] font-bold text-white"

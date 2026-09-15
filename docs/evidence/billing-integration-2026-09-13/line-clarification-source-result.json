@@ -1,0 +1,57 @@
+{
+  "status": "LOCAL_CLARIFICATION_SOURCE_PASS",
+  "recordedAt": "2026-09-15T13:16:15.327543+00:00",
+  "baseCommit": "da569130834e8a7d2adad9ab383c450ed0dc17d8",
+  "sourceSha256": {
+    "apps/api/src/modules/line-ai/application/line-ai-ledger.service.ts": "d6f23d621b34c5d4e1b8eee5f80675ef820d7828004a5535473c782fd112d3df",
+    "apps/api/src/modules/line-ai/application/line-ai-ledger.service.spec.ts": "86087c8c613a235f45c75a3352f031f297d1b4cae179ce479ca704aeec2a640b",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "fc4a3d323971cd33d759aef0535f5f9f619b8c3dc87f7edf947b34bfb86f5e96",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "f714a472673377a541d46ec485100ea882d8d61bdf3d6eafa11088a484cfdcdd",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "b4723365ba884e74f614abe0fd8f3e7406f7e785b24821d3b9efdd02f39552ec",
+    "apps/api/src/modules/expenses/application/services/line-recent-capture.ts": "c15abd1190181fe10dda19117ed8d24a103d5b4ce01c29182dc35a02a1076193",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "50ad7708e02e9fe060157354f7178202a89224e6ec8ce9c45deece62990bef7f",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.ts": "ac31fe4e69df22c798bc4662d808fe45fe4289639978e1c0291e8d6b8a1a4563",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts": "e912bfa8e32e05bba91d7b55388b772adf9dc05df047b2990ed85299c18a9fc4",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "088de84f9d289f6669da03b71cfdfaa4cec9c9905a710f948b25afc43999ef6c"
+  },
+  "runs": {
+    "unit": {
+      "tests": 880,
+      "pass": 880,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-clarification-unit.tap",
+      "sha256": "a99b8d251bcdf3b888f1410ce8bc36b823b60be4b06e09acb3fad70a0ed1344f"
+    },
+    "module": {
+      "tests": 1387,
+      "pass": 1387,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-clarification-source-module.tap",
+      "sha256": "6ef05397560057998e68860a228f1fd7d8609077dfa1a87571c5f21b31a09a5b"
+    },
+    "postgres": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-clarification-source-postgres.tap",
+      "sha256": "21585c9381cc33c1f37dc8011296a579bfeb0864ef7f6063e3f8061435dfa3f9"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "webTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "Bounded original source context is stored with delivered questions, bound to exact request/question/intent/ordered IDs/file handle, actor/company/private chat and Messaging channel. Old, missing, malformed, oversized or changed proof is durably retired through existing consumption markers; the next fresh request can proceed without replaying business work.",
+    "Original read/receipt/draft/candidate/substitute verifiers run before forwarding the old wording and after intake before effects. Composer/read replies retain input proof through final send and token fallback. Review-only callers also recheck access before substitute effects. Group capture is refused before mutation under the existing private-chat delivery boundary.",
+    "Legacy and primary substitute ordinals preserve their original offered universe even when an unrelated active workflow becomes newer. Correction guidance uses the original named candidates at final delivery. The same scoped SQL reader finds original choices outside the newest top-five window while preserving creator, company, chat, branch, status and age restrictions.",
+    "Actual two/three-event webhook tests carry the original emitted proof unchanged. Fault tests cover missing/corrupt/oversized proof, changed question/intent/order/amount/access/channel, source drift during routing/composition/fallback, safe retirement and fresh-request recovery. Real PostgreSQL exercises the named scoped candidate reader; substitute choice/save and delivery transports use documented repository/transport fixtures."
+  ],
+  "limits": [
+    "Counts overlap and are not business-flow counts or an overall completion percentage. This is working-tree evidence, including imports of concurrent environment/config changes; not clean-commit or CI acceptance.",
+    "Native media attachment/storage write races and the remaining current package/payment browser matrix are separate. This does not prove native LINE, LIFF, real Stripe/Postmark, deployment, or both branch merges.",
+    "An already-paid Admin free-day collection policy and local mail-history retention still await the earlier Owner answers. No new financial policy was inferred."
+  ]
+}

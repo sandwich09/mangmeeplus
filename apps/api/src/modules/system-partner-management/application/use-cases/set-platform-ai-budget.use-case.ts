@@ -2,7 +2,7 @@ import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import type { PlatformAiBudgetDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
+import { invalidateCompanyAiBudgetConfiguration } from '../../../line-ai/application/company-ai-usage-meter';
 
 /** Single-row table (spec §7.3): the platform has exactly one budget configuration. */
 const PLATFORM_CONFIG_ID = 'platform';
@@ -17,8 +17,8 @@ export type SetPlatformAiBudgetCommand = {
 /**
  * Write half of the platform AI budget settings page (metering spec §7.9). Mirrors
  * `SetPartnerAiModelUseCase`: validate, then upsert + a CRITICAL audit row carrying before/after
- * for both fields inside ONE transaction, then drop the meter's 60s cache so enforcement follows
- * immediately in this process.
+ * for both fields inside ONE transaction. Admission reads current settings in every process;
+ * invalidate cached observations without releasing any active AI admission.
  */
 @Injectable()
 export class SetPlatformAiBudgetUseCase {
@@ -49,12 +49,13 @@ export class SetPlatformAiBudgetUseCase {
       );
     }
 
-    const existing = await this.prisma.client.platformAiBudgetConfig.findUnique({
-      where: { id: PLATFORM_CONFIG_ID },
-      select: { monthlyBudgetSatang: true, ceilingSatang: true },
-    });
-
     const saved = await this.prisma.client.$transaction(async (tx) => {
+      // Also fences company override writes against a concurrently lowered platform ceiling.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+      const existing = await tx.platformAiBudgetConfig.findUnique({
+        where: { id: PLATFORM_CONFIG_ID },
+        select: { monthlyBudgetSatang: true, ceilingSatang: true },
+      });
       const result = await tx.platformAiBudgetConfig.upsert({
         where: { id: PLATFORM_CONFIG_ID },
         create: {
@@ -94,7 +95,7 @@ export class SetPlatformAiBudgetUseCase {
       return result;
     });
 
-    __resetCompanyAiBudgetCache();
+    invalidateCompanyAiBudgetConfiguration();
 
     return {
       monthlyBudgetSatang: saved.monthlyBudgetSatang,

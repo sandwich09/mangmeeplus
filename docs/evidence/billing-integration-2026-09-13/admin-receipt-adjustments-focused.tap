@@ -1,0 +1,144 @@
+TAP version 13
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 1 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 0.723042
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 2 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 0.709458
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 3 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.597667
+  type: 'test'
+  ...
+# Subtest: renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+    # Subtest: mapped financial sweep rotates beyond one page without minting access or duplicate cases
+    ok 1 - mapped financial sweep rotates beyond one page without minting access or duplicate cases
+      ---
+      duration_ms: 621.960875
+      type: 'test'
+      ...
+    # Subtest: renewal after a restarted contract does not reapply its old-subscription admission fence
+    ok 2 - renewal after a restarted contract does not reapply its old-subscription admission fence
+      ---
+      duration_ms: 163.093583
+      type: 'test'
+      ...
+    # Subtest: historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+    ok 3 - historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+      ---
+      duration_ms: 335.825584
+      type: 'test'
+      ...
+    # Subtest: grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+    ok 4 - grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+      ---
+      duration_ms: 280.272417
+      type: 'test'
+      ...
+    # Subtest: grace and recovery preserve the fixed expiry of Admin-granted receipts
+    ok 5 - grace and recovery preserve the fixed expiry of Admin-granted receipts
+      ---
+      duration_ms: 207.900875
+      type: 'test'
+      ...
+    # Subtest: admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+    ok 6 - admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+      ---
+      duration_ms: 213.570208
+      type: 'test'
+      ...
+    # Subtest: grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+    ok 7 - grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+      ---
+      duration_ms: 163.301625
+      type: 'test'
+      ...
+    # Subtest: expired grace cancels collection once without new quota or deleting the unpaid invoice
+    ok 8 - expired grace cancels collection once without new quota or deleting the unpaid invoice
+      ---
+      duration_ms: 177.901167
+      type: 'test'
+      ...
+    # Subtest: a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+    ok 9 - a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+      ---
+      duration_ms: 140.2065
+      type: 'test'
+      ...
+    1..9
+ok 4 - renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+  ---
+  duration_ms: 2489.140416
+  type: 'test'
+  ...
+# Subtest: paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+    # Subtest: verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+    ok 1 - verified apply seam deduplicates concurrent/replayed source and rejects changed evidence
+      ---
+      duration_ms: 64.749125
+      type: 'test'
+      ...
+    # Subtest: all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+    ok 2 - all 1200 annual units are usable early across web/LINE/months; last-slot race cannot overspend
+      ---
+      duration_ms: 13475.846333
+      type: 'test'
+      ...
+    # Subtest: failed OCR releases its exact reservation once; replay does not recharge
+    ok 3 - failed OCR releases its exact reservation once; replay does not recharge
+      ---
+      duration_ms: 20.29675
+      type: 'test'
+      ...
+    # Subtest: paid repeat never extends an Admin receipt grant expiry
+    ok 4 - paid repeat never extends an Admin receipt grant expiry
+      ---
+      duration_ms: 10.862708
+      type: 'test'
+      ...
+    # Subtest: full-package repeat grants 1200 now, extends valid balance and records future service separately
+    ok 5 - full-package repeat grants 1200 now, extends valid balance and records future service separately
+      ---
+      duration_ms: 35.260542
+      type: 'test'
+      ...
+    # Subtest: payment apply races OCR without deadlock; a failed transaction grants nothing
+    ok 6 - payment apply races OCR without deadlock; a failed transaction grants nothing
+      ---
+      duration_ms: 71.078083
+      type: 'test'
+      ...
+    # Subtest: expiry/hold and cross-company database references cannot bypass admission
+    ok 7 - expiry/hold and cross-company database references cannot bypass admission
+      ---
+      duration_ms: 36.427625
+      type: 'test'
+      ...
+    # Subtest: signup/legacy monthly allowance retains its existing behavior without a billing pointer
+    ok 8 - signup/legacy monthly allowance retains its existing behavior without a billing pointer
+      ---
+      duration_ms: 79.232417
+      type: 'test'
+      ...
+    1..8
+ok 5 - paid package quota on real PostgreSQL (internal payment-apply seam, not Stripe/browser E2E)
+  ---
+  duration_ms: 14185.1055
+  type: 'test'
+  ...
+1..5
+# tests 22
+# suites 0
+# pass 22
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 14691.766125

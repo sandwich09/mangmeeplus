@@ -32,14 +32,27 @@ function makeUseCase(opts: {
   userStatus?: string | null;
   entitlements?: Array<{ featureKey: string; enabled: boolean }>;
   turnFn?: (req: any) => any;
+  duringTurn?: () => void;
   pushResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
 } = {}) {
   const acks: Array<{ id: string; outcome: string }> = [];
   const ackReasons: Array<unknown> = [];
-  const pushes: Array<{ to: string; message: any; text: string }> = [];
+  const pushes: Array<{ to: string; message: any; text: string; operationId?: string }> = [];
   const turnRequests: any[] = [];
   const aiTurnUpdates: any[] = [];
   const eventUpdates: any[] = [];
+  const identityReads: any[] = [];
+  const state = {
+    linked: true, userStatus: opts.userStatus === undefined ? 'ACTIVE' : opts.userStatus,
+    optedOut: false, selectedCompany: null as string | null, pausedUntil: null as Date | null,
+    entitlements: opts.entitlements ?? [{ featureKey: 'ai_line_assistant', enabled: true }],
+    access: {
+      membershipId: 'm1', roles: ['owner'], permissions: opts.permissions ?? ['line.ai.query'],
+      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
+      entitledFeatureKeys: ['ai_line_assistant'] as string[] | null | undefined,
+      scopes: { branchIds: undefined as string[] | undefined, locationIds: undefined as string[] | undefined },
+    },
+  };
   const ledger = {
     enabled: opts.enabled ?? true,
     claimOpenEntries: async () => opts.claims ?? [],
@@ -50,10 +63,16 @@ function makeUseCase(opts: {
   } as any;
   const prisma = {
     client: {
-      user: { findUnique: async () => (opts.userStatus === null ? null : { status: opts.userStatus ?? 'ACTIVE' }) },
+      lineTurnOutcome: { findUnique: async () => null },
+      user: { findUnique: async () => (state.userStatus === null ? null : { status: state.userStatus, aiAssistantOptOutAt: state.optedOut ? NOW : null }) },
+      externalIdentity: { findFirst: async (args: any) => {
+        identityReads.push(args.where);
+        return state.linked && state.userStatus === 'ACTIVE' && !state.optedOut ? { id: 'identity1' } : null;
+      } },
+      lineCompanyContext: { findUnique: async () => ({ companyId: state.selectedCompany, aiPausedUntil: state.pausedUntil }) },
       // The entitlement re-read the drain does at execution time. Default: the family is ON.
       companyFeatureEntitlement: {
-        findMany: async () => opts.entitlements ?? [{ featureKey: 'ai_line_assistant', enabled: true }],
+        findMany: async () => state.entitlements,
       },
       aiTurn: { updateMany: async (args: any) => { aiTurnUpdates.push(args); return { count: 1 }; } },
       lineWebhookEventLog: { updateMany: async (args: any) => { eventUpdates.push(args); return { count: 1 }; } },
@@ -61,18 +80,12 @@ function makeUseCase(opts: {
   } as any;
   const config = { lineAiLedgerClaimMinIdleMs: 1000, lineAiLedgerDeliveryCap: 3, webBaseUrl: 'https://web.test' } as any;
   const permissionResolver = {
-    resolveAccess: async () => ({
-      membershipId: 'm1',
-      roles: ['owner'],
-      permissions: opts.permissions ?? ['line.ai.query'],
-      entitlementDeniedPermissions: { 'inventory.report.read': 'inventory' },
-      entitledFeatureKeys: ['ai_line_assistant'],
-      scopes: { branchIds: undefined },
-    }),
+    resolveAccess: async () => state.access,
   } as any;
   const aiGateway = {
     requestLineTurn: async (req: any) => {
       turnRequests.push(req);
+      opts.duringTurn?.();
       if (opts.turnFn) return opts.turnFn(req);
       return {
         requestId: req.requestId, replyText: 'ยอดค้าง 5,000 บาท', sourceRefs: [], sourceLabels: [], webLinks: [],
@@ -82,8 +95,8 @@ function makeUseCase(opts: {
   } as any;
   const lineReply = {
     buildTextMessage: (text: string) => ({ type: 'text', text }),
-    sendPush: async (to: string, messages: any[]) => {
-      pushes.push({ to, message: messages[0], text: messages[0]?.text ?? messages[0]?.altText ?? '' });
+    sendPush: async (to: string, messages: any[], operationId?: string) => {
+      pushes.push({ to, message: messages[0], text: messages[0]?.text ?? messages[0]?.altText ?? '', operationId });
       return opts.pushResult ?? 'ok';
     },
   } as any;
@@ -101,11 +114,170 @@ function makeUseCase(opts: {
     }),
   } as any;
   const useCase = new DrainLineLedgerUseCase(prisma, config, permissionResolver, ledger, aiGateway, lineReply, shadow);
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => true };
+  const deliveryRows = new Map<string, any>();
+  (useCase as any).deliveryStore = {
+    claim: async (e: LedgerEntry) => {
+      const id = JSON.stringify([e.key, e.id]);
+      const row = deliveryRows.get(id) ?? { id, status: 'PREPARING' }; deliveryRows.set(id, row);
+      return { kind: ['ACCEPTED', 'REFUSED', 'PARKED'].includes(row.status) ? 'terminal' : row.status === 'PREPARING' ? 'prepare' : 'deliver', token: 'synthetic-lease', row };
+    },
+    save: async (claim: any, messages: any, authorization: any, completion: any) => {
+      Object.assign(claim.row, { status: 'READY', messagesJson: messages, authorizationJson: authorization, completionJson: completion }); return true;
+    },
+    beginSend: async (claim: any) => { claim.row.status = 'UNKNOWN'; return true; },
+    finish: async (claim: any, status: string, errorCode: string | null) => { Object.assign(claim.row, { status, errorCode }); return true; },
+  };
   // The drain's own logger, so a test can assert what an operator actually sees at level 40.
   const warnings: any[] = [];
   (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), debug: () => {}, log: () => {}, error: () => {} };
-  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings };
+  return { useCase, acks, ackReasons, pushes, turnRequests, aiTurnUpdates, eventUpdates, shadowRecords, shadowFlushes, warnings, state, identityReads, deliveryRows, prisma };
 }
+
+describe('AP22 queued UNKNOWN and accepted recovery', () => {
+  it('reuses saved bytes/key after UNKNOWN without another model or handoff', async () => {
+    const opts = { claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResult: 'failed_other' as 'failed_other' | 'ok' };
+    const h = makeUseCase(opts); let wraps = 0;
+    (h.useCase as any).handoffLinks = { wrapOutgoingLineContent: async (_actor: unknown, messages: unknown) => { wraps++; return messages; } };
+    await h.useCase.execute(20, NOW);
+    assert.equal([...h.deliveryRows.values()][0].status, 'UNKNOWN');
+    opts.pushResult = 'ok';
+    await h.useCase.execute(20, NOW);
+    assert.equal(h.turnRequests.length, 1); assert.equal(wraps, 1); assert.equal(h.pushes.length, 2);
+    assert.deepEqual(h.pushes[1], h.pushes[0]);
+    assert.equal([...h.deliveryRows.values()][0].status, 'ACCEPTED');
+  });
+
+  it('acceptance survives an ack failure and later access revocation without a new send', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }] });
+    const ledger = (h.useCase as any).ledger, ack = ledger.ack; let first = true;
+    ledger.ack = async (...args: any[]) => { if (first) { first = false; throw new Error('synthetic ack loss'); } return ack(...args); };
+    await h.useCase.execute(20, NOW); h.state.linked = false;
+    const recovered = await h.useCase.execute(20, NOW);
+    assert.equal(recovered.followedUp, 1); assert.equal(h.pushes.length, 1); assert.equal(h.turnRequests.length, 1);
+  });
+
+  it('changed source after UNKNOWN gets a static recovery notice and preserves the original output', async () => {
+    const opts = { claims: [{ entry: entry(), deliveryCount: 1, idleMs: 10_000 }], pushResult: 'failed_other' as 'failed_other' | 'ok' };
+    const h = makeUseCase(opts); await h.useCase.execute(20, NOW);
+    const stored = structuredClone([...h.deliveryRows.values()][0].messagesJson);
+    (h.useCase as any).readEvidence.verifyDelivery = async () => false; opts.pushResult = 'ok';
+    await h.useCase.execute(20, NOW); await h.useCase.execute(20, NOW);
+    assert.equal(h.turnRequests.length, 1); assert.equal(h.pushes.length, 2);
+    assert.match(h.pushes[1].text, /กรุณาเปิดเว็บ/); assert.doesNotMatch(h.pushes[1].text, /5,000/);
+    assert.deepEqual([...h.deliveryRows.values()][0].messagesJson, stored);
+    assert.equal([...h.deliveryRows.values()][0].status, 'REFUSED');
+  });
+
+  for (const accepted of [false, true]) it(`existing live outcome owns recovery and cannot trigger a second model: accepted=${accepted}`, async () => {
+    const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }] });
+    h.prisma.client.lineTurnOutcome.findUnique = async () => ({ id: 'original', deliveredAt: accepted ? NOW : null });
+    await h.useCase.execute(20, NOW);
+    assert.equal(h.turnRequests.length, 0); assert.equal(h.pushes.length, 0);
+    assert.equal(h.acks[0].outcome, accepted ? 'followed_up' : 'parked');
+    assert.deepEqual(h.ackReasons, ['original_outcome_owns_delivery']);
+  });
+});
+
+describe('AP22 queued source delivery fence', () => {
+  for (const fault of ['missing', 'store-error', 'changed', 'read-error', 'unchanged'] as const) {
+    it(`suppresses a queued private response without current read evidence: ${fault}`, async () => {
+      const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }] });
+      (h.useCase as any).readEvidence = {
+        forTurn: async () => { if (fault === 'store-error') throw new Error('store down'); return fault === 'missing' ? null : ['source-1']; },
+        verify: async () => { if (fault === 'read-error') throw new Error('read down'); return fault === 'unchanged'; },
+      };
+      const result = await h.useCase.execute(20, NOW);
+      assert.equal(h.turnRequests.length, 1);
+      if (fault === 'unchanged') assert.equal(result.followedUp, 1);
+      else {
+        assert.equal(result.refused, 1); assert.equal(h.pushes.length, 1);
+        assert.match(h.pushes[0].text, /กรุณาเปิดเว็บ/);
+        assert.doesNotMatch(h.pushes[0].text, /5,000/);
+        assert.deepEqual(h.ackReasons, ['delivery_source_changed']);
+        assert.ok(h.eventUpdates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+      }
+    });
+  }
+});
+
+describe('AP22 queued delivery actor fence', () => {
+  const changes: Array<[string, (state: ReturnType<typeof makeUseCase>['state']) => void]> = [
+    ['membership replacement', state => { state.access.membershipId = 'replacement'; }],
+    ['role revoked', state => { state.access.roles = []; }],
+    ['permission revoked', state => { state.access.permissions = []; }],
+    ['branches restricted to empty', state => { state.access.scopes.branchIds = []; }],
+    ['location restricted', state => { state.access.scopes.locationIds = ['location2']; }],
+    ['feature disabled', state => { state.entitlements = [{ featureKey: 'ai_line_assistant', enabled: false }]; }],
+    ['entitlements changed', state => { state.access.entitledFeatureKeys = []; }],
+    ['company switched', state => { state.selectedCompany = 'c2'; }],
+    ['LINE unlinked', state => { state.linked = false; }],
+    ['user disabled', state => { state.userStatus = 'DISABLED'; }],
+    ['user opted out', state => { state.optedOut = true; }],
+    ['support pause', state => { state.pausedUntil = new Date(Date.now() + 60_000); }],
+  ];
+  for (const [name, change] of changes) it(`suppresses private model output when ${name} during processing`, async () => {
+    const h = makeUseCase({
+      claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 5000 }],
+      duringTurn: () => change(h.state),
+    });
+    const result = await h.useCase.execute(20, NOW);
+    assert.equal(result.refused, 1);
+    assert.equal(h.turnRequests.length, 1);
+    assert.equal(h.pushes.length, 0, 'no stale private facts or handoff URL may leave the API');
+    assert.deepEqual(h.acks, [{ id: '1-0', outcome: 'refused' }]);
+    assert.deepEqual(h.ackReasons, ['delivery_access_changed']);
+    assert.equal(h.eventUpdates.at(-1)?.data.errorCode, 'LINE_DELIVERY_ACCESS_CHANGED');
+    assert.equal(h.aiTurnUpdates.length, 0, 'delivery refusal must not overwrite an existing ERP/AI outcome');
+  });
+
+  it('checks again after slow handoff preparation', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 5000 }] });
+    (h.useCase as any).handoffLinks = { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => {
+      h.state.linked = false;
+      return messages;
+    } };
+    assert.equal((await h.useCase.execute(20, NOW)).refused, 1);
+    assert.equal(h.pushes.length, 0);
+  });
+
+  it('requires the current identity to belong to the exact actor and private destination before model work', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry({ chatKey: 'group-or-other-user' }), deliveryCount: 1, idleMs: 5000 }] });
+    h.state.linked = false;
+    assert.equal((await h.useCase.execute(20, NOW)).refused, 1);
+    assert.deepEqual(h.identityReads[0], { provider: 'LINE', status: 'ACTIVE', userId: 'u1',
+      providerUserId: 'group-or-other-user', user: { status: 'ACTIVE', aiAssistantOptOutAt: null } });
+    assert.equal(h.turnRequests.length, 0);
+    assert.equal(h.pushes.length, 0);
+  });
+
+  it('delivers unchanged authority despite canonical ordering differences', async () => {
+    const h = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 1, idleMs: 5000 }],
+      duringTurn: () => {
+        h.state.access.permissions.reverse();
+        h.state.access.roles.reverse();
+        h.state.access.scopes.branchIds!.reverse();
+      },
+    });
+    h.state.access.permissions = ['line.ai.query', 'dashboard.read'];
+    h.state.access.roles = ['OWNER', 'STAFF'];
+    h.state.access.scopes.branchIds = ['branch1', 'branch2'];
+    assert.equal((await h.useCase.execute(20, NOW)).followedUp, 1);
+    assert.equal(h.pushes.length, 1);
+    assert.match(h.pushes[0].text, /5,000/);
+  });
+
+  it('does not equate legacy null entitlements with explicit empty', async () => {
+    const h = makeUseCase({
+      claims: [{ entry: entry(), deliveryCount: 1, idleMs: 5000 }],
+      duringTurn: () => { h.state.access.entitledFeatureKeys = []; },
+    });
+    h.state.access.entitledFeatureKeys = null;
+    assert.equal((await h.useCase.execute(20, NOW)).refused, 1);
+    assert.equal(h.pushes.length, 0);
+  });
+});
 
 describe('DrainLineLedgerUseCase (item 10F)', () => {
   it('reports skipped when the ledger is disabled (fail-open)', async () => {
@@ -337,7 +509,7 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(turnRequests[0].entitledFeatureKeys, undefined);
   });
 
-  it('re-runs an unacked turn entry after a crash (at-least-once, read-only safe)', async () => {
+  it('computes a crashed turn only when no saved outcome exists and closes deferred event states', async () => {
     const { useCase, acks, pushes, turnRequests, aiTurnUpdates, eventUpdates } = makeUseCase({
       claims: [{ entry: entry({ kind: 'turn', state: 'pending', text: 'ยอดขายวันนี้ กับของใกล้หมด' }), deliveryCount: 2, idleMs: 300000 }],
     });
@@ -347,7 +519,7 @@ describe('DrainLineLedgerUseCase (item 10F)', () => {
     assert.equal(pushes.length, 1, 'the crashed turn is answered by push');
     assert.equal(acks[0]?.outcome, 'followed_up');
     assert.deepEqual(aiTurnUpdates[0].where.status.in, ['PROCESSING', 'ERROR']);
-    assert.deepEqual(eventUpdates[0].where.status.in, ['processing', 'response_ready', 'delivery_pending']);
+    assert.deepEqual(eventUpdates[0].where.status.in, ['processing', 'response_ready', 'delivery_pending', 'ai_error', 'provider_unavailable', 'rate_limited']);
     assert.equal(eventUpdates[0].data.status, 'completed');
   });
 });

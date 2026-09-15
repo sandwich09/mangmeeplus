@@ -1,5 +1,6 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import { branchLimitMessageTh, employeeLimitMessageTh } from '../domain/logic/plan-term.logic';
+import { currentCapacityOverride } from '../domain/logic/plan-capacity';
 
 /**
  * P29 §4D — the two create-side quota gates.
@@ -12,17 +13,23 @@ import { branchLimitMessageTh, employeeLimitMessageTh } from '../domain/logic/pl
  */
 type LimitPrisma = {
   client: {
-    companyPlanTerm: { findUnique(args: unknown): Promise<{ branchLimit: number; employeeLimit: number } | null> };
+    companyPlanTerm: { findUnique(args: unknown): Promise<{ branchLimit: number; employeeLimit: number; capacityOverride?: unknown;
+      billingReceiptAccountId?: string|null; termEndsAt?: Date; termDisabledAt?: Date|null } | null> };
     branch: { count(args: unknown): Promise<number> };
     companyMembership: { count(args: unknown): Promise<number> };
   };
 };
 
+/** A company-created role with the same name cannot turn a paid seat into platform access. */
+export const PLATFORM_SEAT_EXEMPT_ROLE = { key: 'SYSTEM_ADMIN', status: 'ACTIVE', isSystem: true, scopeKey: 'system', companyId: null } as const;
+
 async function planLimits(prisma: LimitPrisma, companyId: string) {
-  return prisma.client.companyPlanTerm.findUnique({
+  const term = await prisma.client.companyPlanTerm.findUnique({
     where: { companyId },
-    select: { branchLimit: true, employeeLimit: true },
+    select: { branchLimit: true, employeeLimit: true, capacityOverride: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
   });
+  const temporary = term && currentCapacityOverride(term);
+  return temporary ?? term;
 }
 
 export async function assertBranchLimit(prisma: LimitPrisma, companyId: string): Promise<void> {
@@ -39,7 +46,7 @@ export async function assertEmployeeLimit(prisma: LimitPrisma, companyId: string
   if (!term) return; // no term row = unlimited
   // SYSTEM_ADMIN memberships are platform staff, never a seat the company bought.
   const active = await prisma.client.companyMembership.count({
-    where: { companyId, status: 'ACTIVE', roles: { none: { role: { key: 'SYSTEM_ADMIN' } } } },
+    where: { companyId, status: 'ACTIVE', roles: { none: { role: PLATFORM_SEAT_EXEMPT_ROLE } } },
   });
   if (active >= term.employeeLimit) {
     throw new UnprocessableEntityException(employeeLimitMessageTh(term.employeeLimit));

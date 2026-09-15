@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /** Local PostgreSQL proof for receipt identity, reservation races and exactly-once customer credit. */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
   before(async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname), 'requires an explicit local test database');
-    assert.equal(url.pathname, '/watchdog_bms', 'requires the local test database name');
+    assert.ok(url.pathname === '/watchdog_bms' || url.port === '15432' && url.pathname === '/mangmee_billing_20260912', 'requires an explicit local test database');
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'RECEIPT_RELIABILITY_REQUIRE_POSTGRES');
     if (unreachable) return;
@@ -123,7 +124,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(storageReservations, countBefore);
     const complete = new CompleteReceiptUploadUseCase(new PrismaExpenseRepository({ client } as any),
       { execute: async () => { throw new Error('ACTIVE image must not be reprocessed'); } } as any,
-      noAudit, { append: async () => undefined } as any, new PrismaAttachmentRepository({ client } as any), { client } as any);
+      noAudit, { append: async () => undefined } as any, new PrismaAttachmentRepository({ client } as any), { client } as any, {resolveAccess: async () => ctx()} as any);
     const record = await complete.execute(ctx(), { expenseId: resumed.expenseId, attachmentId: resumed.attachmentId, checksumSha256: 'synthetic-checksum' });
     assert.equal(record.primaryAttachmentId, original.attachmentId);
     assert.equal(await client.attachmentLink.count({ where: { companyId, targetId: record.id, attachmentId: original.attachmentId } }), 1);
@@ -194,7 +195,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
         if (calls.length === 1) throw new TypeError('synthetic response loss after LINE accepted');
         return new Response('', { status: 409, headers: { 'x-line-accepted-request-id': 'synthetic-accepted' } });
       }) as typeof fetch;
-      const adapter = new LineReplyAdapter({ lineMessagingChannelAccessToken: 'synthetic' } as any);
+      const adapter = new LineReplyAdapter(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: 'synthetic' } as any), { lineMessagingChannelAccessToken: 'synthetic' } as any);
       assert.equal(await adapter.sendPush('U-synthetic', messages, eventId), 'failed_other');
       await client.lineWebhookEventLog.create({ data: { webhookEventId: eventId, companyId, lineUserIdHash: 'synthetic', eventType: 'message',
         status: 'delivery_pending', errorCode: 'LINE_DELIVERY_FAILED_OTHER', createdAt: new Date(Date.now() - LINE_BUFFER_ORPHAN_REPROCESS_MS - 1000),
@@ -202,6 +203,8 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
       await client.lineTurnOutcome.create({ data: { webhookEventId: eventId, companyId, messagesJson: messages, presentationKind: 'flex' } });
       const worker = new RecoverOrphanLineEventsUseCase({ client } as any, { lineAiTerminalOutcomeReplayEnabled: true, aiDataRetentionDays: 90 } as any,
         noAudit, { enqueue: async () => { throw new Error('business work must not be replayed'); } } as any, adapter);
+      // This transport/JSONB test isolates authorization; real current-source replay is covered by line-read-evidence.pg.spec.ts.
+      (worker as any).readEvidence = { verifyDelivery: async () => true };
       await Promise.all([worker.execute(), worker.execute()]);
       assert.equal(calls.length, 2);
       assert.deepEqual(calls[1], calls[0]);

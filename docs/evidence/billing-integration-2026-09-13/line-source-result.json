@@ -1,0 +1,70 @@
+{
+  "status": "Local source-read producer, live/queue consumers and original stored read replay verified; full AP21/AP22 still incomplete.",
+  "testFiles": 41,
+  "tests": 1269,
+  "passed": 1269,
+  "skipped": 0,
+  "actualPostgresql": {
+    "sourceProducerLiveReplay": 21,
+    "actorRevocation": 8,
+    "quotaRaces": 2
+  },
+  "apiTypecheck": "PASS",
+  "noDeployment": true,
+  "simulation": [
+    "AI Gateway/model",
+    "LINE transport",
+    "actor delegation consumption in PostgreSQL producer fixture; independent controller authorization unit tests and existing HTTP gates remain separate"
+  ],
+  "scope": [
+    "bounded original inputs/digest before releasing read data",
+    "all API-recorded reads revalidated even if gateway omits telemetry",
+    "actor and exact private destination/channel before stored read replay",
+    "legacy/non-read saved outcomes keep work and give generic protected-web/new-question recovery",
+    "no ERP mutation or OCR replay to validate source",
+    "claim ownership checked after slow replay reads"
+  ],
+  "limitations": [
+    "source-derived intake/draft/live-capture source coverage pending",
+    "queued UNKNOWN exact-payload delivery bookkeeping pending",
+    "native LINE/whole AP matrix not run"
+  ],
+  "sources": {
+    "apps/api/prisma/schema.prisma": "954e20f5ed63db44c2e4eee563d62df1ce3b3d3a2c3a484f0c402d2163f925de",
+    "apps/api/prisma/migrations/20260914130000_line_read_evidence/migration.sql": "281af3fed5dba9d5dfdcdcde7ead874254c07acfe370b9fac5b7db7f0d4241c6",
+    "apps/api/prisma/migrations/20260914140000_line_outcome_authorization/migration.sql": "eaf27ad39847d1d551f85f86e4bdf05699f2cea0fe5ed1ac96e80440ff8f1780",
+    "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts": "99aa2ddd6a3515c0457627b90b7d25309e67501f72efe9cdfbc4bf6bc76fdcd2",
+    "apps/api/src/modules/line-ai/application/line-delivery-access.ts": "015162ac8ebdec1831a5edee0a28ff4d2238f4e085c51f6fa8ff7b14d246c7b3",
+    "apps/api/src/modules/line-ai/line-ai.module.ts": "a74479e78841b50250772f9337c3625456a984ecf440fbce5ea932e217c3ea20",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "2e8f36b3b893af4eb58fdc50f1779c33f19356141b53277336da7f0b0e1fc6b8",
+    "apps/api/src/modules/line-ai/line-delivery-access.pg.spec.ts": "150ed25c851ff55805e9985bc8efb25a353efcb60165ae81718312a0f6ae5ca6",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "fcdd50c5949f8f74022e21aaf4b266110bc9059de4ce62aca5e2df46e53fd922",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "8f269fde7a50b7400bdb4a51a8ab31129ccb87f85999d8cae697c338a551598c",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts": "35b36b5b92dcccf0ce8aced93a60b68944d25a74ea7a12c6b492854a7d3218b9",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts": "45a189aab07faeac97f30d30640474dc86b38e297f32f834a7d31d1eaea34b5d",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts": "f1e2571be8fa79a15e95c0b32bf75dba7b1b54e8c96f3d84d886670ede7db57a",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts": "32c9e5542c03055d93b97b882db32f5237ae56bfba4c5f011d0e01c13e45b45a",
+    "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts": "8dec3a81b7c481a9621969bb6bedc4108665ede0595060ff4791b45727497dff",
+    "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts": "e61f72a3831b650011dcd71b881a43d5e5aca795f976d97a0d2a28a77237cc88",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "ae9891c0fa1829511f20e5aad556fc179346fc060c825c0707112143b2bf46f8",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "def7a673c8907610a3bca791b8065fa1f04504dfd2ccebe162bc348289610333",
+    ".github/workflows/ci.yml": "b8c4f935dcae2d4913c72c730c145e8410d040c91f3c0f4eb1b762a5edd369c1",
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "c4178f7e2882a3526faced38bbefccf1aa74623e1c54321cff3a8d67d849ac3c"
+  },
+  "finalFocusedPostgresql": {
+    "tests": 29,
+    "passed": 29,
+    "skipped": 0,
+    "reason": "Local/CI database allowlist and CI inclusion; overlaps1269"
+  },
+  "catalogTests": {
+    "tests": 4,
+    "passed": 4
+  },
+  "fullBillingBrowser": {
+    "groups": 129,
+    "passed": 129,
+    "providersSimulated": true
+  },
+  "webTypecheck": "PASS"
+}

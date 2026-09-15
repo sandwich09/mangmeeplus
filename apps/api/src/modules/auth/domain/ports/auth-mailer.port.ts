@@ -1,6 +1,6 @@
 export const AUTH_MAILER_TOKEN = 'AUTH_MAILER_TOKEN';
 
-export type AuthEmailLinkInput = Readonly<{ toEmail: string; rawToken: string; expiresAt: Date }>;
+export type AuthEmailLinkInput = Readonly<{ toEmail: string; rawToken: string; expiresAt: Date; sendAttemptId?: string }>;
 export type AccountClaimEmailInput = AuthEmailLinkInput & Readonly<{
   companyName: string;
   /**
@@ -50,6 +50,7 @@ export type SupportRequestNoticeEmailInput = Readonly<{
 }>;
 
 export interface AuthMailerPort {
+  readonly provider?: 'disabled' | 'local-console' | 'ses' | 'postmark';
   sendEmailVerification(input: AuthEmailLinkInput): Promise<void>;
   sendPasswordResetLink(input: AuthEmailLinkInput): Promise<void>;
   /**

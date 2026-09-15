@@ -1,0 +1,214 @@
+TAP version 13
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 1 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 1.143792
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 2 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.341583
+  type: 'test'
+  ...
+# Subtest: overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+ok 3 - overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+  ---
+  duration_ms: 13.031458
+  type: 'test'
+  ...
+# Subtest: a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+ok 4 - a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+  ---
+  duration_ms: 1.585958
+  type: 'test'
+  ...
+# Subtest: old ambiguous command never posts again without an observed result
+ok 5 - old ambiguous command never posts again without an observed result
+  ---
+  duration_ms: 0.351667
+  type: 'test'
+  ...
+# Subtest: a hold or closed action gate appearing after confirmation prevents external mutation
+ok 6 - a hold or closed action gate appearing after confirmation prevents external mutation
+  ---
+  duration_ms: 0.475625
+  type: 'test'
+  ...
+# Subtest: a stale worker lease cannot mutate the provider or release another command reservation
+ok 7 - a stale worker lease cannot mutate the provider or release another command reservation
+  ---
+  duration_ms: 0.917041
+  type: 'test'
+  ...
+# Subtest: financial observations reject malformed or differently owned money evidence
+ok 8 - financial observations reject malformed or differently owned money evidence
+  ---
+  duration_ms: 1.403083
+  type: 'test'
+  ...
+# Subtest: a stale financial observer cannot update an invoice or open a case
+ok 9 - a stale financial observer cannot update an invoice or open a case
+  ---
+  duration_ms: 0.714916
+  type: 'test'
+  ...
+# Subtest: future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+ok 10 - future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+  ---
+  duration_ms: 1.47775
+  type: 'test'
+  ...
+# Subtest: completed historical phases do not block normal management of the current final paid phase
+ok 11 - completed historical phases do not block normal management of the current final paid phase
+  ---
+  duration_ms: 0.144541
+  type: 'test'
+  ...
+# Subtest: latest equal-boundary consent uses monotonic database revision and validates pending account binding
+ok 12 - latest equal-boundary consent uses monotonic database revision and validates pending account binding
+  ---
+  duration_ms: 3.888375
+  type: 'test'
+  ...
+# Subtest: lost scheduling response can be observed after the future phase starts, with exact economics
+ok 13 - lost scheduling response can be observed after the future phase starts, with exact economics
+  ---
+  duration_ms: 0.926708
+  type: 'test'
+  ...
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 14 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 3.607584
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 15 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 5.262625
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 16 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 3.397833
+  type: 'test'
+  ...
+# Subtest: HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+ok 17 - HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+  ---
+  duration_ms: 4.510917
+  type: 'test'
+  ...
+# Subtest: full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+ok 18 - full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+  ---
+  duration_ms: 0.284584
+  type: 'test'
+  ...
+# Subtest: Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+ok 19 - Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+  ---
+  duration_ms: 0.280541
+  type: 'test'
+  ...
+# Subtest: first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+ok 20 - first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+  ---
+  duration_ms: 0.141
+  type: 'test'
+  ...
+# Subtest: upgrade adds only prorated units, including the future periods already bought
+ok 21 - upgrade adds only prorated units, including the future periods already bought
+  ---
+  duration_ms: 0.271041
+  type: 'test'
+  ...
+# Subtest: invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+ok 22 - invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+  ---
+  duration_ms: 0.561417
+  type: 'test'
+  ...
+# Subtest: actual sandbox shape: manual/send_invoice, inactive inline price and zero-length line period are valid only for bound Checkout
+ok 23 - actual sandbox shape: manual/send_invoice, inactive inline price and zero-length line period are valid only for bound Checkout
+  ---
+  duration_ms: 8.402167
+  type: 'test'
+  ...
+# Subtest: reject unrelated/manual invoices, alternate customer/account/attempt/price and altered payment evidence
+ok 24 - reject unrelated/manual invoices, alternate customer/account/attempt/price and altered payment evidence
+  ---
+  duration_ms: 3.298542
+  type: 'test'
+  ...
+# Subtest: upgrade verifies the paid difference while retaining the full recurring offer price
+ok 25 - upgrade verifies the paid difference while retaining the full recurring offer price
+  ---
+  duration_ms: 1.052959
+  type: 'test'
+  ...
+# Subtest: Stripe request pins account mode, API version, key and serialized nested checkout fields
+ok 26 - Stripe request pins account mode, API version, key and serialized nested checkout fields
+  ---
+  duration_ms: 78.690083
+  type: 'test'
+  ...
+# Subtest: successful wrong-mode response stays UNKNOWN: it cannot release a purchase reservation
+ok 27 - successful wrong-mode response stays UNKNOWN: it cannot release a purchase reservation
+  ---
+  duration_ms: 0.974083
+  type: 'test'
+  ...
+# Subtest: transport and server failures are ambiguous; explicit rejection and rate limit are distinct
+ok 28 - transport and server failures are ambiguous; explicit rejection and rate limit are distinct
+  ---
+  duration_ms: 1.031791
+  type: 'test'
+  ...
+# Subtest: pagination must finish and use a progressing cursor before reconciliation trusts the set
+ok 29 - pagination must finish and use a progressing cursor before reconciliation trusts the set
+  ---
+  duration_ms: 1.488042
+  type: 'test'
+  ...
+# Subtest: signatures require exact body, fresh timestamp and one timestamp; rotated signatures are supported
+ok 30 - signatures require exact body, fresh timestamp and one timestamp; rotated signatures are supported
+  ---
+  duration_ms: 0.513458
+  type: 'test'
+  ...
+# Subtest: provider destinations reject lookalikes, credentials, custom ports and wrong surface
+ok 31 - provider destinations reject lookalikes, credentials, custom ports and wrong surface
+  ---
+  duration_ms: 0.108708
+  type: 'test'
+  ...
+# Subtest: old LINE package/rich-menu command opens the selected owner billing review and never creates a manual upgrade
+ok 32 - old LINE package/rich-menu command opens the selected owner billing review and never creates a manual upgrade
+  ---
+  duration_ms: 1.170459
+  type: 'test'
+  ...
+# Subtest: nonowner and ambiguous/stale selected company cannot get a different shop billing link
+ok 33 - nonowner and ambiguous/stale selected company cannot get a different shop billing link
+  ---
+  duration_ms: 0.255292
+  type: 'test'
+  ...
+# Subtest: disabled billing retains the existing manual support path
+ok 34 - disabled billing retains the existing manual support path
+  ---
+  duration_ms: 0.100625
+  type: 'test'
+  ...
+1..34
+# tests 34
+# suites 0
+# pass 34
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 881.507042

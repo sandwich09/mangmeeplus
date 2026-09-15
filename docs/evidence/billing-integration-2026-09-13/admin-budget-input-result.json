@@ -1,0 +1,85 @@
+{
+  "recordedAt": "2026-09-15T14:57:03.385862+00:00",
+  "status": "LOCAL_ADMIN_BUDGET_INPUT_AND_THAI_UX_PASS",
+  "sourceSha256": {
+    "apps/api/src/scripts/admin-ai-adjustments-smoke.ts": "b04ba7980a6e75cf0fcb546d953c0e06a7df3055448c3eea5d147e6a1ba11da3",
+    "apps/api/src/scripts/receipt-quota-runtime-smoke.ts": "c6263d7b3beb590df87f3bb5163a699aeb75fcc4ba0a745503beaaa27badbeb2",
+    "apps/web/src/features/system-partners/ai-budget.logic.ts": "04e156ef02cc3eb84cb1586783e925f871602511f3c449fe852ea0fb2856443f",
+    "apps/web/src/features/system-partners/ai-budget.logic.spec.ts": "8999791eeb1024d3f67c773b633ebc3d84e6aee40e170204e7634cbc35226f3b",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "624303e4d83c9e81d21fdbd152493c664786ee9bde6818387cc36eb1fc165bb0",
+    "apps/web/src/features/system-partners/PlatformAiBudgetPage.tsx": "e3b109add26efbd179994091a0fdc4c0d9c926c63e2974d47aec320c471625c9",
+    "apps/web/src/common/api/api-error-message.ts": "9e5594cd3a1aa084fe5df67fd5ee9708411549de9cb2a718b3a98d6117239cdc"
+  },
+  "reproduction": {
+    "localLog": "/tmp/mangmee-admin-budget-overflow-before.log",
+    "sha256": "8171f3212ba77174c65fa91c828db36582c247da612e4e0fac895ca3e421f6f7"
+  },
+  "redTest": {
+    "localLog": "/tmp/mangmee-admin-budget-overflow-before.tap",
+    "sha256": "51f48dc4e2c403ecb82fc95b22446a4e9127820cd933e34c9fe11e3e42969dd1"
+  },
+  "runs": {
+    "browser": {
+      "localLog": "/tmp/mangmee-admin-budget-browser-pass.log",
+      "sha256": "b2202ebd316ce4087f9386fb2d37a97857ff1cf9418c367b7b064de5d7ebac9c",
+      "groups": 12,
+      "result": {
+        "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+        "passed": [
+          "runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation",
+          "runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion",
+          "runtime-receipt-quota-paid-grants-cannot-bypass",
+          "browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock",
+          "admin-ai-reason-source-current-value-and-idempotent-replay",
+          "admin-ai-history-25-row-pagination-safe-fields-and-foreign-cursor",
+          "admin-ai-current-shared-admission-follows-raised-and-lowered-budget",
+          "admin-ai-adjustment-preserves-paid-term-and-receipt-grants",
+          "browser-admin-ai-invalid-nonempty-budget-never-clears-override",
+          "browser-platform-ai-thai-form-load-recovery-invalid-input-no-write",
+          "browser-admin-ai-reason-confirm-cancel-save-history-stale-reload-mobile",
+          "browser-admin-ai-lost-response-retry-and-late-navigation"
+        ],
+        "browserE2E": true,
+        "providerCalls": false
+      }
+    },
+    "unitAndErrorGuards": {
+      "localLog": "/tmp/mangmee-admin-budget-final-unit.tap",
+      "sha256": "4f3a27a83172593a6e0194e6f8baabf2adbfe4d4f810b7d154995067193883ef",
+      "tests": 75,
+      "pass": 75,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "webTypecheck": {
+    "localLog": "/tmp/mangmee-admin-budget-web-typecheck.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "swc": {
+    "localLog": "/tmp/mangmee-admin-budget-final-swc.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "inspectedScreenshots": {
+    "admin-platform-budget-thai-20260915.png": "fbd889a660b3ce50f911b7b59ea40769a4da982401a0f73f0b2576ac6a4e44b2",
+    "admin-budget-audit-20260915.png": "f6b546c49f049665be4402b918a4b60c8465e94411a9bdaf9c8687006fff69b1",
+    "package-matrix-pro-year-line-20260915.png": "5f062b27a6cfe99923641f6bd4cdaec1d8da5f2e78c6b001617f221d2df2850b"
+  },
+  "verified": [
+    "An overflowing nonempty baht string previously became Infinity and serialized as null, which means clear the company override. The shared parser now refuses non-safe satang. Only a deliberately blank company field requests inheritance.",
+    "Company and platform forms preserve invalid text with decimal text inputs. Malformed/overflow/zero company values produce short Thai validation, no confirmation/HTTP write/audit change, no horizontal mobile overflow, and keep the original budget. Both platform fields also refuse invalid text without a write.",
+    "Existing real Admin save/cancel/current-value conflict/reload/history/response-loss/original-retry/navigation flows pass; actual shared AI admission follows raised/lowered budgets. Paid term and receipt grants stay unchanged.",
+    "Platform budget page now uses Thai labels/copy and has a reload action after failed reads. Browser proof holds the read unavailable until the actual error is visible, then restores transport and uses the real reload button.",
+    "Five new receipt/signature access/source errors have actionable Thai copy through the existing safe mapper. Existing raw-error guard remains unchanged; the reviewed local validation call uses its expected formatting."
+  ],
+  "combinedBaseline": "combined-upload-access-result.json",
+  "limits": [
+    "308-group combined baseline predates these budget UI changes. This focused12-group real HTTP/PG/Next/Chromium follow-up covers the changed slice without rerunning unrelated controls. Counts overlap and are not total business flows.",
+    "No external provider calls in the focused budget run. Native LINE/LIFF/provider, final clean-source CI and both branch merges remain separate.",
+    "The initial focused browser fault only blocked one GET and the page recovered before the retry assertion; the final fixture blocks reads until the visible error and proves its interception. No production read/retry logic was weakened."
+  ],
+  "apiTypecheck": {
+    "localLog": "/tmp/mangmee-upload-budget-final-api-typecheck.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "status": "LOCAL_LINE_RECEIPT_SOURCE_SLICE_PASS",
+  "recordedAt": "2026-09-15T09:44:32.415239+00:00",
+  "baseCommit": "5246c5eceb7eaa7b4741436fb70736bdcf3a9bec",
+  "sourceSha256": {
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "aa5201e14032624afda2877755df1bf24578d103f4ab49e3f97e97310cce5c37",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "62b60e184a90b1703b257fbb635b48e20bd1befecdc3c82c5e52d0dac5b547a3",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "604ac400cfad58a73a3aa21d79ac2508284c293d97ea92aa4fce1b6e98129e0b"
+  },
+  "runs": {
+    "focused": {
+      "tests": 525,
+      "pass": 525,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-receipt-source-unit.tap",
+      "logSha256": "f54a935efc8bf9dfcf155625545ede45b9245a4d99ee7d03ca852ccf1b790ca6",
+      "resultIndex": "line-receipt-source-focused.txt"
+    },
+    "postgres": {
+      "tests": 55,
+      "pass": 55,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-source-current.tap",
+      "logSha256": "d189dba8b2bb22a6820f6d5e9169e4acc20aca20a0314e37310e92c30aa6f8db",
+      "resultIndex": "line-receipt-source-postgres.txt"
+    },
+    "module": {
+      "tests": 1338,
+      "pass": 1338,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-receipt-module.tap",
+      "logSha256": "536b17a9511d58f7de0c33f5682f93ed66c034871351bdea44dba2635d1e756a",
+      "resultIndex": "line-receipt-source-module.txt"
+    }
+  },
+  "apiTypecheck": "PASS; final runtime checked, subsequent test-only ports are exercised by PostgreSQL and module runners",
+  "moduleTestFiles": [
+    "apps/api/src/modules/line-ai/application/ai-fx-rate.spec.ts",
+    "apps/api/src/modules/line-ai/application/ai-model-pricing.spec.ts",
+    "apps/api/src/modules/line-ai/application/company-ai-model-policy.spec.ts",
+    "apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts",
+    "apps/api/src/modules/line-ai/application/line-ai-consumption-marker.spec.ts",
+    "apps/api/src/modules/line-ai/application/line-ai-ledger.service.spec.ts",
+    "apps/api/src/modules/line-ai/application/line-handoff-link.service.spec.ts",
+    "apps/api/src/modules/line-ai/application/line-message-buffer.service.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/company-list-branches.tool.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-business-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-core-detail-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-crm-operational-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-crm-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-draft-update-tools.di.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-empty-result-semantics.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-expense-list-recent.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-procurement-ledger-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-reimbursement-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/erp-tax-tools.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/expense-explain-record.tool.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/line-capture-branch-default.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-advisor-direct-answer.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-ai-classifier.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-ai-reconciliation.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-ai-terminal-outcome.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-business-card.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-draft-update-card.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-message-buffer.logic.spec.ts",
+    "apps/api/src/modules/line-ai/domain/logic/line-staff-menu.logic.spec.ts",
+    "apps/api/src/modules/line-ai/infrastructure/actor-delegation.service.spec.ts",
+    "apps/api/src/modules/line-ai/infrastructure/ai-gateway.client.spec.ts",
+    "apps/api/src/modules/line-ai/infrastructure/line-intake-state.repository.spec.ts",
+    "apps/api/src/modules/line-ai/infrastructure/line-reply.adapter.spec.ts",
+    "apps/api/src/modules/line-ai/line-delivery-access.pg.spec.ts",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts",
+    "apps/api/src/modules/line-ai/line-ledger-delivery.pg.spec.ts",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts",
+    "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts"
+  ],
+  "fixes": [
+    "Deterministic receipt progress, grounded single-receipt follow-up and saved-media recovery recheck the original own-chat/company/user/branch/revision before final send and reply-token fallback.",
+    "Displayed category names are checked against the current category catalog. Unrelated read proof cannot authorize persisted receipt outputs.",
+    "Silent draft interruption can update the source without returning a message; grounded follow-up always reads its current record after interruption.",
+    "Saved receipt recovery exposes no record link without current source access; confirmed/missing-attachment redelivery also validates the original record."
+  ],
+  "postgresScenarios": "14 added real PostgreSQL record/repository/permission-resolver/webhook scenarios across progress, follow-up and saved-media; unchanged, branch, revision, fallback and applicable category changes. Original55 and module1338 counts overlap. Model/OCR/upload ports fail if unexpectedly invoked; expense count does not increase.",
+  "limits": [
+    "LINE transport and model ports are simulated. No native message, provider payment, browser acceptance or current combined billing claim.",
+    "Module runner explicitly excludes receipt-reliability.pg.spec.ts and onboarding-receipt-allowance.pg.spec.ts; they use separate DB harnesses. All included1338 tests ran with zero skips.",
+    "Remaining multi-candidate/intake/new-capture source coverage and full AP21–24 remain open.",
+    "No CI, push, merge or deployment."
+  ]
+}

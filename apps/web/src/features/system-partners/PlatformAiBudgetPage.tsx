@@ -9,14 +9,14 @@ import { parseBudgetBahtInput, satangToBaht, satangToBahtInput } from './ai-budg
 import { getPlatformAiBudget, setPlatformAiBudget } from './system-partners.api';
 import type { PlatformAiBudgetDto } from './system-partners.api';
 
-const inputClass = 'mangmee-input';
-const btnPrimary = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
+const inputClass = 'mangmee-input min-h-11 text-base';
+const btnPrimary = 'mangmee-btn mangmee-btn-primary min-h-11 text-base disabled:opacity-50';
 
 /** Says where the value in force comes from, so nobody edits a number the platform is ignoring. */
 function SourceNote({ source }: { source: 'db' | 'env' }) {
   return (
     <p className="mt-1 text-xs text-gray-400">
-      {source === 'db' ? 'from platform settings' : 'environment default'}
+      {source === 'db' ? 'ค่าที่ผู้ดูแลบันทึก' : 'ค่าเริ่มต้นของระบบ'}
     </p>
   );
 }
@@ -43,7 +43,7 @@ export default function PlatformAiBudgetPage() {
         const e = err as Error & { status?: number };
         setLoadError(
           e.status === 403
-            ? 'You do not have permission to manage platform AI budget settings.'
+            ? 'คุณไม่มีสิทธิ์ตั้งค่างบ AI กลาง กรุณาติดต่อผู้ดูแลระบบ'
             : apiErrorMessage(err),
         );
       }
@@ -70,7 +70,7 @@ export default function PlatformAiBudgetPage() {
     setSaving(true);
     try {
       apply(await setPlatformAiBudget({ monthlyBudgetSatang, ceilingSatang }));
-      toast.success('Platform AI budget settings saved.');
+      toast.success('บันทึกงบ AI กลางแล้ว');
     } catch (err) {
       // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
       toast.error(apiErrorMessage(err));
@@ -85,44 +85,42 @@ export default function PlatformAiBudgetPage() {
         <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
 
         <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/system/partners" className="hover:text-brand-700">Partners</Link>
+          <Link href="/system/partners" className="hover:text-brand-700">บริษัท</Link>
           <span>/</span>
-          <span className="text-gray-900 font-medium">Platform AI Budget</span>
+          <span className="text-gray-900 font-medium">งบ AI กลาง</span>
         </div>
 
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Platform AI Budget</h1>
+          <h1 className="text-xl font-semibold text-gray-900">งบ AI กลาง</h1>
           <p className="text-sm text-gray-500 mt-1">
-            The monthly AI spend cap every partner company inherits when it has no company override,
-            and the ceiling those overrides cannot exceed. Amounts are in baht, up to two decimals.
+            บริษัทที่ไม่ได้ตั้งงบเฉพาะจะใช้งบเริ่มต้นนี้ ส่วนเพดานใช้จำกัดงบที่ผู้ดูแลตั้งให้แต่ละบริษัท
           </p>
         </div>
 
         {loadError ? (
-          <p className="text-sm text-red-600">{loadError}</p>
+          <div role="alert" className="space-y-3">
+            <p className="text-sm text-red-600">{loadError}</p>
+            <button type="button" className={btnPrimary} onClick={() => window.location.reload()}>ลองโหลดใหม่</button>
+          </div>
         ) : !budget ? (
           <div className="h-40 rounded-lg border border-gray-100 animate-pulse" />
         ) : (
           <>
             <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              <strong>Currently in force:</strong> monthly default {satangToBaht(budget.monthlyBudgetSatang)},
-              ceiling {satangToBaht(budget.ceilingSatang)}. Without these settings the platform falls back to
-              its environment values ({satangToBaht(budget.envDefaults.monthlyBudgetSatang)} and{' '}
-              {satangToBaht(budget.envDefaults.ceilingSatang)}). Lowering the ceiling gates new company
-              overrides only — existing higher overrides keep enforcing as they are.
+              <strong>ค่าที่ใช้อยู่:</strong> งบเริ่มต้น {satangToBaht(budget.monthlyBudgetSatang)} ต่อเดือน
+              เพดาน {satangToBaht(budget.ceilingSatang)} ต่อบริษัท
+              การลดเพดานมีผลกับการตั้งงบครั้งต่อไป งบเฉพาะบริษัทที่ตั้งสูงไว้แล้วจะยังคงเดิม
             </div>
 
             <div className="rounded-lg border border-gray-200 bg-white px-5 py-4 space-y-4">
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5" htmlFor="platform-ai-monthly-budget">
-                  Monthly budget default (฿) *
+                <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-monthly-budget">
+                  งบเริ่มต้นต่อเดือน (บาท) *
                 </label>
                 <input
                   id="platform-ai-monthly-budget"
                   className={inputClass}
-                  type="number"
-                  min={1}
-                  step={0.01}
+                  type="text"
                   inputMode="decimal"
                   value={defaultInput}
                   onChange={(e) => setDefaultInput(e.target.value)}
@@ -132,15 +130,13 @@ export default function PlatformAiBudgetPage() {
               </div>
 
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5" htmlFor="platform-ai-ceiling">
-                  Company override ceiling (฿) *
+                <label className="block text-sm text-gray-600 mb-1" htmlFor="platform-ai-ceiling">
+                  เพดานงบที่ตั้งให้แต่ละบริษัท (บาท) *
                 </label>
                 <input
                   id="platform-ai-ceiling"
                   className={inputClass}
-                  type="number"
-                  min={1}
-                  step={0.01}
+                  type="text"
                   inputMode="decimal"
                   value={ceilingInput}
                   onChange={(e) => setCeilingInput(e.target.value)}
@@ -150,7 +146,7 @@ export default function PlatformAiBudgetPage() {
               </div>
 
               <button type="button" className={btnPrimary} disabled={saving} aria-busy={Boolean(saving)} onClick={() => void handleSave()}>
-                {saving ? 'Saving…' : 'Save settings'}
+                {saving ? 'กำลังบันทึก…' : 'บันทึกการตั้งค่า'}
               </button>
             </div>
           </>

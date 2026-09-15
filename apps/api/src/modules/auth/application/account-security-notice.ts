@@ -1,3 +1,4 @@
+import type { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { pushSystemLineMessage } from '../infrastructure/system-line-push';
 
@@ -23,17 +24,20 @@ export const EMAIL_VERIFIED_NOTICE =
  */
 export async function notifyAccountSecurityChange(
   prisma: PrismaService,
-  channelAccessToken: string | undefined,
+  credentials: LineMessagingCredentialsService,
   userId: string,
   text: string,
 ): Promise<boolean> {
-  if (!channelAccessToken) return false;
+  try {
+  const {accessToken: channelAccessToken, channelId} = await credentials.get();
+  if (!channelAccessToken || !channelId) return false;
   // ACTIVE only: an unlinked or revoked identity belongs to a LINE account that no longer speaks
   // for this user, and "a password was set on your account" is the last message to send there.
   const identity = await prisma.client.externalIdentity.findFirst({
-    where: { userId, provider: 'LINE', status: 'ACTIVE' },
+    where: { userId, provider: 'LINE', providerChannelId: channelId, status: 'ACTIVE' },
     select: { providerUserId: true },
   });
   if (!identity) return false;
-  return pushSystemLineMessage(channelAccessToken, identity.providerUserId, text);
+  return await pushSystemLineMessage(channelAccessToken, identity.providerUserId, text);
+  } catch { return false; }
 }

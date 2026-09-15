@@ -1,104 +1,44 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { SetSharedLineCredentialUseCase } from './set-shared-line-credential.use-case';
 import { decryptCredential } from '../../domain/logic/credential-cipher.logic';
+import { hashPassword } from '../../../auth/domain/logic/password-credential.logic';
 
-const TEST_KEY = Buffer.from('a'.repeat(64), 'hex');
-
-function makeUseCase(overrides: Partial<{ existing: boolean }> = {}) {
-  let stored: Record<string, any> = {};
-  let auditLog: any = null;
-
-  const prisma = {
-    client: {
-      platformLineCredential: {
-        findUnique: async () => (overrides.existing ? { id: 'cred-1' } : null),
-        upsert: async (args: any) => {
-          const row = args.create ?? args.update;
-          stored = { ...row, credentialKind: args.where.credentialKind, health: 'UNKNOWN', lastValidatedAt: null, rotatedAt: new Date(), createdAt: new Date(), updatedAt: new Date() };
-          return { credentialKind: stored.credentialKind, health: stored.health, lastValidatedAt: stored.lastValidatedAt, rotatedAt: stored.rotatedAt, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
-        },
-      },
-      auditLog: {
-        create: async (args: any) => { auditLog = args.data; },
-      },
-      $transaction: async (fn: any) => {
-        const tx = {
-          platformLineCredential: prisma.client.platformLineCredential,
-          auditLog: prisma.client.auditLog,
-        };
-        return fn(tx);
-      },
-    },
-  } as any;
-
-  const config = { credentialEncryptionKey: TEST_KEY } as any;
-  const useCase = new SetSharedLineCredentialUseCase(prisma, config);
-
-  return { useCase, getStored: () => stored, getAuditLog: () => auditLog };
+const key=Buffer.alloc(32,7),password='SyntheticPassword1!',context={permissions:['system.shared_line_credential.manage'],userId:'u',companyId:'c',membershipId:'m',sessionId:'s',requestId:'r'} as any;
+const cmd=()=>({channelId:'1234567890',channelSecret:'a'.repeat(32),accessToken:'synthetic-token-value',expectedVersion:0,rotationId:randomUUID(),reason:'Rotate test credential',password});
+function fixture(){let row:any=null,allowed=true;const audit:any[]=[];const credential={status:'ACTIVE',mustChangePassword:false,updatedAt:new Date(),passwordHash:hashPassword(password)};
+  const db:any={companyMembership:{findFirst:async()=>allowed?{id:'m'}:null},authSession:{findFirst:async()=>({id:'s'})},userCredential:{findUnique:async()=>({...credential})},
+    platformLineCredential:{findUnique:async()=>row,create:async({data}:any)=>row={id:'id',secretVersion:1,createdAt:new Date(),updatedAt:new Date(),...data},
+      update:async({data}:any)=>row={...row,...data,secretVersion:row.secretVersion+1}},auditLog:{create:async({data}:any)=>audit.push(data)},$executeRaw:async()=>{},$queryRaw:async()=>{}};
+  db.$transaction=async(fn:any)=>fn(db);
+  return {service:new SetSharedLineCredentialUseCase({client:db} as any,{credentialEncryptionKey:key,lineMessagingChannelId:'1234567890'} as any),
+    read:()=>row,audit,revoke:()=>{allowed=false;},credential};
 }
-
-describe('SetSharedLineCredentialUseCase', () => {
-  it('response has no secret fields', async () => {
-    const { useCase } = makeUseCase();
-    const result = await useCase.execute({
-      credentialKind: 'LINE_MESSAGING_API',
-      channelId: 'ch-id',
-      channelSecret: 'ch-secret',
-      requestingAdminUserId: 'admin-1',
-      requestId: 'req-1',
-    });
-    const keys = Object.keys(result);
-    for (const forbidden of ['channelId', 'channelSecret', 'accessToken', 'encryptedSecretJson']) {
-      assert.ok(!keys.includes(forbidden), `Response must not include "${forbidden}"`);
-    }
-    assert.equal(result.kind, 'LINE_MESSAGING_API');
-    assert.equal(result.health, 'UNKNOWN');
-  });
-
-  it('audit log has no secret fields', async () => {
-    const { useCase, getAuditLog } = makeUseCase();
-    await useCase.execute({
-      credentialKind: 'LINE_LOGIN',
-      channelId: 'ch-id',
-      channelSecret: 'ch-secret',
-      requestingAdminUserId: 'admin-1',
-      requestId: 'req-1',
-    });
-    const log = getAuditLog();
-    const logStr = JSON.stringify(log);
-    assert.ok(!logStr.includes('ch-secret'), 'Audit log must not contain secret');
-    assert.ok(!logStr.includes('ch-id'), 'Audit log must not contain channelId');
-    assert.equal(log.metadataJson.action, 'created');
-    assert.equal(log.action, 'system.shared_line_credential.upsert');
-  });
-
-  it('audit action is "replaced" when credential already exists', async () => {
-    const { useCase, getAuditLog } = makeUseCase({ existing: true });
-    await useCase.execute({
-      credentialKind: 'LINE_LIFF',
-      channelId: 'ch-id',
-      channelSecret: 'ch-secret',
-      requestingAdminUserId: 'admin-1',
-      requestId: 'req-2',
-    });
-    assert.equal(getAuditLog().metadataJson.action, 'replaced');
-  });
-
-  it('encrypted value decrypts back correctly', async () => {
-    const { useCase, getStored } = makeUseCase();
-    await useCase.execute({
-      credentialKind: 'LINE_MESSAGING_API',
-      channelId: 'the-channel',
-      channelSecret: 'super-secret',
-      accessToken: 'token-abc',
-      requestingAdminUserId: 'admin-1',
-      requestId: 'req-3',
-    });
-    const stored = getStored();
-    const decrypted = JSON.parse(decryptCredential(stored.encryptedSecretJson, TEST_KEY));
-    assert.equal(decrypted.channelId, 'the-channel');
-    assert.equal(decrypted.channelSecret, 'super-secret');
-    assert.equal(decrypted.accessToken, 'token-abc');
-  });
+describe('shared Messaging publication',()=>{
+ it('encrypts publication, distinguishes token/signature and replays the exact save without another provider read',async()=>{
+   const f=fixture(),savedFetch=globalThis.fetch,input=cmd();let calls=0;
+   globalThis.fetch=async(url,init)=>{calls++;assert.equal(url,'https://api.line.me/v2/oauth/verify');assert.equal(new URLSearchParams(String(init?.body)).get('access_token'),input.accessToken);return Response.json({client_id:input.channelId,expires_in:86400});};
+   try{const result=await f.service.execute(context,input);assert.equal(result.version,1);assert.equal(result.inboundVerifiedAt,null);assert.ok(result.tokenValidatedAt);
+     assert.equal(JSON.parse(decryptCredential(f.read().encryptedSecretJson,key)).accessToken,input.accessToken);
+     assert.doesNotMatch(JSON.stringify([result,f.audit]),/synthetic-token-value|aaaaaaaaaaaaaaaa/);
+     assert.deepEqual(await f.service.execute(context,input),result);assert.equal(calls,1);assert.equal(f.audit.length,1);
+     await assert.rejects(f.service.execute(context,{...input,accessToken:'a-different-synthetic-token'}),{status:409});assert.equal(calls,1);
+   }finally{globalThis.fetch=savedFetch;}
+ });
+ it('denies copied role context, different channel and wrong password before provider I/O',async()=>{
+   const f=fixture(),old=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw Error('unexpected');};
+   try{await assert.rejects(f.service.execute({...context,permissions:[]},cmd()),{status:403});
+     await assert.rejects(f.service.execute(context,{...cmd(),channelId:'other'}),{status:409});
+     await assert.rejects(f.service.execute(context,{...cmd(),password:'wrong'}),{status:403});
+     f.revoke();await assert.rejects(f.service.execute(context,cmd()),{status:403});assert.equal(calls,0);assert.equal(f.read(),null);
+   }finally{globalThis.fetch=old;}
+ });
+ for(const failure of ['wrong-channel','bad-expiry','unavailable','revoked','credential-changed'])it(`does not publish after ${failure}`,async()=>{
+   const f=fixture(),old=globalThis.fetch;globalThis.fetch=async()=>{
+     if(failure==='unavailable')throw Error('synthetic transport fault');if(failure==='revoked')f.revoke();
+     if(failure==='credential-changed')f.credential.updatedAt=new Date(Date.now()+1000);
+     return Response.json({client_id:failure==='wrong-channel'?'foreign':'1234567890',expires_in:failure==='bad-expiry'?0:86400});};
+   try{await assert.rejects(f.service.execute(context,cmd()));assert.equal(f.read(),null);assert.equal(f.audit.length,0);}finally{globalThis.fetch=old;}
+ });
 });

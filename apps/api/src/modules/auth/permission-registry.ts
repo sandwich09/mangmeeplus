@@ -1,5 +1,6 @@
 // Permission registry: canonical source of truth for permission keys and role grants.
 // Imported by seed.ts and tested by permission-registry.spec.ts.
+import { BILLING_PERMISSIONS } from '@watchdog-bms/contracts';
 
 export type PermissionRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -10,6 +11,8 @@ export type PermissionDef = {
 };
 
 export const PERMISSIONS: PermissionDef[] = [
+  ...BILLING_PERMISSIONS.map((key): PermissionDef => ({ key, description: `Platform billing: ${key.slice('system.billing.'.length)}`,
+    riskLevel: key.endsWith('.read') ? 'MEDIUM' : key === 'system.billing.issue.manage' ? 'HIGH' : 'CRITICAL' })),
   { key: 'account.session.read',       description: 'Read own session info',              riskLevel: 'LOW' },
   { key: 'account.password.change',    description: 'Change own account password',        riskLevel: 'MEDIUM' },
   { key: 'account.identity.link',      description: 'Link external identity',             riskLevel: 'MEDIUM' },
@@ -61,8 +64,11 @@ export const PERMISSIONS: PermissionDef[] = [
   // Item 10A platform onboarding permissions
   { key: 'system.company_onboarding.create', description: 'Create customer company onboarding', riskLevel: 'HIGH' },
   { key: 'system.company_onboarding.read', description: 'Read customer company onboarding',   riskLevel: 'MEDIUM' },
+  { key: 'system.email_delivery.manage', description: 'Manage local email history retention', riskLevel: 'HIGH' },
+  { key: 'system.email_delivery.read', description: 'Read safe platform email delivery observations', riskLevel: 'HIGH' },
   { key: 'system.company_onboarding.regenerate_temporary_password', description: 'Regenerate customer owner temporary password', riskLevel: 'CRITICAL' },
   { key: 'system.line_binding.manage',  description: 'Manage customer LINE channel bindings', riskLevel: 'HIGH' },
+  { key: 'system.shared_line_credential.manage', description: 'Read and replace shared Messaging credentials for the existing OA', riskLevel: 'CRITICAL' },
   // Item 10A partner management permissions
   { key: 'system.partner_dashboard.read',           description: 'Read partner company list and detail (metadata only)', riskLevel: 'MEDIUM' },
   { key: 'system.partner_company.create',           description: 'Create new partner company',                          riskLevel: 'HIGH' },
@@ -467,12 +473,16 @@ const STAFF_ROLE_GRANTS = [
 export const ROLE_GRANTS: Record<string, string[]> = {
   OWNER: COMPANY_PERMISSION_KEYS,
   SYSTEM_ADMIN: [
+    'system.shared_line_credential.manage',
+    ...BILLING_PERMISSIONS,
     'account.session.read',
     'account.password.change',
     'account.identity.link',
     'account.identity.unlink',
     'system.company_onboarding.create',
     'system.company_onboarding.read',
+    'system.email_delivery.read',
+    'system.email_delivery.manage',
     'system.company_onboarding.regenerate_temporary_password',
     'system.line_binding.manage',
     // Item 10A partner management

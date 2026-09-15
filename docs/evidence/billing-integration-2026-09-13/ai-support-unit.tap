@@ -1,0 +1,231 @@
+TAP version 13
+# Subtest: GET /system/partners/:id/timeline — §8
+    # Subtest: tells the shop story in order, from rows that already exist
+    ok 1 - tells the shop story in order, from rows that already exist
+      ---
+      duration_ms: 2.073875
+      type: 'test'
+      ...
+    # Subtest: says the shop was opened by an admin when there is no application behind it
+    ok 2 - says the shop was opened by an admin when there is no application behind it
+      ---
+      duration_ms: 0.16275
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 3 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.305417
+      type: 'test'
+      ...
+    1..3
+ok 1 - GET /system/partners/:id/timeline — §8
+  ---
+  duration_ms: 2.928708
+  type: 'suite'
+  ...
+# Subtest: the timeline last line: why the assistant is refusing right now
+    # Subtest: is absent for a healthy shop
+    ok 1 - is absent for a healthy shop
+      ---
+      duration_ms: 0.198167
+      type: 'test'
+      ...
+    # Subtest: names a disabled company first, because nothing else matters then
+    ok 2 - names a disabled company first, because nothing else matters then
+      ---
+      duration_ms: 0.104417
+      type: 'test'
+      ...
+    # Subtest: names an expired term
+    ok 3 - names an expired term
+      ---
+      duration_ms: 0.085083
+      type: 'test'
+      ...
+    # Subtest: names an unlinked shop
+    ok 4 - names an unlinked shop
+      ---
+      duration_ms: 0.093
+      type: 'test'
+      ...
+    # Subtest: uses the actual trial allowance during a legacy warmup-ten window
+    ok 5 - uses the actual trial allowance during a legacy warmup-ten window
+      ---
+      duration_ms: 0.271375
+      type: 'test'
+      ...
+    # Subtest: names the AI budget, against the shop own override
+    ok 6 - names the AI budget, against the shop own override
+      ---
+      duration_ms: 0.314708
+      type: 'test'
+      ...
+    1..6
+ok 2 - the timeline last line: why the assistant is refusing right now
+  ---
+  duration_ms: 1.2295
+  type: 'suite'
+  ...
+# Subtest: current Admin AI support explanation
+    # Subtest: uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal
+    ok 1 - uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal
+      ---
+      duration_ms: 0.479791
+      type: 'test'
+      ...
+    # Subtest: honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget
+    ok 2 - honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget
+      ---
+      duration_ms: 0.429083
+      type: 'test'
+      ...
+    1..2
+ok 3 - current Admin AI support explanation
+  ---
+  duration_ms: 0.938958
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/line-message — SEC-05
+    # Subtest: pushes to the shop OWNERs, signed with the operator name, and audits the text
+    ok 1 - pushes to the shop OWNERs, signed with the operator name, and audits the text
+      ---
+      duration_ms: 0.5865
+      type: 'test'
+      ...
+    # Subtest: leaves the request OPEN when the message reached nobody
+    ok 2 - leaves the request OPEN when the message reached nobody
+      ---
+      duration_ms: 0.165542
+      type: 'test'
+      ...
+    # Subtest: never broadcasts an answer to everyone else waiting on the shop
+    ok 3 - never broadcasts an answer to everyone else waiting on the shop
+      ---
+      duration_ms: 0.126084
+      type: 'test'
+      ...
+    # Subtest: reaches the one requester the operator named, alongside the shop OWNERs
+    ok 4 - reaches the one requester the operator named, alongside the shop OWNERs
+      ---
+      duration_ms: 0.199625
+      type: 'test'
+      ...
+    # Subtest: sends one message, not two, when the OWNER is the person who asked
+    ok 5 - sends one message, not two, when the OWNER is the person who asked
+      ---
+      duration_ms: 0.099875
+      type: 'test'
+      ...
+    # Subtest: answers an employee-raised request even when no OWNER has LINE linked
+    ok 6 - answers an employee-raised request even when no OWNER has LINE linked
+      ---
+      duration_ms: 0.097792
+      type: 'test'
+      ...
+    # Subtest: marks the named request answered, with the button's own audit
+    ok 7 - marks the named request answered, with the button's own audit
+      ---
+      duration_ms: 0.131875
+      type: 'test'
+      ...
+    # Subtest: is idempotent on a request that was already answered
+    ok 8 - is idempotent on a request that was already answered
+      ---
+      duration_ms: 0.252834
+      type: 'test'
+      ...
+    # Subtest: refuses a request belonging to another shop, rather than pushing across tenants
+    ok 9 - refuses a request belonging to another shop, rather than pushing across tenants
+      ---
+      duration_ms: 0.123541
+      type: 'test'
+      ...
+    # Subtest: refuses a request that is already CLOSED, which nobody is waiting on
+    ok 10 - refuses a request that is already CLOSED, which nobody is waiting on
+      ---
+      duration_ms: 0.065833
+      type: 'test'
+      ...
+    # Subtest: refuses a request id that does not exist
+    ok 11 - refuses a request id that does not exist
+      ---
+      duration_ms: 0.064458
+      type: 'test'
+      ...
+    # Subtest: refuses a message longer than the bound, before it reaches LINE
+    ok 12 - refuses a message longer than the bound, before it reaches LINE
+      ---
+      duration_ms: 0.09375
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours
+    ok 13 - refuses a second URL glued onto one of ours
+      ---
+      duration_ms: 0.488167
+      type: 'test'
+      ...
+    # Subtest: refuses a link outside our own domains
+    ok 14 - refuses a link outside our own domains
+      ---
+      duration_ms: 0.061583
+      type: 'test'
+      ...
+    # Subtest: sends to nobody, and records the failure, when no OWNER has LINE linked
+    ok 15 - sends to nobody, and records the failure, when no OWNER has LINE linked
+      ---
+      duration_ms: 0.143291
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 16 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.138333
+      type: 'test'
+      ...
+    1..16
+ok 4 - POST /system/partners/:id/line-message — SEC-05
+  ---
+  duration_ms: 2.952208
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+    # Subtest: moves the ceiling to now and records who lifted it
+    ok 1 - moves the ceiling to now and records who lifted it
+      ---
+      duration_ms: 0.219875
+      type: 'test'
+      ...
+    # Subtest: is a no-op on a warm-up that already ended
+    ok 2 - is a no-op on a warm-up that already ended
+      ---
+      duration_ms: 0.0595
+      type: 'test'
+      ...
+    # Subtest: is a no-op for a shop that never had a warm-up
+    ok 3 - is a no-op for a shop that never had a warm-up
+      ---
+      duration_ms: 0.050375
+      type: 'test'
+      ...
+    # Subtest: 404s for a grandfathered company with no term row
+    ok 4 - 404s for a grandfathered company with no term row
+      ---
+      duration_ms: 0.054375
+      type: 'test'
+      ...
+    1..4
+ok 5 - POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+  ---
+  duration_ms: 0.421083
+  type: 'suite'
+  ...
+1..5
+# tests 31
+# suites 5
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 531.791375

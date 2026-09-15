@@ -1,0 +1,458 @@
+TAP version 13
+# Subtest: GetCompanyPlanTermUseCase
+    # Subtest: returns { term: null } for a grandfathered company instead of 404
+    ok 1 - returns { term: null } for a grandfathered company instead of 404
+      ---
+      duration_ms: 0.5725
+      type: 'test'
+      ...
+    # Subtest: computes derivedState and daysLeft on read
+    ok 2 - computes derivedState and daysLeft on read
+      ---
+      duration_ms: 0.741291
+      type: 'test'
+      ...
+    1..2
+ok 1 - GetCompanyPlanTermUseCase
+  ---
+  duration_ms: 2.17075
+  type: 'suite'
+  ...
+# Subtest: SetCompanyPlanTermUseCase
+    # Subtest: 404s on an unknown company
+    ok 1 - 404s on an unknown company
+      ---
+      duration_ms: 0.792
+      type: 'test'
+      ...
+    # Subtest: rejects an unknown tierKey
+    ok 2 - rejects an unknown tierKey
+      ---
+      duration_ms: 0.170916
+      type: 'test'
+      ...
+    # Subtest: rejects non-positive and fractional limits
+    ok 3 - rejects non-positive and fractional limits
+      ---
+      duration_ms: 0.144792
+      type: 'test'
+      ...
+    # Subtest: creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+    ok 4 - creating computes termEndsAt as start plus exactly N x 24h, hour preserved
+      ---
+      duration_ms: 0.394916
+      type: 'test'
+      ...
+    # Subtest: creating defaults to 30 days from now when no dates are given
+    ok 5 - creating defaults to 30 days from now when no dates are given
+      ---
+      duration_ms: 0.187542
+      type: 'test'
+      ...
+    # Subtest: updating limits NEVER moves the dates
+    ok 6 - updating limits NEVER moves the dates
+      ---
+      duration_ms: 0.826375
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with before/after values
+    ok 7 - audits CRITICAL with before/after values
+      ---
+      duration_ms: 0.271583
+      type: 'test'
+      ...
+    # Subtest: records `from: null` when the row is created
+    ok 8 - records `from: null` when the row is created
+      ---
+      duration_ms: 0.251167
+      type: 'test'
+      ...
+    1..8
+ok 2 - SetCompanyPlanTermUseCase
+  ---
+  duration_ms: 3.466833
+  type: 'suite'
+  ...
+# Subtest: applyPlanTermPreset
+    # Subtest: fills the row from the frozen catalog and is a no-op on an existing row
+    ok 1 - fills the row from the frozen catalog and is a no-op on an existing row
+      ---
+      duration_ms: 0.54025
+      type: 'test'
+      ...
+    # Subtest: carries the LINE-first trial preset without opening it to the public form
+    ok 2 - carries the LINE-first trial preset without opening it to the public form
+      ---
+      duration_ms: 0.057041
+      type: 'test'
+      ...
+    1..2
+ok 3 - applyPlanTermPreset
+  ---
+  duration_ms: 0.631875
+  type: 'suite'
+  ...
+# Subtest: RenewCompanyPlanTermUseCase
+    # Subtest: 404s when there is no term to renew
+    ok 1 - 404s when there is no term to renew
+      ---
+      duration_ms: 0.182875
+      type: 'test'
+      ...
+    # Subtest: BEFORE expiry: extends from the existing end date, not from now
+    ok 2 - BEFORE expiry: extends from the existing end date, not from now
+      ---
+      duration_ms: 0.17275
+      type: 'test'
+      ...
+    # Subtest: AFTER expiry: extends from now, never back-dated into the past
+    ok 3 - AFTER expiry: extends from now, never back-dated into the past
+      ---
+      duration_ms: 0.097541
+      type: 'test'
+      ...
+    # Subtest: re-activates a company the SWEEP disabled and clears termDisabledAt
+    ok 4 - re-activates a company the SWEEP disabled and clears termDisabledAt
+      ---
+      duration_ms: 0.138625
+      type: 'test'
+      ...
+    # Subtest: an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+    ok 5 - an ADMIN-disabled company (no termDisabledAt) gets new dates but stays DISABLED
+      ---
+      duration_ms: 0.148042
+      type: 'test'
+      ...
+    # Subtest: never touches a SUSPENDED company status
+    ok 6 - never touches a SUSPENDED company status
+      ---
+      duration_ms: 0.091417
+      type: 'test'
+      ...
+    # Subtest: resets the whole ladder so the next term can warn again
+    ok 7 - resets the whole ladder so the next term can warn again
+      ---
+      duration_ms: 0.128583
+      type: 'test'
+      ...
+    # Subtest: audits CRITICAL with the date move and the renew count
+    ok 8 - audits CRITICAL with the date move and the renew count
+      ---
+      duration_ms: 0.12225
+      type: 'test'
+      ...
+    # Subtest: replays one actor/body/source-bound command across fresh HTTP request IDs
+    ok 9 - replays one actor/body/source-bound command across fresh HTTP request IDs
+      ---
+      duration_ms: 0.484541
+      type: 'test'
+      ...
+    # Subtest: rejects a non-positive day count
+    ok 10 - rejects a non-positive day count
+      ---
+      duration_ms: 0.074666
+      type: 'test'
+      ...
+    1..10
+ok 4 - RenewCompanyPlanTermUseCase
+  ---
+  duration_ms: 1.716458
+  type: 'suite'
+  ...
+# Subtest: GetPlanTermNoticeUseCase
+    # Subtest: returns null for a company with no term row
+    ok 1 - returns null for a company with no term row
+      ---
+      duration_ms: 0.06425
+      type: 'test'
+      ...
+    # Subtest: marks the OWNER, and only the OWNER
+    ok 2 - marks the OWNER, and only the OWNER
+      ---
+      duration_ms: 0.050375
+      type: 'test'
+      ...
+    # Subtest: carries state and deadline but never limits or tier
+    ok 3 - carries state and deadline but never limits or tier
+      ---
+      duration_ms: 0.045125
+      type: 'test'
+      ...
+    1..3
+ok 5 - GetPlanTermNoticeUseCase
+  ---
+  duration_ms: 0.190125
+  type: 'suite'
+  ...
+# Subtest: withdrawn current operator cannot replay or create a renewal
+ok 6 - withdrawn current operator cannot replay or create a renewal
+  ---
+  duration_ms: 0.132958
+  type: 'test'
+  ...
+# Subtest: manual history allowlists scalar changes and supports legacy renewal dates without exposing raw metadata
+ok 7 - manual history allowlists scalar changes and supports legacy renewal dates without exposing raw metadata
+  ---
+  duration_ms: 0.16325
+  type: 'test'
+  ...
+# Subtest: GET /system/package-change-requests
+    # Subtest: shows the shop, the move and who asked for it
+    ok 1 - shows the shop, the move and who asked for it
+      ---
+      duration_ms: 0.7505
+      type: 'test'
+      ...
+    # Subtest: falls back to OPEN rather than trusting an unknown status from the query string
+    ok 2 - falls back to OPEN rather than trusting an unknown status from the query string
+      ---
+      duration_ms: 0.121125
+      type: 'test'
+      ...
+    1..2
+ok 8 - GET /system/package-change-requests
+  ---
+  duration_ms: 1.3185
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — APPROVE
+    # Subtest: moves the tier through the ONE plan-term writer, with that tier preset
+    ok 1 - moves the tier through the ONE plan-term writer, with that tier preset
+      ---
+      duration_ms: 1.467416
+      type: 'test'
+      ...
+    # Subtest: tells the shop, in the tier label it will recognise
+    ok 2 - tells the shop, in the tier label it will recognise
+      ---
+      duration_ms: 0.497125
+      type: 'test'
+      ...
+    # Subtest: is idempotent: repeating the decision buys no second tier change
+    ok 3 - is idempotent: repeating the decision buys no second tier change
+      ---
+      duration_ms: 0.208458
+      type: 'test'
+      ...
+    # Subtest: two operators on one row produce one tier change, not two
+    ok 4 - two operators on one row produce one tier change, not two
+      ---
+      duration_ms: 0.142958
+      type: 'test'
+      ...
+    # Subtest: puts the row back in the queue when the tier write fails
+    ok 5 - puts the row back in the queue when the tier write fails
+      ---
+      duration_ms: 0.27525
+      type: 'test'
+      ...
+    # Subtest: refuses a tier that is not in the catalog before touching anything
+    ok 6 - refuses a tier that is not in the catalog before touching anything
+      ---
+      duration_ms: 0.589208
+      type: 'test'
+      ...
+    # Subtest: 404s on a request that does not exist
+    ok 7 - 404s on a request that does not exist
+      ---
+      duration_ms: 0.437333
+      type: 'test'
+      ...
+    1..7
+ok 9 - POST /system/package-change-requests/:id/decision — APPROVE
+  ---
+  duration_ms: 3.905125
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — REJECT
+    # Subtest: closes the row without moving the tier, and says so politely
+    ok 1 - closes the row without moving the tier, and says so politely
+      ---
+      duration_ms: 0.456334
+      type: 'test'
+      ...
+    # Subtest: holds the note to the SEC-05 fence, before anything is claimed
+    ok 2 - holds the note to the SEC-05 fence, before anything is claimed
+      ---
+      duration_ms: 0.465125
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours in the note
+    ok 3 - refuses a second URL glued onto one of ours in the note
+      ---
+      duration_ms: 0.644375
+      type: 'test'
+      ...
+    # Subtest: refuses the same paragraph the message box refuses, with the same code
+    ok 4 - refuses the same paragraph the message box refuses, with the same code
+      ---
+      duration_ms: 0.115209
+      type: 'test'
+      ...
+    # Subtest: records the note text in the audit, not merely that one existed
+    ok 5 - records the note text in the audit, not merely that one existed
+      ---
+      duration_ms: 0.119333
+      type: 'test'
+      ...
+    # Subtest: stays silent when the shop has no linked LINE owner
+    ok 6 - stays silent when the shop has no linked LINE owner
+      ---
+      duration_ms: 0.173667
+      type: 'test'
+      ...
+    # Subtest: still decides when no LINE channel is configured at all
+    ok 7 - still decides when no LINE channel is configured at all
+      ---
+      duration_ms: 0.122166
+      type: 'test'
+      ...
+    1..7
+ok 10 - POST /system/package-change-requests/:id/decision — REJECT
+  ---
+  duration_ms: 2.176417
+  type: 'suite'
+  ...
+# Subtest: keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+ok 11 - keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+  ---
+  duration_ms: 0.116416
+  type: 'test'
+  ...
+# Subtest: PartnerController
+    # Subtest: list() returns result from ListPartnersUseCase
+    ok 1 - list() returns result from ListPartnersUseCase
+      ---
+      duration_ms: 0.61025
+      type: 'test'
+      ...
+    # Subtest: detail() returns result from GetPartnerDetailUseCase
+    ok 2 - detail() returns result from GetPartnerDetailUseCase
+      ---
+      duration_ms: 0.1045
+      type: 'test'
+      ...
+    # Subtest: update() passes companyId and admin context to use case
+    ok 3 - update() passes companyId and admin context to use case
+      ---
+      duration_ms: 0.079541
+      type: 'test'
+      ...
+    # Subtest: transitionLifecycle() passes targetStatus and reason to use case
+    ok 4 - transitionLifecycle() passes targetStatus and reason to use case
+      ---
+      duration_ms: 0.062208
+      type: 'test'
+      ...
+    # Subtest: setFeatureEntitlements() passes the whole command contract to the use case
+    ok 5 - setFeatureEntitlements() passes the whole command contract to the use case
+      ---
+      duration_ms: 0.067417
+      type: 'test'
+      ...
+    # Subtest: the feature-command DTO rejects non-array, empty, duplicate and over-catalog payloads
+    ok 6 - the feature-command DTO rejects non-array, empty, duplicate and over-catalog payloads
+      ---
+      duration_ms: 5.59325
+      type: 'test'
+      ...
+    # Subtest: setAiModelConfig() passes modelId to use case
+    ok 7 - setAiModelConfig() passes modelId to use case
+      ---
+      duration_ms: 0.272083
+      type: 'test'
+      ...
+    # Subtest: setAiModelConfig() forwards a budget-only body, and null (clear to inherited) unchanged
+    ok 8 - setAiModelConfig() forwards a budget-only body, and null (clear to inherited) unchanged
+      ---
+      duration_ms: 0.150458
+      type: 'test'
+      ...
+    # Subtest: aiUsage() returns the meter for the partner company
+    ok 9 - aiUsage() returns the meter for the partner company
+      ---
+      duration_ms: 0.25575
+      type: 'test'
+      ...
+    # Subtest: setOcrConfiguration() passes absolute state and admin context to the use case
+    ok 10 - setOcrConfiguration() passes absolute state and admin context to the use case
+      ---
+      duration_ms: 1.300542
+      type: 'test'
+      ...
+    # Subtest: the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields
+    ok 11 - the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields
+      ---
+      duration_ms: 1.17225
+      type: 'test'
+      ...
+    # Subtest: the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable
+    ok 12 - the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable
+      ---
+      duration_ms: 0.319375
+      type: 'test'
+      ...
+    # Subtest: each endpoint has @RequirePermissions metadata
+    ok 13 - each endpoint has @RequirePermissions metadata
+      ---
+      duration_ms: 0.1135
+      type: 'test'
+      ...
+    # Subtest: issueLineLinkToken() passes both ids and the trusted api base to the use case
+    ok 14 - issueLineLinkToken() passes both ids and the trusted api base to the use case
+      ---
+      duration_ms: 0.09725
+      type: 'test'
+      ...
+    # Subtest: the platform AI budget routes carry the same manage permission on read and write
+    ok 15 - the platform AI budget routes carry the same manage permission on read and write
+      ---
+      duration_ms: 0.038834
+      type: 'test'
+      ...
+    # Subtest: no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)
+    ok 16 - no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)
+      ---
+      duration_ms: 0.042209
+      type: 'test'
+      ...
+    # Subtest: non-system-admin context has no system.* permissions — guard would throw ForbiddenException
+    ok 17 - non-system-admin context has no system.* permissions — guard would throw ForbiddenException
+      ---
+      duration_ms: 0.052125
+      type: 'test'
+      ...
+    1..17
+ok 12 - PartnerController
+  ---
+  duration_ms: 11.18975
+  type: 'suite'
+  ...
+# Subtest: GetPartnerDetailUseCase — truthful feature-command readiness
+    # Subtest: returns setVersion and friendly per-feature directional disable readiness
+    ok 1 - returns setVersion and friendly per-feature directional disable readiness
+      ---
+      duration_ms: 0.356
+      type: 'test'
+      ...
+    # Subtest: uses the same current-version + valid-cohort predicate as the command
+    ok 2 - uses the same current-version + valid-cohort predicate as the command
+      ---
+      duration_ms: 0.098084
+      type: 'test'
+      ...
+    1..2
+ok 13 - GetPartnerDetailUseCase — truthful feature-command readiness
+  ---
+  duration_ms: 0.492375
+  type: 'suite'
+  ...
+1..13
+# tests 63
+# suites 10
+# pass 63
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 657.628375

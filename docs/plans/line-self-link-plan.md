@@ -1,6 +1,8 @@
 # Self-Service LINE Account Link — Implementation Plan
 
-Spec: [[specs/line-self-link-spec]] · Status: **executing** (Owner order 2026-09-01)
+Spec: [[specs/line-self-link-spec]]. The phases below are the original 2026-09-01 plan; spec §8 supersedes the unshipped self-issued LIFF token/modal with the existing OAuth sidebar entry. Already-linked rows remain disabled.
+
+**2026-09-14 amendment:** refresh account binding readiness on each menu opening; repair existing bindings only through the Admin Partner Detail QR flow. Follow the [controls plan](mangmee-billing-controls-plan-th.md) for atomic claim/receipt/sever and read-only original-QR recovery. [Focused evidence](../evidence/billing-integration-2026-09-13/line-admin-qr-repair-result.json) records 7 browser/HTTP groups, 15 actual PostgreSQL tests and affected regression/typechecks. No package.json edits, self-relink UI, new login enablement or deployment.
 Delivery: single branch with slice A (admin console QR button, already implemented + tested 2026-09-01).
 
 ## Phase 1 — API
@@ -36,8 +38,7 @@ Delivery: single branch with slice A (admin console QR button, already implement
    Mobile/desktop split: same mechanism the sidebar uses for the drawer (do not invent a new breakpoint).
 9. **i18n** — th/en keys in `workspace-dictionary.ts` (`shell.line_link.*`).
 
-## Phase 3 — Tests (wire every new spec into `apps/api/package.json` test script — the
-spec-suite-coverage guard enforces it; this is the sanctioned package.json exception)
+## Phase 3 — Tests (use an existing maintained test entry; keep the ownership guard and package.json unchanged)
 
 10. Use-case spec: self-scope (mint only for ctx user), 15m TTL bounds, revoke-prior sweep,
     no `userCredential` touch, 404 on inactive membership with zero writes, hash-not-raw storage.
@@ -55,7 +56,7 @@ spec-suite-coverage guard enforces it; this is the sanctioned package.json excep
 ## Guardrails for the implementer
 
 - **Do not touch**: `line/exchange` (stays fail-closed), `CompleteEmployeeLineLinkUseCase`, LIFF pages,
-  employee/owner QR flows, `package.json` beyond the test-script spec paths.
+  employee/owner QR flows outside the approved 2026-09-14 repair amendment; do not edit `package.json`.
 - Shortest correct diff (ponytail full); reuse `PartnerMemberLineLinkTokenUseCase` and `QrLinkCard`
   patterns instead of inventing parallel ones.
 - `x-company-id`/request context provides the company; there is no company parameter on the endpoint.

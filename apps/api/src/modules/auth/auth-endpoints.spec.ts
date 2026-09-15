@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it, beforeEach } from 'node:test';
 import './line-recovery.pg.spec';
 import assert from 'node:assert/strict';
@@ -65,7 +66,7 @@ describe('LINE recovery credential lifecycle', () => {
     const prisma = { client } as any;
     const issueToken = { execute: async () => ({ accessToken: 'test', refreshToken: 'test', expiresIn: 900 }) } as any;
     try {
-      await new NotifyPasswordResetRequestUseCase(prisma, { lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any)
+      await new NotifyPasswordResetRequestUseCase(lineMessagingCredentialsFixture({ lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any), prisma, { lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: 'synthetic', passwordResetResponseMinMs: 0 } as any)
         .execute({ username: 'owner.one' });
       await new Promise<void>((resolve) => setImmediate(resolve));
       assert.ok(recoveryPassword);
@@ -802,7 +803,7 @@ describe('ExchangeLineTokenUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ user: { id: 'u-2', status: 'ACTIVE' } }),
+          findFirst: async () => ({ status: 'ACTIVE', user: { id: 'u-2', status: 'ACTIVE' } }),
         },
       },
     } as any;
@@ -820,7 +821,7 @@ describe('ExchangeLineTokenUseCase', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ user: { id: 'u-3', status: 'SUSPENDED' } }),
+          findFirst: async () => ({ status: 'ACTIVE', user: { id: 'u-3', status: 'SUSPENDED' } }),
         },
       },
     } as any;
@@ -856,6 +857,26 @@ describe('ExchangeLineTokenUseCase', () => {
     assert.equal(calls[0].providerChannelId, 'msg-ch-1');
     assert.equal(calls[1].providerChannelId, undefined);
   });
+
+  for (const status of ['ACTIVE', 'UNLINKED', 'DISABLED']) {
+    it(`keeps the canonical ${status} binding authoritative over an active legacy alias`, async () => {
+      const identities = [
+        { id: 'canonical', provider: 'LINE', providerUserId: 'same-line-user', providerChannelId: 'msg-ch-1', status, user: { id: 'current-user', status: 'ACTIVE' } },
+        { id: 'legacy', provider: 'LINE', providerUserId: 'same-line-user', providerChannelId: 'old-login-channel', status: 'ACTIVE', user: { id: 'previous-user', status: 'ACTIVE' } },
+      ];
+      const queries: unknown[] = [], issued: string[] = [];
+      const prisma = { client: { externalIdentity: { findFirst: async ({ where }: any) => {
+        queries.push(where);
+        return identities.find(row => Object.entries(where).every(([key, value]) => (row as any)[key] === value)) ?? null;
+      } } } } as any;
+      const verifier = { verify: async () => ({ subject: 'same-line-user' }) } as any;
+      const issueToken = { execute: async (userId: string) => { issued.push(userId); return { accessToken: 'synthetic', refreshToken: 'synthetic', expiresIn: 900 }; } } as any;
+      const result = await new ExchangeLineTokenUseCase(verifier, prisma, exchangeConfig, issueToken).execute('synthetic-id-token', 'channel-1');
+      assert.equal(result.linked, status === 'ACTIVE');
+      assert.deepEqual(issued, status === 'ACTIVE' ? ['current-user'] : []);
+      assert.equal(queries.length, 1, 'canonical unlink/disable must not consult the legacy identity');
+    });
+  }
 
   it('fails closed in production when the canonical channel is not configured', async () => {
     const lineVerifier = { verify: async () => ({ subject: 'line-u5' }) } as any;
@@ -1127,6 +1148,25 @@ describe('P11 SES auth mailer provider boundary', () => {
       }
     }
   });
+  it('selects Postmark explicitly and refuses incomplete or validation-only production credentials', () => {
+    const disabled = new DisabledAuthMailerAdapter();
+    const local = new LocalConsoleAuthMailerAdapter(config());
+    const ses = sesMailer().mailer;
+    const postmark = { provider: 'postmark' } as any;
+    const settings = config({ emailProvider: 'postmark', postmarkServerToken: 'synthetic-server-token', postmarkServerId: 42,
+      postmarkMessageStream: 'outbound', postmarkFromAddress: 'system@example.test',
+      postmarkWebhookUsername: 'callback', postmarkWebhookPassword: 'synthetic-webhook-secret-12345' });
+    assert.equal(selectAuthMailer(settings, disabled, local, ses, postmark), postmark);
+    for (const key of ['postmarkServerToken', 'postmarkServerId', 'postmarkMessageStream', 'postmarkFromAddress',
+      'sesWebBaseUrl', 'postmarkWebhookUsername', 'postmarkWebhookPassword']) {
+      assert.throws(() => selectAuthMailer({ ...settings, [key]: undefined }, disabled, local, ses, postmark), /Postmark requires/);
+    }
+    assert.throws(() => selectAuthMailer({ ...settings, sesWebBaseUrl: 'http://app.example.test' }, disabled, local, ses, postmark), /HTTPS/);
+    assert.throws(() => selectAuthMailer({ ...settings, postmarkServerToken: 'POSTMARK_API_TEST' }, disabled, local, ses, postmark), /Postmark requires/);
+    assert.equal(selectAuthMailer({ ...settings, isLocal: true, postmarkServerToken: 'POSTMARK_API_TEST' }, disabled, local, ses, postmark), postmark);
+    assert.throws(() => selectAuthMailer(settings, disabled, local, ses), /Postmark requires/);
+    assert.throws(() => selectAuthMailer({ ...settings, emailProvider: 'typo' }, disabled, local, ses, postmark), /Unsupported email provider/);
+  });
 
   it('never uses the public API origin as the SES frontend base', async () => {
     const disabled = new DisabledAuthMailerAdapter();
@@ -1149,7 +1189,7 @@ describe('P11 SES auth mailer provider boundary', () => {
       } else {
         assert.equal(selectAuthMailer(actual, disabled, local, ses), ses);
         await send();
-        assert.match(commands[0].input.Message.Body.Text.Data, /https:\/\/frontend\.example\.com\/verify-email\?token=token/);
+        assert.match(commands[0].input.Message.Body.Text.Data, /https:\/\/frontend\.example\.com\/verify-email#token=token/);
         assert.doesNotMatch(JSON.stringify(commands), /https:\/\/api\.example\.com/);
       }
     }
@@ -1178,12 +1218,12 @@ describe('P11 SES auth mailer provider boundary', () => {
       assert.equal(input.Message.Body.Html.Charset, 'UTF-8');
     }
     assert.deepEqual(inputs.map((input) => input.Tags[0].Value), ['email_verification', 'password_reset', 'account_claim']);
-    assert.match(inputs[0].Message.Body.Text.Data, /verify-email\?token=verify%2B%2F%3D/);
-    assert.match(inputs[1].Message.Body.Text.Data, /reset-password\?token=reset%2B%2F%3D/);
-    assert.match(inputs[2].Message.Body.Text.Data, /claim-account\?token=claim%2B%2F%3D/);
+    assert.match(inputs[0].Message.Body.Text.Data, /verify-email#token=verify%2B%2F%3D/);
+    assert.match(inputs[1].Message.Body.Text.Data, /reset-password#token=reset%2B%2F%3D/);
+    assert.doesNotMatch(inputs[2].Message.Body.Text.Data, /claim-account\?token=/);
     // R12: the request id rides beside the token so a spent or expired link still knows which
     // status page to offer. It is not a secret — the status endpoint answers a coarse state only.
-    assert.match(inputs[2].Message.Body.Text.Data, /claim-account\?token=claim%2B%2F%3D&r=signup-1/);
+    assert.match(inputs[2].Message.Body.Text.Data, /claim-account\?r=signup-1#token=claim%2B%2F%3D/);
     assert.match(inputs[2].Message.Body.Text.Data, /ไม่ใช่รหัสผ่านของ LINE/);
     assert.match(inputs[2].Message.Body.Html.Data, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.doesNotMatch(inputs[2].Message.Body.Html.Data, /<script>/);

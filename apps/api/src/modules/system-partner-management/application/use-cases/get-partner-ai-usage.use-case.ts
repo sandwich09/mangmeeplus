@@ -3,6 +3,7 @@ import type { PartnerAiUsageDto, PartnerAiUsageMonthDto, PartnerOcrUsageMonthDto
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { Prisma } from '../../../../generated/prisma/client';
+import { partnerAiAdjustmentHistory } from '../partner-ai-adjustment-history';
 import {
   bangkokMonthKey,
   previousBangkokMonthKey,
@@ -39,6 +40,10 @@ export class GetPartnerAiUsageUseCase {
     private readonly config: AppConfigService,
   ) {}
 
+  history(companyId:string, cursor?:string) {
+    return this.prisma.client.$transaction(tx => partnerAiAdjustmentHistory(tx, companyId, cursor), {isolationLevel:'RepeatableRead'});
+  }
+
   async execute(companyId: string): Promise<PartnerAiUsageDto> {
     const monthKey = bangkokMonthKey();
     const previousMonthKey = previousBangkokMonthKey();
@@ -53,7 +58,7 @@ export class GetPartnerAiUsageUseCase {
       const txPrisma = { client: tx } as PrismaService;
       // PrismaPg uses one connection for an interactive transaction; keep these sequential so the
       // adapter never receives overlapping client.query calls while preserving the same snapshot.
-      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true } });
+      const company = await tx.company.findUnique({ where: { id: companyId }, select: { id: true, planTerm: { select: { billingReceiptAccountId: true } } } });
       const months = await tx.companyAiMonthlyUsage.findMany({
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
         select: MONTH_SELECT,
@@ -64,6 +69,7 @@ export class GetPartnerAiUsageUseCase {
           monthlyBudgetSatang: true,
           ocrEnabled: true,
           ocrMonthlyLimit: true,
+          receiptQuotaEnforced: true,
           ocrConfigVersion: true,
           updatedAt: true,
         },
@@ -78,7 +84,7 @@ export class GetPartnerAiUsageUseCase {
       });
       // The console must quote what a company actually inherits, which is the platform settings
       // row when one exists — the same value the five enforcement seams compare against.
-      const platform = await resolvePlatformAiBudget(txPrisma, this.config);
+      const platform = await resolvePlatformAiBudget(txPrisma, this.config, true);
       const ocrSources = await tx.companyOcrUsageEvent.groupBy({
         by: ['monthKey', 'sourceRoute'],
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },
@@ -128,8 +134,14 @@ export class GetPartnerAiUsageUseCase {
         config: {
           enabled: configuration?.ocrEnabled ?? true,
           monthlyLimit: configuration?.ocrMonthlyLimit ?? null,
+          receiptQuotaEnforced: configuration?.receiptQuotaEnforced ?? null,
           version: configuration?.ocrConfigVersion ?? 0,
           updatedAt: configuration?.updatedAt.toISOString() ?? null,
+        },
+        planQuota: {
+          enforced: company.planTerm?.billingReceiptAccountId ? true : (configuration?.receiptQuotaEnforced ?? this.config.receiptQuotaEnforced) === true,
+          source: company.planTerm?.billingReceiptAccountId ? 'PAID_GRANTS' : configuration?.receiptQuotaEnforced == null ? 'DEFAULT' : 'COMPANY',
+          defaultEnforced: this.config.receiptQuotaEnforced === true,
         },
         current: ocrMonth(monthKey, currentUploads),
         previous: ocrMonth(previousMonthKey, previousUploads),

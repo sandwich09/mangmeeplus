@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { claimTokenExpiresAt, CLAIM_EXPIRY_AFTER_APPROVAL_DAYS } from '../domain/account-claim.logic';
@@ -347,6 +348,7 @@ describe('SignupClaimEmailService.drain', () => {
     // Any type claimed here must also appear in DrainWorkflowOutboxUseCase's exclusion list, or
     // the generic drain publishes it into a void and the real consumer never sees it.
     assert.deepEqual(h.claims[0].eventTypes, [
+      'email.postmark.event.received',
       ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
       SIGNUP_PENDING_REVIEW_EVENT_TYPE,
@@ -660,6 +662,7 @@ describe('SignupAdminNotifyService', () => {
       execute: async (input: any) => { events.push({ notification: input }); return { skipped: options.skipped === true }; },
     } as any;
     const config = {
+      lineMessagingChannelId:'synthetic-messaging',
       lineMessagingChannelAccessToken: 'token' in options ? options.token : 'channel-token',
     } as any;
     const logger = { warn: (fields: any) => logs.push(fields), error: (fields: any) => logs.push(fields) } as any;
@@ -674,7 +677,7 @@ describe('SignupAdminNotifyService', () => {
     const restore = () => { globalThis.fetch = realFetch; };
 
     return {
-      service: new SignupAdminNotifyService(prisma, outbox, notifications, config, logger),
+      service: new SignupAdminNotifyService(lineMessagingCredentialsFixture(config), prisma, outbox, notifications, config, logger),
       appended, events, pushes, logs, restore,
     };
   }
@@ -709,6 +712,7 @@ describe('SignupAdminNotifyService', () => {
       assert.equal(notification.severity, 'action');
       assert.match(notification.title, /ร้านมั่งมี/);
 
+      assert.equal(h.events.find(e=>e.identityQuery).identityQuery.providerChannelId,'synthetic-messaging');
       assert.deepEqual(h.pushes.map((p) => p.to), ['U-admin-1', 'U-admin-2']);
       assert.ok(h.pushes[0]!.body.startsWith(signupPendingReviewMessage('ร้านมั่งมี')));
       assert.match(h.pushes[0]!.body, /\/system\/signup-requests/);

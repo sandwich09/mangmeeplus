@@ -1,0 +1,365 @@
+TAP version 13
+# Subtest: PrismaBranchRepository tax identity coupling
+    # Subtest: persists a tax code as a VAT establishment and exposes the status
+    ok 1 - persists a tax code as a VAT establishment and exposes the status
+      ---
+      duration_ms: 0.534041
+      type: 'test'
+      ...
+    # Subtest: does not clear the coupling during an unrelated update
+    ok 2 - does not clear the coupling during an unrelated update
+      ---
+      duration_ms: 0.117416
+      type: 'test'
+      ...
+    # Subtest: clears both fields only when the caller explicitly sends null
+    ok 3 - clears both fields only when the caller explicitly sends null
+      ---
+      duration_ms: 0.097958
+      type: 'test'
+      ...
+    1..3
+ok 1 - PrismaBranchRepository tax identity coupling
+  ---
+  duration_ms: 1.19625
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase
+    # Subtest: creates user, membership, role assignment, and access profile as a draft
+    ok 1 - creates user, membership, role assignment, and access profile as a draft
+      ---
+      duration_ms: 57.521125
+      type: 'test'
+      ...
+    # Subtest: rejects multiple or repeated roles before creating any employee records
+    ok 2 - rejects multiple or repeated roles before creating any employee records
+      ---
+      duration_ms: 0.336041
+      type: 'test'
+      ...
+    # Subtest: issues a single-use LINE link QR package bound to the new user
+    ok 3 - issues a single-use LINE link QR package bound to the new user
+      ---
+      duration_ms: 29.138625
+      type: 'test'
+      ...
+    # Subtest: never persists the plaintext identity number
+    ok 4 - never persists the plaintext identity number
+      ---
+      duration_ms: 27.054084
+      type: 'test'
+      ...
+    # Subtest: writes an audit log without the password or identity number
+    ok 5 - writes an audit log without the password or identity number
+      ---
+      duration_ms: 25.896416
+      type: 'test'
+      ...
+    # Subtest: rejects when a role id is unknown
+    ok 6 - rejects when a role id is unknown
+      ---
+      duration_ms: 0.135875
+      type: 'test'
+      ...
+    # Subtest: rejects granting OWNER through employee provisioning
+    ok 7 - rejects granting OWNER through employee provisioning
+      ---
+      duration_ms: 0.084
+      type: 'test'
+      ...
+    # Subtest: rejects granting SYSTEM_ADMIN through employee provisioning
+    ok 8 - rejects granting SYSTEM_ADMIN through employee provisioning
+      ---
+      duration_ms: 0.362167
+      type: 'test'
+      ...
+    # Subtest: rejects granting permissions the requester does not hold
+    ok 9 - rejects granting permissions the requester does not hold
+      ---
+      duration_ms: 0.230375
+      type: 'test'
+      ...
+    # Subtest: allows a role when the resolver proves its disabled-feature permission belongs to the requester
+    ok 10 - allows a role when the resolver proves its disabled-feature permission belongs to the requester
+      ---
+      duration_ms: 25.057833
+      type: 'test'
+      ...
+    # Subtest: requires owner approval to grant FINANCE even when the requester holds its permissions
+    ok 11 - requires owner approval to grant FINANCE even when the requester holds its permissions
+      ---
+      duration_ms: 0.200917
+      type: 'test'
+      ...
+    # Subtest: rejects duplicate identity number within the company
+    ok 12 - rejects duplicate identity number within the company
+      ---
+      duration_ms: 0.16975
+      type: 'test'
+      ...
+    # Subtest: rejects duplicate phone number within the company
+    ok 13 - rejects duplicate phone number within the company
+      ---
+      duration_ms: 0.166167
+      type: 'test'
+      ...
+    # Subtest: resumes the same draft identity instead of creating a duplicate employee
+    ok 14 - resumes the same draft identity instead of creating a duplicate employee
+      ---
+      duration_ms: 50.707959
+      type: 'test'
+      ...
+    # Subtest: widens a narrowed draft membership when the resumed draft carries an all-branch role
+    ok 15 - widens a narrowed draft membership when the resumed draft carries an all-branch role
+      ---
+      duration_ms: 53.121958
+      type: 'test'
+      ...
+    # Subtest: leaves a resumed draft with a branch-scopable role narrowed as it was
+    ok 16 - leaves a resumed draft with a branch-scopable role narrowed as it was
+      ---
+      duration_ms: 50.495416
+      type: 'test'
+      ...
+    # Subtest: activates both the employee profile and membership only when the draft is completed
+    ok 17 - activates both the employee profile and membership only when the draft is completed
+      ---
+      duration_ms: 25.07575
+      type: 'test'
+      ...
+    # Subtest: does not let activation bypass a restricted creator branch assignment
+    ok 18 - does not let activation bypass a restricted creator branch assignment
+      ---
+      duration_ms: 25.048042
+      type: 'test'
+      ...
+    # Subtest: still rejects the identity after its draft has been completed
+    ok 19 - still rejects the identity after its draft has been completed
+      ---
+      duration_ms: 24.541958
+      type: 'test'
+      ...
+    # Subtest: rejects when no roles are provided
+    ok 20 - rejects when no roles are provided
+      ---
+      duration_ms: 0.12425
+      type: 'test'
+      ...
+    # Subtest: prompts to confirm (employee_existing_user) when the username matches an existing account and linkExistingUser is not set
+    ok 21 - prompts to confirm (employee_existing_user) when the username matches an existing account and linkExistingUser is not set
+      ---
+      duration_ms: 23.062625
+      type: 'test'
+      ...
+    # Subtest: attaches an existing user as a second-company draft without a new login or credential reset
+    ok 22 - attaches an existing user as a second-company draft without a new login or credential reset
+      ---
+      duration_ms: 24.837584
+      type: 'test'
+      ...
+    # Subtest: requires a company email that differs from the existing account when attaching
+    ok 23 - requires a company email that differs from the existing account when attaching
+      ---
+      duration_ms: 46.2125
+      type: 'test'
+      ...
+    # Subtest: resumes an attached user draft without resetting the shared login
+    ok 24 - resumes an attached user draft without resetting the shared login
+      ---
+      duration_ms: 48.947
+      type: 'test'
+      ...
+    # Subtest: persists the additive wizard fields (email on the user, the rest on the profile)
+    ok 25 - persists the additive wizard fields (email on the user, the rest on the profile)
+      ---
+      duration_ms: 24.609875
+      type: 'test'
+      ...
+    1..25
+ok 2 - CreateEmployeeUseCase
+  ---
+  duration_ms: 564.145375
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase title prefix
+    # Subtest: stores the title beside the name, leaving displayName free of it
+    ok 1 - stores the title beside the name, leaving displayName free of it
+      ---
+      duration_ms: 24.606334
+      type: 'test'
+      ...
+    # Subtest: carries a corrected title through a resumed draft
+    ok 2 - carries a corrected title through a resumed draft
+      ---
+      duration_ms: 49.666333
+      type: 'test'
+      ...
+    # Subtest: leaves the column empty when no title is sent, rather than inventing one
+    ok 3 - leaves the column empty when no title is sent, rather than inventing one
+      ---
+      duration_ms: 24.4075
+      type: 'test'
+      ...
+    1..3
+ok 3 - CreateEmployeeUseCase title prefix
+  ---
+  duration_ms: 98.7755
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase job title
+    # Subtest: updates a descriptive job title without changing the assigned role
+    ok 1 - updates a descriptive job title without changing the assigned role
+      ---
+      duration_ms: 49.283125
+      type: 'test'
+      ...
+    1..1
+ok 4 - CreateEmployeeUseCase job title
+  ---
+  duration_ms: 49.33125
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase P29 seat cap
+    # Subtest: a company with no plan-term row is unlimited
+    ok 1 - a company with no plan-term row is unlimited
+      ---
+      duration_ms: 24.358125
+      type: 'test'
+      ...
+    # Subtest: under the limit still creates
+    ok 2 - under the limit still creates
+      ---
+      duration_ms: 24.384958
+      type: 'test'
+      ...
+    # Subtest: at the limit throws 422 with the Thai package message and writes nothing
+    ok 3 - at the limit throws 422 with the Thai package message and writes nothing
+      ---
+      duration_ms: 23.370542
+      type: 'test'
+      ...
+    # Subtest: already OVER the limit blocks only the new employee; existing ones are untouched
+    ok 4 - already OVER the limit blocks only the new employee; existing ones are untouched
+      ---
+      duration_ms: 23.327
+      type: 'test'
+      ...
+    # Subtest: resuming an existing DRAFT is never blocked — it adds no seat
+    ok 5 - resuming an existing DRAFT is never blocked — it adds no seat
+      ---
+      duration_ms: 48.63525
+      type: 'test'
+      ...
+    1..5
+ok 5 - CreateEmployeeUseCase P29 seat cap
+  ---
+  duration_ms: 144.209416
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase P29 seat cap on completeDraft
+    # Subtest: a company with no plan-term row completes drafts unlimited
+    ok 1 - a company with no plan-term row completes drafts unlimited
+      ---
+      duration_ms: 24.357084
+      type: 'test'
+      ...
+    # Subtest: under the cap completes, and the completed draft is the seat that lands on the limit
+    ok 2 - under the cap completes, and the completed draft is the seat that lands on the limit
+      ---
+      duration_ms: 24.370125
+      type: 'test'
+      ...
+    # Subtest: at the cap refuses the completion with the same 422 the create path throws
+    ok 3 - at the cap refuses the completion with the same 422 the create path throws
+      ---
+      duration_ms: 24.018625
+      type: 'test'
+      ...
+    # Subtest: closes the stacked-draft loophole: drafts created under the cap cannot all be finished
+    ok 4 - closes the stacked-draft loophole: drafts created under the cap cannot all be finished
+      ---
+      duration_ms: 47.75275
+      type: 'test'
+      ...
+    # Subtest: keeps Finish idempotent at the cap for an already-active employee
+    ok 5 - keeps Finish idempotent at the cap for an already-active employee
+      ---
+      duration_ms: 23.741375
+      type: 'test'
+      ...
+    1..5
+ok 6 - CreateEmployeeUseCase P29 seat cap on completeDraft
+  ---
+  duration_ms: 144.401208
+  type: 'suite'
+  ...
+# Subtest: company employee draft removal
+    # Subtest: removes only this company draft, releases its identity/phone, revokes pending tokens and audits without PII
+    ok 1 - removes only this company draft, releases its identity/phone, revokes pending tokens and audits without PII
+      ---
+      duration_ms: 24.661625
+      type: 'test'
+      ...
+    # Subtest: keeps the existing login and existing-account confirmation/email policy when recreating the deleted identity
+    ok 2 - keeps the existing login and existing-account confirmation/email policy when recreating the deleted identity
+      ---
+      duration_ms: 91.910125
+      type: 'test'
+      ...
+    # Subtest: returns the same safe not-found result for an unknown, cross-company or already-deleted draft
+    ok 3 - returns the same safe not-found result for an unknown, cross-company or already-deleted draft
+      ---
+      duration_ms: 24.161292
+      type: 'test'
+      ...
+    # Subtest: denies missing permissions, owner/platform targets and privileged targets without role-management authority
+    ok 4 - denies missing permissions, owner/platform targets and privileged targets without role-management authority
+      ---
+      duration_ms: 23.964625
+      type: 'test'
+      ...
+    # Subtest: never deletes a non-draft profile or an active membership, and rolls back token revocation on rejection
+    ok 5 - never deletes a non-draft profile or an active membership, and rolls back token revocation on rejection
+      ---
+      duration_ms: 166.94975
+      type: 'test'
+      ...
+    # Subtest: rolls back removal and revocation if the audit cannot be retained
+    ok 6 - rolls back removal and revocation if the audit cannot be retained
+      ---
+      duration_ms: 24.474875
+      type: 'test'
+      ...
+    # Subtest: rechecks Finish after a deletion wins, and rejects deletion when Finish wins
+    ok 7 - rechecks Finish after a deletion wins, and rejects deletion when Finish wins
+      ---
+      duration_ms: 48.181708
+      type: 'test'
+      ...
+    # Subtest: does not let a stale resume recreate a removed draft or reset a completed employee credential
+    ok 8 - does not let a stale resume recreate a removed draft or reset a completed employee credential
+      ---
+      duration_ms: 94.092916
+      type: 'test'
+      ...
+    # Subtest: does not issue an orphan token after deletion, and revokes a token issued just before deletion
+    ok 9 - does not issue an orphan token after deletion, and revokes a token issued just before deletion
+      ---
+      duration_ms: 49.809625
+      type: 'test'
+      ...
+    1..9
+ok 7 - company employee draft removal
+  ---
+  duration_ms: 548.404875
+  type: 'suite'
+  ...
+1..7
+# tests 51
+# suites 7
+# pass 51
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1712.525833

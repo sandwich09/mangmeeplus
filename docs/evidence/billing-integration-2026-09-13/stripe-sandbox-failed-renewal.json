@@ -1,0 +1,23 @@
+{
+  "layer": "actual Stripe sandbox Test Clock, provider primitive only",
+  "realMoney": false,
+  "applicationGraceTested": false,
+  "subscription": "sub_1UF5oZRvebw5L0s314wUeNS9",
+  "clock": "clock_1UF5o8Rvebw5L0s3d09YypaL",
+  "customer": "cus_VFb0DUqE2v931z",
+  "paymentMethodFixture": "pm_card_chargeCustomerFail",
+  "failedInvoice": "in_1UF69QRvebw5L0s3j1WwU4Ri",
+  "renewalAt": 1947043007,
+  "observedAfterRenewal": {
+    "clockStatus": "ready", "clockTime": 1947050207, "subscriptionStatus": "past_due",
+    "invoiceStatus": "open", "totalSatang": 999000, "paidSatang": 0,
+    "remainingSatang": 999000, "attempted": true, "attemptCount": 1
+  },
+  "cancellation": {
+    "clockTime": 1947647807, "daysAfterRenewal": 7, "beforeStatus": "past_due",
+    "invoiceNow": false, "prorate": false, "observedStatus": "canceled", "canceledAt": 1947647807,
+    "unpaidInvoiceStatus": "open", "autoAdvance": false, "nextPaymentAttempt": null,
+    "paidSatang": 0, "remainingSatang": 999000
+  },
+  "limitation": "Provider cancellation stops collection but does not erase the debt. Customer access, quota, holds and durable retry were tested separately on local PostgreSQL; this is not application/native LINE E2E."
+}

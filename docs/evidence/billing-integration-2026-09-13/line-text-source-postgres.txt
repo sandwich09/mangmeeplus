@@ -1,0 +1,10 @@
+# New text-capture cases; full suite totals below
+        ok 35 - receipt text-capture rechecks its actual persisted source before delivery: unchanged
+        ok 36 - receipt text-capture rechecks its actual persisted source before delivery: branch
+        ok 37 - receipt text-capture rechecks its actual persisted source before delivery: revision
+        ok 38 - receipt text-capture rechecks its actual persisted source before delivery: fallback
+        ok 39 - receipt text-capture rechecks its actual persisted source before delivery: category
+# tests 74
+# pass 74
+# fail 0
+# skipped 0

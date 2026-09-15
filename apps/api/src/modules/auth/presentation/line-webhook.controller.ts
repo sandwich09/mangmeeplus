@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Controller, HttpCode, Logger, Post, Req, UnauthorizedException } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
@@ -24,7 +25,7 @@ type RawLineRequest = Request & { rawBody?: Buffer };
 export class LineWebhookController {
   private readonly logger = new Logger(LineWebhookController.name);
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly config: AppConfigService,
     private readonly messageBuffer: LineMessageBufferService,
   ) {}
@@ -54,7 +55,8 @@ export class LineWebhookController {
     const sig = req.headers['x-line-signature'] as string | undefined;
     if (!sig) throw new UnauthorizedException('Missing x-line-signature header.');
 
-    const secret = this.config.lineMessagingChannelSecret;
+    const credential = await this.lineCredentials.get(undefined, 'INBOUND');
+    const secret = credential.channelSecret;
     if (!secret) throw new UnauthorizedException('LINE Messaging channel secret not configured.');
 
     if (!req.rawBody) throw new UnauthorizedException('LINE webhook raw body unavailable.');
@@ -65,8 +67,9 @@ export class LineWebhookController {
       throw new UnauthorizedException('Invalid LINE webhook signature.');
     }
 
+    await this.lineCredentials.observeSignature(credential);
     const payload = req.body as { destination?: string; events?: LineMessageEvent[] };
-    const messagingChannelId = this.config.lineMessagingChannelId ?? '';
+    const messagingChannelId = credential.channelId ?? '';
     this.logger.log({ msg: 'LINE webhook received', destination: payload.destination });
 
     for (const event of payload.events ?? []) {

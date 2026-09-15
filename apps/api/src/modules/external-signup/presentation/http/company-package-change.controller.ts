@@ -18,8 +18,8 @@ export class CreatePackageChangeRequestDto {
 
 /**
  * P10-L §3.7/§8. "Ask to change package" from inside the shop. It opens a request in the admin
- * queue and never touches the tier — that still happens only through the partner plan-term route,
- * which is what keeps one place where a customer's limits can move (H-01).
+ * queue and never touches the tier. Only the reviewed Admin writer or verified paid application
+ * changes the package; an open request is not payment evidence.
  *
  * Guarded by `company.setup.manage`, the existing company-settings permission an OWNER holds. No
  * new permission key: asking about your own plan is a settings action, not a new authority.

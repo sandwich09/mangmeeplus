@@ -1,0 +1,106 @@
+{
+  "status": "LOCAL_MANUAL_RECEIPT_ADJUSTMENTS_SLICE_PASS",
+  "recordedAt": "2026-09-15T08:14:42.930843+00:00",
+  "baseCommit": "e1e127955e574e999235c8e3477abb6aa2ad9fba",
+  "sourceSha256": {
+    "apps/api/prisma/schema.prisma": "4621521587a6b72b178229ead3f71011d801f01e54bc820c82827ff6237d5739",
+    "apps/api/prisma/migrations/20260915100000_manual_receipt_adjustments/migration.sql": "e0f55e6bbb37d2f2a0990981a6c9b6ab92ef42fcc091c80e52ed8610f9756784",
+    "packages/contracts/src/billing.ts": "f5ada0b33410435bc4426ec3f1479bab3b15ac75c71996b2b31cb2a0da5de85c",
+    "apps/api/src/modules/billing/application/billing-receipt-adjustments.service.ts": "8f887f8a16afeb7f1e30d520ba9dbea182519c340d6065ee0b6c16893aeca0a9",
+    "apps/api/src/modules/billing/application/billing-receipt-grants.ts": "a2339576f5363ecb977f319cb04bbe9427df5339bda89d9e35fcbda9937e584c",
+    "apps/api/src/modules/billing/application/billing.service.ts": "c411f4267ec7f0d6eb7ba3002bf2b2ff36de7088c4f14de71dec25a94dc030b0",
+    "apps/api/src/modules/billing/billing-receipts.pg.spec.ts": "950baf54e0774210744f057f56a84f1edd64212eb6b949784f16681a4d2c74e2",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts": "158af84f7e4f7fe2ccca4e075b201ab69f299715c2fc189cd4bc6409f0486d10",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts": "b651710ea2f4a266cb0b79e5215fa919dd7ed0ef5784340f7aef9bc23a1be8f9",
+    "apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts": "b683b06891fef9f989c2ab153834364625737e5de37cae2b79019363ab9c4f6b",
+    "apps/api/src/modules/line-ai/application/company-ocr-governance.ts": "c288a23bfb74ccee87a57d289a6f93f4dac8d644779ca31c8b5fec6f95d3e453",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "4ef4391ef14f6a33a380c9ff80cdb68342ef4c0fe427c33bb7d0b23822ffd5bc",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "9950109d8ab56a5990a358e5810bc2a59c07944d175cc38481d248895d4c2526",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-timeline.use-case.ts": "78b367833cbd17454812b067991895c0d4e9542abbe6df4e377cb57316b0a24c",
+    "apps/api/src/modules/system-partner-management/domain/logic/receipt-quota.logic.ts": "3e1f419d308c17dc795af5529ecbf92bad9d579988ae05823b48888ae7f49730",
+    "apps/api/src/modules/system-partner-management/domain/logic/receipt-quota.logic.spec.ts": "f84dc09a7f719c515950294bda16367a7273762d41be90dc848a26692671d3f2",
+    "apps/api/src/scripts/billing-receipt-adjustments-smoke.ts": "97a7a464436ba0acac105540261ba1ce05733f0c1d872e9bd982e28f591e03b8",
+    "apps/api/src/scripts/manual-receipt-adjustments-smoke.ts": "4406bcf5f9d779b258b3f20cf08705ce809587b5f8c82e135c948ca2f8e30a54",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "68ae8de68bc4f62a940fd21ee347ebf9be74fa782f146cc54bad9201fc7a35e8",
+    "apps/web/src/features/billing-admin/BillingReceiptAdjustmentsPage.tsx": "5330fd8ef2ba36944020de2b09f65db4ddff229212126c7ce2fd21fa7e4fd47f",
+    "apps/web/src/features/billing/BillingPage.tsx": "ad95cccccd6429d1a798a446a70fc7bc8732b8f7faf11bf89031b22a32d9e97e",
+    "apps/web/src/features/billing/billing-display.ts": "36fe7be73da63f7834be9dc50d6af2d13bff8ac76ce9d314018d7087a37f99b0",
+    "apps/web/src/features/billing/billing-display.spec.ts": "962f0b47ea248c3c2ec22ac327fe402d0c6b7082c8decd3cf7609cb4036433b4"
+  },
+  "focused": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "admin-manual-receipts-base15-plus-approved-gift-without-account-concurrent-replay-and-shared-web-line-balance",
+      "browser-manual-receipts-create-independent-approval-lost-result-retry-once-and-separate-monthly-gift-web-line-copy",
+      "admin-manual-receipts-paid-conversion-stales-pending-review-retains-original-replay-and-gift-without-trial-base-carry",
+      "admin-paid-receipts-review-shows-current-disabled-read-limit-and-budget-impact",
+      "admin-paid-receipts-reason-validation-expiry-password-independent-approval-replay",
+      "admin-paid-receipts-web-line-admission-and-revoke-preserve-consumption-and-paid-grant",
+      "admin-paid-receipts-hold-stale-expired-review-cancel-and-foreign-history",
+      "admin-paid-receipts-approval-rechecks-withdrawn-requester-authority",
+      "admin-paid-receipts-audit-failure-rolls-back-grant-and-operation",
+      "browser-customer-web-and-line-billing-entry-see-admin-granted-balance",
+      "browser-admin-receipts-preview-independent-approval-response-loss-history-reload-mobile",
+      "admin-paid-receipts-preserve-package-collection-original-purchase-and-no-fiscal-document"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "checks": {
+    "unit": {
+      "pass": 121,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-receipts-unit.tap"
+    },
+    "postgres": {
+      "pass": 14,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-receipts-postgres.tap"
+    },
+    "entry": {
+      "pass": 338,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-receipts-entry.tap"
+    },
+    "web": {
+      "pass": 5,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-receipts-web.tap"
+    }
+  },
+  "captures": [
+    "admin-manual-receipts-mobile.png",
+    "manual-receipts-owner-mobile.png"
+  ],
+  "commands": [
+    "BILLING_CONFIG_ONLY=1 BILLING_RECEIPT_ADJUSTMENTS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "Guarded local PostgreSQL: billing-receipts.pg.spec.ts; company-ai-usage-meter.spec.ts with OCR_REQUIRE_POSTGRES=true",
+    "API source tests: partner-support-tools.spec.ts, receipt-quota.logic.spec.ts, expense-extraction.use-case.spec.ts, process-line-webhook.use-case.spec.ts",
+    "Web: billing-display.spec.ts; contracts build; Prisma generate; API/web tsc --noEmit; SWC build"
+  ],
+  "boundaries": [
+    "Actual local PostgreSQL/HTTP/Next/Chromium; providers simulated. Null-account ADMIN_ADJUSTMENT gifts do not create a Stripe account, invoice or provider call. The compound company FK remains; a partial unique company/source key and paid-account check guard the existing ledger. Migration20260915100000 was applied only to guarded localhost15432/mangmee_billing_20260912.",
+    "Monthly base is consumed before fixed gifts. Shadow-only reads do not consume gifts. Monthly rollover renews only base allowance; previous gifted usage is retained and over-base shadow usage does not erase gifts. Operational OCR/AI limits and lifecycle/permissions remain independent.",
+    "Actual DB checks cover base15, concurrent last web/LINE unit, exact failure release, monthly rollover, shadow/lower-base changes, company hold, paid conversion, fixed expiry and retained consumed grants. Internal paid conversion fixture is not a real Stripe payment.",
+    "Actual browser creates a manual gift, submits for independent review, reauthenticates the approving browser, loses the actual committed approval response, and retries the same operation once. Owner web and LINE billing entry show separate monthly and gifted balances. Original successful manual operation remains replayable after paid conversion; pending manual preview becomes stale. Paid receipt nine-group regression remains in the same twelve-group run.",
+    "The first browser fixture assumed an approval response would be200; it returned409 before explicit browser password proof. The second fixture checked a visible alert before its intercepted network work completed. Final fixture uses the actual password form, waits for the retained backend result and verifies one grant/audit after response loss. Runtime financial/authority checks were not weakened.",
+    "Quote projection includes still-valid manual gifted units without carrying ordinary trial quota. Native initial Checkout with such a gift is not newly certified by this focused fixture. Original receipt-only sales stay hidden, Enterprise/tax Coming soon stays locked, and paid free-day collection coordination is still pending.",
+    "Earlier combined276 predates manual/AI/gift increments. Counts overlap; this is not a new full combined/native-provider acceptance. No CI, push, merge, deployment, native charge or recipient send. Remaining controls/mail/LINE and both-repository final green-CI merges remain open."
+  ],
+  "typechecks": {
+    "api": "PASS",
+    "web": "PASS",
+    "contracts": "PASS",
+    "prismaGenerate": "PASS",
+    "swc": "PASS"
+  }
+}

@@ -18,6 +18,8 @@ import { LineSignupNotifyService } from './line-signup-notify.service';
 import { shortLineIdHash } from './signup-admin-notify.service';
 import { lineSignupContactEmailConflict, SubmitLineSignupUseCase } from './submit-line-signup.use-case';
 import { daysSinceApproval } from '../domain/account-claim.logic';
+import { signupClaimHistory } from './signup-claim-history';
+import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import {
   OWNED_COMPANY_MEMBERSHIP,
   SIGNUP_SOURCE_LINE_OA,
@@ -110,6 +112,10 @@ export class SignupAdminQueueUseCase {
     private readonly lineNotify: LineSignupNotifyService,
     @Optional() private readonly lineSubmit?: SubmitLineSignupUseCase,
   ) {}
+
+  claimHistory(context: RequestContext, requestId: string, cursor?: string) {
+    return signupClaimHistory(this.prisma.client, context, requestId, cursor);
+  }
 
   /**
    * R13: the tab is decided HERE, and the page is a page. The first version read 200 rows with no

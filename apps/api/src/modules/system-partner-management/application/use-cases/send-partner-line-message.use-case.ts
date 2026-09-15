@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type { PartnerLineMessageResultDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -24,7 +25,7 @@ export const PARTNER_LINE_MESSAGE_ACTION = 'system.partner.line_message_sent';
  */
 @Injectable()
 export class SendPartnerLineMessageUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
   ) {}
@@ -69,8 +70,9 @@ export class SendPartnerLineMessageUseCase {
       throw new UnprocessableEntityException('partner_line_message_external_link');
     }
 
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) throw new UnprocessableEntityException('line_messaging_channel_not_configured');
+    const credentials = await this.lineCredentials.get();
+    const token = credentials.accessToken;
+    if (!token || !credentials.channelId) throw new UnprocessableEntityException('line_messaging_channel_not_configured');
 
     const sender = await this.prisma.client.user.findUnique({
       where: { id: cmd.requestingAdminUserId },
@@ -83,7 +85,7 @@ export class SendPartnerLineMessageUseCase {
     // linked, to nobody at all). Exactly the one the operator named, never the others: two
     // strangers must not read each other's support conversation.
     const recipients = [...new Set([
-      ...await ownerLineUserIds(this.prisma, cmd.companyId),
+      ...await ownerLineUserIds(this.prisma, cmd.companyId, credentials.channelId),
       ...(target ? [target.lineUserId] : []),
     ])];
     let delivered = 0;

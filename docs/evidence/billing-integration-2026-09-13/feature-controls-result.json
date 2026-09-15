@@ -1,0 +1,41 @@
+{
+  "recordedAt": "2026-09-15T16:55:41.071210+00:00",
+  "status": "LOCAL_FEATURE_HTTP_PG_BROWSER_PASS",
+  "baseCommit": "1fe5172bb36091bbf8e1aecdb0a31442c501cf48",
+  "sourceSha256": {
+    "apps/api/src/scripts/billing-feature-controls-smoke.ts": "87da988aa553cb9e3c0ee19a45ccde9ad54d5688ee42452c65f9583e6f7fbdbc",
+    "apps/api/src/scripts/billing-plan-adjustments-smoke.ts": "90f3413e57457af87c717eb695747c98477c9613ea085b1005178ea89080c87c",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-features.use-case.ts": "9a013fda0515cb00eec6ee934190778825a822213f25cb0d4e70327990b347de",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "6aad4fcedae077b888a07f9419509ecf82456a8547a4eaf64a7a25a71ac37dff"
+  },
+  "command": "BILLING_CONFIG_ONLY=1 BILLING_PLAN_ADJUSTMENTS_ONLY=1 BILLING_FEATURE_CONTROLS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+  "localLog": "/tmp/mangmee-final-feature-browser-pass.log",
+  "logSha256": "69f89b79609c30748ade7a4b1c6bd21076254bafb35eb8647e3f7fafac19554e",
+  "result": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "admin-feature-foundation-and-normalization-refusal-no-partial-write-with-browser-disabled-exit",
+      "admin-feature-child-off-current-set-version-original-replay-stale-admin-and-key-reuse-safe",
+      "browser-admin-starter-preset-preview-review-lost-response-identical-replay-reload-17-keys",
+      "admin-feature-dependency-cascade-explicit-confirm-and-preserved-starter-access"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "capture": {
+    "path": "admin-feature-preset-mobile.png",
+    "sha256": "f42ea3199990e63e04e9fdfdee7da16a3963b8c106c9b681f2006f7102d5b576",
+    "inspected": true
+  },
+  "limits": [
+    "Explicit synthetic current-normalization fixture; original signup journey has separate proof.",
+    "Actual API, database and 390px Chromium; providers simulated.",
+    "Foundation and normalization denied before mutation; cross-feature dependency cascade explicitly confirmed.",
+    "A package change does not open a closed launch gate or authorize native rollout."
+  ]
+}

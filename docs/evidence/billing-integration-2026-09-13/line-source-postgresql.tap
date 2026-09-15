@@ -1,0 +1,199 @@
+TAP version 13
+# Subtest: LINE delivery actor access on isolated PostgreSQL
+    # Subtest: sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+    ok 1 - sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+      ---
+      duration_ms: 180.791458
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+    ok 2 - suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+      ---
+      duration_ms: 50.492208
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+    ok 3 - suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+      ---
+      duration_ms: 48.690834
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+    ok 4 - suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+      ---
+      duration_ms: 48.4885
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+    ok 5 - suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+      ---
+      duration_ms: 41.402666
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+    ok 6 - suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+      ---
+      duration_ms: 38.318875
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+    ok 7 - suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+      ---
+      duration_ms: 31.106583
+      type: 'test'
+      ...
+    # Subtest: suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+    ok 8 - suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+      ---
+      duration_ms: 33.450459
+      type: 'test'
+      ...
+    1..8
+ok 1 - LINE delivery actor access on isolated PostgreSQL
+  ---
+  duration_ms: 624.30225
+  type: 'suite'
+  ...
+# Subtest: LINE original-source recheck on isolated PostgreSQL
+    # Subtest: uses the actual expense read and current scopes, retaining only bounded inputs and a result digest
+        # Subtest: unchanged source and observation timestamp/key-order changes still verify
+        ok 1 - unchanged source and observation timestamp/key-order changes still verify
+          ---
+          duration_ms: 23.867792
+          type: 'test'
+          ...
+        # Subtest: API evidence cannot be hidden or substituted by gateway telemetry
+        ok 2 - API evidence cannot be hidden or substituted by gateway telemetry
+          ---
+          duration_ms: 2.467791
+          type: 'test'
+          ...
+        # Subtest: same actor and unchanged scopes cannot reuse a record moved to another branch
+        ok 3 - same actor and unchanged scopes cannot reuse a record moved to another branch
+          ---
+          duration_ms: 23.533625
+          type: 'test'
+          ...
+        # Subtest: a changed result with identical record counts and later restoration is observed
+        ok 4 - a changed result with identical record counts and later restoration is observed
+          ---
+          duration_ms: 29.229875
+          type: 'test'
+          ...
+        # Subtest: missing/duplicate/foreign-request and expired evidence cannot authorize a read
+        ok 5 - missing/duplicate/foreign-request and expired evidence cannot authorize a read
+          ---
+          duration_ms: 13.464458
+          type: 'test'
+          ...
+        # Subtest: proof cannot turn a preview/mutation category into a read executor
+        ok 6 - proof cannot turn a preview/mutation category into a read executor
+          ---
+          duration_ms: 5.249
+          type: 'test'
+          ...
+        # Subtest: bounded inputs and evidence reservation do not let concurrent writers exceed64
+        ok 7 - bounded inputs and evidence reservation do not let concurrent writers exceed64
+          ---
+          duration_ms: 16.239166
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: unchanged
+        ok 8 - live producer-to-delivery with actual DB and expense API: unchanged
+          ---
+          duration_ms: 69.893166
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: branch
+        ok 9 - live producer-to-delivery with actual DB and expense API: branch
+          ---
+          duration_ms: 50.691208
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: amount
+        ok 10 - live producer-to-delivery with actual DB and expense API: amount
+          ---
+          duration_ms: 44.297625
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: handoff
+        ok 11 - live producer-to-delivery with actual DB and expense API: handoff
+          ---
+          duration_ms: 39.411375
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: fallback
+        ok 12 - live producer-to-delivery with actual DB and expense API: fallback
+          ---
+          duration_ms: 51.0395
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay
+        ok 13 - live producer-to-delivery with actual DB and expense API: replay
+          ---
+          duration_ms: 61.612209
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-branch
+        ok 14 - live producer-to-delivery with actual DB and expense API: replay-branch
+          ---
+          duration_ms: 51.862958
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-role
+        ok 15 - live producer-to-delivery with actual DB and expense API: replay-role
+          ---
+          duration_ms: 49.792833
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-group
+        ok 16 - live producer-to-delivery with actual DB and expense API: replay-group
+          ---
+          duration_ms: 50.918625
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-channel
+        ok 17 - live producer-to-delivery with actual DB and expense API: replay-channel
+          ---
+          duration_ms: 46.77125
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-unlink
+        ok 18 - live producer-to-delivery with actual DB and expense API: replay-unlink
+          ---
+          duration_ms: 60.859958
+          type: 'test'
+          ...
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-legacy
+        ok 19 - live producer-to-delivery with actual DB and expense API: replay-legacy
+          ---
+          duration_ms: 45.492208
+          type: 'test'
+          ...
+        # Subtest: disabled current actor and deleted source both fail revalidation
+        ok 20 - disabled current actor and deleted source both fail revalidation
+          ---
+          duration_ms: 10.541625
+          type: 'test'
+          ...
+        1..20
+    ok 1 - uses the actual expense read and current scopes, retaining only bounded inputs and a result digest
+      ---
+      duration_ms: 1008.484958
+      type: 'test'
+      ...
+    1..1
+ok 2 - LINE original-source recheck on isolated PostgreSQL
+  ---
+  duration_ms: 1008.853167
+  type: 'suite'
+  ...
+1..2
+# tests 29
+# suites 2
+# pass 29
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1541.057542

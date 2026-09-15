@@ -13,6 +13,8 @@ import { SIGNUP_PENDING_REVIEW_EVENT_TYPE } from '../../../external-signup/appli
 import { LINE_SIGNUP_PUSH_EVENT_TYPE, LINE_SUPPORT_NOTICE_EVENT_TYPE } from '../../../external-signup/application/line-signup-notify.service';
 import { SIGNUP_OPS_ALERT_EVENT_TYPE } from '../../../external-signup/application/signup-ops-alert.service';
 
+import { POSTMARK_EVENT_TYPE } from '../../../auth/application/email-delivery.service';
+
 const WORKER_ID = 'workflow-outbox-drain';
 const OUTBOX_DEAD_EVENT = 'outbox.dead_rows';
 /** P0-4: this worker's claim lease was revoked mid-handler; another claimer owns the row now. */
@@ -82,6 +84,9 @@ export class DrainWorkflowOutboxUseCase {
       batchSize,
       claimedBy: WORKER_ID,
       excludeEventTypes: [
+        'billing.invoice.applied', // Billing owns delivery; generic workflow publishing must not swallow it.
+        'billing.status.email',
+        POSTMARK_EVENT_TYPE,
         OBJECT_VERSION_CLEANUP_EVENT_TYPE,
         // Reserved for their own consumers. Without these the generic drain would claim a claim
         // email and "publish" it as a workflow event — the applicant would never receive it. The

@@ -1,8 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
   COMPANY_BUSINESS_CATEGORIES,
+  PLAN_TIER_PRESETS,
+  type PlanTierKey,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
   SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
   type AdminSignupDecisionBody,
@@ -106,6 +109,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
 
   return (
     <div className="flex flex-wrap gap-2">
+      {!isLineSignup(item)&&<Link className={`${rowActionClass} border-gray-300 bg-white text-gray-700`} href={`/system/signup-requests/${encodeURIComponent(item.requestId)}/mail`}>ประวัติอีเมลรับบัญชี</Link>}
       {approve && (
         <button
           type="button"
@@ -877,20 +881,22 @@ export default function SignupQueuePage() {
                           />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
-                          {item.currentTierKey ? `${item.currentTierKey} → ` : ''}{item.requestedTierKey}
+                          {item.currentTierKey ? `${PLAN_TIER_PRESETS[item.currentTierKey as PlanTierKey]?.labelTh ?? item.currentTierKey} → ` : ''}
+                          {PLAN_TIER_PRESETS[item.requestedTierKey as PlanTierKey]?.labelTh ?? item.requestedTierKey}
+                          {item.billingReviewPath && <p className="mt-2 text-sm">คำขอนี้จะปิดเมื่อชำระเงินและเปิดสิทธิ์แล้ว การให้สิทธิ์ชั่วคราวยังคงคำขอนี้ไว้</p>}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">{item.requestedByDisplayName ?? '—'}</td>
                         <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-2">
-                            <button
+                            {item.billingReviewPath ? <Link href={item.billingReviewPath} className={`${rowActionClass} border-green-300 bg-green-50 text-green-700`}>ตรวจแพ็กเกจที่ชำระเงิน</Link> : <button
                               type="button"
                               disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handlePackageDecision(item, 'APPROVE')}
                               className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
                             >
                               {busy ? 'กำลังทำรายการ...' : 'เปลี่ยนแพ็กเกจให้'}
-                            </button>
+                            </button>}
                             <button
                               type="button"
                               disabled={busy} aria-busy={Boolean(busy)}

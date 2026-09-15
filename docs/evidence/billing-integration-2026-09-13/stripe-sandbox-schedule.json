@@ -1,0 +1,40 @@
+{
+  "layer": "actual Stripe sandbox through authenticated Workbench Shell",
+  "realMoney": false,
+  "applicationCheckoutTested": false,
+  "account": "acct_1UEk5IRvebw5L0s3",
+  "clock": "clock_1UF5o8Rvebw5L0s3d09YypaL",
+  "customer": "cus_VFb0DUqE2v931z",
+  "subscription": "sub_1UF5oZRvebw5L0s314wUeNS9",
+  "schedule": "sub_sched_1UF5omRvebw5L0s39BiA1icK",
+  "billingMode": "classic",
+  "currency": "thb",
+  "annualAmountSatang": 999000,
+  "paidPrice": "price_1UF5nFRvebw5L0s3XJ83bpfM",
+  "internalZeroPrice": "price_1UF5naRvebw5L0s309bKTaxO",
+  "initialStart": 1789276607,
+  "originalPaidEnd": 1820812607,
+  "scheduleUpdatedAtClock": 1799817407,
+  "deferredCollectionAt": 1883971007,
+  "phaseCount": 2,
+  "prorationBehavior": "none",
+  "endBehavior": "release",
+  "observedScheduleStatus": "released",
+  "observedReleasedAt": 1915507007,
+  "finalClock": { "status": "ready", "frozenTime": 1915514207 },
+  "invoices": [
+    { "id": "in_1UF5oZRvebw5L0s3WNc8h5pJ", "created": 1789276607, "paidAt": 1789276607, "total": 999000, "paid": 999000, "status": "paid" },
+    { "id": "in_1UF5urRvebw5L0s3PyyrWlOJ", "created": 1820812607, "paidAt": 1820816207, "total": 0, "paid": 0, "status": "paid" },
+    { "id": "in_1UF5vmRvebw5L0s3uakqmscC", "created": 1852435007, "paidAt": 1852438607, "total": 0, "paid": 0, "status": "paid" },
+    { "id": "in_1UF5wGRvebw5L0s31buEKngC", "created": 1883971007, "paidAt": 1883974607, "total": 999000, "paid": 999000, "status": "paid" },
+    { "id": "in_1UF5xwRvebw5L0s3cK8JbSkh", "created": 1915507007, "paidAt": 1915510607, "total": 999000, "paid": 999000, "status": "paid" }
+  ],
+  "invoiceListComplete": true,
+  "originalInvoiceSubscriptionItem": "si_VFb0ibDEcDuc2u",
+  "observedRenewalSubscriptionItem": "si_VFb8FsqN9TrUW3",
+  "limitations": [
+    "Proves provider collection scheduling beyond two years and normal renewal after release; repeat-purchase charges themselves were not performed in this scenario.",
+    "Zero invoices are provider scheduling artifacts and must never grant paid rights or receipt quota.",
+    "Does not prove application reschedule recovery, renewal races, payment failure, 3DS, native LINE, or the full customer/Admin flows."
+  ]
+}

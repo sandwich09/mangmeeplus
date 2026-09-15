@@ -1,0 +1,13 @@
+    ok 1 - explains the newest record of THIS chat with the totals identity as real numbers
+    ok 2 - resolves a documentNumber inside the same chat-provenance set, and refuses one outside it
+    ok 3 - answers "not found" — never a different answer — for another company's record id
+    ok 4 - reports a permission failure as forbidden and reads nothing
+    ok 5 - has nothing to explain without chat provenance, and refuses a reserved record type
+    ok 6 - reads the record reference from either the nested contract shape or the flat model-wire pair
+    ok 7 - carries slice B's totals-identity verdict through, both ways
+    ok 8 - names the values the reader assumed, and stays silent for a hand-typed record
+ok 1 - expense.explain_record
+# tests 8
+# pass 8
+# fail 0
+# skipped 0

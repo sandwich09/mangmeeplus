@@ -1,0 +1,53 @@
+{
+  "status": "LOCAL_SUBSTITUTE_SOURCE_PASS",
+  "recordedAt": "2026-09-15T12:34:29.744271+00:00",
+  "baseCommit": "5368afe7a52329df42a97ade7b9bf6e28fb356ce",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.ts": "919172e92edd0b2178514ee15d45745734c1cfcac9839a24c500fd4b35f41536",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts": "7eec09a00f8ac906227ab7e439730759b4dbbad5c644cec7384b3007dff71922",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "7bdc15a6b87786c9d4ff876b8a22b55ff926b82cfd53c73402e6af359a451ab1",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "6fcb9c85cba0f4dd23b4df887a7a689243e84143760663fdfd64121054d17a1f",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "99c01076fea36c93e4f77b7aeb26b81107a62b6593a067d0e2d6ae3a8454f020",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "b291211c13e0c669fb35e7c6f095b5286e55e90bc63f5fb592672e015232db14"
+  },
+  "runs": {
+    "unit": {
+      "tests": 844,
+      "pass": 844,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-substitute-source-unit.tap",
+      "sha256": "ccd5385c17798670df4e4e82cdda274440c04aa79a4cf1ee022b251e72f4780f"
+    },
+    "module": {
+      "tests": 1370,
+      "pass": 1370,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-substitute-source-module.tap",
+      "sha256": "88a367beabb78a6a004b19f495460a435b1a54f232623d834a7e68733cdef420"
+    },
+    "postgres": {
+      "tests": 5,
+      "pass": 5,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-substitute-source-postgres.tap",
+      "sha256": "5b742c4d5d06eec9f9bc6beb1a823d25a2d4e926e0fa1e999109c4375dd11c6e"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "Producer proofs retain the original scoped expense revision, mapped evidence and attachment facts. Relevant category, policy/approver/payer and signature facts are re-read without executing the workflow again.",
+    "All legacy, primary and side-question resume delivery paths validate after rendering and again before expired-token fallback. Changed revision/evidence/access and missing proof suppress private details without capture, OCR or preparation replay.",
+    "Combined captured-receipt and substitute replies are composed after continuation writes. Previous questionnaires are parked before producing substitute facts; a later side-question router receives the resulting current draft context.",
+    "Target lists use exact scoped expense labels and current revisions. A stored mixed reply cannot inherit unrelated generic ERP read authorization.",
+    "Actual PostgreSQL exercises the real conversation save/read, current branch/review permission, evidence-free baseline, attachment-link changes with unchanged expense revision, later human edit and immutable proof. Prepared evidence is separately verified by the real prepare use case with a doubled repository using the production summary mapper."
+  ],
+  "limits": [
+    "844 focused,1370 LINE module and5 PostgreSQL tests overlap and are not a count of business flows or an overall percentage.",
+    "LINE/model delivery transports are simulated. Historical stored question/choice lineage, native media attachment/write races, later storage permissions and full current combined/native acceptance remain open.",
+    "No push, CI, merge, deploy, native message, live payment or provider configuration change."
+  ]
+}

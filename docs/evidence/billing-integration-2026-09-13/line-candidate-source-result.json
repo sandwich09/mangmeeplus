@@ -1,0 +1,46 @@
+{
+  "status": "LOCAL_CANDIDATE_SOURCE_PASS",
+  "recordedAt": "2026-09-15T10:06:45.782326+00:00",
+  "baseCommit": "328f1bd35ec19c8ac965b28462bde9b25178fa17",
+  "sourceSha256": {
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "7954690c6bead3b1e8a364ef94325f98309ee84611d70c08dc33f5549fda3734",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "4c0af079be3caa16a47abdcfad4e65b57e32cc64886e158ca771250be4b3538c",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "309b06276252b011caf121fcbf9b62797562719f0305295f4079f67e8bbcebd9",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "9cf6162d59ed632a50fe9f03c3a3a05115d9d7968dc17cffd6acf059d0c8f570",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "7bb06ea5c7322ddd4d1ba31d2e93ba20b239d4a343109c583df6fdf892937d7e",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.line-continuation.spec.ts": "b9b8ce06b5c4d7673ee6fe732700756440ade352864158af50f3c2e945f08e44"
+  },
+  "runs": {
+    "unit": {
+      "tests": 553,
+      "pass": 553,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-candidate-unit.tap",
+      "sha256": "fabc32c6b72abcbdf88629777ba563da7660dc01cb1006376e8ae1962c10921a"
+    },
+    "postgres": {
+      "tests": 69,
+      "pass": 69,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-candidate-postgres.tap",
+      "sha256": "c7dc29c29168a99174f874f657fa8913f047fb6e710a16f9f1d6df1295aab41f"
+    },
+    "reader": {
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-candidate-reader.tap",
+      "sha256": "647c40bdb1227064340da682d3ff4153dd9a79d7c669b4bb70964719d379a398"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "proof": "23 added unit scenarios;14 actual PostgreSQL/repository/resolver/webhook scenarios cover selection/clarification, same-timestamp order, unrelated metadata, amount/branch/status changes, fallback, intake-time change, and restored-source new-question recovery without new captures/corrections.",
+  "limits": [
+    "Counts overlap with earlier source suites; no new full combined/native/browser acceptance.",
+    "Remaining continuation-result/new-capture and persisted clarification source lineage are not claimed complete.",
+    "LINE/model transports simulated. No CI/push/merge/deploy."
+  ]
+}

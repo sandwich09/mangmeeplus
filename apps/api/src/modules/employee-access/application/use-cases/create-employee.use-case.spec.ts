@@ -48,7 +48,12 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
 
   const tx = {
     companyPlanTerm: companyPlanTermFake,
+    branch: { count: async () => 1 },
     $queryRaw: async (strings: TemplateStringsArray, ...values: string[]) => {
+      if (/FROM "Company" WHERE id = \? FOR UPDATE/.test(strings.join('?'))) {
+        assert.equal(values.length, 1);
+        return [];
+      }
       assert.match(strings.join('?'), /FROM "EmployeeAccessProfile" WHERE "id" = \? AND "companyId" = \? FOR UPDATE/);
       controls.locks.push(values);
       return [];
@@ -76,6 +81,7 @@ function makeUseCase(opts: { roles?: Array<{ id: string; key: string; permission
     companyMembership: {
       count: countMemberships,
       findUniqueOrThrow: async ({ where }: any) => ({
+        branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null,
         ...state.memberships.find((item) => item.id === where.id),
         branchScopes: state.branchScopes.filter((scope) => scope.membershipId === where.id),
       }),

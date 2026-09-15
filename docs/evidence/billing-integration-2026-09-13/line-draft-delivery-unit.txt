@@ -1,0 +1,896 @@
+# Subtest: LINE draft edit — frozen security eval
+    # Subtest: does not return a stored preview after permission, branch or source revision changes
+    ok 1 - does not return a stored preview after permission, branch or source revision changes
+    # Subtest: rechecks applied-memory permission, source and exact committed revision without another write
+    ok 2 - rechecks applied-memory permission, source and exact committed revision without another write
+    # Subtest: keeps legacy and foreign applied memory from returning stored financial facts
+    ok 3 - keeps legacy and foreign applied memory from returning stored financial facts
+    # Subtest: executes every frozen case, and none of them writes
+    ok 4 - executes every frozen case, and none of them writes
+    # Subtest: keys the pending preview by company AND chat, and by nothing else
+    ok 5 - keys the pending preview by company AND chat, and by nothing else
+    # Subtest: subtracts a charge line's own discount from the charges total
+    ok 6 - subtracts a charge line's own discount from the charges total
+    # Subtest: answers a second tap as already applied, not as expired
+    ok 7 - answers a second tap as already applied, not as expired
+    # Subtest: has a runner for every frozen case and no runner without one
+    ok 8 - has a runner for every frozen case and no runner without one
+ok 1 - LINE draft edit — frozen security eval
+# Subtest: AP22 queued UNKNOWN and accepted recovery
+    # Subtest: reuses saved bytes/key after UNKNOWN without another model or handoff
+    ok 1 - reuses saved bytes/key after UNKNOWN without another model or handoff
+    # Subtest: acceptance survives an ack failure and later access revocation without a new send
+    ok 2 - acceptance survives an ack failure and later access revocation without a new send
+    # Subtest: changed source after UNKNOWN gets a static recovery notice and preserves the original output
+    ok 3 - changed source after UNKNOWN gets a static recovery notice and preserves the original output
+    # Subtest: existing live outcome owns recovery and cannot trigger a second model: accepted=false
+    ok 4 - existing live outcome owns recovery and cannot trigger a second model: accepted=false
+    # Subtest: existing live outcome owns recovery and cannot trigger a second model: accepted=true
+    ok 5 - existing live outcome owns recovery and cannot trigger a second model: accepted=true
+ok 2 - AP22 queued UNKNOWN and accepted recovery
+# Subtest: AP22 queued source delivery fence
+    # Subtest: suppresses a queued private response without current read evidence: missing
+    ok 1 - suppresses a queued private response without current read evidence: missing
+    # Subtest: suppresses a queued private response without current read evidence: store-error
+    ok 2 - suppresses a queued private response without current read evidence: store-error
+    # Subtest: suppresses a queued private response without current read evidence: changed
+    ok 3 - suppresses a queued private response without current read evidence: changed
+    # Subtest: suppresses a queued private response without current read evidence: read-error
+    ok 4 - suppresses a queued private response without current read evidence: read-error
+    # Subtest: suppresses a queued private response without current read evidence: unchanged
+    ok 5 - suppresses a queued private response without current read evidence: unchanged
+ok 3 - AP22 queued source delivery fence
+# Subtest: AP22 queued delivery actor fence
+    # Subtest: suppresses private model output when membership replacement during processing
+    ok 1 - suppresses private model output when membership replacement during processing
+    # Subtest: suppresses private model output when role revoked during processing
+    ok 2 - suppresses private model output when role revoked during processing
+    # Subtest: suppresses private model output when permission revoked during processing
+    ok 3 - suppresses private model output when permission revoked during processing
+    # Subtest: suppresses private model output when branches restricted to empty during processing
+    ok 4 - suppresses private model output when branches restricted to empty during processing
+    # Subtest: suppresses private model output when location restricted during processing
+    ok 5 - suppresses private model output when location restricted during processing
+    # Subtest: suppresses private model output when feature disabled during processing
+    ok 6 - suppresses private model output when feature disabled during processing
+    # Subtest: suppresses private model output when entitlements changed during processing
+    ok 7 - suppresses private model output when entitlements changed during processing
+    # Subtest: suppresses private model output when company switched during processing
+    ok 8 - suppresses private model output when company switched during processing
+    # Subtest: suppresses private model output when LINE unlinked during processing
+    ok 9 - suppresses private model output when LINE unlinked during processing
+    # Subtest: suppresses private model output when user disabled during processing
+    ok 10 - suppresses private model output when user disabled during processing
+    # Subtest: suppresses private model output when user opted out during processing
+    ok 11 - suppresses private model output when user opted out during processing
+    # Subtest: suppresses private model output when support pause during processing
+    ok 12 - suppresses private model output when support pause during processing
+    # Subtest: checks again after slow handoff preparation
+    ok 13 - checks again after slow handoff preparation
+    # Subtest: requires the current identity to belong to the exact actor and private destination before model work
+    ok 14 - requires the current identity to belong to the exact actor and private destination before model work
+    # Subtest: delivers unchanged authority despite canonical ordering differences
+    ok 15 - delivers unchanged authority despite canonical ordering differences
+    # Subtest: does not equate legacy null entitlements with explicit empty
+    ok 16 - does not equate legacy null entitlements with explicit empty
+ok 4 - AP22 queued delivery actor fence
+# Subtest: DrainLineLedgerUseCase (item 10F)
+    # Subtest: reports skipped when the ledger is disabled (fail-open)
+    ok 1 - reports skipped when the ledger is disabled (fail-open)
+    # Subtest: follows up a pending sub_request: re-resolves permissions, runs the turn, pushes, acks
+    ok 2 - follows up a pending sub_request: re-resolves permissions, runs the turn, pushes, acks
+    # Subtest: preserves a structured answer card when replaying by push
+    ok 3 - preserves a structured answer card when replaying by push
+    # Subtest: expires a waiting_user entry past the clarify window and leaves fresh ones untouched
+    ok 4 - expires a waiting_user entry past the clarify window and leaves fresh ones untouched
+    # Subtest: holds a fresh waiting_user entry without reporting it as a failure
+    ok 5 - holds a fresh waiting_user entry without reporting it as a failure
+    # Subtest: parks an entry past the delivery cap instead of looping (poison protection)
+    ok 6 - parks an entry past the delivery cap instead of looping (poison protection)
+    # Subtest: refuses an in-flight entry when ai_line_assistant was disabled after the turn was deferred
+    ok 7 - refuses an in-flight entry when ai_line_assistant was disabled after the turn was deferred
+    # Subtest: tells the waiting user when a still-in-window turn is refused after the cutoff
+    ok 8 - tells the waiting user when a still-in-window turn is refused after the cutoff
+    # Subtest: does not acknowledge a disabled in-window turn when its refusal cannot reach LINE
+    ok 9 - does not acknowledge a disabled in-window turn when its refusal cannot reach LINE
+    # Subtest: still runs for a legacy company with no entitlement rows at all (fail-open)
+    ok 10 - still runs for a legacy company with no entitlement rows at all (fail-open)
+    # Subtest: refuses safely when permission was revoked between turn and follow-up
+    ok 11 - refuses safely when permission was revoked between turn and follow-up
+    # Subtest: refuses when the user is no longer active
+    ok 12 - refuses when the user is no longer active
+    # Subtest: leaves the entry unacked when the gateway throws (next reclaim retries)
+    ok 13 - leaves the entry unacked when the gateway throws (next reclaim retries)
+    # Subtest: leaves the entry unacked when LINE push is not confirmed
+    ok 14 - leaves the entry unacked when LINE push is not confirmed
+    # Subtest: sends the company entitlement set with the drained turn, like the live webhook does
+    ok 15 - sends the company entitlement set with the drained turn, like the live webhook does
+    # Subtest: omits entitlements for a legacy company with no rows (fail-open)
+    ok 16 - omits entitlements for a legacy company with no rows (fail-open)
+    # Subtest: computes a crashed turn only when no saved outcome exists and closes deferred event states
+    ok 17 - computes a crashed turn only when no saved outcome exists and closes deferred event states
+ok 5 - DrainLineLedgerUseCase (item 10F)
+# Subtest: LineAiLedgerInternalController auth
+    # Subtest: rejects a missing/wrong worker token with 401
+    ok 1 - rejects a missing/wrong worker token with 401
+    # Subtest: rejects everything when no token is configured (fail closed)
+    ok 2 - rejects everything when no token is configured (fail closed)
+ok 6 - LineAiLedgerInternalController auth
+# Subtest: DrainLineLedgerUseCase shadow coverage (piece 5)
+    # Subtest: records one observation per claimed entry and follows up regardless
+    ok 1 - records one observation per claimed entry and follows up regardless
+    # Subtest: records an entry whose follow-up fails — the failure is caught per entry, the count is not
+    ok 2 - records an entry whose follow-up fails — the failure is caught per entry, the count is not
+    # Subtest: does not start a sweep at all when the ledger is disabled
+    ok 3 - does not start a sweep at all when the ledger is disabled
+ok 7 - DrainLineLedgerUseCase shadow coverage (piece 5)
+# Subtest: DrainLineLedgerUseCase finally-flush (mutation-proved)
+    # Subtest: flushes on any escape from inside the drain loop
+    ok 1 - flushes on any escape from inside the drain loop
+    # Subtest: drains every claimed entry when the real probe cannot read the launch tables
+    ok 2 - drains every claimed entry when the real probe cannot read the launch tables
+ok 8 - DrainLineLedgerUseCase finally-flush (mutation-proved)
+# Subtest: receipt owner summary and fallback
+    # Subtest: orders the five receipt facts and shows taxes and other charges only when nonzero
+    ok 1 - orders the five receipt facts and shows taxes and other charges only when nonzero
+    # Subtest: shows the printed 300 total, saves a passive draft, and exposes only a neutral button with no internal codes
+    ok 2 - shows the printed 300 total, saves a passive draft, and exposes only a neutral button with no internal codes
+    # Subtest: preserves the complete text and all warnings beyond the notification preview on Flex rejection
+    ok 3 - preserves the complete text and all warnings beyond the notification preview on Flex rejection
+ok 9 - receipt owner summary and fallback
+# Subtest: OCR governance LINE reply UX
+    # Subtest: explains disabled and monthly-limit refusals without losing the numbered manual path
+    ok 1 - explains disabled and monthly-limit refusals without losing the numbered manual path
+    # Subtest: keeps the ordinary clarification copy when the read did not fail
+    ok 2 - keeps the ordinary clarification copy when the read did not fail
+    # Subtest: admits a transient read failure instead of asking "what is this picture?" (owner UX 2026-08-29)
+    ok 3 - admits a transient read failure instead of asking "what is this picture?" (owner UX 2026-08-29)
+ok 10 - OCR governance LINE reply UX
+# Subtest: readResponseBodyLimited
+    # Subtest: combines a chunked response within the hard byte cap
+    ok 1 - combines a chunked response within the hard byte cap
+    # Subtest: cancels a chunked response as soon as its running total exceeds the cap
+    ok 2 - cancels a chunked response as soon as its running total exceeds the cap
+ok 11 - readResponseBodyLimited
+# Subtest: check-bill LINE reply UX
+    # Subtest: confirms one draft and asks only the next question while the flow is collectable
+    ok 1 - confirms one draft and asks only the next question while the flow is collectable
+    # Subtest: keeps the complete explanation for a hard ineligible result
+    ok 2 - keeps the complete explanation for a hard ineligible result
+    # Subtest: lists the persisted charges the way the capture card does
+    ok 3 - lists the persisted charges the way the capture card does
+    # Subtest: adds no charge block to a check bill that carried none
+    ok 4 - adds no charge block to a check bill that carried none
+    # Subtest: keeps rounding out of the automatic summary but available in requested item detail
+    ok 5 - keeps rounding out of the automatic summary but available in requested item detail
+    # Subtest: keeps the apply outcome when the check bill is confirmed as paid
+    ok 6 - keeps the apply outcome when the check bill is confirmed as paid
+ok 12 - check-bill LINE reply UX
+# Subtest: AP22 live actor delivery fence
+    # Subtest: text suppresses derived content when membership changes during model work
+    ok 1 - text suppresses derived content when membership changes during model work
+    # Subtest: text suppresses derived content when role changes during model work
+    ok 2 - text suppresses derived content when role changes during model work
+    # Subtest: text suppresses derived content when branch changes during model work
+    ok 3 - text suppresses derived content when branch changes during model work
+    # Subtest: text suppresses derived content when feature changes during model work
+    ok 4 - text suppresses derived content when feature changes during model work
+    # Subtest: text suppresses derived content when company changes during model work
+    ok 5 - text suppresses derived content when company changes during model work
+    # Subtest: text suppresses derived content when unlink changes during model work
+    ok 6 - text suppresses derived content when unlink changes during model work
+    # Subtest: text suppresses derived content when optout changes during model work
+    ok 7 - text suppresses derived content when optout changes during model work
+    # Subtest: text suppresses derived content when disabled changes during model work
+    ok 8 - text suppresses derived content when disabled changes during model work
+    # Subtest: text suppresses derived content when pause changes during model work
+    ok 9 - text suppresses derived content when pause changes during model work
+    # Subtest: media suppresses derived content when membership changes during model work
+    ok 10 - media suppresses derived content when membership changes during model work
+    # Subtest: media suppresses derived content when role changes during model work
+    ok 11 - media suppresses derived content when role changes during model work
+    # Subtest: media suppresses derived content when branch changes during model work
+    ok 12 - media suppresses derived content when branch changes during model work
+    # Subtest: media suppresses derived content when feature changes during model work
+    ok 13 - media suppresses derived content when feature changes during model work
+    # Subtest: media suppresses derived content when company changes during model work
+    ok 14 - media suppresses derived content when company changes during model work
+    # Subtest: media suppresses derived content when unlink changes during model work
+    ok 15 - media suppresses derived content when unlink changes during model work
+    # Subtest: media suppresses derived content when optout changes during model work
+    ok 16 - media suppresses derived content when optout changes during model work
+    # Subtest: media suppresses derived content when disabled changes during model work
+    ok 17 - media suppresses derived content when disabled changes during model work
+    # Subtest: media suppresses derived content when pause changes during model work
+    ok 18 - media suppresses derived content when pause changes during model work
+    # Subtest: checks access again at handoff
+    ok 19 - checks access again at handoff
+    # Subtest: checks access again at reply-fallback
+    ok 20 - checks access again at reply-fallback
+ok 13 - AP22 live actor delivery fence
+# Subtest: AP22 live source delivery fence
+    # Subtest: rechecks deterministic draft preview without repeating work: unchanged
+    ok 1 - rechecks deterministic draft preview without repeating work: unchanged
+    # Subtest: rechecks deterministic draft preview without repeating work: missing
+    ok 2 - rechecks deterministic draft preview without repeating work: missing
+    # Subtest: rechecks deterministic draft preview without repeating work: handoff
+    ok 3 - rechecks deterministic draft preview without repeating work: handoff
+    # Subtest: rechecks deterministic draft preview without repeating work: reply-fallback
+    ok 4 - rechecks deterministic draft preview without repeating work: reply-fallback
+    # Subtest: rechecks deterministic draft confirm without repeating work: unchanged
+    ok 5 - rechecks deterministic draft confirm without repeating work: unchanged
+    # Subtest: rechecks deterministic draft confirm without repeating work: missing
+    ok 6 - rechecks deterministic draft confirm without repeating work: missing
+    # Subtest: rechecks deterministic draft confirm without repeating work: handoff
+    ok 7 - rechecks deterministic draft confirm without repeating work: handoff
+    # Subtest: rechecks deterministic draft confirm without repeating work: reply-fallback
+    ok 8 - rechecks deterministic draft confirm without repeating work: reply-fallback
+    # Subtest: keeps draft preview source checks at dispatch: unchanged
+    ok 9 - keeps draft preview source checks at dispatch: unchanged
+    # Subtest: keeps draft preview source checks at dispatch: missing
+    ok 10 - keeps draft preview source checks at dispatch: missing
+    # Subtest: keeps draft preview source checks at dispatch: handoff
+    ok 11 - keeps draft preview source checks at dispatch: handoff
+    # Subtest: keeps draft preview source checks at dispatch: reply-fallback
+    ok 12 - keeps draft preview source checks at dispatch: reply-fallback
+    # Subtest: rechecks source evidence at final send: missing
+    ok 13 - rechecks source evidence at final send: missing
+    # Subtest: rechecks source evidence at final send: store-error
+    ok 14 - rechecks source evidence at final send: store-error
+    # Subtest: rechecks source evidence at final send: changed
+    ok 15 - rechecks source evidence at final send: changed
+    # Subtest: rechecks source evidence at final send: read-error
+    ok 16 - rechecks source evidence at final send: read-error
+    # Subtest: rechecks source evidence at final send: reply-fallback
+    ok 17 - rechecks source evidence at final send: reply-fallback
+    # Subtest: rechecks source evidence at final send: handoff
+    ok 18 - rechecks source evidence at final send: handoff
+    # Subtest: rechecks source evidence at final send: unchanged
+    ok 19 - rechecks source evidence at final send: unchanged
+ok 14 - AP22 live source delivery fence
+# Subtest: toAiTurnIntent (free-form model intent → AiTurn enum)
+    # Subtest: passes through valid enum values (case-insensitive)
+    ok 1 - passes through valid enum values (case-insensitive)
+    # Subtest: maps free-form/model intents to UNKNOWN so persistence never rejects
+    ok 2 - maps free-form/model intents to UNKNOWN so persistence never rejects
+    # Subtest: falls back via the refusal reason
+    ok 3 - falls back via the refusal reason
+ok 15 - toAiTurnIntent (free-form model intent → AiTurn enum)
+# Subtest: ProcessLineWebhookUseCase
+    # Subtest: settles waiting feedback before sending the final LINE reply
+    ok 1 - settles waiting feedback before sending the final LINE reply
+    # Subtest: resolves the identity on the webhook channel
+    ok 2 - resolves the identity on the webhook channel
+    # Subtest: does not revive an active legacy alias for a canonical UNLINKED text caller
+    ok 3 - does not revive an active legacy alias for a canonical UNLINKED text caller
+    # Subtest: does not revive an active legacy alias for a canonical UNLINKED media caller
+    ok 4 - does not revive an active legacy alias for a canonical UNLINKED media caller
+    # Subtest: does not revive an active legacy alias for a canonical UNLINKED legal caller
+    ok 5 - does not revive an active legacy alias for a canonical UNLINKED legal caller
+    # Subtest: does not revive an active legacy alias for a canonical UNLINKED support caller
+    ok 6 - does not revive an active legacy alias for a canonical UNLINKED support caller
+    # Subtest: does not revive an active legacy alias for a canonical DISABLED text caller
+    ok 7 - does not revive an active legacy alias for a canonical DISABLED text caller
+    # Subtest: does not revive an active legacy alias for a canonical DISABLED media caller
+    ok 8 - does not revive an active legacy alias for a canonical DISABLED media caller
+    # Subtest: does not revive an active legacy alias for a canonical DISABLED legal caller
+    ok 9 - does not revive an active legacy alias for a canonical DISABLED legal caller
+    # Subtest: does not revive an active legacy alias for a canonical DISABLED support caller
+    ok 10 - does not revive an active legacy alias for a canonical DISABLED support caller
+    # Subtest: refuses channel-free production AI resolution before any identity read
+    ok 11 - refuses channel-free production AI resolution before any identity read
+    # Subtest: still reports unlinked when neither the scoped nor the fallback lookup finds an identity
+    ok 12 - still reports unlinked when neither the scoped nor the fallback lookup finds an identity
+    # Subtest: returns the public contact card before identity, opt-out, legal, entitlement, or model reads
+    ok 13 - returns the public contact card before identity, opt-out, legal, entitlement, or model reads
+    # Subtest: greets immediately on the rich-menu talk postback without identity or model reads
+    ok 14 - greets immediately on the rich-menu talk postback without identity or model reads
+    # Subtest: answers an unlinked "ทำอะไรได้บ้าง" with the curated card, before any model read
+    ok 15 - answers an unlinked "ทำอะไรได้บ้าง" with the curated card, before any model read
+    # Subtest: answers an unlinked "สอนวิธีใช้หน่อย" with the curated card, before any model read
+    ok 16 - answers an unlinked "สอนวิธีใช้หน่อย" with the curated card, before any model read
+    # Subtest: answers a linked-but-not-ACTIVE account with the same curated card
+    ok 17 - answers a linked-but-not-ACTIVE account with the same curated card
+    # Subtest: sends a linked caller's "มั่งมีใช้ยังไง" to the scoped turn instead of the fixed card
+    ok 18 - sends a linked caller's "มั่งมีใช้ยังไง" to the scoped turn instead of the fixed card
+    # Subtest: sends a linked caller's "ทำอะไรได้บ้าง" to the scoped turn instead of the fixed card
+    ok 19 - sends a linked caller's "ทำอะไรได้บ้าง" to the scoped turn instead of the fixed card
+    # Subtest: sends a linked caller's "สอนวิธีใช้หน่อย" to the scoped turn instead of the fixed card
+    ok 20 - sends a linked caller's "สอนวิธีใช้หน่อย" to the scoped turn instead of the fixed card
+    # Subtest: keeps a paused capability question out of AI and admits when no live case recorded it
+    ok 21 - keeps a paused capability question out of AI and admits when no live case recorded it
+    # Subtest: never lets an ADVISOR_CONVERSATION draft answer "มั่งมีทำอะไรได้บ้าง" with an unscoped list
+    ok 22 - never lets an ADVISOR_CONVERSATION draft answer "มั่งมีทำอะไรได้บ้าง" with an unscoped list
+    # Subtest: never lets an ADVISOR_CONVERSATION draft answer "สอนวิธีใช้หน่อย" with an unscoped list
+    ok 23 - never lets an ADVISOR_CONVERSATION draft answer "สอนวิธีใช้หน่อย" with an unscoped list
+    # Subtest: answers "มั่งมีใช้ยังไง" from an AI-off shop with the entitlement card, not the bare refusal
+    ok 24 - answers "มั่งมีใช้ยังไง" from an AI-off shop with the entitlement card, not the bare refusal
+    # Subtest: answers "ทำอะไรได้บ้าง" from an AI-off shop with the entitlement card, not the bare refusal
+    ok 25 - answers "ทำอะไรได้บ้าง" from an AI-off shop with the entitlement card, not the bare refusal
+    # Subtest: answers "สอนวิธีใช้หน่อย" from an AI-off shop with the entitlement card, not the bare refusal
+    ok 26 - answers "สอนวิธีใช้หน่อย" from an AI-off shop with the entitlement card, not the bare refusal
+    # Subtest: gives an AI-off shop the entitlement card when the launch route is closed too
+    ok 27 - gives an AI-off shop the entitlement card when the launch route is closed too
+    # Subtest: falls back to a channel-agnostic identity for legacy links
+    ok 28 - falls back to a channel-agnostic identity for legacy links
+    # Subtest: preflights legal acceptance with the server-resolved company and membership only
+    ok 29 - preflights legal acceptance with the server-resolved company and membership only
+    # Subtest: preflight does not invent a company for an unlinked or unresolved multi-company user
+    ok 30 - preflight does not invent a company for an unlinked or unresolved multi-company user
+    # Subtest: preflight honors the explicitly selected company for a multi-company owner
+    ok 31 - preflight honors the explicitly selected company for a multi-company owner
+    # Subtest: preflight rechecks legal access against a durable receipt company snapshot
+    ok 32 - preflight rechecks legal access against a durable receipt company snapshot
+    # Subtest: refuses text turns for an opted-out user before any gateway involvement
+    ok 33 - refuses text turns for an opted-out user before any gateway involvement
+    # Subtest: keeps public contact available when the linked user opted out of AI
+    ok 34 - keeps public contact available when the linked user opted out of AI
+    # Subtest: refuses media turns for an opted-out user before any intake routing
+    ok 35 - refuses media turns for an opted-out user before any intake routing
+    # Subtest: refuses employee text before model routing while legal acceptance is pending
+    ok 36 - refuses employee text before model routing while legal acceptance is pending
+    # Subtest: refuses employee media before download, OCR, routing, or storage while acceptance is pending
+    ok 37 - refuses employee media before download, OCR, routing, or storage while acceptance is pending
+    # Subtest: denies linked users without line.ai.query and does not call AI Gateway
+    ok 38 - denies linked users without line.ai.query and does not call AI Gateway
+    # Subtest: denies the whole turn when ai_line_assistant entitlement is toggled off
+    ok 39 - denies the whole turn when ai_line_assistant entitlement is toggled off
+    # Subtest: denies when entitlements are configured but ai_line_assistant has no row (deny-by-default once configured)
+    ok 40 - denies when entitlements are configured but ai_line_assistant has no row (deny-by-default once configured)
+    # Subtest: refuses the text turn with the CLOSED-route copy, and calls no model or router, when the launch route is closed
+    ok 41 - refuses the text turn with the CLOSED-route copy, and calls no model or router, when the launch route is closed
+    # Subtest: refuses the receipt-upload turn before download, OCR, or storage when the launch route is closed
+    ok 42 - refuses the receipt-upload turn before download, OCR, or storage when the launch route is closed
+    # Subtest: lets an OPEN launch route through unchanged — the gate adds no reply and no refusal
+    ok 43 - lets an OPEN launch route through unchanged — the gate adds no reply and no refusal
+    # Subtest: does not open the lane when the guard itself fails — the turn is thrown, never modelled
+    ok 44 - does not open the lane when the guard itself fails — the turn is thrown, never modelled
+    # Subtest: allows the turn when ai_line_assistant entitlement is enabled
+    ok 45 - allows the turn when ai_line_assistant entitlement is enabled
+    # Subtest: sends the company entitlement set with the turn so the assistant can describe itself honestly
+    ok 46 - sends the company entitlement set with the turn so the assistant can describe itself honestly
+    # Subtest: omits the entitlement set for a legacy company with no rows (fail-open)
+    ok 47 - omits the entitlement set for a legacy company with no rows (fail-open)
+    # Subtest: reports an expenses feature switch instead of blaming the member permission
+    ok 48 - reports an expenses feature switch instead of blaming the member permission
+    # Subtest: delivers a successful business query as one themed Flex answer card
+    ok 49 - delivers a successful business query as one themed Flex answer card
+    # Subtest: keeps a refused response in a trusted fallback card even if a malformed gateway response carries presentation
+    ok 50 - keeps a refused response in a trusted fallback card even if a malformed gateway response carries presentation
+    # Subtest: keeps a clarification focused and does not attach the completion menu
+    ok 51 - keeps a clarification focused and does not attach the completion menu
+    # Subtest: preserves the same Flex payload for expired-token push fallback
+    ok 52 - preserves the same Flex payload for expired-token push fallback
+    # Subtest: routes text-only receipt/tax invoice note to AI Gateway instead of local text capture
+    ok 53 - routes text-only receipt/tax invoice note to AI Gateway instead of local text capture
+    # Subtest: keeps a failed LINE delivery retryable and never records a false completed turn
+    ok 54 - keeps a failed LINE delivery retryable and never records a false completed turn
+    # Subtest: emits Phase-0 distinct stage durations and a correlated turn summary for a business-read turn
+    ok 55 - emits Phase-0 distinct stage durations and a correlated turn summary for a business-read turn
+    # Subtest: forwards the intake prepared plan into the turn only when a downstream lane flag is on (Phase 3/4 independent, default off)
+    ok 56 - forwards the intake prepared plan into the turn only when a downstream lane flag is on (Phase 3/4 independent, default off)
+    # Subtest: carries the trusted intake provenance for a business turn the router had no plan for (E4)
+    ok 57 - carries the trusted intake provenance for a business turn the router had no plan for (E4)
+    # Subtest: does not mark an employee answer completed when reply token and push both fail
+    ok 58 - does not mark an employee answer completed when reply token and push both fail
+    # Subtest: keeps a failed deterministic rich reply in delivery_pending
+    ok 59 - keeps a failed deterministic rich reply in delivery_pending
+    # Subtest: passes at most LINE_AI_CONTEXT_MAX_TURNS recent turns from the active 15-minute window to intake router and AI Gateway
+    ok 60 - passes at most LINE_AI_CONTEXT_MAX_TURNS recent turns from the active 15-minute window to intake router and AI Gateway
+    # Subtest: does not send conversation context after a 15-minute inactivity gap
+    ok 61 - does not send conversation context after a 15-minute inactivity gap
+    # Subtest: omits assistant reply previews when current permissions no longer cover previous tools
+    ok 62 - omits assistant reply previews when current permissions no longer cover previous tools
+    # Subtest: AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=false)
+    ok 63 - AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=false)
+    # Subtest: AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=true)
+    ok 64 - AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=true)
+    # Subtest: AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=null)
+    ok 65 - AP21/AX01 text keeps questions but re-reads business facts even with allowed/legacy features (sales=null)
+    # Subtest: AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=false)
+    ok 66 - AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=false)
+    # Subtest: AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=true)
+    ok 67 - AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=true)
+    # Subtest: AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=null)
+    ok 68 - AP21/AX01 media keeps questions but re-reads business facts even with allowed/legacy features (sales=null)
+    # Subtest: rejects text-only receipt note through normal LINE AI permission when user lacks line.ai.query
+    ok 69 - rejects text-only receipt note through normal LINE AI permission when user lacks line.ai.query
+    # Subtest: answers an unrecognised LINE account with the signup doors
+    ok 70 - answers an unrecognised LINE account with the signup doors
+    # Subtest: sends UNLINKED reply when user has no active company memberships
+    ok 71 - sends UNLINKED reply when user has no active company memberships
+    # Subtest: term-expired company
+        # Subtest: invites the OWNER to renew, naming both ways back and no AI call
+        ok 1 - invites the OWNER to renew, naming both ways back and no AI call
+        # Subtest: leaves staff of the same expired company on the existing generic reply
+        ok 2 - leaves staff of the same expired company on the existing generic reply
+        # Subtest: leaves an owner with no expired company on the existing generic reply
+        ok 3 - leaves an owner with no expired company on the existing generic reply
+        # Subtest: never runs the probe for a company that is still active
+        ok 4 - never runs the probe for a company that is still active
+    ok 72 - term-expired company
+    # Subtest: sends company-selector reply when multi-company user has no LineCompanyContext
+    ok 73 - sends company-selector reply when multi-company user has no LineCompanyContext
+    # Subtest: lists owner companies through explicit LINE control command without AI Gateway
+    ok 74 - lists owner companies through explicit LINE control command without AI Gateway
+    # Subtest: บริษัทของฉัน one-tap web button
+        # Subtest: mints one token per visible bubble, bound to that bubble’s own company
+        ok 1 - mints one token per visible bubble, bound to that bubble’s own company
+        # Subtest: renders the picker exactly as before when the handoff feature is off
+        ok 2 - renders the picker exactly as before when the handoff feature is off
+        # Subtest: drops only the failing bubble’s web button when one mint fails
+        ok 3 - drops only the failing bubble’s web button when one mint fails
+        # Subtest: mints for the visible page only, never for companies this carousel cannot show
+        ok 4 - mints for the visible page only, never for companies this carousel cannot show
+        # Subtest: puts the web button on the context card of a member with a single company
+        ok 5 - puts the web button on the context card of a member with a single company
+        # Subtest: leaves the context card exactly as before when the handoff feature is off
+        ok 6 - leaves the context card exactly as before when the handoff feature is off
+        # Subtest: still delivers the context card when its own mint fails
+        ok 7 - still delivers the context card when its own mint fails
+    ok 75 - บริษัทของฉัน one-tap web button
+    # Subtest: puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup
+    ok 76 - puts เปิดร้านใหม่ on the company card only where this environment opens self-service signup
+    # Subtest: replaces the เปิดร้านใหม่ door with the pending request while an application is travelling
+    ok 77 - replaces the เปิดร้านใหม่ door with the pending request while an application is travelling
+    # Subtest: keeps the เปิดร้านใหม่ door for an owner whose only application already settled
+    ok 78 - keeps the เปิดร้านใหม่ door for an owner whose only application already settled
+    # Subtest: hides เปิดร้านใหม่ from an employee of the current company and points at โปรโมชั่น instead
+    ok 79 - hides เปิดร้านใหม่ from an employee of the current company and points at โปรโมชั่น instead
+    # Subtest: returns only the current-company card to a non-owner
+    ok 80 - returns only the current-company card to a non-owner
+    # Subtest: wires the owner role into the บริษัทของฉัน Quick Reply
+    ok 81 - wires the owner role into the บริษัทของฉัน Quick Reply
+    # Subtest: delivers the main menu as a Flex greeting that names the user
+    ok 82 - delivers the main menu as a Flex greeting that names the user
+    # Subtest: still opens the main menu while a support pause is running
+    ok 83 - still opens the main menu while a support pause is running
+    # Subtest: counts the pending approval queues the member can act on
+    ok 84 - counts the pending approval queues the member can act on
+    # Subtest: delivers the receipt prompt as a Flex card
+    ok 85 - delivers the receipt prompt as a Flex card
+    # Subtest: returns enabled services deterministically even when the AI feature is off
+    ok 86 - returns enabled services deterministically even when the AI feature is off
+    # Subtest: gates the receipt prompt on both the upload feature and a capture permission
+    ok 87 - gates the receipt prompt on both the upload feature and a capture permission
+    # Subtest: renders real tenant-scoped branch names and degrades to the resolved count
+    ok 88 - renders real tenant-scoped branch names and degrades to the resolved count
+    # Subtest: uses a truthful fallback scope without querying branch names for non-main menu commands
+    ok 89 - uses a truthful fallback scope without querying branch names for non-main menu commands
+    # Subtest: reads the approval queues with the caller RequestContext, not with anything from the message
+    ok 90 - reads the approval queues with the caller RequestContext, not with anything from the message
+    # Subtest: keeps the approval card link-only when a queue read fails, instead of reporting it empty
+    ok 91 - keeps the approval card link-only when a queue read fails, instead of reporting it empty
+    # Subtest: switches owner selected company through explicit LINE control command
+    ok 92 - switches owner selected company through explicit LINE control command
+    # Subtest: switches company from a bare number only while the immediately previous turn is a pending picker
+    ok 93 - switches company from a bare number only while the immediately previous turn is a pending picker
+    # Subtest: keeps a bare number as ordinary AI conversation when no company picker is pending
+    ok 94 - keeps a bare number as ordinary AI conversation when no company picker is pending
+    # Subtest: offers the company picker to a multi-company user with mixed roles
+    ok 95 - offers the company picker to a multi-company user with mixed roles
+    # Subtest: lists every company for a multi-company user with mixed roles
+    ok 96 - lists every company for a multi-company user with mixed roles
+    # Subtest: switches to a non-owner membership through explicit LINE control command
+    ok 97 - switches to a non-owner membership through explicit LINE control command
+    # Subtest: auto-resolves single-company user without LineCompanyContext
+    ok 98 - auto-resolves single-company user without LineCompanyContext
+    # Subtest: does not expose raw lineUserId — event log stores hash
+    ok 99 - does not expose raw lineUserId — event log stores hash
+    # Subtest: resolves multi-company user who has selected LineCompanyContext
+    ok 100 - resolves multi-company user who has selected LineCompanyContext
+    # Subtest: rejects invalid LINE bytes before malware scan, intake routing, OCR, or upload intent
+    ok 101 - rejects invalid LINE bytes before malware scan, intake routing, OCR, or upload intent
+    # Subtest: fails closed when LINE malware scanning rejects otherwise valid bytes
+    ok 102 - fails closed when LINE malware scanning rejects otherwise valid bytes
+    # Subtest: explains a check bill and parks it without creating an expense draft
+    ok 103 - explains a check bill and parks it without creating an expense draft
+    # Subtest: creates the signature asset from an explicit caption even when the intake router is unavailable
+    ok 104 - creates the signature asset from an explicit caption even when the intake router is unavailable
+    # Subtest: steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)
+    ok 105 - steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)
+    # Subtest: leaves a ROUTED expense capture alone even when its caption mentions ลายเซ็น
+    ok 106 - leaves a ROUTED expense capture alone even when its caption mentions ลายเซ็น
+    # Subtest: receipt quota answer
+        # Subtest: answers the refused receipt with the §7 card, and never reads or captures it
+        ok 1 - answers the refused receipt with the §7 card, and never reads or captures it
+        # Subtest: does not fall through to the generic "อ่านรูปนี้ไม่สำเร็จ" clarify
+        ok 2 - does not fall through to the generic "อ่านรูปนี้ไม่สำเร็จ" clarify
+        # Subtest: sends the card ONCE per month; the next over-quota receipt gets one line (spec §3.7)
+        ok 3 - sends the card ONCE per month; the next over-quota receipt gets one line (spec §3.7)
+        # Subtest: names the full trial allowance despite a legacy warmup-ten window
+        ok 4 - names the full trial allowance despite a legacy warmup-ten window
+        # Subtest: never tells a PAYING tier it is on a trial
+        ok 5 - never tells a PAYING tier it is on a trial
+        # Subtest: gives the month back when the card cannot be delivered
+        ok 6 - gives the month back when the card cannot be delivered
+        # Subtest: keeps the automatic receipt summary free of quota counters across tiers
+        ok 7 - keeps the automatic receipt summary free of quota counters across tiers
+        # Subtest: does not query presentation quota after an admitted receipt crosses the month boundary
+        ok 8 - does not query presentation quota after an admitted receipt crosses the month boundary
+        # Subtest: still admits fallback OCR once without reading a presentation counter
+        ok 9 - still admits fallback OCR once without reading a presentation counter
+        # Subtest: does not announce a successful read counter for an uploaded source whose OCR application failed
+        ok 10 - does not announce a successful read counter for an uploaded source whose OCR application failed
+        # Subtest: says nothing about a counter for a legacy shop with no plan term
+        ok 11 - says nothing about a counter for a legacy shop with no plan term
+    ok 107 - receipt quota answer
+    # Subtest: turns the numbered signature answer into a usable asset that steers back to the decision, and refuses a PDF outright
+    ok 108 - turns the numbered signature answer into a usable asset that steers back to the decision, and refuses a PDF outright
+    # Subtest: parks the bytes when the intake router routes a media turn to CLARIFY
+    ok 109 - parks the bytes when the intake router routes a media turn to CLARIFY
+    # Subtest: receipt upload errors reply and mark webhook instead of hanging received
+    ok 110 - receipt upload errors reply and mark webhook instead of hanging received
+    # Subtest: audits a failed LINE receipt read with its gateway errorCode
+    ok 111 - audits a failed LINE receipt read with its gateway errorCode
+    # Subtest: does not make a second LINE image call after the governed intake router denies OCR
+    ok 112 - does not make a second LINE image call after the governed intake router denies OCR
+    # Subtest: creates LINE upload expense draft with line_upload permission only
+    ok 113 - creates LINE upload expense draft with line_upload permission only
+    # Subtest: applies OCR fields from AI Gateway to LINE receipt draft
+    ok 114 - applies OCR fields from AI Gateway to LINE receipt draft
+ok 16 - ProcessLineWebhookUseCase
+# Subtest: message buffering interplay (dedup relaxation + push fallback)
+    # Subtest: a received row (created by the buffer at enqueue) does not block the turn
+    ok 1 - a received row (created by the buffer at enqueue) does not block the turn
+    # Subtest: a terminal row still dedups the event
+    ok 2 - a terminal row still dedups the event
+    # Subtest: sends only a private-chat instruction to a group after an expired reply token
+    ok 3 - sends only a private-chat instruction to a group after an expired reply token
+    # Subtest: push fallback targets the 1:1 user when no chat target is set
+    ok 4 - push fallback targets the 1:1 user when no chat target is set
+ok 17 - message buffering interplay (dedup relaxation + push fallback)
+# Subtest: ProcessLineWebhookUseCase – value candidate wiring (item 10F)
+    # Subtest: attaches the same deterministic candidates to the intake route and the turn request
+    ok 1 - attaches the same deterministic candidates to the intake route and the turn request
+    # Subtest: omits valueCandidates for value-free messages so payloads stay unchanged
+    ok 2 - omits valueCandidates for value-free messages so payloads stay unchanged
+ok 18 - ProcessLineWebhookUseCase – value candidate wiring (item 10F)
+# Subtest: ProcessLineWebhookUseCase – the monthly AI budget is not congestion (G-05)
+    # Subtest: answers with the budget card, never the wait-and-retry line
+    ok 1 - answers with the budget card, never the wait-and-retry line
+    # Subtest: acks the turn as refused, so the reclaim worker stops re-running a closed admission
+    ok 2 - acks the turn as refused, so the reclaim worker stops re-running a closed admission
+    # Subtest: leaves an ordinary 429 exactly as it was — this is a fix, not a re-classification
+    ok 3 - leaves an ordinary 429 exactly as it was — this is a fix, not a re-classification
+ok 19 - ProcessLineWebhookUseCase – the monthly AI budget is not congestion (G-05)
+# Subtest: ProcessLineWebhookUseCase – ledger wiring (item 10F)
+    # Subtest: keeps busy feedback intermediate so the queue can deliver the final answer
+    ok 1 - keeps busy feedback intermediate so the queue can deliver the final answer
+    # Subtest: keeps timeout feedback intermediate so the queue can deliver the final answer
+    ok 2 - keeps timeout feedback intermediate so the queue can deliver the final answer
+    # Subtest: a queue winner prevents the late live producer from saving a competing outcome or sending
+    ok 3 - a queue winner prevents the late live producer from saving a competing outcome or sending
+    # Subtest: appends before the gateway and acknowledges only after confirmed delivery
+    ok 4 - appends before the gateway and acknowledges only after confirmed delivery
+    # Subtest: keeps the computed employee turn open when LINE delivery is not confirmed
+    ok 5 - keeps the computed employee turn open when LINE delivery is not confirmed
+    # Subtest: leaves the turn entry unacked when the gateway throws (reclaim re-runs it)
+    ok 6 - leaves the turn entry unacked when the gateway throws (reclaim re-runs it)
+    # Subtest: attaches open clarifications to the turn request and consumes only the ones this turn answered
+    ok 7 - attaches open clarifications to the turn request and consumes only the ones this turn answered
+    # Subtest: intake CLARIFY appends a waiting_user entry carrying the question
+    ok 8 - intake CLARIFY appends a waiting_user entry carrying the question
+ok 20 - ProcessLineWebhookUseCase – ledger wiring (item 10F)
+# Subtest: ProcessLineWebhookUseCase – per-tool invocation records (M-02)
+    # Subtest: persists the real per-tool status, duration and errorCode reported by the gateway
+    ok 1 - persists the real per-tool status, duration and errorCode reported by the gateway
+    # Subtest: falls back to the turn-level derivation when the gateway reports no toolCalls
+    ok 2 - falls back to the turn-level derivation when the gateway reports no toolCalls
+    # Subtest: reconstruction drill: one requestId pivots from the audit row to the turn and its per-tool rows
+    ok 3 - reconstruction drill: one requestId pivots from the audit row to the turn and its per-tool rows
+ok 21 - ProcessLineWebhookUseCase – per-tool invocation records (M-02)
+# Subtest: LINE webhook shadow coverage (piece 5)
+    # Subtest: records the turn for an ENTITLED company and lets the turn proceed
+    ok 1 - records the turn for an ENTITLED company and lets the turn proceed
+    # Subtest: records the turn for a DISABLED company too — the measurement precedes the refusal
+    ok 2 - records the turn for a DISABLED company too — the measurement precedes the refusal
+    # Subtest: records the receipt-capture entry path as well as the AI-query one
+    ok 3 - records the receipt-capture entry path as well as the AI-query one
+    # Subtest: records nothing when no company could be resolved
+    ok 4 - records nothing when no company could be resolved
+ok 22 - LINE webhook shadow coverage (piece 5)
+# Subtest: LINE grounded receipt item follow-up
+    # Subtest: recognizes low-tech references to the current bill as a document question
+    ok 1 - recognizes low-tech references to the current bill as a document question
+    # Subtest: answers only the printed line items and links to the selected expense record
+    ok 2 - answers only the printed line items and links to the selected expense record
+    # Subtest: states honestly when no printed item rows were readable
+    ok 3 - states honestly when no printed item rows were readable
+    # Subtest: lists additional charges under their own heading, not among the products
+    ok 4 - lists additional charges under their own heading, not among the products
+    # Subtest: names no charge the record does not carry, whatever the extractor suggested
+    ok 5 - names no charge the record does not carry, whatever the extractor suggested
+ok 23 - LINE grounded receipt item follow-up
+# Subtest: LINE correction reply says what actually changed
+    # Subtest: never claims to have edited the record when only a note was written
+    ok 1 - never claims to have edited the record when only a note was written
+    # Subtest: names old and new per field for the changes it did make
+    ok 2 - names old and new per field for the changes it did make
+    # Subtest: adds no caveat when the amount it was asked for is the amount it changed
+    ok 3 - adds no caveat when the amount it was asked for is the amount it changed
+    # Subtest: recognizes the money words this lane cannot act on
+    ok 4 - recognizes the money words this lane cannot act on
+ok 24 - LINE correction reply says what actually changed
+# Subtest: receipt capture card: an unread date says so
+    # Subtest: names the placeholder and the way to correct it
+    ok 1 - names the placeholder and the way to correct it
+    # Subtest: prints a date the document proved with no caveat at all
+    ok 2 - prints a date the document proved with no caveat at all
+    # Subtest: says which of the four things the stored date actually is
+    ok 3 - says which of the four things the stored date actually is
+    # Subtest: summarizes the charges that were persisted in one total
+    ok 4 - summarizes the charges that were persisted in one total
+    # Subtest: says the charge is still inside the total rather than listing it as recorded
+    ok 5 - says the charge is still inside the total rather than listing it as recorded
+    # Subtest: claims no fold when this apply wrote no lines at all
+    ok 6 - claims no fold when this apply wrote no lines at all
+    # Subtest: claims no fold when no apply outcome is known at all
+    ok 7 - claims no fold when no apply outcome is known at all
+    # Subtest: falls back to a plain label for a charge kind that is not one
+    ok 8 - falls back to a plain label for a charge kind that is not one
+    # Subtest: adds no charges block to a bill that printed none
+    ok 9 - adds no charges block to a bill that printed none
+ok 25 - receipt capture card: an unread date says so
+# Subtest: web link resolution
+    # Subtest: joins a base and a path without doubling the slash
+    ok 1 - joins a base and a path without doubling the slash
+    # Subtest: leaves an already-absolute URL alone
+    ok 2 - leaves an already-absolute URL alone
+    # Subtest: returns the bare path rather than inventing a host
+    ok 3 - returns the bare path rather than inventing a host
+    # Subtest: prefers WEB_BASE_URL, then PUBLIC_BASE_URL, and never a hard-coded host
+    ok 4 - prefers WEB_BASE_URL, then PUBLIC_BASE_URL, and never a hard-coded host
+ok 26 - web link resolution
+# Subtest: B4 — the pending-media classifier never claims a substitute-receipt request
+    # Subtest: leaves the bytes pending for “ทำใบรับรองแทนใบเสร็จรับเงิน ”
+    ok 1 - leaves the bytes pending for “ทำใบรับรองแทนใบเสร็จรับเงิน ”
+    # Subtest: leaves the bytes pending for “ขอใบรับรองแทนใบเสร็จ”
+    ok 2 - leaves the bytes pending for “ขอใบรับรองแทนใบเสร็จ”
+    # Subtest: leaves the bytes pending for “ทำใบทดแทนใบเสร็จ ค่าแท็กซี่ ”
+    ok 3 - leaves the bytes pending for “ทำใบทดแทนใบเสร็จ ค่าแท็กซี่ ”
+    # Subtest: leaves the bytes pending for “ทำใบรับรองต่อ”
+    ok 4 - leaves the bytes pending for “ทำใบรับรองต่อ”
+    # Subtest: leaves the bytes pending for “ขอใบแทนใบเสร็จหน่อยค่ะ”
+    ok 5 - leaves the bytes pending for “ขอใบแทนใบเสร็จหน่อยค่ะ”
+    # Subtest: still answers the question it was asked with “1” → receipt
+    ok 6 - still answers the question it was asked with “1” → receipt
+    # Subtest: still answers the question it was asked with “ใบเสร็จ” → receipt
+    ok 7 - still answers the question it was asked with “ใบเสร็จ” → receipt
+    # Subtest: still answers the question it was asked with “ใบเสร็จค่ะ” → receipt
+    ok 8 - still answers the question it was asked with “ใบเสร็จค่ะ” → receipt
+    # Subtest: still answers the question it was asked with “บันทึกเลย” → receipt
+    ok 9 - still answers the question it was asked with “บันทึกเลย” → receipt
+    # Subtest: still answers the question it was asked with “ใบกำกับภาษี” → receipt
+    ok 10 - still answers the question it was asked with “ใบกำกับภาษี” → receipt
+    # Subtest: still answers the question it was asked with “สลิป” → receipt
+    ok 11 - still answers the question it was asked with “สลิป” → receipt
+    # Subtest: still answers the question it was asked with “2” → illustration
+    ok 12 - still answers the question it was asked with “2” → illustration
+    # Subtest: still answers the question it was asked with “ภาพประกอบ” → illustration
+    ok 13 - still answers the question it was asked with “ภาพประกอบ” → illustration
+    # Subtest: still answers the question it was asked with “ไม่ต้องบันทึก” → illustration
+    ok 14 - still answers the question it was asked with “ไม่ต้องบันทึก” → illustration
+    # Subtest: still answers the question it was asked with “3” → multiple
+    ok 15 - still answers the question it was asked with “3” → multiple
+    # Subtest: still answers the question it was asked with “สรุปหลายรายการ” → multiple
+    ok 16 - still answers the question it was asked with “สรุปหลายรายการ” → multiple
+ok 27 - B4 — the pending-media classifier never claims a substitute-receipt request
+# Subtest: W1 — a failed delivery can never leave signed-away bytes reusable
+    # Subtest: consumes the pending row before the attachment becomes a signature asset
+    ok 1 - consumes the pending row before the attachment becomes a signature asset
+    # Subtest: leaves the row consumed when the LINE delivery throws
+    ok 2 - leaves the row consumed when the LINE delivery throws
+ok 28 - W1 — a failed delivery can never leave signed-away bytes reusable
+# Subtest: ProcessLineWebhookUseCase – substitute semantic dispatcher
+    # Subtest: PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)
+    ok 1 - PRIMARY: a semantic SUBSTITUTE route executes the continuation exactly once (fresh, no consume)
+    # Subtest: PRIMARY: a non-substitute route (side question) does NOT execute the continuation; substitute stays open
+    ok 2 - PRIMARY: a non-substitute route (side question) does NOT execute the continuation; substitute stays open
+    # Subtest: PRIMARY: UNAVAILABLE + canonical legal name uses the narrow fallback (execute once); a paraphrase does not
+    ok 3 - PRIMARY: UNAVAILABLE + canonical legal name uses the narrow fallback (execute once); a paraphrase does not
+    # Subtest: PRIMARY UNAVAILABLE precedence: a canonical command with BOTH a substitute workflow and an OPEN expense draft dispatches the substitute AND interrupts the draft (P2-H)
+    ok 4 - PRIMARY UNAVAILABLE precedence: a canonical command with BOTH a substitute workflow and an OPEN expense draft dispatches the substitute AND interrupts the draft (P2-H)
+    # Subtest: OFF (default): a legacy-positive starts DIRECTLY with confirmedStart=true (exact legacy, no confirm step)
+    ok 5 - OFF (default): a legacy-positive starts DIRECTLY with confirmedStart=true (exact legacy, no confirm step)
+    # Subtest: SHADOW is an inert NO-GO: byte-identical to OFF — legacy path, no primary dispatch, no substitute capability/context
+    ok 6 - SHADOW is an inert NO-GO: byte-identical to OFF — legacy path, no primary dispatch, no substitute capability/context
+    # Subtest: PRIMARY UAT paraphrase → confirm asks once (pinned to the exact expense) and persists ONLY a ledger clarification; the affirmative inherits and starts
+    ok 7 - PRIMARY UAT paraphrase → confirm asks once (pinned to the exact expense) and persists ONLY a ledger clarification; the affirmative inherits and starts
+    # Subtest: PRIMARY deterministic recovery — bind ONLY on a unique start-confirm; ambiguous (≥2) / missing (0) stay ZERO-WRITE
+    ok 8 - PRIMARY deterministic recovery — bind ONLY on a unique start-confirm; ambiguous (≥2) / missing (0) stay ZERO-WRITE
+    # Subtest: PRIMARY: resolved-clarification consumption is restricted to the substitute-owned intersection
+    ok 9 - PRIMARY: resolved-clarification consumption is restricted to the substitute-owned intersection
+    # Subtest: PRIMARY end-to-end (REAL use case): ≥2 candidates → target-selection → ordinal → confirm binds the EXACT id and saves EXACTLY once
+    ok 10 - PRIMARY end-to-end (REAL use case): ≥2 candidates → target-selection → ordinal → confirm binds the EXACT id and saves EXACTLY once
+    # Subtest: OFF/legacy end-to-end (REAL use case): ≥2 candidates → reply "1" SAVES exactly once, advances the selected target, and does not re-ask the shortlist
+    ok 11 - OFF/legacy end-to-end (REAL use case): ≥2 candidates → reply "1" SAVES exactly once, advances the selected target, and does not re-ask the shortlist
+ok 29 - ProcessLineWebhookUseCase – substitute semantic dispatcher
+# Subtest: ProcessLineWebhookUseCase – completed multi-part replies end in a Flex card
+    # Subtest: renders a single completed part as the Flex card with the completion menu, not plain text
+    ok 1 - renders a single completed part as the Flex card with the completion menu, not plain text
+    # Subtest: keeps the GENERIC card for a terminal with no grounded expense draft behind it (§10.1)
+    ok 2 - keeps the GENERIC card for a terminal with no grounded expense draft behind it (§10.1)
+    # Subtest: keeps earlier parts as lossless text and renders only the terminal part as the Flex card
+    ok 3 - keeps earlier parts as lossless text and renders only the terminal part as the Flex card
+ok 30 - ProcessLineWebhookUseCase – completed multi-part replies end in a Flex card
+# Subtest: ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default off)
+    # Subtest: refuses an unreadable incoming outcome before writing or sending it
+    ok 1 - refuses an unreadable incoming outcome before writing or sending it
+    # Subtest: cannot bind or send an outcome under another event tenant
+    ok 2 - cannot bind or send an outcome under another event tenant
+    # Subtest: writes NOTHING and delivers the exact legacy payload while the flag is off
+    ok 3 - writes NOTHING and delivers the exact legacy payload while the flag is off
+    # Subtest: persists the exact rendered payload BEFORE the first send, then records delivery separately
+    ok 4 - persists the exact rendered payload BEFORE the first send, then records delivery separately
+    # Subtest: FAILS CLOSED: an outcome it cannot record is never sent
+    ok 5 - FAILS CLOSED: an outcome it cannot record is never sent
+ok 31 - ProcessLineWebhookUseCase – durable terminal outcome (§8.3, default off)
+# Subtest: ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, default off)
+    # Subtest: takes the exact legacy push path for a rejected Flex payload while the flag is off
+    ok 1 - takes the exact legacy push path for a rejected Flex payload while the flag is off
+    # Subtest: retries ONCE with each card’s own altText and never pushes the payload LINE refused
+    ok 2 - retries ONCE with each card’s own altText and never pushes the payload LINE refused
+    # Subtest: records the fallback shape on the outcome row so a later replay sends the text, not the card
+    ok 3 - records the fallback shape on the outcome row so a later replay sends the text, not the card
+    # Subtest: FAILS CLOSED on the fallback too: an unrecordable replacement outcome is never sent
+    ok 4 - FAILS CLOSED on the fallback too: an unrecordable replacement outcome is never sent
+    # Subtest: never retries a failure that is not a rejected Flex body
+    ok 5 - never retries a failure that is not a rejected Flex body
+ok 32 - ProcessLineWebhookUseCase – Flex→text delivery fallback (§14.3, default off)
+# Subtest: isAffirmativeText – bounded confirmation forms with a negative guard first
+    # Subtest: accepts natural Thai/English affirmatives (incl. the broadened forms)
+    ok 1 - accepts natural Thai/English affirmatives (incl. the broadened forms)
+    # Subtest: the negative guard runs first: any negation/cancel token vetoes
+    ok 2 - the negative guard runs first: any negation/cancel token vetoes
+    # Subtest: is anchored: a longer sentence merely CONTAINING an affirmative is not a bare confirmation
+    ok 3 - is anchored: a longer sentence merely CONTAINING an affirmative is not a bare confirmation
+ok 33 - isAffirmativeText – bounded confirmation forms with a negative guard first
+# Subtest: ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)
+    # Subtest: never touches the repository and captures exactly as today
+    ok 1 - never touches the repository and captures exactly as today
+    # Subtest: stays off even when the repository is wired and the state would have refused
+    ok 2 - stays off even when the repository is wired and the state would have refused
+ok 34 - ProcessLineWebhookUseCase – neutral intake state mode: off (§8.3, default)
+# Subtest: ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3)
+    # Subtest: reads and CAS-consumes the state but changes NOTHING about the turn
+    ok 1 - reads and CAS-consumes the state but changes NOTHING about the turn
+    # Subtest: logs the divergence when the durable state disagrees, and still lets the turn through
+    ok 2 - logs the divergence when the durable state disagrees, and still lets the turn through
+ok 35 - ProcessLineWebhookUseCase – neutral intake state mode: shadow (§8.3)
+# Subtest: ProcessLineWebhookUseCase – neutral intake state mode: on, four zero-write guarantees (§8.3)
+    # Subtest: captures normally when the durable state is healthy and the CAS wins
+    ok 1 - captures normally when the durable state is healthy and the CAS wins
+    # Subtest: state-store-outage-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    ok 2 - state-store-outage-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    # Subtest: state-stale-or-expired-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    ok 3 - state-stale-or-expired-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    # Subtest: state-cross-user-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    ok 4 - state-cross-user-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    # Subtest: state-cross-chat-or-company-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    ok 5 - state-cross-chat-or-company-zero-write: refuses with ZERO domain writes and re-asks the canonical question
+    # Subtest: a stale CAS loser cannot consume the question — it stays open for the rightful answer
+    ok 6 - a stale CAS loser cannot consume the question — it stays open for the rightful answer
+    # Subtest: opens a durable state when the capture reports missing fields
+    ok 7 - opens a durable state when the capture reports missing fields
+ok 36 - ProcessLineWebhookUseCase – neutral intake state mode: on, four zero-write guarantees (§8.3)
+# Subtest: ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)
+    # Subtest: delivers the legacy all-text reply, unchanged, while the flag is off
+    ok 1 - delivers the legacy all-text reply, unchanged, while the flag is off
+    # Subtest: renders the ร่างค่าใช้จ่าย card from the capture result — no invented row — when the flag is on
+    ok 2 - renders the ร่างค่าใช้จ่าย card from the capture result — no invented row — when the flag is on
+    # Subtest: omits a row the capture did not ground rather than filling it in
+    ok 3 - omits a row the capture did not ground rather than filling it in
+ok 37 - ProcessLineWebhookUseCase – expense draft card on the capture terminal (§10.1, default off)
+# Subtest: keeps the shared event literals frozen so execute() cannot mutate them
+ok 38 - keeps the shared event literals frozen so execute() cannot mutate them
+# Subtest: receipt reliability: saved facts, notification and provider-input continuity
+    # Subtest: delivery failure after commit preserves the one saved receipt with both runtime flags enabled and disabled
+    ok 1 - delivery failure after commit preserves the one saved receipt with both runtime flags enabled and disabled
+    # Subtest: a catch fallback cannot replace or re-send an already accepted terminal result
+    ok 2 - a catch fallback cannot replace or re-send an already accepted terminal result
+    # Subtest: keeps an unverifiable captured outcome after restart and gives safe recovery without OCR, draft writes, or admission
+    ok 3 - keeps an unverifiable captured outcome after restart and gives safe recovery without OCR, draft writes, or admission
+    # Subtest: new webhook identity for the same provider message recovers the saved capture before download or routing
+    ok 4 - new webhook identity for the same provider message recovers the saved capture before download or routing
+    # Subtest: a new message containing exact saved bytes opens the same scoped capture before a new OCR admission
+    ok 5 - a new message containing exact saved bytes opens the same scoped capture before a new OCR admission
+    # Subtest: an exact-image duplicate shows current saved facts and final status instead of old OCR
+    ok 6 - an exact-image duplicate shows current saved facts and final status instead of old OCR
+    # Subtest: retains a failed duplicate card and gives safe recovery when its original source proof is absent
+    ok 7 - retains a failed duplicate card and gives safe recovery when its original source proof is absent
+    # Subtest: does not expose a matching receipt from another creator or chat
+    ok 8 - does not expose a matching receipt from another creator or chat
+    # Subtest: retains usable OCR source and same image when applying financial rows fails, without leaking raw Prisma inputs
+    ok 9 - retains usable OCR source and same image when applying financial rows fails, without leaking raw Prisma inputs
+    # Subtest: re-reads the durable primary when upload completion fails after committing it
+    ok 10 - re-reads the durable primary when upload completion fails after committing it
+    # Subtest: names an existing finalized record truthfully and never promises a saved image without a primary
+    ok 11 - names an existing finalized record truthfully and never promises a saved image without a primary
+ok 39 - receipt reliability: saved facts, notification and provider-input continuity
+# Subtest: receipt card shows nonzero accepted taxes without publishing contradictory OCR money or extra breakdowns
+ok 40 - receipt card shows nonzero accepted taxes without publishing contradictory OCR money or extra breakdowns
+# Subtest: AP22 original outcome authorization
+    # Subtest: revalidates original proof without rerouting: legacy
+    ok 1 - revalidates original proof without rerouting: legacy
+    # Subtest: revalidates original proof without rerouting: changed
+    ok 2 - revalidates original proof without rerouting: changed
+    # Subtest: revalidates original proof without rerouting: unavailable
+    ok 3 - revalidates original proof without rerouting: unavailable
+    # Subtest: revalidates original proof without rerouting: lease-lost
+    ok 4 - revalidates original proof without rerouting: lease-lost
+    # Subtest: revalidates original proof without rerouting: unchanged
+    ok 5 - revalidates original proof without rerouting: unchanged
+ok 41 - AP22 original outcome authorization
+# Subtest: parseBufferEnvelope
+    # Subtest: accepts a stored text envelope
+    ok 1 - accepts a stored text envelope
+    # Subtest: rejects junk instead of throwing mid-sweep
+    ok 2 - rejects junk instead of throwing mid-sweep
+ok 42 - parseBufferEnvelope
+# Subtest: parseOutcomeMessages
+    # Subtest: accepts a stored LINE message array
+    ok 1 - accepts a stored LINE message array
+    # Subtest: refuses anything that would push a half-formed payload into a real chat
+    ok 2 - refuses anything that would push a half-formed payload into a real chat
+ok 43 - parseOutcomeMessages
+# Subtest: RecoverOrphanLineEventsUseCase
+    # Subtest: repairs the incident preview before replaying the same complete card, without intake or quota work
+    ok 1 - repairs the incident preview before replaying the same complete card, without intake or quota work
+    # Subtest: does not send a repaired card after losing either the representation or event claim
+    ok 2 - does not send a repaired card after losing either the representation or event claim
+    # Subtest: keeps full canonical text on a provider-rejected Flex and preserves valid unsent cards
+    ok 3 - keeps full canonical text on a provider-rejected Flex and preserves valid unsent cards
+    # Subtest: replays an orphaned row through the buffer and marks it reclaimable
+    ok 4 - replays an orphaned row through the buffer and marks it reclaimable
+    # Subtest: leaves an in-flight row alone
+    ok 5 - leaves an in-flight row alone
+    # Subtest: waits for a provider-input lease before retrying the same durable input
+    ok 6 - waits for a provider-input lease before retrying the same durable input
+    # Subtest: replays a row parked by a failed dispatch notice
+    ok 7 - replays a row parked by a failed dispatch notice
+    # Subtest: replays a response claim interrupted before the fallback delivery result was persisted
+    ok 8 - replays a response claim interrupted before the fallback delivery result was persisted
+    # Subtest: parks an over-age row instead of answering a stale question, and drops its payload
+    ok 9 - parks an over-age row instead of answering a stale question, and drops its payload
+    # Subtest: parks an unreadable payload without replaying it
+    ok 10 - parks an unreadable payload without replaying it
+    # Subtest: never double-replays when another sweeper won the row
+    ok 11 - never double-replays when another sweeper won the row
+    # Subtest: does not replay a row whose turn already answered with an error
+    ok 12 - does not replay a row whose turn already answered with an error
+    # Subtest: stops replaying a row the buffer never took back
+    ok 13 - stops replaying a row the buffer never took back
+    # Subtest: leaves a failed in-turn delivery alone while the replay flag is off
+    ok 14 - leaves a failed in-turn delivery alone while the replay flag is off
+    # Subtest: pushes the STORED outcome verbatim and never re-routes the input (§8.3)
+    ok 15 - pushes the STORED outcome verbatim and never re-routes the input (§8.3)
+    # Subtest: drops the context prefix, never the answer, when the stored outcome already fills LINE's 5-message cap
+    ok 16 - drops the context prefix, never the answer, when the stored outcome already fills LINE's 5-message cap
+    # Subtest: converts a provider-rejected representation without rerunning the business operation
+    ok 17 - converts a provider-rejected representation without rerunning the business operation
+    # Subtest: keeps the row claimable when the replay push does not reach LINE
+    ok 18 - keeps the row claimable when the replay push does not reach LINE
+    # Subtest: never pushes a stored outcome twice when another sweeper won the claim
+    ok 19 - never pushes a stored outcome twice when another sweeper won the claim
+    # Subtest: parks an over-age row instead of pushing an hour-old answer
+    ok 20 - parks an over-age row instead of pushing an hour-old answer
+    # Subtest: parks a missing business outcome for repair instead of repeating its mutation
+    ok 21 - parks a missing business outcome for repair instead of repeating its mutation
+    # Subtest: reconciles accepted outcomes after a restart without pushing or rerouting them
+    ok 22 - reconciles accepted outcomes after a restart without pushing or rerouting them
+    # Subtest: leases a failed attempt until the retry interval and parks permanent failure
+    ok 23 - leases a failed attempt until the retry interval and parks permanent failure
+    # Subtest: parks an unreadable stored outcome rather than pushing a half-formed payload
+    ok 24 - parks an unreadable stored outcome rather than pushing a half-formed payload
+    # Subtest: purges event rows past the AI retention window
+    ok 25 - purges event rows past the AI retention window
+ok 44 - RecoverOrphanLineEventsUseCase
+# tests 399
+# suites 45
+# pass 399
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 966.551792

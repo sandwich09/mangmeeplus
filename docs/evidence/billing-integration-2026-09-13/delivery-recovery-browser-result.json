@@ -1,0 +1,36 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "admin-configuration-password-proof-session-credential-expiry-and-platform-scope",
+    "admin-emergency-close-and-independent-approved-reopen-no-restart",
+    "admin-vat-issuer-price-preview-publish-and-compensating-off-revision",
+    "admin-configuration-idempotency-revoked-requester-cancel-approval-race-and-historical-invoices",
+    "browser-admin-password-independent-approval-observed-config-and-mobile",
+    "browser-admin-vat-form-publish-return-off-without-process-restart",
+    "admin-scope-directory-pagination-and-real-platform-target-boundary",
+    "admin-scope-independent-password-approved-grant-and-delegated-redaction",
+    "admin-scope-revoke-expiry-mode-and-historical-replay-no-regrant",
+    "admin-scope-stale-role-version-expired-preview-revoked-initiator-and-unchanged-ledgers",
+    "browser-admin-scope-search-pagination-preview-reload-independent-approval-revoke-and-mobile",
+    "admin-company-trial-manual-paid-held-grace-and-expiry-provenance",
+    "admin-company-scoped-search-stable-pagination-and-read-without-provisioning",
+    "admin-timeline-timestamp-ties-mode-scope-financial-audit-and-recipient-redaction",
+    "browser-admin-trial-search-no-account-and-mobile",
+    "browser-admin-timeline-pages-related-record-back-refresh-and-mobile",
+    "admin-case-redetection-preserves-owner-note-priority-and-followup",
+    "admin-case-reassignment-backup-scope-revocation-and-return-queue",
+    "admin-case-overdue-without-worker-concurrent-edit-and-reopen-episode",
+    "browser-admin-case-reassign-backup-followup-expired-owner-return-queue-and-mobile",
+    "admin-delivery-scoped-source-preview-concurrency-replay-and-lost-line-response",
+    "admin-delivery-revoked-operator-before-send-parks-original-and-new-review-recovers",
+    "admin-delivery-content-preference-accepted-budget-and-aged-key-fences",
+    "browser-admin-original-delivery-preview-command-reload-return-and-mobile"
+  ],
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false,
+  "browserE2E": true
+}

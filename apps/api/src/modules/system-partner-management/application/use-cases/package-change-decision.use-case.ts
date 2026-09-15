@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { Inject, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import {
   PLAN_TIER_PRESETS,
@@ -13,7 +14,9 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
 import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
-import { SetCompanyPlanTermUseCase } from './company-plan-term.use-cases';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
+import { assertPlanTermAdjustmentActor, planTermSourceVersion } from '../plan-term-adjustment';
+import { SetCompanyPlanTermUseCase, paidPlanReviewRequired } from './company-plan-term.use-cases';
 
 export const PACKAGE_CHANGE_DECIDED_ACTION = 'signup.line.package_change_decided';
 
@@ -33,15 +36,13 @@ export function packageChangeRejectedMessageTh(note?: string): string {
 /**
  * P10-L §8, the admin half of the package-change queue.
  *
- * APPROVE is deliberately not its own tier writer: it CLAIMS the row and then calls the very
- * use-case `PUT /system/partners/:id/plan-term` calls, so a customer's limits still move in exactly
- * one place (H-01) with the same CRITICAL before/after audit row. The claim is a CAS on `OPEN`, so
- * two operators tapping the same row produce one tier change, not two — and a failure inside the
- * tier write puts the row back where the next operator can find it.
+ * APPROVE shares the plan-term writer and one Company-locked transaction with its request and
+ * audit. A failed write or process stop cannot leave an approved request without the actual term.
+ * Customer notification follows commit and never runs again for an already-decided request.
  */
 @Injectable()
 export class PackageChangeDecisionUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly setPlanTerm: SetCompanyPlanTermUseCase,
     private readonly config: AppConfigService,
@@ -54,7 +55,7 @@ export class PackageChangeDecisionUseCase {
       orderBy: { createdAt: 'asc' },
       take: 200,
       include: {
-        company: { select: { name: true, planTerm: { select: { tierKey: true } } } },
+        company: { select: { name: true, planTerm: { select: { tierKey: true, billingReceiptAccountId: true } } } },
       },
     });
     if (rows.length === 0) return { items: [] };
@@ -73,11 +74,13 @@ export class PackageChangeDecisionUseCase {
         companyId: row.companyId,
         companyName: row.company.name,
         requestedTierKey: row.requestedTierKey,
+        ...(row.company.planTerm?.billingReceiptAccountId ? {billingReviewPath:`/system/billing/companies/${encodeURIComponent(row.companyId)}/plan-adjustments`} : {}),
         ...(row.company.planTerm?.tierKey ? { currentTierKey: row.company.planTerm.tierKey } : {}),
         ...(nameByUserId.get(row.requestedByUserId)
           ? { requestedByDisplayName: nameByUserId.get(row.requestedByUserId)! }
           : {}),
         status: row.status as PackageChangeRequestStatus,
+        ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
         ...(row.note ? { note: row.note } : {}),
         createdAt: row.createdAt.toISOString(),
         ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),
@@ -106,60 +109,38 @@ export class PackageChangeDecisionUseCase {
     // the CAS claim so a refused note leaves the row exactly where the operator found it.
     const note = this.checkedNote(body.note);
 
-    // Claim first. The loser of a race sees a decided row above on its next read and changes nothing.
-    const claimed = await this.prisma.client.packageChangeRequest.updateMany({
-      where: { id, status: 'OPEN' },
-      data: { status: target, decidedByUserId: adminUserId, decidedAt: new Date() },
-    });
-    if (claimed.count !== 1) {
-      const current = await this.prisma.client.packageChangeRequest.findUnique({ where: { id } });
-      return { id, status: (current?.status ?? 'OPEN') as PackageChangeRequestStatus };
-    }
-
     if (body.action === 'APPROVE') {
-      const preset = PLAN_TIER_PRESETS[row.requestedTierKey as PlanTierKey];
-      try {
-        await this.setPlanTerm.execute({
-          companyId: row.companyId,
-          tierKey: row.requestedTierKey as PlanTierKey,
-          branchLimit: preset.branchLimit,
-          employeeLimit: preset.employeeLimit,
-          monthlySlipLimit: preset.monthlySlipLimit,
-          requestingAdminUserId: adminUserId,
-          requestId,
-        });
-      } catch (error) {
-        // The tier did not move, so the row must not claim it did — put it back in the queue.
-        await this.prisma.client.packageChangeRequest.updateMany({
-          where: { id, status: 'APPROVED' },
-          data: { status: 'OPEN', decidedByUserId: null, decidedAt: null },
-        });
-        throw error;
-      }
+      const term = await this.prisma.client.companyPlanTerm.findUnique({where:{companyId:row.companyId},select:{billingReceiptAccountId:true}});
+      if (term?.billingReceiptAccountId) throw paidPlanReviewRequired();
     }
 
-    await this.prisma.client.auditLog.create({
-      data: {
-        companyId: row.companyId,
-        actorUserId: adminUserId,
-        action: PACKAGE_CHANGE_DECIDED_ACTION,
-        targetType: 'package_change_request',
-        targetId: id,
-        requestId,
-        result: 'SUCCESS',
-        riskLevel: 'HIGH',
-        metadataJson: {
-          // The paragraph IS the evidence, exactly as it is for the message box: an operator
-          // speaking to a customer as the platform leaves behind what they actually said.
-          action: body.action,
-          requestedTierKey: row.requestedTierKey,
-          ...(note ? { note } : {}),
-        },
-      },
+    const decision = await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, row.companyId);
+      await assertPlanTermAdjustmentActor(tx,adminUserId);
+      const current = await tx.packageChangeRequest.findUnique({where:{id}});
+      if(!current)throw new NotFoundException('package_change_request_not_found');
+      if(current.status!=='OPEN')return {status:current.status as PackageChangeRequestStatus,changed:false};
+      const term=await tx.companyPlanTerm.findUnique({where:{companyId:row.companyId}});
+      if(body.action==='APPROVE'&&term?.billingReceiptAccountId)throw paidPlanReviewRequired();
+      const claimed=await tx.packageChangeRequest.updateMany({where:{id,status:'OPEN'},data:{status:target,decidedByUserId:adminUserId,decidedAt:new Date()}});
+      if(claimed.count!==1){const latest=await tx.packageChangeRequest.findUnique({where:{id}});return {status:(latest?.status??'OPEN') as PackageChangeRequestStatus,changed:false};}
+      if(body.action==='APPROVE'){
+        const preset=PLAN_TIER_PRESETS[current.requestedTierKey as PlanTierKey];
+        if(!preset)throw new UnprocessableEntityException('Unknown plan tier');
+        await this.setPlanTerm.execute({companyId:row.companyId,commandId:`line-package-${id}`,
+          expectedVersion:planTermSourceVersion(row.companyId,term),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:id,
+          tierKey:current.requestedTierKey as PlanTierKey,branchLimit:preset.branchLimit,employeeLimit:preset.employeeLimit,
+          monthlySlipLimit:preset.monthlySlipLimit,requestingAdminUserId:adminUserId,requestId},tx);
+      }
+      await tx.auditLog.create({data:{companyId:row.companyId,actorUserId:adminUserId,action:PACKAGE_CHANGE_DECIDED_ACTION,
+        targetType:'package_change_request',targetId:id,requestId,result:'SUCCESS',riskLevel:'HIGH',
+        metadataJson:{action:body.action,requestedTierKey:current.requestedTierKey,...note?{note}:{}}}});
+      return {status:target,changed:true};
     });
+    if(!decision.changed)return {id,status:decision.status};
 
     await this.notifyShop(row.companyId, body, row.requestedTierKey, note);
-    return { id, status: target };
+    return { id, status: decision.status };
   }
 
   /**
@@ -185,12 +166,13 @@ export class PackageChangeDecisionUseCase {
     requestedTierKey: string,
     note: string | undefined,
   ): Promise<void> {
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return;
     const text = body.action === 'APPROVE'
       ? packageChangeApprovedMessageTh(requestedTierKey, note)
       : packageChangeRejectedMessageTh(note);
-    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId)) {
+    for (const providerUserId of await ownerLineUserIds(this.prisma, companyId, credentials.channelId)) {
       if (!await pushSystemLineMessage(token, providerUserId, text)) {
         this.logger.warn(
           { event: 'signup.line.package_change_notice_failed', riskLevel: 'LOW' },
@@ -205,14 +187,14 @@ export class PackageChangeDecisionUseCase {
  * The LINE identities of a shop's active OWNERs. Shared with the admin message box (SEC-05): both
  * answer "who speaks for this shop", and one definition keeps them from drifting apart.
  */
-export async function ownerLineUserIds(prisma: PrismaService, companyId: string): Promise<string[]> {
+export async function ownerLineUserIds(prisma: PrismaService, companyId: string, channelId: string): Promise<string[]> {
   const owners = await prisma.client.companyMembership.findMany({
     where: { companyId, status: 'ACTIVE', roles: { some: { role: { key: 'OWNER' } } } },
     select: { userId: true },
   });
   if (owners.length === 0) return [];
   const identities = await prisma.client.externalIdentity.findMany({
-    where: { userId: { in: owners.map((owner) => owner.userId) }, provider: 'LINE', status: 'ACTIVE' },
+    where: { userId: { in: owners.map((owner) => owner.userId) }, provider: 'LINE', providerChannelId: channelId, status: 'ACTIVE' },
     select: { providerUserId: true },
   });
   // One owner may hold more than one identity row; the shop wants one message, not two.

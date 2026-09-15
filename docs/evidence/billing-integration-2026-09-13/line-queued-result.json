@@ -1,0 +1,65 @@
+{
+  "status": "Local exact queued-delivery and live/queue ownership checkpoint PASS; full AP21–24 still incomplete.",
+  "testFiles": 42,
+  "tests": 1287,
+  "passed": 1287,
+  "skipped": 0,
+  "apiTypecheck": "PASS",
+  "actualPostgresql": {
+    "sourceProducerLiveReplayAndQueuedTransport": 24,
+    "queuedLeaseAndOwnership": 7,
+    "actorRevocation": 8,
+    "quotaRaces": 2
+  },
+  "simulation": [
+    "AI Gateway/model",
+    "LINE transport including accepted-request 409 and response loss",
+    "Redis entry claim/ack shim in PostgreSQL producer-chain fixture; separate ledger unit tests"
+  ],
+  "scope": [
+    "durable first payload and original source/actor proof before send",
+    "UNKNOWN retry uses one stable operation key and never reruns saved work",
+    "ACCEPTED reconciles only bookkeeping after ack loss or later access revocation",
+    "finite lease/token, context expiry and separate sub-request identities",
+    "atomic top-level final notification owner before live outcome persistence",
+    "busy/timeout feedback does not occupy the final answer",
+    "finalization cannot overwrite another producer’s event"
+  ],
+  "limitations": [
+    "source-derived intake/draft/live-capture source coverage pending",
+    "native LINE and full AP01–24 matrix pending"
+  ],
+  "noDeployment": true,
+  "sources": {
+    "apps/api/prisma/schema.prisma": "512643407b1889bb04f893f2aff81e676f46821c9ad2636e5570a61bb5cdd70b",
+    "apps/api/prisma/migrations/20260914130000_line_read_evidence/migration.sql": "281af3fed5dba9d5dfdcdcde7ead874254c07acfe370b9fac5b7db7f0d4241c6",
+    "apps/api/prisma/migrations/20260914140000_line_outcome_authorization/migration.sql": "eaf27ad39847d1d551f85f86e4bdf05699f2cea0fe5ed1ac96e80440ff8f1780",
+    "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts": "99aa2ddd6a3515c0457627b90b7d25309e67501f72efe9cdfbc4bf6bc76fdcd2",
+    "apps/api/src/modules/line-ai/application/line-delivery-access.ts": "015162ac8ebdec1831a5edee0a28ff4d2238f4e085c51f6fa8ff7b14d246c7b3",
+    "apps/api/src/modules/line-ai/line-ai.module.ts": "e828d406d619b92a049246b999cc5a6b3513bb4e0d31d1086b2d1c55b55f5aee",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "2d5857ffd21f19f1bc345e1a7ef4dc11a2c926fef15e0ad16ee8392fb5712599",
+    "apps/api/src/modules/line-ai/line-delivery-access.pg.spec.ts": "150ed25c851ff55805e9985bc8efb25a353efcb60165ae81718312a0f6ae5ca6",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "b057d6ff150917e101ee64cf461795fc67f84b816331aa06836c5e3016d97bea",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "b4fb10d25d6d352d1304d0b45d6f53478d4936611492a0a6ac69d7414963f647",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.ts": "eab402c798fbc938545415c6f11fb710a23d1d919f28875bffd77137f2cfca92",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts": "e004f0fdab16a8beab6b5747ddad310b7b6f7bbb3a974525851a8e37f0c6e5cc",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.ts": "5c660be1b8c0fc4aee8c3cad6a4c2aac991fd522902682317ba5288f2ca45cdb",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts": "782a692c625b4410b088128ffe27331f563d3db7d2b5e961d8c3064fe0d9becf",
+    "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.ts": "8dec3a81b7c481a9621969bb6bedc4108665ede0595060ff4791b45727497dff",
+    "apps/api/src/modules/line-ai/presentation/http/internal-tools.controller.spec.ts": "e61f72a3831b650011dcd71b881a43d5e5aca795f976d97a0d2a28a77237cc88",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "ae9891c0fa1829511f20e5aad556fc179346fc060c825c0707112143b2bf46f8",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "def7a673c8907610a3bca791b8065fa1f04504dfd2ccebe162bc348289610333",
+    ".github/workflows/ci.yml": "d5201ea75276f1ee4a802bf03332712bebe41cb01b6db8b161cca1b983fe93da",
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "c4178f7e2882a3526faced38bbefccf1aa74623e1c54321cff3a8d67d849ac3c",
+    "apps/api/src/modules/line-ai/application/line-ledger-delivery.service.ts": "b7ab2eb3a1908fe55d062c6e8cb461c029db4d6244bb362298dfa209bb8be274",
+    "apps/api/src/modules/line-ai/application/line-ai-ledger.service.ts": "ebafae7bf3c2d59c2d2dc411032dfe6435f71f6c4ae0ee28badfaea06f29a0ee",
+    "apps/api/src/modules/line-ai/line-ledger-delivery.pg.spec.ts": "accd825c8e9e7a90259681cb67ef2249055f5b26a386677666ef9e2fd00a3914",
+    "apps/api/prisma/migrations/20260914150000_line_ledger_delivery/migration.sql": "f72dfc2c44f61353af5652ecfac39c461cedfa2a7450781bb2225ef6453e18d4",
+    "apps/api/prisma/migrations/20260914160000_line_delivery_owner/migration.sql": "547b8a1022735d222488942446d937157178fbbbf14207da94687f54dfba6ec8"
+  },
+  "fullBillingBrowser": {
+    "groups": 129,
+    "passed": 129,
+    "providersSimulated": true
+  }
+}

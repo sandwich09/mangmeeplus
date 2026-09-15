@@ -15,6 +15,8 @@ export type AccountProfileState = {
   pendingEmail: string | null;
   pendingEmailExpiresAt: string | null;
   lineLinked: boolean;
+  /** Current Messaging identity binding; provider delivery readiness is separate. */
+  lineMessagingReady?: boolean;
   phoneNumber: string | null;
   hasPassword: boolean;
   /** False when `EMAIL_PROVIDER=disabled`: nothing can be sent, so nothing may be promised. */

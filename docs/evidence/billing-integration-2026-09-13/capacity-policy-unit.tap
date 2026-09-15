@@ -1,0 +1,112 @@
+TAP version 13
+# Subtest: continuing purchases preserve paid capacity, accept increases and never convert temporary gifts to purchased rights
+ok 1 - continuing purchases preserve paid capacity, accept increases and never convert temporary gifts to purchased rights
+  ---
+  duration_ms: 2.102667
+  type: 'test'
+  ...
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 2 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 0.546417
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 3 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.432875
+  type: 'test'
+  ...
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 4 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 1.208709
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 5 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 1.3345
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 6 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.715625
+  type: 'test'
+  ...
+# Subtest: provider prices require exact requested identity, product and recurring contract
+ok 7 - provider prices require exact requested identity, product and recurring contract
+  ---
+  duration_ms: 1.43025
+  type: 'test'
+  ...
+# Subtest: provider Portal configuration requires explicit safe flags and exact native binding
+ok 8 - provider Portal configuration requires explicit safe flags and exact native binding
+  ---
+  duration_ms: 0.140541
+  type: 'test'
+  ...
+# Subtest: HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+ok 9 - HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+  ---
+  duration_ms: 1.583416
+  type: 'test'
+  ...
+# Subtest: full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+ok 10 - full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+  ---
+  duration_ms: 0.104292
+  type: 'test'
+  ...
+# Subtest: Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+ok 11 - Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+  ---
+  duration_ms: 0.094042
+  type: 'test'
+  ...
+# Subtest: first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+ok 12 - first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+  ---
+  duration_ms: 0.063167
+  type: 'test'
+  ...
+# Subtest: upgrade adds only prorated units, including the future periods already bought
+ok 13 - upgrade adds only prorated units, including the future periods already bought
+  ---
+  duration_ms: 0.230291
+  type: 'test'
+  ...
+# Subtest: invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+ok 14 - invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+  ---
+  duration_ms: 0.540416
+  type: 'test'
+  ...
+# Subtest: refund policy is closed for old settings and validates approved integer bounds
+ok 15 - refund policy is closed for old settings and validates approved integer bounds
+  ---
+  duration_ms: 0.666542
+  type: 'test'
+  ...
+# Subtest: approved offer prices and upfront quota share a snapshot and retain original defaults
+ok 16 - approved offer prices and upfront quota share a snapshot and retain original defaults
+  ---
+  duration_ms: 1.11875
+  type: 'test'
+  ...
+# Subtest: capacity policy accepts paired bounded limits without changing prices, receipt quantities or old defaults
+ok 17 - capacity policy accepts paired bounded limits without changing prices, receipt quantities or old defaults
+  ---
+  duration_ms: 0.318917
+  type: 'test'
+  ...
+1..17
+# tests 17
+# suites 0
+# pass 17
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 553.779916

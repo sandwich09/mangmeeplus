@@ -41,6 +41,16 @@ describe('sesConfigurationSet', () => {
 });
 
 describe('SesAuthMailerAdapter.sendAccountClaim', () => {
+  it('keeps the shared claim proof out of request URLs while retaining the status reference', async () => {
+    const h = harness();
+    await h.adapter.sendAccountClaim({ ...CLAIM_INPUT, signupRequestId: 'synthetic-request' });
+    const text = h.inputs[0].Message.Body.Text.Data as string;
+    const url = new URL(text.match(/https:\/\/[^\s]+\/claim-account[^\s]+/)![0]);
+    assert.equal(url.searchParams.get('token'), null);
+    assert.equal(url.searchParams.get('r'), 'synthetic-request');
+    assert.equal(new URLSearchParams(url.hash.slice(1)).get('token'), CLAIM_INPUT.rawToken);
+  });
+
   it('omits ConfigurationSetName entirely when the env is unset', async () => {
     const h = harness();
     await withConfigurationSet(undefined, () => h.adapter.sendAccountClaim(CLAIM_INPUT));

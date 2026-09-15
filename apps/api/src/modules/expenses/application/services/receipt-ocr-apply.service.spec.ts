@@ -6,8 +6,9 @@ import { acceptExpenseVatSource } from '../../domain/logic/expense-vat-reconcili
 
 function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
   return {
-    runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
-      const matched = await detectWithinTx({ marker: 'tx' });
+    runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>, db: any) => {
+      assert.ok(db, 'OCR duplicate detection joins the existing transaction');
+      const matched = await detectWithinTx(db);
       return {
         openCandidates: matched.length,
         duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH',
@@ -29,6 +30,15 @@ function makeDuplicateRepo(overrides: Record<string, unknown> = {}) {
     updateExpense: async (input: any) => input,
     ...overrides,
   };
+}
+
+// Arithmetic fixtures have no concurrent writer; the source-boundary case below supplies exact revisions.
+function makeApplyPrisma(tx: any) {
+  return { client: { $transaction: async (fn: any) => fn({
+    $executeRaw: async () => 0,
+    ...tx,
+    expenseRecord: { findFirstOrThrow: async () => ({ updatedAt: new Date('2026-09-15T00:00:00.001Z') }), ...tx.expenseRecord },
+  }) } };
 }
 
 // Spec §19c: a BENLAI card slip prints TAX RATE 7% / TAX AMT 37.94 / TAX Exclude 542.06 / paid 580.00.
@@ -215,13 +225,41 @@ async function applyFields(fields: any, vatCaptureSnapshotJson: any = null, exis
     expenseCategory: { findFirst: async () => null },
     expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
   };
-  const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+  const prisma = makeApplyPrisma(tx);
   const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any)
     .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields, todayIso ? { todayIso } : {});
   return { record: updates[0]?.data, line: lines[0], lines, result };
 }
 
 describe('ReceiptOcrApplyService.apply staleness guard', () => {
+  it('returns the original committed revision with duplicate detection in the same transaction', async () => {
+    const before = new Date('2026-09-15T00:00:00.000Z');
+    const committed = new Date('2026-09-15T00:00:00.002Z');
+    const steps: string[] = [];
+    const tx = {
+      $executeRaw: async () => { steps.push('lock'); },
+      expenseRecord: {
+        findFirst: async () => ({ updatedAt: before, expenseCategoryId: null, expenseCategory: null, lines: [] }),
+        update: async () => { steps.push('apply'); return { updatedAt: new Date(before.getTime() + 1) }; },
+        findFirstOrThrow: async () => { steps.push('revision'); return { updatedAt: committed }; },
+      },
+      expenseCategory: { findFirst: async () => null },
+      expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
+    };
+    const repo = makeDuplicateRepo({ runDuplicateCheck: async (_input: unknown, _detect: unknown, db: unknown) => {
+      assert.equal(db, tx, 'duplicate detection must not open a second transaction after OCR commits');
+      steps.push('duplicates'); return { openCandidates: 1, duplicateStatus: 'POSSIBLE_DUPLICATE' };
+    } });
+    const prisma = { client: { $transaction: async (work: (db: typeof tx) => Promise<unknown>) => {
+      const result = await work(tx); steps.push('commit'); return result;
+    } } };
+    const result = await new ReceiptOcrApplyService(prisma as any, repo as any).apply(
+      { companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '580' }, { expectedUpdatedAt: before });
+    assert.equal(result.candidatesCreated, 1);
+    assert.deepEqual((result as any).committedUpdatedAt, committed);
+    assert.deepEqual(steps.slice(-4), ['apply', 'duplicates', 'revision', 'commit']);
+  });
+
   function harness(currentUpdatedAt: Date) {
     const writes: any[] = [];
     const tx = {
@@ -232,7 +270,7 @@ describe('ReceiptOcrApplyService.apply staleness guard', () => {
       expenseCategory: { findFirst: async () => null },
       expenseLine: { deleteMany: async () => { writes.push({ deleteLines: true }); }, create: async () => { writes.push({ createLine: true }); } },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
     return { service: new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any), writes };
   }
   const fields = { grandTotalAmount: '580.00' };
@@ -316,7 +354,7 @@ describe('ReceiptOcrApplyService.apply', () => {
       expenseCategory: { findFirst: async () => null },
       expenseLine: { deleteMany: async () => undefined, create: async (args: any) => { lines.push(args.data); } },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
     const fields = { taxableAmount: '542.06', vatAmount: '37.94', grandTotalAmount: '580.00', unitPrice: '542.06', quantity: '1' };
 
     await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', fields);
@@ -789,7 +827,7 @@ describe('ReceiptOcrApplyService.apply', () => {
         create: async (args: any) => { lines.push(args.data); },
       },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
 
     const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply(
       { companyId: 'company-1', userId: 'user-1' },
@@ -812,6 +850,7 @@ describe('ReceiptOcrApplyService.apply', () => {
       OR: [{ companyId: 'company-1' }, { companyId: null }],
     });
     assert.deepEqual(result, {
+      committedUpdatedAt: new Date('2026-09-15T00:00:00.001Z'),
       candidatesCreated: 0,
       acceptedAmounts: { discountAmount: '0.0000', grandTotalAmount: '65.0000', vatAmount: '0.0000', whtAmount: '0.0000', netPayableAmount: '65.0000', vatMode: 'NO_VAT' },
       categoryId: 'cat-meals',
@@ -851,7 +890,7 @@ describe('ReceiptOcrApplyService.apply', () => {
           create: async (args: any) => { lines.push(args.data); },
         },
       };
-      const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+      const prisma = makeApplyPrisma(tx);
       const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply(
         { companyId: 'company-1', userId: 'user-1' },
         'expense-1',
@@ -912,7 +951,7 @@ describe('ReceiptOcrApplyService.apply', () => {
         },
         expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
       };
-      const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+      const prisma = makeApplyPrisma(tx);
       const result = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any).apply(
         { companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '65.00', ...fields }, options,
       );
@@ -973,7 +1012,7 @@ describe('ReceiptOcrApplyService.apply', () => {
       expenseCategory: { findFirst: async () => null },
       expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
     const repo = makeDuplicateRepo({
       findByIdWithRelations: async () => ({
         id: 'expense-1',
@@ -1025,7 +1064,7 @@ describe('ReceiptOcrApplyService.apply', () => {
       expenseCategory: { findFirst: async () => null },
       expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
     const repo = makeDuplicateRepo({
       findByIdWithRelations: async () => ({
         id: 'expense-angle-2',
@@ -1697,7 +1736,7 @@ describe('apply: outcomes that write no lines still report the charges the recor
       expenseCategory: { findFirst: async () => null },
       expenseLine: { deleteMany: async () => undefined, create: async () => undefined },
     };
-    const prisma = { client: { $transaction: async (fn: any) => fn(tx) } };
+    const prisma = makeApplyPrisma(tx);
 
     const outcome = await new ReceiptOcrApplyService(prisma as any, makeDuplicateRepo() as any)
       .apply({ companyId: 'company-1', userId: 'user-1' }, 'expense-1', { grandTotalAmount: '153.01' }, {

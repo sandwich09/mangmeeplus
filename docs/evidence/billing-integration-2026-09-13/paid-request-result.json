@@ -1,0 +1,87 @@
+{
+  "status": "LOCAL_PAID_REQUEST_FULFILLMENT_SLICE_PASS",
+  "recordedAt": "2026-09-15T08:41:28.475035+00:00",
+  "baseCommit": "e5aa021551ff34e9264207d2d0bc4ef257d9f43b",
+  "sourceSha256": {
+    "apps/api/src/modules/auth/presentation/auth.guard.ts": "af007768ec64bdb067274de39b4b564854802da2f2fc494a4e47a9b403cc4c8f",
+    "apps/api/src/modules/auth/auth.guard.spec.ts": "3c20822ad48e48e7d3bd294e94750c8594fe9020f6988702ac4782921351d3dc",
+    "apps/api/src/modules/billing/application/billing-package-request.ts": "28c7b1a31240b785c59dd0a7b5985e7745241d7912730f54a4ec58aac305e7ee",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "87a31aa95fdbf0612678f408884376304e294469de4f53a52adc4509e1c7c159",
+    "apps/api/src/modules/billing/application/billing-repeat.ts": "b59c2e63a5623ab4a021447e46e4958e84d1cb2758f285716eced2d67cb1b772",
+    "apps/api/src/modules/billing/billing-grace.pg.spec.ts": "7bca7bd93af8199f2ccc8a883fa44287f3b2660f7c966681642fe7397dccd35b",
+    "apps/api/src/modules/external-signup/application/package-change-request.use-case.ts": "7b515c625540ff78ccc8c3f41d012d96220379770202a7c648c7d0d446b55e9d",
+    "apps/api/src/modules/external-signup/presentation/http/company-package-change.controller.ts": "944d314ac1967662ef596374d89e5bc0c93f94e6189cf3e84779d401645443b6",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-timeline.use-case.ts": "5331b6862092da95e5703b8ff5a4df0d82cf233a64cc54b7387362b2519e847f",
+    "apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts": "c29f2b945a387070ebe7cc99bb76383e4a12707976db5b9e1cbb8d4cf7928c69",
+    "apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.spec.ts": "748de0d75b78e95a707b71bd8a722c15717819eaaa2d0b8da2db5cbfbf51e6ff",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner-support-tools.spec.ts": "d8f146714ee4c1a0efa4838c84820062b5cb728639871d010b931fa2448dcbd0",
+    "apps/api/src/scripts/billing-http-smoke.ts": "76c2203b92cf0bb2ca2f5208829d0ae781e4802399b5b5fe636c022243f2362c",
+    "apps/web/src/features/system-signup-requests/SignupQueuePage.tsx": "ba54cdc853914fd9bf25f402ec122258807a70af9f2ffbb1fe071a227a59fe88",
+    "packages/contracts/src/external-signup.ts": "544683cd9ea452257a6c095308c95ac37dac64cb3fca2b9050c4f98987023ba6"
+  },
+  "focused": {
+    "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+    "passed": [
+      "real-session-tenant-and-expired-owner-recovery",
+      "hidden-enterprise-and-forged-price-rejected",
+      "browser-owner-company-picker-retains-plan-interval-and-line-origin",
+      "browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart",
+      "browser-real-cookie-csrf-expired-owner-quote-consent-checkout",
+      "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+      "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+      "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+      "historical-paid-invoice-survives-replaced-subscription-item",
+      "original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history",
+      "historical-paid-replay-preserves-newer-and-foreign-package-requests"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "checks": {
+    "unit": {
+      "passed": 104,
+      "failed": 0,
+      "skipped": 0,
+      "artifact": "paid-request-unit.tap"
+    },
+    "postgres": {
+      "passed": 13,
+      "failed": 0,
+      "skipped": 0,
+      "artifact": "paid-request-postgres.tap"
+    },
+    "web": {
+      "passed": 19,
+      "failed": 0,
+      "skipped": 0,
+      "artifact": "paid-request-web.tap"
+    }
+  },
+  "builds": {
+    "contracts": "PASS (new optional resolutionSource contract built before this continuation)",
+    "apiTypecheck": "PASS final session71970",
+    "webTypecheck": "PASS final session23080",
+    "swc": "PASS final session15480"
+  },
+  "commands": {
+    "browser": "BILLING_PACKAGE_REQUEST_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "postgres": "guarded localhost15432/mangmee_billing_20260912 environment, pnpm --dir apps/api exec tsx --tsconfig tsconfig.json --test src/modules/billing/billing-grace.pg.spec.ts"
+  },
+  "corrections": [
+    "Actual expired-owner package request returned403; exact read/create routes now use the existing term recovery boundary without bypassing authorization/legal/platform checks.",
+    "PG negative fixture initially violated expiresAt >= serviceEnd; corrected both dates to form a valid expired grant. Existing DB constraint was not weakened."
+  ],
+  "limits": [
+    "Stripe/Postmark/LINE adapters simulated; no native payment or delivery.",
+    "Browser acceptance covers customer Checkout entry and the original request HTTP/state loop; Admin source labels are unit/API checked. Final queue copy has source QA and typecheck, no new dedicated visual capture.",
+    "Initial paid application and verified renewal/request closure proven locally; current full repeat/upgrade/downgrade and active-gift native acceptance remain open.",
+    "No new full combined pass; earlier276 predates manual controls, AI support, manual receipt gifts and this slice.",
+    "Paid free-day versus next collection policy remains pending. No new collection behavior selected.",
+    "No push, CI, merge or deploy; other concurrent changes are excluded."
+  ]
+}

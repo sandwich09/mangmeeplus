@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
 import { PrismaService } from '../../../common/database/prisma.service';
@@ -16,6 +16,10 @@ import {
 } from './signup-ops-alert.service';
 import { CLAIM_EXPIRY_AFTER_APPROVAL_DAYS, CLAIM_REMINDER_AFTER_HOURS } from '../domain/account-claim.logic';
 
+import { EmailDeliveryService, POSTMARK_EVENT_TYPE } from '../../auth/application/email-delivery.service';
+import { PostmarkEventsService, type PostmarkEvent } from '../../auth/application/postmark-events.service';
+import { PostmarkSendError } from '../../auth/infrastructure/postmark.client';
+
 /** P11 F-EM-2. Reserved for this consumer: the generic workflow drain must exclude it. */
 export const ACCOUNT_CLAIM_EMAIL_EVENT_TYPE = 'email.account_claim.requested';
 export const SIGNUP_REJECTION_NOTICE_EVENT_TYPE = 'email.signup_rejected.requested';
@@ -27,6 +31,7 @@ const CLAIM_EMAIL_WORKER_ID = 'signup-claim-email-worker';
  * excluded from the generic workflow drain, or that drain claims it and "publishes" it into a void.
  */
 const SIGNUP_OUTBOX_EVENT_TYPES = [
+  POSTMARK_EVENT_TYPE,
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
   SIGNUP_PENDING_REVIEW_EVENT_TYPE,
@@ -73,6 +78,8 @@ export class SignupClaimEmailService {
     private readonly opsAlerts: SignupOpsAlertService,
     @Inject(AUTH_MAILER_TOKEN) private readonly mailer: AuthMailerPort,
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
+    @Optional() private readonly emailDelivery?: EmailDeliveryService,
+    @Optional() private readonly postmarkEvents?: PostmarkEventsService,
   ) {}
 
   /**
@@ -149,7 +156,10 @@ export class SignupClaimEmailService {
         // A support alert belongs to a PERSON, not to an application — it may have no signup row at
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
         // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
-        if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
+        if (event.eventType === POSTMARK_EVENT_TYPE) {
+          if (!this.postmarkEvents) throw new Error('postmark.handler_unavailable');
+          await this.postmarkEvents.apply(event.payloadJson as unknown as PostmarkEvent);
+        } else if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {
           const supportRequestId = readPayloadString(event.payloadJson, 'supportRequestId');
           // A schemaVersion 1 row queued before the deploy names a shop and a day, not a request,
           // and there is no `LineSupportRequest` for it to describe. Settling it is the right
@@ -169,7 +179,7 @@ export class SignupClaimEmailService {
           await this.opsAlerts.deliver(kind as SignupOpsAlertKind, dayKey);
         } else {
           if (!signupRequestId) throw new Error('missing_signup_request_id');
-          await this.handle(event.eventType, signupRequestId, event.payloadJson);
+          await this.handle(event.eventType, signupRequestId, event.payloadJson, event.id);
         }
         sent += 1;
         await this.settle(event.id, event.claimToken ?? null, event.eventType, null);
@@ -187,6 +197,8 @@ export class SignupClaimEmailService {
         await this.settle(event.id, event.claimToken ?? null, event.eventType, code, error);
       }
     }
+    if (this.emailDelivery?.isPostmark) await this.emailDelivery.reconcileUnknown();
+    if (this.emailDelivery?.maintainHistory) await this.emailDelivery.maintainHistory();
     return { claimed: events.length, sent, failed, reclaimed, dead };
   }
 
@@ -195,8 +207,9 @@ export class SignupClaimEmailService {
     eventType: string,
     signupRequestId: string,
     payload: Record<string, unknown>,
+    outboxEventId?: string,
   ): Promise<void> {
-    if (eventType === ACCOUNT_CLAIM_EMAIL_EVENT_TYPE) return this.sendClaimEmail(signupRequestId);
+    if (eventType === ACCOUNT_CLAIM_EMAIL_EVENT_TYPE) return this.sendClaimEmail(signupRequestId, outboxEventId);
     if (eventType === SIGNUP_REJECTION_NOTICE_EVENT_TYPE) {
       return this.sendRejectionEmail(signupRequestId, readRejectionReason(payload));
     }
@@ -338,10 +351,10 @@ export class SignupClaimEmailService {
     });
   }
 
-  private async sendClaimEmail(signupRequestId: string): Promise<void> {
+  private async sendClaimEmail(signupRequestId: string, outboxEventId?: string): Promise<void> {
     const request = await this.prisma.client.companySignupRequest.findUnique({
       where: { id: signupRequestId },
-      select: { id: true, state: true, contactEmail: true, companyName: true, claimWindowStartedAt: true },
+      select: { id: true, state: true, contactEmail: true, companyName: true, claimWindowStartedAt: true, latestClaimEmailAttemptId: true },
     });
     if (!request) throw new Error('signup_request_not_found');
     // A request that moved on (claimed, rejected, suspended) must not receive a stale link.
@@ -351,7 +364,29 @@ export class SignupClaimEmailService {
     if (!request.contactEmail) return;
 
     // Review F7: the link dies with its activation window, never after it.
-    const { rawToken, expiresAt } = await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt);
+    const intentKey = `claim:${outboxEventId ?? request.id}`;
+    if (this.emailDelivery && !this.emailDelivery.isPostmark) {
+      const existing = await this.prisma.client.emailSendAttempt.findFirst({ where: { intentKey }, orderBy: { generation: 'desc' } });
+      if (existing?.provider === 'postmark') {
+        if (existing.status === 'ACCEPTED' || existing.deliveredAt) return;
+        throw new PostmarkSendError('CONFIG', 'outbound_provider_changed');
+      }
+      if (request.latestClaimEmailAttemptId) throw new PostmarkSendError('CONFIG', 'outbound_provider_changed');
+    }
+    let sendAttemptId: string | undefined;
+    const prepared = this.emailDelivery?.isPostmark
+      ? await this.prisma.client.$transaction(async (tx) => {
+          const attempt = await this.emailDelivery!.prepare({ purpose: 'account_claim', recipient: request.contactEmail!,
+            signupRequestId: request.id, intentKey }, tx);
+          if (attempt.status === 'ACCEPTED') return null;
+          sendAttemptId = attempt.id;
+          const token = await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt, tx, attempt.deadlineAt);
+          await tx.emailSendAttempt.update({ where: { id: attempt.id }, data: { deadlineAt: token.expiresAt } });
+          return token;
+        })
+      : await this.tokens.mint(request.id, new Date(), request.claimWindowStartedAt);
+    if (!prepared) return;
+    const { rawToken, expiresAt } = prepared;
     const messageId = await this.mailer.sendAccountClaim({
       toEmail: request.contactEmail,
       companyName: request.companyName,
@@ -359,9 +394,11 @@ export class SignupClaimEmailService {
       expiresAt,
       // R12: so a link that turns out to be spent can still offer the status page (spec §4D ②).
       signupRequestId: request.id,
+      ...(sendAttemptId ? { sendAttemptId } : {}),
     });
     // Only after a successful send: this timestamp is what the reminder sweep counts from, and the
     // SES message id is the only handle a later bounce/complaint event has on this row (spec §4D).
+    if (this.mailer.provider === 'postmark') return; // Provider-neutral attempt owns its CAS; never write a Postmark ID into SES.
     await this.prisma.client.companySignupRequest.update({
       where: { id: request.id },
       data: { claimEmailLastSentAt: new Date(), claimEmailSesMessageId: messageId },
@@ -381,12 +418,15 @@ export class SignupClaimEmailService {
     // own timescale, and the default 2^n ladder would DEAD the "your shop is ready" push in about
     // two minutes for a condition nothing was wrong with.
     const throttle = error instanceof LinePushThrottledError ? error : null;
+    const mailFailure = error instanceof PostmarkSendError ? error : null;
     const written = errorCode
       ? await this.outbox.markFailed({
         id,
         claimToken,
         error: errorCode,
         expectedEventType,
+        ...(mailFailure ? { nextAvailableAt: new Date(Date.now() + Math.max(60, mailFailure.retryAfterSeconds) * 1000),
+          ...(['pending_reconciliation', 'backoff'].includes(mailFailure.code) ? { countsTowardMax: false } : {}) } : {}),
         ...(throttle ? {
           nextAvailableAt: new Date(Date.now() + throttle.retryAfterSeconds * 1000),
           countsTowardMax: false,

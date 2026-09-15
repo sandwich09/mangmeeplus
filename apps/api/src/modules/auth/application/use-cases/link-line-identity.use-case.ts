@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { lineIdentityLockKey } from '../../../../common/database/line-identity-lock';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -37,123 +38,77 @@ export class LinkLineIdentityUseCase {
       idToken,
       expectedNonce ? { nonce: expectedNonce } : undefined,
     );
-    // Messaging user ids are channel-scoped; LINE Login channel only verifies identity.
-    const canonicalChannelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId;
-    if (!canonicalChannelId && this.config.isProduction) {
-      // P12.1: production must not create or resolve 'unknown'-channel identities.
+    return this.prisma.client.$transaction(
+      (tx) => this.linkVerifiedIdentity({ ...input, lineUserId }, tx),
+      { maxWait: 5_000, timeout: 20_000 },
+    );
+  }
+
+  canonicalChannelId(): string {
+    const channelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId;
+    if (!channelId && this.config.isProduction) {
       throw new ServiceUnavailableException('LINE channel configuration is missing.');
     }
-    // ponytail: 'unknown' survives for local/dev only; production fails closed above
-    const providerChannelId = canonicalChannelId ?? 'unknown';
-    const resolvedCompanyId = await this.resolveCompanyId(userId, companyId);
+    return channelId ?? 'unknown';
+  }
 
-    /**
-     * Review MED-1. Signup provisioning re-points this SAME row inside its own company
-     * transaction, and an owner can trigger a link at any moment. Both sides used to read and then
-     * update with nothing between them: the second UPDATE waited on the row lock, then overwrote
-     * the first — so a link landing beside a fresh provisioning silently took the LINE credential
-     * off the owner of the shop that had just been built, and that credential is their only way in.
-     *
-     * One transaction, one shared advisory key, and the read happens INSIDE the lock so it is the
-     * decision rather than a guess that was already stale. Keyed on the canonical channel: it is
-     * the only channel either writer ever creates rows on, so a legacy-channel row picked up by the
-     * fallback below cannot be one provisioning is touching.
-     */
-    const alreadyActive = await this.prisma.client.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineIdentityLockKey(providerChannelId, lineUserId)}, 0))`;
-
-      // Match regardless of status: an UNLINKED row still owns the unique
-      // (provider, channel, providerUserId) slot, so it must be reactivated in
-      // place — a create here would blow up on the unique constraint. Prefer the
-      // canonical-channel row (P12.1); fall back to legacy-channel rows with a
-      // warn until the migration backfill lands.
-      const matchAnyStatus = { provider: 'LINE' as const, providerUserId: lineUserId };
-      const existing =
-        (await tx.externalIdentity.findFirst({ where: { ...matchAnyStatus, providerChannelId } })) ??
-        (await tx.externalIdentity.findFirst({ where: matchAnyStatus }));
-      if (existing && existing.providerChannelId !== providerChannelId) {
-        console.warn(`[line-link] line_identity_legacy_channel_row identityId=${existing.id}`);
-      }
-
-      // Owner decision 2026-09-06. Both re-point branches below move this LINE account to a
-      // DIFFERENT person, and the unspent handoff links already sitting in that chat still name the
-      // previous holder — a tap after the move would mint the old owner's session for whoever holds
-      // the account now. Placed once, before the branch, so neither can forget it; run inside the
-      // transaction, so the refusals below (`line_linked_elsewhere`, disabled) roll it back with
-      // everything else and a link that never happened revokes nothing.
-      if (existing && existing.userId !== userId) {
-        await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, { lineUserId, userId: existing.userId });
-      }
-
-      if (existing?.status === 'ACTIVE') {
-        if (existing.userId !== userId) {
-          if (!allowReassign) throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
-          await tx.externalIdentity.update({
-            where: { id: existing.id },
-            data: { userId, linkedAt: new Date() },
-          });
+  /** Internal transaction boundary. Callers must verify LINE proof before taking DB locks.
+   * Ordinary OAuth/LIFF calls enter through execute; only the admin QR service shares this body.
+   */
+  async linkVerifiedIdentity(
+    input: { userId: string; lineUserId: string; requestId: string; companyId?: string; allowReassign?: boolean },
+    tx: Prisma.TransactionClient,
+  ): Promise<{ linked: true; providerUserId: string }> {
+    const { userId, lineUserId, requestId, allowReassign = false } = input;
+    const providerChannelId = this.canonicalChannelId();
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${'line-identity-user:' + userId}, 0))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineIdentityLockKey(providerChannelId, lineUserId)}, 0))`;
+    const companyId = await this.resolveCompanyId(userId, input.companyId, tx);
+    const match = { provider: 'LINE' as const, providerUserId: lineUserId };
+    let existing = await tx.externalIdentity.findFirst({ where: { ...match, providerChannelId } });
+    if (!existing) {
+      const legacy = await tx.externalIdentity.findMany({ where: match, take: 2 });
+      if (legacy.length) {
+        const candidate = legacy[0]!;
+        const known = candidate.providerChannelId === 'unknown' || candidate.providerChannelId === this.config.lineLoginChannelId;
+        if (legacy.length !== 1 || !known || !allowReassign) {
+          throw new ConflictException({ code: 'line_identity_review_required', message: 'Ask an administrator to review the existing LINE binding and issue a new LINE QR.' });
         }
-        // Same user re-links, or an admin-issued one-time QR moves the identity.
-        return true;
+        existing = candidate;
       }
-      if (existing?.status === 'DISABLED') {
-        // Admin kill-switch: relinking must not silently resurrect it.
-        throw new ForbiddenException('LINE identity is disabled.');
-      }
-
+    }
+    if (existing?.status === 'DISABLED') throw new ForbiddenException('LINE identity is disabled.');
+    if (existing?.status === 'ACTIVE' && existing.userId !== userId && !allowReassign) {
+      throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
+    }
+    if (existing && existing.userId !== userId) {
+      await tx.passwordResetToken.updateMany({ where: { userId: existing.userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
+      await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, { lineUserId, userId: existing.userId });
+    }
+    try {
       if (existing) {
-        // UNLINKED: reactivate for the current user (covers relink after unlink and
-        // moving a severed LINE account to a different user).
         await tx.externalIdentity.update({
-          where: { id: existing.id },
-          data: { userId, status: 'ACTIVE', linkedAt: new Date() },
+          where: { id: existing.id, userId: existing.userId, status: existing.status, updatedAt: existing.updatedAt },
+          data: { userId, providerChannelId, status: 'ACTIVE', linkedAt: new Date() },
         });
       } else {
-        try {
-          await tx.externalIdentity.create({
-            data: {
-              userId,
-              provider: 'LINE',
-              providerUserId: lineUserId,
-              providerChannelId,
-              status: 'ACTIVE',
-              linkedAt: new Date(),
-            },
-          });
-        } catch (err) {
-          // The lock above makes this unreachable for the canonical channel, so it stands as the
-          // fail-closed answer for anything that writes the slot without taking the key. Throwing
-          // rolls this transaction back, which is what makes catching it here safe.
-          if ((err as { code?: string }).code === 'P2002') {
-            throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
-          }
-          throw err;
-        }
+        await tx.externalIdentity.create({ data: {
+          userId, provider: 'LINE', providerUserId: lineUserId, providerChannelId, status: 'ACTIVE', linkedAt: new Date(),
+        } });
       }
-      return false;
-    // The FIRST statement in here waits on the identity key, and the holder is usually onboarding —
-    // which runs its whole company transaction under that key on a `{ maxWait: 5_000, timeout:
-    // 15_000 }` budget. Prisma's default 5s would expire while this call is doing exactly what it
-    // is supposed to do (waiting), and P2028 is not a code `all-exceptions.filter.ts` maps: the
-    // customer would get a 500 instead of the designed `line_linked_elsewhere` 409. 20s sits above
-    // the onboarding cap, so the wait can only end in a decision, never in a timeout.
-    }, { maxWait: 5_000, timeout: 20_000 });
-
-    // Outside the lock on purpose: neither the company context nor the audit decides the slot, and
-    // holding an advisory key across them would serialise unrelated work.
-    await this.upsertCompanyContext(lineUserId, resolvedCompanyId);
-    if (alreadyActive) return { linked: true, providerUserId: lineUserId };
-
-    void this.audit?.log({
-      actorUserId: userId,
-      action: AuditAction.AUTH_IDENTITY_LINK,
-      targetType: 'ExternalIdentity',
-      targetId: lineUserId,
-      requestId,
-      result: 'SUCCESS',
-      riskLevel: 'MEDIUM',
-    });
-
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002' || (error as { code?: string }).code === 'P2025') {
+        throw new ConflictException({ code: 'line_identity_changed', message: 'LINE binding changed. Reload and try again.' });
+      }
+      throw error;
+    }
+    await this.upsertCompanyContext(lineUserId, companyId, tx);
+    await tx.auditLog.create({ data: {
+      actorUserId: userId, action: AuditAction.AUTH_IDENTITY_LINK,
+      targetType: 'ExternalIdentity', targetId: lineUserId, requestId,
+      result: 'SUCCESS', riskLevel: 'MEDIUM',
+      metadataJson: { ...(existing && existing.providerChannelId !== providerChannelId ? { legacyBindingRepaired: true } : {}) },
+    } });
     return { linked: true, providerUserId: lineUserId };
   }
 
@@ -163,9 +118,9 @@ export class LinkLineIdentityUseCase {
    *    permission resolver and branch ABAC downstream).
    *  - no companyId, single membership: auto-resolve.
    *  - no companyId, multiple memberships: skip context; webhook prompts selection. */
-  private async resolveCompanyId(userId: string, companyId: string | undefined): Promise<string | undefined> {
-    const activeMemberships = await this.prisma.client.companyMembership.findMany({
-      where: { userId, status: 'ACTIVE', company: { status: 'ACTIVE' } },
+  private async resolveCompanyId(userId: string, companyId: string | undefined, tx: Prisma.TransactionClient): Promise<string | undefined> {
+    const activeMemberships = await tx.companyMembership.findMany({
+      where: { userId, status: 'ACTIVE', user: { status: 'ACTIVE' }, company: { status: 'ACTIVE' } },
       select: { companyId: true },
     });
 
@@ -187,10 +142,10 @@ export class LinkLineIdentityUseCase {
     return undefined;
   }
 
-  private async upsertCompanyContext(lineUserId: string, companyId: string | undefined): Promise<void> {
+  private async upsertCompanyContext(lineUserId: string, companyId: string | undefined, tx: Prisma.TransactionClient): Promise<void> {
     if (!companyId) return;
 
-    await this.prisma.client.lineCompanyContext.upsert({
+    await tx.lineCompanyContext.upsert({
       where: { lineUserId },
       create: { lineUserId, companyId, selectedAt: new Date() },
       // Review MED-2: `aiPausedUntil` is the §8 "ติดต่อเจ้าหน้าที่" hold on one conversation about

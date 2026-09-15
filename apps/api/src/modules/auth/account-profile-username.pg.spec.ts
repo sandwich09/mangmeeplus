@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /**
  * The username uniqueness read, against real PostgreSQL.
  *
@@ -32,7 +33,7 @@ describe('username uniqueness on real PostgreSQL', { skip: !databaseUrl }, () =>
     assert.equal(url.pathname, '/watchdog_bms', 'refusing to write to anything but the local docker database');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `acctprofile-${randomUUID().slice(0, 8)}`;
-    const useCase = new AccountProfileUseCase({ client } as any, null, null);
+    const useCase = new AccountProfileUseCase(lineMessagingCredentialsFixture(null), { client } as any, null, null);
 
     /** Runs the real check and reports how the use case answered, without keeping the credential. */
     const attempt = async (desired: string): Promise<'accepted' | 'taken' | 'invalid'> => {

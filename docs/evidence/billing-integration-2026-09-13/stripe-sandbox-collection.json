@@ -1,0 +1,27 @@
+{
+  "layer": "actual Stripe sandbox provider primitives via Chrome Developer Workbench",
+  "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
+  "livemode": false,
+  "applicationE2E": false,
+  "customerId": "cus_VFkevZi3gecDSg",
+  "customerEmail": null,
+  "subscriptionId": "sub_1UFFAFRvebw5L0s39O4bXjSE",
+  "scheduleId": "sub_sched_1UFFBxRvebw5L0s3Qs8MKzF2",
+  "testClockId": "clock_1UF5o8Rvebw5L0s3d09YypaL",
+  "paidPriceId": "price_1UF5nFRvebw5L0s3XJ83bpfM",
+  "zeroPriceId": "price_1UF5naRvebw5L0s309bKTaxO",
+  "ordinaryCancel": { "status": "active", "cancel_at_period_end": true, "cancel_at": 2042349407 },
+  "ordinaryResume": { "status": "active", "cancel_at_period_end": false, "cancel_at": null, "periodEnd": 2042349407 },
+  "prepaidCancel": { "end_behavior": "cancel", "phaseCount": 1, "phaseStart": 2010813407, "phaseEnd": 2073885407, "cancel_at_period_end": false, "cancel_at": 2073885407, "currentSubscriptionPeriodEnd": 2042349407 },
+  "prepaidResume": { "end_behavior": "release", "phaseCount": 2, "paidPhaseStart": 2073885407, "paidPhaseEnd": 2105507807, "billing_cycle_anchor": "phase_start", "cancel_at": null, "latestInvoiceUnchanged": true },
+  "finalScheduledCancellation": { "subscriptionStatus": "canceled", "ended_at": 2073885407, "scheduleStatus": "completed", "scheduleCurrentPhase": null, "scheduleStillReferencesSubscription": true },
+  "invoicesHasMore": false,
+  "invoices": [
+    { "id": "in_1UFFAFRvebw5L0s30AatIPkL", "status": "paid", "billing_reason": "subscription_create", "total": 999000, "amount_paid": 999000, "proration": false },
+    { "id": "in_1UFFFFRvebw5L0s3OM2xPAC3", "status": "paid", "billing_reason": "subscription_cycle", "total": 0, "amount_paid": 0, "proration": false }
+  ],
+  "additionalCollectedFromCancelResume": 0,
+  "syntheticSubscriptionStillActive": false,
+  "liveMoneyOrExternalMessages": false,
+  "notes": "One initial synthetic test-card payment; no new charge or invoice from cancel/resume. The zero invoice at the ordinary cycle is not a package purchase. All reads/mutations used the observed sandbox UI; no credentials were copied. This provider proof is separate from the application simulation and does not establish full native LINE acceptance."
+}

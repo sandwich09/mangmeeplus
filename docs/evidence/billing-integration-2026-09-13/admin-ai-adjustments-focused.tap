@@ -1,0 +1,950 @@
+TAP version 13
+# Subtest: company OCR admission
+    # Subtest: keeps legacy companies enabled and unlimited, then records one event + aggregate
+    ok 1 - keeps legacy companies enabled and unlimited, then records one event + aggregate
+      ---
+      duration_ms: 1.605791
+      type: 'test'
+      ...
+    # Subtest: fails closed when disabled or exhausted without consuming a read
+    ok 2 - fails closed when disabled or exhausted without consuming a read
+      ---
+      duration_ms: 0.505834
+      type: 'test'
+      ...
+    # Subtest: uses the request fence: an exact retry neither increments nor reaches a second provider admission
+    ok 3 - uses the request fence: an exact retry neither increments nor reaches a second provider admission
+      ---
+      duration_ms: 0.377708
+      type: 'test'
+      ...
+    # Subtest: atomically releases a pre-provider refusal and permits a later retry
+    ok 4 - atomically releases a pre-provider refusal and permits a later retry
+      ---
+      duration_ms: 0.451583
+      type: 'test'
+      ...
+    # Subtest: retries two transient release failures across a bounded recovery window
+    ok 5 - retries two transient release failures across a bounded recovery window
+      ---
+      duration_ms: 304.950834
+      type: 'test'
+      ...
+    # Subtest: fails closed and emits a compensation alert when every release attempt is exhausted
+    ok 6 - fails closed and emits a compensation alert when every release attempt is exhausted
+      ---
+      duration_ms: 1304.129625
+      type: 'test'
+      ...
+    # Subtest: releases only exact pre-provider status/code pairs from the gateway
+    ok 7 - releases only exact pre-provider status/code pairs from the gateway
+      ---
+      duration_ms: 0.218167
+      type: 'test'
+      ...
+    # Subtest: serializes concurrent calls at limit-1 so exactly one wins
+    ok 8 - serializes concurrent calls at limit-1 so exactly one wins
+      ---
+      duration_ms: 0.305375
+      type: 'test'
+      ...
+    # Subtest: returns unavailable rather than allowing an unmetered read when the store fails
+    ok 9 - returns unavailable rather than allowing an unmetered read when the store fails
+      ---
+      duration_ms: 0.374459
+      type: 'test'
+      ...
+    # Subtest: real PostgreSQL: limit 2 with used 1 admits only one of two concurrent requests
+    ok 10 - real PostgreSQL: limit 2 with used 1 admits only one of two concurrent requests
+      ---
+      duration_ms: 457.373042
+      type: 'test'
+      ...
+    1..10
+ok 1 - company OCR admission
+  ---
+  duration_ms: 2071.274458
+  type: 'suite'
+  ...
+# Subtest: company OCR admission — commercial plan ceiling
+    # Subtest: uses the saved runtime override for both receipt lanes: override=null, startup=false
+    ok 1 - uses the saved runtime override for both receipt lanes: override=null, startup=false
+      ---
+      duration_ms: 0.694708
+      type: 'test'
+      ...
+    # Subtest: uses the saved runtime override for both receipt lanes: override=null, startup=true
+    ok 2 - uses the saved runtime override for both receipt lanes: override=null, startup=true
+      ---
+      duration_ms: 0.15425
+      type: 'test'
+      ...
+    # Subtest: uses the saved runtime override for both receipt lanes: override=false, startup=false
+    ok 3 - uses the saved runtime override for both receipt lanes: override=false, startup=false
+      ---
+      duration_ms: 0.157375
+      type: 'test'
+      ...
+    # Subtest: uses the saved runtime override for both receipt lanes: override=false, startup=true
+    ok 4 - uses the saved runtime override for both receipt lanes: override=false, startup=true
+      ---
+      duration_ms: 0.257167
+      type: 'test'
+      ...
+    # Subtest: uses the saved runtime override for both receipt lanes: override=true, startup=false
+    ok 5 - uses the saved runtime override for both receipt lanes: override=true, startup=false
+      ---
+      duration_ms: 0.132333
+      type: 'test'
+      ...
+    # Subtest: uses the saved runtime override for both receipt lanes: override=true, startup=true
+    ok 6 - uses the saved runtime override for both receipt lanes: override=true, startup=true
+      ---
+      duration_ms: 0.283
+      type: 'test'
+      ...
+    # Subtest: refuses receipt 16 of 15 as plan_exceeded, with its own code and no usage event
+    ok 7 - refuses receipt 16 of 15 as plan_exceeded, with its own code and no usage event
+      ---
+      duration_ms: 0.138209
+      type: 'test'
+      ...
+    # Subtest: applies to both receipt routes and NEVER to a bank statement
+    ok 8 - applies to both receipt routes and NEVER to a bank statement
+      ---
+      duration_ms: 0.253917
+      type: 'test'
+      ...
+    # Subtest: bank statement reads cannot spend the receipt allowance, while they still meet the ops brake
+    ok 9 - bank statement reads cannot spend the receipt allowance, while they still meet the ops brake
+      ---
+      duration_ms: 0.141042
+      type: 'test'
+      ...
+    # Subtest: lets the OPS brake keep its own code and copy when it is the lower ceiling
+    ok 10 - lets the OPS brake keep its own code and copy when it is the lower ceiling
+      ---
+      duration_ms: 0.334875
+      type: 'test'
+      ...
+    # Subtest: lets the PLAN ceiling bind when it is the lower of the two
+    ok 11 - lets the PLAN ceiling bind when it is the lower of the two
+      ---
+      duration_ms: 0.179875
+      type: 'test'
+      ...
+    # Subtest: allows legacy warmup-10 trial rows their full stored monthly allowance immediately
+    ok 12 - allows legacy warmup-10 trial rows their full stored monthly allowance immediately
+      ---
+      duration_ms: 0.176958
+      type: 'test'
+      ...
+    # Subtest: never blocks a company with no plan term row
+    ok 13 - never blocks a company with no plan term row
+      ---
+      duration_ms: 0.185083
+      type: 'test'
+      ...
+    # Subtest: counts and audits but never blocks while RECEIPT_QUOTA_ENFORCED is off
+    ok 14 - counts and audits but never blocks while RECEIPT_QUOTA_ENFORCED is off
+      ---
+      duration_ms: 0.139958
+      type: 'test'
+      ...
+    # Subtest: does not write a second would-block row in the same month
+    ok 15 - does not write a second would-block row in the same month
+      ---
+      duration_ms: 0.121334
+      type: 'test'
+      ...
+    # Subtest: does not audit a shop that is merely near its ceiling
+    ok 16 - does not audit a shop that is merely near its ceiling
+      ---
+      duration_ms: 0.057834
+      type: 'test'
+      ...
+    # Subtest: real PostgreSQL: the plan ceiling admits only one of two concurrent reads at limit-1
+    ok 17 - real PostgreSQL: the plan ceiling admits only one of two concurrent reads at limit-1
+      ---
+      duration_ms: 440.594292
+      type: 'test'
+      ...
+# (node:19634) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+    1..17
+ok 2 - company OCR admission — commercial plan ceiling
+  ---
+  duration_ms: 444.413583
+  type: 'suite'
+  ...
+# Subtest: bangkokMonthKey
+    # Subtest: rolls to the next month at 17:00 UTC, when Bangkok hits midnight
+    ok 1 - rolls to the next month at 17:00 UTC, when Bangkok hits midnight
+      ---
+      duration_ms: 0.4055
+      type: 'test'
+      ...
+    # Subtest: zero-pads single-digit months
+    ok 2 - zero-pads single-digit months
+      ---
+      duration_ms: 0.104459
+      type: 'test'
+      ...
+    1..2
+ok 3 - bangkokMonthKey
+  ---
+  duration_ms: 0.633584
+  type: 'suite'
+  ...
+# Subtest: recordCompanyAiUsage
+    # Subtest: writes the events and the aggregate increment in ONE transaction
+    ok 1 - writes the events and the aggregate increment in ONE transaction
+      ---
+      duration_ms: 1.04025
+      type: 'test'
+      ...
+    # Subtest: upserts on the unique row with scalar increments only (native ON CONFLICT, no nested writes)
+    ok 2 - upserts on the unique row with scalar increments only (native ON CONFLICT, no nested writes)
+      ---
+      duration_ms: 0.103875
+      type: 'test'
+      ...
+    # Subtest: accumulates increments across calls and reports pre/post spend
+    ok 3 - accumulates increments across calls and reports pre/post spend
+      ---
+      duration_ms: 0.099916
+      type: 'test'
+      ...
+    # Subtest: records against the month pinned when budget admission began
+    ok 4 - records against the month pinned when budget admission began
+      ---
+      duration_ms: 0.062041
+      type: 'test'
+      ...
+    # Subtest: warns ai.usage.absent and writes nothing when the response carried no usage
+    ok 5 - warns ai.usage.absent and writes nothing when the response carried no usage
+      ---
+      duration_ms: 0.046125
+      type: 'test'
+      ...
+    # Subtest: still records an unknown model, at the max price, with a warn
+    ok 6 - still records an unknown model, at the max price, with a warn
+      ---
+      duration_ms: 0.087542
+      type: 'test'
+      ...
+    1..6
+ok 4 - recordCompanyAiUsage
+  ---
+  duration_ms: 1.61375
+  type: 'suite'
+  ...
+# Subtest: assertCompanyAiBudget resolution
+    # Subtest: falls back to the platform default when the company has no configuration row
+    ok 1 - falls back to the platform default when the company has no configuration row
+      ---
+      duration_ms: 0.114958
+      type: 'test'
+      ...
+    # Subtest: prefers a non-null row override over the platform default
+    ok 2 - prefers a non-null row override over the platform default
+      ---
+      duration_ms: 0.060625
+      type: 'test'
+      ...
+    # Subtest: treats a null override exactly like an absent row: inherit the platform default
+    ok 3 - treats a null override exactly like an absent row: inherit the platform default
+      ---
+      duration_ms: 0.274834
+      type: 'test'
+      ...
+    # Subtest: reads a changed company budget before every admission without a local invalidation
+    ok 4 - reads a changed company budget before every admission without a local invalidation
+      ---
+      duration_ms: 0.124458
+      type: 'test'
+      ...
+    # Subtest: uses a changed inherited platform budget without clearing any process cache
+    ok 5 - uses a changed inherited platform budget without clearing any process cache
+      ---
+      duration_ms: 0.514166
+      type: 'test'
+      ...
+    # Subtest: reads spend live on every call, so a fresh increment is seen immediately
+    ok 6 - reads spend live on every call, so a fresh increment is seen immediately
+      ---
+      duration_ms: 0.410834
+      type: 'test'
+      ...
+    # Subtest: treats a missing aggregate row as zero spend
+    ok 7 - treats a missing aggregate row as zero spend
+      ---
+      duration_ms: 0.277625
+      type: 'test'
+      ...
+    1..7
+ok 5 - assertCompanyAiBudget resolution
+  ---
+  duration_ms: 2.0535
+  type: 'suite'
+  ...
+# Subtest: runWithCompanyAiBudgetAdmission
+    # Subtest: a configuration invalidation keeps an already admitted local action locked
+    ok 1 - a configuration invalidation keeps an already admitted local action locked
+      ---
+      duration_ms: 0.613667
+      type: 'test'
+      ...
+    # Subtest: refuses a concurrent company action until the admitted action finishes
+    ok 2 - refuses a concurrent company action until the admitted action finishes
+      ---
+      duration_ms: 1.006834
+      type: 'test'
+      ...
+    1..2
+ok 6 - runWithCompanyAiBudgetAdmission
+  ---
+  duration_ms: 1.737958
+  type: 'suite'
+  ...
+# Subtest: assertCompanyAiBudget refusal and fail-closed
+    # Subtest: refuses at spend >= budget and emits ai.company_budget.exceeded with riskLevel HIGH
+    ok 1 - refuses at spend >= budget and emits ai.company_budget.exceeded with riskLevel HIGH
+      ---
+      duration_ms: 0.22525
+      type: 'test'
+      ...
+    # Subtest: stays silent while the company is under budget
+    ok 2 - stays silent while the company is under budget
+      ---
+      duration_ms: 0.055125
+      type: 'test'
+      ...
+    # Subtest: fails closed as unavailable when the budget read throws — never an unmetered pass
+    ok 3 - fails closed as unavailable when the budget read throws — never an unmetered pass
+      ---
+      duration_ms: 0.086541
+      type: 'test'
+      ...
+    # Subtest: fails closed as unavailable when the spend read throws
+    ok 4 - fails closed as unavailable when the spend read throws
+      ---
+      duration_ms: 0.058459
+      type: 'test'
+      ...
+    # Subtest: fails closed when the platform default is not configured (stale packages/config dist)
+    ok 5 - fails closed when the platform default is not configured (stale packages/config dist)
+      ---
+      duration_ms: 0.140084
+      type: 'test'
+      ...
+    # Subtest: fails closed when the ledger delegate is missing entirely (no meter, no pass)
+    ok 6 - fails closed when the ledger delegate is missing entirely (no meter, no pass)
+      ---
+      duration_ms: 0.071583
+      type: 'test'
+      ...
+    1..6
+ok 7 - assertCompanyAiBudget refusal and fail-closed
+  ---
+  duration_ms: 0.699375
+  type: 'suite'
+  ...
+# Subtest: recordCompanyAiUsage 80% threshold event
+    # Subtest: emits exactly once for the recording that crosses 80%, and never again
+    ok 1 - emits exactly once for the recording that crosses 80%, and never again
+      ---
+      duration_ms: 0.76375
+      type: 'test'
+      ...
+    # Subtest: emits once, not twice, when two concurrent recordings straddle the line
+    ok 2 - emits once, not twice, when two concurrent recordings straddle the line
+      ---
+      duration_ms: 0.369333
+      type: 'test'
+      ...
+    # Subtest: does not emit against the platform default until 80% of it is crossed
+    ok 3 - does not emit against the platform default until 80% of it is crossed
+      ---
+      duration_ms: 0.061458
+      type: 'test'
+      ...
+    1..3
+ok 8 - recordCompanyAiUsage 80% threshold event
+  ---
+  duration_ms: 1.247833
+  type: 'suite'
+  ...
+# Subtest: recordCompanyAiUsage FX stamping
+    # Subtest: stamps the resolved rate AND its provenance on every row it writes
+    ok 1 - stamps the resolved rate AND its provenance on every row it writes
+      ---
+      duration_ms: 0.096125
+      type: 'test'
+      ...
+    # Subtest: carries a non-default resolver source verbatim onto the rows
+    ok 2 - carries a non-default resolver source verbatim onto the rows
+      ---
+      duration_ms: 0.185833
+      type: 'test'
+      ...
+    # Subtest: applies a changed rate to new rows only — history is never re-priced
+    ok 3 - applies a changed rate to new rows only — history is never re-priced
+      ---
+      duration_ms: 0.371042
+      type: 'test'
+      ...
+    1..3
+ok 9 - recordCompanyAiUsage FX stamping
+  ---
+  duration_ms: 0.706875
+  type: 'suite'
+  ...
+# Subtest: resolvePlatformAiBudget
+    # Subtest: prefers the DB row over the env values and labels both sources
+    ok 1 - prefers the DB row over the env values and labels both sources
+      ---
+      duration_ms: 0.379709
+      type: 'test'
+      ...
+    # Subtest: falls back to the env values when no row exists
+    ok 2 - falls back to the env values when no row exists
+      ---
+      duration_ms: 0.214375
+      type: 'test'
+      ...
+    # Subtest: degrades to the env values when the delegate is missing (old unit fakes)
+    ok 3 - degrades to the env values when the delegate is missing (old unit fakes)
+      ---
+      duration_ms: 0.115542
+      type: 'test'
+      ...
+    # Subtest: shares the 60s budget cache and its reset
+    ok 4 - shares the 60s budget cache and its reset
+      ---
+      duration_ms: 0.773917
+      type: 'test'
+      ...
+    1..4
+ok 10 - resolvePlatformAiBudget
+  ---
+  duration_ms: 1.591125
+  type: 'suite'
+  ...
+# Subtest: assertCompanyAiBudget against the platform settings row
+    # Subtest: enforces the DB platform default for a company without an override
+    ok 1 - enforces the DB platform default for a company without an override
+      ---
+      duration_ms: 0.245458
+      type: 'test'
+      ...
+    # Subtest: fails closed when the platform settings read throws
+    ok 2 - fails closed when the platform settings read throws
+      ---
+      duration_ms: 0.228083
+      type: 'test'
+      ...
+    # Subtest: keeps enforcing an override above a later-lowered ceiling (grandfathered)
+    ok 3 - keeps enforcing an override above a later-lowered ceiling (grandfathered)
+      ---
+      duration_ms: 0.113
+      type: 'test'
+      ...
+    1..3
+ok 11 - assertCompanyAiBudget against the platform settings row
+  ---
+  duration_ms: 0.64775
+  type: 'suite'
+  ...
+# Subtest: retryBusyAdmission
+    # Subtest: returns a non-busy outcome immediately, with or without a deadline
+    ok 1 - returns a non-busy outcome immediately, with or without a deadline
+      ---
+      duration_ms: 0.407292
+      type: 'test'
+      ...
+    # Subtest: without a deadline, busy fails fast exactly as before (the ledger drain path)
+    ok 2 - without a deadline, busy fails fast exactly as before (the ledger drain path)
+      ---
+      duration_ms: 0.224792
+      type: 'test'
+      ...
+    # Subtest: retries a busy admission until it is allowed within the deadline
+    ok 3 - retries a busy admission until it is allowed within the deadline
+      ---
+      duration_ms: 0.2525
+      type: 'test'
+      ...
+    # Subtest: returns the busy outcome once the deadline has passed
+    ok 4 - returns the busy outcome once the deadline has passed
+      ---
+      duration_ms: 0.051958
+      type: 'test'
+      ...
+    1..4
+ok 12 - retryBusyAdmission
+  ---
+  duration_ms: 1.025417
+  type: 'suite'
+  ...
+# Subtest: admission lanes
+    # Subtest: chat and media lanes acquire DIFFERENT leases; no lane keeps the legacy combined key
+    ok 1 - chat and media lanes acquire DIFFERENT leases; no lane keeps the legacy combined key
+      ---
+      duration_ms: 0.584541
+      type: 'test'
+      ...
+    1..1
+ok 13 - admission lanes
+  ---
+  duration_ms: 0.623958
+  type: 'suite'
+  ...
+# Subtest: AI gateway timeout budget
+    # Subtest: waits strictly longer than the gateway chain worst case
+    ok 1 - waits strictly longer than the gateway chain worst case
+      ---
+      duration_ms: 0.276042
+      type: 'test'
+      ...
+    # Subtest: is the SAME constant the gateway budgets each provider call with
+    ok 2 - is the SAME constant the gateway budgets each provider call with
+      ---
+      duration_ms: 0.399416
+      type: 'test'
+      ...
+    # Subtest: is what BOTH receipt callers actually pass to AbortSignal
+    ok 3 - is what BOTH receipt callers actually pass to AbortSignal
+      ---
+      duration_ms: 0.49525
+      type: 'test'
+      ...
+    # Subtest: covers the bank statement route on the same rule, at its own chain depth
+    ok 4 - covers the bank statement route on the same rule, at its own chain depth
+      ---
+      duration_ms: 0.335458
+      type: 'test'
+      ...
+    # Subtest: leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed
+    ok 5 - leaves the four-call chain visible in the gateway, so the count cannot drift unnoticed
+      ---
+      duration_ms: 0.156
+      type: 'test'
+      ...
+    1..5
+ok 14 - AI gateway timeout budget
+  ---
+  duration_ms: 1.765625
+  type: 'suite'
+  ...
+# Subtest: history exposes only supported scalar changes, source and a bounded reason
+ok 15 - history exposes only supported scalar changes, source and a bounded reason
+  ---
+  duration_ms: 0.8235
+  type: 'test'
+  ...
+# Subtest: missing or malformed historical values are not invented or copied as raw metadata
+ok 16 - missing or malformed historical values are not invented or copied as raw metadata
+  ---
+  duration_ms: 0.173958
+  type: 'test'
+  ...
+# Subtest: SetPartnerAiModelUseCase
+    # Subtest: requires a bounded reason, refuses stale previous values, and keeps exact replay unchanged
+    ok 1 - requires a bounded reason, refuses stale previous values, and keeps exact replay unchanged
+      ---
+      duration_ms: 2.237833
+      type: 'test'
+      ...
+    # Subtest: rejects an empty body — nothing to update
+    ok 2 - rejects an empty body — nothing to update
+      ---
+      duration_ms: 0.349375
+      type: 'test'
+      ...
+    # Subtest: throws NotFoundException when the company does not exist
+    ok 3 - throws NotFoundException when the company does not exist
+      ---
+      duration_ms: 0.1615
+      type: 'test'
+      ...
+    # Subtest: skips the transaction when the company is DISABLED
+    ok 4 - skips the transaction when the company is DISABLED
+      ---
+      duration_ms: 0.186334
+      type: 'test'
+      ...
+    # Subtest: skips the transaction when the company is ARCHIVED
+    ok 5 - skips the transaction when the company is ARCHIVED
+      ---
+      duration_ms: 0.235292
+      type: 'test'
+      ...
+    # Subtest: rejects a model outside the approved list
+    ok 6 - rejects a model outside the approved list
+      ---
+      duration_ms: 0.130875
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang 0 and persists nothing
+    ok 7 - rejects monthlyBudgetSatang 0 and persists nothing
+      ---
+      duration_ms: 0.163083
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang -1 and persists nothing
+    ok 8 - rejects monthlyBudgetSatang -1 and persists nothing
+      ---
+      duration_ms: 0.050458
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang 1.5 and persists nothing
+    ok 9 - rejects monthlyBudgetSatang 1.5 and persists nothing
+      ---
+      duration_ms: 0.179292
+      type: 'test'
+      ...
+    # Subtest: rejects a budget above the ceiling naming it, and never clamps
+    ok 10 - rejects a budget above the ceiling naming it, and never clamps
+      ---
+      duration_ms: 0.275625
+      type: 'test'
+      ...
+    # Subtest: validates against the platform settings ceiling, not the env one, when a row exists
+    ok 11 - validates against the platform settings ceiling, not the env one, when a row exists
+      ---
+      duration_ms: 0.108916
+      type: 'test'
+      ...
+    # Subtest: checks the locked platform ceiling and preserves a previously committed replay
+    ok 12 - checks the locked platform ceiling and preserves a previously committed replay
+      ---
+      duration_ms: 0.103167
+      type: 'test'
+      ...
+    # Subtest: accepts a budget above the env ceiling when the platform row raises it
+    ok 13 - accepts a budget above the env ceiling when the platform row raises it
+      ---
+      duration_ms: 0.194291
+      type: 'test'
+      ...
+    # Subtest: accepts exactly the ceiling
+    ok 14 - accepts exactly the ceiling
+      ---
+      duration_ms: 0.123084
+      type: 'test'
+      ...
+    # Subtest: budget-only update leaves the configured model untouched
+    ok 15 - budget-only update leaves the configured model untouched
+      ---
+      duration_ms: 0.398625
+      type: 'test'
+      ...
+    # Subtest: model-only update leaves the budget override untouched
+    ok 16 - model-only update leaves the budget override untouched
+      ---
+      duration_ms: 0.185833
+      type: 'test'
+      ...
+    # Subtest: creates a fresh row with the absent field inherited (null)
+    ok 17 - creates a fresh row with the absent field inherited (null)
+      ---
+      duration_ms: 0.187375
+      type: 'test'
+      ...
+    # Subtest: clearing the override records the transition to inherited in a CRITICAL audit row
+    ok 18 - clearing the override records the transition to inherited in a CRITICAL audit row
+      ---
+      duration_ms: 0.197209
+      type: 'test'
+      ...
+    # Subtest: writes before/after for BOTH fields when both change, inside the same transaction
+    ok 19 - writes before/after for BOTH fields when both change, inside the same transaction
+      ---
+      duration_ms: 0.85175
+      type: 'test'
+      ...
+    # Subtest: reads the audit predecessor inside the shared configuration and Company locks
+    ok 20 - reads the audit predecessor inside the shared configuration and Company locks
+      ---
+      duration_ms: 0.166833
+      type: 'test'
+      ...
+    # Subtest: cannot save after a company was disabled between preflight and the locked write
+    ok 21 - cannot save after a company was disabled between preflight and the locked write
+      ---
+      duration_ms: 0.085875
+      type: 'test'
+      ...
+    # Subtest: admission always rereads its current budget after Admin writes
+    ok 22 - admission always rereads its current budget after Admin writes
+      ---
+      duration_ms: 0.33275
+      type: 'test'
+      ...
+    1..22
+ok 17 - SetPartnerAiModelUseCase
+  ---
+  duration_ms: 7.718417
+  type: 'suite'
+  ...
+# Subtest: SetPartnerOcrConfigUseCase
+    # Subtest: requires a nonblank reason before either mutation or replay
+    ok 1 - requires a nonblank reason before either mutation or replay
+      ---
+      duration_ms: 0.1995
+      type: 'test'
+      ...
+    # Subtest: preserves an omitted override and versions explicit enforce, observe and inheritance changes
+    ok 2 - preserves an omitted override and versions explicit enforce, observe and inheritance changes
+      ---
+      duration_ms: 0.236583
+      type: 'test'
+      ...
+    # Subtest: writes config and CRITICAL before/after audit in the same transaction
+    ok 3 - writes config and CRITICAL before/after audit in the same transaction
+      ---
+      duration_ms: 0.118125
+      type: 'test'
+      ...
+    # Subtest: is naturally idempotent: exact desired replay is a no-op even with a stale expected version
+    ok 4 - is naturally idempotent: exact desired replay is a no-op even with a stale expected version
+      ---
+      duration_ms: 0.048333
+      type: 'test'
+      ...
+    # Subtest: prevents a stale second admin from overwriting, while the first admin replay stays safe
+    ok 5 - prevents a stale second admin from overwriting, while the first admin replay stays safe
+      ---
+      duration_ms: 0.110125
+      type: 'test'
+      ...
+    # Subtest: real PostgreSQL: two admins cannot overwrite each other and the winning stale replay is a no-op
+    ok 6 - real PostgreSQL: two admins cannot overwrite each other and the winning stale replay is a no-op
+      ---
+      duration_ms: 517.224958
+      type: 'test'
+      ...
+    # Subtest: rejects invalid limits and locked company metadata before any write
+    ok 7 - rejects invalid limits and locked company metadata before any write
+      ---
+      duration_ms: 0.292666
+      type: 'test'
+      ...
+    1..7
+ok 18 - SetPartnerOcrConfigUseCase
+  ---
+  duration_ms: 518.349916
+  type: 'suite'
+  ...
+# Subtest: SetPlatformAiBudgetUseCase validation
+    # Subtest: rejects a ceiling below the default and persists nothing
+    ok 1 - rejects a ceiling below the default and persists nothing
+      ---
+      duration_ms: 1.180583
+      type: 'test'
+      ...
+    # Subtest: accepts a ceiling exactly equal to the default
+    ok 2 - accepts a ceiling exactly equal to the default
+      ---
+      duration_ms: 0.414166
+      type: 'test'
+      ...
+    # Subtest: rejects {"monthlyBudgetSatang":0,"ceilingSatang":1000} and persists nothing
+    ok 3 - rejects {"monthlyBudgetSatang":0,"ceilingSatang":1000} and persists nothing
+      ---
+      duration_ms: 0.280208
+      type: 'test'
+      ...
+    # Subtest: rejects {"monthlyBudgetSatang":-1,"ceilingSatang":1000} and persists nothing
+    ok 4 - rejects {"monthlyBudgetSatang":-1,"ceilingSatang":1000} and persists nothing
+      ---
+      duration_ms: 0.432333
+      type: 'test'
+      ...
+    # Subtest: rejects {"monthlyBudgetSatang":1000,"ceilingSatang":0} and persists nothing
+    ok 5 - rejects {"monthlyBudgetSatang":1000,"ceilingSatang":0} and persists nothing
+      ---
+      duration_ms: 0.381917
+      type: 'test'
+      ...
+    # Subtest: rejects {"monthlyBudgetSatang":1.5,"ceilingSatang":1000} and persists nothing
+    ok 6 - rejects {"monthlyBudgetSatang":1.5,"ceilingSatang":1000} and persists nothing
+      ---
+      duration_ms: 0.330625
+      type: 'test'
+      ...
+    # Subtest: rejects {"monthlyBudgetSatang":1000,"ceilingSatang":2000.5} and persists nothing
+    ok 7 - rejects {"monthlyBudgetSatang":1000,"ceilingSatang":2000.5} and persists nothing
+      ---
+      duration_ms: 0.137
+      type: 'test'
+      ...
+    1..7
+ok 19 - SetPlatformAiBudgetUseCase validation
+  ---
+  duration_ms: 4.079917
+  type: 'suite'
+  ...
+# Subtest: SetPlatformAiBudgetUseCase write
+    # Subtest: upserts the single row and audits CRITICAL before/after in the same transaction
+    ok 1 - upserts the single row and audits CRITICAL before/after in the same transaction
+      ---
+      duration_ms: 1.076291
+      type: 'test'
+      ...
+    # Subtest: records the first write as a transition away from the env fallbacks
+    ok 2 - records the first write as a transition away from the env fallbacks
+      ---
+      duration_ms: 0.22575
+      type: 'test'
+      ...
+    # Subtest: resets the meter cache so the new default binds immediately
+    ok 3 - resets the meter cache so the new default binds immediately
+      ---
+      duration_ms: 0.141125
+      type: 'test'
+      ...
+    1..3
+ok 20 - SetPlatformAiBudgetUseCase write
+  ---
+  duration_ms: 1.596209
+  type: 'suite'
+  ...
+# Subtest: PartnerController
+    # Subtest: list() returns result from ListPartnersUseCase
+    ok 1 - list() returns result from ListPartnersUseCase
+      ---
+      duration_ms: 0.743625
+      type: 'test'
+      ...
+    # Subtest: detail() returns result from GetPartnerDetailUseCase
+    ok 2 - detail() returns result from GetPartnerDetailUseCase
+      ---
+      duration_ms: 0.17475
+      type: 'test'
+      ...
+    # Subtest: update() passes companyId and admin context to use case
+    ok 3 - update() passes companyId and admin context to use case
+      ---
+      duration_ms: 0.163584
+      type: 'test'
+      ...
+    # Subtest: transitionLifecycle() passes targetStatus and reason to use case
+    ok 4 - transitionLifecycle() passes targetStatus and reason to use case
+      ---
+      duration_ms: 0.132375
+      type: 'test'
+      ...
+    # Subtest: setFeatureEntitlements() passes the whole command contract to the use case
+    ok 5 - setFeatureEntitlements() passes the whole command contract to the use case
+      ---
+      duration_ms: 0.223834
+      type: 'test'
+      ...
+    # Subtest: the feature-command DTO rejects non-array, empty, duplicate and over-catalog payloads
+    ok 6 - the feature-command DTO rejects non-array, empty, duplicate and over-catalog payloads
+      ---
+      duration_ms: 4.823208
+      type: 'test'
+      ...
+    # Subtest: setAiModelConfig() passes modelId to use case
+    ok 7 - setAiModelConfig() passes modelId to use case
+      ---
+      duration_ms: 0.18275
+      type: 'test'
+      ...
+    # Subtest: setAiModelConfig() forwards a budget-only body, and null (clear to inherited) unchanged
+    ok 8 - setAiModelConfig() forwards a budget-only body, and null (clear to inherited) unchanged
+      ---
+      duration_ms: 0.437791
+      type: 'test'
+      ...
+    # Subtest: aiUsage() returns the meter for the partner company
+    ok 9 - aiUsage() returns the meter for the partner company
+      ---
+      duration_ms: 0.472041
+      type: 'test'
+      ...
+    # Subtest: setOcrConfiguration() passes absolute state and admin context to the use case
+    ok 10 - setOcrConfiguration() passes absolute state and admin context to the use case
+      ---
+      duration_ms: 1.388125
+      type: 'test'
+      ...
+    # Subtest: the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields
+    ok 11 - the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields
+      ---
+      duration_ms: 1.919833
+      type: 'test'
+      ...
+    # Subtest: the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable
+    ok 12 - the ai-model body DTO keeps null (clear) and absent (leave alone) distinguishable
+      ---
+      duration_ms: 0.390166
+      type: 'test'
+      ...
+    # Subtest: each endpoint has @RequirePermissions metadata
+    ok 13 - each endpoint has @RequirePermissions metadata
+      ---
+      duration_ms: 0.14375
+      type: 'test'
+      ...
+    # Subtest: issueLineLinkToken() passes both ids and the trusted api base to the use case
+    ok 14 - issueLineLinkToken() passes both ids and the trusted api base to the use case
+      ---
+      duration_ms: 0.109958
+      type: 'test'
+      ...
+    # Subtest: the platform AI budget routes carry the same manage permission on read and write
+    ok 15 - the platform AI budget routes carry the same manage permission on read and write
+      ---
+      duration_ms: 0.063875
+      type: 'test'
+      ...
+    # Subtest: no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)
+    ok 16 - no route uses a :companyId param (auth guard would demand membership in the CUSTOMER company)
+      ---
+      duration_ms: 0.042292
+      type: 'test'
+      ...
+    # Subtest: non-system-admin context has no system.* permissions — guard would throw ForbiddenException
+    ok 17 - non-system-admin context has no system.* permissions — guard would throw ForbiddenException
+      ---
+      duration_ms: 0.056959
+      type: 'test'
+      ...
+    1..17
+ok 21 - PartnerController
+  ---
+  duration_ms: 12.449625
+  type: 'suite'
+  ...
+# Subtest: GetPartnerDetailUseCase — truthful feature-command readiness
+    # Subtest: returns setVersion and friendly per-feature directional disable readiness
+    ok 1 - returns setVersion and friendly per-feature directional disable readiness
+      ---
+      duration_ms: 0.415917
+      type: 'test'
+      ...
+    # Subtest: uses the same current-version + valid-cohort predicate as the command
+    ok 2 - uses the same current-version + valid-cohort predicate as the command
+      ---
+      duration_ms: 0.101375
+      type: 'test'
+      ...
+    1..2
+ok 22 - GetPartnerDetailUseCase — truthful feature-command readiness
+  ---
+  duration_ms: 0.626125
+  type: 'suite'
+  ...
+1..22
+# tests 133
+# suites 20
+# pass 133
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3256.762709

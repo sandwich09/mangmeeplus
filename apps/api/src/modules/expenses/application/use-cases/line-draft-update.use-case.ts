@@ -237,20 +237,38 @@ export class LineDraftUpdateUseCase {
 
   /** The pending preview this chat is holding, when it belongs to this user and this turn. */
   async pendingPreview(
-    ctx: Pick<RequestContext, 'companyId' | 'userId'>,
+    ctx: RequestContext,
     chatKeyHash: string,
     requestId?: string,
   ): Promise<LineDraftUpdatePreview | null> {
-    if (!this.enabled) return null;
+    if (!this.enabled || !ctx.permissions.includes('expense.update')) return null;
     const stored = await this.previews.load(ctx.companyId, chatKeyHash);
-    if (!stored || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) return null;
+    if (!stored || stored.companyId !== ctx.companyId || stored.userId !== ctx.userId || stored.chatKeyHash !== chatKeyHash) return null;
     if (requestId && stored.requestId !== requestId) return null;
+    const record = await this.repo.findByIdWithRelations(ctx.companyId, stored.expenseId, undefined, ctx.scopes ?? {});
+    if (this.guardRecord(ctx, record) || record!.updatedAt.toISOString() !== stored.expenseUpdatedAt) return null;
     return stored.preview;
+  }
+
+  /** Read only: delivery and double-tap recovery must never execute the edit again. */
+  async appliedResult(ctx: RequestContext, chatKeyHash: string): Promise<LineDraftApplyOutcome> {
+    if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
+    if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
+    const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
+    if (!applied || applied.companyId !== ctx.companyId || applied.userId !== ctx.userId || applied.chatKeyHash !== chatKeyHash)
+      return { status: 'expired' };
+    const record = await this.repo.findByIdWithRelations(ctx.companyId, applied.expenseId, undefined, ctx.scopes ?? {});
+    const guard = this.guardRecord(ctx, record);
+    if (guard) return guard;
+    if (!applied.appliedExpenseUpdatedAt || record!.updatedAt.toISOString() !== applied.appliedExpenseUpdatedAt)
+      return { status: 'changed', expenseId: record!.id };
+    return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
   }
 
   /** Beat two, confirm. Everything is re-derived from the chat; the postback proves only intent. */
   async apply(ctx: RequestContext, chatKeyHash: string, webhookEventId: string): Promise<LineDraftApplyOutcome> {
     if (!this.enabled) return { status: 'blocked', reason: 'feature_disabled' };
+    if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
     const stored = await this.previews.load(ctx.companyId, chatKeyHash);
     // Wrong user, wrong chat, wrong company, or simply gone: all one answer, because telling them
     // apart would confirm that some other chat holds a pending edit.
@@ -259,14 +277,8 @@ export class LineDraftUpdateUseCase {
       // applied memory first was a real bug: within its window, a SECOND edit would preview
       // normally, the user would press ยืนยัน, nothing would be written, and the reply would
       // restate the FIRST edit — J3.2 followed by J3.3, which is the ordinary journey.
-      const applied = await this.previews.loadApplied(ctx.companyId, chatKeyHash);
-      if (applied && applied.userId === ctx.userId) {
-        return { status: 'applied', preview: applied.preview, expenseId: applied.expenseId, replayed: true };
-      }
-      return { status: 'expired' };
+      return this.appliedResult(ctx, chatKeyHash);
     }
-    if (!ctx.permissions.includes('expense.update')) return { status: 'blocked', reason: 'forbidden' };
-
     const record = await this.repo.findByIdWithRelations(ctx.companyId, stored.expenseId, undefined, ctx.scopes ?? {});
     const guard = this.guardRecord(ctx, record);
     if (guard) {
@@ -289,9 +301,10 @@ export class LineDraftUpdateUseCase {
 
     const before = totalsOf(target);
     const client = this.prisma.client as any;
+    let appliedExpenseUpdatedAt: string | undefined;
     try {
-      await client.$transaction(async (tx: any) => {
-      await this.updateDraft.execute(
+      appliedExpenseUpdatedAt = await client.$transaction(async (tx: any) => {
+      const updated = await this.updateDraft.execute(
         ctx,
         target.id,
         this.buildInput(target, stored.patch, projected.lines),
@@ -317,6 +330,7 @@ export class LineDraftUpdateUseCase {
           diff: stored.preview.diff,
         },
       }, tx);
+      return updated.updatedAt.toISOString();
       });
     } catch (err) {
       // The row moved between our own re-read and the write — the same race the `updatedAt` compare
@@ -333,7 +347,7 @@ export class LineDraftUpdateUseCase {
     // Remembered briefly so a SECOND tap on the same card answers "แก้ไปแล้วค่ะ" rather than
     // "there is nothing pending" — a double tap is the commonest thing a person does to a button
     // whose reply is slow, and telling them nothing happened would be a lie about their own edit.
-    await this.previews.remember(ctx.companyId, chatKeyHash, stored);
+    await this.previews.remember(ctx.companyId, chatKeyHash, { ...stored, appliedExpenseUpdatedAt });
     return { status: 'applied', preview: stored.preview, expenseId: target.id };
   }
 

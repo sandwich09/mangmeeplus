@@ -1,0 +1,192 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
+import type { PrismaService } from '../common/database/prisma.service';
+import type { BillingReconcilerService } from '../modules/billing/application/billing-reconciler.service';
+import type { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
+import type { startBillingBrowser } from './billing-browser-smoke';
+
+/** Real Admin HTTP/auth/PG/worker and optional Next browser; only provider transport is simulated. */
+export async function checkBillingProviderEvents(input: {
+  request: (path:string,method?:string,body?:unknown,headers?:Record<string,string>)=>Promise<{status:number;body:any}>;
+  prisma:PrismaService; userId:string;membershipId:string;stripeAccountId:string;
+  reconciler:BillingReconcilerService;operations:BillingOperationsService;
+  provider:{invoices:Record<string,any>[];customers:Record<string,any>[]};
+  interceptRead:(hook?: (path:string)=>Promise<void>)=>void;
+  browser?:Awaited<ReturnType<typeof startBillingBrowser>>;
+}):Promise<string[]> {
+  const {prisma,userId,membershipId,stripeAccountId,reconciler,operations,provider,browser}=input,db=prisma.client;
+  let requestRateLimits=0;
+  const request:typeof input.request=async(...args)=>{
+    for(let attempt=0;;attempt++){
+      const result=await input.request(...args);
+      if(result.status!==429||attempt>=2)return result;
+      assert.equal(result.body.code,'BILLING_RATE_LIMIT');
+      assert.ok(Number.isInteger(result.body.retryAfterSeconds)&&result.body.retryAfterSeconds>=1&&result.body.retryAfterSeconds<=60);
+      requestRateLimits++;
+      await new Promise(resolve=>setTimeout(resolve,(result.body.retryAfterSeconds+1)*1000));
+    }
+  };
+  const base='/v1/system/billing',run=randomUUID().replaceAll('-',''),companyId=`provider-event-${run}`,roleId=randomUUID();
+  const invoiceId=`in_event${run}`,customerId=`cus_event${run}`,eventIds:string[]=[];
+  const member=await db.companyMembership.findUniqueOrThrow({where:{id:membershipId}});
+  const originalTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId:member.companyId}});
+  let adminId:string|undefined,createdAdmin=false,browserRateLimit=false;
+  const read=(id:string)=>request(`${base}/provider-events/${id}`);
+  const preview=async(id:string)=>{const event=await read(id);assert.equal(event.status,200,JSON.stringify(event));
+    return request(`${base}/provider-events/${id}/preview`,'POST',{sourceHash:event.body.sourceHash,reason:'ตรวจหลักฐานเดิมก่อนดำเนินการ'});};
+  const submit=(row:any)=>request(`${base}/operations`,'POST',{previewId:row.id,previewHash:row.previewHash,expectedVersion:row.version},{'idempotency-key':`billing-op-${row.id}`});
+  const create=async()=>{const row=await db.billingProviderEvent.create({data:{stripeAccountId,livemode:false,eventId:`evt_${randomUUID().replaceAll('-','')}`,
+    eventType:'invoice.paid',objectId:invoiceId,apiVersion:STRIPE_API_VERSION,evidenceHash:run,status:'DEAD',attempts:10,errorCode:'provider-private-diagnostic'}});eventIds.push(row.id);return row;};
+  try {
+    assert.equal((await request(`${base}/provider-events`)).status,403);
+    await db.companyPlanTerm.update({where:{companyId:member.companyId},data:{termEndsAt:new Date(Date.now()+86400000)}});
+    await db.company.create({data:{id:companyId,name:'Synthetic provider-event company'}});
+    const account=await db.billingAccount.create({data:{companyId,stripeAccountId,livemode:false,customerId}});
+    provider.invoices.push({id:invoiceId,object:'invoice',customer:customerId,livemode:false});
+    provider.customers.push({id:customerId,object:'customer',livemode:false,metadata:{}});
+    const keys=['system.billing.read','system.billing.reconcile.run','system.billing.issue.manage'];
+    const permissions=await Promise.all(keys.map(key=>db.permission.upsert({where:{key},update:{},create:{key,description:key}})));
+    await db.role.create({data:{id:roleId,key:`EVENT_OPERATOR_${run}`,scopeKey:'system',isSystem:true,name:'Synthetic event operator',permissions:{create:permissions.map(p=>({permissionId:p.id}))}}});
+    await db.membershipRole.create({data:{membershipId,roleId}});
+    const source=await create();
+    await db.billingOperatorScope.create({data:{userId,stripeAccountId,livemode:false,companyId,createdByUserId:userId}});
+    assert.equal((await request(`${base}/provider-events`)).status,404,'delegated scope cannot see platform events');
+    assert.equal((await read(source.id)).status,404);
+    const existing=await db.role.findUnique({where:{scopeKey_key:{scopeKey:'system',key:'SYSTEM_ADMIN'}}});
+    const admin=existing??await db.role.create({data:{key:'SYSTEM_ADMIN',scopeKey:'system',isSystem:true,name:'Synthetic platform role'}});
+    adminId=admin.id;createdAdmin=!existing;await db.membershipRole.create({data:{membershipId,roleId:admin.id}});
+    const issue=await db.billingIssue.create({data:{stripeAccountId,livemode:false,kind:'PROVIDER_EVENT_FAILED',referenceId:source.id}});
+    const otherIssue=await db.billingIssue.create({data:{stripeAccountId,livemode:false,companyId,kind:'FINANCIAL_REVIEW',referenceId:account.id}});
+    const event=(await read(source.id)).body;
+    assert.equal(event.canRetry,true);assert.equal(event.issueId,issue.id);
+    assert.doesNotMatch(JSON.stringify(event),/provider-private|evt_|in_event|cus_event|evidenceHash|stripeAccountId|recipient|amount/);
+    assert.equal((await request(`${base}/provider-events/${source.id}/preview`,'POST',{sourceHash:event.sourceHash,reason:'no custom mapping',customerId})).status,400);
+    await db.billingProviderEvent.update({where:{id:source.id},data:{livemode:true}});
+    assert.equal((await read(source.id)).status,404);
+    assert.equal((await request(`${base}/provider-events?cursor=${source.id}`)).status,404);
+    await db.billingProviderEvent.update({where:{id:source.id},data:{livemode:false}});
+    const stale=await preview(source.id);assert.equal(stale.status,200);
+    await db.billingProviderEvent.update({where:{id:source.id},data:{attempts:{increment:1}}});
+    assert.equal((await submit(stale.body)).status,409,'source changes invalidate the preview');
+    await db.billingProviderEvent.update({where:{id:source.id},data:{status:'PROCESSING',leaseToken:run,leaseUntil:new Date(Date.now()+60000)}});
+    assert.equal((await read(source.id)).body.canRetry,false);assert.equal((await preview(source.id)).status,409);
+    await db.billingProviderEvent.update({where:{id:source.id},data:{status:'DEAD',leaseToken:null,leaseUntil:null}});
+    const first=await preview(source.id),competing=await preview(source.id);
+    const queued=await submit(first.body);assert.equal(queued.status,202);assert.equal(queued.body.state,'QUEUED');
+    assert.equal((await submit(first.body)).body.id,first.body.id);assert.equal((await submit(competing.body)).status,409);
+    await db.membershipRole.delete({where:{membershipId_roleId:{membershipId,roleId:admin.id}}});
+    assert.equal((await request(`${base}/operations/${first.body.id}`)).status,404);
+    await operations.drain();assert.equal((await db.billingOperation.findUniqueOrThrow({where:{id:first.body.id}})).state,'BLOCKED');
+    assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:source.id}})).attempts,11);
+    await db.membershipRole.create({data:{membershipId,roleId:admin.id}});
+    let operation=(await request(`${base}/operations/${first.body.id}`)).body;
+    assert.equal((await request(`${base}/operations/${operation.id}/retry`,'POST',{expectedVersion:operation.version})).status,200);
+    input.interceptRead(async path=>{if(path===`/invoices/${invoiceId}`)throw Error('simulated provider read unavailable');});
+    await operations.drain();input.interceptRead();
+    operation=(await request(`${base}/operations/${first.body.id}`)).body;assert.equal(operation.state,'UNKNOWN');
+    assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:source.id}})).attempts,12);
+    assert.notEqual((await db.billingIssue.findUniqueOrThrow({where:{id:issue.id}})).state,'RESOLVED');
+    // A missing binding must fail closed, then the same operation can observe a corrected binding.
+    await db.billingAccount.update({where:{id:account.id},data:{customerId:null}});
+    assert.equal((await request(`${base}/operations/${operation.id}/retry`,'POST',{expectedVersion:operation.version})).status,200);
+    await operations.drain();operation=(await request(`${base}/operations/${first.body.id}`)).body;assert.equal(operation.state,'UNKNOWN');
+    await db.billingAccount.update({where:{id:account.id},data:{customerId}});
+    assert.equal((await request(`${base}/operations/${operation.id}/retry`,'POST',{expectedVersion:operation.version})).status,200);
+    await operations.drain();operation=(await request(`${base}/operations/${first.body.id}`)).body;
+    assert.equal(operation.state,'SUCCEEDED');assert.equal(operation.observed.eventState,'PROCESSED');
+    const processed=await db.billingProviderEvent.findUniqueOrThrow({where:{id:source.id}});
+    assert.equal(processed.attempts,14);assert.equal(processed.errorCode,null);
+    assert.equal((await db.billingIssue.findUniqueOrThrow({where:{id:issue.id}})).state,'RESOLVED');
+    assert.equal((await db.billingIssue.findUniqueOrThrow({where:{id:otherIssue.id}})).state,'OPEN');
+    input.interceptRead(async()=>{throw Error('processed event must not repeat provider work');});
+    assert.equal(await reconciler.reconcileEvent(source.id,true),'PROCESSED');input.interceptRead();
+    assert.equal(await db.auditLog.count({where:{targetId:issue.id,action:'billing.issue.resolved'}}),1);
+    assert.ok(await db.auditLog.count({where:{targetId:operation.id,action:'billing.operation.observed'}}));
+    assert.equal(await db.billingReceiptGrant.count({where:{companyId}}),0);
+    assert.equal(await db.billingAttempt.count({where:{billingAccountId:account.id}}),0);
+    const racing=await create();let entered!:()=>void,release!:()=>void;
+    const inside=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+    input.interceptRead(async path=>{if(path===`/invoices/${invoiceId}`){entered();await gate;}});
+    const running=reconciler.reconcileEvent(racing.id,true);
+    await inside;assert.equal(await reconciler.reconcileEvent(racing.id,true),'BUSY');
+    await db.billingProviderEvent.update({where:{id:racing.id},data:{leaseUntil:new Date(Date.now()-1)}});
+    release();assert.equal(await running,'BUSY','lost lease cannot count as processed');input.interceptRead();
+    assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:racing.id}})).status,'PROCESSING');
+    assert.equal(await reconciler.reconcileEvent(racing.id,true),'PROCESSED');
+    const cancelled=await create();
+    if(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1'){
+      const before=await db.billingOperation.count({where:{referenceId:cancelled.id}});let limited=false;
+      for(let i=0;i<=30;i++){
+        const probe=await input.request(`${base}/provider-events/${cancelled.id}/preview`,'POST',{sourceHash:'stale-test-source',reason:'ตรวจข้อจำกัดคำขอจำลอง'});
+        if(probe.status===429){assert.equal(probe.body.code,'BILLING_RATE_LIMIT');limited=true;break;}
+        assert.equal(probe.status,409,JSON.stringify(probe));
+      }
+      assert.ok(limited,'exercise the actual command limiter before cancellation review');
+      assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),before,'stale probes create no operation');
+    }
+    const cancelPreview=await preview(cancelled.id);assert.equal(cancelPreview.status,200,JSON.stringify(cancelPreview));
+    const cancel=await request(`${base}/operations/${cancelPreview.body.id}/cancel`,'POST',{expectedVersion:cancelPreview.body.version});
+    assert.equal(cancel.status,200,JSON.stringify(cancel));assert.equal(cancel.body.state,'CANCELLED');
+    assert.equal((await submit(cancelPreview.body)).status,409);
+    assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),1,'retry creates only the original cancelled preview');
+    assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:cancelled.id}})).attempts,10,'cancelled preview cannot dispatch provider work');
+    if(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1')assert.ok(requestRateLimits>0);
+    for(let index=0;index<26;index++)await create();
+    const firstPage=await request(`${base}/provider-events`);assert.equal(firstPage.status,200);assert.equal(firstPage.body.items.length,25);assert.ok(firstPage.body.nextCursor);
+    const secondPage=await request(`${base}/provider-events?cursor=${firstPage.body.nextCursor}`);assert.equal(secondPage.status,200);
+    assert.equal(new Set([...firstPage.body.items,...secondPage.body.items].map(row=>row.id)).size,firstPage.body.items.length+secondPage.body.items.length);
+    if(browser){
+      const page=browser.page;
+      await page.setViewportSize({width:390,height:844});
+      await page.goto(`${browser.origin}/system/billing/provider-events`,{waitUntil:'domcontentloaded'});
+      await page.getByRole('button',{name:'เหตุการณ์หน้าถัดไป',exact:true}).click();await page.getByRole('button',{name:'เหตุการณ์หน้าแรก',exact:true}).click();
+      await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`,{waitUntil:'domcontentloaded'});
+      await page.getByRole('link',{name:'ตรวจเหตุการณ์ Stripe เดิมของเคสนี้',exact:true}).click();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).getByText(/ตรวจเหตุการณ์แล้ว/).waitFor();
+      await page.goto(`${browser.origin}/system/billing/provider-events/${cancelled.id}`,{waitUntil:'domcontentloaded'});
+      await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).fill('ตรวจรายการเดิมจากหน้าจอ');
+      const beforePreview=await db.billingOperation.count({where:{referenceId:cancelled.id}});
+      for(let attempt=0;attempt<2;attempt++){
+        const previewResponse=page.waitForResponse(response=>new URL(response.url()).pathname.endsWith(`/system/billing/provider-events/${cancelled.id}/preview`)&&response.request().method()==='POST');
+        await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
+        const reviewed=await previewResponse,result=await reviewed.json();
+        if(reviewed.status()!==429||attempt===1){assert.equal(reviewed.status(),200,JSON.stringify({status:reviewed.status(),body:result}));break;}
+        assert.equal(result.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(result.retryAfterSeconds)&&result.retryAfterSeconds>=1&&result.retryAfterSeconds<=60);
+        await page.getByRole('alert').filter({hasText:`กรุณารอ ${result.retryAfterSeconds} วินาที`}).waitFor();
+        assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),beforePreview);
+        assert.equal(await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).inputValue(),'ตรวจรายการเดิมจากหน้าจอ');
+        await new Promise(resolve=>setTimeout(resolve,Math.min(60,result.retryAfterSeconds+1)*1000));browserRateLimit=true;
+      }
+      assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),beforePreview+1);
+      await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
+      await operations.drain();await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
+      await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor({timeout:3000});
+      await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();
+      await page.waitForURL('**/system/billing/operations/*');
+      await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor();
+      await page.reload({waitUntil:'domcontentloaded'});await page.getByText('ผลตรวจเหตุการณ์: ตรวจเหตุการณ์แล้ว',{exact:false}).waitFor();
+      await page.getByRole('link',{name:'กลับไปเหตุการณ์เดิม',exact:true}).click();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).getByText(/ตรวจเหตุการณ์แล้ว/).waitFor();
+      await page.getByRole('region',{name:'รายละเอียดเหตุการณ์',exact:true}).screenshot({path:`${browser.evidenceDir}/admin-provider-event-mobile.png`});
+    }
+    return ['provider-event-platform-scope-mode-redaction-pagination','provider-event-preview-stale-lease-dedupe-and-cancel',
+      'provider-event-reauthorization-unavailable-unmapped-same-command-recovery','provider-event-shared-worker-lease-loss-and-processed-replay',
+      'provider-event-evidenced-case-resolution-audit-and-no-manual-grant',...(browser?['browser-provider-event-case-preview-command-reload-and-return']:[]),
+      ...(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1'?['provider-event-real-429-original-preview-cancel-no-duplicate-operation-or-provider-dispatch']:[]),
+      ...(browserRateLimit?['browser-provider-event-real-rate-limit-wait-preserves-input-and-no-command-on-refusal']:[])];
+  } finally {
+    input.interceptRead();
+    await db.companyPlanTerm.update({where:{companyId:member.companyId},data:{termEndsAt:originalTerm.termEndsAt}});
+    await db.auditLog.deleteMany({where:{OR:[{companyId},{actorUserId:userId,companyId:null},{targetId:{in:eventIds}},{targetType:'BillingIssue',requestId:{contains:'billing-issue:'},targetId:{in:(await db.billingIssue.findMany({where:{stripeAccountId,referenceId:{in:eventIds}},select:{id:true}})).map(r=>r.id)}}]}});
+    await db.billingOperation.deleteMany({where:{stripeAccountId,type:'RETRY_PROVIDER_EVENT',referenceId:{in:eventIds}}});
+    await db.billingIssue.deleteMany({where:{stripeAccountId,OR:[{companyId},{referenceId:{in:eventIds}}]}});
+    await db.billingProviderEvent.deleteMany({where:{id:{in:eventIds}}});
+    await db.billingOperatorScope.deleteMany({where:{userId,stripeAccountId,companyId}});
+    await db.billingAccount.deleteMany({where:{companyId}});await db.company.deleteMany({where:{id:companyId}});
+    await db.membershipRole.deleteMany({where:{membershipId,roleId:{in:[roleId,...adminId?[adminId]:[]]}}});
+    await db.role.deleteMany({where:{id:{in:[roleId,...createdAdmin&&adminId?[adminId]:[]]}}});
+    provider.invoices.splice(provider.invoices.findIndex(row=>row.id===invoiceId),1);provider.customers.splice(provider.customers.findIndex(row=>row.id===customerId),1);
+  }
+}

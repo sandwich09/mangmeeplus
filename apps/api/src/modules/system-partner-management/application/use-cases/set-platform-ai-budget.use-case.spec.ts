@@ -21,7 +21,9 @@ function makePrisma(existing: { monthlyBudgetSatang: number; ceilingSatang: numb
   let txCalled = false;
 
   const txClient = {
+    $executeRaw: async () => {},
     platformAiBudgetConfig: {
+      findUnique: async () => existing,
       upsert: async (args: any) => {
         upsertArgs = args;
         return { monthlyBudgetSatang: args.create.monthlyBudgetSatang, ceilingSatang: args.create.ceilingSatang };
@@ -35,7 +37,7 @@ function makePrisma(existing: { monthlyBudgetSatang: number; ceilingSatang: numb
     auditData: () => auditData,
     txCalled: () => txCalled,
     client: {
-      platformAiBudgetConfig: { findUnique: async () => existing },
+      platformAiBudgetConfig: { findUnique: async () => { throw new Error('Unprotected audit predecessor'); } },
       $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
         txCalled = true;
         return fn(txClient);

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
@@ -10,7 +11,10 @@ function sign(rawBody: Buffer, secret: string): string {
 
 function makeController(enqueueImpl?: (envelope: unknown) => Promise<void>) {
   const enqueued: any[] = [];
-  const controller = new LineWebhookController(
+  const controller = new LineWebhookController(lineMessagingCredentialsFixture({
+      lineMessagingChannelSecret: 'line-secret',
+      lineMessagingChannelId: 'msg-channel-1',
+    } as any),
     {
       lineMessagingChannelSecret: 'line-secret',
       lineMessagingChannelId: 'msg-channel-1',

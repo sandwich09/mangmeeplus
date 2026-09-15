@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { ConflictException, ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashToken } from '../../domain/logic/secure-token.logic';
@@ -8,7 +9,7 @@ import { EMAIL_VERIFIED_NOTICE, notifyAccountSecurityChange } from '../account-s
 
 @Injectable()
 export class ConfirmEmailVerificationUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
     @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null,
@@ -60,8 +61,12 @@ export class ConfirmEmailVerificationUseCase {
     let verifiedAt = now;
     const claimed = await this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-email:${token.userId}`}))`;
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${token.userId} FOR UPDATE`;
+      const current = await tx.user.findUnique({ where: { id: token.userId }, select: { status: true } });
+      if (current?.status !== 'ACTIVE') return false;
+      verifiedAt = new Date();
       const claim = await tx.emailVerificationToken.updateMany({
-        where: { id: token.id, status: 'PENDING' },
+        where: { id: token.id, status: 'PENDING', expiresAt: { gt: verifiedAt } },
         data: { status: 'USED', usedAt: verifiedAt },
       });
       if (claim.count !== 1) return false;
@@ -78,9 +83,14 @@ export class ConfirmEmailVerificationUseCase {
         data: { status: 'REVOKED' },
       });
       return true;
+    }).catch((error: unknown) => {
+      if ((error as { code?: string })?.code === 'P2002') {
+        throw new ConflictException('This email is already being used by another account.');
+      }
+      throw error;
     });
 
-    if (!claimed) return fail('token_already_claimed');
+    if (!claimed) return fail('token_or_account_changed');
 
     await this.audit?.log({
       action: AuditAction.AUTH_EMAIL_VERIFIED,
@@ -96,7 +106,7 @@ export class ConfirmEmailVerificationUseCase {
     // This route is public — anyone holding the emailed link can spend it — and for a LINE-first
     // owner the new address is a second way to reach the account. LINE is the only channel that
     // can tell them it happened, since the notice cannot go to the mailbox that just changed.
-    await notifyAccountSecurityChange(this.prisma, this.config?.lineMessagingChannelAccessToken, token.userId, EMAIL_VERIFIED_NOTICE);
+    await notifyAccountSecurityChange(this.prisma, this.lineCredentials, token.userId, EMAIL_VERIFIED_NOTICE);
 
     return { email: token.newEmail, verifiedAt: verifiedAt.toISOString() };
   }

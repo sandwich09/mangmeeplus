@@ -1,0 +1,85 @@
+{
+  "recordedAt": "2026-09-15T14:24:52.096544+00:00",
+  "baseCommit": "bba55f6c5ba19d282e7269860b4d7bdb5308c2c4",
+  "status": "LOCAL_UPLOAD_SOURCE_TRANSACTION_AND_CURRENT_ACCESS_PASS",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.ts": "a48bd6cc7b3b524fc018cacedb649d1815ab6c1d6ce74f134dd2af0b1153ed39",
+    "apps/api/src/modules/expenses/application/use-cases/expense-upload.use-case.spec.ts": "016154267f805ee24e179e8d9f056af5e6adab95d526d4cd6254c2383c579003",
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "fa3be8e92559be0a843db6000ba11a5d12787e43b8370fa6dc89eb34dc39be59",
+    "apps/api/src/modules/expenses/receipt-upload-source.pg.spec.ts": "800659e78eaa3d9688ebf6c3d38b3e5ad160802c817284de8df900f86f49a7be",
+    "apps/api/src/modules/line-ai/receipt-reliability.pg.spec.ts": "9ffa9a30b4bc047ca012867e35d8f66be20fb73643d9e363b022483a90b3d94d",
+    "apps/api/src/modules/line-ai/onboarding-receipt-allowance.pg.spec.ts": "ed9f90e2f8d3ac354eaa7dcd3c8af2b6a820715896e57c5d28a1fa3557e4b958"
+  },
+  "runs": {
+    "uploadUnit": {
+      "localLog": "/tmp/mangmee-upload-source-unit.log",
+      "sha256": "e667d635156de492405b55f0defdfdcf18d26269609e9dcb240242f57fe4720b",
+      "tests": 24,
+      "pass": 24,
+      "fail": 0,
+      "skipped": 0
+    },
+    "receiptAndWebhookBeforeSignature": {
+      "localLog": "/tmp/mangmee-upload-access-unit.tap",
+      "sha256": "0735c0d92406214e997e227de41b8acf3b3476774ee37473919b258fe8ec62d6",
+      "tests": 341,
+      "pass": 341,
+      "fail": 0,
+      "skipped": 0
+    },
+    "newPostgres": {
+      "localLog": "/tmp/mangmee-upload-source-postgres.tap",
+      "sha256": "cd98f5a63257e8ba4b6cfff0a317b2c75cb4730c68684392ebaf4ddf84803882",
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "skipped": 0
+    },
+    "existingPostgres": {
+      "localLog": "/tmp/mangmee-upload-source-existing-postgres.tap",
+      "sha256": "c4b7c0ed084c8bfe579c726ec903e0f2d37747432f3a419f847acdd96114e911",
+      "tests": 7,
+      "pass": 7,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "typecheck": {
+    "localLog": "/tmp/mangmee-upload-access-final-typecheck.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "swc": {
+    "localLog": "/tmp/mangmee-upload-access-swc.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "reproduction": {
+    "before": {
+      "localLog": "/tmp/mangmee-upload-source-race-before.log",
+      "sha256": "06958b80c1a688525a5c9dfbf2a470d4cd2829d0454738b250557b022a5e0277"
+    },
+    "result": "A CONFIRMED update during simulated storage was overwritten to NEEDS_REVIEW and a new attachment linked. The reproduction used the original shared production use case with in-memory collaborators."
+  },
+  "implementation": [
+    "Shared web/LINE completion refuses out-of-scope branches and missing source revision.",
+    "After remote storage, original expectedUpdatedAt CAS, attachment link, primary replacement/retention, and duplicate reconciliation join one existing PostgreSQL transaction under the existing duplicate/funding locks. No provider/storage/OCR I/O under the transaction.",
+    "Supporting/payment links also advance and check the source revision. Existing signed/shared evidence rules are retained.",
+    "Current permission resolution after storage requires the same membership, active user/company, receipt permission and current branch scope. The LINE caller supplies an internal original-event check before business writes.",
+    "Repository findById accepts the existing transaction and preserves the minimal completion response, without attachment/payment relation expansion."
+  ],
+  "verified": [
+    "Real PostgreSQL web and LINE status/primary/branch changes during storage cannot overwrite the changed record or attach/retire files.",
+    "A deliberately thrown duplicate-check failure after link/retirement rolls all business changes back. LINE then uses its original ACTIVE reservation without another upload; web uses its existing reviewed re-upload path.",
+    "Out-of-scope branch is refused before storage. Existing onboarding upload/receipt allowance and LINE reservation/recovery suites pass.",
+    "Actual PostgreSQL current membership, permissions, active user/company and branch scope changes during storage prevent linking or retiring receipts for both WEB_UPLOAD and LINE_UPLOAD.",
+    "Direct and resumed LINE uploads invoke the original-event callback after simulated storage; unlink suppresses receipt completion and OCR application.",
+    "The completion response retains its original minimal projection."
+  ],
+  "limits": [
+    "Ten new PostgreSQL tests contain parameterized changes; test/group counts overlap and are not business-flow totals.",
+    "New PostgreSQL tests use the real permission resolver/repositories; storage, audit and outbox collaborators are simulated. Existing onboarding tests use the real finalizer with in-memory object storage.",
+    "The341 receipt/webhook unit run predates signature wiring; final598 signature/webhook tests and the308-group combined build separately cover the latest webhook. Counts overlap.",
+    "No atomic guarantee across every possible concurrent permission update is inferred. This proves original expense CAS/transaction and post-storage authorization boundaries.",
+    "Working-tree evidence includes concurrent imported environment/config edits; not clean-commit/CI/native LINE/LIFF/provider acceptance. No push, merge or deploy."
+  ],
+  "combinedEvidence": "combined-upload-access-result.json"
+}

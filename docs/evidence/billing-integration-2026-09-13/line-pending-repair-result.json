@@ -1,0 +1,43 @@
+{
+  "status": "LOCAL_PENDING_RECEIPT_REPAIR_PASS",
+  "recordedAt": "2026-09-15T11:59:53.721158+00:00",
+  "baseCommit": "fd672cb3ca91d080461bbd30603f3e8a7916da5c",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/infrastructure/prisma-expense.repository.ts": "017f07029cda2750da3486d45d1c345c872c8a8f7700fddd925f945af58207f2",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "a688d611c1b3f7017d5446b70ed2e895a97828fb543d4332a32e38d4b50a6356",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "e6031438f1f2738e75fb1e1c6590d8b1c6a020cc82206eb6be4ee7bdabae8f67",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "c24e1bfd25a1d8928c14fe56a59dc976a38b445a11ef6b377c3bed87fea72e75",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "cfd70dbdfe41ee5a92508fa41e0b18332ad1dc8119e93693beb4db1dedf18219"
+  },
+  "runs": {
+    "unit": {
+      "tests": 585,
+      "pass": 585,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-pending-repair-unit.tap",
+      "sha256": "0218598acbffa823668ecf2967f43a54ffeed51f679d8911f712a39de07f34f4"
+    },
+    "postgres": {
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-pending-repair-postgres.tap",
+      "sha256": "d8a6c2fda143636e2fac586ae3a035602cd96cef07fbfed620e6b474cc594c59"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "The original company/creator/LINE message/chat/branch and active owned attachment are required before repair. Completed matching receipts are read-only even after human confirmation.",
+    "Existing funding, substitute and retention lock order is taken before the attachment row lock. Primary link, initial review summary and duplicate reconciliation share one PostgreSQL transaction.",
+    "Actual PostgreSQL proves rollback after the duplicate stage, source revision conflict preserving a concurrent human edit, and replay of an existing attachment link without a P2002-aborted transaction.",
+    "Pending receipt replies now reuse current saved facts and final source validation. Dispatcher regression preserves a reviewed receipt and returns its original record. Completed check-bill retry uses the same validation without reapplying OCR."
+  ],
+  "limits": [
+    "585 unit and4 PostgreSQL tests overlap earlier suites. One PG case exercises multiple repair scenarios through the production completion method and repository; it is not a full native LINE or UI transaction.",
+    "Historical pending-question/original-choice provenance, substitute/correction result sources, later storage permission races and full current combined/native acceptance remain open.",
+    "No new schema/dependency/package.json changes; no CI/push/merge/deploy or native payment/message."
+  ]
+}

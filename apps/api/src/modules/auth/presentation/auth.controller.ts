@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
   Body,
   Controller,
@@ -223,7 +224,7 @@ function extractSid(req: Request): string | undefined {
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly config: AppConfigService,
     private readonly prisma: PrismaService,
     private readonly issueToken: IssueTokenUseCase,
@@ -667,9 +668,9 @@ export class AuthController {
 
   private async getOaAddFriendUrl(): Promise<string> {
     if (this.oaAddFriendUrl !== undefined) return this.oaAddFriendUrl;
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return '';
     try {
+      const token = (await this.lineCredentials.get()).accessToken;
+      if (!token) return '';
       const res = await fetch('https://api.line.me/v2/bot/info', {
         headers: { authorization: `Bearer ${token}` },
         signal: AbortSignal.timeout(5000),
@@ -782,10 +783,10 @@ export class AuthController {
         'api-base': apiBase,
         'oa-add-url': oaAddUrl,
       },
-      content: `      <h1>Link your LINE account</h1>
-      <p id="status" class="notice notice-info">Ready</p>
-      <button id="link">Link LINE account</button>
-      <a id="open-line" class="btn" hidden>Open LINE</a>
+      content: `      <h1>เชื่อมบัญชี LINE</h1>
+      <p id="status" class="notice notice-info">กำลังเตรียมการเชื่อมต่อ</p>
+      <button id="link">เชื่อม LINE</button>
+      <a id="open-line" class="btn" hidden>เปิด LINE</a>
       <pre id="detail"></pre>`,
     });
   }
@@ -1066,7 +1067,7 @@ export class AuthController {
       select: {
         companyId: true,
         company: { select: { name: true, status: true, planTerm: { select: { termEndsAt: true } } } },
-        roles: { select: { role: { select: { key: true } } } },
+        roles: { where: { role: { status: 'ACTIVE' } }, select: { role: { select: { key: true } } } },
       },
       orderBy: { createdAt: 'asc' },
     });

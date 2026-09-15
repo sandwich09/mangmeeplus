@@ -1,0 +1,64 @@
+{
+  "layer": "native Stripe Sandbox Workbench preview primitive",
+  "result": "PASS for isolated difference preview only",
+  "account": "acct_1UEk5IRvebw5L0s3",
+  "livemode": false,
+  "request": {
+    "command": "stripe invoices create_preview",
+    "currency": "thb",
+    "customer_details": {
+      "address": {
+        "country": "TH"
+      }
+    },
+    "invoice_items": [
+      {
+        "amount": 25000,
+        "currency": "thb",
+        "description": "Synthetic prepaid upgrade preview",
+        "discountable": false,
+        "tax_behavior": "inclusive"
+      }
+    ],
+    "discounts": ""
+  },
+  "observed": {
+    "id": "in_1UFGZURvebw5L0s33ux5BXq3",
+    "customer": "cus_VFm7I2nCgGtK8W",
+    "billing_reason": "upcoming",
+    "parent": null,
+    "status": "draft",
+    "amount_due": 25000,
+    "amount_paid": 0,
+    "total": 25000,
+    "tax": 0,
+    "starting_balance": 0,
+    "ending_balance": 0,
+    "auto_advance": false,
+    "attempted": false,
+    "line_count": 1,
+    "line_amount": 25000,
+    "line_parent_type": "invoice_item_details",
+    "has_more": false,
+    "hosted_invoice_url": null,
+    "invoice_pdf": null
+  },
+  "follow_up": {
+    "invoice_retrieve": "Returned preview object with same ID; do not assume preview IDs use upcoming_ prefix",
+    "invoice_list_by_preview_customer": {
+      "code": "resource_missing",
+      "message": "No such customer: cus_VFm7I2nCgGtK8W",
+      "request": "req_PETlYRHXhh0Y2y"
+    }
+  },
+  "limitations": [
+    "No payment or subscription created by this preview request",
+    "Preview confirms API shape only, not application upgrade acceptance",
+    "No contact details supplied; no external-recipient messages",
+    "Do not infer invoice persistence or financial availability merely from an in_ ID"
+  ],
+  "references": [
+    "https://docs.stripe.com/api/invoices/create_preview",
+    "https://docs.stripe.com/billing/subscriptions/prorations"
+  ]
+}

@@ -560,8 +560,8 @@ export class PrismaExpenseRepository {
     return input.draftIdempotencyKey || withinTx || input.assignExpenseNumber ? this.prisma.client.$transaction(create) : create(this.prisma.client);
   }
 
-  async findById(companyId: string, id: string): Promise<ExpenseRecord | null> {
-    const r = await this.prisma.client.expenseRecord.findFirst({ where: { id, companyId } });
+  async findById(companyId: string, id: string, db: ExpenseDb = this.prisma.client): Promise<ExpenseRecord | null> {
+    const r = await db.expenseRecord.findFirst({ where: { id, companyId } });
     return r ? mapExpense(r) : null;
   }
 
@@ -2910,19 +2910,22 @@ export class PrismaExpenseRepository {
     scopes: { branchIds?: string[] };
     take: number;
     includeAllStatuses?: boolean;
+    expenseIds?: string[];
   }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; vendorDocumentNumber: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
+    if (input.expenseIds && (!input.expenseIds.length || input.expenseIds.length > 5)) return [];
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
         createdByUserId: input.createdByUserId,
         captureSource: 'LINE_UPLOAD',
+        ...(input.expenseIds ? { id: { in: input.expenseIds } } : {}),
         ...(input.includeAllStatuses ? {} : { status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any } }),
         createdAt: { gte: input.since },
         // Rows captured before chatKeyHash existed simply never match — accepted transitional gap.
         sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: input.chatKeyHash },
         ...branchScopeWhere(input.scopes),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: input.take,
       // ponytail: served by the existing (companyId, captureSource) index plus a filter+sort;
       // fine at SME LINE-capture volumes. Add (companyId, captureSource, createdAt) if a company's
@@ -3012,7 +3015,7 @@ export class PrismaExpenseRepository {
         note: true, grandTotalAmount: true,
         updatedAt: true, sourceChannelMetadataJson: true,
       },
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
       take: Math.min(10, Math.max(1, input.take ?? 5)),
     });
     return rows.filter((row: any) =>
@@ -3232,13 +3235,20 @@ export class PrismaExpenseRepository {
     });
   }
 
-  async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
-    await this.linkAttachmentToTarget(attachmentId, 'expense.record', expenseId, purpose, companyId, actorUserId);
+  async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string, db?: ExpenseDb): Promise<void> {
+    await this.linkAttachmentToTarget(attachmentId, 'expense.record', expenseId, purpose, companyId, actorUserId, db);
   }
 
-  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
-    const conflict = await findAttachmentLinkConflict(this.prisma.client, { companyId, attachmentId, targetType });
+  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string, db?: ExpenseDb): Promise<void> {
+    const conflict = await findAttachmentLinkConflict(db ?? this.prisma.client, { companyId, attachmentId, targetType });
     if (conflict) throw new BadRequestException(conflict);
+    // A partial LINE repair may already have this link. Catching P2002 inside PostgreSQL's
+    // transaction aborts the remaining repair, so retain the original link with an empty upsert.
+    if (db) {
+      await db.attachmentLink.upsert({ where: { attachmentId_targetType_targetId_purpose: { attachmentId, targetType, targetId, purpose } },
+        create: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId }, update: {} });
+      return;
+    }
     await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId } });
   }
 

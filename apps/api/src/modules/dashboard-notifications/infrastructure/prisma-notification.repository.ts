@@ -14,7 +14,7 @@ import type {
   NotificationRule, NotificationEvent, NotificationRecipient,
   NotificationDelivery, NotificationPreference, AlertState,
 } from '../domain/models/notification.model';
-import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS } from '../domain/models/notification.model';
+import { DEFAULT_ENABLED_CHANNELS, IMPLEMENTED_TRIGGER_KEYS, MAX_DELIVERY_ATTEMPTS } from '../domain/models/notification.model';
 
 /**
  * Keyset page for the three cursor-paginated lists here.
@@ -222,6 +222,11 @@ export class PrismaNotificationRecipientRepository implements NotificationRecipi
 export class PrismaNotificationDeliveryRepository implements NotificationDeliveryRepositoryPort {
   constructor(private readonly prisma: PrismaService) {}
   async findById(companyId: string, id: string) { const r = await this.prisma.client.notificationDelivery.findFirst({ where: { id, companyId } }); return r ? toDelivery(r) : null; }
+  async retryCompanyDelivery(companyId:string,id:string,updatedAt:Date) {
+    const changed=await this.prisma.client.notificationDelivery.updateMany({where:{id,companyId,updatedAt,status:'FAILED',attemptCount:{lt:MAX_DELIVERY_ATTEMPTS},
+      recipient:{companyId,event:{companyId,sourceModule:{not:'billing'}}}},data:{status:'QUEUED',nextAttemptAt:new Date()}});
+    return changed.count?this.findById(companyId,id):null;
+  }
   async listByCompany(companyId: string, filter: { channel?: string; status?: string; cursor?: string; pageSize?: number }) {
     const pageSize = filter.pageSize ?? 25;
     const where: any = { companyId };
@@ -236,7 +241,7 @@ export class PrismaNotificationDeliveryRepository implements NotificationDeliver
   /** Cross-company due deliveries for the sweep (A4): QUEUED and past their backoff. */
   async findDue(now: Date, limit: number): Promise<Array<{ id: string; companyId: string }>> {
     return this.prisma.client.notificationDelivery.findMany({
-      where: { status: 'QUEUED', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+      where: { status: 'QUEUED', recipient: { event: { sourceModule: { not: 'billing' } } }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
       select: { id: true, companyId: true },
       take: limit,
       orderBy: { createdAt: 'asc' },

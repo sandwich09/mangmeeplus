@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -82,7 +83,7 @@ function harness(options: {
 
   // §15.6: a failed push raises the once-a-day ops alert; recorded here rather than sent.
   const alerts: string[] = [];
-  const service = new LineSignupNotifyService(
+  const service = new LineSignupNotifyService(lineMessagingCredentialsFixture({ lineMessagingChannelAccessToken: TOKEN, lineLiffId: '1234567890-abcdef', sesWebBaseUrl: 'https://app.example.test' } as any),
     prisma,
     { append: async (input: any) => { appended.push(input); } } as any,
     { lineMessagingChannelAccessToken: TOKEN, lineLiffId: '1234567890-abcdef', sesWebBaseUrl: 'https://app.example.test' } as any,

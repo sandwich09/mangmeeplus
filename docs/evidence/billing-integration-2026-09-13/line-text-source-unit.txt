@@ -1,0 +1,12 @@
+# New text-capture cases; full suite totals below
+    ok 19 - refuses duplicate-message evidence outside the current record scope without creating or updating
+    ok 20 - a duplicate text capture formats the current saved header rather than stale questionnaire memory
+    ok 1 - committed text capture delivery: unchanged
+    ok 2 - committed text capture delivery: branch
+    ok 3 - committed text capture delivery: revision
+    ok 4 - committed text capture delivery: category
+    ok 5 - committed text capture delivery: fallback
+# tests 594
+# pass 594
+# fail 0
+# skipped 0

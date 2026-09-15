@@ -1,0 +1,191 @@
+TAP version 13
+# Subtest: request body validation coverage (audit H-23)
+    # Subtest: does not grow the unvalidated-body backlog
+    ok 1 - does not grow the unvalidated-body backlog
+      ---
+      duration_ms: 24.606042
+      type: 'test'
+      ...
+    # Subtest: reports when the backlog has shrunk so the recorded total can be lowered
+    ok 2 - reports when the backlog has shrunk so the recorded total can be lowered
+      ---
+      duration_ms: 10.938125
+      type: 'test'
+      ...
+    # Subtest: keeps the worst-offending controllers on the record
+    ok 3 - keeps the worst-offending controllers on the record
+      ---
+      duration_ms: 10.650208
+      type: 'test'
+      ...
+    # Subtest: never lets a bare type alias impersonate a DTO class on a request body
+    ok 4 - never lets a bare type alias impersonate a DTO class on a request body
+      ---
+      duration_ms: 14.193625
+      type: 'test'
+      ...
+    1..4
+ok 1 - request body validation coverage (audit H-23)
+  ---
+  duration_ms: 60.96425
+  type: 'suite'
+  ...
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 2 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 0.68125
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 3 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.156042
+  type: 'test'
+  ...
+# Subtest: overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+ok 4 - overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+  ---
+  duration_ms: 4.052917
+  type: 'test'
+  ...
+# Subtest: a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+ok 5 - a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+  ---
+  duration_ms: 0.684
+  type: 'test'
+  ...
+# Subtest: old ambiguous command never posts again without an observed result
+ok 6 - old ambiguous command never posts again without an observed result
+  ---
+  duration_ms: 0.742416
+  type: 'test'
+  ...
+# Subtest: a hold or closed action gate appearing after confirmation prevents external mutation
+ok 7 - a hold or closed action gate appearing after confirmation prevents external mutation
+  ---
+  duration_ms: 1.007416
+  type: 'test'
+  ...
+# Subtest: a stale worker lease cannot mutate the provider or release another command reservation
+ok 8 - a stale worker lease cannot mutate the provider or release another command reservation
+  ---
+  duration_ms: 0.617542
+  type: 'test'
+  ...
+# Subtest: financial observations reject malformed or differently owned money evidence
+ok 9 - financial observations reject malformed or differently owned money evidence
+  ---
+  duration_ms: 0.5835
+  type: 'test'
+  ...
+# Subtest: a stale financial observer cannot update an invoice or open a case
+ok 10 - a stale financial observer cannot update an invoice or open a case
+  ---
+  duration_ms: 0.22525
+  type: 'test'
+  ...
+# Subtest: future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+ok 11 - future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+  ---
+  duration_ms: 2.141542
+  type: 'test'
+  ...
+# Subtest: completed historical phases do not block normal management of the current final paid phase
+ok 12 - completed historical phases do not block normal management of the current final paid phase
+  ---
+  duration_ms: 0.271417
+  type: 'test'
+  ...
+# Subtest: latest equal-boundary consent uses monotonic database revision and validates pending account binding
+ok 13 - latest equal-boundary consent uses monotonic database revision and validates pending account binding
+  ---
+  duration_ms: 1.397709
+  type: 'test'
+  ...
+# Subtest: lost scheduling response can be observed after the future phase starts, with exact economics
+ok 14 - lost scheduling response can be observed after the future phase starts, with exact economics
+  ---
+  duration_ms: 0.632417
+  type: 'test'
+  ...
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 15 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 0.794667
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 16 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 0.741083
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 17 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.641542
+  type: 'test'
+  ...
+# Subtest: HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+ok 18 - HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+  ---
+  duration_ms: 1.959708
+  type: 'test'
+  ...
+# Subtest: full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+ok 19 - full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+  ---
+  duration_ms: 0.130083
+  type: 'test'
+  ...
+# Subtest: Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+ok 20 - Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+  ---
+  duration_ms: 0.104167
+  type: 'test'
+  ...
+# Subtest: first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+ok 21 - first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+  ---
+  duration_ms: 0.104833
+  type: 'test'
+  ...
+# Subtest: upgrade adds only prorated units, including the future periods already bought
+ok 22 - upgrade adds only prorated units, including the future periods already bought
+  ---
+  duration_ms: 0.082959
+  type: 'test'
+  ...
+# Subtest: invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+ok 23 - invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+  ---
+  duration_ms: 0.25425
+  type: 'test'
+  ...
+# Subtest: actual sandbox shape: manual/send_invoice, inactive inline price and zero-length line period are valid only for bound Checkout
+ok 24 - actual sandbox shape: manual/send_invoice, inactive inline price and zero-length line period are valid only for bound Checkout
+  ---
+  duration_ms: 1.702542
+  type: 'test'
+  ...
+# Subtest: reject unrelated/manual invoices, alternate customer/account/attempt/price and altered payment evidence
+ok 25 - reject unrelated/manual invoices, alternate customer/account/attempt/price and altered payment evidence
+  ---
+  duration_ms: 0.754625
+  type: 'test'
+  ...
+# Subtest: upgrade verifies the paid difference while retaining the full recurring offer price
+ok 26 - upgrade verifies the paid difference while retaining the full recurring offer price
+  ---
+  duration_ms: 0.095458
+  type: 'test'
+  ...
+1..26
+# tests 29
+# suites 1
+# pass 29
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 503.695667

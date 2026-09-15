@@ -33,7 +33,7 @@ export type BranchLeaveActiveRefusal = { code: string; message: string };
  * platform tenant is exempt by having no branch rows at all, so it never reaches this function.
  */
 export function canLeaveActiveBranch(
-  branch: BranchRecord,
+  branch: Pick<BranchRecord, 'type'>,
   activeHeadOfficeCount: number,
   activeBranchCount: number,
 ): BranchLeaveActiveRefusal | null {

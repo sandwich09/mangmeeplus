@@ -1,0 +1,41 @@
+TAP version 13
+# Subtest: LINE AI whole-chain acceptance catalog
+    # Subtest: encodes every mandatory replay row exactly once with semantic assertions
+    ok 1 - encodes every mandatory replay row exactly once with semantic assertions
+      ---
+      duration_ms: 0.996
+      type: 'test'
+      ...
+    # Subtest: binds every catalog assertion to a file and behavioral evidence pattern run by the harness
+    ok 2 - binds every catalog assertion to a file and behavioral evidence pattern run by the harness
+      ---
+      duration_ms: 16.892791
+      type: 'test'
+      ...
+    # Subtest: keeps raw external images and final mutations outside the automated LINE path
+    ok 3 - keeps raw external images and final mutations outside the automated LINE path
+      ---
+      duration_ms: 0.225
+      type: 'test'
+      ...
+    # Subtest: fails stale local-only readiness claims and context-cap drift
+    ok 4 - fails stale local-only readiness claims and context-cap drift
+      ---
+      duration_ms: 81.224
+      type: 'test'
+      ...
+    1..4
+ok 1 - LINE AI whole-chain acceptance catalog
+  ---
+  duration_ms: 99.883375
+  type: 'suite'
+  ...
+1..1
+# tests 4
+# suites 1
+# pass 4
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 158.681333

@@ -1,0 +1,28 @@
+# New candidate regression cases (full suite totals below; log hash is in the result manifest)
+    ok 1 - selection verifies the exact candidate facts before delivery: unchanged
+    ok 2 - selection verifies the exact candidate facts before delivery: amount
+    ok 3 - selection verifies the exact candidate facts before delivery: reorder
+    ok 4 - selection verifies the exact candidate facts before delivery: unavailable
+    ok 5 - selection verifies the exact candidate facts before delivery: fallback
+    ok 6 - next-step verifies the exact candidate facts before delivery: unchanged
+    ok 7 - next-step verifies the exact candidate facts before delivery: amount
+    ok 8 - next-step verifies the exact candidate facts before delivery: reorder
+    ok 9 - next-step verifies the exact candidate facts before delivery: unavailable
+    ok 10 - next-step verifies the exact candidate facts before delivery: fallback
+    ok 11 - guidance verifies the exact candidate facts before delivery: unchanged
+    ok 12 - guidance verifies the exact candidate facts before delivery: amount
+    ok 13 - guidance verifies the exact candidate facts before delivery: reorder
+    ok 14 - guidance verifies the exact candidate facts before delivery: unavailable
+    ok 15 - guidance verifies the exact candidate facts before delivery: fallback
+    ok 16 - clarification verifies the exact candidate facts before delivery: unchanged
+    ok 17 - clarification verifies the exact candidate facts before delivery: amount
+    ok 18 - clarification verifies the exact candidate facts before delivery: reorder
+    ok 19 - clarification verifies the exact candidate facts before delivery: unavailable
+    ok 20 - clarification verifies the exact candidate facts before delivery: fallback
+    ok 21 - rejects a stale intake result before correction or capture: amount
+    ok 22 - rejects a stale intake result before correction or capture: disappeared
+    ok 23 - rejects a stale intake result before correction or capture: permission
+# tests 553
+# pass 553
+# fail 0
+# skipped 0

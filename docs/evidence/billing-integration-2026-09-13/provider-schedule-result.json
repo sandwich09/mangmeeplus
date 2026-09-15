@@ -1,0 +1,68 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "scheduled-discovery-default-off-strict-input-password-proof-revision-race-idempotent-publication-and-mode-scope",
+    "scheduled-discovery-concurrent-workers-one-run-initial-window-cadence-overlap-sales-closed-and-redacted-current-read",
+    "scheduled-discovery-downtime-clips-retention-records-unresolved-coverage-gap-and-off-stops-new-runs",
+    "scheduled-discovery-expired-preview-cancel-and-real-postgresql-audit-failure-rolls-back-publication",
+    "scheduled-discovery-revoked-owner-no-provider-read-blocked-run-new-admin-cancel-republish-and-retained-gap",
+    "scheduled-discovery-shared-five-run-cap-and-off-preserves-existing-work",
+    "scheduled-discovery-first-failure-range-retained-admission-audit-rollback-corrupt-config-manual-continuity-and-repair",
+    "scheduled-discovery-history-25-plus-one-timestamp-ties-and-stable-cursor",
+    "browser-schedule-stale-copy-cancel-password-publish-committed-response-loss-same-record-retry-reload-mobile-run-return"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Stripe"
+  ],
+  "realProviderPayment": false,
+  "status": "PASS_FOR_SCOPED_INCREMENT",
+  "baseCommit": "9c508cc44cc769c5c9f872c47b46742be1045ac5",
+  "capturedAt": "2026-09-14T13:55:23.949509+00:00",
+  "sourceHashScope": "Changed runtime, contracts, smoke harness and CI files relative to baseCommit; transitive unchanged source remains identified by that commit.",
+  "checks": {
+    "scheduleHttpPostgresqlBrowser": {
+      "passedGroups": 9,
+      "command": "BILLING_SCAN_SCHEDULE_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js"
+    },
+    "manualDiscoveryRegression": {
+      "passedGroups": 7,
+      "command": "BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js",
+      "scenarios": [
+        "provider-discovery-platform-scope-strict-window-idempotent-redacted-admission",
+        "provider-discovery-webhook-race-original-evidence-and-financials-preserved",
+        "provider-discovery-page-checkpoint-429-backoff-resume-worker-race",
+        "provider-discovery-cancel-lost-lease-and-revoked-actor-before-read-or-commit",
+        "provider-discovery-invalid-mode-duplicate-empty-page-and-retention-remain-incomplete",
+        "provider-discovery-cursor-scope-pagination-and-active-admission-cap",
+        "browser-provider-discovery-create-unknown-resume-reload-return-mobile"
+      ]
+    },
+    "apiTypecheck": "PASS",
+    "webTypecheck": "PASS",
+    "webErrorCoverageAndRawDisplayGuards": "PASS",
+    "contractsBuild": "PASS",
+    "maintenancePins": "PASS",
+    "diffCheck": "PASS"
+  },
+  "limits": [
+    "Local Nest HTTP/PostgreSQL and real Next/Chromium with synthetic Stripe only; no live payment, native LINE or provider changes.",
+    "Two suites are bounded overlapping scenarios, not a full new combined161 run or full C01–C08 acceptance.",
+    "Historical invoice pagination, configuration/settlement drift, bulk recovery and remaining controls/mail/LINE scope stay open.",
+    "Existing CI34848620246 passed base9c508cc4; this increment requires its own fresh CI. No merge or deploy."
+  ],
+  "sourceHashes": {
+    ".github/workflows/ci.yml": "a1aed1d83da96bae69d97c3dce4be6a6414ba47494df9e6bbbf0a9368e7615f4",
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "275313a530279f7d43cc41340d520b73009df8731acd1ab7b59f2ad98b89e453",
+    "apps/api/src/modules/billing/application/billing-provider-scans.service.ts": "d0bf7978133c66ca2baf3c1d57789bdc1ffbcd7898e58705ca015e356d334b85",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "b88f8d69763edd1ee1db687424212ccc32616690a43c668ac50f829ba72f8e69",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "f53b00004b20dcd5181576a82a3c754ef4a656f46c04e6324f25389e949d5a28",
+    "apps/api/src/scripts/billing-http-smoke.ts": "7b419a9135e1709e3a172f6b54b74b931b8a213506ba4e1564e7ca49b1a1e4d9",
+    "apps/api/src/scripts/billing-provider-scans-smoke.ts": "c19c14ec27ea12546796663953b99ab7030daa53ad23960b433d07e63fd4077c",
+    "apps/api/src/scripts/billing-scan-schedule-smoke.ts": "7f1d1407d00fb2c0e663b2d1bfd53377705c5b4f18d0f6574e513a6a9fd7ea15",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "03c67c74a5dbf9749a39603216614281f2965fa2f1c42671df9b2499eda93d90",
+    "apps/web/src/features/billing-admin/BillingProviderScansPage.tsx": "4bdb295325e123874b5416b8e33d47649b2e96b991f6e5e9a139e299e60bc3f1",
+    "apps/web/src/features/billing-admin/BillingScanSchedulePanel.tsx": "16391593fa584c2ad5cca75ecd08d6bb26351a693a2e92e0c094b7047e54923e",
+    "packages/contracts/src/billing.ts": "80703cfec2947cf931d0563b0ae8a136e3a2523f77407a050c43e1a7c818d551"
+  }
+}

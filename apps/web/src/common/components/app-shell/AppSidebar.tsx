@@ -180,12 +180,15 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
 
   const lineLinkRow = lineLinkMenuRow(accountSecurity);
 
-  // Lazy: the link state is only needed once the menu is on screen, so the shell never pays for
-  // it on mount. The menu item itself renders from permissions alone — the badge just appears.
+  // Read each time the LINE row opens so an Admin repair is visible without reloading the app.
+  // Its own account.session.read permission is independent of the password-menu permission.
   useEffect(() => {
-    if (!userMenuOpen || !showAccountSecurity || accountSecurity) return;
-    void getAccountSecurityState().then(setAccountSecurity).catch(() => undefined);
-  }, [accountSecurity, showAccountSecurity, userMenuOpen]);
+    if (!userMenuOpen) return;
+    let current = true;
+    setAccountSecurity(null);
+    void getAccountSecurityState().then(state => { if (current) setAccountSecurity(state); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [userMenuOpen]);
 
   const isActive = (path: string) => path === pathname;
   const isActiveItem = (nav: NavItem) => {
@@ -507,6 +510,9 @@ const AppSidebar: React.FC<Props> = ({ navItems, activeKey, locale, userName, us
                   </span>
                 )}
               </button>
+              {accountSecurity?.lineLinked && accountSecurity.lineMessagingReady === false && (
+                <p className="px-4 pb-3 text-xs text-amber-800">การรับข้อความ LINE ต้องตรวจการเชื่อมต่อ กรุณาติดต่อผู้ดูแลเพื่อออก QR ใหม่</p>
+              )}
               <button
                 type="button"
                 className="w-full px-4 py-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700"

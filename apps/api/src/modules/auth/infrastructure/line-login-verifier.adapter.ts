@@ -39,8 +39,7 @@ export class LineLoginVerifierAdapter implements IJwtVerifier {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
-        // The employee-link flow holds a claimed single-use token across this call;
-        // an unbounded hang would widen that window (H-09).
+        // Bound provider latency before the employee QR opens its database transaction.
         signal: AbortSignal.timeout(5000),
       });
     } catch (err) {

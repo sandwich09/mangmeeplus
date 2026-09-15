@@ -1,0 +1,82 @@
+{
+  "recordedAt": "2026-09-13T04:04:01.019361+00:00",
+  "scope": "Uncommitted local implementation slice; not Stripe/browser/native LINE E2E",
+  "sourceHashes": {
+    "packages/contracts/src/billing.ts": "99d8b250ece33347a9275552f4215f8e79b2f8ff8cf003c47d22878b3c7cc98c",
+    "apps/api/prisma/schema.prisma": "82b17e48874338b74bb4b98e15d9e17a6ff03cc75c9be718e4e0f4bf8a85d820",
+    "apps/api/prisma/migrations/20260913100000_billing_receipt_grants/migration.sql": "41017098b29d6adf62f2ad714a0928909041a49692f846c4be34fe9ab0b83c7f",
+    "apps/api/src/modules/billing/domain/billing-package.ts": "ec1e6045ffda3879a1980198071a35fd53d76742229f187aa36921c4e51c84f1",
+    "apps/api/src/modules/billing/domain/billing-package.spec.ts": "9cef3b5af1b726459a0745c0f522bbd02a71add993811a2a44af73f120d68de0",
+    "apps/api/src/modules/billing/domain/billing-policy.ts": "574a58ef01710a95cecbc360b1ef5dd7c91646ec4da45449ccc1fc357d9593dc",
+    "apps/api/src/modules/billing/domain/paid-invoice.ts": "63041b56584332ae6876bf3ccb22a7fc462b040a5a73f2d42522aec1c82dd144",
+    "apps/api/src/modules/billing/application/billing-receipt-grants.ts": "7ff360db7c3c9acf11a8dae4c694a3d4b4c44f4536aba43100fa4516f0ae6450",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "3f5e654f119a51a48e957510d36118be1242f322df38c288ee7eaf4a3a039919",
+    "apps/api/src/modules/billing/application/billing.service.ts": "4084ee4c5ba5f2e94f6505bb8bbf0c1dd1034969a50bd9efc9e77f8fbc9feb42",
+    "apps/api/src/modules/billing/billing-receipts.pg.spec.ts": "ca3d6053f4771b87a92b77045bab0271bc7f5243719da517bddb8d0f06c0ec09",
+    "apps/api/src/modules/line-ai/application/company-ocr-governance.ts": "60e3988540917b2277b3de4eadf7baad1b8059e1ae0c28c37a7dfdde08978777",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "78a7f82e10c2606ecfe1ab6d56cdddb04008bce5985339baaedd913e0536c5c4",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts": "687289e2e4b0baeac7d8628d2ad7989a0af6d8ea2a67775b30c70bbd14801fe8",
+    "apps/api/src/modules/system-partner-management/domain/logic/receipt-quota.logic.ts": "9f4c447e0a00916b0cb9f9c3d4fe1da66fda3a003e526226528e92bef93db7fd",
+    ".github/workflows/ci.yml": "2f162d599d4580442bc3a70293fcc684d210eadf04eb6d886dd7663e36798838",
+    "scripts/line-ai-whole-chain-acceptance.catalog.mjs": "248187b89b344b87a5aa2029d28b8ea19df93ef5132468f15f564ed969305011"
+  },
+  "runs": [
+    {
+      "kind": "paid-receipt-postgres",
+      "localLog": "/tmp/mangmee-billing-receipts-pg.log",
+      "sha256": "813c8a056393ce1d2c17fd4454d23c28d0e03488c86a1a430cd17d44665f1455",
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "kind": "legacy-ocr-postgres",
+      "localLog": "/tmp/mangmee-billing-legacy-ocr-pg.log",
+      "sha256": "114ce0d0c3304670a48317da36408e447f52be57204d3238e9c546da28af4607",
+      "tests": 65,
+      "pass": 65,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "kind": "focused-ocr-line-package",
+      "localLog": "/tmp/mangmee-billing-quota-focused.log",
+      "sha256": "73c033ba4b878a5ac67c03e5f98c60e52ca8b05f1fa15c8527ba73f2276b7be8",
+      "tests": 342,
+      "pass": 340,
+      "fail": 0,
+      "skipped": 2
+    },
+    {
+      "kind": "package-and-suite-inventory",
+      "localLog": "/tmp/mangmee-billing-grants-wiring.log",
+      "sha256": "79b180b97328adaa38eb5f7a7a722da4f20bc2c05692feaa00cf46fc073e6c3a",
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0
+    },
+    {
+      "kind": "acceptance-catalog",
+      "localLog": "/tmp/mangmee-billing-grants-catalog.log",
+      "sha256": "b9ee71c3e5995b72ca19f513e4ffa0f0d32212fe1db95f50bac1db5750ac7841",
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0
+    }
+  ],
+  "checks": {
+    "contractsBuild": "PASS",
+    "apiTypecheck": "PASS",
+    "apiSWCBuild": "PASS",
+    "ciYaml": "PASS",
+    "githubCI": "NOT_RUN",
+    "browserBillingE2E": "NOT_RUN",
+    "stripeSandboxPaymentAndScheduling": "NOT_RUN",
+    "nativeLine": "NOT_RUN",
+    "deployment": "NOT_PERFORMED",
+    "merge": "NOT_PERFORMED"
+  }
+}

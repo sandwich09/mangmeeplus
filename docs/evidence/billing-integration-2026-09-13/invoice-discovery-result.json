@@ -1,0 +1,78 @@
+{
+  "baseCommit": "cdd0c02ad7428b7a1f12aa5b59e8b3724e5fcde0",
+  "capturedAt": "2026-09-14T14:35:18.607323+00:00",
+  "sourceHashScope": "Changed runtime, contracts, harness and CI files relative to baseCommit; unchanged transitive sources are identified by baseCommit.",
+  "checks": {
+    "invoiceHistoryHttpPostgresqlBrowser": {
+      "passedGroups": 8,
+      "command": "BILLING_INVOICE_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js",
+      "scenarios": [
+        "invoice-discovery-scoped-nonmember-expired-company-read-only-capability-strict-window-no-provider-id-and-idempotency",
+        "invoice-discovery-old-dates-two-pages-durable-429-backoff-concurrent-local-mapping-one-review-case-and-no-grants",
+        "invoice-discovery-25-plus-one-findings-timestamp-ties-private-provider-fields-redacted-and-minimum-storage",
+        "invoice-discovery-company-mode-cursor-boundaries-and-cancel-or-lost-lease-prevent-page-commit",
+        "invoice-discovery-current-customer-before-read-and-commit-and-revoked-actor-fence-original-run",
+        "invoice-discovery-invalid-provider-pages-fail-closed-and-shared-event-invoice-five-job-admission",
+        "invoice-discovery-invalid-stored-window-refused-and-real-postgresql-audit-failure-rolls-back-findings-and-checkpoint",
+        "browser-invoice-discovery-create-response-loss-same-command-unknown-resume-reload-findings-invoice-case-company-and-timeline-return"
+      ]
+    },
+    "manualEventRegression": {
+      "passedGroups": 7,
+      "command": "BILLING_PROVIDER_SCANS_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js",
+      "scenarios": [
+        "provider-discovery-platform-scope-strict-window-idempotent-redacted-admission",
+        "provider-discovery-webhook-race-original-evidence-and-financials-preserved",
+        "provider-discovery-page-checkpoint-429-backoff-resume-worker-race",
+        "provider-discovery-cancel-lost-lease-and-revoked-actor-before-read-or-commit",
+        "provider-discovery-invalid-mode-duplicate-empty-page-and-retention-remain-incomplete",
+        "provider-discovery-cursor-scope-pagination-and-active-admission-cap",
+        "browser-provider-discovery-create-unknown-resume-reload-return-mobile"
+      ]
+    },
+    "scheduledDiscoveryRegression": {
+      "passedGroups": 9,
+      "command": "BILLING_SCAN_SCHEDULE_ONLY=1 BILLING_BROWSER_E2E=1 node <compiled-api>/scripts/billing-http-smoke.js",
+      "scenarios": [
+        "scheduled-discovery-default-off-strict-input-password-proof-revision-race-idempotent-publication-and-mode-scope",
+        "scheduled-discovery-concurrent-workers-one-run-initial-window-cadence-overlap-sales-closed-and-redacted-current-read",
+        "scheduled-discovery-downtime-clips-retention-records-unresolved-coverage-gap-and-off-stops-new-runs",
+        "scheduled-discovery-expired-preview-cancel-and-real-postgresql-audit-failure-rolls-back-publication",
+        "scheduled-discovery-revoked-owner-no-provider-read-blocked-run-new-admin-cancel-republish-and-retained-gap",
+        "scheduled-discovery-shared-five-run-cap-and-off-preserves-existing-work",
+        "scheduled-discovery-first-failure-range-retained-admission-audit-rollback-corrupt-config-manual-continuity-and-repair",
+        "scheduled-discovery-history-25-plus-one-timestamp-ties-and-stable-cursor",
+        "browser-schedule-stale-copy-cancel-password-publish-committed-response-loss-same-record-retry-reload-mobile-run-return"
+      ]
+    },
+    "apiTypecheck": "PASS",
+    "webTypecheck": "PASS",
+    "webErrorCoverageAndRawDisplayGuards": "13 PASS; 0 skips",
+    "contractsBuild": "PASS",
+    "maintenancePins": "PASS",
+    "diffCheck": "PASS"
+  },
+  "limits": [
+    "Local Nest HTTP/PostgreSQL and real Next/Chromium with synthetic Stripe; no live payment, provider change or native LINE send.",
+    "The three bounded overlapping suites are not a new combined161 run or full C01–C08 acceptance.",
+    "Concurrent invoice mapping is a direct fixture DB write; signed webhook race belongs to the separate event regression.",
+    "Discovery only observes summaries. It never creates payment evidence, a paid ledger, a grant or provider mutation. Missing-invoice verified recovery remains a C03 follow-up.",
+    "Base cdd0c02a CI34852433176 passed; this increment requires fresh CI. Both develop/main merges remain owed; no deploy."
+  ],
+  "sourceHashes": {
+    ".github/workflows/ci.yml": "41ebc22f41c03149ed4519d38d5da434e3454c444a3a00934a21e72e252b141b",
+    "apps/api/src/modules/billing/application/billing-provider-scans.service.ts": "3837bd32ef31cc727f42567c66c4cb850c408cb54faabde2bf1f803c5613e455",
+    "apps/api/src/modules/billing/application/billing-timeline.ts": "f69d751ef13afe58172d8dae7972a0ca067f1d720239d5d3b57aedb28d3eb6aa",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "30e2249c358000abee1ecb3cb36e1c817057a1656612bd0823ea4db6dcf102c3",
+    "apps/api/src/scripts/billing-http-smoke.ts": "9ccd3a512284115fafdd3c0215917d5c6f946d34da323fa221e987a5a5907ff7",
+    "apps/api/src/scripts/billing-invoice-scans-smoke.ts": "9f7b8f0fedadbb99482568786e25bd08f719c027362a6accdc8dda763b047abe",
+    "apps/api/src/scripts/billing-provider-scans-smoke.ts": "f340a821cd0295781cb177457d3250330bb43386c22628b30e3375d9574e1fbb",
+    "apps/web/app/system/billing/companies/[id]/invoice-scans/[scanId]/page.tsx": "5c4a1dfd27a16f856b77ba99bd03220a7285a67cc889da82897e7a469e022751",
+    "apps/web/app/system/billing/companies/[id]/invoice-scans/page.tsx": "38cf17faa272ab312f94745fdc6d913c358f4b365f0c0ac7bbb3b9eecd007901",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "e69165dacbcbd96a684842ed33e7c959f3a120456897fdce9824b3b933b8d9f3",
+    "apps/web/src/features/billing-admin/BillingInvoiceFindings.tsx": "04419885cceaf95a5e7347e4276e29b22b85ab2a1221a4adcdc39e34d87156fc",
+    "apps/web/src/features/billing-admin/BillingProviderScansPage.tsx": "36995702dfcc22b65b71da8e812fbdf00b61a1f181c63f96e693a4874802b72f",
+    "apps/web/src/features/billing-admin/BillingTimelinePanel.tsx": "483147a6505106445375e1f3488c92764a5a498c7fbf2a7171b550da4d7d87a7",
+    "packages/contracts/src/billing.ts": "5f49dea3c4d303cadfc679309a2beb7b9d8061680429d4a8e148134ed84d0b12"
+  }
+}
