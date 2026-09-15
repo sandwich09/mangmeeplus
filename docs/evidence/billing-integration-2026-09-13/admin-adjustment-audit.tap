@@ -1,0 +1,180 @@
+TAP version 13
+# Subtest: SetPartnerAiModelUseCase
+    # Subtest: rejects an empty body — nothing to update
+    ok 1 - rejects an empty body — nothing to update
+      ---
+      duration_ms: 0.900833
+      type: 'test'
+      ...
+    # Subtest: throws NotFoundException when the company does not exist
+    ok 2 - throws NotFoundException when the company does not exist
+      ---
+      duration_ms: 0.105333
+      type: 'test'
+      ...
+    # Subtest: skips the transaction when the company is DISABLED
+    ok 3 - skips the transaction when the company is DISABLED
+      ---
+      duration_ms: 0.081583
+      type: 'test'
+      ...
+    # Subtest: skips the transaction when the company is ARCHIVED
+    ok 4 - skips the transaction when the company is ARCHIVED
+      ---
+      duration_ms: 0.091833
+      type: 'test'
+      ...
+    # Subtest: rejects a model outside the approved list
+    ok 5 - rejects a model outside the approved list
+      ---
+      duration_ms: 0.181375
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang 0 and persists nothing
+    ok 6 - rejects monthlyBudgetSatang 0 and persists nothing
+      ---
+      duration_ms: 0.123416
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang -1 and persists nothing
+    ok 7 - rejects monthlyBudgetSatang -1 and persists nothing
+      ---
+      duration_ms: 0.047458
+      type: 'test'
+      ...
+    # Subtest: rejects monthlyBudgetSatang 1.5 and persists nothing
+    ok 8 - rejects monthlyBudgetSatang 1.5 and persists nothing
+      ---
+      duration_ms: 0.043875
+      type: 'test'
+      ...
+    # Subtest: rejects a budget above the ceiling naming it, and never clamps
+    ok 9 - rejects a budget above the ceiling naming it, and never clamps
+      ---
+      duration_ms: 0.255417
+      type: 'test'
+      ...
+    # Subtest: validates against the platform settings ceiling, not the env one, when a row exists
+    ok 10 - validates against the platform settings ceiling, not the env one, when a row exists
+      ---
+      duration_ms: 0.17675
+      type: 'test'
+      ...
+    # Subtest: accepts a budget above the env ceiling when the platform row raises it
+    ok 11 - accepts a budget above the env ceiling when the platform row raises it
+      ---
+      duration_ms: 1.124291
+      type: 'test'
+      ...
+    # Subtest: accepts exactly the ceiling
+    ok 12 - accepts exactly the ceiling
+      ---
+      duration_ms: 0.069334
+      type: 'test'
+      ...
+    # Subtest: budget-only update leaves the configured model untouched
+    ok 13 - budget-only update leaves the configured model untouched
+      ---
+      duration_ms: 0.071833
+      type: 'test'
+      ...
+    # Subtest: model-only update leaves the budget override untouched
+    ok 14 - model-only update leaves the budget override untouched
+      ---
+      duration_ms: 0.084042
+      type: 'test'
+      ...
+    # Subtest: creates a fresh row with the absent field inherited (null)
+    ok 15 - creates a fresh row with the absent field inherited (null)
+      ---
+      duration_ms: 0.056667
+      type: 'test'
+      ...
+    # Subtest: clearing the override records the transition to inherited in a CRITICAL audit row
+    ok 16 - clearing the override records the transition to inherited in a CRITICAL audit row
+      ---
+      duration_ms: 0.066292
+      type: 'test'
+      ...
+    # Subtest: writes before/after for BOTH fields when both change, inside the same transaction
+    ok 17 - writes before/after for BOTH fields when both change, inside the same transaction
+      ---
+      duration_ms: 0.464833
+      type: 'test'
+      ...
+    # Subtest: reads the audit predecessor inside the shared configuration and Company locks
+    ok 18 - reads the audit predecessor inside the shared configuration and Company locks
+      ---
+      duration_ms: 0.0675
+      type: 'test'
+      ...
+    # Subtest: cannot save after a company was disabled between preflight and the locked write
+    ok 19 - cannot save after a company was disabled between preflight and the locked write
+      ---
+      duration_ms: 0.148417
+      type: 'test'
+      ...
+    # Subtest: resets the meter budget cache after a budget write, but not for a model-only write
+    ok 20 - resets the meter budget cache after a budget write, but not for a model-only write
+      ---
+      duration_ms: 0.265583
+      type: 'test'
+      ...
+    1..20
+ok 1 - SetPartnerAiModelUseCase
+  ---
+  duration_ms: 4.922583
+  type: 'suite'
+  ...
+# Subtest: SetPartnerOcrConfigUseCase
+    # Subtest: preserves an omitted override and versions explicit enforce, observe and inheritance changes
+    ok 1 - preserves an omitted override and versions explicit enforce, observe and inheritance changes
+      ---
+      duration_ms: 0.343167
+      type: 'test'
+      ...
+    # Subtest: writes config and CRITICAL before/after audit in the same transaction
+    ok 2 - writes config and CRITICAL before/after audit in the same transaction
+      ---
+      duration_ms: 0.098666
+      type: 'test'
+      ...
+    # Subtest: is naturally idempotent: exact desired replay is a no-op even with a stale expected version
+    ok 3 - is naturally idempotent: exact desired replay is a no-op even with a stale expected version
+      ---
+      duration_ms: 0.044709
+      type: 'test'
+      ...
+    # Subtest: prevents a stale second admin from overwriting, while the first admin replay stays safe
+    ok 4 - prevents a stale second admin from overwriting, while the first admin replay stays safe
+      ---
+      duration_ms: 0.111417
+      type: 'test'
+      ...
+    # Subtest: real PostgreSQL: two admins cannot overwrite each other and the winning stale replay is a no-op
+    ok 5 - real PostgreSQL: two admins cannot overwrite each other and the winning stale replay is a no-op
+      ---
+      duration_ms: 380.079292
+      type: 'test'
+      ...
+    # Subtest: rejects invalid limits and locked company metadata before any write
+    ok 6 - rejects invalid limits and locked company metadata before any write
+      ---
+      duration_ms: 0.306708
+      type: 'test'
+      ...
+    1..6
+ok 2 - SetPartnerOcrConfigUseCase
+  ---
+  duration_ms: 381.074917
+  type: 'suite'
+  ...
+1..2
+# tests 26
+# suites 2
+# pass 26
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 817.2455

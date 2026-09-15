@@ -27,6 +27,7 @@ function makeCmd(fields: { modelId?: string; monthlyBudgetSatang?: number | null
 function makePrisma(opts: {
   companyFound?: boolean;
   status?: string;
+  lockedStatus?: string;
   existing?: { modelId: string | null; monthlyBudgetSatang: number | null } | null;
   /** Absent = no delegate at all (the pre-phase-6 fake), `null` = a delegate with no row. */
   platform?: { monthlyBudgetSatang: number; ceilingSatang: number } | null;
@@ -37,9 +38,14 @@ function makePrisma(opts: {
   let upsertArgs: any = null;
   let auditData: any = null;
   let txCalled = false;
+  const lockOrder: string[] = [];
 
   const txClient = {
+    $executeRaw: async (_sql: TemplateStringsArray, key: string) => { lockOrder.push(key); },
+    $queryRaw: async (_sql: TemplateStringsArray, id: string) => { lockOrder.push(`company:${id}`); return []; },
+    company: { findUnique: async () => (companyFound ? { id: 'co-1', status: opts.lockedStatus ?? status } : null) },
     companyAiConfiguration: {
+      findUnique: async () => existing,
       upsert: async (args: any) => {
         upsertArgs = args;
         // Mirror the DB: create when no row exists, otherwise apply only the provided fields.
@@ -57,6 +63,7 @@ function makePrisma(opts: {
     upsertArgs: () => upsertArgs,
     auditData: () => auditData,
     txCalled: () => txCalled,
+    lockOrder,
     client: {
       company: { findUnique: async () => (companyFound ? { id: 'co-1', status } : null) },
       companyAiConfiguration: { findUnique: async () => existing },
@@ -197,6 +204,10 @@ describe('SetPartnerAiModelUseCase', () => {
     const audit = prisma.auditData();
     assert.equal(audit.riskLevel, 'CRITICAL');
     assert.equal(audit.action, 'system.partner_ai_model.update');
+    assert.equal(audit.companyId, 'co-1');
+    assert.equal(audit.actorUserId, 'admin-1');
+    assert.equal(audit.metadataJson.source, 'ADMIN_ADJUSTMENT');
+    assert.equal(audit.metadataJson.entryPoint, 'SYSTEM_PARTNER_ADMIN');
     assert.equal(audit.metadataJson.fromMonthlyBudgetSatang, 900_000);
     assert.equal(audit.metadataJson.toMonthlyBudgetSatang, null);
     assert.equal(audit.metadataJson.fromModelId, APPROVED);
@@ -211,9 +222,25 @@ describe('SetPartnerAiModelUseCase', () => {
     const audit = prisma.auditData();
     assert.deepEqual(
       { ...audit.metadataJson },
-      { fromModelId: null, toModelId: APPROVED, fromMonthlyBudgetSatang: null, toMonthlyBudgetSatang: 700_000 },
+      { source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN', fromModelId: null, toModelId: APPROVED, fromMonthlyBudgetSatang: null, toMonthlyBudgetSatang: 700_000 },
     );
     assert.equal(prisma.txCalled(), true);
+  });
+
+  it('reads the audit predecessor inside the shared configuration and Company locks', async () => {
+    const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 321 } });
+    prisma.client.companyAiConfiguration.findUnique = async () => { throw new Error('Unprotected configuration read'); };
+    await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 400 }));
+    assert.deepEqual(prisma.lockOrder, ['partner-ocr-config:co-1', 'company:co-1']);
+    assert.equal(prisma.auditData().metadataJson.fromMonthlyBudgetSatang, 321);
+    assert.equal(prisma.auditData().metadataJson.toMonthlyBudgetSatang, 400);
+  });
+
+  it('cannot save after a company was disabled between preflight and the locked write', async () => {
+    const prisma = makePrisma({ status: 'ACTIVE', lockedStatus: 'DISABLED' });
+    await assert.rejects(new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 100 })), UnprocessableEntityException);
+    assert.equal(prisma.upsertArgs(), null);
+    assert.equal(prisma.auditData(), null);
   });
 
   it('resets the meter budget cache after a budget write, but not for a model-only write', async () => {
@@ -262,6 +289,7 @@ function makeOcrPrisma(input: {
   const lockKeys: string[] = [];
   const tx = {
     $executeRaw: async (_strings: TemplateStringsArray, key: string) => { locks += 1; lockKeys.push(key); },
+    $queryRaw: async () => [],
     company: { findUnique: async () => ({ id: 'co-1', status: input.status ?? 'ACTIVE' }) },
     companyAiConfiguration: {
       findUnique: async () => saved ? { ...saved, updatedAt: new Date('2026-08-20T00:00:00Z') } : null,
@@ -340,7 +368,10 @@ describe('SetPartnerOcrConfigUseCase', () => {
     assert.deepEqual(state.lockKeys, ['partner-ocr-config:co-1']);
     assert.equal(state.audits.length, 1);
     assert.equal(state.audits[0].riskLevel, 'CRITICAL');
+    assert.equal(state.audits[0].companyId, 'co-1');
+    assert.equal(state.audits[0].actorUserId, 'admin-1');
     assert.deepEqual(state.audits[0].metadataJson, {
+      source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN',
       fromEnabled: true, toEnabled: false, fromMonthlyLimit: null, toMonthlyLimit: 25,
       fromReceiptQuotaEnforced: null, toReceiptQuotaEnforced: null,
       fromVersion: 3, toVersion: 4,
@@ -446,6 +477,27 @@ describe('SetPartnerOcrConfigUseCase', () => {
       assert.equal((await clients[0]!.companyAiConfiguration.findUniqueOrThrow({
         where: { companyId }, select: { ocrConfigVersion: true },
       })).ocrConfigVersion, 1);
+
+      // Real concurrent AI edits must form one truthful before/after chain, even after OCR
+      // created the shared row. Neither may claim the same obsolete predecessor.
+      await Promise.all(clients.map((client, index) => new SetPartnerAiModelUseCase({ client } as any, makeConfig()).execute({
+        companyId, monthlyBudgetSatang: [1234, 2345][index]!, requestingAdminUserId: adminIds[index]!, requestId: `ai-audit-${index}-${runId}`,
+      })));
+      const audits = await clients[0]!.auditLog.findMany({ where: { companyId, action: 'system.partner_ai_model.update' } });
+      assert.equal(audits.length, 2);
+      const first = audits.find(a => (a.metadataJson as any).fromMonthlyBudgetSatang === null)!;
+      const second = audits.find(a => a.id !== first.id)!;
+      assert.ok(first);
+      assert.equal((second.metadataJson as any).fromMonthlyBudgetSatang, (first.metadataJson as any).toMonthlyBudgetSatang);
+      for (const audit of audits) {
+        assert.equal((audit.metadataJson as any).source, 'ADMIN_ADJUSTMENT');
+        assert.equal((audit.metadataJson as any).entryPoint, 'SYSTEM_PARTNER_ADMIN');
+        assert.ok(adminIds.includes(audit.actorUserId!));
+        assert.equal(audit.targetId, companyId);
+      }
+      const current = await clients[0]!.companyAiConfiguration.findUniqueOrThrow({ where: { companyId } });
+      assert.equal(current.monthlyBudgetSatang, (second.metadataJson as any).toMonthlyBudgetSatang);
+      assert.equal(current.ocrConfigVersion, 1);
     } finally {
       if (companyId) {
         await clients[0]!.auditLog.deleteMany({ where: { targetId: companyId } });

@@ -1,0 +1,38 @@
+{
+  "scope": "Admin AI/OCR audit foundation; paid adjustment UI and full C08 remain open",
+  "verifiedAt": "2026-09-15T04:20:29.526524+00:00",
+  "checks": {
+    "focused": {
+      "command": "node /tmp/mangmee-run-admin-ai-audit-check.mjs",
+      "testCommand": "corepack pnpm --dir apps/web exec tsx --tsconfig ../api/tsconfig.json --test ../api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts",
+      "database": "localhost:15432/mangmee_billing_20260912",
+      "requiredPostgres": true,
+      "passed": 26,
+      "failed": 0,
+      "skipped": 0,
+      "receipt": "admin-adjustment-audit.tap"
+    },
+    "apiTypecheck": {
+      "command": "NODE_OPTIONS=--max-old-space-size=8192 corepack pnpm --dir apps/api exec tsc --noEmit",
+      "exitCode": 0
+    }
+  },
+  "coverage": [
+    "Concurrent actual PostgreSQL AI updates form one predecessor chain",
+    "Shared OCR/Company lock and current company status recheck",
+    "Audit company/actor/ADMIN_ADJUSTMENT source and before/after values",
+    "Existing OCR CAS/replay and partial AI updates preserved"
+  ],
+  "sourceSha256": {
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.ts": "4af3d12ee3b729801948c4f76c684710af0fafb907bed8b2b6762b2b82216162",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ocr-config.use-case.ts": "9648c67bcbc98ac3b40b4eccae66ff986781b518bd664661418caff5d360c8f3",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts": "eab940d7ed48b239b5ac7cacb26db3f5f8ce0f58eb194c361756100e366b838d"
+  },
+  "limitations": [
+    "No new browser/E2E acceptance",
+    "No reason-entry/history UI in this checkpoint",
+    "Paid package/renewal/extra receipt adjustments remain incomplete",
+    "Admin-added free days versus Stripe collection date awaits Owner",
+    "No native payment/message, CI, push, merge or deployment"
+  ]
+}

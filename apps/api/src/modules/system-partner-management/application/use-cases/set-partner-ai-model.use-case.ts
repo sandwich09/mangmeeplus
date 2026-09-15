@@ -3,6 +3,7 @@ import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { __resetCompanyAiBudgetCache, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
 
 /**
  * Partial update (metering spec §7.7): an `undefined` field is left untouched, while an explicit
@@ -74,12 +75,20 @@ export class SetPartnerAiModelUseCase {
       }
     }
 
-    const existing = await this.prisma.client.companyAiConfiguration.findUnique({
-      where: { companyId: cmd.companyId },
-      select: { modelId: true, monthlyBudgetSatang: true },
-    });
-
     const saved = await this.prisma.client.$transaction(async (tx) => {
+      // Share OCR's configuration lock: both controls upsert the same company row.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${cmd.companyId}`}))`;
+      await lockPlanTermCompany(tx, cmd.companyId);
+      const currentCompany = await tx.company.findUnique({
+        where: { id: cmd.companyId }, select: { status: true },
+      });
+      if (!currentCompany) throw new NotFoundException(`Partner company "${cmd.companyId}" not found.`);
+      const currentLockError = partnerMetadataLockError(currentCompany.status);
+      if (currentLockError) throw new UnprocessableEntityException(currentLockError);
+      // A previous read may predate another Admin's save. Audit the actual committed predecessor.
+      const existing = await tx.companyAiConfiguration.findUnique({
+        where: { companyId: cmd.companyId }, select: { modelId: true, monthlyBudgetSatang: true },
+      });
       const result = await tx.companyAiConfiguration.upsert({
         where: { companyId: cmd.companyId },
         // A field the caller did not send has no prior value on a fresh row: it starts inherited.
@@ -101,6 +110,7 @@ export class SetPartnerAiModelUseCase {
       // A cleared override is recorded as a transition to inherited (null).
       await tx.auditLog.create({
         data: {
+          companyId: cmd.companyId,
           actorUserId: cmd.requestingAdminUserId,
           action: 'system.partner_ai_model.update',
           targetType: 'company',
@@ -109,6 +119,8 @@ export class SetPartnerAiModelUseCase {
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
           metadataJson: {
+            source: 'ADMIN_ADJUSTMENT',
+            entryPoint: 'SYSTEM_PARTNER_ADMIN',
             fromModelId: existing?.modelId ?? null,
             toModelId: result.modelId,
             fromMonthlyBudgetSatang: existing?.monthlyBudgetSatang ?? null,

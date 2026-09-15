@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException, UnprocessableEntityEx
 import type { PartnerOcrConfigDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
 
 const OCR_MONTHLY_LIMIT_MAX = 1_000_000;
 
@@ -38,6 +39,7 @@ export class SetPartnerOcrConfigUseCase {
 
     return this.prisma.client.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`partner-ocr-config:${cmd.companyId}`}))`;
+      await lockPlanTermCompany(tx, cmd.companyId);
 
       const company = await tx.company.findUnique({
         where: { id: cmd.companyId },
@@ -93,6 +95,7 @@ export class SetPartnerOcrConfigUseCase {
 
       await tx.auditLog.create({
         data: {
+          companyId: cmd.companyId,
           actorUserId: cmd.requestingAdminUserId,
           action: 'system.partner_ocr_config.update',
           targetType: 'company',
@@ -101,6 +104,8 @@ export class SetPartnerOcrConfigUseCase {
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
           metadataJson: {
+            source: 'ADMIN_ADJUSTMENT',
+            entryPoint: 'SYSTEM_PARTNER_ADMIN',
             fromEnabled: before.enabled,
             toEnabled: saved.ocrEnabled,
             fromMonthlyLimit: before.monthlyLimit,
