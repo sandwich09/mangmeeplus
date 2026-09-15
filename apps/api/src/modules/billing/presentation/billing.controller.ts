@@ -6,7 +6,7 @@ import { BillingCheckoutExpiryService } from '../application/billing-checkout-ex
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import { BillingTimelineExportDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -68,13 +68,13 @@ export class BillingAdminController {
   @Get('companies/:id/plan-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   planAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.planAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
-  @Post('companies/:id/plan-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
-  async planAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown){
+  @Post('companies/:id/plan-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async planAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingPlanAdjustmentDto){
     await this.operationLimit(req);return this.planAdjustments.preview(req.context,textField(id,128),body as BillingPlanAdjustmentInput);}
   @Get('plan-adjustments/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   planAdjustmentGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.planAdjustments.get(req.context,uuid(id));}
   @Post('plan-adjustments/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
-  async planAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async planAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key?:string){
     if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
     if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
     return this.planAdjustments.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
@@ -82,25 +82,25 @@ export class BillingAdminController {
   receiptAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.receiptAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('companies/:id/receipt-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
-  async receiptAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown){
+  async receiptAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingReceiptAdjustmentDto){
     await this.operationLimit(req);return this.receiptAdjustments.preview(req.context,textField(id,128),body as BillingReceiptAdjustmentInput);}
   @Get('receipt-adjustments/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   receiptAdjustmentGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.receiptAdjustments.get(req.context,uuid(id));}
   @Post('receipt-adjustments/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
-  async receiptAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async receiptAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key?:string){
     if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
     if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
     return this.receiptAdjustments.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
   @Get('batches') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   batchList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.batches.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('batches/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
-  async batchPreview(@Req() req:AuthedRequest,@Body() body:unknown){await this.operationLimit(req);return this.batches.preview(req.context,body);}
+  async batchPreview(@Req() req:AuthedRequest,@Body() body:BillingBatchDto){await this.operationLimit(req);return this.batches.preview(req.context,body);}
   @Get('batches/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   batchGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.batches.get(req.context,uuid(id));}
   @Get('batches/:id/export') @RequirePermissions('system.billing.export') @Header('Cache-Control','no-store')
   async batchExport(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);await this.operationLimit(req);return this.batches.export(req.context,uuid(id));}
   @Post('batches/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
-  async batchCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async batchCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key?:string){
     if(action!=='submit'&&action!=='cancel')invalid();const fields=bodyFields(body,action==='submit'?['expectedVersion','previewHash']:['expectedVersion']);
     if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
     return action==='submit'?this.batches.submit(req.context,uuid(id),fields.expectedVersion as number,textField(fields.previewHash,64),key??''):this.batches.cancel(req.context,uuid(id),fields.expectedVersion as number);
@@ -110,14 +110,14 @@ export class BillingAdminController {
   @Get('companies/:id/checkouts/:attemptId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   async checkoutReview(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Query() query:unknown){bodyFields(query,[]);await this.operationLimit(req);return this.checkoutExpiry.review(req.context,textField(id,128),uuid(attemptId));}
   @Post('companies/:id/checkouts/:attemptId/preview') @HttpCode(200) @RequirePermissions('system.billing.gate.manage') @Header('Cache-Control','no-store')
-  async checkoutPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Body() body:unknown){
+  async checkoutPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Body() body:BillingEventPreviewDto){
     const fields=bodyFields(body,['reason','sourceHash']);await this.operationLimit(req);return this.checkoutExpiry.preview(req.context,textField(id,128),uuid(attemptId),{reason:textField(fields.reason,500),sourceHash:textField(fields.sourceHash,64)});}
   @Get('companies/:id/checkouts/:attemptId/requests') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   checkoutRequests(@Req() req:AuthedRequest,@Param('id') id:string,@Param('attemptId') attemptId:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.checkoutExpiry.history(req.context,textField(id,128),uuid(attemptId),fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Get('checkout-expiry/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   checkoutExpiryGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.checkoutExpiry.get(req.context,uuid(id));}
   @Post('checkout-expiry/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.gate.manage') @Header('Cache-Control','no-store')
-  async checkoutExpiryCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async checkoutExpiryCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key?:string){
     if(!['submit','cancel','run'].includes(action))invalid();const fields=bodyFields(body,action==='run'?['expectedVersion']:['expectedVersion','previewHash']);
     if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
     if(action==='run')return this.checkoutExpiry.run(req.context,uuid(id),fields.expectedVersion as number);
@@ -126,7 +126,7 @@ export class BillingAdminController {
   @Get('settlements') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   settlementList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.settlement.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('settlements') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
-  async settlementCreate(@Req() req:AuthedRequest,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+  async settlementCreate(@Req() req:AuthedRequest,@Body() body:BillingProviderScanDto,@Headers('idempotency-key') key?:string){
     const fields=bodyFields(body,['windowStart','windowEnd','reason']);await this.operationLimit(req);
     return this.settlement.create(req.context,{windowStart:textField(fields.windowStart,30),windowEnd:textField(fields.windowEnd,30),reason:textField(fields.reason,500)},key??'');
   }
@@ -135,7 +135,7 @@ export class BillingAdminController {
   @Get('settlements/:id/findings') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   settlementFindings(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.settlement.findings(req.context,uuid(id),fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('settlements/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
-  async settlementAction(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown){
+  async settlementAction(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingVersionDto){
     const fields=bodyFields(body,['expectedVersion']);if(action!=='run'&&action!=='resume'&&action!=='cancel')invalid();await this.operationLimit(req);
     return this.settlement.action(req.context,uuid(id),action,fields.expectedVersion as number);
   }
@@ -144,7 +144,7 @@ export class BillingAdminController {
     bodyFields(query,[]);await this.operationLimit(req);return this.refunds.review(req.context,textField(companyId,128),uuid(invoiceId));
   }
   @Post('companies/:id/invoices/:invoiceId/refund-preview') @HttpCode(200) @RequirePermissions('system.billing.refund.manage') @Header('Cache-Control','no-store')
-  async refundPreview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:unknown){
+  async refundPreview(@Req() req:AuthedRequest,@Param('id') companyId:string,@Param('invoiceId') invoiceId:string,@Body() body:BillingRefundDto){
     await this.operationLimit(req);return this.refunds.preview(req.context,textField(companyId,128),uuid(invoiceId),body as BillingRefundInput);
   }
   @Get('companies/:id/invoices/:invoiceId/refund-requests') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
@@ -154,7 +154,7 @@ export class BillingAdminController {
   @Get('refunds/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   refundRequest(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.refunds.get(req.context,uuid(id));}
   @Post('refunds/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
-  async refundCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key:string|undefined){
+  async refundCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:BillingCommandDto,@Headers('idempotency-key') key:string|undefined){
     const fields=bodyFields(body,action==='run'?['expectedVersion']:['expectedVersion','previewHash']);
     if(!Number.isSafeInteger(fields.expectedVersion)||Number(fields.expectedVersion)<0)invalid();await this.operationLimit(req);
     if(action==='run')return this.refunds.run(req.context,uuid(id),fields.expectedVersion as number);
@@ -396,7 +396,7 @@ export class BillingAdminController {
     return this.admin.overview(req.context, fields.cursor === undefined ? undefined : textField(fields.cursor,128), fields.search === undefined || fields.search === '' ? '' : textField(fields.search,100));
   }
   @Post('companies/:id/timeline/export') @HttpCode(200) @RequirePermissions('system.billing.export') @Header('Cache-Control','no-store')
-  async exportTimeline(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown) {
+  async exportTimeline(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingTimelineExportDto) {
     const fields=bodyFields(body,['cursor']);await this.operationLimit(req);
     return this.admin.exportTimeline(req.context,textField(id,128),fields.cursor===undefined?undefined:textField(fields.cursor,180));
   }

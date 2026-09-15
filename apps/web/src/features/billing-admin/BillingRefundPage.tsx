@@ -77,7 +77,7 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         <div><label className="block" htmlFor="refund-private-reason">เหตุผลภายใน (ลูกค้าไม่เห็น)</label><textarea id="refund-private-reason" className={field} required maxLength={500} value={reason} disabled={busy} onChange={e=>setReason(e.target.value)}/></div>
         <div><label className="block" htmlFor="refund-customer-memo">ข้อความบนเอกสารให้ลูกค้า (ไม่บังคับ)</label><textarea id="refund-customer-memo" className={field} maxLength={500} value={memo} disabled={busy} onChange={e=>setMemo(e.target.value)}/></div>
         <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={notifyCustomer} disabled={busy} onChange={e=>setNotifyCustomer(e.target.checked)}/>ให้ Stripe ส่งอีเมลเอกสารปรับยอดให้ลูกค้า</label>
-        <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะมีผู้อนุมัติอีกคน</p><button className={button} disabled={busy}>ตรวจยอดและผลกระทบ</button>
+        <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะมีผู้อนุมัติอีกคน</p><button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจยอดและผลกระทบ</button>
       </form>:<p role="status" className="rounded-xl border p-4">{errors[review.blockedReason??'']??'ยังเริ่มคำขอไม่ได้ กรุณาติดต่อทีมงาน'}</p>}
       <section className="space-y-3" aria-label="คำขอคืนเงินเดิม"><h2 className="font-bold">คำขอของใบแจ้งหนี้นี้</h2>{!history.length&&<p>ไม่พบคำขอในหน้านี้</p>}
         {history.map(op=><Link key={op.id} className="block min-h-11 rounded-xl border p-4 underline" href={`/system/billing/refunds/${encodeURIComponent(op.id)}`}>{states[op.state]??'ต้องตรวจสอบ'} · {money(op.amountSatang)} · {time(op.createdAt)}<span className="block">{op.reason}</span></Link>)}
@@ -103,8 +103,8 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
       {canAct&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2><p>ใช้รหัสผ่านปัจจุบัน การยืนยันใช้ได้ 5 นาทีในอุปกรณ์นี้</p>
         {proof&&<p role="status">ยืนยันแล้วถึง {time(proof)}</p>}
         <form className="space-y-3" onSubmit={e=>{e.preventDefault();void act('reauthenticate');}}><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label>
-          <button className={button} disabled={busy||!password}>ยืนยันรหัสผ่าน</button><Link className={button} href="/forgot-password">กู้รหัสผ่าน</Link></form>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติคำขอคืนเงิน',cancel:'ยกเลิกคำขอที่ยังไม่ส่ง',run:'ตรวจและดำเนินการคำขอเดิม'})[action]}</button>)}</div>
+          <button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link className={button} href="/forgot-password">กู้รหัสผ่าน</Link></form>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติคำขอคืนเงิน',cancel:'ยกเลิกคำขอที่ยังไม่ส่ง',run:'ตรวจและดำเนินการคำขอเดิม'})[action]}</button>)}</div>
       </section>}
       {invoicePath&&<Link className={button} href={`/system/billing${invoicePath}/refund`}>กลับไปคำขอของใบแจ้งหนี้นี้</Link>}
     </>}

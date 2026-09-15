@@ -1,9 +1,18 @@
 import { BadRequestException, Body, Controller, Get, Header, Put, Query, Req } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsBoolean, IsInt, IsUUID, Max, Min, MinLength, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 import { EMAIL_DELIVERY_PURPOSES, type EmailHistoryPolicyInput, type EmailDeliveryPurpose } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import type { RequestContext } from '../domain/models/request-context.model';
 import { SystemEmailDeliveryService } from '../application/system-email-delivery.service';
+
+export class EmailHistoryPolicyDto implements EmailHistoryPolicyInput {
+  @IsString() @MinLength(1) @MaxLength(128) scopeKey!: string;
+  @IsInt() @Min(0) version!: number;
+  @IsInt() @Min(1) @Max(3650) retentionDays!: number;
+  @IsBoolean() enabled!: boolean;
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+  @IsUUID() commandId!: string;
+}
 
 export class SystemEmailHistoryQueryDto {
   @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]+$/) @MaxLength(512) cursor?: string;
@@ -38,7 +47,7 @@ export class SystemEmailDeliveryController {
   @Put('retention')
   @RequirePermissions('system.email_delivery.read', 'system.email_delivery.manage')
   @Header('Cache-Control', 'no-store')
-  setRetention(@Req() req: { context: RequestContext }, @Body() input: EmailHistoryPolicyInput, @Query() query: Record<string, unknown>) {
+  setRetention(@Req() req: { context: RequestContext }, @Body() input: EmailHistoryPolicyDto, @Query() query: Record<string, unknown>) {
     if (Object.keys(query).length) throw new BadRequestException();
     return this.delivery.setRetention(req.context, input);
   }

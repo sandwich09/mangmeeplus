@@ -57,14 +57,14 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
     <p>เปรียบเทียบยอดชำระ ค่าธรรมเนียม และรายการโอนตามช่วงที่เลือก ผลตรวจนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจลูกค้า</p>
     <nav className="flex flex-wrap gap-3"><Link onClick={leaving} className={button} href="/system/billing">บริษัท</Link><Link onClick={leaving} className={button} href="/system/billing/issues">คิวตรวจสอบ</Link><Link onClick={leaving} className={button} href="/system/billing/settings">ตั้งค่าการจ่ายเงิน</Link>
       {runId&&<Link onClick={leaving} className={button} href={base}>กลับรายการงานตรวจ</Link>}</nav>
-    <button className={button} disabled={loading||busy} onClick={()=>refresh()}>โหลดผลล่าสุด</button>
+    <button className={button} disabled={loading||busy} aria-busy={Boolean(loading || busy)} onClick={()=>refresh()}>โหลดผลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {!runId&&list?.canCreate&&<form onSubmit={e=>void create(e)} className="space-y-4 rounded-xl border p-4"><h2 className="text-lg font-bold">เริ่มตรวจยอด</h2>
       <p>เลือกช่วงไม่เกิน 31 วัน และสิ้นสุดก่อนปัจจุบันอย่างน้อย 1 นาที เวลาตามเครื่องนี้</p>
       <label className="block">เริ่มช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={start} disabled={busy} onChange={e=>setStart(e.target.value)}/></label>
       <label className="block">สิ้นสุดช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={end} disabled={busy} onChange={e=>setEnd(e.target.value)}/></label>
       <div><label className="block" htmlFor="settlement-reason">เหตุผล</label><textarea id="settlement-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></div>
-      <button className={button} disabled={busy||!reason.trim()}>เริ่มตรวจยอด</button></form>}
+      <button className={button} disabled={busy||!reason.trim()} aria-busy={Boolean(busy)}>เริ่มตรวจยอด</button></form>}
     {!runId&&list&&!list.canCreate&&<p>ดูงานเดิมได้ แต่ยังเริ่มงานใหม่ไม่ได้ ให้ผู้ดูแลตรวจสิทธิ์และการเชื่อมต่อ Stripe</p>}
     {run&&<section aria-label="ผลตรวจยอด Stripe" className="space-y-3 rounded-xl border p-4"><h2 className="text-lg font-bold" role="status">{label(states,run.state,'ต้องตรวจสอบสถานะ')}</h2>
       <p>{billingLabel('mode',run.mode)} · {run.reason}</p><p>{time(run.windowStart)} ถึงก่อน {time(run.windowEnd)}</p><p>อัปเดต {time(run.observedAt)}</p>
@@ -75,7 +75,7 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
       <p>แสดงเฉพาะบาทในบัญชีรับชำระ ยอดเปลี่ยนแปลงรวมเงินเข้า เงินคืน และเงินโอน จึงไม่ใช่ยอดขาย</p>
       {run.totals.unknownTaxCharges>0&&<p>ยังตรวจภาษีไม่ได้ {run.totals.unknownTaxCharges} รายการ — ไม่ได้ถือว่าภาษีเป็นศูนย์</p>}{run.totals.excluded>0&&<p>อีก {run.totals.excluded} รายการอยู่นอกยอดบาทข้างต้น ให้ตรวจแยก</p>}
       {run.errorCode&&<p role="alert">{label(errors,run.errorCode,'เปิดเคสเพื่อตรวจเงื่อนไขก่อนทำต่อ')}</p>}{run.retryAt&&<p>ตรวจต่อได้หลัง {time(run.retryAt)}</p>}
-      <div className="flex flex-wrap gap-3">{run.canRun&&<button className={button} disabled={busy} onClick={()=>void act('run')}>ตรวจรายการถัดไป</button>}{run.canResume&&<button className={button} disabled={busy} onClick={()=>void act('resume')}>ทำงานเดิมต่อ</button>}{run.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>หยุดงานตรวจนี้</button>}</div>
+      <div className="flex flex-wrap gap-3">{run.canRun&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('run')}>ตรวจรายการถัดไป</button>}{run.canResume&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('resume')}>ทำงานเดิมต่อ</button>}{run.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>หยุดงานตรวจนี้</button>}</div>
       {findings?.caseIds.map(id=><Link key={id} className={button} href={`/system/billing/issues/${id}`} onClick={leaving}>เปิดเคสที่ต้องตรวจ</Link>)}
       <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงงานตรวจ</summary><p className="break-all">{run.id}</p></details>
     </section>}
@@ -91,6 +91,6 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
         <details><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงรายการ</summary><p className="break-all">{f.id}</p></details>
       </div></details></article>)}</section>}
     {!runId&&list&&<section aria-label="งานตรวจยอดที่ผ่านมา" className="space-y-3"><h2 className="text-lg font-bold">งานตรวจที่ผ่านมา</h2>{!list.items.length&&<p>ยังไม่มีงานตรวจยอด</p>}{list.items.map(r=><article key={r.id} className="space-y-2 rounded-xl border p-4"><p>{label(states,r.state,'ต้องตรวจสอบสถานะ')} · {r.reason}</p><p>{time(r.windowStart)} ถึงก่อน {time(r.windowEnd)}</p><Link onClick={leaving} className={button} href={`${base}/${r.id}`}>เปิดผลตรวจ</Link></article>)}</section>}
-    <div className="flex flex-wrap gap-3">{next&&<button className={button} disabled={busy||loading} onClick={()=>refresh(next)}>หน้าถัดไป</button>}{cursor&&<button className={button} disabled={busy||loading} onClick={()=>refresh(null)}>กลับหน้าแรก</button>}</div>
+    <div className="flex flex-wrap gap-3">{next&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>refresh(next)}>หน้าถัดไป</button>}{cursor&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>refresh(null)}>กลับหน้าแรก</button>}</div>
   </main>;
 }

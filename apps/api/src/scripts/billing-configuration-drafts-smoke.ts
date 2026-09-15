@@ -98,3 +98,10 @@ export async function checkBillingConfigurationDrafts(input:Parameters<typeof ch
     await db.auditLog.deleteMany({where:{targetType:'BillingOperation',targetId:{in:ids}}});await db.billingOperation.deleteMany({where:{id:{in:ids}}});
   }
 }
+
+/** Reuse an actual current scoped session proof; never reset the password rate limiter. */
+export async function ensureBillingCompanyProof(request:Parameters<typeof checkBillingConfigurationDrafts>[0]['request'],companyId:string,password:string){
+  const path=`/v1/system/billing/companies/${companyId}/reauthenticate`,current=await request(path);
+  assert.equal(current.status,200,JSON.stringify(current));
+  if(!current.body.reauthenticatedUntil)assert.equal((await request(path,'POST',{password})).status,200);
+}

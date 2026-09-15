@@ -1,5 +1,7 @@
 # Billing controls 1–8 — ควบคุมผ่าน Admin เว็บและกู้ปัญหาได้
 
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
 > **Current follow-up:** ข้อกำหนดการกู้ฟอร์ม Admin: หลังคำขอถูกปฏิเสธ (รวม 429) ต้องคงเหตุผล ช่วงเวลา และคำสั่งเดิมให้ลองต่อได้ ช่องข้อความหลายบรรทัดต้องมี label แยกที่ผูกด้วย htmlFor/id เพื่อให้ชื่อช่องไม่รวมข้อความที่ผู้ดูแลพิมพ์เมื่อ React อัปเดตค่า ใช้หลักเดียวกันกับช่องเหตุผล/บันทึก/ข้อความให้ลูกค้าใน billing Admin.
 
 > **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
@@ -26,12 +28,12 @@
 
 ## 2. หน้าเว็บและ navigation
 
-ต่อยอด `/system` และ Partner detail เดิม. ชื่อ routes ด้านล่างเป็น **target**, ไม่ใช่หน้าที่เปิดใช้แล้ว.
+ต่อยอด `/system` และ Partner detail เดิม. Runtime routes และผลตรวจปัจจุบันอ้าง [แผนที่ acceptance](../evidence/billing-integration-2026-09-13/final-acceptance-map.md); deploy เป็นงานแยก.
 
 | หน้า | Route | เนื้อหาและทางกลับ |
 |---|---|---|
 | ภาพรวม | `/system/billing` | รายบริษัท/ตัวกรอง env, status, อายุปัญหา; การ์ดปัญหาเปิดคิวที่กรองแล้ว; no-data/error ไม่ใช้ข้อความเดียว |
-| รายบริษัท | `/system/partners/:companyId?tab=billing` | C01 summary/timeline; tab existing partner เก็บ route/query; company switch ล้าง selection/preview/pending action ของบริษัทเก่า |
+| รายบริษัท | `/system/billing/companies/:companyId` (เข้าจาก Partner detail ได้) | C01 summary/timeline; tab existing partner เก็บ route/query; company switch ล้าง selection/preview/pending action ของบริษัทเก่า |
 | คิวปัญหา | `/system/billing/issues` และ `/:issueId` | C02 owner/status/reference และ action ที่อนุญาต; กลับคิวด้วย filter/cursor เดิม |
 | คำสั่ง | `/system/billing/operations/:operationId` | desired/observed state, target company, initiator/approver, progress/retry/error; refresh/login/browser back อ่าน operation เดิม |
 | ตั้งค่าและประวัติ | `/system/billing/settings?section=…` | C04–C08 permissions, policy, gates, reconcile และ audit; Draft/Review/Active/Failed แยกชัด |
@@ -323,7 +325,7 @@ Provider signed-webhook/parserต้องมีintegrationtestของadapter�
 
 ### 7.1 Billing-only operators และแหล่งข้อมูล
 
-- เพิ่ม target `/system/billing/companies/:companyId` สำหรับผู้มี `system.billing.read` ตาม scope. หน้า `/system/partners/:companyId?tab=billing` เดิมยังเป็น entry ของผู้มี partner permissions; reuse billing view ภายในได้ แต่ห้ามให้ billing-only user ต้องเปิด editor/เรียก APIs ทั้ง PartnerDetailPage เพื่อดูบิล.
+- เพิ่ม target `/system/billing/companies/:companyId` สำหรับผู้มี `system.billing.read` ตาม scope. หน้า `/system/billing/companies/:companyId` (เข้าจาก Partner detail ได้) เดิมยังเป็น entry ของผู้มี partner permissions; reuse billing view ภายในได้ แต่ห้ามให้ billing-only user ต้องเปิด editor/เรียก APIs ทั้ง PartnerDetailPage เพื่อดูบิล.
 - `/system` shell ตรวจว่ามีสิทธิ์เข้าอย่างน้อยหนึ่ง section; child route/BFF/API ต้องตรวจ exact permission อีกครั้ง. Billing grant ไม่ให้เข้าหน้า platform access, company onboarding, employee credentials, AI budget หรือ partner metadata ที่ไม่ได้รับสิทธิ์. Direct URL ต้องได้ผลเดียวกับเมนู.
 - Billing read projection คืนข้อมูลต่ำสุดตาม capability; links, filtered counts, CSV/export และ issue descriptions ต้องใช้ scope เดียวกัน. Partial financial denial ไม่คืน field ใน JSON แล้วเพียงซ่อน CSS. การอ่าน payment status ขั้นต่ำไม่ให้สิทธิ์เปิดเอกสาร.
 - Source ของ paid/apply คือ BillingInvoice/Account; CompanyPlanTerm เป็น applied access projection; manual term grant/override มี provenance แยก. ไม่มีการอนุมาน paid จากชื่อ tier, admin approval หรือ session redirect.
@@ -342,7 +344,7 @@ Preview สร้าง `intentId` ฝั่ง server และผูก initia
 | PUBLISH_POLICY | draft revisionId; `proposed:{effectiveAt}` ISO UTC | policy.manage + approval ตาม policy; draft เป็น typed schemaVersion พร้อมมติ ไม่รับ raw script/Stripe payload |
 | SET_ACTION_GATE | scope + `proposed:{action,enabled}`; action เป็น new_sales/plan_changes/portal_payment_method/portal_change_plan/portal_cancel_subscription/notification_delivery | gate.manage; เปลี่ยนแต่ละ action ผ่าน command แยก; ไม่มี side effect เปลี่ยน environment ceiling |
 | EXPIRE_CHECKOUT | local attemptId; `proposed:{}` | gate.manage; explicit preview ของ open hosted Session; ไม่ cancel subscription/refund โดยปริยาย |
-| CHANGE_COLLECTION | local accountId; `proposed:{action:"PAUSE"|"RESUME"|"CANCEL", collectionPolicyRevisionId, resumeAt?}` | collection.manage + approved policy; provider params/invoice behavior deriveจากrevision ไม่รับfreeform |
+| CHANGE_COLLECTION | local accountId; `proposed:{collectionChange:{action:"PAUSE"|"RESUME", before, after, ...}}` | collection.manage + approved policy; provider params/invoice behavior deriveจากrevision ไม่รับfreeform |
 | REFUND | local invoice/payment reference; `proposed:{amountSatang,currency:"THB",refundPolicyRevisionId}` | refund.manage + approval/วงเงิน; positive integer และไม่เกินremaining refundableที่ยืนยันใหม่ |
 | GRANT_OVERRIDE | company scope; `proposed:{overridePolicyRevisionId,startsAt,expiresAt,values}` | override.manage + approval; valuesเฉพาะ feature/limit keys ที่typedpolicyอนุญาต; expiryบังคับ |
 | REVOKE_OVERRIDE | local overrideId; `proposed:{}` | override.manage; ไม่มีการลบaudit/ย้อนเงินจริง |
@@ -757,10 +759,12 @@ Use the existing Stripe classic schedule and zero-price phase machinery with pro
 
 ### CT22 implementation closure — scoped collection pause/resume (2026-09-15)
 
-The acceptance audit found that `CHANGE_COLLECTION` and its permission existed only in the contract. Implement PAUSE/RESUME for one mapped company/subscription through the existing reviewed Admin operation, password proof and independent approval. Require `system.billing.collection.manage` for the requester and current approval permission for a different approver. Reauthorize before a new provider write; observing an already-approved completed write must remain possible after response loss or approval expiry.
+The acceptance audit found that `CHANGE_COLLECTION` and its permission existed only in the contract. Implement PAUSE/RESUME for one mapped company/subscription through the existing reviewed Admin operation, password proof and independent approval. Require `system.billing.collection.manage` for the requester and current approval permission for a different approver. The common HTTP preview route requires financial read; the service then checks the exact command permission. Collection-only Admins do not also need `system.billing.override.manage`; they cannot grant days or change package capacity. The browser must hide those unrelated forms while keeping collection review available. Reauthorize before a new provider write; observing an already-approved completed write must remain possible after response loss or approval expiry.
 
 PAUSE requires an explicit future resume date (between 10 minutes and 365 days when previewed). Use Stripe `pause_collection.behavior=keep_as_draft`; invoices issued before the pause can still be collected. The impact lists bounded original open/draft invoice counts and outstanding THB amounts, current paid-through/grace/cancellation and the exact resume date. RESUME clears only pause_collection; it never finalizes or collects retained draft invoices. Existing draft/debt review remains in the company invoice/reconciliation workflow. No invoice void/refund/uncollectible setting is implied. Pausing does not extend service, add quota, cancel renewal, stop already-issued invoice collection or override the existing grace/security policy. Admin copy must say this before confirmation.
 
 Native source hash and account/term/lease/version fence prevent overwriting a competing purchase, downgrade or external provider change. Durable original command, stable provider key, pre-write journal, positive observation first and a 23-hour resend ceiling prevent duplicate mutation after uncertainty. Do not retry a PAUSE after its resume time. A failed/ambiguous result retains the original operation and incident, with read/retry and safe cancellation only before dispatch. Store a safe observed pause projection for customer/Admin status; automatic provider resumption is reconciled without a new payment command. Retain immutable actor/reason/before/after audit and all paid financial/receipt/AI evidence.
 
 Verification: real HTTP/PostgreSQL/browser preview→independent approval→worker→provider observation→owner status→resume; self/foreign/scope denial, invalid date, old invoice impact, source drift, lost response/same command, approval revocation and audit rollback. Stripe transport is simulated. Reference: https://docs.stripe.com/billing/subscriptions/pause-payment (read 2026-09-15). No native send/payment/deploy is authorized by this check.
+
+Scoped password proof uses the same exact command capabilities as the action: collection-only operators can GET/POST company proof without refund/override/approval permission. Existing proof remains valid for5minutes across approved actions; plan/receipt UI must explain reuse. Do not increase or reset the5attempts/300seconds password limiter for repeated test journeys; the harness reads current company proof before an unnecessary reauthentication.

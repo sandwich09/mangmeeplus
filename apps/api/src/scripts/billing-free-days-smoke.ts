@@ -1,3 +1,4 @@
+import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
 import { checkAdminCollectionControl } from './billing-admin-collection-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -49,7 +50,7 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
     await db.billingReceiptGrant.updateMany({where:{billingAccountId:accountId,kind:'INITIAL'},data:{sourceKey:invoice.id,serviceStart:start,serviceEnd:end,availableAt:start,expiresAt:end}});
     const grantsBefore=await db.billingReceiptGrant.findMany({where:{billingAccountId:accountId},orderBy:{id:'asc'}});
     const aiBefore=await db.companyAiConfiguration.findUnique({where:{companyId}});
-    for(const actor of [request,approveRequest])assert.equal((await actor(`${company}/reauthenticate`,'POST',{password:input.password})).status,200);
+    for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,input.password);
     assert.notEqual((await preview(0)).status,200);
     let result=await preview();assert.equal(result.status,200,JSON.stringify(result));let op=result.body;ids.push(op.id);
     assert.equal(op.dayExtension.days,7);assert.equal(op.dayExtension.after,new Date(end.getTime()+7*86400000).toISOString());

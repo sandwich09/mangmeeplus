@@ -1,5 +1,7 @@
 # Billing controls 1–8 — implementation และ browser E2E plan
 
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
 > **Current follow-up:** งานแก้ฟอร์ม Admin 2026-09-15: เปลี่ยน nested label/textarea เป็น explicit htmlFor/id ใน 11 ช่องของ 10 หน้า billing Admin โดยคงข้อความและการบันทึกเดิม ทดสอบด้วย limiter จริงบนฐานข้อมูลท้องถิ่นให้คำขอสร้างงานถูกปฏิเสธด้วย 429 แล้วตรวจชื่อช่อง เหตุผล ช่วงเวลา และ retry คำสั่งเดิม ไม่ลด limiter หรือเปลี่ยน locator เพื่อข้ามข้อผิดพลาด ผลล่าสุด: forced429 ผ่านด้วย browser/API/PG จริง เหตุผล/ช่วงเวลา/คำสั่งเดิมคงอยู่และสร้างงานครั้งเดียว ดู billing-label-offer-matrix-result.json.
 
 > **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
@@ -103,10 +105,10 @@ Previous 565 focused /25 browser /22 marketing เป็นevidenceก่อน�
 
 - [x] C01–C08 ระบุroute/state/permission/action/error/recovery/audit/no-deploy contract.
 - [x] บันทึกcurrentcodegapและtargetmitigation; synchronizeทั้งสองrepoผ่านsourceoftruthlinks.
-- [ ] BC-S0–S5 runtime/DTO/migrations/worker/provideradaptersครบตามverticalslice.
-- [ ] CT01–CT32และrelated money/security/providercasesรันกับimplementationจริง; ไม่มีroutefulfillsuccessมาแทนbackend.
-- [ ] ไม่มีปุ่มเงียบ/401loop/UNKNOWN→newcharge/paidheld→repay; negativechecksกับtenant/role/modeผ่าน.
-- [ ] Webmutation→DB/worker→web/LINE/catalogเห็นrevisionเดียวกันขณะprocessไม่restart.
+- [x] BC-S0–S5 runtime/DTO/migrations/worker/provideradaptersครบตามverticalslice. — local proof ตาม final acceptance map; ไม่รวม native release acceptance.
+- [x] CT01–CT32และrelated money/security/providercasesรันกับimplementationจริง; ไม่มีroutefulfillsuccessมาแทนbackend. — local proof ตาม final acceptance map; ไม่รวม native release acceptance.
+- [x] ไม่มีปุ่มเงียบ/401loop/UNKNOWN→newcharge/paidheld→repay; negativechecksกับtenant/role/modeผ่าน. — local proof ตาม final acceptance map; ไม่รวม native release acceptance.
+- [x] Webmutation→DB/worker→web/LINE/catalogเห็นrevisionเดียวกันขณะprocessไม่restart. — local proof ตาม final acceptance map; ไม่รวม native release acceptance.
 - [ ] Sandbox/nativeacceptanceตามแผนหลักและbusinesspolicyพร้อมก่อนpaidlaunch; deploymentเป็นงานแยกตามrunbook.
 
 ## 6. Developer preflight และการรับงานที่เริ่มได้จริง
@@ -448,3 +450,5 @@ PAUSE requires an explicit future resume date (between 10 minutes and 365 days w
 Native source hash and account/term/lease/version fence prevent overwriting a competing purchase, downgrade or external provider change. Durable original command, stable provider key, pre-write journal, positive observation first and a 23-hour resend ceiling prevent duplicate mutation after uncertainty. Do not retry a PAUSE after its resume time. A failed/ambiguous result retains the original operation and incident, with read/retry and safe cancellation only before dispatch. Store a safe observed pause projection for customer/Admin status; automatic provider resumption is reconciled without a new payment command. Retain immutable actor/reason/before/after audit and all paid financial/receipt/AI evidence.
 
 Verification: real HTTP/PostgreSQL/browser preview→independent approval→worker→provider observation→owner status→resume; self/foreign/scope denial, invalid date, old invoice impact, source drift, lost response/same command, approval revocation and audit rollback. Stripe transport is simulated. Reference: https://docs.stripe.com/billing/subscriptions/pause-payment (read 2026-09-15). No native send/payment/deploy is authorized by this check.
+
+Final integration correction 2026-09-16: verify collection-only Admin permission through actual HTTP and browser, including absent package/gift controls, denied gift preview, independent approval and current permission withdrawal. Shared preview endpoint checks financial read; command service retains collection/override separation before provider observation and again in transaction. No broadened package permission.

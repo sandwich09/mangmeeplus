@@ -57,7 +57,7 @@ export function BillingScanSchedulePanel() {
         <label className="block" htmlFor="scan-lookback">ครั้งแรกตรวจย้อนหลังกี่ชั่วโมง (1–672)</label><input id="scan-lookback" className={field} type="number" required min={1} max={672} value={lookback} onChange={e=>setLookback(Number(e.target.value))}/>
         <label className="block" htmlFor="scan-schedule-reason">เหตุผลปรับรอบตรวจ</label><textarea id="scan-schedule-reason" className={field} required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/>
         <p>รอบต่อไปใช้ช่วงที่ตรวจสำเร็จล่าสุดและตรวจซ้ำขอบช่วง 5 นาที การปิดหยุดเฉพาะงานใหม่ งานเดิมยังเปิดตรวจต่อได้</p>
-        <button className={button} disabled={busy}>ตรวจการตั้งค่าก่อนยืนยัน</button>
+        <button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจการตั้งค่าก่อนยืนยัน</button>
       </form>}
     </>}
     {record&&<article aria-label="ฉบับตั้งค่าที่เลือก" className="space-y-3 rounded-lg bg-gray-50 p-3">
@@ -67,8 +67,8 @@ export function BillingScanSchedulePanel() {
       {record.state==='PREVIEW'&&!record.canPublish&&<p>ข้อมูลหรือสิทธิ์เปลี่ยน หรือหมดเวลายืนยันแล้ว นำค่ามาตรวจใหม่ได้</p>}
       {record.canPublish&&<><label htmlFor="scan-schedule-password">รหัสผ่านปัจจุบันเพื่อเผยแพร่</label><input id="scan-schedule-password" className={field} type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/></>}
       <div className="flex flex-wrap gap-2">
-        {record.canPublish&&<button className={button} disabled={busy} onClick={()=>void act('publish')}>ยืนยันเผยแพร่รอบตรวจ</button>}
-        {record.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>ยกเลิกฉบับตั้งค่า</button>}
+        {record.canPublish&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('publish')}>ยืนยันเผยแพร่รอบตรวจ</button>}
+        {record.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>ยกเลิกฉบับตั้งค่า</button>}
         {schedule?.canManage&&<button className={button} disabled={busy} onClick={()=>{setEnabled(record.enabled);setInterval(record.intervalHours);setLookback(record.initialLookbackHours);setReason(record.reason);intent.current=null;setReload(v=>v+1);}}>นำค่ามาตรวจใหม่</button>}
         <Link className="underline" href={`${base}?schedule=${record.id}`}>ลิงก์ฉบับตั้งค่านี้</Link><Link className="underline" href={base}>กลับประวัติรอบตรวจ</Link>
       </div>

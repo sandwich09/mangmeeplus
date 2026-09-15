@@ -1,5 +1,7 @@
 # Email Delivery และ Claim Account — Spec P11
 
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
 > **Owner decision2026-09-15:** verified-email password recovery through Postmark is approved, including users without LINE. The authoritative new routes, eligibility, fragment proof, current binding, atomic reset/session revocation, no-auto-login and replay contract are in [Postmark spec](mangmee-transactional-email-provider-spec-th.md#email-recovery-implementation-contract--owner-approval2026-09-15). Existing LINE recovery remains available. Earlier sections saying email routes must stay404/parked or email reset should auto-login are historical and superseded for this feature. Current implementation/evidence status: [task memory](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md); no deployment is authorized.
 
 

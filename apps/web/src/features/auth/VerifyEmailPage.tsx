@@ -33,7 +33,7 @@ function Confirmation({ token }: { token: string | null }) {
       {email ? <p role="status">{formatMessage(t('auth.verify.success.body', locale), { email })}</p> : <>
         <p>{t('auth.verify.confirm.body', locale)}</p>
         {error && <p role="alert" className="rounded-lg bg-red-50 p-3">{t(error === 'invalid' ? 'auth.verify.error.body' : error === 'conflict' ? 'auth.verify.conflict' : 'auth.verify.temporary', locale)}</p>}
-        {token && error !== 'invalid' && error !== 'conflict' && <button className="min-h-11 w-full rounded-lg bg-brand-700 px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={busy} onClick={() => void confirm()}>
+        {token && error !== 'invalid' && error !== 'conflict' && <button className="min-h-11 w-full rounded-lg bg-brand-700 px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void confirm()}>
           {t(busy ? 'auth.verify.loading' : error === 'temporary' ? 'auth.verify.retry' : 'auth.verify.confirm.action', locale)}
         </button>}
       </>}

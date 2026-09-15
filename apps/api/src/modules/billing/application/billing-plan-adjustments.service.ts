@@ -107,12 +107,12 @@ export class BillingPlanAdjustmentsService {
     if(input.type!=='CHANGE_COLLECTION'&&(input.collectionAction!==undefined||input.resumesAt!==undefined))throw new BadRequestException();
     if(input.type==='CHANGE_COLLECTION'){
       const initial=await this.scope(context,companyId);await this.admin.access(context,managePermission(input.type));
-      if(!initial.account||['tierKey','branchLimit','employeeLimit','expiresAt','overrideId','days'].some(k=>k in input))throw new BadRequestException();
+      if(!initial.account||['tierKey','branchLimit','employeeLimit','expiresAt','overrideId','days'].some(k=>input[k as keyof BillingPlanAdjustmentInput]!==undefined))throw new BadRequestException();
       collectionChange=await this.billing.adminCollection.source(initial.account,input.collectionAction!,input.resumesAt);
     }
     if(input.type==='GRANT_FREE_DAYS'){
       const initial=await this.scope(context,companyId);await this.admin.access(context,'system.billing.override.manage');
-      if(!initial.account||['tierKey','branchLimit','employeeLimit','expiresAt','overrideId'].some(k=>k in input))throw new BadRequestException();
+      if(!initial.account||['tierKey','branchLimit','employeeLimit','expiresAt','overrideId'].some(k=>input[k as keyof BillingPlanAdjustmentInput]!==undefined))throw new BadRequestException();
       dayExtension=await this.billing.freeDays.source(initial.account,input.days!);
     }else if(input.days!==undefined)throw new BadRequestException();
     const row=await this.prisma.client.$transaction(async tx=>{

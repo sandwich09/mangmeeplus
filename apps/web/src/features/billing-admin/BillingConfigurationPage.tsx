@@ -98,7 +98,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {settings.reauthenticatedUntil && <p role="status">ยืนยันแล้วถึง {new Date(settings.reauthenticatedUntil).toLocaleTimeString('th-TH')}</p>}
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act('reauthenticate'); }}>
           <label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={e => setPassword(e.target.value)} /></label>
-          <button className={button} disabled={busy || !password}>ยืนยันรหัสผ่าน</button>
+          <button className={button} disabled={busy || !password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button>
           <Link onClick={leaving} className="ml-3 underline" href="/login">กลับไปเข้าสู่ระบบหรือกู้บัญชี</Link>
         </form>
       </section>
@@ -159,8 +159,8 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
             <p className="text-base">เวลาในอุปกรณ์นี้: {Intl.DateTimeFormat().resolvedOptions().timeZone} · เลือกล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี ต้องอนุมัติก่อนเวลาที่เลือก</p></>:<p>ใช้ค่าทันทีหลังผู้ดูแลอีกคนอนุมัติ</p>}
         </fieldset>
         <div><label className="block" htmlFor="billing-policy-reason">เหตุผลการเปลี่ยนค่า</label><textarea id="billing-policy-reason" className={field} maxLength={500} value={reason} onChange={e => setReason(e.target.value)} /></div>
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!reason.trim()||(scheduled&&!effectiveAt)} onClick={()=>void act('save')}>บันทึกฉบับร่าง</button><button className={button} disabled={busy || !reason.trim() || draftChanged||(scheduled&&!effectiveAt)} onClick={() => void act('preview')}>ตรวจผลกระทบการตั้งค่า</button>
-          {!draft&&canGates && <button className={button} disabled={busy || !reason.trim() || !BILLING_ACTIONS.some(a => settings.gates[a] && !gates[a])} onClick={() => void act('close')}>หยุดเฉพาะช่องทางที่เอาเครื่องหมายออกทันที</button>}</div>
+        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||!reason.trim()||(scheduled&&!effectiveAt)} aria-busy={Boolean(busy)} onClick={()=>void act('save')}>บันทึกฉบับร่าง</button><button className={button} disabled={busy || !reason.trim() || draftChanged||(scheduled&&!effectiveAt)} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>ตรวจผลกระทบการตั้งค่า</button>
+          {!draft&&canGates && <button className={button} disabled={busy || !reason.trim() || !BILLING_ACTIONS.some(a => settings.gates[a] && !gates[a])} aria-busy={Boolean(busy)} onClick={() => void act('close')}>หยุดเฉพาะช่องทางที่เอาเครื่องหมายออกทันที</button>}</div>
         {draftChanged&&<p>มีการแก้ไขที่ยังไม่บันทึก กรุณาบันทึกฉบับร่างก่อนตรวจผลกระทบ</p>}
         <p className="text-base">หยุดรับรายการใหม่ไม่หยุดการต่ออายุเดิม หน้าชำระที่ออกไปแล้วต้องตรวจแยก การเปิดกลับต้องมีผู้อนุมัติอีกคน</p>
       </section>}
@@ -201,12 +201,12 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         </section>
         <ul className="space-y-1">{BILLING_ACTIONS.map(a => <li key={a}>{gateNames[a]}: {operation.proposed.gates[a] ? 'เปิด' : 'ปิด'}</li>)}</ul>
         <p>สัญญาที่จ่ายแล้วใช้เงื่อนไขเดิม {operation.state==='SUCCEEDED'?'คำขอนี้ผ่านการอนุมัติและนำไปใช้แล้ว':'การบันทึกหรือดูร่างยังไม่เปลี่ยนค่าที่ใช้งานอยู่'}</p>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act(action)}>
           {action === 'submit' ? 'ส่งคำขอให้ผู้อนุมัติ' : action === 'approve' ? (operation.proposed.effectiveAt?'อนุมัติและรอวันที่กำหนด':'อนุมัติและใช้ค่าชุดนี้') : action==='apply'?'ใช้ค่าที่อนุมัติไว้ตอนนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
         {operation.sourceDraftVersion!==undefined&&operation.referenceId&&<Link onClick={leaving} className="block underline" href={`/system/billing/configuration-changes/${operation.referenceId}`}>กลับฉบับร่างต้นทาง รุ่น {operation.sourceDraftVersion}</Link>}
         {operation.state!=='DRAFT'&&(operation.type==='PUBLISH_POLICY'?canPolicy:canGates)&&<div className="space-y-2">
           {operation.type==='SET_ACTION_GATE'&&<p>การสร้างร่างใหม่จะคัดลอกเฉพาะค่าสวิตช์ และใช้นโยบายล่าสุดที่โหลดไว้</p>}
-          <button className={button} disabled={busy} onClick={()=>void act('copy')}>สร้างฉบับร่างจากคำขอนี้</button></div>}
+          <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('copy')}>สร้างฉบับร่างจากคำขอนี้</button></div>}
         {operation.state==='DRAFT'&&<p>ฉบับร่างนี้ยังไม่มีผลกับระบบ การยกเลิกฉบับร่างไม่ยกเลิกคำขอที่สร้างไปแล้ว ให้เปิดคำขอในประวัติเพื่อตรวจแยก</p>}
         <Link onClick={leaving} className="inline-block break-all underline" href={`/system/billing/configuration-changes/${operation.id}`}>เปิดลิงก์คำขอนี้</Link>
         {operation.state === 'AWAITING_APPROVAL' && <p>ผู้ดูแลอีกคนที่มีสิทธิ์อนุมัติเปิดลิงก์นี้ ตรวจผลกระทบ และยืนยันรหัสผ่านก่อนอนุมัติได้</p>}

@@ -1500,7 +1500,7 @@ function AiUsageBudgetSection({
             <button
               type="button"
               className={`${btnPrimary} min-h-11 text-base`}
-              disabled={budgetLoading || ocrLoading || fieldsLocked}
+              disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
               {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
@@ -1649,7 +1649,7 @@ function AiUsageBudgetSection({
               <button
                 type="button"
                 className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || budgetLoading || fieldsLocked}
+                disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 onClick={() => void handleOcrSave()}
               >
                 {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
@@ -1832,7 +1832,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 
   return (
     <><SectionCard title="แพ็กเกจและอายุการใช้งาน">
-      {uncertain&&<div role="alert" className="rounded border border-amber-300 p-3 text-base"><p>ยังยืนยันผลคำขอเดิมไม่ได้ ตรวจคำขอเดิมก่อนเริ่มรายการใหม่</p><button type="button" className={`${btnPrimary} mt-2 min-h-11`} disabled={saving||renewing} onClick={()=>void sendPending()}>ตรวจและลองคำขอเดิม</button></div>}
+      {uncertain&&<div role="alert" className="rounded border border-amber-300 p-3 text-base"><p>ยังยืนยันผลคำขอเดิมไม่ได้ ตรวจคำขอเดิมก่อนเริ่มรายการใหม่</p><button type="button" className={`${btnPrimary} mt-2 min-h-11`} disabled={saving||renewing} aria-busy={Boolean(saving || renewing)} onClick={()=>void sendPending()}>ตรวจและลองคำขอเดิม</button></div>}
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>

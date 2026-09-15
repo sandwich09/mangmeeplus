@@ -70,7 +70,7 @@ export default function EmailHistoryPolicyPanel() {
         <p>เปลี่ยนจาก {data.retentionDays} เป็น {preview.retentionDays} วัน · ล้างอัตโนมัติจาก {data.enabled ? 'เปิด' : 'ปิด'} เป็น {preview.enabled ? 'เปิด' : 'ปิด'}</p>
         <p className="whitespace-pre-wrap break-words">เหตุผล: {preview.reason}</p>
         <p>เมื่อเปิด ระบบทยอยล้างไม่เกิน 100 รายการต่อชั่วโมง จำนวนที่ครบเงื่อนไขจะตรวจตามระยะเวลาใหม่ การปิดจะหยุดรอบถัดไป และไม่คืนรายละเอียดที่ล้างแล้ว</p>
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy} onClick={() => void save()}>{busy ? 'กำลังบันทึก…' : uncertain ? 'ลองรายการเดิมอีกครั้ง' : 'ยืนยันบันทึก'}</button>
+        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void save()}>{busy ? 'กำลังบันทึก…' : uncertain ? 'ลองรายการเดิมอีกครั้ง' : 'ยืนยันบันทึก'}</button>
           {!uncertain && <button className={button} disabled={busy} onClick={() => setPreview(null)}>กลับไปแก้ไข</button>}</div>
       </div>}
       <details><summary className="cursor-pointer py-3 font-semibold">ประวัติแก้ไขล่าสุด 25 รายการ</summary>

@@ -63,7 +63,7 @@ export default function BillingConfigurationChecksPage({checkId}:{checkId?:strin
       {history.activeCheck&&<Link className={button} href={`${base}/${history.activeCheck.id}`}>เปิดรายการที่กำลังตรวจ</Link>}
       {history.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-3 rounded-xl border p-4">
         <div><label className="block" htmlFor="configuration-check-reason">เหตุผลการตรวจ</label><textarea id="configuration-check-reason" className="mt-1 block min-h-11 w-full rounded-lg border p-2" required maxLength={500} disabled={busy||!!intent.current} value={reason} onChange={event=>setReason(event.target.value)}/></div>
-        <button className={button} disabled={busy||!reason.trim()}>{intent.current?'ลองคำขอเดิมอีกครั้ง':'เริ่มตรวจการเชื่อมต่อ'}</button>
+        <button className={button} disabled={busy||!reason.trim()} aria-busy={Boolean(busy)}>{intent.current?'ลองคำขอเดิมอีกครั้ง':'เริ่มตรวจการเชื่อมต่อ'}</button>
       </form>}
       <section aria-label="ประวัติการตรวจ" className="space-y-3"><h2 className="text-lg font-bold">ประวัติการตรวจ</h2>
         {!history.items.length&&<p>ยังไม่มีรายการตรวจ</p>}
@@ -86,8 +86,8 @@ export default function BillingConfigurationChecksPage({checkId}:{checkId?:strin
       {check.items.some(item=>item.kind==='PRICE'&&item.state==='NOT_CONFIGURED')&&<details><summary className="min-h-11 cursor-pointer py-2">แพ็กเกจที่ยังไม่เปิดขาย</summary><ul className="space-y-3">
         {check.items.filter(item=>item.kind==='PRICE'&&item.state==='NOT_CONFIGURED').map(item=><li key={item.offerKey}>{itemName(item).replace('ราคาขาย · ','')}</li>)}
       </ul><p>เติมราคาจากหน้าการตั้งค่าและขออนุมัติก่อนเปิดขาย</p></details>}
-      <div className="flex flex-wrap gap-3">{check.canRun&&<button className={button} disabled={busy} onClick={()=>void act('run')}>ตรวจรายการนี้ตอนนี้</button>}
-        {check.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>ยกเลิกรายการตรวจนี้</button>}
+      <div className="flex flex-wrap gap-3">{check.canRun&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('run')}>ตรวจรายการนี้ตอนนี้</button>}
+        {check.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>ยกเลิกรายการตรวจนี้</button>}
         {check.reviewCaseId&&<Link className={button} href={`/system/billing/issues/${check.reviewCaseId}`}>เปิดเคสที่เกี่ยวข้อง</Link>}</div>
       <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับทีมช่วยเหลือ</summary><p>รายการ {check.id}</p><p>รุ่นการตั้งค่า {check.sourceVersion}</p>{check.items.filter(item=>item.kind==='PREPAID_PRICE').map(item=><p key={item.offerKey}>{itemName(item)}: {resultName(item.state)}</p>)}{check.errorCode&&<p>{check.errorCode}</p>}</details>
     </section>}

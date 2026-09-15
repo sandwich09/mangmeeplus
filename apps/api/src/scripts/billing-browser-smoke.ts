@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 
 export async function startBillingBrowser(input: { apiOrigin: string; token: string; companyId: string }) {
-  const root = process.cwd(), evidenceDir = '/tmp/mangmee-billing-browser-evidence';
+  const root = process.cwd(), evidenceDir = resolve(process.env.BILLING_BROWSER_EVIDENCE_DIR ?? `/tmp/mangmee-billing-browser-evidence-${process.pid}`);
   mkdirSync(evidenceDir, { recursive: true });
   const port = await new Promise<number>((done, reject) => {
     const server = createServer(); server.on('error', reject);

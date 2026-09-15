@@ -61,27 +61,27 @@ export default function BillingBatchPage({batchId}:{batchId?:string}){
     <p>ตรวจหลักฐานล่าสุดและดำเนินการรายการเดิมตามนโยบาย เลือกได้ครั้งละ 25 บริษัท ผลตรวจแต่ละบริษัทแยกกัน</p>
     <nav className="flex flex-wrap gap-3"><Link className={button} onClick={leaving} href="/system/billing">บริษัท</Link><Link className={button} onClick={leaving} href="/system/billing/issues">คิวตรวจสอบ</Link>
       {batchId&&<Link className={button} onClick={leaving} href={base}>กลับรายการงานตรวจ</Link>}</nav>
-    <button className={button} disabled={loading||busy} onClick={refresh}>โหลดผลล่าสุด</button>
+    <button className={button} disabled={loading||busy} aria-busy={Boolean(loading || busy)} onClick={refresh}>โหลดผลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{notice&&<p role="status">{notice}</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {!batchId&&overview&&<section className="space-y-4" aria-label="เลือกบริษัทเพื่อตรวจ">
       <h2 className="text-lg font-bold">เลือกบริษัท</h2><p>{billingLabel('mode',overview.mode)}</p>
       <form className="space-y-2" onSubmit={e=>{e.preventDefault();invalidate();setLoading(true);setCompanyCursor(null);setQuery(search.trim());setReload(v=>v+1);}}>
         <label className="block">ค้นหาบริษัท<input className="mt-1 block min-h-11 w-full rounded-lg border p-2" maxLength={100} value={search} onChange={e=>setSearch(e.target.value)}/></label>
-        <button className={button} disabled={busy||loading}>ค้นหา</button></form>
+        <button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)}>ค้นหา</button></form>
       {!canCreate&&<p>ดูผลเดิมได้ แต่ยังเริ่มงานใหม่ไม่ได้ ให้ผู้ดูแลตรวจสิทธิ์และการเชื่อมต่อ Stripe</p>}
       {!overview.companies.length&&<p>ไม่พบบริษัทตามคำค้นในขอบเขตนี้</p>}
       {overview.companies.map(c=><label key={c.companyId} className="flex min-h-11 items-start gap-3 rounded-xl border p-3">
         <input type="checkbox" className="mt-1 size-5 shrink-0" checked={selected.some(s=>s.companyId===c.companyId)} disabled={!canCreate||busy||loading||!c.accountId||(selected.length>=25&&!selected.some(s=>s.companyId===c.companyId))}
           onChange={e=>setSelected(current=>e.target.checked?[...current,c]:current.filter(s=>s.companyId!==c.companyId))}/>
         <span>{c.companyName}{!c.accountId&&<span className="block text-gray-600">ยังไม่มีบัญชีชำระเงินให้ตรวจ</span>}</span></label>)}
-      <div className="flex flex-wrap gap-3">{overview.nextCursor&&<button className={button} disabled={busy||loading} onClick={()=>{invalidate();setCompanyCursor(overview.nextCursor);}}>บริษัทหน้าถัดไป</button>}
-        {companyCursor&&<button className={button} disabled={busy||loading} onClick={()=>{invalidate();setCompanyCursor(null);}}>บริษัทหน้าแรก</button>}</div>
+      <div className="flex flex-wrap gap-3">{overview.nextCursor&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>{invalidate();setCompanyCursor(overview.nextCursor);}}>บริษัทหน้าถัดไป</button>}
+        {companyCursor&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>{invalidate();setCompanyCursor(null);}}>บริษัทหน้าแรก</button>}</div>
       {canCreate&&<form className="space-y-3 rounded-xl border p-4" onSubmit={e=>void preview(e)}>
         <h3 className="font-bold">เลือกไว้ {selected.length} บริษัท</h3>{selected.length>0&&<details><summary className="min-h-11 cursor-pointer py-2">ดูบริษัทที่เลือกและนำออก</summary>
-          {selected.map(c=><div key={c.companyId} className="flex flex-wrap items-center justify-between gap-2 py-2"><span>{c.companyName}</span><button type="button" className={button} disabled={busy} onClick={()=>setSelected(rows=>rows.filter(row=>row.companyId!==c.companyId))}>นำ {c.companyName} ออก</button></div>)}</details>}
+          {selected.map(c=><div key={c.companyId} className="flex flex-wrap items-center justify-between gap-2 py-2"><span>{c.companyName}</span><button type="button" className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>setSelected(rows=>rows.filter(row=>row.companyId!==c.companyId))}>นำ {c.companyName} ออก</button></div>)}</details>}
         <div><label className="block" htmlFor="billing-batch-reason">เหตุผลการตรวจ</label><textarea id="billing-batch-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></div>
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||loading||!selected.length||!reason.trim()}>ตรวจบริษัทที่เลือกก่อนยืนยัน</button>
-          <button type="button" className={button} disabled={busy} onClick={()=>{setSelected([]);refresh();}}>เริ่มเลือกใหม่</button></div>
+        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||loading||!selected.length||!reason.trim()} aria-busy={Boolean(busy || loading)}>ตรวจบริษัทที่เลือกก่อนยืนยัน</button>
+          <button type="button" className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>{setSelected([]);refresh();}}>เริ่มเลือกใหม่</button></div>
       </form>}
     </section>}
     {batch&&<section className="space-y-4 rounded-xl border p-4" aria-label="ผลตรวจรายบริษัท">
@@ -89,9 +89,9 @@ export default function BillingBatchPage({batchId}:{batchId?:string}){
       <p>ตรวจแล้ว {batch.checked} · รอผล {batch.pending} · ต้องตรวจต่อ {batch.review} · หยุดแล้ว {batch.stopped}</p>
       <p>ตรวจแล้วหมายถึงได้ผลของคำขอนี้ สถานะจ่ายเงิน สิทธิ์ และเคสค้างให้เปิดดูที่บริษัท</p>
       {batch.state==='PREVIEW'&&<p>{batch.canSubmit?`ยืนยันได้ถึง ${time(batch.expiresAt)}`:'ยังยืนยันไม่ได้ ข้อมูลหรือสิทธิ์อาจเปลี่ยน ให้ตรวจบริษัทแล้วเริ่มงานใหม่'}</p>}
-      <div className="flex flex-wrap gap-3">{batch.canSubmit&&<button className={button} disabled={busy} onClick={()=>void act('submit')}>ยืนยันตรวจ {batch.items.length} บริษัท</button>}
-        {batch.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>{batch.state==='PREVIEW'?'ยกเลิกคำขอนี้':'หยุดเฉพาะบริษัทที่ยังไม่เริ่ม'}</button>}
-        {batch.canExport&&<button className={button} disabled={busy} onClick={()=>void download()}>ดาวน์โหลดผลตรวจ</button>}</div>
+      <div className="flex flex-wrap gap-3">{batch.canSubmit&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('submit')}>ยืนยันตรวจ {batch.items.length} บริษัท</button>}
+        {batch.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>{batch.state==='PREVIEW'?'ยกเลิกคำขอนี้':'หยุดเฉพาะบริษัทที่ยังไม่เริ่ม'}</button>}
+        {batch.canExport&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void download()}>ดาวน์โหลดผลตรวจ</button>}</div>
       {batch.canExport&&<p className="text-gray-600">ไฟล์ผลตรวจเปิดใน Excel ได้</p>}
       {batch.items.map(item=><article key={item.companyId} className="space-y-2 rounded-lg bg-slate-50 p-3" aria-label={item.companyName}>
         <h3 className="font-semibold">{item.companyName}</h3><p>{Object.hasOwn(states,item.state)?states[item.state]:'ต้องตรวจสอบสถานะ'} · {time(item.observedAt)}</p>
@@ -104,8 +104,8 @@ export default function BillingBatchPage({batchId}:{batchId?:string}){
     </section>}
     {!batchId&&history&&<section className="space-y-3" aria-label="ประวัติงานตรวจหลายบริษัท"><h2 className="text-lg font-bold">งานตรวจเดิม</h2>
       {!history.items.length&&<p>ไม่พบงานที่ยังมีสิทธิ์ดูในหน้านี้</p>}{history.items.map(item=><article className="space-y-2 rounded-xl border p-4" key={item.id}><p>{item.reason}</p><p>{progress[item.progress]} · {item.items.length} บริษัท · {time(item.createdAt)}</p><Link className={button} onClick={leaving} href={`${base}/${item.id}`}>เปิดงานตรวจเดิม</Link></article>)}
-      <div className="flex flex-wrap gap-3">{history.nextCursor&&<button className={button} disabled={busy||loading} onClick={()=>{invalidate();setHistoryCursor(history.nextCursor);}}>ประวัติหน้าถัดไป</button>}
-        {historyCursor&&<button className={button} disabled={busy||loading} onClick={()=>{invalidate();setHistoryCursor(null);}}>ประวัติหน้าแรก</button>}</div>
+      <div className="flex flex-wrap gap-3">{history.nextCursor&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>{invalidate();setHistoryCursor(history.nextCursor);}}>ประวัติหน้าถัดไป</button>}
+        {historyCursor&&<button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>{invalidate();setHistoryCursor(null);}}>ประวัติหน้าแรก</button>}</div>
     </section>}
   </main>;
 }

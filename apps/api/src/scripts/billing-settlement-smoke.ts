@@ -126,12 +126,12 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
       await page.getByLabel('สิ้นสุดช่วงเวลา',{exact:true}).fill(new Date((stamp+120)*1000-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16));
       await page.getByLabel('เหตุผล',{exact:true}).fill(body.reason);
       const originalWindow=await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue()));
-      // Opt-in focused regression: consume the REAL operator limiter with invalid empty requests.
-      // They fail validation after admission and cannot create an operation or touch Stripe.
+      // Pass DTO validation, then reject the empty time window after REAL limiter admission.
+      // Invalid empty bodies stop before the controller and never consume its rate limit.
       if(process.env.BILLING_SETTLEMENT_FORCE_RATE_LIMIT==='1') {
         const count=await db.billingOperation.count({where:{stripeAccountId}});let primed=false;
         for(let round=0;round<2&&!primed;round++)for(let i=0;i<=30;i++) {
-          const probe=await page.request.post(`${browser.origin}/api/v1/system/billing/settlements`,{data:{},headers:{'x-csrf-token':'synthetic-billing-csrf'}});
+          const probe=await page.request.post(`${browser.origin}/api/v1/system/billing/settlements`,{data:{...body,windowEnd:body.windowStart},headers:{'x-csrf-token':'synthetic-billing-csrf'}});
           const value=await probe.json();
           if(probe.status()===429) {
             assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
@@ -155,7 +155,7 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
           assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(value.retryAfterSeconds)&&value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
           await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();
           try{assert.equal(await page.getByLabel('เหตุผล',{exact:true}).inputValue(),body.reason);}
-          catch(error){await page.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-settlement-create-failure.png',fullPage:true});
+          catch(error){await page.screenshot({path:`${browser.evidenceDir}/admin-settlement-create-failure.png`,fullPage:true});
             console.error('settlement-create-context',JSON.stringify({url:page.url(),text:await page.locator('main').innerText()}));throw error;}
           assert.deepEqual(await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue())),originalWindow);
           await new Promise(resolve=>setTimeout(resolve,(value.retryAfterSeconds+1)*1000));continue;
@@ -179,7 +179,7 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
       const finalPage=await browserNext();assert.equal(finalPage.seen,27);await page.getByRole('status').filter({hasText:'ตรวจครบช่วงที่เลือก'}).waitFor();
       await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).click();await page.getByRole('button',{name:'กลับหน้าแรก',exact:true}).waitFor();
       await page.getByRole('button',{name:'กลับหน้าแรก',exact:true}).click();await page.getByRole('region',{name:'รายการยอดที่ตรวจแล้ว'}).waitFor();
-      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-settlement-result-mobile.png',fullPage:false});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:`${browser.evidenceDir}/admin-settlement-result-mobile.png`,fullPage:false});
       await page.getByRole('link',{name:'เปิดเคสที่ต้องตรวจ',exact:true}).click();await page.getByRole('link',{name:'เปิดงานตรวจยอดของเคสนี้',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/settlements/${browserRun}`);
       await page.getByRole('link',{name:'กลับรายการงานตรวจ',exact:true}).click();await page.getByRole('heading',{name:'งานตรวจที่ผ่านมา',exact:true}).waitFor();
       let release!:()=>void,arrived!:(value:any)=>void,delivered!:()=>void,lateId='';
@@ -205,7 +205,7 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
       }finally{release();await page.unroute('**/settlements');}
       cases.push('browser-settlement-late-created-response-cannot-navigate-after-leave-and-original-history-cancel-recovers');
       await page.goto(`${browser.origin}/system/billing/settlements/${pending.row.id}`,{waitUntil:'domcontentloaded'});await page.getByText('Stripe ยังไม่เริ่มโอน',{exact:true}).waitFor();
-      await page.getByRole('link',{name:'เปิดรายงาน Stripe เพื่อตรวจต่อ',exact:true}).waitFor();await page.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-settlement-pending-mobile.png',fullPage:true});
+      await page.getByRole('link',{name:'เปิดรายงาน Stripe เพื่อตรวจต่อ',exact:true}).waitFor();await page.screenshot({path:`${browser.evidenceDir}/admin-settlement-pending-mobile.png`,fullPage:true});
       cases.push('browser-settlement-create-retained-partial-next-page-complete-mobile-case-original-run-history-and-delayed-payout-path');
     }
     assert.deepEqual(await financial(),before);assert.equal(writes,0);assert.ok(reads>0);cases.push('settlement-get-only-never-mutates-financial-evidence-paid-days-quota-or-capacity');return cases;

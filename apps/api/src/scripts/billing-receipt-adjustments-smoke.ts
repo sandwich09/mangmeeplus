@@ -1,3 +1,4 @@
+import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
 import {checkManualReceiptAdjustments} from './manual-receipt-adjustments-smoke';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
@@ -44,7 +45,7 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
     // Other scenarios in the combined run can leave this same synthetic session's proof valid.
     await db.authSession.updateMany({where:{userId:{in:input.userIds.slice(0,2)}},data:{billingReauthenticatedAt:null,billingCredentialVersion:null}});
     assert.equal((await command(first.body,'submit')).status,409,'current password proof required');
-    for(const actor of [request,approveRequest])assert.equal((await actor(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
+    for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
     const submitted=await command(first.body,'submit');assert.equal(submitted.status,200,JSON.stringify(submitted));
     assert.equal(submitted.body.state,'AWAITING_APPROVAL');assert.equal((await command(first.body,'submit')).body.id,first.body.id);
     assert.equal((await command(submitted.body,'approve')).status,403);

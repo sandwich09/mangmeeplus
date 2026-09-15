@@ -1,5 +1,7 @@
 # แผน implement Postmark และใช้เอกสารลูกค้าจาก Stripe
 
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
 > **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
 
 
@@ -105,7 +107,8 @@ Prove CONFIG→review→READY→accepted, UNKNOWN→same-message lookup with no 
 - [x] API/auth/error/webhook/idempotency/attachment/sandbox docsตรวจแล้ว; sender-specific assumptionsถูกแทนที่.
 - [x] ระบุruntime gaps, migration, permission/state/secret boundariesและtest matrixที่ใช้จริง.
 - [x] เชื่อม P11/P26/easy signup/ADR/mangmee_web และแยก scope tax/e-Taxที่ยังไม่ทำ.
-- [ ] M1–M4 implementation + EM01–EM18; actual provider/Stripe document acceptance.
+- [x] M1–M4 implementation และ local acceptance ตาม final-integration-result.json; provider transport จำลอง.
+- [ ] Actual provider/Stripe document acceptance ก่อนเปิดบริการจริงตาม EM matrix และ release runbook.
 
 ผลตรวจเอกสาร/ลิงก์/fixturesบันทึกใน [task memory](../agent-memory/unified-easy-signup-2026-09-11.md). Docs-readyไม่ใช่production-ready; ไม่อ้าง API/inbox/E2Eผ่านจากการอ่านเอกสาร.
 

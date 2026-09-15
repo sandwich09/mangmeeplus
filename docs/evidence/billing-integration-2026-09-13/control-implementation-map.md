@@ -13,16 +13,12 @@
 | C07 ตรวจเทียบ Stripe | Event/invoice/config/settlement → ค้นหาแบบมีขอบเขต → ดูสิ่งที่ยังไม่ตรง → เคส/คำสั่งเดิม → ตรวจอีกครั้ง; หน้าต่อไปล้มให้ทำต่อจากจุดเดิม | [Provider event](provider-event-result.json), [Discovery](provider-discovery-result.json), [Invoice scan](invoice-discovery-result.json), [Config](configuration-check-result.json), [Settlement](settlement-result.json), [Batch](batch-result.json) |
 | C08 ข้อยกเว้นและประวัติ | ปรับแพ็กเกจ/เพดานชั่วคราว เพิ่มใบเสร็จ ปรับ AI หรือคืนเงินตามการอนุมัติ → ดูผู้แก้/เหตุผล/ค่าก่อนหลัง/ผลจริง; สิทธิ์ซื้อและสิทธิ์แถมแยกกัน | [แพ็กเกจชั่วคราว](plan-adjustments-result.json), [ใบเสร็จ paid](admin-receipt-adjustments-result.json), [AI](admin-ai-adjustments-result.json), [Manual plan](manual-plan-result.json), [Manual receipts](manual-receipts-result.json), [Refund](refund-command-result.json) |
 
-ยังต้องทำก่อนรับรองครบ:
+สถานะปิดงานล่าสุด2026-09-15: มติวันแถมและอายุประวัติเมลได้รับอนุมัติและเขียนโค้ดแล้ว. CT22 พัก/กลับมาเก็บเงินมีคำขอผ่าน Admin พร้อมตรวจบิลเดิม/ผู้อนุมัติ/ผล Stripe; ไม่มี Owner question ค้าง. Local clean integration ผ่านตาม final-integration-result.json; รอ final CI และ Admin merge ทั้งสอง repo.
 
-- C08 การเพิ่มวันให้ลูกค้าที่จ่ายแล้ว: รอคำตอบเดิมว่าจะเลื่อนวันเรียกเก็บ Stripe ด้วยหรือไม่ จึงยังไม่มีการเดาวันตัดเงิน
-- อายุจัดเก็บประวัติเมลในระบบ: รอคำตอบเดิม; การเก็บของ Postmark เป็นคนละขอบเขต ห้ามล้างหลักฐานส่งซ้ำ/งานค้าง/audit ตามการล้างประวัติทั่วไป
-- AP21–AP24: ใบเสร็จตรวจ revision/สิทธิ์หลังเก็บไฟล์และบันทึกแบบ transaction ผ่าน [receipt proof](receipt-upload-source-result.json) แล้ว; ลายเซ็น/หลักฐานเสริมตรวจผู้ใช้และ LINE event ก่อนบันทึกผ่าน [signature proof](signature-upload-access-result.json) แบบจำลองแล้ว. คำถาม/ลำดับเดิมและ source ของงานก่อนหน้านี้มีผลใน evidence; ยังต้องเทียบ acceptance รวมกับ native LINE/LIFF แยกต่างหาก
-- CT01–CT32 และ AP01–AP24 ต้องเทียบกับผลรวมของ source ปัจจุบันและ acceptance ที่ยังขาด; ชุดย่อยมีกรณีซ้ำกัน จึงห้ามบวกจำนวนเป็นเปอร์เซ็นต์หรือจำนวน business flows
-- หลักฐานในตารางมีทั้งผลเก่าและผลล่าสุด แต่ละไฟล์บอก source และข้อจำกัดของตนเอง การผ่าน simulation ไม่แทน native LINE/LIFF/provider และไม่แทน final CI
+- วันแถมเลื่อนทั้งวันใช้งานและวันเก็บ Stripe เท่ากัน; ไม่เพิ่มใบเสร็จ/AI. ซื้อซ้ำคงวันครบรอบที่เลื่อน, ยกเลิกและ downgrade ที่รอไว้ยังคงอยู่.
+- ประวัติเมลทั่วไปเก็บ180วัน, cleanupOFF; Admin เปลี่ยนผ่านเว็บได้. เก็บ original send/dedupe/suppression/audit/งานค้างต่อ; ไม่เปลี่ยน retention ใน Postmark.
+- AP02–AP04 เพิ่ม proof หน้า Admin preset/child/CAS/retry/cascade/normalization จริง; package tier, role และ launch gate เป็นคนละชั้น. การเปลี่ยน entitlement ไม่ใช่การเปิด feature launch ที่ปิดอยู่.
+- AP21–AP24 ตรวจ receipt/signature/current LINE source และการกู้ delivery ผ่านชุดเฉพาะและ regression; native LINE/LIFF บนอุปกรณ์จริงยังเป็น acceptance ก่อนเปิดบริการ ไม่ใช่ผลจำลอง.
+- CT01–CT32+CT24a มี33กลุ่ม, AP01–AP24มี24กลุ่ม รวม57กลุ่ม acceptance; ไม่ใช่57business flowsหรือเปอร์เซ็นต์. ดู [mappingรายกลุ่ม](final-acceptance-map.md).
 
-[แพ็กเกจครบ12แบบและฟอร์ม Admin หลัง429](billing-label-offer-matrix-result.json) ผ่านแบบจำลองในเครื่องแล้ว; ผลนี้ไม่ใช่ native LINE/LIFF และไม่แทนทุก CT/AP.
-
-CI ยังรวบไปรันเมื่อพร้อมเพื่อลดค่าใช้จ่าย งานนี้ยังไม่ push/merge/deploy
-
-Current follow-up: [combined308](combined-upload-access-result.json) includes the12-offer matrix and forced429 recovery. [Admin budget safety/Thai UI](admin-budget-input-result.json) then passes12 focused browser/HTTP/PG groups and75 unit/error guards. Invalid nonempty amounts cannot clear a company override; platform read failure has a reload path. No full CT/AP/native or clean-CI closure is inferred.
+ผล native provider/device และการ deploy แยกจาก source/CI acceptance เสมอ. User อนุญาต simulation และสั่งจบที่ merge; ห้ามเปิด LIVE/deploy เพื่อเติมคำว่า PASS.

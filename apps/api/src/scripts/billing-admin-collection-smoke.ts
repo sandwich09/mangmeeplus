@@ -1,3 +1,4 @@
+import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import type { checkBillingConfigurationDrafts } from './billing-configuration-drafts-smoke';
@@ -14,17 +15,30 @@ export async function checkAdminCollectionControl(input:Parameters<typeof checkB
     reason:'ตรวจการพักเก็บเงินตามคำขอ',sourceHash:(await request(`${company}/plan-adjustments`)).body.sourceHash});
   const approve=async(action:string)=>{let r=await preview(action);assert.equal(r.status,200,JSON.stringify(r));r=await cmd(r.body,'submit');assert.equal(r.status,200,JSON.stringify(r));
     r=await cmd(r.body,'approve',approveRequest);assert.equal(r.status,200,JSON.stringify(r));return r.body;};
-  const proof=async()=>{for(const actor of [request,approveRequest])assert.equal((await actor(`${company}/reauthenticate`,'POST',{password:input.password})).status,200);};
+  const proof=async()=>{for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,input.password);};
   const unchanged=async()=>({term:await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}}),grants:await db.billingReceiptGrant.findMany({where:{billingAccountId:accountId},orderBy:{id:'asc'}}),
     invoices:await db.billingInvoice.findMany({where:{billingAccountId:accountId},orderBy:{id:'asc'}}),ai:await db.companyAiConfiguration.findUnique({where:{companyId}})});
   const before=await unchanged(),invoiceCount=invoices.length;
   invoices.push(...['open','draft'].map((status,index)=>({id:`in_control_${tag}_${status}`,object:'invoice',livemode:false,customer:sub.customer,subscription:sub.id,
     status,currency:'thb',amount_remaining:10000+index*5000,auto_advance:status==='open',attempt_count:0})));
   const invoiceSource=structuredClone(invoices),results:string[]=[];
+  const originalRoles=await db.membershipRole.findMany({where:{membershipId:input.membershipId}});
+  const collectionPermissions=await db.permission.findMany({where:{key:{in:['system.billing.read','system.billing.financial.read','system.billing.collection.manage','account.session.read']}}});assert.equal(collectionPermissions.length,4);
+  const onlyRole=await db.role.create({data:{key:`COLLECTION_ONLY_${tag}`,scopeKey:'system',isSystem:true,companyId:null,name:'Synthetic collection-only Admin',permissions:{create:collectionPermissions.map(p=>({permissionId:p.id}))}}});
+  const onlyScope=await db.billingOperatorScope.create({data:{userId:input.userIds[0]!,stripeAccountId:input.stripeAccountId,livemode:false,companyId,createdByUserId:input.userIds[1]!}});
   try{
+    await db.membershipRole.deleteMany({where:{membershipId:input.membershipId}});
+    await db.membershipRole.create({data:{membershipId:input.membershipId,roleId:onlyRole.id}});
+    const capabilities=(await request(`${base}/overview`)).body.capabilities;
+    assert.deepEqual([...capabilities].sort(),['system.billing.collection.manage','system.billing.financial.read','system.billing.read']);
+    assert.equal((await request(`${company}/reauthenticate`)).status,200,'collection-only staff can access the scoped password proof');
+    const access=await request(`${company}/plan-adjustments`);assert.equal(access.status,200);
+    assert.equal(access.body.canCreate,false);assert.equal(access.body.canManageCollection,true);
+    assert.equal((await request(`${company}/plan-adjustments/preview`,'POST',{type:'GRANT_FREE_DAYS',days:1,reason:'ไม่มีสิทธิ์แถมวัน',sourceHash:access.body.sourceHash})).status,403);
     await proof();assert.notEqual((await preview('INVALID')).status,200);assert.notEqual((await preview('PAUSE',new Date(Date.now()-60000).toISOString())).status,200);
     assert.notEqual((await preview('RESUME')).status,200,'cannot resume an unpaused subscription');
     let p=await preview();assert.equal(p.status,200,JSON.stringify(p));
+    results.push('admin-collection-only-permission-can-preview-without-package-override-and-cannot-grant-days');
     assert.equal(p.body.collectionChange.openInvoices,1);assert.equal(p.body.collectionChange.draftInvoices,1);assert.equal(p.body.collectionChange.outstandingSatang,25000);
     p=await cmd(p.body,'submit');assert.equal(p.status,200);assert.equal((await cmd(p.body,'approve')).status,403);
     p=await cmd(p.body,'approve',approveRequest);assert.equal(p.status,200,JSON.stringify(p));
@@ -84,15 +98,29 @@ export async function checkAdminCollectionControl(input:Parameters<typeof checkB
     results.push('admin-collection-late-observation-after-automatic-resume-never-repauses-or-collects-drafts');
     if(browser&&secondBrowser){
       await proof();const page=browser.page,other=secondBrowser.pages()[0]!;
+      const press=async(actor:typeof page,name:string,path:string)=>{
+        let original:unknown;
+        for(let attempt=0;attempt<3;attempt++){
+          const response=actor.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith(path));
+          await actor.getByRole('button',{name,exact:true}).click();const r=await response,value=await r.json();
+          const intent={body:r.request().postDataJSON(),key:r.request().headers()['idempotency-key']};
+          if(attempt===0)original=intent;else assert.deepEqual(intent,original,'retry the same reviewed command');
+          if(r.status()!==429){assert.equal(r.status(),200,JSON.stringify(value));return value;}
+          assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(value.retryAfterSeconds)&&value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
+          await actor.getByRole('alert').filter({hasText:'กรุณารอ'}).waitFor();await new Promise(resolve=>setTimeout(resolve,(value.retryAfterSeconds+1)*1000));
+        }
+        throw Error('Collection browser command did not recover within the actual rate limit');
+      };
       await page.goto(`${browser.origin}/system/billing/companies/${companyId}/plan-adjustments`,{waitUntil:'domcontentloaded'});
       const panel=page.getByRole('region',{name:'พักหรือกลับมาเก็บเงิน',exact:true});
+      await panel.waitFor();assert.equal(await page.getByRole('region',{name:'แถมวันใช้งาน',exact:true}).count(),0);assert.equal(await page.getByLabel('แพ็กเกจชั่วคราว',{exact:true}).count(),0);
       await panel.getByLabel('รายการที่ต้องการ',{exact:true}).selectOption('PAUSE');
       await panel.getByLabel('กลับมาเก็บเงินเมื่อไร (เวลาประเทศไทย)',{exact:true}).fill(new Date(Date.now()+86400000+7*3600000).toISOString().slice(0,16));
       await panel.getByLabel('เหตุผลที่ปรับการเก็บเงิน',{exact:true}).fill('พักเก็บเงินจากหน้าเว็บ');
-      await panel.getByRole('button',{name:'ตรวจผลต่อบิลก่อนส่งคำขอ',exact:true}).click();await page.waitForURL(/\/system\/billing\/plan-adjustments\//);
-      await page.getByText('บิลเดิมที่ยังเปิด 1 รายการ',{exact:false}).waitFor();await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();
+      await press(page,'ตรวจผลต่อบิลก่อนส่งคำขอ',`${company}/plan-adjustments/preview`);await page.waitForURL(/\/system\/billing\/plan-adjustments\//);
+      await page.getByText('บิลเดิมที่ยังเปิด 1 รายการ',{exact:false}).waitFor();await press(page,'ส่งคำขอให้ผู้อนุมัติ',`${base}/plan-adjustments/${page.url().split('/').at(-1)}/submit`);
       await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();await other.goto(page.url(),{waitUntil:'domcontentloaded'});
-      await other.getByRole('button',{name:'อนุมัติปรับการเก็บเงิน',exact:true}).click();await other.getByRole('heading',{name:'รอตรวจการเก็บเงินกับ Stripe',exact:true}).waitFor();
+      await press(other,'อนุมัติปรับการเก็บเงิน',`${base}/plan-adjustments/${page.url().split('/').at(-1)}/approve`);await other.getByRole('heading',{name:'รอตรวจการเก็บเงินกับ Stripe',exact:true}).waitFor();
       await input.reconcile(accountId);await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('heading',{name:'ยืนยันการปรับเก็บเงินแล้ว',exact:true}).waitFor();
       assert.ok(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await other.screenshot({path:`${browser.evidenceDir}/admin-collection-control-20260915.png`,fullPage:true});
       await page.goto(`${browser.origin}/companies/${companyId}/billing`,{waitUntil:'domcontentloaded'});await page.getByText('พักเก็บเงินอยู่ตามสถานะที่ตรวจล่าสุด',{exact:true}).waitFor();
@@ -101,5 +129,8 @@ export async function checkAdminCollectionControl(input:Parameters<typeof checkB
     }
     assert.deepEqual(await unchanged(),before);assert.deepEqual(invoices,invoiceSource);
     return results;
-  }finally{invoices.splice(invoiceCount);}
+  }finally{
+    await db.membershipRole.deleteMany({where:{membershipId:input.membershipId}});await db.membershipRole.createMany({data:originalRoles});
+    await db.billingOperatorScope.delete({where:{id:onlyScope.id}});await db.rolePermission.deleteMany({where:{roleId:onlyRole.id}});await db.role.delete({where:{id:onlyRole.id}});invoices.splice(invoiceCount);
+  }
 }

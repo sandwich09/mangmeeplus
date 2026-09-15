@@ -1,3 +1,4 @@
+import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
@@ -18,7 +19,7 @@ export async function checkManualReceiptAdjustments(input:Parameters<typeof chec
     await db.companyPlanTerm.create({data:{companyId,tierKey:'FREE_TRIAL_15',monthlySlipLimit:15,branchLimit:1,employeeLimit:2,termStartAt:now,termEndsAt:end}});
     for(let i=0;i<15;i++)assert.equal((await admitCompanyOcr(prisma,{companyId,sourceRoute:'receipt-ocr-web',requestId:randomUUID(),enforceReceiptQuota:true})).allowed,true);
     assert.equal((await review()).remaining,0);assert.equal((await review()).canCreate,true);
-    for(const actor of [request,approveRequest])assert.equal((await actor(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
+    for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
     const first=await preview(),sent=await command(first,'submit');assert.equal(sent.status,200,JSON.stringify(sent));
     const approved=await Promise.all([command(sent.body,'approve',approveRequest),command(sent.body,'approve',approveRequest)]);
     for(const result of approved)assert.equal(result.status,200,JSON.stringify(result));
@@ -39,7 +40,9 @@ export async function checkManualReceiptAdjustments(input:Parameters<typeof chec
       await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).waitFor();
       await other.getByLabel('รหัสผ่านปัจจุบัน',{exact:true}).fill(password);
+      const passwordResult=other.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith(`${base}/companies/${companyId}/reauthenticate`));
       await other.getByRole('button',{name:'ยืนยันรหัสผ่าน',exact:true}).click();
+      const passwordResponse=await passwordResult;assert.equal(passwordResponse.status(),200,JSON.stringify(await passwordResponse.json()));
       await other.getByText('ยืนยันรหัสผ่านแล้ว ดำเนินการต่อได้ภายใน 5 นาที',{exact:true}).waitFor();
       let committed=false,approvalFailure:unknown;
       let finishApproval!:()=>void;const approvalHandled=new Promise<void>(resolve=>{finishApproval=resolve;});
@@ -48,12 +51,12 @@ export async function checkManualReceiptAdjustments(input:Parameters<typeof chec
       assert.equal(committed,true,JSON.stringify(approvalFailure));await other.getByRole('alert').filter({hasText:'เชื่อมต่อระบบไม่ได้'}).waitFor();
       await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).click();await other.getByRole('heading',{name:'ปรับใบเสร็จแล้ว',exact:true}).waitFor();
       assert.equal(await db.billingReceiptGrant.count({where:{companyId,sourceKey:browserGiftId}}),1);assert.equal((await customer()).usage.remaining,4);
-      await other.setViewportSize({width:390,height:844});await other.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-manual-receipts-mobile.png',fullPage:true});
+      await other.setViewportSize({width:390,height:844});await other.screenshot({path:`${browser.evidenceDir}/admin-manual-receipts-mobile.png`,fullPage:true});
       for(const channel of ['web','line']){
         await page.goto(`${browser.origin}/companies/${companyId}/billing?channel=${channel}`,{waitUntil:'domcontentloaded'});
         await page.getByText(/ใบเสร็จคงเหลือ 4 ใบ/).waitFor();await page.getByText(/โควตาปกติ 15 ใบต่อเดือน.*ผู้ดูแลเพิ่มให้ เหลือ 4 ใบ/).waitFor();
       }
-      await page.screenshot({path:'/tmp/mangmee-billing-browser-evidence/manual-receipts-owner-mobile.png',fullPage:true});
+      await page.screenshot({path:`${browser.evidenceDir}/manual-receipts-owner-mobile.png`,fullPage:true});
       cases.push('browser-manual-receipts-create-independent-approval-lost-result-retry-once-and-separate-monthly-gift-web-line-copy');
     }
     const pending=await preview(),pendingSent=await command(pending,'submit');assert.equal(pendingSent.status,200);
