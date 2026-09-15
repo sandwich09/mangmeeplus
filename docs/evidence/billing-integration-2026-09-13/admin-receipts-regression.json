@@ -1,0 +1,21 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+  "passed": [
+    "admin-paid-receipts-review-shows-current-disabled-read-limit-and-budget-impact",
+    "admin-paid-receipts-reason-validation-expiry-password-independent-approval-replay",
+    "admin-paid-receipts-web-line-admission-and-revoke-preserve-consumption-and-paid-grant",
+    "admin-paid-receipts-hold-stale-expired-review-cancel-and-foreign-history",
+    "admin-paid-receipts-approval-rechecks-withdrawn-requester-authority",
+    "admin-paid-receipts-audit-failure-rolls-back-grant-and-operation",
+    "browser-customer-web-and-line-billing-entry-see-admin-granted-balance",
+    "browser-admin-receipts-preview-independent-approval-response-loss-history-reload-mobile",
+    "admin-paid-receipts-preserve-package-collection-original-purchase-and-no-fiscal-document"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false
+}

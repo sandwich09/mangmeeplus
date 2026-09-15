@@ -280,3 +280,4 @@ export * from './substitute-receipt-presentation.js';
 export * from './billing.js';
 
 export * from './billing-labels.js';
+export * from './email-delivery.js';

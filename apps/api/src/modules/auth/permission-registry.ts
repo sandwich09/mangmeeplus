@@ -64,6 +64,7 @@ export const PERMISSIONS: PermissionDef[] = [
   // Item 10A platform onboarding permissions
   { key: 'system.company_onboarding.create', description: 'Create customer company onboarding', riskLevel: 'HIGH' },
   { key: 'system.company_onboarding.read', description: 'Read customer company onboarding',   riskLevel: 'MEDIUM' },
+  { key: 'system.email_delivery.read', description: 'Read safe platform email delivery observations', riskLevel: 'HIGH' },
   { key: 'system.company_onboarding.regenerate_temporary_password', description: 'Regenerate customer owner temporary password', riskLevel: 'CRITICAL' },
   { key: 'system.line_binding.manage',  description: 'Manage customer LINE channel bindings', riskLevel: 'HIGH' },
   { key: 'system.shared_line_credential.manage', description: 'Read and replace shared Messaging credentials for the existing OA', riskLevel: 'CRITICAL' },
@@ -479,6 +480,7 @@ export const ROLE_GRANTS: Record<string, string[]> = {
     'account.identity.unlink',
     'system.company_onboarding.create',
     'system.company_onboarding.read',
+    'system.email_delivery.read',
     'system.company_onboarding.regenerate_temporary_password',
     'system.line_binding.manage',
     // Item 10A partner management

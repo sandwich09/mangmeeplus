@@ -44,6 +44,7 @@ const SECTIONS = [
   { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน' },
+  { href: '/system/email-delivery', label: 'สถานะอีเมล' },
   { href: SUPPORT_REQUESTS_HREF, label: 'คำขอคุยกับเจ้าหน้าที่' },
   // ค้นหาผู้ใช้ is a section on the partners page, not a tab — /system/users redirects there.
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
@@ -53,7 +54,7 @@ const SECTIONS = [
   { href: '/system/billing', label: 'การชำระเงิน' },
 ];
 
-const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean }> = ({ billingOnly = false, billingAllowed = false }) => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false }) => {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const pathname = usePathname();
@@ -73,10 +74,11 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean }
     <header className="sticky top-0 z-40 flex w-full flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 lg:px-6">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <Link href={billingOnly ? "/system/billing" : "/system/partners"} className="mr-1 text-sm font-semibold text-gray-900">
-          {billingOnly ? 'มั่งมี · ดูแลการชำระเงิน' : 'WatchDog System Admin'}
+          {billingOnly ? 'มั่งมี · ดูแลการชำระเงิน' : 'มั่งมี · ผู้ดูแลระบบ'}
         </Link>
         <nav aria-label="ส่วนงานผู้ดูแลระบบ" className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap md:max-w-none md:overflow-x-visible md:whitespace-normal">
-          {SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' : section.href !== '/system/billing' || billingAllowed).map((section) => {
+          {SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' :
+            (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed)).map((section) => {
             const active = pathname.startsWith(section.href);
             return (
               <Link

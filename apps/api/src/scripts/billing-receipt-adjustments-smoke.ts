@@ -39,6 +39,8 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
     for(const extra of [{reason:''},{reason:'x'.repeat(501)},{units:0},{units:1.5},{units:2147483648},{source:'STRIPE'},{expiresAt:'10/12/2027'},{expiresAt:'not-a-date'},{type:'REVOKE_RECEIPTS',units:undefined,expiresAt:undefined,grantId:'wrong-id'}])assert.equal((await preview(extra)).status,400);
     assert.equal((await preview({expiresAt:new Date(end.getTime()+1000).toISOString()})).status,409);
     const first=await preview();assert.equal(first.status,200,JSON.stringify(first));
+    // Other scenarios in the combined run can leave this same synthetic session's proof valid.
+    await db.authSession.updateMany({where:{userId:{in:input.userIds.slice(0,2)}},data:{billingReauthenticatedAt:null,billingCredentialVersion:null}});
     assert.equal((await command(first.body,'submit')).status,409,'current password proof required');
     for(const actor of [request,approveRequest])assert.equal((await actor(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
     const submitted=await command(first.body,'submit');assert.equal(submitted.status,200,JSON.stringify(submitted));
@@ -100,7 +102,16 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
       await page.getByText('ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',{exact:true}).waitFor();
       await page.getByRole('textbox',{name:'เพิ่มใบเสร็จจำนวน',exact:true}).fill('7');
       await page.getByRole('textbox',{name:'เหตุผลที่ปรับใบเสร็จ',exact:true}).fill('เพิ่มจากหน้าเว็บให้เจ้าของร้าน');
-      await page.getByRole('button',{name:'ตรวจจำนวนก่อนส่งคำขอ',exact:true}).click();await page.waitForURL(/\/system\/billing\/receipt-adjustments\//);
+      for(let tries=0;;tries++){
+        const response=page.waitForResponse(r=>r.url().endsWith(`/companies/${companyId}/receipt-adjustments/preview`));
+        await page.getByRole('button',{name:'ตรวจจำนวนก่อนส่งคำขอ',exact:true}).click();const result=await response;
+        if(result.status()!==429){assert.equal(result.status(),200,JSON.stringify(await result.json()));break;}
+        assert.ok(tries<2);const body=await result.json();assert.ok(Number.isInteger(body.retryAfterSeconds)&&body.retryAfterSeconds<=60);
+        await page.getByRole('alert').getByText(/รอ/).waitFor();
+        assert.equal(await page.getByRole('textbox',{name:'เหตุผลที่ปรับใบเสร็จ',exact:true}).inputValue(),'เพิ่มจากหน้าเว็บให้เจ้าของร้าน');
+        await new Promise(resolve=>setTimeout(resolve,Math.min(60,body.retryAfterSeconds+1)*1000));
+      }
+      await page.waitForURL(/\/system\/billing\/receipt-adjustments\//);
       const opId=new URL(page.url()).pathname.split('/').pop()!;
       for(let tries=0;;tries++){
         const response=page.waitForResponse(r=>r.url().endsWith(`/receipt-adjustments/${opId}/submit`));
@@ -108,7 +119,7 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
         if(result.status()!==429){assert.equal(result.status(),200);break;}
         assert.ok(tries<2);const body=await result.json();assert.ok(Number.isInteger(body.retryAfterSeconds)&&body.retryAfterSeconds<=60);
         await page.getByRole('alert').getByText(/รอ/).waitFor();
-        await new Promise(resolve=>setTimeout(resolve,(body.retryAfterSeconds+1)*1000));
+        await new Promise(resolve=>setTimeout(resolve,Math.min(60,body.retryAfterSeconds+1)*1000));
       }
       await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();assert.equal((await review()).remaining,0);
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});

@@ -8,6 +8,7 @@ import { checkSignupJourney } from './signup-journey-smoke';
 import { checkBillingProviderScans } from './billing-provider-scans-smoke';
 import { checkEmailPasswordReset } from './email-password-reset-smoke';
 import { checkEmailVerification } from './email-verification-smoke';
+import { checkEmailMonitoring } from './email-monitoring-smoke';
 import { checkBillingApplyRetry } from './billing-apply-retry-smoke';
 import { RedisRateLimitService } from '../common/security/redis-rate-limit.service';
 import { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
@@ -181,6 +182,7 @@ async function main() {
     const checkProviderEvents=()=>checkBillingProviderEvents({request,prisma,userId:userIds[0]!,membershipId:memberId,stripeAccountId:accountId,
       reconciler:app.get(BillingReconcilerService),operations:app.get(BillingOperationsService),provider,browser,interceptRead:hook=>{providerReadHook=hook;}});
     const checkClaimHistory=()=>checkSignupClaimHistory({request,prisma,userId:userIds[0]!,membershipId:memberId,browser});
+    const checkMailMonitoring=()=>checkEmailMonitoring({app,prisma,request,userId:userIds[0]!,membershipId:memberId,browser,transport:hook=>{journeyTransport=hook;}});
     const checkProviderScans=async()=>{
       // Keep the actual operator limit; this independent scenario follows other commands in the combined suite.
       const budget=await app.get(RedisRateLimitService).inspect('billing-operator-commands',userIds[0]!,30,60);
@@ -224,12 +226,12 @@ async function main() {
         drain:()=>request('/v1/internal/signup-claim-email/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}}));
       console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,simulatedProviders:['DNS','Postmark','AI Gateway (503)'],objectStorage:'real-local-bytes',realProviderDelivery:false,browserE2E:true}));return;
     }
-    if (process.env.BILLING_CLAIM_HISTORY_ONLY === '1') {
+    if (process.env.BILLING_CLAIM_HISTORY_ONLY === '1' || process.env.BILLING_EMAIL_MONITORING_ONLY === '1') {
       if(process.env.BILLING_BROWSER_E2E==='1'){
         const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       }
-      cases.push(...await checkClaimHistory());
-      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL',passed:cases,browserE2E:Boolean(browser),providerCalls:false}));return;
+      cases.push(...await (process.env.BILLING_EMAIL_MONITORING_ONLY === '1' ? checkMailMonitoring() : checkClaimHistory()));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL',passed:cases,browserE2E:Boolean(browser),nativeProviderCalls:false}));return;
     }
     if (process.env.BILLING_PROVIDER_EVENTS_ONLY === '1') {
       if(process.env.BILLING_BROWSER_E2E==='1'){
@@ -530,6 +532,7 @@ async function main() {
     cases.push(...await checkReceiptQuotaRuntime({ request, prisma, userId: userIds[0]!, membershipId: memberId, browser }));
     cases.push(...await checkProviderEvents());
     cases.push(...await checkClaimHistory());
+    cases.push(...await checkMailMonitoring());
     cases.push(...await checkProviderScans());
     console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
       simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false, browserE2E: Boolean(browser) }));

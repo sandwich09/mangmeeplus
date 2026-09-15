@@ -34,7 +34,7 @@ export default async function SystemLayout({ children }: { children: ReactNode }
 
   return (
     <div className="min-h-dvh bg-gray-50">
-      <SystemHeader billingOnly={!isSystemAdmin(result.session)} billingAllowed={result.session.permissions.includes('system.billing.read')} />
+      <SystemHeader billingOnly={!isSystemAdmin(result.session)} billingAllowed={result.session.permissions.includes('system.billing.read')} emailAllowed={result.session.permissions.includes('system.email_delivery.read')} />
       {children}
     </div>
   );

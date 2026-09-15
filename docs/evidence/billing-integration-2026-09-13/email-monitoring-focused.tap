@@ -1,0 +1,446 @@
+TAP version 13
+# Subtest: projects only configured native facts without secrets or inferred content retention
+ok 1 - projects only configured native facts without secrets or inferred content retention
+  ---
+  duration_ms: 0.88725
+  type: 'test'
+  ...
+# Subtest: foreign identities never establish configured mode, stream type or archive state
+ok 2 - foreign identities never establish configured mode, stream type or archive state
+  ---
+  duration_ms: 0.06425
+  type: 'test'
+  ...
+# Subtest: absent or malformed native fields remain unknown without truthy coercion
+ok 3 - absent or malformed native fields remain unknown without truthy coercion
+  ---
+  duration_ms: 0.159417
+  type: 'test'
+  ...
+# Subtest: known inactive or non-transactional streams stay distinguishable from unknown
+ok 4 - known inactive or non-transactional streams stay distinguishable from unknown
+  ---
+  duration_ms: 0.042833
+  type: 'test'
+  ...
+# Subtest: Postmark cloud environment isolation before dispatch
+    # Subtest: checks exact live server and active transactional stream before every UAT/Production POST
+    ok 1 - checks exact live server and active transactional stream before every UAT/Production POST
+      ---
+      duration_ms: 17.814083
+      type: 'test'
+      ...
+    # Subtest: refuses wrong deployment, provider, sender, origin, stream or recipient before any provider request
+    ok 2 - refuses wrong deployment, provider, sender, origin, stream or recipient before any provider request
+      ---
+      duration_ms: 0.710625
+      type: 'test'
+      ...
+    # Subtest: normalizes an exact UAT recipient without rewriting it, and does not apply that list to Production
+    ok 3 - normalizes an exact UAT recipient without rewriting it, and does not apply that list to Production
+      ---
+      duration_ms: 0.268958
+      type: 'test'
+      ...
+    # Subtest: unknown, foreign, sandbox, archived and non-transactional native facts never allow POST
+    ok 4 - unknown, foreign, sandbox, archived and non-transactional native facts never allow POST
+      ---
+      duration_ms: 0.668208
+      type: 'test'
+      ...
+    # Subtest: readiness network failure stays a sanitized config failure without an uncertain email POST
+    ok 5 - readiness network failure stays a sanitized config failure without an uncertain email POST
+      ---
+      duration_ms: 0.070166
+      type: 'test'
+      ...
+    1..5
+ok 5 - Postmark cloud environment isolation before dispatch
+  ---
+  duration_ms: 19.8615
+  type: 'suite'
+  ...
+# Subtest: Postmark transport and callback contract
+    # Subtest: inspects only the configured server and stream through GET without returning native secrets
+    ok 1 - inspects only the configured server and stream through GET without returning native secrets
+      ---
+      duration_ms: 0.239166
+      type: 'test'
+      ...
+    # Subtest: stops native inspection at missing configuration or a foreign server and keeps failures sanitized
+    ok 2 - stops native inspection at missing configuration or a foreign server and keeps failures sanitized
+      ---
+      duration_ms: 0.134792
+      type: 'test'
+      ...
+    # Subtest: uses the fixed API with redirect refusal, timeout and explicit authentication; validates accepted response
+    ok 3 - uses the fixed API with redirect refusal, timeout and explicit authentication; validates accepted response
+      ---
+      duration_ms: 0.399166
+      type: 'test'
+      ...
+    # Subtest: keeps malformed success UNKNOWN ({})
+    ok 4 - keeps malformed success UNKNOWN ({})
+      ---
+      duration_ms: 0.245125
+      type: 'test'
+      ...
+    # Subtest: keeps malformed success UNKNOWN ({"ErrorCode":0,"MessageID":"22222222-2222-4222-8222-222222222222"})
+    ok 5 - keeps malformed success UNKNOWN ({"ErrorCode":0,"MessageID":"22222222-2222-4222-8222-222222222222"})
+      ---
+      duration_ms: 0.202083
+      type: 'test'
+      ...
+    # Subtest: keeps malformed success UNKNOWN ({"ErrorCode":0,"MessageID":"x","SubmittedAt":"today"})
+    ok 6 - keeps malformed success UNKNOWN ({"ErrorCode":0,"MessageID":"x","SubmittedAt":"today"})
+      ---
+      duration_ms: 0.074167
+      type: 'test'
+      ...
+    # Subtest: does not expose provider body or tokens on transport failure
+    ok 7 - does not expose provider body or tokens on transport failure
+      ---
+      duration_ms: 0.066916
+      type: 'test'
+      ...
+    # Subtest: rejects the provider validation token outside local execution
+    ok 8 - rejects the provider validation token outside local execution
+      ---
+      duration_ms: 0.049083
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 401 / ErrorCode 10
+    ok 9 - classifies HTTP 401 / ErrorCode 10
+      ---
+      duration_ms: 0.044084
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 422 / ErrorCode 406
+    ok 10 - classifies HTTP 422 / ErrorCode 406
+      ---
+      duration_ms: 0.018459
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 422 / ErrorCode 413
+    ok 11 - classifies HTTP 422 / ErrorCode 413
+      ---
+      duration_ms: 0.021041
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 413 / ErrorCode 0
+    ok 12 - classifies HTTP 413 / ErrorCode 0
+      ---
+      duration_ms: 0.017875
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 429 / ErrorCode 0
+    ok 13 - classifies HTTP 429 / ErrorCode 0
+      ---
+      duration_ms: 0.017625
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 503 / ErrorCode 0
+    ok 14 - classifies HTTP 503 / ErrorCode 0
+      ---
+      duration_ms: 0.016792
+      type: 'test'
+      ...
+    # Subtest: honors a bounded Retry-After without inventing a header
+    ok 15 - honors a bounded Retry-After without inventing a header
+      ---
+      duration_ms: 0.098417
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 401 even when a proxy returns HTML
+    ok 16 - classifies HTTP 401 even when a proxy returns HTML
+      ---
+      duration_ms: 0.160125
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 413 even when a proxy returns HTML
+    ok 17 - classifies HTTP 413 even when a proxy returns HTML
+      ---
+      duration_ms: 0.0625
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 429 even when a proxy returns HTML
+    ok 18 - classifies HTTP 429 even when a proxy returns HTML
+      ---
+      duration_ms: 0.055667
+      type: 'test'
+      ...
+    # Subtest: classifies HTTP 502 even when a proxy returns HTML
+    ok 19 - classifies HTTP 502 even when a proxy returns HTML
+      ---
+      duration_ms: 0.060208
+      type: 'test'
+      ...
+    # Subtest: cannot treat an incomplete or malformed lookup as evidence of non-delivery
+    ok 20 - cannot treat an incomplete or malformed lookup as evidence of non-delivery
+      ---
+      duration_ms: 0.343458
+      type: 'test'
+      ...
+    # Subtest: sanitizes callbacks and keeps delivery distinct from a complaint for the same message
+    ok 21 - sanitizes callbacks and keeps delivery distinct from a complaint for the same message
+      ---
+      duration_ms: 0.371542
+      type: 'test'
+      ...
+    # Subtest: refuses wrong record types and malformed provider identities
+    ok 22 - refuses wrong record types and malformed provider identities
+      ---
+      duration_ms: 0.124291
+      type: 'test'
+      ...
+    1..22
+ok 6 - Postmark transport and callback contract
+  ---
+  duration_ms: 3.088167
+  type: 'suite'
+  ...
+# Subtest: permission-registry
+    # Subtest: billing control grants are registered only for platform administration, never customer OWNER
+    ok 1 - billing control grants are registered only for platform administration, never customer OWNER
+      ---
+      duration_ms: 0.504666
+      type: 'test'
+      ...
+    # Subtest: lets employee create/update permissions load only the supporting editor catalogs
+    ok 2 - lets employee create/update permissions load only the supporting editor catalogs
+      ---
+      duration_ms: 0.511166
+      type: 'test'
+      ...
+    # Subtest: lets role managers load the role builder without granting employee-list read
+    ok 3 - lets role managers load the role builder without granting employee-list read
+      ---
+      duration_ms: 0.107917
+      type: 'test'
+      ...
+    # Subtest: lets reimbursement policy managers load the settings they are allowed to update
+    ok 4 - lets reimbursement policy managers load the settings they are allowed to update
+      ---
+      duration_ms: 0.032667
+      type: 'test'
+      ...
+    # Subtest: has no duplicate permission keys
+    ok 5 - has no duplicate permission keys
+      ---
+      duration_ms: 0.110958
+      type: 'test'
+      ...
+    # Subtest: all role grants reference only known permission keys
+    ok 6 - all role grants reference only known permission keys
+      ---
+      duration_ms: 0.163
+      type: 'test'
+      ...
+    # Subtest: every role granted line.ai.query is also granted ai.tool.invoke
+    ok 7 - every role granted line.ai.query is also granted ai.tool.invoke
+      ---
+      duration_ms: 0.059167
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.read is also granted expense.evidence.read
+    ok 8 - every role granted expense.read is also granted expense.evidence.read
+      ---
+      duration_ms: 0.070125
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.void is also granted expense.delete
+    ok 9 - every role granted expense.void is also granted expense.delete
+      ---
+      duration_ms: 0.116542
+      type: 'test'
+      ...
+    # Subtest: every internal employee role has the complete self-service baseline
+    ok 10 - every internal employee role has the complete self-service baseline
+      ---
+      duration_ms: 0.270667
+      type: 'test'
+      ...
+    # Subtest: every company role can request its own reimbursement without granting approval or payment to read-only roles
+    ok 11 - every company role can request its own reimbursement without granting approval or payment to read-only roles
+      ---
+      duration_ms: 0.253292
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to reimbursements it participated in
+    ok 12 - every company role has view-only access to reimbursements it participated in
+      ---
+      duration_ms: 0.053333
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to each procurement document family it participated in
+    ok 13 - every company role has view-only access to each procurement document family it participated in
+      ---
+      duration_ms: 0.051916
+      type: 'test'
+      ...
+    # Subtest: ADMIN can upload receipt evidence through web
+    ok 14 - ADMIN can upload receipt evidence through web
+      ---
+      duration_ms: 0.022584
+      type: 'test'
+      ...
+    # Subtest: default ADMIN cannot manage roles until the owner delegates it
+    ok 15 - default ADMIN cannot manage roles until the owner delegates it
+      ---
+      duration_ms: 0.031625
+      type: 'test'
+      ...
+    # Subtest: OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot
+    ok 16 - OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot
+      ---
+      duration_ms: 0.030583
+      type: 'test'
+      ...
+    # Subtest: ADMIN works expenses owner-equal, minus owner-level signature approval
+    ok 17 - ADMIN works expenses owner-equal, minus owner-level signature approval
+      ---
+      duration_ms: 0.026334
+      type: 'test'
+      ...
+    # Subtest: every role can change its own password
+    ok 18 - every role can change its own password
+      ---
+      duration_ms: 0.073833
+      type: 'test'
+      ...
+    # Subtest: every role that can change its own password can link its own LINE account
+    ok 19 - every role that can change its own password can link its own LINE account
+      ---
+      duration_ms: 0.035584
+      type: 'test'
+      ...
+    # Subtest: STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+    ok 20 - STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+      ---
+      duration_ms: 0.062084
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ROLES keys match ROLE_GRANTS keys
+    ok 21 - SYSTEM_ROLES keys match ROLE_GRANTS keys
+      ---
+      duration_ms: 0.041625
+      type: 'test'
+      ...
+    # Subtest: OWNER has all company permissions but no platform permissions
+    ok 22 - OWNER has all company permissions but no platform permissions
+      ---
+      duration_ms: 0.070916
+      type: 'test'
+      ...
+    # Subtest: lets every company role reach accounting relation ABAC without widening document reads
+    ok 23 - lets every company role reach accounting relation ABAC without widening document reads
+      ---
+      duration_ms: 0.033625
+      type: 'test'
+      ...
+    # Subtest: keeps financial role assignment approval OWNER-only
+    ok 24 - keeps financial role assignment approval OWNER-only
+      ---
+      duration_ms: 0.022583
+      type: 'test'
+      ...
+    # Subtest: gives HR only the dedicated operational employee-administration boundary
+    ok 25 - gives HR only the dedicated operational employee-administration boundary
+      ---
+      duration_ms: 0.03975
+      type: 'test'
+      ...
+    # Subtest: all 7 item-10A partner management permission keys are present
+    ok 26 - all 7 item-10A partner management permission keys are present
+      ---
+      duration_ms: 0.041125
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ADMIN has all 7 partner management permission keys
+    ok 27 - SYSTEM_ADMIN has all 7 partner management permission keys
+      ---
+      duration_ms: 0.025375
+      type: 'test'
+      ...
+    # Subtest: COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+    ok 28 - COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+      ---
+      duration_ms: 0.033083
+      type: 'test'
+      ...
+    # Subtest: customer merge and LINE identity re-point stay Owner/Admin-only
+    ok 29 - customer merge and LINE identity re-point stay Owner/Admin-only
+      ---
+      duration_ms: 0.023708
+      type: 'test'
+      ...
+    # Subtest: MARKETING can segment customers but cannot read contact-person PII
+    ok 30 - MARKETING can segment customers but cannot read contact-person PII
+      ---
+      duration_ms: 0.019084
+      type: 'test'
+      ...
+    # Subtest: Step 0 company tax identity
+        # Subtest: registers the six keys at the risk levels the spec fixes
+        ok 1 - registers the six keys at the risk levels the spec fixes
+          ---
+          duration_ms: 0.058833
+          type: 'test'
+          ...
+        # Subtest: gives the owner every company-side key without an explicit grant
+        ok 2 - gives the owner every company-side key without an explicit grant
+          ---
+          duration_ms: 0.024791
+          type: 'test'
+          ...
+        # Subtest: keeps reconciliation platform-side only
+        ok 3 - keeps reconciliation platform-side only
+          ---
+          duration_ms: 0.027458
+          type: 'test'
+          ...
+        # Subtest: keeps data-rights orchestration CRITICAL and platform-side only
+        ok 4 - keeps data-rights orchestration CRITICAL and platform-side only
+          ---
+          duration_ms: 0.027417
+          type: 'test'
+          ...
+        # Subtest: answers VAT with the accountant and reads it with finance
+        ok 5 - answers VAT with the accountant and reads it with finance
+          ---
+          duration_ms: 0.023709
+          type: 'test'
+          ...
+        # Subtest: gives buyer-evidence remediation to finance and to nobody else by default
+        ok 6 - gives buyer-evidence remediation to finance and to nobody else by default
+          ---
+          duration_ms: 0.030667
+          type: 'test'
+          ...
+        # Subtest: keeps the legal identity owner-only pending QP2
+        ok 7 - keeps the legal identity owner-only pending QP2
+          ---
+          duration_ms: 0.025959
+          type: 'test'
+          ...
+        1..7
+    ok 31 - Step 0 company tax identity
+      ---
+      duration_ms: 0.283375
+      type: 'suite'
+      ...
+    1..31
+ok 7 - permission-registry
+  ---
+  duration_ms: 3.831958
+  type: 'suite'
+  ...
+1..7
+# tests 68
+# suites 4
+# pass 68
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 427.508334

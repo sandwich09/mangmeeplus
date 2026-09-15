@@ -56,6 +56,8 @@ import { POSTMARK_FETCH, PostmarkClient } from './infrastructure/postmark.client
 import { EmailDeliveryService } from './application/email-delivery.service';
 import { PostmarkEventsService } from './application/postmark-events.service';
 import { PostmarkEventsController } from './presentation/postmark-events.controller';
+import { SystemEmailDeliveryController } from './presentation/system-email-delivery.controller';
+import { SystemEmailDeliveryService } from './application/system-email-delivery.service';
 
 type MailerSelectionConfig = Pick<AppConfigService, 'emailProvider' | 'isLocal' | 'sesRegion' | 'sesFromAddress' | 'sesWebBaseUrl'> & Partial<Pick<AppConfigService, 'postmarkServerToken' | 'postmarkServerId' | 'postmarkMessageStream' | 'postmarkFromAddress' | 'postmarkWebhookUsername' | 'postmarkWebhookPassword'>>;
 
@@ -91,7 +93,7 @@ export function selectAuthMailer(
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
   imports: [JwtModule.register({}), AccessControlModule, AuditModule],
-  controllers: [EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
+  controllers: [SystemEmailDeliveryController, EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
@@ -139,6 +141,7 @@ export function selectAuthMailer(
     EmailDeliveryService,
     PostmarkEventsService,
     PostmarkClient,
+    SystemEmailDeliveryService,
     { provide: POSTMARK_FETCH, useValue: globalThis.fetch },
     {
       provide: SES_EMAIL_CLIENT_TOKEN,

@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { AppConfigService } from '../../../common/config/app-config.service';
+import { postmarkConfigurationFacts, type PostmarkConfigurationFacts } from './postmark-configuration';
 
 export const POSTMARK_FETCH = 'POSTMARK_FETCH';
 export type MailFailureKind = 'CONFIG' | 'PERMANENT' | 'SUPPRESSED' | 'RETRY' | 'UNKNOWN';
@@ -51,6 +52,17 @@ export class PostmarkClient {
       throw postmarkFailure(response.status, data.ErrorCode, response.headers.get('retry-after'));
     }
     return data;
+  }
+
+  async inspectConfiguration(): Promise<PostmarkConfigurationFacts> {
+    const serverId = this.config.postmarkServerId, stream = this.config.postmarkMessageStream;
+    if (!Number.isSafeInteger(serverId) || !serverId || serverId < 1 || typeof stream !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(stream)) {
+      throw new PostmarkSendError('CONFIG', 'missing_server_or_stream');
+    }
+    const expected = { serverId, stream }, server = await this.request('/server');
+    const facts = postmarkConfigurationFacts(expected, server, null);
+    if (facts.server !== 'MATCHED') return facts;
+    return postmarkConfigurationFacts(expected, server, await this.request(`/message-streams/${encodeURIComponent(stream)}`));
   }
 
   async send(body: Record<string, unknown>): Promise<{ messageId: string; submittedAt: Date }> {

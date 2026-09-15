@@ -5,7 +5,32 @@ import { parsePostmarkEvent, postmarkEventKey } from '../application/postmark-ev
 
 const id = '22222222-2222-4222-8222-222222222222';
 const config = { postmarkServerToken: 'POSTMARK_API_TEST', isLocal: true } as any;
+
 describe('Postmark transport and callback contract', () => {
+  it('inspects only the configured server and stream through GET without returning native secrets', async () => {
+    const calls: string[] = [];
+    const client = new PostmarkClient({ ...config, postmarkServerId: 123, postmarkMessageStream: 'outbound' }, (async (url: string, init: RequestInit) => {
+      calls.push(url); assert.equal(init.method, 'GET'); assert.equal(init.body, undefined);
+      return new Response(JSON.stringify(url.endsWith('/server')
+        ? { ID: 123, DeliveryType: 'Sandbox', ApiTokens: ['PRIVATE_TOKEN'] }
+        : { ID: 'outbound', ServerID: 123, MessageStreamType: 'Transactional', ArchivedAt: null, Name: 'PRIVATE_NAME' }));
+    }) as any);
+    assert.deepEqual(await client.inspectConfiguration(), { server: 'MATCHED', stream: 'MATCHED', mode: 'SANDBOX', transactional: true, archived: false });
+    assert.deepEqual(calls, ['https://api.postmarkapp.com/server', 'https://api.postmarkapp.com/message-streams/outbound']);
+  });
+  it('stops native inspection at missing configuration or a foreign server and keeps failures sanitized', async () => {
+    let calls = 0;
+    const client = new PostmarkClient({ ...config, postmarkServerId: 123, postmarkMessageStream: 'outbound' }, (async () => {
+      calls++; return new Response(JSON.stringify({ ID: 456, DeliveryType: 'Live', ApiTokens: ['PRIVATE_TOKEN'] }));
+    }) as any);
+    assert.deepEqual(await client.inspectConfiguration(), { server: 'MISMATCH', stream: 'UNKNOWN', mode: 'UNKNOWN', transactional: null, archived: null });
+    assert.equal(calls, 1);
+    await assert.rejects(new PostmarkClient(config, (async () => assert.fail('No native call without server/stream')) as any).inspectConfiguration(), (error: any) => error.kind === 'CONFIG');
+    const unavailable = new PostmarkClient({ ...config, postmarkServerId: 123, postmarkMessageStream: 'outbound' }, (async () => {
+      throw Error('PRIVATE_TOKEN');
+    }) as any);
+    await assert.rejects(unavailable.inspectConfiguration(), (error: any) => error.message === 'postmark.transport_unknown');
+  });
   it('uses the fixed API with redirect refusal, timeout and explicit authentication; validates accepted response', async () => {
     const calls: any[] = [];
     const client = new PostmarkClient(config, (async (...args: any[]) => {
