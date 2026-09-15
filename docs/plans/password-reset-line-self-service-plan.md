@@ -1,5 +1,8 @@
 # Self-service Password Recovery via LINE — Build Plan
 
+> **Owner decision2026-09-15:** verified-email password recovery through Postmark is approved, including users without LINE. The authoritative new routes, eligibility, fragment proof, current binding, atomic reset/session revocation, no-auto-login and replay contract are in [Postmark spec](../specs/mangmee-transactional-email-provider-spec-th.md#email-recovery-implementation-contract--owner-approval2026-09-15). Existing LINE recovery remains available. Earlier sections saying email routes must stay404/parked or email reset should auto-login are historical and superseded for this feature. Current implementation/evidence status: [task memory](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md); no deployment is authorized.
+
+
 Spec: `docs/specs/password-reset-line-self-service-spec.md`.
 Branch: `codex/line-self-service-recovery` from `origin/develop`.
 
@@ -37,3 +40,7 @@ Branch: `codex/line-self-service-recovery` from `origin/develop`.
 - Registered the lifecycle regression and an opt-in real PostgreSQL concurrency suite through the existing auth test entry, without editing package manifests. Dedicated `AUTH_RECOVERY_TEST_DATABASE_URL` must identify a local `_recovery_review_` database.
 - Focused auth/reset/SES: 55/55 passed. Real PostgreSQL: one end-to-end lifecycle/concurrency scenario passed with four simultaneous requests, two simultaneous claims, self/admin rotation, stale snapshot, closed access, disabled credential and failed LINE delivery. LINE transport is intercepted; no live push.
 - Full API/web, browser and exact-head CI results are recorded in [backlog task memory](../agent-memory/pr-backlog-impact-review-2026-08-27.md).
+
+## Current Messaging binding amendment — 2026-09-14
+
+Resolve only the current Messaging-channel identity and recheck credentials/binding immediately before delivery. Admin QR repair/unlink/sever/reassignment revokes the affected pending recovery tokens atomically with the identity change; preserve generic responses, current-password continuity and the Admin support path. [Focused QR proof](../evidence/billing-integration-2026-09-13/line-admin-qr-repair-result.json) includes actual forgot-password delivery after repair and login rejection of that delivered password after Admin unlink. LINE transport is simulated. Email recovery remains parked pending the owner decision.

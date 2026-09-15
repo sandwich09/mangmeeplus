@@ -15,6 +15,7 @@ import { GLOBAL_VALIDATION_PIPE_OPTIONS } from './common/pipes/validation-pipe.o
 import { ApiRateLimitGuard } from './common/security/api-rate-limit.guard';
 import { RedisRateLimitService } from './common/security/redis-rate-limit.service';
 import { apiCacheControl } from './common/middleware/api-cache-control.middleware';
+import { PROVIDER_EVENTS_PATH, providerEventsJson } from './common/middleware/provider-events-body.middleware';
 
 type RawBodyRequest = Request & { rawBody?: Buffer };
 
@@ -86,6 +87,7 @@ async function bootstrap() {
   // content type, capped at SNS's own 256 KB maximum message size — a tighter ceiling than the
   // global limit, applied before parsing, which is this public endpoint's body-size guard.
   app.use(/^\/v1\/public\/ses-events$/, json({ limit: '256kb', type: () => true }));
+  app.use(PROVIDER_EVENTS_PATH, providerEventsJson);
   app.use(json({ limit: bodyLimit, verify: saveRawBody }));
   app.use(urlencoded({ extended: true, limit: bodyLimit, verify: saveRawBody }));
   app.enableCors({

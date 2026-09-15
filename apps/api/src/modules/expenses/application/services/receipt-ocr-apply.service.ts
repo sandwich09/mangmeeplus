@@ -900,7 +900,7 @@ type AppliedReceiptResult = AppliedReceiptCategory & {
 /** The applied result, or — when the record moved under the OCR round trip — the same shape with
  *  `staleSkipped` set and nothing written. One shape rather than a union so every existing caller
  *  and fixture keeps compiling; `isStaleOcrApply` is the only correct way to read it. */
-export type ReceiptOcrApplyOutcome = { candidatesCreated: number; staleSkipped?: true } & AppliedReceiptResult;
+export type ReceiptOcrApplyOutcome = { candidatesCreated: number; staleSkipped?: true; committedUpdatedAt?: Date } & AppliedReceiptResult;
 
 export function isStaleOcrApply(outcome: ReceiptOcrApplyOutcome): boolean {
   return outcome.staleSkipped === true;
@@ -958,7 +958,17 @@ export class ReceiptOcrApplyService {
     if (date) data['expenseDate'] = date;
     const vatMode = validVatMode(completed.vatMode);
     if (vatMode) data['vatMode'] = vatMode;
-    const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<AppliedReceiptResult | { stale: ExpenseChargeSummary[] }> => {
+    const appliedCategory = await this.prisma.client.$transaction(async (tx): Promise<ReceiptOcrApplyOutcome | { stale: ExpenseChargeSummary[] }> => {
+      // Match correction/duplicate lock order before taking the record's write lock.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:${expenseId}:substitute-receipt`}))`;
+      const finish = async (result: AppliedReceiptResult): Promise<ReceiptOcrApplyOutcome> => {
+        const duplicate = await reconcileExpenseDuplicateCandidates(this.expenses, ctx.companyId, expenseId, ctx.userId, ctx.scopes ?? {}, tx);
+        // Read inside the transaction that produced these facts. A later read could bless a
+        // human edit with an old OCR summary; callers must fence their follow-up writes.
+        const saved = await tx.expenseRecord.findFirstOrThrow({ where: { id: expenseId, companyId: ctx.companyId }, select: { updatedAt: true } });
+        return { ...result, candidatesCreated: duplicate.openCandidates, committedUpdatedAt: saved.updatedAt };
+      };
       const currentExpense = await tx.expenseRecord.findFirst({
         where: { id: expenseId, companyId: ctx.companyId },
         select: {
@@ -1121,7 +1131,7 @@ export class ReceiptOcrApplyService {
       const acceptedAmounts = Object.fromEntries(['grandTotalAmount', 'vatAmount', 'whtAmount', 'netPayableAmount', 'vatMode', 'discountAmount']
         .map((key) => [key, String(data[key] ?? currentExpense[key as keyof typeof currentExpense] ?? (key === 'vatMode' ? 'NO_VAT' : '0'))])) as NonNullable<AppliedReceiptResult['acceptedAmounts']>;
       if (!lineTotal || preserveReviewedLines) {
-        return {
+        return finish({
           acceptedAmounts,
           categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
           categoryName: effectiveCategory?.name ?? null,
@@ -1136,7 +1146,7 @@ export class ReceiptOcrApplyService {
           dateAssumed: dateReview.assumed,
           dateStatus: dateReview.status,
           ...(dateReview.assumptions ? { dateAssumptions: dateReview.assumptions } : {}),
-        };
+        });
       }
       await tx.expenseLine.deleteMany({ where: { expenseId } });
       for (const [index, line] of prepared!.lines.entries()) {
@@ -1167,7 +1177,7 @@ export class ReceiptOcrApplyService {
           reviewStatus: line.needsReview ? 'NEEDS_REVIEW' : line.sourceLineText ? 'SUGGESTED' : 'REVIEWED',
         } });
       }
-      return {
+      return finish({
         acceptedAmounts,
         categoryId: effectiveCategory?.id ?? currentExpense?.expenseCategoryId ?? null,
         categoryName: effectiveCategory?.name ?? null,
@@ -1182,7 +1192,7 @@ export class ReceiptOcrApplyService {
         dateAssumed: dateReview.assumed,
         dateStatus: dateReview.status,
         ...(dateReview.assumptions ? { dateAssumptions: dateReview.assumptions } : {}),
-      };
+      });
     });
     if ('stale' in appliedCategory) {
       // F12: one honest shape, no cast that omits half the fields. Nothing was applied, so this
@@ -1208,13 +1218,6 @@ export class ReceiptOcrApplyService {
         confidenceBand: appliedCategory.categorySuggestion.confidence >= RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE ? 'high' : 'low',
       });
     }
-    const duplicateResult = await reconcileExpenseDuplicateCandidates(
-      this.expenses,
-      ctx.companyId,
-      expenseId,
-      ctx.userId,
-      ctx.scopes ?? {},
-    );
-    return { candidatesCreated: duplicateResult.openCandidates, ...appliedCategory };
+    return appliedCategory;
   }
 }

@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { runInNewContext } from 'node:vm';
@@ -17,7 +18,7 @@ const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
 
 function makeController(config: Record<string, unknown> = {}): AuthController {
   const stub = {} as any;
-  return new AuthController(
+  return new AuthController(lineMessagingCredentialsFixture({ lineLiffId: '1234567890-test', isLocal: false, ...config } as any),
     { lineLiffId: '1234567890-test', isLocal: false, ...config } as any,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
     stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
@@ -37,8 +38,8 @@ function makeController(config: Record<string, unknown> = {}): AuthController {
  */
 describe('AuthController constructor shape', () => {
   const NAMED_POSITIONS: ReadonlyArray<readonly [number, string]> = [
-    [2, 'prisma'], [11, 'changePassword'], [13, 'notifyPasswordResetRequest'],
-    [15, 'setAiAssistantPreferenceUseCase'], [19, 'authRateLimit'], [20, 'legalAcceptance'],
+    [1, 'lineCredentials'], [3, 'prisma'], [12, 'changePassword'], [14, 'notifyPasswordResetRequest'],
+    [16, 'setAiAssistantPreferenceUseCase'], [20, 'authRateLimit'], [21, 'legalAcceptance'],
   ];
 
   it('has the arity and the parameter order the positional stubs assume', () => {
@@ -47,7 +48,7 @@ describe('AuthController constructor shape', () => {
     const params = [...source.slice(start, source.indexOf(') {}', start)).matchAll(/private readonly (\w+):/g)]
       .map((match) => match[1]!);
 
-    assert.equal(params.length, 30, 'constructor arity changed: re-count the stub rows BY NAME');
+    assert.equal(params.length, 31, 'constructor arity changed: re-count the stub rows BY NAME');
     assert.equal(params.at(-1), 'audit', 'the optional audit param must stay last');
     for (const [position, name] of NAMED_POSITIONS) {
       assert.equal(params[position - 1], name, `parameter #${position} moved; the stub rows now place a fake on the wrong dependency`);
@@ -120,7 +121,7 @@ describe('AuthController password reset request', () => {
     const notifyPasswordResetRequest = {
       execute: async (input: unknown) => { calls.push(input); return { message: 'generic' }; },
     } as any;
-    const controller = new AuthController(
+    const controller = new AuthController(lineMessagingCredentialsFixture(stub),
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub,
@@ -155,7 +156,7 @@ describe('AuthController password reset request', () => {
     } as any);
     const stub = {} as any;
     const notifyPasswordResetRequest = { execute: async () => ({ message: 'generic' }) } as any;
-    const controller = new AuthController(
+    const controller = new AuthController(lineMessagingCredentialsFixture(stub),
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, notifyPasswordResetRequest, stub, stub, stub, stub, stub, rateLimit, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub,
@@ -247,7 +248,7 @@ describe('AI assistant preference (PDPA opt-out)', () => {
     const calls: any[] = [];
     const stub = {} as any;
     const pref = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
-    const controller = new AuthController(
+    const controller = new AuthController(lineMessagingCredentialsFixture(stub),
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, pref, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub,
@@ -266,7 +267,7 @@ describe('AuthController password change session binding', () => {
     const calls: unknown[][] = [];
     const stub = {} as any;
     const changePassword = { execute: async (...args: unknown[]) => { calls.push(args); } } as any;
-    const controller = new AuthController(
+    const controller = new AuthController(lineMessagingCredentialsFixture(stub),
       stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       changePassword, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub,
@@ -303,7 +304,7 @@ describe('AuthController me()', () => {
     const legalAcceptance = {
       getStatus: async () => ({ required: true }),
     } as any;
-    return new AuthController(
+    return new AuthController(lineMessagingCredentialsFixture(stub),
       stub, prisma, stub, stub, stub, stub, stub, stub, stub, stub,
       stub, stub, stub, stub, stub, stub, stub, stub, stub, legalAcceptance, stub, stub,
       stub, stub, stub, stub, stub, stub, stub,

@@ -13,7 +13,7 @@ export class GetPlatformAiBudgetUseCase {
   ) {}
 
   async execute(): Promise<PlatformAiBudgetDto> {
-    const settings = await resolvePlatformAiBudget(this.prisma, this.config);
+    const settings = await resolvePlatformAiBudget(this.prisma, this.config, true);
     return {
       monthlyBudgetSatang: settings.monthlyBudgetSatang,
       ceilingSatang: settings.ceilingSatang,

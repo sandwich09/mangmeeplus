@@ -1,0 +1,515 @@
+TAP version 13
+# Subtest: L-09 deep log redaction (real pino instance)
+    # Subtest: redacts a secret nested three levels deep — beyond pino redact.paths depth ceiling
+    ok 1 - redacts a secret nested three levels deep — beyond pino redact.paths depth ceiling
+      ---
+      duration_ms: 2.17775
+      type: 'test'
+      ...
+    # Subtest: redacts err.meta.password on the all-exceptions.filter 5xx shape
+    ok 2 - redacts err.meta.password on the all-exceptions.filter 5xx shape
+      ---
+      duration_ms: 0.404416
+      type: 'test'
+      ...
+    # Subtest: scrubs a Postgres DSN embedded inside err.message (Prisma init failure)
+    ok 3 - scrubs a Postgres DSN embedded inside err.message (Prisma init failure)
+      ---
+      duration_ms: 0.31075
+      type: 'test'
+      ...
+    # Subtest: scrubs a DSN passed on the msg channel (2nd logger argument, not formatters.log)
+    ok 4 - scrubs a DSN passed on the msg channel (2nd logger argument, not formatters.log)
+      ---
+      duration_ms: 0.198666
+      type: 'test'
+      ...
+    # Subtest: redacts key-pattern secrets that the exact-path list never matched
+    ok 5 - redacts key-pattern secrets that the exact-path list never matched
+      ---
+      duration_ms: 0.228084
+      type: 'test'
+      ...
+    # Subtest: redacts personal-data keys in the log pipeline (audit trail is unaffected — L-11)
+    ok 6 - redacts personal-data keys in the log pipeline (audit trail is unaffected — L-11)
+      ---
+      duration_ms: 0.169459
+      type: 'test'
+      ...
+    # Subtest: empirical ordering: formatters.log runs before pino's err serializer
+    ok 7 - empirical ordering: formatters.log runs before pino's err serializer
+      ---
+      duration_ms: 0.197125
+      type: 'test'
+      ...
+    # Subtest: a real Error instance keeps name/message/stack through the redactor
+    ok 8 - a real Error instance keeps name/message/stack through the redactor
+      ---
+      duration_ms: 1.132417
+      type: 'test'
+      ...
+    # Subtest: redactionEnabled=false leaves the payload untouched (opt-out is honest)
+    ok 9 - redactionEnabled=false leaves the payload untouched (opt-out is honest)
+      ---
+      duration_ms: 0.754541
+      type: 'test'
+      ...
+    # Subtest: is cycle-safe — a self-referencing payload does not throw
+    ok 10 - is cycle-safe — a self-referencing payload does not throw
+      ---
+      duration_ms: 0.440917
+      type: 'test'
+      ...
+    1..10
+ok 1 - L-09 deep log redaction (real pino instance)
+  ---
+  duration_ms: 6.628917
+  type: 'suite'
+  ...
+# Subtest: permission-registry
+    # Subtest: billing control grants are registered only for platform administration, never customer OWNER
+    ok 1 - billing control grants are registered only for platform administration, never customer OWNER
+      ---
+      duration_ms: 0.489209
+      type: 'test'
+      ...
+    # Subtest: lets employee create/update permissions load only the supporting editor catalogs
+    ok 2 - lets employee create/update permissions load only the supporting editor catalogs
+      ---
+      duration_ms: 0.490375
+      type: 'test'
+      ...
+    # Subtest: lets role managers load the role builder without granting employee-list read
+    ok 3 - lets role managers load the role builder without granting employee-list read
+      ---
+      duration_ms: 0.124166
+      type: 'test'
+      ...
+    # Subtest: lets reimbursement policy managers load the settings they are allowed to update
+    ok 4 - lets reimbursement policy managers load the settings they are allowed to update
+      ---
+      duration_ms: 0.036
+      type: 'test'
+      ...
+    # Subtest: has no duplicate permission keys
+    ok 5 - has no duplicate permission keys
+      ---
+      duration_ms: 0.109625
+      type: 'test'
+      ...
+    # Subtest: all role grants reference only known permission keys
+    ok 6 - all role grants reference only known permission keys
+      ---
+      duration_ms: 0.165625
+      type: 'test'
+      ...
+    # Subtest: every role granted line.ai.query is also granted ai.tool.invoke
+    ok 7 - every role granted line.ai.query is also granted ai.tool.invoke
+      ---
+      duration_ms: 0.059667
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.read is also granted expense.evidence.read
+    ok 8 - every role granted expense.read is also granted expense.evidence.read
+      ---
+      duration_ms: 0.071459
+      type: 'test'
+      ...
+    # Subtest: every role granted expense.void is also granted expense.delete
+    ok 9 - every role granted expense.void is also granted expense.delete
+      ---
+      duration_ms: 0.115041
+      type: 'test'
+      ...
+    # Subtest: every internal employee role has the complete self-service baseline
+    ok 10 - every internal employee role has the complete self-service baseline
+      ---
+      duration_ms: 0.271417
+      type: 'test'
+      ...
+    # Subtest: every company role can request its own reimbursement without granting approval or payment to read-only roles
+    ok 11 - every company role can request its own reimbursement without granting approval or payment to read-only roles
+      ---
+      duration_ms: 0.095709
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to reimbursements it participated in
+    ok 12 - every company role has view-only access to reimbursements it participated in
+      ---
+      duration_ms: 0.03625
+      type: 'test'
+      ...
+    # Subtest: every company role has view-only access to each procurement document family it participated in
+    ok 13 - every company role has view-only access to each procurement document family it participated in
+      ---
+      duration_ms: 0.080709
+      type: 'test'
+      ...
+    # Subtest: ADMIN can upload receipt evidence through web
+    ok 14 - ADMIN can upload receipt evidence through web
+      ---
+      duration_ms: 0.036458
+      type: 'test'
+      ...
+    # Subtest: default ADMIN cannot manage roles until the owner delegates it
+    ok 15 - default ADMIN cannot manage roles until the owner delegates it
+      ---
+      duration_ms: 0.113541
+      type: 'test'
+      ...
+    # Subtest: OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot
+    ok 16 - OWNER, ADMIN and MANAGER can approve reimbursements; FINANCE cannot
+      ---
+      duration_ms: 0.042458
+      type: 'test'
+      ...
+    # Subtest: ADMIN works expenses owner-equal, minus owner-level signature approval
+    ok 17 - ADMIN works expenses owner-equal, minus owner-level signature approval
+      ---
+      duration_ms: 0.029708
+      type: 'test'
+      ...
+    # Subtest: every role can change its own password
+    ok 18 - every role can change its own password
+      ---
+      duration_ms: 0.069458
+      type: 'test'
+      ...
+    # Subtest: every role that can change its own password can link its own LINE account
+    ok 19 - every role that can change its own password can link its own LINE account
+      ---
+      duration_ms: 0.030708
+      type: 'test'
+      ...
+    # Subtest: STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+    ok 20 - STAFF keeps dashboard access when the dashboard menu starts requiring dashboard.read
+      ---
+      duration_ms: 0.053625
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ROLES keys match ROLE_GRANTS keys
+    ok 21 - SYSTEM_ROLES keys match ROLE_GRANTS keys
+      ---
+      duration_ms: 0.03875
+      type: 'test'
+      ...
+    # Subtest: OWNER has all company permissions but no platform permissions
+    ok 22 - OWNER has all company permissions but no platform permissions
+      ---
+      duration_ms: 0.065958
+      type: 'test'
+      ...
+    # Subtest: lets every company role reach accounting relation ABAC without widening document reads
+    ok 23 - lets every company role reach accounting relation ABAC without widening document reads
+      ---
+      duration_ms: 0.032458
+      type: 'test'
+      ...
+    # Subtest: keeps financial role assignment approval OWNER-only
+    ok 24 - keeps financial role assignment approval OWNER-only
+      ---
+      duration_ms: 0.020208
+      type: 'test'
+      ...
+    # Subtest: gives HR only the dedicated operational employee-administration boundary
+    ok 25 - gives HR only the dedicated operational employee-administration boundary
+      ---
+      duration_ms: 0.040625
+      type: 'test'
+      ...
+    # Subtest: all 7 item-10A partner management permission keys are present
+    ok 26 - all 7 item-10A partner management permission keys are present
+      ---
+      duration_ms: 0.038375
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ADMIN has all 7 partner management permission keys
+    ok 27 - SYSTEM_ADMIN has all 7 partner management permission keys
+      ---
+      duration_ms: 0.023
+      type: 'test'
+      ...
+    # Subtest: COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+    ok 28 - COMPANY_VIEW has the compact menu permissions used by the Mangmee company shell
+      ---
+      duration_ms: 0.030375
+      type: 'test'
+      ...
+    # Subtest: customer merge and LINE identity re-point stay Owner/Admin-only
+    ok 29 - customer merge and LINE identity re-point stay Owner/Admin-only
+      ---
+      duration_ms: 0.020583
+      type: 'test'
+      ...
+    # Subtest: MARKETING can segment customers but cannot read contact-person PII
+    ok 30 - MARKETING can segment customers but cannot read contact-person PII
+      ---
+      duration_ms: 0.017625
+      type: 'test'
+      ...
+    # Subtest: Step 0 company tax identity
+        # Subtest: registers the six keys at the risk levels the spec fixes
+        ok 1 - registers the six keys at the risk levels the spec fixes
+          ---
+          duration_ms: 0.058
+          type: 'test'
+          ...
+        # Subtest: gives the owner every company-side key without an explicit grant
+        ok 2 - gives the owner every company-side key without an explicit grant
+          ---
+          duration_ms: 0.023834
+          type: 'test'
+          ...
+        # Subtest: keeps reconciliation platform-side only
+        ok 3 - keeps reconciliation platform-side only
+          ---
+          duration_ms: 0.025166
+          type: 'test'
+          ...
+        # Subtest: keeps data-rights orchestration CRITICAL and platform-side only
+        ok 4 - keeps data-rights orchestration CRITICAL and platform-side only
+          ---
+          duration_ms: 0.02575
+          type: 'test'
+          ...
+        # Subtest: answers VAT with the accountant and reads it with finance
+        ok 5 - answers VAT with the accountant and reads it with finance
+          ---
+          duration_ms: 0.023625
+          type: 'test'
+          ...
+        # Subtest: gives buyer-evidence remediation to finance and to nobody else by default
+        ok 6 - gives buyer-evidence remediation to finance and to nobody else by default
+          ---
+          duration_ms: 0.029
+          type: 'test'
+          ...
+        # Subtest: keeps the legal identity owner-only pending QP2
+        ok 7 - keeps the legal identity owner-only pending QP2
+          ---
+          duration_ms: 0.025417
+          type: 'test'
+          ...
+        1..7
+    ok 31 - Step 0 company tax identity
+      ---
+      duration_ms: 0.268167
+      type: 'suite'
+      ...
+    1..31
+ok 2 - permission-registry
+  ---
+  duration_ms: 3.721542
+  type: 'suite'
+  ...
+# Subtest: GET /system/partners/:id/timeline — §8
+    # Subtest: tells the shop story in order, from rows that already exist
+    ok 1 - tells the shop story in order, from rows that already exist
+      ---
+      duration_ms: 1.610958
+      type: 'test'
+      ...
+    # Subtest: says the shop was opened by an admin when there is no application behind it
+    ok 2 - says the shop was opened by an admin when there is no application behind it
+      ---
+      duration_ms: 0.137292
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 3 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.322833
+      type: 'test'
+      ...
+    1..3
+ok 3 - GET /system/partners/:id/timeline — §8
+  ---
+  duration_ms: 2.44975
+  type: 'suite'
+  ...
+# Subtest: the timeline last line: why the assistant is refusing right now
+    # Subtest: is absent for a healthy shop
+    ok 1 - is absent for a healthy shop
+      ---
+      duration_ms: 0.186875
+      type: 'test'
+      ...
+    # Subtest: names a disabled company first, because nothing else matters then
+    ok 2 - names a disabled company first, because nothing else matters then
+      ---
+      duration_ms: 0.089375
+      type: 'test'
+      ...
+    # Subtest: names an expired term
+    ok 3 - names an expired term
+      ---
+      duration_ms: 0.096583
+      type: 'test'
+      ...
+    # Subtest: names an unlinked shop
+    ok 4 - names an unlinked shop
+      ---
+      duration_ms: 0.094584
+      type: 'test'
+      ...
+    # Subtest: uses the actual trial allowance during a legacy warmup-ten window
+    ok 5 - uses the actual trial allowance during a legacy warmup-ten window
+      ---
+      duration_ms: 0.240125
+      type: 'test'
+      ...
+    # Subtest: names the AI budget, against the shop own override
+    ok 6 - names the AI budget, against the shop own override
+      ---
+      duration_ms: 0.291875
+      type: 'test'
+      ...
+    1..6
+ok 4 - the timeline last line: why the assistant is refusing right now
+  ---
+  duration_ms: 1.161625
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/line-message — SEC-05
+    # Subtest: pushes to the shop OWNERs, signed with the operator name, and audits the text
+    ok 1 - pushes to the shop OWNERs, signed with the operator name, and audits the text
+      ---
+      duration_ms: 0.620417
+      type: 'test'
+      ...
+    # Subtest: leaves the request OPEN when the message reached nobody
+    ok 2 - leaves the request OPEN when the message reached nobody
+      ---
+      duration_ms: 0.146083
+      type: 'test'
+      ...
+    # Subtest: never broadcasts an answer to everyone else waiting on the shop
+    ok 3 - never broadcasts an answer to everyone else waiting on the shop
+      ---
+      duration_ms: 0.12125
+      type: 'test'
+      ...
+    # Subtest: reaches the one requester the operator named, alongside the shop OWNERs
+    ok 4 - reaches the one requester the operator named, alongside the shop OWNERs
+      ---
+      duration_ms: 0.249083
+      type: 'test'
+      ...
+    # Subtest: sends one message, not two, when the OWNER is the person who asked
+    ok 5 - sends one message, not two, when the OWNER is the person who asked
+      ---
+      duration_ms: 0.104833
+      type: 'test'
+      ...
+    # Subtest: answers an employee-raised request even when no OWNER has LINE linked
+    ok 6 - answers an employee-raised request even when no OWNER has LINE linked
+      ---
+      duration_ms: 0.108166
+      type: 'test'
+      ...
+    # Subtest: marks the named request answered, with the button's own audit
+    ok 7 - marks the named request answered, with the button's own audit
+      ---
+      duration_ms: 0.130333
+      type: 'test'
+      ...
+    # Subtest: is idempotent on a request that was already answered
+    ok 8 - is idempotent on a request that was already answered
+      ---
+      duration_ms: 0.289041
+      type: 'test'
+      ...
+    # Subtest: refuses a request belonging to another shop, rather than pushing across tenants
+    ok 9 - refuses a request belonging to another shop, rather than pushing across tenants
+      ---
+      duration_ms: 0.087583
+      type: 'test'
+      ...
+    # Subtest: refuses a request that is already CLOSED, which nobody is waiting on
+    ok 10 - refuses a request that is already CLOSED, which nobody is waiting on
+      ---
+      duration_ms: 0.0775
+      type: 'test'
+      ...
+    # Subtest: refuses a request id that does not exist
+    ok 11 - refuses a request id that does not exist
+      ---
+      duration_ms: 0.1045
+      type: 'test'
+      ...
+    # Subtest: refuses a message longer than the bound, before it reaches LINE
+    ok 12 - refuses a message longer than the bound, before it reaches LINE
+      ---
+      duration_ms: 0.10775
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours
+    ok 13 - refuses a second URL glued onto one of ours
+      ---
+      duration_ms: 0.516833
+      type: 'test'
+      ...
+    # Subtest: refuses a link outside our own domains
+    ok 14 - refuses a link outside our own domains
+      ---
+      duration_ms: 0.083
+      type: 'test'
+      ...
+    # Subtest: sends to nobody, and records the failure, when no OWNER has LINE linked
+    ok 15 - sends to nobody, and records the failure, when no OWNER has LINE linked
+      ---
+      duration_ms: 0.083
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 16 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.074583
+      type: 'test'
+      ...
+    1..16
+ok 5 - POST /system/partners/:id/line-message — SEC-05
+  ---
+  duration_ms: 3.029417
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+    # Subtest: moves the ceiling to now and records who lifted it
+    ok 1 - moves the ceiling to now and records who lifted it
+      ---
+      duration_ms: 0.16775
+      type: 'test'
+      ...
+    # Subtest: is a no-op on a warm-up that already ended
+    ok 2 - is a no-op on a warm-up that already ended
+      ---
+      duration_ms: 0.059042
+      type: 'test'
+      ...
+    # Subtest: is a no-op for a shop that never had a warm-up
+    ok 3 - is a no-op for a shop that never had a warm-up
+      ---
+      duration_ms: 0.049875
+      type: 'test'
+      ...
+    # Subtest: 404s for a grandfathered company with no term row
+    ok 4 - 404s for a grandfathered company with no term row
+      ---
+      duration_ms: 0.058042
+      type: 'test'
+      ...
+    1..4
+ok 6 - POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+  ---
+  duration_ms: 0.367208
+  type: 'suite'
+  ...
+1..6
+# tests 76
+# suites 7
+# pass 76
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 518.574875

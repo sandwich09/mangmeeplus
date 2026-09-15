@@ -1,0 +1,59 @@
+TAP version 13
+# Subtest: billing case detection and ownership on real PostgreSQL
+    # Subtest: concurrent detections create one episode and one audit
+    ok 1 - concurrent detections create one episode and one audit
+      ---
+      duration_ms: 34.302875
+      type: 'test'
+      ...
+    # Subtest: redetection preserves assigned state, note, priority, follow-up and operator version
+    ok 2 - redetection preserves assigned state, note, priority, follow-up and operator version
+      ---
+      duration_ms: 10.880917
+      type: 'test'
+      ...
+    # Subtest: resolved recurrence opens one new unassigned episode without losing the audit
+    ok 3 - resolved recurrence opens one new unassigned episode without losing the audit
+      ---
+      duration_ms: 15.651791
+      type: 'test'
+      ...
+    # Subtest: unchanged reviewed financial evidence stays resolved, changed evidence reopens
+    ok 4 - unchanged reviewed financial evidence stays resolved, changed evidence reopens
+      ---
+      duration_ms: 24.484208
+      type: 'test'
+      ...
+    # Subtest: detection rollback leaves neither issue nor episode audit
+    ok 5 - detection rollback leaves neither issue nor episode audit
+      ---
+      duration_ms: 19.555958
+      type: 'test'
+      ...
+    # Subtest: verified service resolution is audited once and preserves operator history
+    ok 6 - verified service resolution is audited once and preserves operator history
+      ---
+      duration_ms: 14.760417
+      type: 'test'
+      ...
+    # Subtest: candidate role and mode/company scope are checked from current rows
+    ok 7 - candidate role and mode/company scope are checked from current rows
+      ---
+      duration_ms: 48.554708
+      type: 'test'
+      ...
+    1..7
+ok 1 - billing case detection and ownership on real PostgreSQL
+  ---
+  duration_ms: 343.451375
+  type: 'test'
+  ...
+1..1
+# tests 8
+# suites 0
+# pass 8
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 493.441125

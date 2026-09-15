@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -114,7 +115,7 @@ function harness(options: {
     sesWebBaseUrl: 'https://app.example.test', lineMessagingChannelAccessToken: 'line-token',
   } as any;
   return {
-    useCase: new SupportRequestAdminUseCase({ client } as any, config),
+    useCase: new SupportRequestAdminUseCase(lineMessagingCredentialsFixture(config), { client } as any, config),
     audits, updates, listQueries, transactions,
     current: () => current,
     allowAudit: () => { auditFails = false; },

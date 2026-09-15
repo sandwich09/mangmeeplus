@@ -1,0 +1,56 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+  "passed": [
+    "email-verification-postmark-fragment-open-reload-no-mutation",
+    "browser-email-explicit-confirm-service-error-retry-single-use",
+    "browser-email-resend-revokes-old-proof-lost-response-account-return",
+    "browser-email-legacy-conflicting-used-expired-recovery-mobile",
+    "email-verification-purpose-double-claim-current-user-expiry-revocation-and-unique-conflict",
+    "email-resend-stale-source-confirmed-or-suspended-cannot-mint-or-send"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderDelivery": false,
+  "status": "PASS for explicit email verification and transaction/source recovery; full scope remains IN PROGRESS",
+  "baseCommit": "7ca2d7a8298154ddcef81aa38e10de24e0e6ac82",
+  "sourceMeaning": "This6-group check runs the real compiled AppModule and Next app at base7ca2d7a8 plus these files. It is separate from the primary150 checkpoint and signup8; do not sum overlapping assertions as complete flows.",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "authRegressionTests": 93,
+  "webRegressionTests": 1703,
+  "apiTypecheck": "PASS",
+  "webTypecheck": "PASS",
+  "limitations": [
+    "Postmark and LINE HTTP transport and a service/response-loss failure are synthetic; no native mail or message delivered",
+    "New fragments exclude proof from HTTP URLs; first legacy query request may still reach access logs, and browser history/provider retention are separate",
+    "Password-reset email routes remain closed pending Owner decision; no new account recovery policy",
+    "Full EM05/EM09 retention/operations/identity variants, broader billing/LINE controls and both branch merges remain open"
+  ],
+  "sources": {
+    ".github/workflows/ci.yml": "e633fa739ff64659ce51dded499f858323fe7c8a0a521c5ca99f26d039a04847",
+    "apps/api/src/modules/auth/application/email-delivery.service.ts": "e278063b5cae0401f723171212d7079233b7463ea80d9cb95c88624df78b7c18",
+    "apps/api/src/modules/auth/application/use-cases/confirm-email-verification.use-case.ts": "da5ad88743a7073fd86bb0899fe6aa4cf17211f79679d4f3e2e79561d99f96fd",
+    "apps/api/src/modules/auth/application/use-cases/request-email-change.use-case.ts": "75ab515c367d2b60a18c4ae38415796b1dde470dc36442c7d80cd354771919a9",
+    "apps/api/src/modules/auth/application/use-cases/resend-email-verification.use-case.ts": "cedaa8426337b95239d1bb3d53580ebe01feacdd1d937f63787ca69bcaa0544a",
+    "apps/api/src/modules/auth/auth-endpoints.spec.ts": "524a54efb1c9ed4cc7e8594dafb30e8603192bafa66fcf5916fb8cb26f6ff2e0",
+    "apps/api/src/modules/auth/infrastructure/auth-email.templates.ts": "d68defa3a7fbcb499279fa39420bd8724b508f25f29bb4f1bf21809f71f8b95c",
+    "apps/api/src/modules/auth/infrastructure/local-console-auth-mailer.adapter.ts": "1a05873a6e36f6bf6232f8136c9a44ceb5e30adefc22f40f74a184634449cbf9",
+    "apps/api/src/modules/auth/infrastructure/postmark-auth-mailer.adapter.ts": "146bb590ca9b33c8defe1e600667ef2ff8cd224aa97add09d03fc488aabab9cf",
+    "apps/api/src/modules/auth/presentation/auth.controller.ts": "9a9a2566459ad0bd792868257c0d51a8abdee146b625689ceaf33b09d456a1e9",
+    "apps/api/src/scripts/billing-http-smoke.ts": "21b3474b263904adfc0b073fa4addad7e9e16c3de9cffd63d7ca17f8b4cf7d62",
+    "apps/api/src/scripts/email-verification-smoke.ts": "90677b9b53f7a0377309a1156189eaa6163651510d36c430d92672e01640dab6",
+    "apps/web/src/common/i18n/workspace-dictionary.ts": "358c3df1b2ef4db7a5d22068ff2e83a1565471a72659c1308b3e0f7a6cb8e922",
+    "apps/web/src/features/account-security/AccountSecurityPage.tsx": "9401104dbc4e3823f06764f5b8c88b8011946b085f635cf01e38f12b0467404f",
+    "apps/web/src/features/auth/VerifyEmailPage.tsx": "f1be7ef7d80525666bb0892157ad77a093ef31fa7dc9401505ce7ad63cea0663",
+    "apps/web/src/features/auth/auth.api.ts": "95b95ba6861044250fca2d8544cb62db57f7efea996625a1d915e1a3f82b6116",
+    "apps/web/src/features/auth/auth.logic.ts": "c226d48775150d94caa5a3ff7376ababfe23820b5607908cba2955b4a6b54579",
+    "apps/web/src/features/company-profile/CompanyProfilePage.qa.spec.ts": "c52628b238dfc88bf00554afcde81b0e1a5d1819bcb4564c82e2226a60476af2",
+    "apps/web/src/features/company-profile/CompanyProfilePage.tsx": "a43571334e65055b6e9756ad0b00c028f71d5519f01a4ec95027a4769b43b7fa"
+  },
+  "pinCheck": "PASS"
+}

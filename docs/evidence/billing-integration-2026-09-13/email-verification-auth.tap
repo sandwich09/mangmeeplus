@@ -1,0 +1,748 @@
+TAP version 13
+# [Nest] 9721  - 09/14/2026, 10:10:57 AM    WARN [AuthRateLimitService] Object(4) {
+#   scope: 'account-profile-write-user',
+#   retryAfterSeconds: 60,
+#   msg: 'auth.rate_limit.exceeded',
+#   riskLevel: 'HIGH'
+# }
+# Subtest: AccountProfileUseCase — first password
+    # Subtest: creates an ACTIVE credential that does not force a change, for an account that has none
+    ok 1 - creates an ACTIVE credential that does not force a change, for an account that has none
+      ---
+      duration_ms: 49.714541
+      type: 'test'
+      ...
+    # Subtest: refuses to overwrite an existing password and names the change-password route instead
+    ok 2 - refuses to overwrite an existing password and names the change-password route instead
+      ---
+      duration_ms: 0.29475
+      type: 'test'
+      ...
+    # Subtest: lets the LINE-first owner log in with the username they just set
+    ok 3 - lets the LINE-first owner log in with the username they just set
+      ---
+      duration_ms: 49.90075
+      type: 'test'
+      ...
+    # Subtest: refuses a password that nothing could ever log in with
+    ok 4 - refuses a password that nothing could ever log in with
+      ---
+      duration_ms: 0.147834
+      type: 'test'
+      ...
+    # Subtest: accepts no username once a verified email can carry the login
+    ok 5 - accepts no username once a verified email can carry the login
+      ---
+      duration_ms: 24.7605
+      type: 'test'
+      ...
+    # Subtest: rejects a username differing only by case from one already held
+    ok 6 - rejects a username differing only by case from one already held
+      ---
+      duration_ms: 0.205417
+      type: 'test'
+      ...
+    # Subtest: answers username_taken when the name is claimed between the uniqueness read and the write
+    ok 7 - answers username_taken when the name is claimed between the uniqueness read and the write
+      ---
+      duration_ms: 25.262417
+      type: 'test'
+      ...
+    # Subtest: revokes the other sessions and tells the owner over LINE
+    ok 8 - revokes the other sessions and tells the owner over LINE
+      ---
+      duration_ms: 24.868042
+      type: 'test'
+      ...
+    # Subtest: does not announce the password to a revoked LINE identity
+    ok 9 - does not announce the password to a revoked LINE identity
+      ---
+      duration_ms: 25.703708
+      type: 'test'
+      ...
+    # Subtest: still sets the password when there is no LINE identity to notify
+    ok 10 - still sets the password when there is no LINE identity to notify
+      ---
+      duration_ms: 24.519083
+      type: 'test'
+      ...
+    # Subtest: rejects a username that is not a usable login name, with a code the web can translate
+    ok 11 - rejects a username that is not a usable login name, with a code the web can translate
+      ---
+      duration_ms: 0.495583
+      type: 'test'
+      ...
+    # Subtest: uses unverified email as a login identifier without fabricating mailbox verification
+    ok 12 - uses unverified email as a login identifier without fabricating mailbox verification
+      ---
+      duration_ms: 25.148709
+      type: 'test'
+      ...
+    1..12
+ok 1 - AccountProfileUseCase — first password
+  ---
+  duration_ms: 251.773709
+  type: 'suite'
+  ...
+# Subtest: owner email HTTP contract
+    # Subtest: normalizes valid email, requires expectedEmail and preserves long email reset identifiers
+    ok 1 - normalizes valid email, requires expectedEmail and preserves long email reset identifiers
+      ---
+      duration_ms: 2.535333
+      type: 'test'
+      ...
+    1..1
+ok 2 - owner email HTTP contract
+  ---
+  duration_ms: 2.591209
+  type: 'suite'
+  ...
+# Subtest: AccountProfileUseCase — recovery phone
+    # Subtest: stores a Thai mobile however the owner spaced it, and clears it when blank
+    ok 1 - stores a Thai mobile however the owner spaced it, and clears it when blank
+      ---
+      duration_ms: 0.173625
+      type: 'test'
+      ...
+    # Subtest: refuses to write the number of a user who is not active
+    ok 2 - refuses to write the number of a user who is not active
+      ---
+      duration_ms: 0.094875
+      type: 'test'
+      ...
+    # Subtest: rejects anything that is not a 10-digit Thai mobile
+    ok 3 - rejects anything that is not a 10-digit Thai mobile
+      ---
+      duration_ms: 0.117167
+      type: 'test'
+      ...
+    1..3
+ok 3 - AccountProfileUseCase — recovery phone
+  ---
+  duration_ms: 0.433792
+  type: 'suite'
+  ...
+# Subtest: recovery email for an account with no password
+    # Subtest: lets a credential-less LINE account request verification without a password
+    ok 1 - lets a credential-less LINE account request verification without a password
+      ---
+      duration_ms: 0.407583
+      type: 'test'
+      ...
+    # Subtest: still demands the current password once a credential exists
+    ok 2 - still demands the current password once a credential exists
+      ---
+      duration_ms: 25.123958
+      type: 'test'
+      ...
+    # Subtest: refuses to promise a verification mail the environment cannot send
+    ok 3 - refuses to promise a verification mail the environment cannot send
+      ---
+      duration_ms: 0.170291
+      type: 'test'
+      ...
+    # Subtest: refuses a resend on the same environment, without revoking the pending token
+    ok 4 - refuses a resend on the same environment, without revoking the pending token
+      ---
+      duration_ms: 0.272583
+      type: 'test'
+      ...
+    # Subtest: still sends on an environment that has a mailer
+    ok 5 - still sends on an environment that has a mailer
+      ---
+      duration_ms: 0.237209
+      type: 'test'
+      ...
+    # Subtest: answers a mailbox held by another account with the merge code, not a dead end
+    ok 6 - answers a mailbox held by another account with the merge code, not a dead end
+      ---
+      duration_ms: 0.07625
+      type: 'test'
+      ...
+    # Subtest: spends the confirmation token exactly once
+    ok 7 - spends the confirmation token exactly once
+      ---
+      duration_ms: 0.286584
+      type: 'test'
+      ...
+    1..7
+ok 4 - recovery email for an account with no password
+  ---
+  duration_ms: 26.697
+  type: 'suite'
+  ...
+# Subtest: GET account/security reports what the profile page must branch on
+    # Subtest: separates "no password at all" from "has one"
+    ok 1 - separates "no password at all" from "has one"
+      ---
+      duration_ms: 0.139458
+      type: 'test'
+      ...
+    1..1
+ok 5 - GET account/security reports what the profile page must branch on
+  ---
+  duration_ms: 0.174875
+  type: 'suite'
+  ...
+# Subtest: the HTTP surface of the my-account routes
+    # Subtest: mounts the routes the profile page calls
+    ok 1 - mounts the routes the profile page calls
+      ---
+      duration_ms: 0.072
+      type: 'test'
+      ...
+    # Subtest: spends a per-user budget on both writes before the use case is reached
+    ok 2 - spends a per-user budget on both writes before the use case is reached
+      ---
+      duration_ms: 1.353292
+      type: 'test'
+      ...
+    # Subtest: refuses a member who does not hold the self-service key, and admits one who does
+    ok 3 - refuses a member who does not hold the self-service key, and admits one who does
+      ---
+      duration_ms: 0.394084
+      type: 'test'
+      ...
+    1..3
+ok 6 - the HTTP surface of the my-account routes
+  ---
+  duration_ms: 1.864417
+  type: 'suite'
+  ...
+# [Nest] 9722  - 09/14/2026, 10:10:57 AM    WARN [AuthRateLimitService] Object(4) {
+#   scope: 'password-reset-request-identifier-ip',
+#   retryAfterSeconds: 60,
+#   msg: 'auth.rate_limit.exceeded',
+#   riskLevel: 'HIGH'
+# }
+# Subtest: RequestPasswordResetUseCase
+    # Subtest: returns the same generic response when the identifier is not found
+    ok 1 - returns the same generic response when the identifier is not found
+      ---
+      duration_ms: 0.367958
+      type: 'test'
+      ...
+    # Subtest: revokes older pending reset tokens before issuing a new one
+    ok 2 - revokes older pending reset tokens before issuing a new one
+      ---
+      duration_ms: 0.228167
+      type: 'test'
+      ...
+    1..2
+ok 7 - RequestPasswordResetUseCase
+  ---
+  duration_ms: 0.937375
+  type: 'suite'
+  ...
+# Subtest: ConfirmPasswordResetUseCase
+    # Subtest: updates the password, revokes sessions, and returns a new login session
+    ok 1 - updates the password, revokes sessions, and returns a new login session
+      ---
+      duration_ms: 102.972875
+      type: 'test'
+      ...
+    # Subtest: rejects reusing the password already on the account, leaving the token usable
+    ok 2 - rejects reusing the password already on the account, leaving the token usable
+      ---
+      duration_ms: 50.986583
+      type: 'test'
+      ...
+    # Subtest: rejects an expired token with a uniform error
+    ok 3 - rejects an expired token with a uniform error
+      ---
+      duration_ms: 0.233042
+      type: 'test'
+      ...
+    # Subtest: does not reset or issue a session without access to an active company
+    ok 4 - does not reset or issue a session without access to an active company
+      ---
+      duration_ms: 0.983125
+      type: 'test'
+      ...
+    1..4
+ok 8 - ConfirmPasswordResetUseCase
+  ---
+  duration_ms: 155.42
+  type: 'suite'
+  ...
+# Subtest: RequestEmailChangeUseCase
+    # Subtest: creates a pending verification token for a valid password
+    ok 1 - creates a pending verification token for a valid password
+      ---
+      duration_ms: 52.123833
+      type: 'test'
+      ...
+    # Subtest: rejects a wrong current password without writes, email delivery or audit
+    ok 2 - rejects a wrong current password without writes, email delivery or audit
+      ---
+      duration_ms: 49.369209
+      type: 'test'
+      ...
+    # Subtest: keeps missing users and disabled credentials unauthorized
+    ok 3 - keeps missing users and disabled credentials unauthorized
+      ---
+      duration_ms: 26.265042
+      type: 'test'
+      ...
+    1..3
+ok 9 - RequestEmailChangeUseCase
+  ---
+  duration_ms: 128.073416
+  type: 'suite'
+  ...
+# Subtest: AuthRateLimitService
+    # Subtest: blocks repeated reset requests after the configured threshold
+    ok 1 - blocks repeated reset requests after the configured threshold
+      ---
+      duration_ms: 1.343583
+      type: 'test'
+      ...
+    1..1
+ok 10 - AuthRateLimitService
+  ---
+  duration_ms: 1.398458
+  type: 'suite'
+  ...
+# Subtest: LINE recovery PostgreSQL lifecycle and concurrency
+ok 11 - LINE recovery PostgreSQL lifecycle and concurrency # SKIP
+  ---
+  duration_ms: 0.223208
+  type: 'suite'
+  ...
+# [line-exchange] line_identity_channel_agnostic_fallback identityId=ei-legacy
+# Subtest: LINE recovery credential lifecycle
+    # Subtest: rejects a pending recovery password after the user changes their password
+    ok 1 - rejects a pending recovery password after the user changes their password
+      ---
+      duration_ms: 152.863
+      type: 'test'
+      ...
+    1..1
+ok 12 - LINE recovery credential lifecycle
+  ---
+  duration_ms: 153.024459
+  type: 'suite'
+  ...
+# Subtest: IssueTokenUseCase
+    # Subtest: creates a session and returns access + refresh tokens
+    ok 1 - creates a session and returns access + refresh tokens
+      ---
+      duration_ms: 1.755792
+      type: 'test'
+      ...
+    # Subtest: throws when no signing secret is configured
+    ok 2 - throws when no signing secret is configured
+      ---
+      duration_ms: 0.0945
+      type: 'test'
+      ...
+    # Subtest: locks and rechecks the verified password credential before creating a watchdog session
+    ok 3 - locks and rechecks the verified password credential before creating a watchdog session
+      ---
+      duration_ms: 0.7825
+      type: 'test'
+      ...
+    # Subtest: rejects a password login whose credential changed before its session was created
+    ok 4 - rejects a password login whose credential changed before its session was created
+      ---
+      duration_ms: 0.267791
+      type: 'test'
+      ...
+    1..4
+ok 13 - IssueTokenUseCase
+  ---
+  duration_ms: 3.034958
+  type: 'suite'
+  ...
+# Subtest: PasswordLoginUseCase
+    # Subtest: blocks an ordinary valid credential while customer access is closed and issues no token
+    ok 1 - blocks an ordinary valid credential while customer access is closed and issues no token
+      ---
+      duration_ms: 51.295375
+      type: 'test'
+      ...
+    # Subtest: allows SYSTEM_ADMIN while customer access is closed
+    ok 2 - allows SYSTEM_ADMIN while customer access is closed
+      ---
+      duration_ms: 49.248416
+      type: 'test'
+      ...
+    # Subtest: issues watchdog tokens for an active username/password credential
+    ok 3 - issues watchdog tokens for an active username/password credential
+      ---
+      duration_ms: 69.604166
+      type: 'test'
+      ...
+    # Subtest: keeps the current password valid while a recovery token is pending
+    ok 4 - keeps the current password valid while a recovery token is pending
+      ---
+      duration_ms: 72.57375
+      type: 'test'
+      ...
+    # Subtest: atomically turns a one-time LINE recovery password into a forced-change credential
+    ok 5 - atomically turns a one-time LINE recovery password into a forced-change credential
+      ---
+      duration_ms: 127.541166
+      type: 'test'
+      ...
+    # Subtest: never treats a parked email-reset token as a login password
+    ok 6 - never treats a parked email-reset token as a login password
+      ---
+      duration_ms: 47.543209
+      type: 'test'
+      ...
+    # Subtest: rejects an expired or concurrently claimed recovery password as invalid credentials
+    ok 7 - rejects an expired or concurrently claimed recovery password as invalid credentials
+      ---
+      duration_ms: 118.286958
+      type: 'test'
+      ...
+    # Subtest: matches the trimmed identifier against username or lowercased email
+    ok 8 - matches the trimmed identifier against username or lowercased email
+      ---
+      duration_ms: 47.407042
+      type: 'test'
+      ...
+    # Subtest: redirects system admin credentials to partner management
+    ok 9 - redirects system admin credentials to partner management
+      ---
+      duration_ms: 47.742583
+      type: 'test'
+      ...
+    # Subtest: only considers active memberships whose company is active
+    ok 10 - only considers active memberships whose company is active
+      ---
+      duration_ms: 47.330708
+      type: 'test'
+      ...
+    # Subtest: rejects valid credentials with company_access_unavailable and issues no token when no active-company membership exists
+    ok 11 - rejects valid credentials with company_access_unavailable and issues no token when no active-company membership exists
+      ---
+      duration_ms: 47.372666
+      type: 'test'
+      ...
+    # Subtest: rejects expired temporary password
+    ok 12 - rejects expired temporary password
+      ---
+      duration_ms: 47.978833
+      type: 'test'
+      ...
+    1..12
+ok 14 - PasswordLoginUseCase
+  ---
+  duration_ms: 774.816584
+  type: 'suite'
+  ...
+# Subtest: ChangePasswordUseCase
+    # Subtest: replaces the hash and clears temporary-password constraints
+    ok 1 - replaces the hash and clears temporary-password constraints
+      ---
+      duration_ms: 117.854084
+      type: 'test'
+      ...
+    # Subtest: rejects re-submitting the current password as the new one
+    ok 2 - rejects re-submitting the current password as the new one
+      ---
+      duration_ms: 70.703125
+      type: 'test'
+      ...
+    1..2
+ok 15 - ChangePasswordUseCase
+  ---
+  duration_ms: 188.630334
+  type: 'suite'
+  ...
+# Subtest: ChangePasswordUseCase reauthentication errors
+    # Subtest: returns a correctable 400 before any mutation for a wrong ACTIVE current password
+    ok 1 - returns a correctable 400 before any mutation for a wrong ACTIVE current password
+      ---
+      duration_ms: 23.782125
+      type: 'test'
+      ...
+    # Subtest: returns a correctable 400 before any mutation for a wrong TEMPORARY current password
+    ok 2 - returns a correctable 400 before any mutation for a wrong TEMPORARY current password
+      ---
+      duration_ms: 23.468166
+      type: 'test'
+      ...
+    # Subtest: keeps missing credentials unauthorized even with a matching password
+    ok 3 - keeps missing credentials unauthorized even with a matching password
+      ---
+      duration_ms: 0.120792
+      type: 'test'
+      ...
+    # Subtest: keeps disabled credentials unauthorized even with a matching password
+    ok 4 - keeps disabled credentials unauthorized even with a matching password
+      ---
+      duration_ms: 0.039417
+      type: 'test'
+      ...
+    # Subtest: still rejects an expired temporary password before mutation
+    ok 5 - still rejects an expired temporary password before mutation
+      ---
+      duration_ms: 24.02825
+      type: 'test'
+      ...
+    # Subtest: still rejects password reuse before mutation
+    ok 6 - still rejects password reuse before mutation
+      ---
+      duration_ms: 47.047
+      type: 'test'
+      ...
+    1..6
+ok 16 - ChangePasswordUseCase reauthentication errors
+  ---
+  duration_ms: 118.624875
+  type: 'suite'
+  ...
+# Subtest: JWT verifiers
+    # Subtest: rejects refresh tokens as request authorization tokens
+    ok 1 - rejects refresh tokens as request authorization tokens
+      ---
+      duration_ms: 0.593375
+      type: 'test'
+      ...
+    # Subtest: verifies access tokens with the same fallback secret used for issuance
+    ok 2 - verifies access tokens with the same fallback secret used for issuance
+      ---
+      duration_ms: 0.334083
+      type: 'test'
+      ...
+    # Subtest: rejects dev refresh tokens as request authorization tokens
+    ok 3 - rejects dev refresh tokens as request authorization tokens
+      ---
+      duration_ms: 0.299
+      type: 'test'
+      ...
+    1..3
+ok 17 - JWT verifiers
+  ---
+  duration_ms: 1.274916
+  type: 'suite'
+  ...
+# Subtest: ExchangeLineTokenUseCase
+    # Subtest: returns linked=false when ExternalIdentity not found
+    ok 1 - returns linked=false when ExternalIdentity not found
+      ---
+      duration_ms: 0.245083
+      type: 'test'
+      ...
+    # Subtest: returns tokens when identity is found and user is active
+    ok 2 - returns tokens when identity is found and user is active
+      ---
+      duration_ms: 0.056958
+      type: 'test'
+      ...
+    # Subtest: throws ForbiddenException when user is suspended
+    ok 3 - throws ForbiddenException when user is suspended
+      ---
+      duration_ms: 0.098625
+      type: 'test'
+      ...
+    # Subtest: resolves via canonical channel first and falls back channel-agnostically for legacy rows
+    ok 4 - resolves via canonical channel first and falls back channel-agnostically for legacy rows
+      ---
+      duration_ms: 0.195125
+      type: 'test'
+      ...
+    # Subtest: fails closed in production when the canonical channel is not configured
+    ok 5 - fails closed in production when the canonical channel is not configured
+      ---
+      duration_ms: 0.102625
+      type: 'test'
+      ...
+    1..5
+ok 18 - ExchangeLineTokenUseCase
+  ---
+  duration_ms: 0.742416
+  type: 'suite'
+  ...
+# Subtest: LogoutUseCase
+    # Subtest: marks session as revoked
+    ok 1 - marks session as revoked
+      ---
+      duration_ms: 0.079084
+      type: 'test'
+      ...
+    # Subtest: audits a logout whose actor cannot be resolved, marking the actor explicitly
+    ok 2 - audits a logout whose actor cannot be resolved, marking the actor explicitly
+      ---
+      duration_ms: 0.048
+      type: 'test'
+      ...
+    # Subtest: records the resolved actor without the unresolved marker
+    ok 3 - records the resolved actor without the unresolved marker
+      ---
+      duration_ms: 0.037834
+      type: 'test'
+      ...
+    1..3
+ok 19 - LogoutUseCase
+  ---
+  duration_ms: 0.193375
+  type: 'suite'
+  ...
+# Subtest: RevokeOtherSessionsUseCase
+    # Subtest: revokes active sessions for the user except the current token
+    ok 1 - revokes active sessions for the user except the current token
+      ---
+      duration_ms: 0.0845
+      type: 'test'
+      ...
+    # Subtest: returns zero when there are no other active sessions
+    ok 2 - returns zero when there are no other active sessions
+      ---
+      duration_ms: 0.03225
+      type: 'test'
+      ...
+    1..2
+ok 20 - RevokeOtherSessionsUseCase
+  ---
+  duration_ms: 0.142792
+  type: 'suite'
+  ...
+# Subtest: PlatformAccessService
+    # Subtest: forces production maintenance closed even when the stored request says OPEN
+    ok 1 - forces production maintenance closed even when the stored request says OPEN
+      ---
+      duration_ms: 0.193333
+      type: 'test'
+      ...
+    # Subtest: defaults production closed and non-production open when no row exists
+    ok 2 - defaults production closed and non-production open when no row exists
+      ---
+      duration_ms: 0.042542
+      type: 'test'
+      ...
+    # Subtest: fails closed and refuses opening when the control table cannot be read
+    ok 3 - fails closed and refuses opening when the control table cannot be read
+      ---
+      duration_ms: 0.156542
+      type: 'test'
+      ...
+    # Subtest: writes the switch and CRITICAL audit atomically in a verified live release
+    ok 4 - writes the switch and CRITICAL audit atomically in a verified live release
+      ---
+      duration_ms: 0.082584
+      type: 'test'
+      ...
+    1..4
+ok 21 - PlatformAccessService
+  ---
+  duration_ms: 0.503833
+  type: 'suite'
+  ...
+# Subtest: P11 SES auth mailer provider boundary
+    # Subtest: keeps disabled as a true no-op and makes local console explicit
+    ok 1 - keeps disabled as a true no-op and makes local console explicit
+      ---
+      duration_ms: 0.163667
+      type: 'test'
+      ...
+    # Subtest: fails SES selection at boot when required delivery config is missing
+    ok 2 - fails SES selection at boot when required delivery config is missing
+      ---
+      duration_ms: 0.088542
+      type: 'test'
+      ...
+    # Subtest: selects Postmark explicitly and refuses incomplete or validation-only production credentials
+    ok 3 - selects Postmark explicitly and refuses incomplete or validation-only production credentials
+      ---
+      duration_ms: 0.151167
+      type: 'test'
+      ...
+    # Subtest: never uses the public API origin as the SES frontend base
+    ok 4 - never uses the public API origin as the SES frontend base
+      ---
+      duration_ms: 0.610542
+      type: 'test'
+      ...
+    # Subtest: builds UTF-8 SES messages for verification, reset, and account claim without unsafe HTML
+    ok 5 - builds UTF-8 SES messages for verification, reset, and account claim without unsafe HTML
+      ---
+      duration_ms: 1.42225
+      type: 'test'
+      ...
+    # Subtest: propagates SES failures so the caller or outbox can retry
+    ok 6 - propagates SES failures so the caller or outbox can retry
+      ---
+      duration_ms: 0.148042
+      type: 'test'
+      ...
+    # Subtest: rejects non-HTTPS claim and application links before sending
+    ok 7 - rejects non-HTTPS claim and application links before sending
+      ---
+      duration_ms: 0.050458
+      type: 'test'
+      ...
+    1..7
+ok 22 - P11 SES auth mailer provider boundary
+  ---
+  duration_ms: 2.686125
+  type: 'suite'
+  ...
+# Subtest: sesConfigurationSet
+    # Subtest: is undefined when unset or blank, so the send keeps its pre-existing shape
+    ok 1 - is undefined when unset or blank, so the send keeps its pre-existing shape
+      ---
+      duration_ms: 0.301333
+      type: 'test'
+      ...
+    1..1
+ok 23 - sesConfigurationSet
+  ---
+  duration_ms: 0.615958
+  type: 'suite'
+  ...
+# Subtest: SesAuthMailerAdapter.sendAccountClaim
+    # Subtest: keeps the shared claim proof out of request URLs while retaining the status reference
+    ok 1 - keeps the shared claim proof out of request URLs while retaining the status reference
+      ---
+      duration_ms: 1.077084
+      type: 'test'
+      ...
+    # Subtest: omits ConfigurationSetName entirely when the env is unset
+    ok 2 - omits ConfigurationSetName entirely when the env is unset
+      ---
+      duration_ms: 0.14175
+      type: 'test'
+      ...
+    # Subtest: attaches the configuration set when the env names one — no events without it
+    ok 3 - attaches the configuration set when the env names one — no events without it
+      ---
+      duration_ms: 0.108625
+      type: 'test'
+      ...
+    # Subtest: returns the SES MessageId, the join key a later bounce event arrives with
+    ok 4 - returns the SES MessageId, the join key a later bounce event arrives with
+      ---
+      duration_ms: 0.124583
+      type: 'test'
+      ...
+    # Subtest: returns null rather than undefined when SES answers without a MessageId
+    ok 5 - returns null rather than undefined when SES answers without a MessageId
+      ---
+      duration_ms: 0.086667
+      type: 'test'
+      ...
+    # Subtest: sends every message type through the same configuration set, so reputation is measured once
+    ok 6 - sends every message type through the same configuration set, so reputation is measured once
+      ---
+      duration_ms: 1.115
+      type: 'test'
+      ...
+    1..6
+ok 24 - SesAuthMailerAdapter.sendAccountClaim
+  ---
+  duration_ms: 3.09575
+  type: 'suite'
+  ...
+1..24
+# tests 93
+# suites 24
+# pass 93
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2063.537625

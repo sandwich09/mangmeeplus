@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
   ConflictException, Injectable, NotFoundException, UnprocessableEntityException,
 } from '@nestjs/common';
@@ -88,7 +89,7 @@ function validRetryKey(value: string | null): value is string {
 
 @Injectable()
 export class SupportRequestAdminUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
   ) {}
@@ -304,7 +305,7 @@ export class SupportRequestAdminUseCase {
       if (check.reason === 'too_long') throw new UnprocessableEntityException('partner_line_message_too_long');
       throw new UnprocessableEntityException('partner_line_message_external_link');
     }
-    const token = this.config.lineMessagingChannelAccessToken;
+    const token = (await this.lineCredentials.get()).accessToken;
     if (!token) throw new UnprocessableEntityException('line_messaging_channel_not_configured');
     const now = new Date();
     const senderName = request.replyOperationId === operationId && request.lastReplySenderName

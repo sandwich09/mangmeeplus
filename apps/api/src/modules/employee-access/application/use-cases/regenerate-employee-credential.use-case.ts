@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { EmployeeCredentialHandoff } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -22,7 +23,7 @@ export type RegenerateEmployeeCredentialCommand = {
 
 @Injectable()
 export class RegenerateEmployeeCredentialUseCase {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
   ) {}
@@ -94,11 +95,12 @@ export class RegenerateEmployeeCredentialUseCase {
 
   /** Best-effort delivery to the LINE identity already linked to this exact user. */
   private async pushTemporaryPassword(userId: string, temporaryPassword: string, expiresAt: Date): Promise<boolean> {
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return false;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return false;
 
     const identity = await this.prisma.client.externalIdentity.findFirst({
-      where: { userId, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId, provider: 'LINE', providerChannelId: credentials.channelId, status: 'ACTIVE' },
       select: { providerUserId: true },
     });
     if (!identity) return false;

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
 import { ApiOperation, ApiResponse } from '@nestjs/swagger';
 import {
   IsBoolean, IsIn, IsInt, IsNumberString, IsOptional, IsString, Matches, MaxLength, Min,
@@ -51,6 +51,10 @@ export class SignupQueueQueryDto {
   @IsNumberString() @IsOptional() limit?: string;
 }
 
+export class SignupClaimHistoryQueryDto {
+  @IsOptional() @IsString() @MaxLength(36) @Matches(/^[a-f0-9-]{36}$/i) cursor?: string;
+}
+
 /**
  * System Admin review queue (spec §4C). Gated by the onboarding permissions rather than a new key:
  * reading the queue is reading pending onboardings, and approving one is what causes a company to
@@ -65,6 +69,13 @@ export class SystemSignupRequestController {
     private readonly queue: SignupAdminQueueUseCase,
     private readonly config: AppConfigService,
   ) {}
+
+  @Get(':requestId/claim-deliveries')
+  @RequirePermissions('system.company_onboarding.read')
+  @Header('Cache-Control', 'no-store')
+  claimHistory(@Req() req: Request & { context: RequestContext }, @Param('requestId') requestId: string, @Query() query: SignupClaimHistoryQueryDto) {
+    return this.queue.claimHistory(req.context, requestId, query.cursor);
+  }
 
   @Get()
   @RequirePermissions('system.company_onboarding.read')

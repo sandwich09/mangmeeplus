@@ -1,145 +1,36 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
+import { lockEmailRecoveryAccount } from '../email-recovery-lock';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
 import { PASSWORD_REUSE } from './change-password.use-case';
-import { hashToken } from '../../domain/logic/secure-token.logic';
-import { IssueTokenUseCase } from './issue-token.use-case';
-import type { PasswordLoginResult } from './password-login.use-case';
-import { AuditService } from '../../../audit/application/audit.service';
+import { EMAIL_RECOVERY_TOKEN, emailRecoveryBinding, emailRecoveryCredential, hashToken } from '../../domain/logic/secure-token.logic';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 
+const invalid=()=>new ForbiddenException({code:'email_reset_invalid',message:'Password reset link is invalid, expired, or already used.'});
 @Injectable()
 export class ConfirmPasswordResetUseCase {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly issueToken: IssueTokenUseCase,
-    @Optional() @Inject(AuditService) private readonly audit: AuditService | null = null,
-  ) {}
-
-  async execute(input: { token: string; newPassword: string; requestId?: string }): Promise<Omit<PasswordLoginResult, 'legalAcceptanceRequired'>> {
-    const tokenHash = hashToken(input.token);
-    const now = new Date();
-    const token = await this.prisma.client.passwordResetToken.findUnique({ where: { tokenHash } });
-
-    const fail = async (reason: string, actorUserId: string | null = token?.userId ?? null) => {
-      await this.audit?.log({
-        action: AuditAction.AUTH_PASSWORD_RESET_FAILURE,
-        actorUserId: actorUserId ?? undefined,
-        targetType: 'PasswordResetToken',
-        targetId: token?.id,
-        requestId: input.requestId ?? 'system',
-        result: 'FAILED',
-        riskLevel: 'MEDIUM',
-        metadataJson: { reason },
-      });
-      throw new ForbiddenException('Password reset link is invalid, expired, or already used.');
-    };
-
-    if (!token) return fail('token_not_found', null);
-    if (token.status !== 'PENDING') return fail('token_not_pending');
-    if (token.expiresAt <= now) {
-      await this.prisma.client.passwordResetToken.updateMany({
-        where: { id: token.id, status: 'PENDING' },
-        data: { status: 'EXPIRED' },
-      });
-      return fail('token_expired');
-    }
-
-    const user = await this.prisma.client.user.findUnique({
-      where: { id: token.userId },
-      include: { credential: true },
-    });
-    const credential = user?.credential;
-    if (!user || user.status !== 'ACTIVE' || !credential || credential.status === 'DISABLED') {
-      return fail('user_ineligible', user?.id ?? null);
-    }
-
-    const membership = await this.prisma.client.companyMembership.findFirst({
-      where: { userId: user.id, status: 'ACTIVE', company: { status: 'ACTIVE' } },
-      select: {
-        companyId: true,
-        roles: { select: { role: { select: { key: true } } } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (!membership) {
-      throw new ForbiddenException({
-        code: 'company_access_unavailable',
-        message: 'This account has no active company access. Contact your administrator.',
-      });
-    }
-    const isSystemAdmin = membership.roles.some((entry) => entry.role.key === 'SYSTEM_ADMIN');
-    const companyId = isSystemAdmin ? null : membership.companyId;
-
-    // Same rule as the forced change screen: a reset that keeps the password already on the
-    // account is not a reset. Checked before the transaction so the token stays usable for a retry.
-    if (verifyPassword(input.newPassword, credential.passwordHash)) {
-      throw new BadRequestException(PASSWORD_REUSE);
-    }
-
-    let revokedSessionCount = 0;
-    let credentialUpdatedAt: Date | null = null;
-    const usedAt = new Date();
-    let claimed = true;
-
-    try {
-      await this.prisma.client.$transaction(async (tx) => {
-        const claim = await tx.passwordResetToken.updateMany({
-          where: { id: token.id, status: 'PENDING' },
-          data: { status: 'USED', usedAt },
-        });
-        if (claim.count !== 1) {
-          claimed = false;
-          throw new Error('token_already_claimed');
-        }
-
-        const revoked = await tx.authSession.updateMany({
-          where: { userId: user.id, status: 'ACTIVE' },
-          data: { status: 'REVOKED', revokedAt: usedAt },
-        });
-        revokedSessionCount = revoked.count;
-
-        const updatedCredential = await tx.userCredential.update({
-          where: { userId: user.id },
-          data: {
-            passwordHash: hashPassword(input.newPassword),
-            status: 'ACTIVE',
-            mustChangePassword: false,
-            expiresAt: null,
-            // User-chosen password: drop the revealable system-generated copy.
-            tempPasswordEncrypted: null,
-          },
-        });
-        credentialUpdatedAt = updatedCredential.updatedAt;
-
-        await tx.auditLog.create({
-          data: {
-            companyId,
-            actorUserId: user.id,
-            action: AuditAction.AUTH_PASSWORD_RESET_CONFIRM,
-            targetType: 'PasswordResetToken',
-            targetId: token.id,
-            requestId: input.requestId ?? 'system',
-            result: 'SUCCESS',
-            riskLevel: 'HIGH',
-            metadataJson: { revokedSessionCount },
-          },
-        });
-      });
-    } catch (error) {
-      if (!claimed || (error instanceof Error && error.message === 'token_already_claimed')) {
-        return fail('token_already_claimed');
-      }
-      throw error;
-    }
-
-    if (!credentialUpdatedAt) throw new Error('Password reset completed without a credential version.');
-    const tokens = await this.issueToken.execute(user.id, 'watchdog', credentialUpdatedAt);
-    return {
-      ...tokens,
-      passwordChangeRequired: false,
-      companyId,
-      redirectPath: isSystemAdmin ? '/system/platform-access' : `/companies/${companyId}/dashboard`,
-    };
+  constructor(private readonly prisma:PrismaService){}
+  async execute(input:{token:string;newPassword:string;requestId?:string}):Promise<{completed:true}>{
+    if(!EMAIL_RECOVERY_TOKEN.test(input.token))throw invalid();
+    if(typeof input.newPassword!=='string'||input.newPassword.length<8||input.newPassword.length>128)throw new BadRequestException();
+    const token=await this.prisma.client.passwordResetToken.findUnique({where:{tokenHash:hashToken(input.token)}});
+    if(!token)throw invalid();const parts=input.token.split('.');
+    await this.prisma.client.$transaction(async tx=>{
+      const account=await lockEmailRecoveryAccount(tx,token.userId);if(!account)throw invalid();
+      const {user,member}=account,current=await tx.passwordResetToken.findUnique({where:{id:token.id}});
+      if(!current||emailRecoveryBinding(user)!==parts[1])throw invalid();
+      // No login session is issued. A lost-response replay only confirms the same completed change.
+      const now=new Date(),samePassword=verifyPassword(input.newPassword,user.credential!.passwordHash);
+      if(current.status==='USED'&&current.expiresAt>now&&current.usedAt&&user.credential!.updatedAt.getTime()===current.usedAt.getTime()&&now.getTime()-current.usedAt.getTime()<=5*60000&&samePassword)return;
+      if(current.status!=='PENDING'||current.expiresAt<=now||emailRecoveryCredential(user)!==parts[2])throw invalid();
+      if(samePassword)throw new BadRequestException(PASSWORD_REUSE);
+      const claimed=await tx.passwordResetToken.updateMany({where:{id:current.id,status:'PENDING',expiresAt:{gt:now}},data:{status:'USED',usedAt:now}});
+      if(claimed.count!==1)throw invalid();
+      await tx.userCredential.update({where:{userId:user.id},data:{passwordHash:hashPassword(input.newPassword),status:'ACTIVE',mustChangePassword:false,expiresAt:null,tempPasswordEncrypted:null,updatedAt:now}});
+      const revoked=await tx.authSession.updateMany({where:{userId:user.id,status:'ACTIVE'},data:{status:'REVOKED',revokedAt:now}});
+      await tx.passwordResetToken.updateMany({where:{userId:user.id,status:'PENDING'},data:{status:'REVOKED'}});
+      await tx.auditLog.create({data:{companyId:member.companyId,actorUserId:user.id,action:AuditAction.AUTH_PASSWORD_RESET_CONFIRM,targetType:'PasswordResetToken',targetId:current.id,
+        requestId:input.requestId??current.id,result:'SUCCESS',riskLevel:'HIGH',metadataJson:{channel:'EMAIL',revokedSessionCount:revoked.count}}});
+    });return {completed:true};
   }
 }

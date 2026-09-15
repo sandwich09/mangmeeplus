@@ -1,0 +1,13 @@
+{
+  "layer": "local-real-Nest-HTTP-PostgreSQL",
+  "passed": [
+    "full-app-di-postmark-selection",
+    "missing-and-invalid-basic-auth",
+    "server-and-stream-fence",
+    "malformed-event-rejection",
+    "oversize-case-and-trailing-slash",
+    "durable-sanitized-receipt-and-dedupe",
+    "http-503-on-persistence-failure"
+  ],
+  "externalDelivery": false
+}

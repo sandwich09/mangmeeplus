@@ -1,0 +1,46 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+  "passed": [
+    "signup-web-real-form-idempotent-manual-review-no-early-company",
+    "signup-postmark-unknown-original-lookup-replay-no-extra-proof-or-send",
+    "signup-single-use-claim-real-BFF-session-seven-menus-trial15-without-line",
+    "browser-signup-claim-welcome-skip-line-legal-and-receipt-entry-mobile",
+    "signup-first-receipt-closed-gate-retry-real-stored-bytes-and-unavailable-extraction-recovery",
+    "signup-logout-revokes-session-real-login-returns-to-saved-receipt-with-unchanged-trial",
+    "signup-expired-link-status-resend-new-proof-no-window-extension-or-early-provision",
+    "signup-fragment-proof-absent-from-request-URLs-real-POST-and-legacy-link-reload"
+  ],
+  "simulatedProviders": [
+    "DNS",
+    "Postmark",
+    "AI Gateway (503)"
+  ],
+  "objectStorage": "real-local-bytes",
+  "realProviderDelivery": false,
+  "browserE2E": true,
+  "capturedAt": "2026-09-14T04:20:55.750402+00:00",
+  "baseCommit": "6da6514887cc4b7f258e633650d50cd44eda7b17",
+  "sourceMeaning": "Same signup8 journey after fixing the fixture click/legal redirect race observed in CI34803284452. Actual gate and app behavior retained; no timeout/gate bypass.",
+  "sources": {
+    "apps/api/src/scripts/billing-http-smoke.ts": "e37a258572c76c5457171699cddd47782ef25930e27574ca3697185d84604a2e",
+    "apps/api/src/scripts/signup-journey-smoke.ts": "4c2850f71fdb41c6f55efbcd5c565584e847f20ccc05300f2132fe414872f37b",
+    "apps/api/src/scripts/billing-browser-smoke.ts": "29fe45c8721ca63838660e67c7a9e0a9455decdd2c9c030e6499fe85fd23ec09",
+    "apps/api/src/modules/auth/infrastructure/auth-email.templates.ts": "d68defa3a7fbcb499279fa39420bd8724b508f25f29bb4f1bf21809f71f8b95c",
+    "apps/api/src/modules/auth/infrastructure/postmark-auth-mailer.adapter.ts": "146bb590ca9b33c8defe1e600667ef2ff8cd224aa97add09d03fc488aabab9cf",
+    "apps/api/src/modules/auth/application/email-delivery.service.ts": "e278063b5cae0401f723171212d7079233b7463ea80d9cb95c88624df78b7c18",
+    "apps/api/src/modules/external-signup/application/signup-claim-email.service.ts": "7559c3fd93356d8536d486103972ebdea0004f205d16505333cea6092965fc3c",
+    "apps/api/src/modules/external-signup/application/public-signup-status.use-case.ts": "da4e04bed747fd22941105024437d2097b21ae614f97d30f7206c15c4934135c",
+    "apps/api/src/modules/external-signup/application/signup-claim.use-case.ts": "77351138f54f46be22db99329a07beaf8efb91fc973d9b3439e6995497a1cb3c",
+    "apps/web/src/features/auth/auth.logic.ts": "c226d48775150d94caa5a3ff7376ababfe23820b5607908cba2955b4a6b54579",
+    "apps/web/src/features/external-signup/ClaimAccountPage.tsx": "de37e2ab4ce27310bde78566410c6e251abcbf5c1c1f33b276fc85e0e9e17fdc",
+    "apps/web/src/features/external-signup/SignupPage.tsx": "f9ddbb22a18d9083484e850771f0a3273fb9074bc9fdb3049cc82da7d9446c52",
+    "apps/web/src/features/external-signup/SignupStatusPage.tsx": "c7856262aeefee8333234fda709d8cd29267a388e871c44eed7d901a135f9e95",
+    "apps/web/src/features/external-signup/SignupWelcomePage.tsx": "27292c707b61c86d65413901073d81e535adf958ac335a79a2a05d236265e99f",
+    "apps/web/app/api/auth/signup-claim/route.ts": "0f8832f01205300742d4ea26f8c6f1d89210503f8f6a2f641f3acfc7b2d844ed",
+    "apps/web/app/api/auth/logout/route.ts": "55e49e559d1cf8b72e86c680bce654383e136890c504cc9ac77fb4e511fc1779",
+    "apps/web/src/features/auth/LoginPage.tsx": "f97473b90b2f2749c59b92a03654782f6932b4cd8da1ba546e578706702cc41f",
+    "apps/web/src/features/expenses/ExpenseReviewPage.tsx": "06e9f659bd64deb8ab2410eeb6be8de81cdc932488215ef993dfc9a5827e9861",
+    "docs/specs/mangmee-transactional-email-provider-spec-th.md": "ab7b42c0a8dccb30d18f3359b78ca8ce89580f6c8e2e022c04d21d7feda76fb1"
+  },
+  "ci": "New revision pending; previous run failed at the now-corrected fixture"
+}

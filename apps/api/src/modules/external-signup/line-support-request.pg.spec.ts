@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /**
  * UAT 2026-09-05 (build 1399bb83), against real PostgreSQL.
  *
@@ -80,7 +81,7 @@ function wire(client: PrismaClient, options: {
     sesWebBaseUrl: WEB_BASE,
   } as any;
 
-  const notify = new LineSignupNotifyService(
+  const notify = new LineSignupNotifyService(lineMessagingCredentialsFixture(config),
     prisma,
     { append: async () => undefined } as any,
     config,
@@ -101,7 +102,7 @@ function wire(client: PrismaClient, options: {
     { info: () => {}, warn: () => {}, error: () => {} } as any,
   );
 
-  const webhook = new ProcessLineWebhookUseCase(
+  const webhook = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture(config),
     prisma,
     config,
     {} as any,
@@ -124,7 +125,7 @@ function wire(client: PrismaClient, options: {
 
   return {
     webhook, notify, unlink: new UnlinkLineIdentityUseCase(prisma),
-    admin: new SupportRequestAdminUseCase(prisma, config),
+    admin: new SupportRequestAdminUseCase(lineMessagingCredentialsFixture(config), prisma, config),
     replies, notices, letters, alerts,
     get adminPushes() { return state.adminPushes; },
   };

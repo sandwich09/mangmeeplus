@@ -1,0 +1,30 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "real-session-tenant-and-expired-owner-recovery",
+    "hidden-enterprise-and-forged-price-rejected",
+    "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+    "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+    "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+    "historical-paid-invoice-survives-replaced-subscription-item",
+    "billing-web-verified-owner-email-and-line-lost-response-stable-key",
+    "billing-outbox-replay-preserves-resolved-event-and-sent-deliveries",
+    "billing-notification-gate-close-reopen-resumes-existing-intents",
+    "billing-wrong-line-channel-owner-withdrawal-and-unverified-email-do-not-send",
+    "billing-postmark-unknown-lookup-recovers-same-message-without-resend",
+    "billing-line-crashed-worker-recovers-aged-or-changed-intent-requires-review",
+    "billing-concurrent-workers-claim-once-and-cannot-consume-other-mode",
+    "billing-security-hold-and-missing-owner-defer-with-recoverable-original-intents",
+    "billing-quiet-hours-defer-and-explicit-line-preference-suppresses",
+    "billing-mail-suppression-keeps-paid-term-and-receipt-grants-unchanged",
+    "billing-company-notification-retry-cannot-bypass-billing-command",
+    "ordinary-notification-retry-preserves-budget-and-concurrent-cas"
+  ],
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false,
+  "browserE2E": false
+}

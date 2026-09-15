@@ -201,6 +201,7 @@ describe('recent LINE receipt status discovery', () => {
     assert.deepEqual(correctionWhere.sourceChannelMetadataJson, { path: ['chatKeyHash'], equals: 'chat-1' });
     assert.match(JSON.stringify(correctionWhere), /branch-1/);
     assert.equal(queries[1].take, 5);
+    assert.deepEqual(queries[0].orderBy, [{ createdAt: 'desc' }, { id: 'desc' }], 'same-timestamp receipts keep a stable offered order');
     await repo.listRecentLineCaptures({ ...input, includeAllStatuses: true, scopes: { branchIds: [] } });
     assert.deepEqual(queries[2].where.OR, [{ branchId: { in: [] } }, { branchId: null }], 'empty scope retains only existing company-central visibility');
   });

@@ -25,7 +25,7 @@ export class LineIdTokenService {
 
   async verify(idToken: string): Promise<VerifiedLineIdToken> {
     const { subject, name } = await this.verifier.verify(idToken);
-    // Messaging user ids are channel-scoped; the Login channel only proves identity. Same
+    // LINE user IDs are provider-scoped; the approved Login channel proves identity. Same
     // resolution order as LinkLineIdentityUseCase, so both write into the same identity slot.
     const canonicalChannelId = this.config.lineMessagingChannelId ?? this.config.lineLoginChannelId;
     if (!canonicalChannelId && this.config.isProduction) {

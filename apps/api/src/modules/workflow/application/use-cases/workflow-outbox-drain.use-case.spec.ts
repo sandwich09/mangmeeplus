@@ -85,6 +85,9 @@ describe('DrainWorkflowOutboxUseCase', () => {
     // workflow event and the real consumer would never see it — for the signup claim email that
     // means an approved applicant silently never receives the only email this flow sends.
     assert.deepEqual(claims[0].excludeEventTypes, [
+      'billing.invoice.applied',
+      'billing.status.email',
+      'email.postmark.event.received',
       'storage.object_version_cleanup.requested',
       'email.account_claim.requested',
       'email.signup_rejected.requested',

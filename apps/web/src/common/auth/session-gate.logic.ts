@@ -26,6 +26,12 @@ export function isSystemAdmin(session: WebSession): boolean {
   return session.roles.includes(SYSTEM_ADMIN_ROLE);
 }
 
+/** Billing delegates may enter only the billing subtree; the API verifies system-role and company scope. */
+export function canOpenSystemBilling(session: WebSession, path: string): boolean {
+  const pathname = sanitizeNextPath(path)?.split(/[?#]/)[0];
+  return Boolean(pathname && (pathname === '/system/billing' || pathname.startsWith('/system/billing/'))) && session.permissions.includes('system.billing.read');
+}
+
 // A landing target that lands back on /login (or on '/', which redirects to /login) would bounce
 // the signed-in user straight back here — the redirect loop this gate exists to prevent.
 function usableLanding(path: string | null): string | null {

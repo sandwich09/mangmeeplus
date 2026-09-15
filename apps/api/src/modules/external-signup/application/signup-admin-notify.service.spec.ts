@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { SignupAdminNotifyService, shortLineIdHash } from './signup-admin-notify.service';
@@ -22,9 +23,9 @@ function harness(options: { identities?: Array<{ providerUserId: string }>; toke
     },
   } as any;
   const config = {
-    lineMessagingChannelAccessToken: options.token === undefined ? TOKEN : options.token ?? undefined,
+    lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? TOKEN : options.token ?? undefined,
   } as any;
-  const service = new SignupAdminNotifyService(prisma, {} as any, {} as any, config, {
+  const service = new SignupAdminNotifyService(lineMessagingCredentialsFixture(config), prisma, {} as any, {} as any, config, {
     warn: () => {}, error: () => {},
   } as any);
 

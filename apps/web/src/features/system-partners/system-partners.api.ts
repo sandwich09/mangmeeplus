@@ -1,4 +1,7 @@
+import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
+  PartnerAiAdjustmentHistory,
+  PartnerPlanAdjustmentHistory,
   PaginatedPartnersDto,
   PartnerCompanyDetailDto,
   PartnerCompanyStatus,
@@ -171,7 +174,7 @@ export async function setPartnerFeatures(
 export async function setPartnerAiModel(
   companyId: string,
   dto: SetPartnerAiModelDto,
-): Promise<{ companyId: string; modelId: string | null; monthlyBudgetSatang: number | null; updatedAt: string }> {
+): Promise<{ companyId: string; modelId: string | null; monthlyBudgetSatang: number | null; updatedAt: string | null }> {
   return apiFetch(`/v1/system/partners/${companyId}/ai-model`, {
     method: 'PUT',
     body: JSON.stringify(dto),
@@ -181,6 +184,10 @@ export async function setPartnerAiModel(
 
 export async function getPartnerAiUsage(companyId: string): Promise<PartnerAiUsageDto> {
   return apiFetch<PartnerAiUsageDto>(`/v1/system/partners/${companyId}/ai-usage`);
+}
+
+export function getPartnerAiAdjustments(companyId:string, cursor?:string):Promise<PartnerAiAdjustmentHistory> {
+  return apiFetch(`/v1/system/partners/${encodeURIComponent(companyId)}/ai-adjustments${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {suppressErrorToast:true});
 }
 
 export async function setPartnerOcrConfig(
@@ -322,14 +329,16 @@ export async function renewPartnerPlanTerm(
   });
 }
 
-export async function setSharedLineCredential(
-  credentialKind: 'LINE_MESSAGING_API' | 'LINE_LOGIN' | 'LINE_LIFF',
-  dto: SetSharedLineCredentialDto,
-): Promise<SharedLineCredentialMetadataDto> {
-  return apiFetch<SharedLineCredentialMetadataDto>(
-    `/v1/system/line/shared-credentials/${credentialKind}`,
-    { method: 'PUT', body: JSON.stringify(dto) },
-  );
+export function getSharedLineMessagingSettings() {
+  return apiFetch<SharedLineMessagingSettings>('/v1/system/line/shared-credentials', { suppressErrorToast: true });
+}
+export function setSharedLineMessagingSettings(dto: {
+  channelId: string; channelSecret: string; accessToken: string; expectedVersion: number;
+  rotationId: string; reason: string; password: string;
+}) {
+  return apiFetch<SharedLineMessagingSettings>('/v1/system/line/shared-credentials/LINE_MESSAGING_API', {
+    method: 'PUT', body: JSON.stringify(dto), suppressErrorToast: true,
+  });
 }
 
 /** Answer or correct a partner company's VAT registration. `expectedVersion` comes from the
@@ -343,4 +352,8 @@ export async function setPartnerVatRegistration(
     body: JSON.stringify({ ...dto, commandId: crypto.randomUUID() }),
     suppressErrorToast: true,
   });
+}
+
+export function getPartnerPlanAdjustments(companyId: string, cursor?: string): Promise<PartnerPlanAdjustmentHistory> {
+  return apiFetch(`/v1/system/partners/${companyId}/plan-term/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {suppressErrorToast:true});
 }

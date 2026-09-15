@@ -24,6 +24,8 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
   const state = { profileStatus: 'ACTIVE', membershipStatus: 'ACTIVE', auditLogs: [] as any[], tokens: [] as any[], aiPurges: [] as any[] };
   const tx = {
     $queryRaw: async () => [],
+    membershipRole: { findMany: async () => targetRoleRows },
+    branch: { count: async () => 1 },
     // The seat gate runs on `tx`, inside the same transaction as the status write.
     companyPlanTerm: { findUnique: async () => seats.planTerm ?? null },
     employeeAccessProfile: {
@@ -31,6 +33,7 @@ function makePrisma(targetRoleRows: Array<{ role: { key: string; permissions: Ar
       update: async ({ data }: any) => { state.profileStatus = data.status ?? state.profileStatus; },
     },
     companyMembership: {
+      findUniqueOrThrow: async () => ({ branchScopeMode: 'ALL_BRANCHES', defaultBranchId: null, branchScopes: [] }),
       // P29 seat count: ACTIVE non-SYSTEM_ADMIN memberships already held by the company. The one
       // being re-enabled is NOT among them — it is still SUSPENDED/DISABLED when the gate reads.
       count: async () => seats.activeMemberships ?? 0,

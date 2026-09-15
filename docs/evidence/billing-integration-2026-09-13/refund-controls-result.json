@@ -1,0 +1,147 @@
+{
+  "date": "2026-09-15",
+  "baseCommit": "a7137fefa92b30adaa967e56cdf57709448b271f",
+  "scope": "C08 closed-default refund policy and scoped current-password proof only; monetary dispatch remains unfinished",
+  "sourceHashes": {
+    "packages/contracts/src/billing.ts": "f84b3b6e4589a78448db9bd35fd49635fa9f4004f114d2249810dba081679c9d",
+    "apps/api/src/modules/billing/application/billing-admin.service.ts": "c0bec118900f57508e93e681be1d1949950afe636f8365d11b210e3f5c31708d",
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "650d71a352ff9c2911a96cc2ca1439030251c2bea000fe381ed5f1983d2bab22",
+    "apps/api/src/modules/billing/domain/billing-policy.ts": "63428f5ad4935c06dcac5d8a99457f5fe08d969f061ab4e308865c21b70ee2a2",
+    "apps/api/src/modules/billing/domain/billing-package.spec.ts": "3d039d87430ebb967e72b00cd2027d6af76b2ca102a2db0aff162b90e193c3a8",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "a40bbd24b4842e0f27de6c16a613db375f761437453c50718a4a07c6d603bacb",
+    "apps/api/src/scripts/billing-http-smoke.ts": "49809b9e703428da96546ce0ad1402e4d0b6cf3f8ef0015772f18a7455e3c5a5",
+    "apps/api/src/scripts/billing-configuration-smoke.ts": "ba3ee8aa8d7bad87e3d97a5ef425fb691fdf0ab85a63a6a713acda1f290f8de9",
+    "apps/api/src/scripts/billing-refund-controls-smoke.ts": "0cc164a4a518839ae34649b3be0d3d4a1f71fdea203c53079e0519781c3fc645",
+    "apps/web/src/features/billing-admin/BillingConfigurationPage.tsx": "877fd8919d22d63ebaa69c299f905cf0478d1661f8920c3b9c4a7b08e9db9b5d"
+  },
+  "runs": [
+    {
+      "command": "BILLING_REFUND_CONTROLS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+      "result": {
+        "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+        "passed": [
+          "real-session-tenant-and-expired-owner-recovery",
+          "hidden-enterprise-and-forged-price-rejected",
+          "browser-owner-company-picker-retains-plan-interval-and-line-origin",
+          "browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart",
+          "browser-real-cookie-csrf-expired-owner-quote-consent-checkout",
+          "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+          "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+          "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+          "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+          "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+          "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+          "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+          "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+          "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+          "browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return",
+          "apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort",
+          "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+          "historical-paid-invoice-survives-replaced-subscription-item",
+          "billing-web-verified-owner-email-and-line-lost-response-stable-key",
+          "billing-outbox-replay-preserves-resolved-event-and-sent-deliveries",
+          "billing-notification-gate-close-reopen-resumes-existing-intents",
+          "billing-wrong-line-channel-owner-withdrawal-and-unverified-email-do-not-send",
+          "billing-postmark-unknown-lookup-recovers-same-message-without-resend",
+          "billing-line-crashed-worker-recovers-aged-or-changed-intent-requires-review",
+          "billing-concurrent-workers-claim-once-and-cannot-consume-other-mode",
+          "billing-security-hold-and-missing-owner-defer-with-recoverable-original-intents",
+          "billing-quiet-hours-defer-and-explicit-line-preference-suppresses",
+          "billing-mail-suppression-keeps-paid-term-and-receipt-grants-unchanged",
+          "billing-company-notification-retry-cannot-bypass-billing-command",
+          "ordinary-notification-retry-preserves-budget-and-concurrent-cas",
+          "browser-billing-notification-center-link-returns-to-authoritative-paid-status",
+          "verified-payment-atomic-automatic-unlock-and-shared-web-line-quota",
+          "browser-return-verified-unlock-documents-and-mobile-layout",
+          "browser-forged-missing-and-expired-return-never-reuse-an-old-payment-success",
+          "protected-invoice-pdf-receipt-tenant-owner-and-url-allowlist",
+          "collection-ordinary-cancel-lost-response-owner-revocation-and-reconcile",
+          "collection-ordinary-reservation-withdraw-resume-preserves-paid-days-and-receipts",
+          "collection-ordinary-provider-drift-before-and-after-command-cannot-overwrite-or-falsely-succeed",
+          "failed-renewal-not-hidden-by-prior-paid-invoice",
+          "callback-persistence-failure-is-retryable",
+          "repeat-renewal-race-blocks-checkout-and-restores-original-collection",
+          "repeat-exact-held-renewal-finalized-without-charge-and-voided",
+          "repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases",
+          "repeat-concurrent-intent-reservation",
+          "repeat-expired-checkout-restores-collection-without-quota",
+          "repeat-lost-checkout-response-reuses-single-session",
+          "repeat-paid-schedule-and-unpause-crash-recovery-grants-once",
+          "repeat-calendar-extension-old-quota-carry-and-invoice-receipt",
+          "browser-repeat-quote-and-verified-return",
+          "repeat-apply-original-checkout-invoice-binding-refuses-redirect-without-grant",
+          "repeat-apply-original-schedule-resume-response-loss-same-operation-one-purchase-grant",
+          "browser-repeat-apply-preview-unknown-reload-retry-original-invoice-company-return",
+          "collection-prepaid-cancel-lost-response-owner-revocation-and-reconcile",
+          "collection-prepaid-reservation-withdraw-resume-preserves-paid-days-and-receipts",
+          "collection-prepaid-provider-drift-before-and-after-command-cannot-overwrite-or-falsely-succeed",
+          "collection-prepaid-unapproved-extra-line-and-duplicate-subscription-rejected",
+          "browser-prepaid-resume-confirm-worker-observed-and-mobile",
+          "admin-system-role-company-mode-scope-and-owner-negative",
+          "admin-support-financial-redaction-and-expired-revoked-scope",
+          "admin-case-version-audit-and-no-false-resolution",
+          "admin-operation-preview-dedupe-and-competing-resource-reservation",
+          "admin-operation-provider-failure-permission-revoke-and-same-command-retry",
+          "admin-operation-cancel-before-work-and-no-extra-quota",
+          "browser-admin-preview-queue-observed-result-and-back",
+          "browser-delegated-billing-shell-case-assignment-and-mobile",
+          "refund-controls-legacy-closed-integer-bounds-and-no-unapproved-limit",
+          "browser-refund-limit-precision-draft-reload-impact-independent-approval-mobile",
+          "refund-controls-approved-revision-emergency-close-and-cleared-limit-without-restart",
+          "refund-scoped-password-proof-without-company-membership-or-platform-settings-access",
+          "refund-scoped-proof-rechecks-withdrawn-authority-and-current-credential-version",
+          "refund-controls-never-mutate-invoices-grants-or-provider-money"
+        ],
+        "browserE2E": true,
+        "simulatedProviders": [
+          "Stripe",
+          "Postmark",
+          "LINE"
+        ],
+        "realProviderPayment": false
+      },
+      "note": "before final target-company audit field assertion"
+    },
+    {
+      "command": "BILLING_CONFIG_ONLY=1 BILLING_REFUND_CONTROLS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+      "result": {
+        "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+        "passed": [
+          "refund-controls-legacy-closed-integer-bounds-and-no-unapproved-limit",
+          "browser-refund-limit-precision-draft-reload-impact-independent-approval-mobile",
+          "refund-controls-approved-revision-emergency-close-and-cleared-limit-without-restart",
+          "refund-scoped-password-proof-without-company-membership-or-platform-settings-access",
+          "refund-scoped-proof-rechecks-withdrawn-authority-and-current-credential-version",
+          "refund-controls-never-mutate-invoices-grants-or-provider-money"
+        ],
+        "browserE2E": true,
+        "simulatedProviders": [
+          "Stripe",
+          "Postmark",
+          "LINE"
+        ],
+        "realProviderPayment": false
+      }
+    }
+  ],
+  "checks": {
+    "policyUnit": "9 PASS; initial NODE_PATH harness failure corrected",
+    "contractsBuild": "PASS",
+    "apiTypecheck": "PASS before target audit field/assertion; fixture Prisma generic cast corrected",
+    "webTypecheck": "PASS",
+    "maintenancePins": "PASS 59be4030fbf8974a7582a70e3941e35a60ec695073fc71ffa1777fbd487b95bb"
+  },
+  "boundaries": {
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderMutation": false,
+    "ciDispatch": false,
+    "push": false,
+    "merge": false,
+    "deploy": false
+  },
+  "visual": "390px final approved refund limit inspected; no horizontal overflow; no entrepreneur usability study"
+}

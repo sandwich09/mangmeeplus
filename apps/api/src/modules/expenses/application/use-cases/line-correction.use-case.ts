@@ -43,6 +43,7 @@ export type LineCorrectionOutcome =
       expenseId: string;
       fields: Partial<Record<LineCorrectionField, AppliedCorrectionField>>;
       replayed?: boolean;
+      source?: { id: string; updatedAt: Date };
       /** Set when the note write did not do the plain thing the reply would otherwise claim
        *  (spec §5.3): the note filled up, or this sentence was already its newest segment. */
       noteOutcome?: 'truncated' | 'duplicate';
@@ -53,6 +54,7 @@ export type LineCorrectionOutcome =
 export type LineCorrectionInput = {
   /** Hash of the LINE message id — the idempotency key, and never the raw id. */
   lineMessageIdHash: string;
+  chatKeyHash: string;
   /** Server-resolved candidates for this turn; the model may only pick from these. */
   candidates: LineIntakeCorrectionCandidate[];
   hints?: LineIntakeCorrectionHints;
@@ -119,8 +121,14 @@ export class CorrectLineCapturedExpenseUseCase {
       const existing = await tx.outboxEvent.findFirst({ where: { companyId: ctx.companyId, eventKey: markerKey }, select: { payloadJson: true } });
       if (existing) {
         // Same message already applied — replay its confirmation instead of correcting twice.
-        const payload = (existing.payloadJson ?? {}) as { expenseId?: string; fields?: Record<string, AppliedCorrectionField> };
-        return { status: 'applied', expenseId: payload.expenseId ?? target.expenseId, fields: (payload.fields ?? {}) as never, replayed: true };
+        const payload = (existing.payloadJson ?? {}) as { expenseId?: string; fields?: Record<string, AppliedCorrectionField>;
+          sourceUpdatedAt?: string; noteOutcome?: 'truncated' | 'duplicate' };
+        const revision = typeof payload.sourceUpdatedAt === 'string' ? new Date(payload.sourceUpdatedAt) : undefined;
+        return { status: 'applied', expenseId: payload.expenseId ?? target.expenseId, fields: (payload.fields ?? {}) as never, replayed: true,
+          ...(payload.expenseId && revision && Number.isFinite(revision.getTime())
+            ? { source: { id: payload.expenseId, updatedAt: revision } } : {}),
+          ...(['truncated', 'duplicate'].includes(payload.noteOutcome ?? '') ? { noteOutcome: payload.noteOutcome } : {}),
+        };
       }
 
       const record = await tx.expenseRecord.findFirst({
@@ -130,6 +138,8 @@ export class CorrectLineCapturedExpenseUseCase {
       // Re-checked inside the lock: routing decided nothing about authority.
       if (!record) return { status: 'guidance', reason: 'target_not_found' };
       if (record.createdByUserId !== ctx.userId) return { status: 'guidance', reason: 'not_creator' };
+      if (record.captureSource !== 'LINE_UPLOAD' || !input.chatKeyHash
+        || record.sourceChannelMetadataJson?.chatKeyHash !== input.chatKeyHash) return { status: 'guidance', reason: 'target_not_found' };
       if (!CORRECTABLE_STATUSES.has(record.status)) return { status: 'guidance', reason: `status_locked:${record.status}` };
       if (!isBranchInScope(ctx.scopes ?? {}, record.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
 
@@ -189,6 +199,9 @@ export class CorrectLineCapturedExpenseUseCase {
         metadataJson: { lineMessageIdHash: input.lineMessageIdHash, fields, ...(noteAppend ? { noteAppend: noteAppend.outcome } : {}) },
       }, tx);
 
+      const committed = await tx.expenseRecord.findFirstOrThrow({ where: { id: target.expenseId, companyId: ctx.companyId },
+        select: { id: true, updatedAt: true } });
+      const noteOutcome = noteAppend && noteAppend.outcome !== 'appended' ? noteAppend.outcome : undefined;
       await tx.outboxEvent.create({
         data: {
           companyId: ctx.companyId,
@@ -196,14 +209,14 @@ export class CorrectLineCapturedExpenseUseCase {
           aggregateType: 'line_message',
           aggregateId: `${ctx.companyId}:${input.lineMessageIdHash}`,
           eventKey: markerKey,
-          payloadJson: { expenseId: target.expenseId, fields },
+          payloadJson: { expenseId: target.expenseId, fields, sourceUpdatedAt: committed.updatedAt.toISOString(), ...(noteOutcome ? { noteOutcome } : {}) },
         },
       });
       if (input.consumption) await markClarificationsConsumed(tx, input.consumption);
 
       return {
-        status: 'applied', expenseId: target.expenseId, fields,
-        ...(noteAppend && noteAppend.outcome !== 'appended' ? { noteOutcome: noteAppend.outcome } : {}),
+        status: 'applied', expenseId: target.expenseId, fields, source: { id: committed.id, updatedAt: committed.updatedAt },
+        ...(noteOutcome ? { noteOutcome } : {}),
       };
     });
   }

@@ -26,6 +26,10 @@ function withIdentityTx(prisma: any): any {
   prisma.client.lineWebHandoffToken ??= {
     updateMany: async (args: unknown) => { handoffRevokes.push(args); return { count: 0 }; },
   };
+  prisma.client.externalIdentity.findMany ??= async () => [];
+  prisma.client.externalIdentity.update ??= async () => ({});
+  prisma.client.auditLog ??= { create: async () => ({}) };
+  prisma.client.passwordResetToken ??= { updateMany: async () => ({ count: 0 }) };
   return prisma;
 }
 
@@ -265,15 +269,13 @@ describe('LinkLineIdentityUseCase', () => {
     assert.equal(wheres[0].providerChannelId, 'msg-ch-1');
   });
 
-  it('falls back to a legacy-channel row and reactivates it in place', async () => {
+  it('repairs a proved known legacy binding in place through an admin QR', async () => {
     const updates: any[] = [];
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async (args: any) =>
-            args.where.providerChannelId
-              ? null
-              : { id: 'ei-legacy', userId: 'user-1', status: 'UNLINKED', providerChannelId: 'legacy-ch' },
+          findFirst: async () => null,
+          findMany: async () => [{ id: 'ei-legacy', userId: 'user-1', status: 'UNLINKED', providerChannelId: 'login-ch-1' }],
           update: async (args: any) => { updates.push(args); return {}; },
         },
         companyMembership: { findMany: async () => [ownerMembership()] },
@@ -281,11 +283,12 @@ describe('LinkLineIdentityUseCase', () => {
       },
     } as any;
     const uc = new LinkLineIdentityUseCase(lineVerifier, withIdentityTx(prisma), config);
-    const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1' });
+    const result = await uc.execute({ userId: 'user-1', idToken: 'tok', requestId: 'req-1', allowReassign: true });
     assert.equal(result.linked, true);
     assert.equal(updates.length, 1);
     assert.equal(updates[0].where.id, 'ei-legacy');
     assert.equal(updates[0].data.status, 'ACTIVE');
+    assert.equal(updates[0].data.providerChannelId, 'msg-ch-1');
   });
 
   it('asks LINE to check the nonce claim only when the web OAuth link supplies one', async () => {
@@ -333,9 +336,10 @@ function makeUnlinkPrisma(handoffRows: HandoffRow[] = []) {
   const updated: unknown[] = [];
   const contextDeletes: unknown[] = [];
   const ops = {
+    passwordResetToken: { updateMany: async () => ({ count: 0 }) },
     externalIdentity: {
-      findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1' }),
-      update: async (args: unknown) => { updated.push(args); return {}; },
+      findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1', updatedAt: new Date(0) }),
+      updateMany: async (args: unknown) => { updated.push(args); return { count: 1 }; },
     },
     lineCompanyContext: {
       deleteMany: async (args: unknown) => { contextDeletes.push(args); return { count: 1 }; },

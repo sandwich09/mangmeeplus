@@ -1,0 +1,77 @@
+{
+  "recordedAt": "2026-09-15T05:25:59.586590+00:00",
+  "status": "LOCAL_PAID_RECEIPT_SLICE_PASS",
+  "sourceSha256": {
+    "apps/api/prisma/migrations/20260915060000_admin_receipt_adjustments/migration.sql": "4bab7cbdbaeab578aa708e6a81a0ee2e9885e5eee0bdc40051f63dff1b313856",
+    "apps/api/src/modules/billing/application/billing-receipt-adjustments.service.ts": "2bb85812e35df27f05e539f4902a5ae7855d3a101cb207ace4fb433674c39085",
+    "apps/api/src/modules/billing/application/billing-receipt-grants.ts": "2918bdc2d00ffa11c2da4d7b9e657c59ff78606e510b06a483852b592b75dfc9",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "37f32cfd53bbf5b2844f0ab88087f57646d9c4f095ba919345c5e0eae74a020a",
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "dc7ce34b548d1e81d13fff860b7fdc72ad9dac7ab83182b2eb0982b3589fae2e",
+    "apps/api/src/modules/billing/application/billing-timeline.ts": "d8f296119ec3b214d898332463d1da3d712ea07fcdaf218501f4a81d989d9a9a",
+    "apps/api/src/modules/billing/billing.module.ts": "e77b4164ae6ae2005bf00fb831678a42d653b93bbdc97872fd917c628f7c90cb",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "0419d6e5c6cf5b3c88dcade3b7c1421a98f934624932c261dba46e5928470fc2",
+    "apps/api/src/modules/billing/billing-receipts.pg.spec.ts": "6e3e8a66d00db6c6c3c82c8dbba6e3d1ec128f34269deec97c8cc4583f442887",
+    "apps/api/src/modules/billing/billing-grace.pg.spec.ts": "30e7f34f4c9fbb2725ae13aa13061e5a2261eafe557fa0cdedd44551899c93e2",
+    "apps/api/src/scripts/billing-receipt-adjustments-smoke.ts": "3b57351006774f4a5c343fc60f6aa76987851e9f1fd8e42cdd9a406c47953498",
+    "apps/api/src/scripts/billing-configuration-smoke.ts": "a90d1f647d9ba0d8a291e77353732291d6e76aca66c202ea5e323a946e28bb1b",
+    "apps/api/src/scripts/billing-http-smoke.ts": "4cf3714eed6ab9d96d4efad8eb1b0e12303aaea7c19a118f19e7aac08d01cb68",
+    "apps/web/src/features/billing-admin/BillingReceiptAdjustmentsPage.tsx": "72b3d6a29d77a829e13fb4a23907de7cda187abe35b50d50c6d05a9709bca609",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "ebb90136e34dcf426a11b2c8491976707ed630d8f7c50cb8fac5d9d642ca49bd",
+    "apps/web/src/features/billing/BillingPage.tsx": "95e4aa0c14a5f4b3560e4723a7a6e5583b6c47ed94936681d3770236d800b588",
+    "apps/web/app/system/billing/companies/[id]/receipt-adjustments/page.tsx": "b8a2c7696a4ec81296790077d56ae411734f385d35273425bbd2779b61514236",
+    "apps/web/app/system/billing/receipt-adjustments/[id]/page.tsx": "4efb3fbca31a6929113089ea9259bb0dbe0ec1abcf78839f0bb6136130fb2e8e",
+    "packages/contracts/src/billing.ts": "1ebd3aceff735d6228944f4461da18afeccfea14756e28b28820034f41a8a731",
+    "packages/contracts/src/billing-labels.ts": "98cf6367e442ae23e8636aee9350d09935e2f4eded8488d15ef7383db9a92455"
+  },
+  "runtime": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "admin-paid-receipts-review-shows-current-disabled-read-limit-and-budget-impact",
+      "admin-paid-receipts-reason-validation-expiry-password-independent-approval-replay",
+      "admin-paid-receipts-web-line-admission-and-revoke-preserve-consumption-and-paid-grant",
+      "admin-paid-receipts-hold-stale-expired-review-cancel-and-foreign-history",
+      "admin-paid-receipts-approval-rechecks-withdrawn-requester-authority",
+      "admin-paid-receipts-audit-failure-rolls-back-grant-and-operation",
+      "browser-customer-web-and-line-billing-entry-see-admin-granted-balance",
+      "browser-admin-receipts-preview-independent-approval-response-loss-history-reload-mobile",
+      "admin-paid-receipts-preserve-package-collection-original-purchase-and-no-fiscal-document"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "focused": {
+    "pass": 22,
+    "fail": 0,
+    "skip": 0,
+    "artifact": "admin-receipt-adjustments-focused.tap"
+  },
+  "checks": [
+    "Contracts build PASS",
+    "API and web tsc --noEmit PASS",
+    "SWC compilation PASS",
+    "Two390px captures visually inspected",
+    "git diff --check PASS"
+  ],
+  "commands": [
+    "BILLING_CONFIG_ONLY=1 BILLING_RECEIPT_ADJUSTMENTS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "node /tmp/mangmee-run-admin-receipt-grants-check.mjs (billing-receipts.pg, billing-grace.pg, billing-upgrade source suite)"
+  ],
+  "migration": {
+    "name": "20260915060000_admin_receipt_adjustments",
+    "appliedTo": "dedicated localhost15432/mangmee_billing_20260912 only",
+    "pendingBefore": [
+      "20260915060000_admin_receipt_adjustments"
+    ]
+  },
+  "limits": [
+    "This implements active paid-account Admin receipt additions/revocations only. Manual/trial additive grants, package/day overrides, remaining C08/mail/LINE acceptance and final merges remain open.",
+    "The user browser and LINE-channel shared billing page plus shared OCR admission are real; no native LINE delivery or paid Stripe call.",
+    "One browser fault forwards the actual approval then drops its response; replay retains one grant.",
+    "No CI dispatch, push, merge, deployment or native message/payment."
+  ]
+}

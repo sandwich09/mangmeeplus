@@ -1,0 +1,106 @@
+TAP version 13
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 1 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 0.60775
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 2 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.145291
+  type: 'test'
+  ...
+# Subtest: overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+ok 3 - overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+  ---
+  duration_ms: 1.955333
+  type: 'test'
+  ...
+# Subtest: a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+ok 4 - a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+  ---
+  duration_ms: 0.848125
+  type: 'test'
+  ...
+# Subtest: old ambiguous command never posts again without an observed result
+ok 5 - old ambiguous command never posts again without an observed result
+  ---
+  duration_ms: 0.336
+  type: 'test'
+  ...
+# Subtest: a hold or closed action gate appearing after confirmation prevents external mutation
+ok 6 - a hold or closed action gate appearing after confirmation prevents external mutation
+  ---
+  duration_ms: 0.443875
+  type: 'test'
+  ...
+# Subtest: a stale worker lease cannot mutate the provider or release another command reservation
+ok 7 - a stale worker lease cannot mutate the provider or release another command reservation
+  ---
+  duration_ms: 0.486
+  type: 'test'
+  ...
+# Subtest: financial observations reject malformed or differently owned money evidence
+ok 8 - financial observations reject malformed or differently owned money evidence
+  ---
+  duration_ms: 0.522333
+  type: 'test'
+  ...
+# Subtest: a stale financial observer cannot update an invoice or open a case
+ok 9 - a stale financial observer cannot update an invoice or open a case
+  ---
+  duration_ms: 0.230958
+  type: 'test'
+  ...
+# Subtest: future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+ok 10 - future phase_start on February 28 uses March 28 while purchased extension keeps original day 31 and rejects arbitrary future price
+  ---
+  duration_ms: 0.896917
+  type: 'test'
+  ...
+# Subtest: completed historical phases do not block normal management of the current final paid phase
+ok 11 - completed historical phases do not block normal management of the current final paid phase
+  ---
+  duration_ms: 0.113208
+  type: 'test'
+  ...
+# Subtest: latest equal-boundary consent uses monotonic database revision and validates pending account binding
+ok 12 - latest equal-boundary consent uses monotonic database revision and validates pending account binding
+  ---
+  duration_ms: 0.625333
+  type: 'test'
+  ...
+# Subtest: lost scheduling response can be observed after the future phase starts, with exact economics
+ok 13 - lost scheduling response can be observed after the future phase starts, with exact economics
+  ---
+  duration_ms: 0.2015
+  type: 'test'
+  ...
+# Subtest: money proration uses actual seconds and rounds half up per prepaid segment
+ok 14 - money proration uses actual seconds and rounds half up per prepaid segment
+  ---
+  duration_ms: 0.576125
+  type: 'test'
+  ...
+# Subtest: isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+ok 15 - isolated native-shaped invoice preview rejects renewal totals, mode, credits and wrong lines
+  ---
+  duration_ms: 1.06325
+  type: 'test'
+  ...
+# Subtest: prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+ok 16 - prepaid source recheck accepts later zero cycles but blocks external collection drift before Checkout
+  ---
+  duration_ms: 0.64575
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 375.414042

@@ -1,0 +1,590 @@
+TAP version 13
+# Subtest: LINE recovery PostgreSQL lifecycle and concurrency
+ok 1 - LINE recovery PostgreSQL lifecycle and concurrency # SKIP
+  ---
+  duration_ms: 0.305291
+  type: 'suite'
+  ...
+# [line-exchange] line_identity_channel_agnostic_fallback identityId=ei-legacy
+# Subtest: LINE recovery credential lifecycle
+    # Subtest: rejects a pending recovery password after the user changes their password
+    ok 1 - rejects a pending recovery password after the user changes their password
+      ---
+      duration_ms: 151.038
+      type: 'test'
+      ...
+    1..1
+ok 2 - LINE recovery credential lifecycle
+  ---
+  duration_ms: 151.21075
+  type: 'suite'
+  ...
+# Subtest: IssueTokenUseCase
+    # Subtest: creates a session and returns access + refresh tokens
+    ok 1 - creates a session and returns access + refresh tokens
+      ---
+      duration_ms: 1.420125
+      type: 'test'
+      ...
+    # Subtest: throws when no signing secret is configured
+    ok 2 - throws when no signing secret is configured
+      ---
+      duration_ms: 0.091042
+      type: 'test'
+      ...
+    # Subtest: locks and rechecks the verified password credential before creating a watchdog session
+    ok 3 - locks and rechecks the verified password credential before creating a watchdog session
+      ---
+      duration_ms: 0.699541
+      type: 'test'
+      ...
+    # Subtest: rejects a password login whose credential changed before its session was created
+    ok 4 - rejects a password login whose credential changed before its session was created
+      ---
+      duration_ms: 0.267959
+      type: 'test'
+      ...
+    1..4
+ok 3 - IssueTokenUseCase
+  ---
+  duration_ms: 2.62125
+  type: 'suite'
+  ...
+# Subtest: PasswordLoginUseCase
+    # Subtest: blocks an ordinary valid credential while customer access is closed and issues no token
+    ok 1 - blocks an ordinary valid credential while customer access is closed and issues no token
+      ---
+      duration_ms: 49.845917
+      type: 'test'
+      ...
+    # Subtest: allows SYSTEM_ADMIN while customer access is closed
+    ok 2 - allows SYSTEM_ADMIN while customer access is closed
+      ---
+      duration_ms: 50.530917
+      type: 'test'
+      ...
+    # Subtest: issues watchdog tokens for an active username/password credential
+    ok 3 - issues watchdog tokens for an active username/password credential
+      ---
+      duration_ms: 49.783792
+      type: 'test'
+      ...
+    # Subtest: keeps the current password valid while a recovery token is pending
+    ok 4 - keeps the current password valid while a recovery token is pending
+      ---
+      duration_ms: 51.030584
+      type: 'test'
+      ...
+    # Subtest: atomically turns a one-time LINE recovery password into a forced-change credential
+    ok 5 - atomically turns a one-time LINE recovery password into a forced-change credential
+      ---
+      duration_ms: 130.361
+      type: 'test'
+      ...
+    # Subtest: never treats a parked email-reset token as a login password
+    ok 6 - never treats a parked email-reset token as a login password
+      ---
+      duration_ms: 50.710833
+      type: 'test'
+      ...
+    # Subtest: rejects an expired or concurrently claimed recovery password as invalid credentials
+    ok 7 - rejects an expired or concurrently claimed recovery password as invalid credentials
+      ---
+      duration_ms: 124.7005
+      type: 'test'
+      ...
+    # Subtest: matches the trimmed identifier against username or lowercased email
+    ok 8 - matches the trimmed identifier against username or lowercased email
+      ---
+      duration_ms: 48.26275
+      type: 'test'
+      ...
+    # Subtest: redirects system admin credentials to partner management
+    ok 9 - redirects system admin credentials to partner management
+      ---
+      duration_ms: 47.09775
+      type: 'test'
+      ...
+    # Subtest: only considers active memberships whose company is active
+    ok 10 - only considers active memberships whose company is active
+      ---
+      duration_ms: 47.440042
+      type: 'test'
+      ...
+    # Subtest: rejects valid credentials with company_access_unavailable and issues no token when no active-company membership exists
+    ok 11 - rejects valid credentials with company_access_unavailable and issues no token when no active-company membership exists
+      ---
+      duration_ms: 46.346292
+      type: 'test'
+      ...
+    # Subtest: rejects expired temporary password
+    ok 12 - rejects expired temporary password
+      ---
+      duration_ms: 45.924458
+      type: 'test'
+      ...
+    1..12
+ok 4 - PasswordLoginUseCase
+  ---
+  duration_ms: 742.471667
+  type: 'suite'
+  ...
+# Subtest: ChangePasswordUseCase
+    # Subtest: replaces the hash and clears temporary-password constraints
+    ok 1 - replaces the hash and clears temporary-password constraints
+      ---
+      duration_ms: 114.646625
+      type: 'test'
+      ...
+    # Subtest: rejects re-submitting the current password as the new one
+    ok 2 - rejects re-submitting the current password as the new one
+      ---
+      duration_ms: 70.144666
+      type: 'test'
+      ...
+    1..2
+ok 5 - ChangePasswordUseCase
+  ---
+  duration_ms: 184.866875
+  type: 'suite'
+  ...
+# Subtest: ChangePasswordUseCase reauthentication errors
+    # Subtest: returns a correctable 400 before any mutation for a wrong ACTIVE current password
+    ok 1 - returns a correctable 400 before any mutation for a wrong ACTIVE current password
+      ---
+      duration_ms: 23.359542
+      type: 'test'
+      ...
+    # Subtest: returns a correctable 400 before any mutation for a wrong TEMPORARY current password
+    ok 2 - returns a correctable 400 before any mutation for a wrong TEMPORARY current password
+      ---
+      duration_ms: 22.986417
+      type: 'test'
+      ...
+    # Subtest: keeps missing credentials unauthorized even with a matching password
+    ok 3 - keeps missing credentials unauthorized even with a matching password
+      ---
+      duration_ms: 0.11175
+      type: 'test'
+      ...
+    # Subtest: keeps disabled credentials unauthorized even with a matching password
+    ok 4 - keeps disabled credentials unauthorized even with a matching password
+      ---
+      duration_ms: 0.036125
+      type: 'test'
+      ...
+    # Subtest: still rejects an expired temporary password before mutation
+    ok 5 - still rejects an expired temporary password before mutation
+      ---
+      duration_ms: 23.256875
+      type: 'test'
+      ...
+    # Subtest: still rejects password reuse before mutation
+    ok 6 - still rejects password reuse before mutation
+      ---
+      duration_ms: 47.924875
+      type: 'test'
+      ...
+    1..6
+ok 6 - ChangePasswordUseCase reauthentication errors
+  ---
+  duration_ms: 117.807791
+  type: 'suite'
+  ...
+# Subtest: JWT verifiers
+    # Subtest: rejects refresh tokens as request authorization tokens
+    ok 1 - rejects refresh tokens as request authorization tokens
+      ---
+      duration_ms: 0.961
+      type: 'test'
+      ...
+    # Subtest: verifies access tokens with the same fallback secret used for issuance
+    ok 2 - verifies access tokens with the same fallback secret used for issuance
+      ---
+      duration_ms: 0.342334
+      type: 'test'
+      ...
+    # Subtest: rejects dev refresh tokens as request authorization tokens
+    ok 3 - rejects dev refresh tokens as request authorization tokens
+      ---
+      duration_ms: 0.287917
+      type: 'test'
+      ...
+    1..3
+ok 7 - JWT verifiers
+  ---
+  duration_ms: 1.645
+  type: 'suite'
+  ...
+# Subtest: ExchangeLineTokenUseCase
+    # Subtest: returns linked=false when ExternalIdentity not found
+    ok 1 - returns linked=false when ExternalIdentity not found
+      ---
+      duration_ms: 0.224333
+      type: 'test'
+      ...
+    # Subtest: returns tokens when identity is found and user is active
+    ok 2 - returns tokens when identity is found and user is active
+      ---
+      duration_ms: 0.057208
+      type: 'test'
+      ...
+    # Subtest: throws ForbiddenException when user is suspended
+    ok 3 - throws ForbiddenException when user is suspended
+      ---
+      duration_ms: 0.081792
+      type: 'test'
+      ...
+    # Subtest: resolves via canonical channel first and falls back channel-agnostically for legacy rows
+    ok 4 - resolves via canonical channel first and falls back channel-agnostically for legacy rows
+      ---
+      duration_ms: 0.183083
+      type: 'test'
+      ...
+    # Subtest: fails closed in production when the canonical channel is not configured
+    ok 5 - fails closed in production when the canonical channel is not configured
+      ---
+      duration_ms: 0.098666
+      type: 'test'
+      ...
+    1..5
+ok 8 - ExchangeLineTokenUseCase
+  ---
+  duration_ms: 1.589333
+  type: 'suite'
+  ...
+# Subtest: LogoutUseCase
+    # Subtest: marks session as revoked
+    ok 1 - marks session as revoked
+      ---
+      duration_ms: 0.077084
+      type: 'test'
+      ...
+    # Subtest: audits a logout whose actor cannot be resolved, marking the actor explicitly
+    ok 2 - audits a logout whose actor cannot be resolved, marking the actor explicitly
+      ---
+      duration_ms: 0.047708
+      type: 'test'
+      ...
+    # Subtest: records the resolved actor without the unresolved marker
+    ok 3 - records the resolved actor without the unresolved marker
+      ---
+      duration_ms: 0.036667
+      type: 'test'
+      ...
+    1..3
+ok 9 - LogoutUseCase
+  ---
+  duration_ms: 0.191792
+  type: 'suite'
+  ...
+# Subtest: RevokeOtherSessionsUseCase
+    # Subtest: revokes active sessions for the user except the current token
+    ok 1 - revokes active sessions for the user except the current token
+      ---
+      duration_ms: 0.082709
+      type: 'test'
+      ...
+    # Subtest: returns zero when there are no other active sessions
+    ok 2 - returns zero when there are no other active sessions
+      ---
+      duration_ms: 0.032333
+      type: 'test'
+      ...
+    1..2
+ok 10 - RevokeOtherSessionsUseCase
+  ---
+  duration_ms: 0.140667
+  type: 'suite'
+  ...
+# Subtest: PlatformAccessService
+    # Subtest: forces production maintenance closed even when the stored request says OPEN
+    ok 1 - forces production maintenance closed even when the stored request says OPEN
+      ---
+      duration_ms: 0.196584
+      type: 'test'
+      ...
+    # Subtest: defaults production closed and non-production open when no row exists
+    ok 2 - defaults production closed and non-production open when no row exists
+      ---
+      duration_ms: 0.040583
+      type: 'test'
+      ...
+    # Subtest: fails closed and refuses opening when the control table cannot be read
+    ok 3 - fails closed and refuses opening when the control table cannot be read
+      ---
+      duration_ms: 0.125041
+      type: 'test'
+      ...
+    # Subtest: writes the switch and CRITICAL audit atomically in a verified live release
+    ok 4 - writes the switch and CRITICAL audit atomically in a verified live release
+      ---
+      duration_ms: 0.081375
+      type: 'test'
+      ...
+    1..4
+ok 11 - PlatformAccessService
+  ---
+  duration_ms: 0.472625
+  type: 'suite'
+  ...
+# Subtest: P11 SES auth mailer provider boundary
+    # Subtest: keeps disabled as a true no-op and makes local console explicit
+    ok 1 - keeps disabled as a true no-op and makes local console explicit
+      ---
+      duration_ms: 0.188208
+      type: 'test'
+      ...
+    # Subtest: fails SES selection at boot when required delivery config is missing
+    ok 2 - fails SES selection at boot when required delivery config is missing
+      ---
+      duration_ms: 0.073958
+      type: 'test'
+      ...
+    # Subtest: selects Postmark explicitly and refuses incomplete or validation-only production credentials
+    ok 3 - selects Postmark explicitly and refuses incomplete or validation-only production credentials
+      ---
+      duration_ms: 0.167791
+      type: 'test'
+      ...
+    # Subtest: never uses the public API origin as the SES frontend base
+    ok 4 - never uses the public API origin as the SES frontend base
+      ---
+      duration_ms: 0.803833
+      type: 'test'
+      ...
+    # Subtest: builds UTF-8 SES messages for verification, reset, and account claim without unsafe HTML
+    ok 5 - builds UTF-8 SES messages for verification, reset, and account claim without unsafe HTML
+      ---
+      duration_ms: 0.525125
+      type: 'test'
+      ...
+    # Subtest: propagates SES failures so the caller or outbox can retry
+    ok 6 - propagates SES failures so the caller or outbox can retry
+      ---
+      duration_ms: 0.092209
+      type: 'test'
+      ...
+    # Subtest: rejects non-HTTPS claim and application links before sending
+    ok 7 - rejects non-HTTPS claim and application links before sending
+      ---
+      duration_ms: 0.044208
+      type: 'test'
+      ...
+    1..7
+ok 12 - P11 SES auth mailer provider boundary
+  ---
+  duration_ms: 1.9495
+  type: 'suite'
+  ...
+# Subtest: account claim email copy
+    # Subtest: uses the Owner-locked subject
+    ok 1 - uses the Owner-locked subject
+      ---
+      duration_ms: 9.366709
+      type: 'test'
+      ...
+    # Subtest: never prints a plus sign in customer-facing copy
+    ok 2 - never prints a plus sign in customer-facing copy
+      ---
+      duration_ms: 0.205416
+      type: 'test'
+      ...
+    # Subtest: carries no password value and no personal QR
+    ok 3 - carries no password value and no personal QR
+      ---
+      duration_ms: 0.1755
+      type: 'test'
+      ...
+    # Subtest: contains every Owner-required section
+    ok 4 - contains every Owner-required section
+      ---
+      duration_ms: 0.093166
+      type: 'test'
+      ...
+    # Subtest: renders the Owner-picked signature: bold legal name and a short site label
+    ok 5 - renders the Owner-picked signature: bold legal name and a short site label
+      ---
+      duration_ms: 0.068708
+      type: 'test'
+      ...
+    # Subtest: splits the opening line and closes it with ด้านล่างนี้ (Owner 2026-08-31)
+    ok 6 - splits the opening line and closes it with ด้านล่างนี้ (Owner 2026-08-31)
+      ---
+      duration_ms: 0.066375
+      type: 'test'
+      ...
+    # Subtest: places the logo inside the signature between the website line and the tagline
+    ok 7 - places the logo inside the signature between the website line and the tagline
+      ---
+      duration_ms: 0.105584
+      type: 'test'
+      ...
+    # Subtest: renders the account heading black with a green shop name; other headings stay green
+    ok 8 - renders the account heading black with a green shop name; other headings stay green
+      ---
+      duration_ms: 0.098125
+      type: 'test'
+      ...
+    # Subtest: states the 72h single-use rule with a Thai-formatted expiry
+    ok 9 - states the 72h single-use rule with a Thai-formatted expiry
+      ---
+      duration_ms: 0.189625
+      type: 'test'
+      ...
+    # Subtest: carries neither the trial-benefits block nor the LINE invitation (Owner order 2026-08-31)
+    ok 10 - carries neither the trial-benefits block nor the LINE invitation (Owner order 2026-08-31)
+      ---
+      duration_ms: 0.35325
+      type: 'test'
+      ...
+    # Subtest: offers the claim link as both a button and a copyable URL
+    ok 11 - offers the claim link as both a button and a copyable URL
+      ---
+      duration_ms: 0.130291
+      type: 'test'
+      ...
+    # Subtest: escapes a company name that contains markup
+    ok 12 - escapes a company name that contains markup
+      ---
+      duration_ms: 0.105917
+      type: 'test'
+      ...
+    # Subtest: includes the masthead only when an HTTPS logo is configured
+    ok 13 - includes the masthead only when an HTTPS logo is configured
+      ---
+      duration_ms: 0.177834
+      type: 'test'
+      ...
+    1..13
+ok 13 - account claim email copy
+  ---
+  duration_ms: 11.84125
+  type: 'suite'
+  ...
+# Subtest: signup rejection email copy
+    # Subtest: uses the Owner-locked subject
+    ok 1 - uses the Owner-locked subject
+      ---
+      duration_ms: 0.15575
+      type: 'test'
+      ...
+    # Subtest: never prints a plus sign in customer-facing copy
+    ok 2 - never prints a plus sign in customer-facing copy
+      ---
+      duration_ms: 0.055667
+      type: 'test'
+      ...
+    # Subtest: thanks the applicant, states the outcome, and invites a conversation
+    ok 3 - thanks the applicant, states the outcome, and invites a conversation
+      ---
+      duration_ms: 0.0475
+      type: 'test'
+      ...
+    # Subtest: includes the admin paragraph only when one was written
+    ok 4 - includes the admin paragraph only when one was written
+      ---
+      duration_ms: 0.12
+      type: 'test'
+      ...
+    # Subtest: keeps a multi-line reason as separate paragraphs
+    ok 5 - keeps a multi-line reason as separate paragraphs
+      ---
+      duration_ms: 0.046916
+      type: 'test'
+      ...
+    # Subtest: renders the same signature block as the claim email
+    ok 6 - renders the same signature block as the claim email
+      ---
+      duration_ms: 0.037625
+      type: 'test'
+      ...
+    # Subtest: carries no link, no token and no password — it closes a request, it opens nothing
+    ok 7 - carries no link, no token and no password — it closes a request, it opens nothing
+      ---
+      duration_ms: 0.099042
+      type: 'test'
+      ...
+    # Subtest: escapes markup in the company name and in the admin paragraph
+    ok 8 - escapes markup in the company name and in the admin paragraph
+      ---
+      duration_ms: 0.095667
+      type: 'test'
+      ...
+    # Subtest: shows the masthead only when an HTTPS logo is configured
+    ok 9 - shows the masthead only when an HTTPS logo is configured
+      ---
+      duration_ms: 0.14775
+      type: 'test'
+      ...
+    1..9
+ok 14 - signup rejection email copy
+  ---
+  duration_ms: 0.935792
+  type: 'suite'
+  ...
+# Subtest: sesConfigurationSet
+    # Subtest: is undefined when unset or blank, so the send keeps its pre-existing shape
+    ok 1 - is undefined when unset or blank, so the send keeps its pre-existing shape
+      ---
+      duration_ms: 0.293208
+      type: 'test'
+      ...
+    1..1
+ok 15 - sesConfigurationSet
+  ---
+  duration_ms: 0.609459
+  type: 'suite'
+  ...
+# Subtest: SesAuthMailerAdapter.sendAccountClaim
+    # Subtest: keeps the shared claim proof out of request URLs while retaining the status reference
+    ok 1 - keeps the shared claim proof out of request URLs while retaining the status reference
+      ---
+      duration_ms: 1.409375
+      type: 'test'
+      ...
+    # Subtest: omits ConfigurationSetName entirely when the env is unset
+    ok 2 - omits ConfigurationSetName entirely when the env is unset
+      ---
+      duration_ms: 0.190875
+      type: 'test'
+      ...
+    # Subtest: attaches the configuration set when the env names one — no events without it
+    ok 3 - attaches the configuration set when the env names one — no events without it
+      ---
+      duration_ms: 0.118375
+      type: 'test'
+      ...
+    # Subtest: returns the SES MessageId, the join key a later bounce event arrives with
+    ok 4 - returns the SES MessageId, the join key a later bounce event arrives with
+      ---
+      duration_ms: 0.125333
+      type: 'test'
+      ...
+    # Subtest: returns null rather than undefined when SES answers without a MessageId
+    ok 5 - returns null rather than undefined when SES answers without a MessageId
+      ---
+      duration_ms: 0.08625
+      type: 'test'
+      ...
+    # Subtest: sends every message type through the same configuration set, so reputation is measured once
+    ok 6 - sends every message type through the same configuration set, so reputation is measured once
+      ---
+      duration_ms: 0.70375
+      type: 'test'
+      ...
+    1..6
+ok 16 - SesAuthMailerAdapter.sendAccountClaim
+  ---
+  duration_ms: 2.861334
+  type: 'suite'
+  ...
+1..16
+# tests 78
+# suites 16
+# pass 78
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1933.494875

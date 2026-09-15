@@ -1,0 +1,51 @@
+{
+  "status": "LOCAL_CORRECTION_SOURCE_PASS",
+  "recordedAt": "2026-09-15T12:06:50.879308+00:00",
+  "baseCommit": "af2cb75820b0d3f1d0b5a15153a13397a8918292",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/line-correction.use-case.ts": "46d99a4e6c7bf190af45d7a58a96167b32d24ba71eb69eab4a3b22bc92dc452c",
+    "apps/api/src/modules/expenses/application/use-cases/line-correction.use-case.spec.ts": "d4088183453795c4e6695d6aa06abc004e1109f2351fec612b7426dc36977954",
+    "apps/api/src/modules/expenses/receipt-truth.pg.spec.ts": "58e3eb8bf1a75361cda78edb1a9d14e5b9bf026333f307ba22444cfe918d1280",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "34b2b5cc40c494496ffe07ffcba7bbc806bc3e19a71f32c5d87aaed9a7ffbcb6",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "be503c660b96616c88c5ebd6a5acad4b2725dfea8e0e72e2f8d651fccd8c5b38"
+  },
+  "runs": {
+    "unit": {
+      "tests": 606,
+      "pass": 606,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-correction-source-unit.tap",
+      "sha256": "3c838096349f39bc874fee2a45bb0a694476fbf74296e779fa941cebbc1d3aa6"
+    },
+    "module": {
+      "tests": 1349,
+      "pass": 1349,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-correction-source-module.tap",
+      "sha256": "234debbf496ff91fea795791b0049662389742eb1b3353587d036f55437304b9"
+    },
+    "postgres": {
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-correction-source-postgres.tap",
+      "sha256": "d938e9b4fd1669d04a1b46d20949cafd75ef3968e9b70227db5a30e29d9b476f"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "Apply validates current original creator/branch and LINE capture/chat. Producing revision is read after provenance and duplicate writes inside the existing transaction.",
+    "The existing message marker stores the original revision and truncated/duplicate note outcome. A replay after later human edits retains the original revision and does not repeat the mutation.",
+    "Final rendering and fallback validate that original source under current authority; a missing/legacy proof or changed record/access suppresses private confirmation without recreating the expense.",
+    "Real PostgreSQL exercises correction/note cap and original marker replay after a later edit. Final LINE transport is separately simulated by dispatcher tests."
+  ],
+  "limits": [
+    "606 focused,1349 LINE module and8 PG tests overlap; counts are not distinct business flows or a completion percentage.",
+    "Substitute result/resume sources, historical clarification/choice lineage, later storage permissions and full current combined/native acceptance remain open.",
+    "CI already includes receipt-truth.pg.spec.ts. No workflow edit, push, merge, deploy, native message or payment."
+  ]
+}

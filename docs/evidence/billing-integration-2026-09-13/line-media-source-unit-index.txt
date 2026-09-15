@@ -1,0 +1,10 @@
+ok 1 - returns the original committed revision with duplicate detection in the same transaction
+ok 1 - initializes a passive draft from current saved facts when old OCR hints disagree
+ok 1 - preserves a human edit before capture-summary and recovers the saved media without OCR replay
+ok 2 - preserves a human edit before ocr-apply and recovers the saved media without OCR replay
+ok 3 - preserves a human edit before final-summary and recovers the saved media without OCR replay
+ok 4 - rechecks new photo and PDF summaries after link rendering and before reply-token fallback
+ok 5 - does not capture media after access changes during route
+ok 6 - does not capture media after access changes during ocr
+ok 7 - suppresses an exact-byte duplicate receipt when its saved source changes during rendering
+ok 13 - lists current saved products and charges once without replaying old OCR items

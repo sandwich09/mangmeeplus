@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../../common/config/line-messaging-credentials.service';
 /**
  * Processes a verified LINE text message event end-to-end:
  * 1. Dedup webhook event id
@@ -8,7 +9,8 @@
  * 6. Reply to LINE
  * 7. Persist turn
  */
-import { HttpException, Injectable, Logger, Optional, ForbiddenException, ConflictException } from '@nestjs/common';
+import { HttpException, Inject, Injectable, Logger, Optional, ForbiddenException, ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -70,10 +72,11 @@ import {
   type LineSubstituteMediaScan,
   type LineSubstituteReceiptContinuationResult,
 } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
-import { LineExpenseDraftConversationUseCase } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
+import { LineExpenseDraftConversationUseCase, type LineExpenseDraftConversationResult } from '../../../expenses/application/use-cases/line-expense-draft-conversation.use-case';
 import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { lockFundingEvidence } from '../../../expenses/infrastructure/substitute-funding.guard';
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
@@ -96,8 +99,9 @@ import { ListApprovalQueueUseCase } from '../../../reimbursements/application/us
 import { ListPurchaseRequestsUseCase } from '../../../procurement/application/use-cases/purchase-request.use-case';
 import { ListPurchaseOrdersUseCase } from '../../../procurement/application/use-cases/purchase-order.use-case';
 import type { BusinessDocumentClassification, ExpenseChargeSummary, LineExpenseDraftRouteContext, LineUserContext, LineAiTurnRequest, LineAiTurnResponse, LineAiConversationContext, LineAiOpenClarification, LineAiValueCandidates, LineIntakeCorrectionCandidate, LineIntakeRoutePlan, LineIntakeSubstituteContext, ReceiptOcrFieldResult, RequestContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, hasToolFeature, hasToolPermissions, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
-import { LineAiLedgerService, ledgerKey, type LedgerEntry } from '../line-ai-ledger.service';
+import { LINE_AI_CONTEXT_MAX_TURNS, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, LINE_CORRECTION_CANDIDATE_LIMIT, LINE_TOOL_REGISTRY, RECEIPT_CATEGORY_AUTO_FILL_MIN_CONFIDENCE, nextPlanTierKey, asIntakeRouteIntent, civilDateToUtcDate, extractValueCandidates, todayCivilDate, type ExpenseDocumentDateStatus } from '@watchdog-bms/contracts';
+import { LineAiLedgerService, ledgerKey, LINE_CLARIFICATION_SOURCE_MAX_BYTES, type LedgerEntry, type LedgerSubRequestInput } from '../line-ai-ledger.service';
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { ConsumptionMarkerUnavailableError, markClarificationsConsumed, type ClarificationConsumption } from '../line-ai-consumption-marker';
 import { availableApprovalSurfaceKeys, buildCapabilityCard, buildCompanyContextMessage, buildCompanyPickerMessage, buildContactCard, buildPendingApprovalCard, buildPromotionCard, buildReceiptCapturePrompt, buildServiceEntitlementMessage, buildStaffCompletionQuickReply, buildStaffMainMenu, buildStaffQueryMenu, companyPickerPage, isCapabilityQuestion, staffMenuCommand, PACKAGE_CHANGE_COMMAND, PENDING_APPROVAL_ITEM_LIMIT, RESUME_AI_COMMAND, type ApprovalSurfaceKey, type CompanyPickerItem, type PendingApprovalSnapshot, type StaffMenuContext } from '../../domain/logic/line-staff-menu.logic';
 import { buildAiBudgetExceededMessage, buildExpenseDraftCardMessage, buildLegalAcceptanceRequiredMessage, buildLineAssistantTextCardMessage, buildLineBusinessAnswerMessage, buildReceiptQuotaExceededMessage, buildReimbursementHandoffMessage, buildReimbursementPayerClarificationMessage, buildSignupDoorCard, buildSignupStatusCard, LIFF_ID_PATTERN, type LineExpenseDraftCardFacts } from '../../domain/logic/line-business-card.logic';
@@ -109,7 +113,7 @@ import { AuthRateLimitService } from '../../../auth/application/auth-rate-limit.
 import { isBusinessHours } from '../../../external-signup/domain/business-hours.logic';
 import { SIGNUP_SOURCE_LINE_OA } from '../../../external-signup/domain/company-signup.logic';
 import { advisorDirectAnswerText } from '../../domain/logic/line-advisor-direct-answer.logic';
-import { capabilityFollowUpReply, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
+import { capabilityFollowUpReply, capabilityHistoryIntent, isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { safeLineErrorDetails, parseOutcomeMessages, type LineReplyMessage } from '../../infrastructure/line-reply.adapter';
 import { LINE_BUFFER_ORPHAN_REPROCESS_MS } from '../../domain/logic/line-message-buffer.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
@@ -838,14 +842,6 @@ export function splitPendingMediaReply(text: string): { decision: 'receipt' | 'i
   return { decision: match[1] === '1' ? 'receipt' : match[1] === '2' ? 'illustration' : 'multiple', remainder: match[2].trim() };
 }
 
-function canUseAssistantPreview(toolNames: string[] | undefined, permissions: string[], entitled: ReadonlySet<string> | null): boolean {
-  if (!toolNames || toolNames.length === 0) return true;
-  return toolNames.every((toolName) => {
-    const meta = LINE_TOOL_REGISTRY.find((tool) => tool.name === toolName);
-    return !!meta && hasToolPermissions(meta, permissions) && hasToolFeature(meta, entitled);
-  });
-}
-
 function companyLabel(membership: LineCompanyMembership): string {
   return membership.company?.brandName ?? membership.company?.name ?? 'ไม่ระบุบริษัท';
 }
@@ -1404,11 +1400,40 @@ const bahtText = (amount: string) => {
     : `${amount} บาท`;
 };
 
+type LineClarificationSource = {
+  v: 1; userId: string; companyId: string; fingerprint: string; chatKeyHash: string; recipientHash: string; contentHash: string;
+  read?: { requestId: string; ids: string[] | null };
+  receipt?: { records: Array<[string, string | null]>; categories: Array<[string, string | null]>; draftChoices?: LineExpenseDraftRouteContext[] };
+  substitute?: Array<LineSubstituteReceiptContinuationResult['source'] | null>;
+  candidates?: string;
+  draft?: { requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' };
+  draftRouting?: string;
+};
+
+export function lineClarificationContentHash(item: Pick<LedgerSubRequestInput, 'text' | 'subject' | 'clarifyForIntent' | 'candidateExpenseIds' | 'pendingMedia'> & { clarifyQuestion?: string; question?: string }): string {
+  return hashMessagePreview(JSON.stringify([item.text, item.clarifyQuestion ?? item.question ?? null,
+    item.subject ?? null, item.clarifyForIntent ?? null, item.candidateExpenseIds ?? [], item.pendingMedia ?? null]));
+}
+
 @Injectable()
 export class ProcessLineWebhookUseCase {
   private readonly logger = new Logger(ProcessLineWebhookUseCase.name);
+  private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
+  private readonly deliveryDenialNotified = new WeakSet<object>();
+  private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
+  private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
+  private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
+    records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
+  private readonly deliverySubstituteSources = new WeakMap<object, Array<{ context: RequestContext; source: LineSubstituteReceiptContinuationResult['source'] }>>();
+  private readonly deliveryCandidates = new WeakMap<object, { context: RequestContext; chatKeyHash: string; snapshot: string; originalChoices?: boolean }>();
+  private readonly deliveryWaitingSources = new WeakMap<object, { context: RequestContext; items: Array<LineAiOpenClarification & { entry: LedgerEntry }> }>();
+  private readonly clarificationRouteSources = new WeakMap<object, { candidates: string; draftRouting?: string }>();
+  private readonly deliveryDenialCode = new WeakMap<object, string>();
+  private readonly replayedOutcomes = new WeakMap<object, unknown>();
+  private readonly intermediateDeliveries = new WeakSet<object>();
+  @Inject(LineReadEvidenceService) private readonly readEvidence!: LineReadEvidenceService;
 
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
     private readonly permissionResolver: PermissionResolverService,
@@ -1516,7 +1541,7 @@ export class ProcessLineWebhookUseCase {
    * runbook R8 rule 2: "availability problems therefore degrade toward closed, never toward open".
    */
   private async refuseWhenLaunchRouteClosed(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     actorUserId: string,
     companyId: string,
     requestId: string,
@@ -1630,7 +1655,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async refusePendingLegalAcceptance(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
     companyId: string,
     membershipId: string,
@@ -1758,7 +1783,7 @@ export class ProcessLineWebhookUseCase {
    *  queued batch never ends in silence (spec §10). Push consumes OA quota —
    *  the fallback is counted via the `line_push_fallback_used` log line. */
   private async deliverReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     quickReply?: LineReplyMessage['quickReply'],
   ): Promise<void> {
@@ -1776,7 +1801,7 @@ export class ProcessLineWebhookUseCase {
    *  resolver, the entitlement read, the router and the model — so an expired company costs one
    *  indexed membership lookup and not a single token. */
   private async replyIfTermExpiredOwner(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     userId: string,
   ): Promise<boolean> {
     if (!await ownsTermExpiredCompany(this.prisma, userId)) return false;
@@ -1890,7 +1915,7 @@ export class ProcessLineWebhookUseCase {
    * to one, and that is exactly the person the old shape dropped.
    */
   private async handleStaffContact(event: LineTextEvent, requestId: string): Promise<void> {
-    const asker = await this.resolveSupportAsker(event.lineUserId);
+    const asker = await this.resolveSupportAsker(event);
     // Dedupe is per LIVE request, not per day (§2.2.4): while one is live the answer is "you are
     // still in the queue" and nobody is paged twice; once it closes, a new tap is a new request.
     // ANSWERED counts as live (review 2026-09-06): deduping on OPEN alone meant TAPPING the button
@@ -2009,12 +2034,13 @@ export class ProcessLineWebhookUseCase {
    * for a chat that can ask a question; a support ticket cannot, so it falls back to the oldest
    * membership rather than filing the request against no shop at all.
    */
-  private async resolveSupportAsker(lineUserId: string): Promise<{
+  private async resolveSupportAsker(event: { lineUserId: string; messagingChannelId?: string }): Promise<{
     companyId: string | null;
     signupRequestId?: string;
     lastMessageText?: string;
   } | null> {
-    const identity = await this.resolveLineIdentity({ lineUserId });
+    const { lineUserId } = event;
+    const identity = await this.resolveLineIdentity(event);
     if (!identity || identity.user.status !== 'ACTIVE') {
       const pending = await this.pendingSignupFor(lineUserId);
       return pending ? { companyId: null, signupRequestId: pending } : null;
@@ -2240,7 +2266,7 @@ export class ProcessLineWebhookUseCase {
         userId,
         status: 'ACTIVE',
         company: { OR: [{ status: 'ACTIVE' }, { status: 'DISABLED', planTerm: { termDisabledAt: { not: null } } }] },
-        roles: { some: { role: { key: 'OWNER' } } },
+        roles: { some: { role: { key: 'OWNER', status: 'ACTIVE' } } },
       },
       orderBy: { createdAt: 'asc' },
       select: { companyId: true, company: { select: { name: true, planTerm: { select: { tierKey: true } } } } },
@@ -2262,6 +2288,15 @@ export class ProcessLineWebhookUseCase {
           quickReply: { items: [{ type: 'action', action: { type: 'message', label: PACKAGE_CHANGE_COMMAND, text: PACKAGE_CHANGE_COMMAND } }] } },
       ]);
       await this.updateEventLog(event.webhookEventId, 'needs_company_selection', LINE_AI_ERROR_CODES.AMBIGUOUS_COMPANY);
+      return;
+    }
+    if (['test', 'live'].includes(this.config.billingMode) && this.config.webBaseUrl) {
+      // Old rich-menu/message commands converge here too. The card offers a review page, never
+      // claims payment or changes rights; the existing delivery seam binds its handoff to this owner.
+      event.handoff = { userId, companyId: owned.companyId };
+      const url = new URL(`/companies/${encodeURIComponent(owned.companyId)}/billing?channel=line`, this.config.webBaseUrl).toString();
+      await this.deliverReply(event, `📦 ${owned.company.name}\nดูแพ็กเกจ ตรวจสอบการชำระเงิน และเปิดใบเสร็จได้ที่\n${url}\nกรุณาตรวจสอบราคาและยืนยันบนเว็บก่อนชำระเงินค่ะ`);
+      await this.updateEventLog(event.webhookEventId, 'billing_review_link', undefined, owned.companyId);
       return;
     }
     if (!this.packageChange) {
@@ -2353,6 +2388,7 @@ export class ProcessLineWebhookUseCase {
     let reply: string;
     let status = 'completed';
     if (outcome.status === 'applied') {
+      this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash, requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'APPLIED' });
       const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
       // A double tap is the commonest thing a person does to a slow button; saying "nothing is
       // pending" would deny an edit they really made.
@@ -2403,6 +2439,7 @@ export class ProcessLineWebhookUseCase {
       ...(expenseId ? { expenseId } : {}),
     });
     if (outcome.status === 'preview') {
+      this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: chatKeyHashOf(event), requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'PENDING' });
       await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
       await this.persistIntakeTurn({
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
@@ -2460,7 +2497,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverRequiredMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<void> {
     const result = await this.deliverMessages(event, messages);
@@ -2483,7 +2520,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReply(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     text: string,
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -2521,7 +2558,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   private async deliverCompletedReplies(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     texts: string[],
     companyId: string,
     access: { permissions: string[]; roles: string[] },
@@ -2569,14 +2606,14 @@ export class ProcessLineWebhookUseCase {
    *  is timed once here rather than at one call site — and it stays the NETWORK send (plus its own
    *  delivery bookkeeping), never the message construction, which is the separate `render` stage. */
   private async deliverMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     return this.timeStage(event.webhookEventId, 'line_delivery', () => this.sendMessages(event, messages));
   }
 
   private async sendMessages(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; beforeReply?: () => Promise<void>; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     // Handoff is set only after company membership resolves. Bind tenant without advancing the
@@ -2594,8 +2631,19 @@ export class ProcessLineWebhookUseCase {
       // Waiting feedback is cosmetic; it must never block the actual answer.
       this.logger.warn({ msg: 'LINE waiting feedback settlement failed', ...safeLineErrorDetails(error) });
     }
-    if (this.config.lineAiTerminalOutcomeReplayEnabled) {
-      const outcome = await this.recordTurnOutcome(event.webhookEventId, messages, presentationKindOf(messages));
+    // Claim before storing an outcome: a queue winner must not acquire a competing live outcome
+    // between its UNKNOWN send and reclaim, or that outcome would strand its exact-payload retry.
+    if (this.deliverySources.has(event) && !this.intermediateDeliveries.has(event)) {
+      const owner = await this.prisma.client.lineWebhookEventLog.updateMany({
+        where: { webhookEventId: event.webhookEventId, ...(event.handoff ? { companyId: event.handoff.companyId } : {}),
+          OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }] },
+        data: { deliveryOwnerId: 'webhook' },
+      });
+      if (owner.count !== 1) return 'failed_other';
+    }
+    const persistentOutcome = this.config.lineAiTerminalOutcomeReplayEnabled && !this.intermediateDeliveries.has(event);
+    if (persistentOutcome) {
+      const outcome = await this.recordTurnOutcome(event, messages, presentationKindOf(messages));
       if (!outcome) {
         await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_NOT_RECORDED');
         return 'failed_other';
@@ -2619,8 +2667,8 @@ export class ProcessLineWebhookUseCase {
       // would either mark the stale Flex outcome delivered (send ok) or leave replay pushing the
       // very payload LINE just rejected (send fails). Nothing has reached the user this turn, so
       // recovery converts this same rejected representation without repeating business work.
-      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
-        const replacement = await this.recordTurnOutcome(event.webhookEventId, textMessages, 'text_fallback', messages);
+      if (persistentOutcome) {
+        const replacement = await this.recordTurnOutcome(event, textMessages, 'text_fallback', messages);
         if (!replacement) {
           await this.updateEventLog(event.webhookEventId, 'delivery_pending', 'LINE_OUTCOME_REPRESENTATION_PENDING');
           return 'failed_other';
@@ -2629,9 +2677,10 @@ export class ProcessLineWebhookUseCase {
       result = await this.attemptDelivery(event, textMessages);
     }
     if (result !== 'ok') {
-      await this.updateEventLog(event.webhookEventId, result === 'failed_permanent' ? 'delivery_failed' : 'delivery_pending', `LINE_DELIVERY_${result.toUpperCase()}`);
+      await this.updateEventLog(event.webhookEventId, result === 'failed_permanent' ? 'delivery_failed' : 'delivery_pending',
+        this.deliveryDenialCode.get(event) ?? `LINE_DELIVERY_${result.toUpperCase()}`);
     } else {
-      if (this.config.lineAiTerminalOutcomeReplayEnabled) {
+      if (persistentOutcome) {
         // API acceptance is separate from rendering and device delivery. If its outcome stamp
         // fails, keep a durable event marker so recovery updates bookkeeping without another send.
         const acceptance = await this.prisma.client.lineTurnOutcome.updateMany({
@@ -2670,7 +2719,7 @@ export class ProcessLineWebhookUseCase {
    *  `line_push_fallback_used` line, and the push result overwrites it — so the value never escapes
    *  and every observable byte of the legacy path is unchanged. */
   private async attemptDelivery(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     messages: LineReplyMessage[],
   ): Promise<LineDeliveryResult> {
     // P12-3b: the ONE place every reply and its push fallback pass through, so wrapping here covers
@@ -2688,6 +2737,7 @@ export class ProcessLineWebhookUseCase {
         messages,
       )
       : messages;
+    if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
     let result: LineDeliveryResult;
     try {
       result = await this.lineReply.sendReply(event.replyToken, outgoing);
@@ -2696,6 +2746,7 @@ export class ProcessLineWebhookUseCase {
       result = 'failed_other';
     }
     if (result === 'failed_token' || (result === 'failed_flex' && !this.config.lineAiFlexTextFallbackEnabled)) {
+      if (!await this.mayDeliverBusinessReply(event)) return 'failed_permanent';
       this.logger.warn({ msg: 'line_push_fallback_used' });
       try {
         result = await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, outgoing, event.webhookEventId);
@@ -2707,6 +2758,270 @@ export class ProcessLineWebhookUseCase {
     return result;
   }
 
+  private async mayDeliverBusinessReply(event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string }): Promise<boolean> {
+    const original = this.deliveryAccess.get(event);
+    if (this.replayedOutcomes.has(event)) {
+      const current = await this.readEvidence.verifyDelivery(this.replayedOutcomes.get(event), {
+        webhookEventId: event.webhookEventId, lineUserId: event.lineUserId, chatId: event.pushTargetId ?? event.lineUserId,
+        channelId: event.messagingChannelId ?? '',
+      }).catch(() => false);
+      if (!current) { await this.denyBusinessDelivery(event, 'LINE_OUTCOME_REAUTHORIZATION_REQUIRED', original); return false; }
+    }
+    if (!original) return true; // Fresh public and dedicated account/billing recovery paths have their own gates.
+    let allowed = false;
+    let denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+    try {
+      const sources = this.deliverySources.get(event);
+      let sourcesCurrent = true;
+      if (sources) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sources.ids !== null && (!sources.ids.length
+          || await this.readEvidence.verify(original.companyId, original.userId, sources.requestId, sources.ids));
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const draft = this.deliveryDraftPreviews.get(event);
+      if (draft) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        const applied = draft.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(draft.context, draft.chatKeyHash) : null;
+        const current = draft.phase === 'APPLIED' ? (applied?.status === 'applied' ? applied.preview : null)
+          : await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
+        sourcesCurrent = sourcesCurrent && Boolean(draft.previewId && current?.previewId === draft.previewId);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      if (this.deliveryReceiptSources.has(event)) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sourcesCurrent && await this.receiptDeliverySourcesCurrent(event);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const substitute = this.deliverySubstituteSources.get(event);
+      if (substitute) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        for (const proof of substitute) sourcesCurrent = sourcesCurrent
+          && Boolean(await this.substituteReceiptContinuation?.replySourcesCurrent(proof.context, proof.source));
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const waiting = this.deliveryWaitingSources.get(event);
+      if (waiting) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        for (const item of waiting.items) sourcesCurrent = sourcesCurrent
+          && await this.clarificationSourceCurrent(event as LineTextEvent, waiting.context, item);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const candidates = this.deliveryCandidates.get(event);
+      if (candidates) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sourcesCurrent && await this.correctionCandidatesCurrent(candidates.context, candidates.chatKeyHash, candidates.snapshot, candidates.originalChoices);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
+      const identity = await this.resolveLineIdentity(event);
+      if (sourcesCurrent && identity?.userId === original.userId && identity.user.status === 'ACTIVE' && !identity.user.aiAssistantOptOutAt
+        && (!event.pushTargetId || event.pushTargetId === event.lineUserId)) {
+        const access = await this.permissionResolver.resolveAccess(original.userId, original.companyId);
+        const entitled = await loadEntitledFeatureKeys(this.prisma, original.companyId);
+        const context = await this.prisma.client.lineCompanyContext.findUnique({
+          where: { lineUserId: event.lineUserId }, select: { companyId: true, aiPausedUntil: true },
+        });
+        allowed = (!context?.companyId || context.companyId === original.companyId)
+          && (original.allowDuringSupportPause || !context?.aiPausedUntil || context.aiPausedUntil.getTime() <= Date.now())
+          && original.fingerprint === resolvedLineDeliveryAccessFingerprint(original.userId, original.companyId, access, entitled);
+      }
+    } catch (error) {
+      this.logger.warn({ msg: 'line_delivery_access_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+    }
+    if (!allowed) await this.denyBusinessDelivery(event, denialCode, original);
+    return allowed;
+  }
+
+  private rememberReceiptDeliverySource(event: LineTextEvent | LineReceiptUploadEvent, context: RequestContext,
+    expense: { id: string; updatedAt?: Date }, category?: { id: string; name: string }) {
+    const proof = this.deliveryReceiptSources.get(event) ?? { context, chatKeyHash: chatKeyHashOf(event), records: new Map(), categories: new Map() };
+    const revision = expense.updatedAt instanceof Date && Number.isFinite(expense.updatedAt.getTime()) ? expense.updatedAt.toISOString() : null;
+    proof.records.set(expense.id, proof.records.has(expense.id) && proof.records.get(expense.id) !== revision ? null : revision);
+    if (category) proof.categories.set(category.id, proof.categories.has(category.id) && proof.categories.get(category.id) !== category.name ? null : category.name);
+    this.deliveryReceiptSources.set(event, proof);
+  }
+
+  private rememberContinuationDeliverySource(event: LineTextEvent, context: RequestContext, result: LineExpenseDraftConversationResult) {
+    if (!result.handled || result.status === 'STALE' || result.status === 'NOT_FOUND') return;
+    const source = result.source;
+    if (!source?.records.length) {
+      // A legacy/unproven success must not be blessed by reading a newer revision now.
+      this.deliveryReceiptSources.set(event, { context, chatKeyHash: chatKeyHashOf(event),
+        records: new Map([[result.expenseId ?? 'unproven-draft', null]]), categories: new Map() });
+      return;
+    }
+    for (const record of source.records) {
+      this.rememberReceiptDeliverySource(event, context, record);
+      for (const category of source.categories) this.rememberReceiptDeliverySource(event, context, record, category);
+    }
+    if (source.choices) this.deliveryReceiptSources.get(event)!.draftChoices = source.choices;
+  }
+
+  private rememberSubstituteDeliverySource(event: LineTextEvent, context: RequestContext, result: LineSubstituteReceiptContinuationResult) {
+    if (!result.source && !result.expenseId && !result.candidateExpenseIds?.length && !result.resumeCapsule) return;
+    if (result.status === 'FORBIDDEN' && !result.source) return; // Static permission guidance only.
+    const proofs = this.deliverySubstituteSources.get(event) ?? [];
+    proofs.push({ context, source: result.source }); this.deliverySubstituteSources.set(event, proofs);
+  }
+
+  private rememberCandidateDeliverySources(event: LineTextEvent, context: RequestContext, candidates: LineIntakeCorrectionCandidate[], originalChoices = false) {
+    this.deliveryCandidates.set(event, { context, chatKeyHash: chatKeyHashOf(event), snapshot: JSON.stringify(candidates), originalChoices });
+  }
+
+  private async correctionCandidatesCurrent(ctx: RequestContext, chatKeyHash: string, snapshot: string, originalChoices = false): Promise<boolean> {
+    if (!this.expenseRepo || !RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))) return false;
+    try {
+      // Compare the facts/ordering actually used, not unrelated questionnaire metadata writes.
+      const original = JSON.parse(snapshot) as LineIntakeCorrectionCandidate[];
+      if (!Array.isArray(original) || original.length > 5 || new Set(original.map(row => row.id)).size !== original.length) return false;
+      const current = await this.loadCorrectionCandidates(ctx.companyId, ctx.userId, chatKeyHash, ctx.scopes ?? {},
+        originalChoices ? original.map(row => row.id) : undefined);
+      return current.length === original.length
+        && JSON.stringify(originalChoices ? original.map(row => current.find(now => now.id === row.id)) : current) === snapshot;
+    } catch { return false; }
+  }
+
+  /** Read only: never recapture an expense merely to validate a prepared receipt answer. */
+  private async receiptDeliverySourcesCurrent(event: object): Promise<boolean> {
+    const proof = this.deliveryReceiptSources.get(event);
+    return this.receiptSourcesCurrent(proof);
+  }
+
+  private async receiptSourcesCurrent(proof: { context: RequestContext; chatKeyHash: string;
+    records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] } | undefined): Promise<boolean> {
+    if (!proof || !this.expenseRepo || proof.records.size > 5) return false;
+    const ctx = proof.context;
+    if (!RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))) return false;
+    for (const [id, revision] of proof.records) {
+      const current = await this.expenseRepo.findByIdWithRelations(ctx.companyId, id, undefined, ctx.scopes ?? {});
+      if (!revision || !current || current.id !== id || current.companyId !== ctx.companyId || current.createdByUserId !== ctx.userId
+        || current.captureSource !== 'LINE_UPLOAD' || current.sourceChannelMetadataJson?.chatKeyHash !== proof.chatKeyHash
+        || !isBranchInScope(ctx.scopes ?? {}, current.branchId) || current.updatedAt?.toISOString() !== revision) return false;
+    }
+    if (proof.categories.size) {
+      const categories = await this.expenseRepo.listCategories(ctx.companyId);
+      for (const [id, name] of proof.categories) if (!name || !categories.some(category => category.id === id && category.name === name)) return false;
+    }
+    if (proof.draftChoices && (!this.expenseDraftConversation || JSON.stringify(proof.draftChoices)
+      !== JSON.stringify(await this.expenseDraftConversation.routeContexts(ctx, proof.chatKeyHash)))) return false;
+    return true;
+  }
+
+  private clarificationSourceContext(event: LineTextEvent | LineReceiptUploadEvent, item: LedgerSubRequestInput): string | undefined {
+    const access = this.deliveryAccess.get(event);
+    if (!access) return undefined;
+    const receipt = this.deliveryReceiptSources.get(event), substitute = this.deliverySubstituteSources.get(event), draft = this.deliveryDraftPreviews.get(event);
+    const routing = !receipt && !substitute && !draft ? this.clarificationRouteSources.get(event) : undefined;
+    const source: LineClarificationSource = { v: 1, userId: access.userId, companyId: access.companyId,
+      fingerprint: access.fingerprint, chatKeyHash: chatKeyHashOf(event),
+      recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''), contentHash: lineClarificationContentHash(item),
+      read: this.deliverySources.get(event),
+      ...(receipt ? { receipt: { records: [...receipt.records], categories: [...receipt.categories], draftChoices: receipt.draftChoices } } : {}),
+      ...(substitute ? { substitute: substitute.map(proof => proof.source ?? null) } : {}),
+      ...(draft ? { draft: { requestId: draft.requestId, previewId: draft.previewId, phase: draft.phase } } : {}),
+      candidates: this.deliveryCandidates.get(event)?.snapshot ?? routing?.candidates,
+      draftRouting: routing?.draftRouting,
+    };
+    const serialized = JSON.stringify(source);
+    return Buffer.byteLength(serialized, 'utf8') <= LINE_CLARIFICATION_SOURCE_MAX_BYTES ? serialized : undefined;
+  }
+
+  private async appendSourceBoundClarifications(event: LineTextEvent | LineReceiptUploadEvent, input: Parameters<LineAiLedgerService['appendSubRequests']>[0]) {
+    await this.ledger?.appendSubRequests({ ...input, items: input.items.map(item => ({ ...item,
+      sourceContext: this.clarificationSourceContext(event, item),
+    })) });
+  }
+
+  /** Verify the old question itself, never relabel old wording with a newly read revision. */
+  private async clarificationSourceCurrent(event: LineTextEvent, ctx: RequestContext, item: LineAiOpenClarification & { entry: LedgerEntry }): Promise<boolean> {
+    try {
+      const raw = item.entry.sourceContext, access = this.deliveryAccess.get(event);
+      if (!raw || Buffer.byteLength(raw, 'utf8') > LINE_CLARIFICATION_SOURCE_MAX_BYTES || !access) return false;
+      const source = JSON.parse(raw) as LineClarificationSource;
+      if (source.v !== 1 || source.userId !== ctx.userId || source.companyId !== ctx.companyId
+        || source.fingerprint !== access.fingerprint || source.chatKeyHash !== chatKeyHashOf(event)
+        || source.recipientHash !== lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? '')
+        || source.contentHash !== lineClarificationContentHash(item)) return false;
+      if (source.read && (!Array.isArray(source.read.ids) || source.read.ids.length > 64 || source.read.ids.length > 0
+        && !await this.readEvidence.verify(ctx.companyId, ctx.userId, source.read.requestId, source.read.ids))) return false;
+      if (source.receipt && !await this.receiptSourcesCurrent({ context: ctx, chatKeyHash: source.chatKeyHash,
+        records: new Map(source.receipt.records), categories: new Map(source.receipt.categories), draftChoices: source.receipt.draftChoices })) return false;
+      if (source.substitute) {
+        if (!source.substitute.length || source.substitute.length > 5) return false;
+        for (const proof of source.substitute) if (!await this.substituteReceiptContinuation?.replySourcesCurrent(ctx, proof ?? undefined)) return false;
+      }
+      if (source.candidates && source.candidates !== '[]'
+        && !await this.correctionCandidatesCurrent(ctx, source.chatKeyHash, source.candidates, true)) return false;
+      if (source.draft) {
+        const saved = source.draft.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(ctx, source.chatKeyHash) : null;
+        const preview = source.draft.phase === 'APPLIED' ? saved?.status === 'applied' ? saved.preview : null
+          : await this.draftUpdate?.pendingPreview(ctx, source.chatKeyHash, source.draft.requestId);
+        if (!source.draft.previewId || preview?.previewId !== source.draft.previewId) return false;
+      }
+      if (source.draftRouting !== undefined && (!this.expenseDraftConversation
+        || JSON.stringify(await this.expenseDraftConversation.routeContexts(ctx, source.chatKeyHash)) !== source.draftRouting)) return false;
+      if (item.candidateExpenseIds?.length) {
+        const ids = item.candidateExpenseIds;
+        const provenIds = new Set([
+          ...(source.substitute?.flatMap(proof => proof?.records.map(row => row.id) ?? []) ?? []),
+          ...(source.receipt?.records.map(row => row[0]) ?? []),
+          ...(source.candidates ? (JSON.parse(source.candidates) as LineIntakeCorrectionCandidate[]).map(row => row.id) : []),
+        ]);
+        if (ids.length > 5 || new Set(ids).size !== ids.length || ids.some(id => !provenIds.has(id))) return false;
+      }
+      if (item.pendingMedia) {
+        const pending = await this.prisma.client.lineIntakePendingMedia.findFirst({ where: { id: item.pendingMedia.pendingMediaId,
+          companyId: ctx.companyId, userId: ctx.userId, attachmentId: item.pendingMedia.attachmentId, mimeType: item.pendingMedia.mimeType,
+          status: 'PENDING', expiresAt: { gt: new Date() } } });
+        if (!pending || (pending.caption || MEDIA_PENDING_REQUEST_TEXT) !== item.text) return false;
+        const attachment = await this.expenseRepo?.findActiveAttachmentObject(ctx.companyId, item.pendingMedia.attachmentId);
+        if (!attachment) return false;
+      }
+      return true;
+    } catch { return false; }
+  }
+
+  private async waitingSourcesCurrent(event: LineTextEvent, ctx: RequestContext, open: Array<LineAiOpenClarification & { entry: LedgerEntry }>): Promise<boolean> {
+    const stale = [];
+    for (const item of open) if (!await this.clarificationSourceCurrent(event, ctx, item)) stale.push(item.id);
+    if (!stale.length) return true;
+    // A durable refusal prevents this unsafe question from trapping every later fresh request.
+    await this.consumeClarifications(ctx.companyId, event.pushTargetId ?? event.lineUserId, ctx.userId, open, stale, 'clarification_source_changed');
+    await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+    return false;
+  }
+
+  private async denyBusinessDelivery(
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string },
+    denialCode: string,
+    original?: { userId: string; companyId: string },
+  ): Promise<void> {
+    this.deliveryDenialCode.set(event, denialCode);
+    await this.audit.log({ companyId: original?.companyId, actorUserId: original?.userId,
+      action: 'ai.line.delivery.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId,
+      requestId: event.webhookEventId, result: 'DENIED', riskLevel: 'HIGH', metadataJson: { reason: denialCode === 'LINE_DELIVERY_ACCESS_CHANGED' ? 'delivery_access_changed' : 'delivery_source_changed' } }).catch(error => {
+      // An audit outage cannot turn denial into an exception that replays completed business work.
+      this.logger.warn({ msg: 'line_delivery_denial_audit_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+    });
+    await this.updateEventLog(event.webhookEventId, 'delivery_failed', denialCode, original?.companyId);
+    if (!this.deliveryDenialNotified.has(event)) {
+      this.deliveryDenialNotified.add(event);
+      // This separate refusal contains no stored business facts, company link or handoff token.
+      // Do not route it through the saved-outcome path, which retains the original private answer.
+      const messages = [this.lineReply.buildTextMessage(event.pushTargetId && event.pushTargetId !== event.lineUserId
+        ? 'เพื่อความเป็นส่วนตัว กรุณาเปิดแชตส่วนตัวกับมั่งมี หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
+        : denialCode !== 'LINE_DELIVERY_ACCESS_CHANGED'
+          ? 'ข้อมูลต้นทางเปลี่ยนหรือยังตรวจสอบไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการหรือถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ'
+          : 'สิทธิ์หรือร้านที่เลือกเปลี่ยนระหว่างดำเนินการ กรุณาเลือกร้านแล้วถามใหม่ หากส่งรายการไว้แล้วให้ตรวจในเว็บก่อนส่งซ้ำค่ะ')];
+      try {
+        const result = await this.lineReply.sendReply(event.replyToken, messages);
+        if (result === 'failed_token') await this.lineReply.sendPush(event.pushTargetId ?? event.lineUserId, messages, `${event.webhookEventId}:access-denied`);
+      } catch (error) {
+        this.logger.warn({ msg: 'line_delivery_refusal_unavailable', webhookEventId: event.webhookEventId, ...safeLineErrorDetails(error) });
+      }
+    }
+  }
+
   private async completePendingDelivery(webhookEventId: string): Promise<void> {
     await this.prisma.client.lineWebhookEventLog.updateMany({
       where: { webhookEventId, status: 'delivery_pending' },
@@ -2716,11 +3031,12 @@ export class ProcessLineWebhookUseCase {
 
   /** Only a provider-rejected representation can be replaced; ordinary fallback cannot rewrite facts. */
   private async recordTurnOutcome(
-    webhookEventId: string,
+    event: { webhookEventId: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string },
     messages: LineReplyMessage[],
     presentationKind: string,
     rejectedMessages?: LineReplyMessage[],
   ): Promise<{ messages: LineReplyMessage[]; accepted: boolean } | null> {
+    const { webhookEventId } = event;
     try {
       // Do not write an outcome that the replay reader cannot read back.
       if (!parseOutcomeMessages(messages)) return null;
@@ -2736,11 +3052,23 @@ export class ProcessLineWebhookUseCase {
         if (updated.count !== 1) return null;
         return { messages, accepted: false };
       }
+      const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
+      const authorizationJson = { v: 1, producerId,
+        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
+          userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
+          requestId: sources.requestId, ids: sources.ids, webhookEventId,
+          recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
+          channelId: event.messagingChannelId ?? '',
+        } } : {}),
+      };
       const outcome = await this.prisma.client.lineTurnOutcome.upsert({
         where: { webhookEventId },
-        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, presentationKind, attempts: 1 },
+        create: { webhookEventId, companyId: log?.companyId ?? null, messagesJson, authorizationJson, presentationKind, attempts: 1 },
         update: { attempts: { increment: 1 } },
       });
+      if ((outcome.authorizationJson as { producerId?: string } | null)?.producerId !== producerId) {
+        this.replayedOutcomes.set(event, outcome.authorizationJson);
+      }
       const stored = parseOutcomeMessages(outcome.messagesJson);
       return stored ? { messages: stored, accepted: outcome.deliveredAt != null } : null;
     } catch (error) {
@@ -2749,26 +3077,26 @@ export class ProcessLineWebhookUseCase {
     }
   }
 
-  /**
-   * LINE userIds are channel-scoped: the same person has a different `providerUserId` per
-   * messaging channel, so an unfiltered `providerUserId` lookup can resolve a webhook from one OA
-   * against an identity linked on another. The webhook carries its own channel, so match on it
-   * first. Identities linked before `providerChannelId` was recorded (or under a legacy channel)
-   * still fall back to the channel-agnostic query with a warn — the same shape the notification
-   * delivery path uses, so relinking is not required to keep chatting.
+  /** LINE IDs are provider-scoped; the approved local binding uses the Messaging channel.
+   * An explicit canonical unlink/disable is authoritative over any older legacy alias.
+   * Legacy-only accounts retain their existing route until the Admin QR repair is complete.
    */
   private async resolveLineIdentity(event: { lineUserId: string; messagingChannelId?: string }) {
+    const channelId = event.messagingChannelId ?? this.config.lineMessagingChannelId;
     const where = { providerUserId: event.lineUserId, provider: 'LINE' as const, status: 'ACTIVE' as const };
-    if (event.messagingChannelId) {
+    if (!channelId && this.config.isProduction) {
+      throw new ServiceUnavailableException('LINE channel configuration is missing.');
+    }
+    if (channelId) {
       const scoped = await this.prisma.client.externalIdentity.findFirst({
-        where: { ...where, providerChannelId: event.messagingChannelId },
+        where: { providerUserId: event.lineUserId, provider: 'LINE', providerChannelId: channelId },
         include: { user: true },
       });
-      if (scoped) return scoped;
+      if (scoped) return scoped.status === 'ACTIVE' ? scoped : null;
     }
     const identity = await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
-    if (identity && event.messagingChannelId) {
-      this.logger.warn({ msg: 'line_identity_channel_agnostic_fallback', messagingChannelId: event.messagingChannelId });
+    if (identity && channelId) {
+      this.logger.warn({ msg: 'line_identity_channel_agnostic_fallback', messagingChannelId: channelId });
     }
     return identity;
   }
@@ -3033,6 +3361,9 @@ export class ProcessLineWebhookUseCase {
     // Read once for the whole turn: the AI gate, the capability copy, and the gateway turn request
     // all need the same entitlement set. `null` stays the legacy fail-open sentinel.
     const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+      fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, resolvedAccess, entitledFeatureKeys),
+      allowDuringSupportPause: deterministicCommand });
     const menuCommand = staffMenuCommand(event.messageText);
     const canCaptureExpense = RECEIPT_CAPTURE_PERMISSIONS
       .some((permission) => resolvedAccess.permissions.includes(permission));
@@ -3279,11 +3610,16 @@ export class ProcessLineWebhookUseCase {
       // re-ask about THAT file instead of asking the customer to send one.
     }
 
-    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId, resolvedAccess.permissions) : undefined;
+    const conversationContext = canQuery ? await this.loadConversationContext(companyId, identity.userId) : undefined;
     const valueCandidates = computeValueCandidates(normalizedText);
     // Item 10F: chatKey = groupId ?? roomId ?? userId (same as the buffer); open waiting_user
     // ledger entries ride the turn as DATA so the model can complete the ORIGINAL request.
     const chatKey = event.pushTargetId ?? event.lineUserId;
+    const expenseDraftCtx: RequestContext = {
+      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
+      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
+      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
+    };
     let openWaiting: Awaited<ReturnType<LineAiLedgerService['openWaitingUser']>>;
     try {
       openWaiting = this.ledger ? await this.ledger.openWaitingUser(companyId, chatKey, identity.userId) : [];
@@ -3296,6 +3632,7 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'marker_unavailable', 'CONSUMPTION_MARKER_UNAVAILABLE', companyId);
       return;
     }
+    if (!await this.waitingSourcesCurrent(event, expenseDraftCtx, openWaiting)) return;
     const openClarifications: LineAiOpenClarification[] | undefined = openWaiting.length > 0
       ? openWaiting.map(({ id, question, text, subject, askedAt, clarifyForIntent, candidateExpenseIds, pendingMedia }) => ({
         id, question, text, ...(subject && { subject }), askedAt,
@@ -3309,14 +3646,18 @@ export class ProcessLineWebhookUseCase {
     const recentCapturedExpenses = canCaptureExpense
       ? await this.loadCorrectionCandidates(companyId, identity.userId, chatKeyHashOf(event), resolvedAccess.scopes)
       : [];
-    const expenseDraftCtx: RequestContext = {
-      requestId, authSubject: identity.userId, userId: identity.userId, companyId,
-      membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
-      permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
-    };
-    const activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
+    let activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
       : [];
+    let draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+    const draftRouteCurrent = async () => {
+      if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
+      try {
+        if (JSON.stringify(await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))) === draftRouteSnapshot) return true;
+      } catch { /* An unavailable source cannot authorize the retained route. */ }
+      await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+      return false;
+    };
     const statusQuestion = receiptStatusQuestion(normalizedText);
     if (statusQuestion && (statusQuestion === 'receipt' || openWaiting.length === 0)) {
       const listLink = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses`);
@@ -3333,6 +3674,7 @@ export class ProcessLineWebhookUseCase {
           if (!expense || expense.id !== row.id || expense.companyId !== companyId || expense.createdByUserId !== identity.userId
             || expense.captureSource !== 'LINE_UPLOAD'
             || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
+          this.rememberReceiptDeliverySource(event, expenseDraftCtx, expense);
           const number = typeof expense.vendorDocumentNumber === 'string'
             ? expense.vendorDocumentNumber.replace(/[\r\n]/gu, ' ').slice(0, 60) : '';
           const verification = expense.aiVerificationSummaryJson?.status === 'OCR_FAILED' ? 'FAILED'
@@ -3365,12 +3707,14 @@ export class ProcessLineWebhookUseCase {
       : undefined;
     if (activeExpenseDrafts.length > 0 && this.expenseDraftConversation
       && isDeterministicLineExpenseDraftInput(normalizedText)) {
+      if (!await draftRouteCurrent() || !await this.mayDeliverBusinessReply(event)) return;
       const result = await this.expenseDraftConversation.execute(expenseDraftCtx, {
         messageText: normalizedText,
         chatKeyHash: chatKeyHashOf(event),
         webhookEventId: event.webhookEventId,
       });
       if (result.handled) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -3398,6 +3742,7 @@ export class ProcessLineWebhookUseCase {
 
     if (this.expenseRepo && isGroundedReceiptFollowUp(normalizedText) && !isSubstituteReceiptConversationText(normalizedText)) {
       if (recentCapturedExpenses.length > 1) {
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
         const reply = ['พบรายการล่าสุดมากกว่า 1 รายการ กรุณาระบุรายการก่อนค่ะ', ...recentCapturedExpenses.map((item, index) => `${index + 1}) ${item.label}`)].join('\n');
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
         await this.persistIntakeTurn({
@@ -3417,11 +3762,19 @@ export class ProcessLineWebhookUseCase {
           && (receiptContinuation as any).chatKeyHash === chatKeyHashOf(event)
           && typeof (receiptContinuation as any).deliveredOutcomeId === 'string';
         if (expense && expense.createdByUserId === identity.userId && hasDeliveredContinuation) {
-          const category = expense.expenseCategoryId
-            ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === expense.expenseCategoryId)
-            : undefined;
           const interruption = await interruptExpenseDraft();
-          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
+          // Pausing a questionnaire can itself update this record. Answer from the committed
+          // current row after that write rather than rejecting our own metadata revision.
+          const current = await this.expenseRepo.findByIdWithRelations(companyId, candidate.id, undefined, resolvedAccess.scopes);
+          if (!current) {
+            await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+            return;
+          }
+          const category = current.expenseCategoryId
+            ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === current.expenseCategoryId)
+            : undefined;
+          this.rememberReceiptDeliverySource(event, expenseDraftCtx, current, category);
+          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, current, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -3491,10 +3844,25 @@ export class ProcessLineWebhookUseCase {
         && !openWaiting.some((item) => item.clarifyForIntent === 'EXPENSE_DOCUMENT_CAPTURE')
         ? valueCandidates?.amounts[0]?.value
         : undefined;
+      const waitingChoices = openWaiting.filter(item => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION' && item.candidateExpenseIds?.length);
+      if (waitingChoices.length > 1) {
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, waitingChoices.map(item => item.id), 'clarification_ambiguous');
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
+      const originalChoiceIds = waitingChoices[0]?.candidateExpenseIds;
+      if (!await this.mayDeliverBusinessReply(event)) return;
       const captured = await this.captureBeforeSubstituteContinuation(
         event, continuationCtx, normalizedText, captureFirstAmount, carriedSubstituteIntent,
       );
-      const captureReply = captured
+      // Park older questionnaires before producing source-bound substitute facts. If this turns
+      // out to be a side question, the later router must receive the resulting current context.
+      const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
+      if (expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation) {
+        activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event));
+        draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+      }
+      let captureReply = captured
         ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
           textOnly: true,
           amount: captured.insertedAmount,
@@ -3511,7 +3879,10 @@ export class ProcessLineWebhookUseCase {
         result = await this.substituteReceiptContinuation.execute(continuationCtx, {
           messageText: normalizedText,
           chatKeyHash: chatKeyHashOf(event),
-          recentCandidates: captured
+          ...(originalChoiceIds ? { boundCandidateExpenseIds: originalChoiceIds } : {}),
+          recentCandidates: originalChoiceIds
+            ? originalChoiceIds.map(id => ({ id, label: id }))
+            : captured
             ? [{ id: captured.expense.id, label: `รายการที่เพิ่งบันทึก ${captured.expense.expenseNumber ?? captured.expense.id}` }]
             // GAP C tier 1: the one document this chat is in the middle of, so the card reports IT
             // instead of asking which of several recent captures the question was about.
@@ -3526,6 +3897,7 @@ export class ProcessLineWebhookUseCase {
       } catch (error) {
         // The draft is already committed; a continuation failure degrades, it never sinks the capture.
         if (!captureReply) throw error;
+        if (captured) this.rememberReceiptDeliverySource(event, continuationCtx, captured.expense);
         this.logger.warn({ msg: 'line_substitute_continuation_after_capture_failed', requestId, ...safeLineErrorDetails(error) });
         const degraded = `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
         await this.deliverCompletedReply(event, degraded, companyId, resolvedAccess);
@@ -3536,6 +3908,8 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return;
       }
+      this.rememberSubstituteDeliverySource(event, continuationCtx, result);
+      if (captured) captureReply = (await this.savedReceiptReplies(event, companyId, captured.expense.id)).join('\n');
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
       //
@@ -3560,7 +3934,6 @@ export class ProcessLineWebhookUseCase {
       if (routeSideQuestion) {
         substituteInterruption = result;
       } else {
-        const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
         const merged = `${captureReply ? `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n` : ''}${result.replyText}`;
         const replyText = `${merged}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess, result.badge);
@@ -3583,7 +3956,8 @@ export class ProcessLineWebhookUseCase {
           && canCaptureExpense && recentCapturedExpenses.length === 0
           && isSubstituteReceiptConversationText(normalizedText);
         if (result.pendingQuestion || carriedIntentArmed) {
-          await this.ledger?.appendSubRequests({
+          await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
             companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId,
             items: [{
@@ -3592,6 +3966,7 @@ export class ProcessLineWebhookUseCase {
               clarifyQuestion: result.pendingQuestion ?? SUBSTITUTE_TARGET_PENDING_QUESTION,
               intent: 'CLARIFY',
               clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+              ...(result.candidateExpenseIds?.length ? { candidateExpenseIds: result.candidateExpenseIds } : {}),
             }],
           });
         }
@@ -3610,6 +3985,7 @@ export class ProcessLineWebhookUseCase {
     // both wrong and a dead end. With no capture to name, the question falls through untouched: the
     // AI owns intent whenever it is reachable, and this is only the floor under it.
     if (nextStepQuestion && !nextStepSubstituteTarget && recentCapturedExpenses.length > 0) {
+      this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0]);
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
@@ -3650,6 +4026,12 @@ export class ProcessLineWebhookUseCase {
       !(substituteInterruption && item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION')
       && !(mediaResumeCapsule && item.pendingMedia));
 
+    const routedWaiting = openWaiting.filter(item => aiOpenClarifications?.some(clarification => clarification.id === item.id));
+    if (!await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
+    this.clarificationRouteSources.set(event, { candidates: JSON.stringify(recentCapturedExpenses),
+      ...(expenseDraftConversationEnabled && canCaptureExpense ? { draftRouting: draftRouteSnapshot } : {}),
+    });
+
     // 5.5 LINE Intake Router first: semantic route before any source-module dispatch.
     // Deterministic guards (identity, company, permissions) already ran above.
     // One busy-wait budget for the WHOLE live turn (intake + gateway turn share it), so a turn
@@ -3671,6 +4053,15 @@ export class ProcessLineWebhookUseCase {
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
+
+    if (!await this.mayDeliverBusinessReply(event) || !await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
+    if (!await draftRouteCurrent()) return;
+    if (recentCapturedExpenses.length) {
+      if (!await this.correctionCandidatesCurrent(expenseDraftCtx, chatKeyHashOf(event), JSON.stringify(recentCapturedExpenses))) {
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
+    }
 
     // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
     // draft passes every delivery-time gate is answered HERE from the single intake call — no
@@ -3723,6 +4114,11 @@ export class ProcessLineWebhookUseCase {
         // active clarification — never a stale/historical substitute clarification. The model may only
         // resolve an id we actually surfaced this turn (openClarifications carries the ids + shortlist).
         const modelResolved = (routePlan.resolvedClarificationIds ?? []).filter((id) => substituteClarificationIds.includes(id));
+        if (modelResolved.length > 1) {
+          await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, modelResolved, 'clarification_ambiguous');
+          await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+          return;
+        }
         const resolvedClar = substituteClarifications.find((item) => modelResolved.includes(item.id));
         // A START-CONFIRM clarification carries EXACTLY ONE candidate id (the single expense a paraphrase
         // pinned to confirm). A target-selection carries the offered shortlist (>= 2); a field-continuation
@@ -3742,7 +4138,15 @@ export class ProcessLineWebhookUseCase {
         // fills in when the model omitted the id. Either way the target rides the RESOLVED clarification's
         // typed shortlist, so the ordinal/affirmative binds to the SAME id the previous turn offered — never
         // the shifting recency window. A start-confirm carries exactly ONE id; a target-selection the shortlist.
-        const effectiveClar = resolvedClar ?? deterministicStartConfirmClar;
+        const waitingChoices = substituteClarifications.filter(item => item.candidateExpenseIds?.length);
+        const originalOrdinal = /^\s*[1-5]\s*$/u.test(normalizedText) && waitingChoices.length === 1 ? waitingChoices[0] : undefined;
+        const effectiveClar = resolvedClar ?? deterministicStartConfirmClar ?? originalOrdinal;
+        if (!effectiveClar && waitingChoices.length > 0) {
+          if (waitingChoices.length > 1) await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
+            waitingChoices.map(item => item.id), 'clarification_ambiguous');
+          await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+          return;
+        }
         const boundCandidateIds = effectiveClar?.candidateExpenseIds ?? [];
         const startConfirmId = boundCandidateIds.length === 1 ? boundCandidateIds[0] : undefined;
         // confirmedStart requires an affirmative AND a currently active, single-target start-confirm
@@ -3757,21 +4161,23 @@ export class ProcessLineWebhookUseCase {
         // The continuation use case re-reads authoritative state and rejects on permission/feature/
         // eligibility BEFORE any save; a question/negation/denied result writes nothing. An affirmative
         // to a pending start clarification confirms the paraphrase start for that ONE bound expense.
+        const interruption = await interruptExpenseDraft();
         const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
           messageText: normalizedText,
           chatKeyHash: chatKeyHashOf(event),
           recentCandidates: executeCandidates,
+          ...(boundCandidateIds.length ? { boundCandidateExpenseIds: boundCandidateIds } : {}),
           // PRIMARY is the model-only route: a FRESH start that matches no deterministic entry phrase must
           // CONFIRM before it writes (no auto-create on the router's confidence alone).
           requireStartConfirmation: true,
           confirmedStart,
         });
+        this.rememberSubstituteDeliverySource(event, continuationCtx, result);
         // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
         // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)
         // wins THIS turn, and any OPEN expense draft is INTERRUPTED — paused with a note appended to the
         // reply, never silently dropped. So even with the router unreachable, a canonical substitute
         // command deterministically handles the substitute and preserves the draft to resume later.
-        const interruption = await interruptExpenseDraft();
         const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
         await this.persistIntakeTurn({
@@ -3790,7 +4196,8 @@ export class ProcessLineWebhookUseCase {
         // next ordinal ("1") or affirmative ("ใช่") binds to the SAME id — not the shifting recency window.
         const awaitingUser = !!result.pendingQuestion || !!result.candidateExpenseIds?.length;
         if (awaitingUser) {
-          await this.ledger?.appendSubRequests({
+          await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
             companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
             userId: identity.userId,
             items: [{
@@ -3874,7 +4281,10 @@ export class ProcessLineWebhookUseCase {
         // in that order — otherwise the stale entry outlives the reply and the next message inherits it.
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting,
           resolvedReimbursementIds, 'reimbursement_payer_reclarify');
-        await this.ledger?.appendSubRequests({
+        await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
+          () => this.withCompletionMenu(buildReimbursementPayerClarificationMessage(), companyId, resolvedAccess))]);
+        await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
@@ -3882,8 +4292,6 @@ export class ProcessLineWebhookUseCase {
             intent: 'CLARIFY', clarifyForIntent: 'REIMBURSEMENT_REQUEST_START',
           }],
         });
-        await this.deliverRequiredMessages(event, [await this.timeStage(event.webhookEventId, 'render',
-          () => this.withCompletionMenu(buildReimbursementPayerClarificationMessage(), companyId, resolvedAccess))]);
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
@@ -3939,6 +4347,7 @@ export class ProcessLineWebhookUseCase {
         captureHints: routePlan.captureHints,
       });
       if (result.handled) {
+        this.rememberContinuationDeliverySource(event, expenseDraftCtx, result);
         await this.deliverCompletedReplies(event, this.withDraftWebLink(result.replyTexts, companyId, result.expenseId), companyId, resolvedAccess, undefined, true);
         await this.persistIntakeTurn({
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -4060,7 +4469,8 @@ export class ProcessLineWebhookUseCase {
           userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
           userMessagePreview: normalizedText, replyText: clarifyReply, intent: 'CLARIFY',
         });
-        await this.ledger?.appendSubRequests({
+        await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
@@ -4099,6 +4509,8 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
+      this.rememberReceiptDeliverySource(event, ctx, captured.expense,
+        captured.categoryNameSourceId && captured.categoryName ? { id: captured.categoryNameSourceId, name: captured.categoryName } : undefined);
       const replyTexts = captured.replyTexts.length
         ? captured.replyTexts
         : [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
@@ -4138,6 +4550,21 @@ export class ProcessLineWebhookUseCase {
         return;
       }
       const canEdit = resolvedAccess.permissions.includes('expense.update') || resolvedAccess.permissions.includes('expense.review');
+      const resolvedChoices = openWaiting.filter(item => item.clarifyForIntent === 'EXPENSE_CAPTURE_CORRECTION'
+        && routePlan.resolvedClarificationIds?.includes(item.id) && item.candidateExpenseIds?.length);
+      if (resolvedChoices.length > 1) {
+        await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, resolvedChoices.map(item => item.id), 'clarification_ambiguous');
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
+      const originalIds = resolvedChoices[0]?.candidateExpenseIds;
+      const originalCandidates = originalIds ? await this.loadCorrectionCandidates(companyId, identity.userId,
+        chatKeyHashOf(event), resolvedAccess.scopes, originalIds) : recentCapturedExpenses;
+      const correctionCandidates = originalIds ? originalIds.flatMap(id => originalCandidates.filter(item => item.id === id)) : originalCandidates;
+      if (originalIds && correctionCandidates.length !== originalIds.length) {
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
       const correctionPlan = this.planConsumption(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_apply');
       const correctionCtx: RequestContext = {
         requestId, authSubject: identity.userId, userId: identity.userId, companyId,
@@ -4155,10 +4582,10 @@ export class ProcessLineWebhookUseCase {
       // somebody else's document. `amount` is handled below because it arrives as a router HINT
       // rather than as words this function can read.
       const draftRequest = detectLineDraftEditRequest(normalizedText)
-        ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, recentCapturedExpenses);
+        ?? this.amountCorrectionAsDraftEdit(routePlan.correctionHints, correctionCandidates);
       const draftOutcome = draftRequest && this.draftUpdate?.enabled
         ? await this.proposeDraftUpdate(event, correctionCtx, resolvedAccess, draftRequest, correctionEvidence,
-          recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0]!.id : undefined)
+          correctionCandidates.length === 1 ? correctionCandidates[0]!.id : undefined)
         : 'not_handled';
       if (draftOutcome !== 'not_handled') {
         await this.ackConsumed(correctionPlan, draftProposalAckReason(draftOutcome));
@@ -4168,7 +4595,8 @@ export class ProcessLineWebhookUseCase {
       const applied = this.correctExpense
         ? await this.correctExpense.execute(correctionCtx, {
           lineMessageIdHash: hashMessagePreview(event.lineMessageId ?? event.webhookEventId),
-          candidates: recentCapturedExpenses,
+          chatKeyHash: chatKeyHashOf(event),
+          candidates: correctionCandidates,
           ...(routePlan.correctionHints ? { hints: routePlan.correctionHints } : {}),
           evidence: correctionEvidence,
           ...(correctionPlan ? { consumption: correctionPlan.consumption } : {}),
@@ -4177,12 +4605,15 @@ export class ProcessLineWebhookUseCase {
 
       let reply: string;
       if (applied.status === 'applied') {
+        this.rememberReceiptDeliverySource(event, correctionCtx, { id: applied.expenseId,
+          updatedAt: applied.source?.id === applied.expenseId ? applied.source.updatedAt : undefined });
         await this.ackConsumed(correctionPlan, 'correction_apply');
         reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText, applied.noteOutcome);
       } else if (applied.status === 'clarify') {
         reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
       } else {
-        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit, applied.reason);
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, correctionCandidates, Boolean(originalIds));
+        reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, correctionCandidates, canEdit, applied.reason);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
       const expenseDraftInterruption = applied.status === 'clarify' ? undefined : await interruptExpenseDraft();
@@ -4195,10 +4626,10 @@ export class ProcessLineWebhookUseCase {
       });
       await this.audit.log({
         companyId, actorUserId: identity.userId, action: 'expense.line_correction.guide',
-        targetType: recentCapturedExpenses.length === 1 ? 'expense_record' : 'LineWebhookEvent',
-        targetId: recentCapturedExpenses.length === 1 ? recentCapturedExpenses[0].id : event.webhookEventId,
+        targetType: correctionCandidates.length === 1 ? 'expense_record' : 'LineWebhookEvent',
+        targetId: correctionCandidates.length === 1 ? correctionCandidates[0].id : event.webhookEventId,
         requestId, result: 'SUCCESS', riskLevel: 'LOW',
-        metadataJson: { candidateCount: recentCapturedExpenses.length, canEdit, outcome: applied.status },
+        metadataJson: { candidateCount: correctionCandidates.length, canEdit, outcome: applied.status },
       });
       await this.updateEventLog(
         event.webhookEventId,
@@ -4230,6 +4661,7 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY') {
       // Discovery: prefer the router's own clarifying question (bounded at parse) over the template.
+      if (recentCapturedExpenses.length) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
       await this.deliverReply(event, clarifyReply);
       await this.persistIntakeTurn({
@@ -4238,7 +4670,8 @@ export class ProcessLineWebhookUseCase {
       });
       // Item 10F: the clarified request waits in the ledger; the next turn carries it and the
       // reclaim expires it silently (audited) when the user never answers.
-      await this.ledger?.appendSubRequests({
+      await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
         companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
         userId: identity.userId,
         items: [{
@@ -4261,6 +4694,11 @@ export class ProcessLineWebhookUseCase {
       await this.updateEventLog(event.webhookEventId, 'forbidden', LINE_AI_ERROR_CODES.FORBIDDEN, companyId);
       return;
     }
+
+    // Read/composer turns retain their original input proof through the final reply and fallback.
+    // Mutation lanes returned above and deliver from their own committed result source instead.
+    if (!await this.waitingSourcesCurrent(event, expenseDraftCtx, routedWaiting)) return;
+    if (routedWaiting.length) this.deliveryWaitingSources.set(event, { context: expenseDraftCtx, items: routedWaiting });
 
     // 6. Build user context (server-derived only)
     const userCtx: LineUserContext = {
@@ -4329,6 +4767,7 @@ export class ProcessLineWebhookUseCase {
     // unacked and the reclaim worker re-runs it (at-least-once is safe: read-only channel).
     const ledgerTurnId = this.ledger
       ? await this.ledger.appendTurn({
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, text: normalizedText,
           ...(valueCandidates && { valueCandidates }),
@@ -4362,6 +4801,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, failure.status, failure.errorCode, companyId);
         return;
       }
+      if (ledgerTurnId) this.intermediateDeliveries.add(event);
       await this.deliverReply(
         event,
         failure.replyKind === 'timeout'
@@ -4375,6 +4815,9 @@ export class ProcessLineWebhookUseCase {
       // pushes the answer, so a gateway outage cannot silently lose the request.
       return;
     }
+
+    // The API's own read rows are authoritative even when gateway telemetry omits them.
+    this.deliverySources.set(event, { requestId, ids: await this.readEvidence.forTurn(turnRequest, turnResponse).catch(() => null) });
 
     // 9. Persist the turn + audit FIRST, so a LINE delivery failure can never lose the record.
     if (turnResponse.refusalReason === 'mutation_blocked') {
@@ -4424,9 +4867,13 @@ export class ProcessLineWebhookUseCase {
     // here rather than by the gateway because only the API may print the buttons whose postbacks
     // it will have to re-derive (SEC-04), and because every figure on it comes from the server's
     // own rolled-back run, never from model text.
-    const draftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool))
-      ? await this.draftUpdate?.pendingPreview({ companyId, userId: identity.userId }, chatKeyHashOf(event), requestId)
+    const hasDraftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool));
+    const draftPreview = hasDraftPreview
+      ? await this.draftUpdate?.pendingPreview(expenseDraftCtx, chatKeyHashOf(event), requestId)
       : null;
+    if (hasDraftPreview && (draftPreview || !turnResponse.refused)) this.deliveryDraftPreviews.set(event, {
+      context: expenseDraftCtx, chatKeyHash: chatKeyHashOf(event), requestId, previewId: draftPreview?.previewId ?? null, phase: 'PENDING',
+    });
     const delivery = await this.deliverMessages(
       event,
       draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage],
@@ -4461,13 +4908,15 @@ export class ProcessLineWebhookUseCase {
         openWaiting.filter((item) => item.clarifyForIntent === 'SUBSTITUTE_RECEIPT_CONTINUATION').map((item) => item.id),
         'business_answer');
       if (substituteInterruption.pendingQuestion) {
-        await this.ledger?.appendSubRequests({
+        await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId,
           items: [{
             text: 'ทำใบรับรองแทนใบเสร็จรับเงินต่อ', state: 'waiting_user',
             clarifyQuestion: substituteInterruption.pendingQuestion, intent: 'CLARIFY',
             clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+            ...(substituteInterruption.candidateExpenseIds?.length ? { candidateExpenseIds: substituteInterruption.candidateExpenseIds } : {}),
           }],
         });
       }
@@ -4478,7 +4927,8 @@ export class ProcessLineWebhookUseCase {
     if (this.ledger) {
       const subRequests = this.ledger.coverageToSubRequests(turnResponse.coverage);
       if (subRequests.length > 0) {
-        await this.ledger.appendSubRequests({
+        await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
           companyId, chatKey, turnId: requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, items: subRequests,
         });
@@ -4871,7 +5321,7 @@ export class ProcessLineWebhookUseCase {
     } catch { /* telemetry cannot change the outcome it observes */ }
   }
 
-  private async loadConversationContext(companyId: string, userId: string, permissions: string[]): Promise<LineAiConversationContext | undefined> {
+  private async loadConversationContext(companyId: string, userId: string): Promise<LineAiConversationContext | undefined> {
     const since = new Date(Date.now() - LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000);
     const rows = await this.prisma.client.aiTurn.findMany({
       where: {
@@ -4889,20 +5339,20 @@ export class ProcessLineWebhookUseCase {
         intent: true,
         agent: true,
         refused: true,
-        toolInvocations: { select: { toolName: true } },
       },
     });
     if (rows.length === 0) return undefined;
-    // History is model input on both text and media lanes. A surviving CRM permission must not
-    // replay an old sales result after the company switches sales_documents off.
-    const entitled = await loadEntitledFeatureKeys(this.prisma, companyId);
+    // AP21: tool permission/feature checks cannot prove a historical record is still in scope.
+    // Even an unchanged actor can lose access when a record moves. The existing sourceRefs carry
+    // locators, not current authorization. Keep the user's questions for follow-ups, but never
+    // send stored derived replies; current business facts must be read through ERP tools. The
+    // bounded stored preview is inspected only to recognize a fixed capability-help routing hint.
+    // Its contents never enter model input, and the help examples use current access again.
     const recentTurns = [...rows].reverse().map((row) => {
-      const canUseReply = canUseAssistantPreview(row.toolInvocations?.map((tool) => tool.toolName), permissions, entitled);
       return {
         at: row.createdAt.toISOString(),
         ...(row.userMessagePreview && { userMessagePreview: row.userMessagePreview }),
-        ...(canUseReply && row.replyPreview && { assistantReplyPreview: row.replyPreview }),
-        ...(row.intent && { intent: String(row.intent) }),
+        ...(row.intent && { intent: capabilityHistoryIntent(row.replyPreview) ?? String(row.intent) }),
         ...(row.agent && { agent: row.agent }),
         refused: row.refused,
       };
@@ -5037,7 +5487,10 @@ export class ProcessLineWebhookUseCase {
 
     await this.recordShadowTurn(companyId);
     if (await this.refuseWhenLaunchRouteClosed(event, identity.userId, companyId, requestId)) return;
-    if (await lineAssistantDisabled(this.prisma, companyId)) {
+    const entitledFeatureKeys = await loadEntitledFeatureKeys(this.prisma, companyId);
+    this.deliveryAccess.set(event, { userId: identity.userId, companyId,
+      fingerprint: resolvedLineDeliveryAccessFingerprint(identity.userId, companyId, access, entitledFeatureKeys) });
+    if (lineAssistantDisabledFor(entitledFeatureKeys)) {
       await this.deliverReply(event, formatRefusal('feature_disabled'));
       await this.audit.log({ companyId, actorUserId: identity.userId, action: 'ai.line.query.denied', targetType: 'LineWebhookEvent', targetId: event.webhookEventId, requestId, result: 'DENIED', riskLevel: 'LOW', metadataJson: { reason: 'feature_disabled' } });
       await this.updateEventLog(event.webhookEventId, 'feature_disabled', LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE, companyId);
@@ -5136,6 +5589,7 @@ export class ProcessLineWebhookUseCase {
       if (!exact || exact.createdByUserId !== ctx.userId || exact.captureSource !== 'LINE_UPLOAD'
         || !isBranchInScope(ctx.scopes ?? {}, exact.branchId)
         || exact.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
+      this.rememberReceiptDeliverySource(event, ctx, exact);
       await this.deliverCompletedReply(event, [
         '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ',
         ...(exact.vendorNameSnapshot ? [`ผู้ขาย – ${exact.vendorNameSnapshot}`] : []),
@@ -5150,7 +5604,7 @@ export class ProcessLineWebhookUseCase {
     // LINE Intake Router: semantic classification of the media message
     // (expense evidence vs signature vs other) before any record is created.
     const conversationContext = access.permissions.includes('line.ai.query')
-      ? await this.loadConversationContext(companyId, identity.userId, access.permissions)
+      ? await this.loadConversationContext(companyId, identity.userId)
       : undefined;
     const caption = captionText?.trim() ?? '';
     const captionSuffix = caption ? ` ${caption}` : '';
@@ -5175,6 +5629,7 @@ export class ProcessLineWebhookUseCase {
     });
 
     admissionAttempt.receiptRequested = routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE';
+    if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
 
     // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
     // substitute workflow in this chat is parked at the issue decision — not only on the numbered
@@ -5195,7 +5650,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5216,7 +5671,7 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status !== 'ROUTED'
       && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
       && this.initSignatureUpload && this.createSignatureAsset) {
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5249,7 +5704,7 @@ export class ProcessLineWebhookUseCase {
         replyText: clarifyReply, intent: 'CLARIFY',
       });
       if (parked?.created && parked.pending) {
-        await this.appendMediaClarification({
+        await this.appendMediaClarification(event, {
           companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
           userId: identity.userId, caption, question: clarifyReply, pending: parked.pending,
         });
@@ -5285,7 +5740,7 @@ export class ProcessLineWebhookUseCase {
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: MEDIA_CLARIFY_REPLY, intent: 'CLARIFY',
           });
           if (pending) {
-            await this.appendMediaClarification({
+            await this.appendMediaClarification(event, {
               companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
               userId: identity.userId, caption, question: MEDIA_CLARIFY_REPLY, pending,
             });
@@ -5388,6 +5843,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
@@ -5434,7 +5890,7 @@ export class ProcessLineWebhookUseCase {
             userMessagePreview: `[ผู้ใช้ส่งเช็กบิล]${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
           if (pending) {
-            await this.appendMediaClarification({
+            await this.appendMediaClarification(event, {
               companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
               userId: identity.userId, caption, question: reply, pending,
             });
@@ -5475,7 +5931,7 @@ export class ProcessLineWebhookUseCase {
             userMessagePreview: `${mediaPreviewLabel(pending)}${captionSuffix}`, replyText: reply, intent: 'CLARIFY',
           });
           if (pending) {
-            await this.appendMediaClarification({
+            await this.appendMediaClarification(event, {
               companyId, chatKey: mediaChatKey(event), requestId, webhookEventId: event.webhookEventId,
               userId: identity.userId, caption, question: reply, pending,
             });
@@ -5516,11 +5972,12 @@ export class ProcessLineWebhookUseCase {
       attachmentId: intent.attachmentId,
       checksumSha256: media.checksumSha256,
       byteSize: media.byteSize,
-    }));
+    }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(event)) throw new LineDeliveryError('failed_permanent'); } }));
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: intent.expenseId, companyId, uploaded: true };
     const ocrFields = decision.manualReview ? null : ocr.fields;
-    await this.prisma.client.expenseRecord.update({
-      where: { id: intent.expenseId },
+    if (!completedExpense.updatedAt) throw new ConflictException('Receipt upload revision unavailable');
+    const capturedRevision = await this.prisma.client.expenseRecord.update({
+      where: { id: intent.expenseId, companyId, updatedAt: completedExpense.updatedAt },
       data: { aiVerificationStatus: 'NEEDS_REVIEW', aiVerificationSummaryJson: {
         status: ocr.status, recognizedFields: ocrFields ?? undefined,
         missingFields: ocrFields?.missingFields ?? ['vendor', 'expenseDate', 'grandTotalAmount', 'category'],
@@ -5530,7 +5987,7 @@ export class ProcessLineWebhookUseCase {
 
 
     // ponytail: web and LINE share upload and post-OCR duplicate detection.
-    let ocrApplied = false;
+    let sourceUpdatedAt = capturedRevision.updatedAt;
     let hasDuplicate = completedExpense.duplicateStatus === 'POSSIBLE_DUPLICATE';
 
     // Route hints are AI suggestions; deterministic guards decide what is stored.
@@ -5566,12 +6023,9 @@ export class ProcessLineWebhookUseCase {
     let dateAssumptions: string[] | undefined;
     let reviewReasons: string[] = [];
     let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
-    /** Spec §5.1: the charge rows the apply WROTE, for the card to print. Stays `[]` when the apply
-     *  folded them (or was skipped as stale) — the card then says so rather than listing them. */
-    let appliedCharges: ExpenseChargeSummary[] = [];
-    let acceptedAmounts: ReceiptOcrApplyOutcome['acceptedAmounts'];
     if (ocrFields) {
       const applyOutcome = await this.timeStage(event.webhookEventId, 'receipt_ocr_apply', () => this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
+        expectedUpdatedAt: sourceUpdatedAt,
         ...(hintedCategory
           ? {
               fallbackCategorySuggestion: {
@@ -5581,9 +6035,13 @@ export class ProcessLineWebhookUseCase {
             }
           : {}),
       }));
-      // Stale means a correction landed during the OCR round trip; keep the draft as captured.
-      const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
-      ocrApplied = duplicateResult !== null;
+      if (isStaleOcrApply(applyOutcome) || !applyOutcome.committedUpdatedAt) {
+        throw new ConflictException('Receipt changed before OCR could be saved');
+      }
+      const duplicateResult = applyOutcome;
+      sourceUpdatedAt = applyOutcome.committedUpdatedAt;
+      admissionAttempt.usablePersisted = ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
+        && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount);
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
       reviewReasons = duplicateResult?.reviewReasons ?? [];
       dateVerified = duplicateResult?.dateVerified ?? false;
@@ -5598,8 +6056,6 @@ export class ProcessLineWebhookUseCase {
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           }
         : undefined;
-      appliedCharges = duplicateResult?.charges ?? [];
-      acceptedAmounts = duplicateResult?.acceptedAmounts;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -5623,7 +6079,7 @@ export class ProcessLineWebhookUseCase {
     if (!dateVerified) missingFields.add('expenseDate');
 
     await this.prisma.client.expenseRecord.update({
-      where: { id: intent.expenseId },
+      where: { id: intent.expenseId, companyId, updatedAt: sourceUpdatedAt },
       data: {
         captureSource: 'LINE_UPLOAD',
         ...(expenseDraftConversationEnabled ? { status: 'DRAFT' } : {}),
@@ -5674,8 +6130,6 @@ export class ProcessLineWebhookUseCase {
         },
       },
     });
-    admissionAttempt.usablePersisted = ocrApplied && ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
-      && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields?.grandTotalAmount);
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
@@ -5693,22 +6147,7 @@ export class ProcessLineWebhookUseCase {
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       });
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
-    const replyTexts = [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
-      hasDuplicate,
-      acceptedAmounts,
-      fields: ocrFields,
-      // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
-      charges: appliedCharges,
-      // …and the outcome that says whether THIS apply folded them, so the card only claims a fold
-      // that actually happened (F5).
-      ...(chargeReconciliation ? { chargeReconciliation } : {}),
-      sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
-      categoryName: effectiveCategory?.name || null,
-      questionText: caption,
-      // Spec §5.2: the card says what the stored date IS — read, assumed, placeholder or absurd —
-      // instead of printing whatever string happens to be there as though the page stated it.
-      dateStatus,
-    })];
+    const replyTexts = await this.savedReceiptReplies(event, companyId, intent.expenseId, caption);
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
@@ -5719,23 +6158,38 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
-  private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string): Promise<string[]> {
+  private async savedReceiptReplies(event: LineReceiptUploadEvent | LineTextEvent, companyId: string, expenseId: string, questionText?: string): Promise<string[]> {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
-    const fallback = `📷 เก็บรูปและร่างแล้วค่ะ ยังไม่ยืนยันรายการ\nเปิดดูรายการ: ${link}`;
+    const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
     try {
       if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return [fallback];
       const access = await this.permissionResolver.resolveAccess(event.handoff.userId, companyId);
       const expense = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes ?? {});
-      if (!expense || expense.createdByUserId !== event.handoff.userId) return [fallback];
+      if (!expense || expense.createdByUserId !== event.handoff.userId || expense.captureSource !== 'LINE_UPLOAD'
+        || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) return [fallback];
+      const category = expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find(item => item.id === expense.expenseCategoryId) : undefined;
+      this.rememberReceiptDeliverySource(event, { requestId: event.webhookEventId, authSubject: event.handoff.userId,
+        userId: event.handoff.userId, companyId, membershipId: access.membershipId, roles: access.roles,
+        permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, expense, category);
       if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
+      const summary = expense.aiVerificationSummaryJson;
+      const reconciliation = summary?.chargeReconciliation as { status?: unknown; chargesApplied?: unknown } | undefined;
       return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
+        questionText,
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
-        categoryName: expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find((category) => category.id === expense.expenseCategoryId)?.name : null,
-        fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
+        categoryName: category?.name,
+        fields: { ...(summary?.recognizedFields as ReceiptOcrFieldResult | undefined),
+          vendorName: expense.vendorNameSnapshot ?? undefined, documentNumber: expense.vendorDocumentNumber ?? undefined,
+          expenseDate: expense.expenseDate.toISOString().slice(0, 10),
+          description: undefined, quantity: undefined, unitPrice: undefined,
+          lines: expense.lines.filter(line => !line.chargeKind).map(line => ({ description: line.description, quantity: line.quantity,
+            unitPrice: line.unitPrice, amount: line.lineTotalAmount, evidenceSignal: line.sourceLineText ?? line.description })) },
         charges: expense.charges,
-        hasDuplicate: Boolean(expense.duplicateOfExpenseId),
-        dateStatus: expense.aiVerificationSummaryJson?.dateStatus as ExpenseDocumentDateStatus | undefined,
+        ...(reconciliation && typeof reconciliation.status === 'string' && typeof reconciliation.chargesApplied === 'number'
+          ? { chargeReconciliation: { status: reconciliation.status, chargesApplied: reconciliation.chargesApplied } } : {}),
+        hasDuplicate: Boolean(expense.duplicateOfExpenseId) || expense.duplicateStatus === 'POSSIBLE_DUPLICATE',
+        dateStatus: (summary?.dateStatus as ExpenseDocumentDateStatus | undefined) ?? (expense.reviewedAt ? 'verified' : 'unverified'),
       })];
     } catch (error) {
       this.logger.warn({ msg: 'line_receipt_summary_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
@@ -5769,7 +6223,7 @@ export class ProcessLineWebhookUseCase {
       expense = await this.completeReceiptUpload!.execute(ctx, {
         expenseId: expense.id, attachmentId: intent.attachmentId,
         ...(media ? { checksumSha256: media.checksumSha256, byteSize: media.byteSize } : {}),
-      });
+      }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(event)) throw new LineDeliveryError('failed_permanent'); } });
     }
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = {
       expenseId: expense.id, companyId: ctx.companyId, uploaded: Boolean(expense.primaryAttachmentId),
@@ -5782,6 +6236,8 @@ export class ProcessLineWebhookUseCase {
       ocrFields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
     });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
+    if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status) || !expense.primaryAttachmentId)
+      this.rememberReceiptDeliverySource(event, ctx, expense);
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
 ${link}`, ctx.companyId, access);
     else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่
@@ -5857,7 +6313,7 @@ ${link}`, ctx.companyId, access);
    *  already stored — the text path has always done this for its own clarifies, and the media path
    *  not doing it is what left the follow-up answer with no context to attach to. Ledger writes
    *  fail open (§13); LineIntakePendingMedia in Postgres stays the source of truth either way. */
-  private async appendMediaClarification(input: {
+  private async appendMediaClarification(event: LineTextEvent | LineReceiptUploadEvent, input: {
     companyId: string;
     chatKey: string;
     requestId: string;
@@ -5867,7 +6323,7 @@ ${link}`, ctx.companyId, access);
     question: string;
     pending: { id: string; attachmentId: string; mimeType: string };
   }): Promise<void> {
-    await this.ledger?.appendSubRequests({
+    await this.appendSourceBoundClarifications(event, {
       companyId: input.companyId, chatKey: input.chatKey, turnId: input.requestId,
       webhookEventId: input.webhookEventId, userId: input.userId,
       items: [{
@@ -5923,6 +6379,7 @@ ${link}`, ctx.companyId, access);
   private async createLineSignatureAsset(input: {
     ctx: RequestContext;
     event: Pick<LineReceiptUploadEvent, 'lineMessageId'>;
+    sourceEvent: LineReceiptUploadEvent | LineTextEvent;
     companyId: string;
     /** Omitted only when `attachmentId` names bytes that are already stored. */
     media?: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer };
@@ -5947,7 +6404,7 @@ ${link}`, ctx.companyId, access);
       submittedFromChannel: 'LINE',
       lineMessageId: input.event.lineMessageId,
       ...(input.attachmentId ? { attachmentAlreadyActive: true } : {}),
-    });
+    }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(input.sourceEvent)) throw new LineDeliveryError('failed_permanent'); } });
     return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision);
   }
 
@@ -6011,7 +6468,7 @@ ${link}`, ctx.companyId, access);
       userId: input.userId, companyId, webhookEventId: event.webhookEventId,
       userMessagePreview: `${mediaPreviewLabel(pending)}${input.captionSuffix}`, replyText: text, intent: 'CLARIFY',
     });
-    await this.appendMediaClarification({
+    await this.appendMediaClarification(event, {
       companyId, chatKey: mediaChatKey(event), requestId: input.requestId, webhookEventId: event.webhookEventId,
       userId: input.userId, caption: input.caption, question: text, pending,
     });
@@ -6033,6 +6490,7 @@ ${link}`, ctx.companyId, access);
     purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
   }): Promise<LineMediaTurnOutcome> {
     const { event, companyId } = input;
+    if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'done' };
     const { replyText } = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
       expenseId: input.context.expenseId,
       attachmentId: input.pending.attachmentId,
@@ -6171,12 +6629,14 @@ ${link}`, ctx.companyId, access);
       // and the very next answer could file the same id as this expense's receipt or substitute
       // evidence, producing an artifact that is both. A failure after this point costs the sender one
       // re-send; the alternative costs a reviewer a document that cannot be trusted.
+      if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'handled' };
       await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');
       const replyText = await this.createLineSignatureAsset({
         ctx,
         // The IMAGE's message id, not this answer's: that is what a redelivery of the photo would
         // collide with, and what the router-routed ticket would have de-duplicated on.
         event: { lineMessageId: pending.lineMessageId },
+        sourceEvent: event,
         companyId: ctx.companyId,
         attachmentId: pending.attachmentId,
         // F8: steer to “ตอบ 1” only when a workflow is actually parked at the issue decision — read
@@ -6254,7 +6714,7 @@ ${link}`, ctx.companyId, access);
     const existing = await this.expenseRepo.findByLineMessageId(ctx.companyId, pending.lineMessageId);
     let expenseId: string;
     if (existing) {
-      await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes);
+      await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes, chatKeyHash);
       expenseId = existing.id;
     } else {
       ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
@@ -6271,13 +6731,21 @@ ${link}`, ctx.companyId, access);
     // Spec §5.1/§5.2: the SAME apply as the photo lane runs here, so it raises the same review
     // reasons and writes the same charge rows. Both used to be thrown away with the outcome — the
     // summary JSON below was composed from scratch and the reply never named the charge.
-    const applied = asked.ocrFields ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields) : undefined;
-    const appliedOutcome = applied && !isStaleOcrApply(applied) ? applied : undefined;
+    const captured = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
+    if (!captured || captured.createdByUserId !== ctx.userId || captured.captureSource !== 'LINE_UPLOAD'
+      || captured.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHash) throw new ForbiddenException('Receipt is outside your capture scope.');
+    // A saved check bill may have been edited since the original answer. Resume it without
+    // applying its old pending OCR or replacing its current review metadata a second time.
+    const applied = !existing && asked.ocrFields
+      ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields, { expectedUpdatedAt: captured.updatedAt }) : undefined;
+    if (applied && (isStaleOcrApply(applied) || !applied.committedUpdatedAt)) throw new ConflictException('Receipt changed before OCR could be saved');
+    const appliedOutcome = applied;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
-    await this.expenseRepo.updateExpense({
+    if (!existing) await this.expenseRepo.updateExpense({
       id: expenseId,
       companyId: ctx.companyId,
       updatedByUserId: ctx.userId,
+      expectedUpdatedAt: appliedOutcome?.committedUpdatedAt ?? captured.updatedAt,
       sourceDocumentType: 'NEEDS_REVIEW',
       taxEvidenceStatus: 'NEEDS_REVIEW',
       inputVatClaimStatus: 'NEEDS_REVIEW',
@@ -6310,7 +6778,11 @@ ${link}`, ctx.companyId, access);
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? []);
+    this.rememberSubstituteDeliverySource(event, ctx, continuation);
+    const completed = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, access.scopes);
+    if (!completed) throw new ConflictException('Receipt changed before the reply.');
+    this.rememberReceiptDeliverySource(event, ctx, completed);
+    const reply = formatCheckBillDraftCreatedReply(continuation, completed.charges ?? []);
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {
@@ -6323,7 +6795,8 @@ ${link}`, ctx.companyId, access);
       userMessagePreview: text, replyText: reply, intent: 'EVIDENCE_CAPTURE',
     });
     if (continuation.pendingQuestion) {
-      await this.ledger?.appendSubRequests({
+      await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
         companyId: ctx.companyId, chatKey: event.pushTargetId ?? event.lineUserId,
         turnId: ctx.requestId, webhookEventId: event.webhookEventId, userId: ctx.userId,
         items: [{
@@ -6549,12 +7022,11 @@ ${link}`, ctx.companyId, access);
     // REPAIRS a partial draft instead of rubber-stamping it (Fix #5).
     const existing = await this.expenseRepo.findByLineMessageId(companyId, pending.lineMessageId);
     let expenseId: string;
-    let hasDuplicate: boolean;
     if (existing) {
-      hasDuplicate = await this.completeReceiptDraft(existing.id, pending, companyId, userId, access.scopes);
+      await this.completeReceiptDraft(existing.id, pending, companyId, userId, access.scopes, chatKeyHashOf(event));
       expenseId = existing.id;
     } else {
-      ({ expenseId, hasDuplicate } = await this.createReceiptDraftFromPendingMedia(
+      ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
         requestId,
         userId,
         companyId,
@@ -6565,7 +7037,7 @@ ${link}`, ctx.companyId, access);
         access.membershipId,
       ));
     }
-    let reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
+    let additionalReply: string | undefined;
     let pendingQuestion: string | undefined;
     if (additionalText && this.substituteReceiptContinuation && isSubstituteReceiptConversationText(additionalText)) {
       try {
@@ -6579,13 +7051,17 @@ ${link}`, ctx.companyId, access);
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
         });
-        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${continuation.replyText}`;
+        this.rememberSubstituteDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
+          membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, continuation);
+        additionalReply = continuation.replyText;
         pendingQuestion = continuation.pendingQuestion;
       } catch (error) {
         this.logger.warn({ msg: 'line_substitute_continuation_additional_outcome_failed', requestId, ...safeLineErrorDetails(error) });
-        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
+        additionalReply = SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED;
       }
     }
+    const receiptReply = (await this.savedReceiptReplies(event, companyId, expenseId)).join('\n');
+    const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
     await this.deliverCompletedReply(event, reply, companyId, access);
     await this.prisma.client.lineIntakePendingMedia.updateMany({
       where: { id: pending.id, status: 'PENDING' },
@@ -6597,7 +7073,8 @@ ${link}`, ctx.companyId, access);
       userMessagePreview: `[ยืนยันบันทึกใบเสร็จ] ${userMessagePreview}`, replyText: reply, intent: 'EVIDENCE_CAPTURE',
     });
     if (pendingQuestion) {
-      await this.ledger?.appendSubRequests({
+      await this.appendSourceBoundClarifications(event, {
+          messagingChannelId: event.messagingChannelId,
         companyId, chatKey: event.pushTargetId ?? event.lineUserId, turnId: requestId,
         webhookEventId: event.webhookEventId, userId,
         items: [{
@@ -6639,12 +7116,14 @@ ${link}`, ctx.companyId, access);
     userId: string,
     chatKeyHash: string,
     scopes: { branchIds?: string[] },
+    expenseIds?: string[],
   ): Promise<LineIntakeCorrectionCandidate[]> {
     if (!this.expenseRepo) return [];
     // Recency window + chat provenance come from the ONE shared rule (spec §5.5), so the correction
     // lane and `expense.explain_record` can never disagree about what "this chat just captured" is.
     const rows = await listRecentLineCaptureCandidates(this.expenseRepo, {
       companyId, userId, chatKeyHash, scopes, take: LINE_CORRECTION_CANDIDATE_LIMIT,
+      ...(expenseIds ? { expenseIds } : {}),
     });
     return rows.map((row) => {
       const amount = row.grandTotalAmount && Number(row.grandTotalAmount) > 0
@@ -6744,7 +7223,7 @@ ${link}`, ctx.companyId, access);
     lineEventId: string,
     pending: { attachmentId: string; lineMessageId: string; mimeType: string },
     scopes: { branchIds?: string[] },
-    chatKeyHash?: string,
+    chatKeyHash: string,
     membershipId?: string,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
@@ -6768,7 +7247,7 @@ ${link}`, ctx.companyId, access);
       // so omitting it here would make clarified receipts uncorrectable.
       ...(chatKeyHash ? { sourceChannelMetadataJson: { channel: 'LINE', kind: 'pending_media', chatKeyHash } } : {}),
     });
-    const hasDuplicate = await this.completeReceiptDraft(expense.id, pending, companyId, userId, scopes);
+    const hasDuplicate = await this.completeReceiptDraft(expense.id, pending, companyId, userId, scopes, chatKeyHash);
     await this.audit.log({
       companyId, actorUserId: userId, action: 'expense.line_upload.receive', targetType: 'expense_record',
       targetId: expense.id, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
@@ -6777,42 +7256,64 @@ ${link}`, ctx.companyId, access);
     return { expenseId: expense.id, hasDuplicate };
   }
 
-  /** RECEIPT-05 (Fix #5): idempotently link the persisted attachment to the draft and set
-   *  primaryAttachmentId. Shared by first-time create and the partial-failure repair path — the
-   *  attachment link tolerates its unique-constraint replay and the update is a plain set, so a
-   *  retry always converges the draft to "complete with its attachment" before the pending row is
-   *  marked RESOLVED_RECEIPT. */
+  /** Repair only the original incomplete receipt. Retrying a completed upload never resets
+   * human review; link, primary attachment, initial summary and duplicate facts commit together. */
   private async completeReceiptDraft(
     expenseId: string,
-    pending: { attachmentId: string },
+    pending: { attachmentId: string; lineMessageId: string },
     companyId: string,
     userId: string,
     scopes: { branchIds?: string[] },
+    chatKeyHash: string,
   ): Promise<boolean> {
     const repo = this.expenseRepo!;
-    try {
-      await repo.linkAttachment(expenseId, pending.attachmentId, 'expense.receipt.primary', companyId, userId);
-    } catch (err) {
-      // Link already exists from a partial first resolve — repair is idempotent, keep going.
-      if ((err as { code?: string }).code !== 'P2002') throw err;
-    }
-    await repo.updateExpense({
-      id: expenseId, companyId, updatedByUserId: userId,
-      primaryAttachmentId: pending.attachmentId, status: 'NEEDS_REVIEW', aiVerificationStatus: 'NEEDS_REVIEW',
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:duplicate-reconciliation`}))`;
+      // Match funding/substitute/retention writers before locking the attachment row.
+      await lockFundingEvidence(tx, companyId, { expenseIds: [expenseId], attachmentIds: [pending.attachmentId] });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${pending.attachmentId}:attachment-retention`}))`;
+      const current = await repo.findByIdWithRelations(companyId, expenseId, tx, scopes);
+      if (!current || current.companyId !== companyId || current.createdByUserId !== userId
+        || current.captureSource !== 'LINE_UPLOAD' || current.lineMessageId !== pending.lineMessageId
+        || current.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHash || !isBranchInScope(scopes, current.branchId)) {
+        throw new ForbiddenException('Receipt is outside your capture scope.');
+      }
+      await tx.$executeRaw`SELECT id FROM "AttachmentObject" WHERE id = ${pending.attachmentId} AND "companyId" = ${companyId} FOR SHARE`;
+      const attachment = await tx.attachmentObject.findFirst({ where: {
+        id: pending.attachmentId, companyId, uploadedByUserId: userId, status: 'ACTIVE',
+      }, select: { id: true } });
+      if (!attachment) throw new ConflictException('The original receipt attachment is unavailable.');
+      const linked = current.attachments.some(item => item.id === pending.attachmentId && item.purpose === 'expense.receipt.primary');
+      if (current.primaryAttachmentId === pending.attachmentId && linked) {
+        return current.duplicateStatus === 'POSSIBLE_DUPLICATE' || Boolean(current.duplicateOfExpenseId);
+      }
+      if (current.primaryAttachmentId && current.primaryAttachmentId !== pending.attachmentId
+        || !['DRAFT', 'NEEDS_REVIEW'].includes(current.status) || current.reviewedAt) {
+        throw new ConflictException('Receipt changed. Review the original record in the web app.');
+      }
+      await repo.linkAttachment(expenseId, pending.attachmentId, 'expense.receipt.primary', companyId, userId, tx);
+      await repo.updateExpense({
+        id: expenseId, companyId, updatedByUserId: userId, expectedUpdatedAt: current.updatedAt,
+        primaryAttachmentId: pending.attachmentId,
+        ...(!current.aiVerificationSummaryJson ? { status: 'NEEDS_REVIEW', aiVerificationStatus: 'NEEDS_REVIEW' } : {}),
+      }, undefined, tx);
+      const duplicate = await reconcileExpenseDuplicateCandidates(repo, companyId, expenseId, userId, scopes, tx);
+      const saved = await repo.findByIdWithRelations(companyId, expenseId, tx, scopes);
+      if (!saved) throw new ConflictException('Receipt changed during attachment repair.');
+      await repo.updateExpense({
+        id: expenseId, companyId, updatedByUserId: userId, expectedUpdatedAt: saved.updatedAt,
+        aiVerificationSummaryJson: {
+          ...(current.aiVerificationSummaryJson ?? {
+            status: 'NOT_REQUESTED',
+            missingFields: ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category'],
+            nextAction: 'review_in_web', resolvedVia: 'line_clarify_receipt',
+          }),
+          duplicateWarning: duplicate.openCandidates > 0,
+        },
+      }, undefined, tx);
+      return duplicate.openCandidates > 0;
     });
-    const duplicateResult = await reconcileExpenseDuplicateCandidates(repo, companyId, expenseId, userId, scopes);
-    const hasDuplicate = duplicateResult.openCandidates > 0;
-    await repo.updateExpense({
-      id: expenseId, companyId, updatedByUserId: userId,
-      aiVerificationSummaryJson: {
-        status: 'NOT_REQUESTED',
-        missingFields: ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category'],
-        duplicateWarning: hasDuplicate,
-        nextAction: 'review_in_web',
-        resolvedVia: 'line_clarify_receipt',
-      },
-    });
-    return hasDuplicate;
   }
 
   /**
@@ -6823,7 +7324,7 @@ ${link}`, ctx.companyId, access);
    * meets this at 10, not 15. Returns what was said, for the turn record.
    */
   private async deliverReceiptQuotaRefusal(
-    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; handoff?: LineHandoffRecipient },
+    event: { webhookEventId: string; replyToken: string; lineUserId: string; pushTargetId?: string; messagingChannelId?: string; handoff?: LineHandoffRecipient },
     companyId: string,
     userId: string,
   ): Promise<string> {
@@ -6832,14 +7333,14 @@ ${link}`, ctx.companyId, access);
     // sent, and the numberless copy below is a true sentence without it.
     const snapshot = await receiptQuotaSnapshot(this.prisma, companyId, monthKey).catch((error) => {
       this.logger.warn({ msg: 'receipt.quota.snapshot_failed', companyId, monthKey, ...safeLineErrorDetails(error) });
-      return { usedCount: 0, planLimit: null, tierKey: null };
+      return { usedCount: 0, planLimit: null, tierKey: null, cadence: undefined };
     });
-    const { planLimit, tierKey } = snapshot;
-    const limit = displayReceiptQuotaLimit(planLimit, tierKey);
+    const { planLimit, tierKey, cadence } = snapshot;
+    const limit = displayReceiptQuotaLimit(planLimit, tierKey, cadence);
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
     const text = first
-      ? receiptQuotaExceededTextTh(limit, tierKey)
-      : receiptQuotaExceededShortTextTh(limit, tierKey);
+      ? receiptQuotaExceededTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot)
+      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot);
     let delivered = true;
     try {
       if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);
@@ -6928,7 +7429,7 @@ ${link}`, ctx.companyId, access);
   }
 
   private async downloadLineMedia(lineMessageId: string, messageType: 'image' | 'file', fileName?: string, fileSize?: number): Promise<DownloadedLineMedia | null> {
-    const accessToken = this.config.lineMessagingChannelAccessToken;
+    const accessToken = (await this.lineCredentials.get().catch(() => null))?.accessToken;
     if (!accessToken) return null;
     if (fileSize !== undefined && (fileSize <= 0 || fileSize > this.config.uploadMaxBytes)) return null;
     const response = await fetch(`https://api-data.line.me/v2/bot/message/${encodeURIComponent(lineMessageId)}/content`, {
@@ -6956,6 +7457,7 @@ ${link}`, ctx.companyId, access);
     const result = await this.prisma.client.lineWebhookEventLog.updateMany({
       where: {
         webhookEventId,
+        OR: [{ deliveryOwnerId: null }, { deliveryOwnerId: 'webhook' }],
         // Once delivery is pending, only the delivery path itself may advance
         // the event. Callers that continue after deliverMessages must not turn
         // an unsent response into a false "completed" record.

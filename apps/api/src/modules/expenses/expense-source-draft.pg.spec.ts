@@ -23,7 +23,8 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
   before(async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname));
-    assert.ok(['/watchdog_bms', '/substitute_receipt_only_review'].includes(url.pathname));
+    assert.ok(['/watchdog_bms', '/substitute_receipt_only_review'].includes(url.pathname)
+      || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     await client.user.create({ data: { id: userId, displayName: 'Source draft test', status: 'ACTIVE' } });
     await client.company.create({ data: { id: companyId, name: tag, businessCategory: 'SERVICE' } });
@@ -510,11 +511,17 @@ describe('receipt source draft continuity on PostgreSQL (T11–T18)', { skip: !d
     await client.expenseRecord.update({ where: { id }, data: { vendorNameSnapshot: 'ร้านแก้จากเว็บ', updatedAt: new Date(initial.updatedAt.getTime() + 1000) } });
     const stale = await conversation.execute(lineCtx(), { chatKeyHash: 'chat', messageText: 'D-PURPOSE ใช้สำนักงาน', captureHints: { targetExpenseId: id } });
     assert.equal(stale.status, 'STALE');
+    assert.equal(stale.source, undefined, 'a refused update carries no committed success proof');
     const resume = await conversation.execute(lineCtx(), { chatKeyHash: 'chat', messageText: 'ต่อ', captureHints: { targetExpenseId: id } });
     assert.equal(resume.status, 'UPDATED'); assert.match(resume.replyTexts.join('\n'), /ร้านแก้จากเว็บ/);
+    const resumed = await stored(id);
+    assert.deepEqual(resume.source?.records, [{ id, updatedAt: resumed.updatedAt }]);
     const answer = await conversation.execute(lineCtx(), { chatKeyHash: 'chat', messageText: 'D-PURPOSE ใช้สำนักงาน', captureHints: { targetExpenseId: id } });
     assert.equal(answer.status, 'UPDATED');
-    assert.equal((await stored(id)).vendorNameSnapshot, 'ร้านแก้จากเว็บ');
+    const answered = await stored(id);
+    assert.equal(answered.vendorNameSnapshot, 'ร้านแก้จากเว็บ');
+    assert.deepEqual(answer.source?.records, [{ id, updatedAt: answered.updatedAt }]);
+    assert.deepEqual(resume.source?.records, [{ id, updatedAt: resumed.updatedAt }], 'later saves never bless an earlier reply');
   });
 
   it('enforces source-only fields, active membership, scope, exact references and concurrent revision', async () => {

@@ -32,26 +32,27 @@ function harness(recordOverrides: Record<string, unknown> = {}) {
     branchId: 'branch-1', updatedAt: new Date('2026-09-03T04:00:00.000Z'),
     note: 'LINE receipt upload', expenseDate: new Date('2026-09-03T00:00:00.000Z'),
     grandTotalAmount: '1789.04', vendorNameSnapshot: 'BHC', vendorDocumentNumber: 'A-1',
-    sourceDocumentType: 'RECEIPT', aiVerificationSummaryJson: null,
+    sourceDocumentType: 'RECEIPT', captureSource: 'LINE_UPLOAD', sourceChannelMetadataJson: { chatKeyHash: 'chat-1' }, aiVerificationSummaryJson: null,
     lines: [{ description: 'ข้าวผัด', vatAmount: '117.04', whtAmount: '0' }],
     ...recordOverrides,
   };
+  let marker: any;
   const tx = {
     $executeRaw: async () => 0,
-    outboxEvent: { findFirst: async () => null, create: async () => undefined },
-    expenseRecord: { findFirst: async () => record },
+    outboxEvent: { findFirst: async () => marker, create: async (input: any) => { marker = structuredClone(input.data); } },
+    expenseRecord: { findFirst: async () => record, findFirstOrThrow: async () => ({ id: record.id, updatedAt: new Date(record.updatedAt) }) },
   };
   const useCase = new CorrectLineCapturedExpenseUseCase(
     { client: { $transaction: async (fn: any) => fn(tx) } } as any,
-    { updateExpense: async () => undefined } as any,
+    { updateExpense: async (input: any) => { Object.assign(record, input, { updatedAt: new Date(record.updatedAt.getTime() + 1) }); return record; } } as any,
     { execute: async (_c: unknown, _id: string, input: any) => { draftUpdates.push(input); } } as any,
     { log: async (entry: any) => { audits.push(entry); } } as any,
   );
-  return { useCase, draftUpdates, audits, record };
+  return { useCase, draftUpdates, audits, record, tx, marker: () => marker };
 }
 
 const noteTurn = (text = OWNER_TURN) => ({
-  lineMessageIdHash: 'hash-1',
+  lineMessageIdHash: 'hash-1', chatKeyHash: 'chat-1',
   candidates: [{ id: 'expense-1', label: 'BHC 1,789.04' }] as never,
   hints: { note: { to: text } } as never,
   evidence: [{ text, todayIso: TODAY }],
@@ -152,6 +153,7 @@ function buildFlagLane(options: { draftEditEnabled?: boolean; lines?: unknown[];
     createdByUserId: 'u-1',
     updatedAt: NOW,
     sourceDocumentType: options.sourceDocumentType ?? 'EXPENSE_NOTE_TEXT',
+    captureSource: 'LINE_UPLOAD', sourceChannelMetadataJson: { chatKeyHash: 'chat-1' },
     expenseDate: new Date('2026-09-03T00:00:00.000Z'),
     grandTotalAmount: '59',
     vendorNameSnapshot: 'ร้านกาแฟ',
@@ -164,7 +166,7 @@ function buildFlagLane(options: { draftEditEnabled?: boolean; lines?: unknown[];
   const tx = {
     $executeRaw: async () => 0,
     outboxEvent: { findFirst: async () => null, create: async () => ({}) },
-    expenseRecord: { findFirst: async () => record },
+    expenseRecord: { findFirst: async () => record, findFirstOrThrow: async () => ({ id: record.id, updatedAt: new Date(record.updatedAt) }) },
   };
   const prisma = { client: { $transaction: async (run: (t: unknown) => Promise<unknown>) => run(tx) } };
   const useCase = new CorrectLineCapturedExpenseUseCase(
@@ -185,7 +187,7 @@ const flagCtx = {
 };
 
 const input = (hints: Record<string, unknown>) => ({
-  lineMessageIdHash: 'hash-1',
+  lineMessageIdHash: 'hash-1', chatKeyHash: 'chat-1',
   candidates: [{ id: 'exp-1', label: 'บิลเงินสด · 59.00', createdAt: NOW.toISOString() }],
   hints,
   evidence: [{ text: 'ยอดจริง ๆ 590', todayIso: '2026-09-05' }],
@@ -243,4 +245,29 @@ describe('LINE correction lane — the amount field across the S-4 flag', () => 
       assert.equal((outcome as any).reason, 'missing_update_permission');
     }
   });
+});
+
+describe('LINE correction source proof', () => {
+  it('retains the original producing revision and actual truncated note result across replay after a human edit', async () => {
+    const h = harness({ note: 'LINE receipt upload'.padEnd(460, '!') });
+    const outcome = await h.useCase.execute(ctx(), noteTurn()); assert.equal(outcome.status, 'applied');
+    if (outcome.status !== 'applied') return;
+    assert.deepEqual(outcome.source, { id: h.record.id, updatedAt: h.record.updatedAt });
+    assert.equal(h.marker().payloadJson.sourceUpdatedAt, h.record.updatedAt.toISOString());
+    assert.equal(h.marker().payloadJson.noteOutcome, 'truncated');
+    h.record.updatedAt = new Date(h.record.updatedAt.getTime() + 1000); h.record.note = 'Human reviewed note';
+    const replay = await h.useCase.execute(ctx(), noteTurn()); assert.equal(replay.status, 'applied');
+    if (replay.status !== 'applied') return;
+    assert.deepEqual(replay.source, outcome.source); assert.equal(replay.noteOutcome, 'truncated');
+    assert.equal(h.draftUpdates.length, 1); assert.equal(h.record.note, 'Human reviewed note');
+    delete h.marker().payloadJson.sourceUpdatedAt;
+    const legacy = await h.useCase.execute(ctx(), noteTurn());
+    assert.equal(legacy.status, 'applied'); assert.equal('source' in legacy, false); assert.equal(h.draftUpdates.length, 1);
+  });
+  for (const source of [{ captureSource: 'WEB_UPLOAD' }, { sourceChannelMetadataJson: { chatKeyHash: 'other' } }]) {
+    it(`rejects a changed capture source before correction: ${JSON.stringify(source)}`, async () => {
+      const h = harness(source); assert.equal((await h.useCase.execute(ctx(), noteTurn())).status, 'guidance');
+      assert.equal(h.draftUpdates.length, 0); assert.equal(h.marker(), undefined);
+    });
+  }
 });

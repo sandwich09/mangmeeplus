@@ -3,6 +3,7 @@ import { validateProductionConfig, workersConfigSchema } from '@watchdog-bms/con
 import type { Worker } from 'bullmq';
 import { fatalDetail, workerLog } from './common/log.js';
 import { configureQueues } from './common/queue.js';
+import { startBillingDiscoveryWorker, startBillingEventWorker, startBillingNotificationWorker, startBillingScanWorker } from './modules/billing/billing-worker.js';
 import { startNotificationWorker } from './modules/notifications/notification-worker.js';
 import { startWorkflowWorker } from './modules/workflow/workflow-worker.js';
 import { startAiDraftWorker } from './modules/ai-draft/ai-draft-worker.js';
@@ -56,6 +57,7 @@ const healthServer = createServer((_req, res) => {
 logHeartbeat();
 const workers: Worker[] = [];
 if (config.QUEUE_ENABLED) {
+  workers.push(startBillingEventWorker(config.REDIS_URL), startBillingScanWorker(config.REDIS_URL), startBillingNotificationWorker(config.REDIS_URL), startBillingDiscoveryWorker(config.REDIS_URL));
   workers.push(startNotificationWorker(config.REDIS_URL));
   workerLog('info', { event: 'notification_worker_started' });
   workers.push(startPlanTermSweepWorker(config.REDIS_URL));

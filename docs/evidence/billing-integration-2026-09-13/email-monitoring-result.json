@@ -1,0 +1,57 @@
+{
+  "recordedAt": "2026-09-15T06:20:29.505315+00:00",
+  "status": "LOCAL_MONITORING_SLICE_PASS",
+  "sourceSha256": {
+    "apps/api/prisma/migrations/20260915070000_email_delivery_monitoring/migration.sql": "2eaba64894f3b870e5595723cbdef8c7aa660e5f59f464b3824cafc9ed8c4b4a",
+    "apps/api/src/modules/auth/application/system-email-delivery.service.ts": "d2884252d1b18b399e8c5daea2b45d83070fded0dc4b3e9a9a25eb9e3c9fd331",
+    "apps/api/src/modules/auth/infrastructure/postmark-configuration.ts": "9345e4014997d9941fe4c96df2727a6a635f9e34decb828c46994d55347657c4",
+    "apps/api/src/modules/auth/infrastructure/postmark-configuration.spec.ts": "3fe51815114713bdda88934257659a855be30541057a2f41e034e20f5d748a8a",
+    "apps/api/src/modules/auth/presentation/system-email-delivery.controller.ts": "e83d245e10aa129a12c7c51ef79dcfe05d37715982d68d4c6f2e0b2545cfd993",
+    "apps/api/src/modules/auth/permission-registry.ts": "cded16dccd409fc85c646de0a466e79abda261ea3d4ce3133d39503af094fc7b",
+    "apps/api/src/modules/auth/auth.module.ts": "5f700bc18adbc49f1e6e8dea94b49d7e70748365a27e69149a3f246889ea3c87",
+    "apps/api/src/scripts/email-monitoring-smoke.ts": "3861be7115f42cf7e6f29f2dfc96750340c364a36b69aba031548138352e1abb",
+    "apps/api/src/scripts/billing-http-smoke.ts": "95783d3838b31ae548291f3fe15101011f620522b2a21df2efbfa6ce336f392e",
+    "apps/web/src/features/system-email-delivery/SystemEmailDeliveryPage.tsx": "ac2ce7be89613c3a44c621abdbe1194bc031b3d01d1e4c87da1641e55554457a",
+    "apps/web/app/system/email-delivery/page.tsx": "18995922630d3fea322c100ef72f0282488c72d7cad4baddbbb03f991ed8ea10",
+    "apps/web/app/system/layout.tsx": "35040165540d34a7e70384a483f7696802f491d76b55f5f9dee8072f9b2f2ecb",
+    "apps/web/src/common/components/app-shell/SystemHeader.tsx": "2173ef23f0ecfe66726cc6e7a572ecf8d29188a93a69d3007fa284e465b5d8b9",
+    "packages/contracts/src/email-delivery.ts": "663264dd83148b625e05eb9b140de1092441ed1fc2c5437deda690d430c4fd82",
+    "packages/contracts/src/index.ts": "10b945d07eaac89f1bf21a9e989f7875bc8c8253341f044a6f2e6b4cd5d3f590"
+  },
+  "runtime": {
+    "layer": "real-Nest-HTTP-PostgreSQL",
+    "passed": [
+      "email-monitor-current-global-role-dedicated-permission-and-strict-query",
+      "email-monitor-seven-day-facts-all-history-cursors-purpose-server-stream-and-safe-projection",
+      "email-monitor-original-billing-link-current-permission-and-provider-account-boundary",
+      "email-monitor-deduplicated-late-unmapped-callback-disabled-outbound-and-missing-config",
+      "email-monitor-native-safe-identity-unknown-failure-final-authority-and-throttle-no-send",
+      "browser-email-monitor-mobile-navigation-filter-pages-reload-provider-retry-and-permission-recovery"
+    ],
+    "browserE2E": true,
+    "nativeProviderCalls": false
+  },
+  "focused": {
+    "pass": 68,
+    "fail": 0,
+    "skip": 0,
+    "artifact": "email-monitoring-focused.tap",
+    "note": "Includes five adjacent uncommitted environment-isolation tests. Only read-only Postmark inspection changes belong to this increment."
+  },
+  "checks": [
+    "Contracts build, SWC, API and web tsc --noEmit PASS",
+    "Two mobile captures visually inspected",
+    "Local scoped history index migration applied to dedicated localhost15432/mangmee_billing_20260912 only"
+  ],
+  "commands": [
+    "BILLING_EMAIL_MONITORING_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "corepack pnpm exec tsx --tsconfig tsconfig.json --test src/modules/auth/infrastructure/postmark-configuration.spec.ts src/modules/auth/infrastructure/postmark.client.spec.ts src/modules/auth/permission-registry.spec.ts (apps/api)"
+  ],
+  "limits": [
+    "Postmark GET transport is simulated; no native mail, account change, inbox or retention/allowance acceptance.",
+    "Safe fallback copy for non-claim/non-billing mail was clarified after the final browser run; no runtime behavior changed.",
+    "Shared PostmarkClient contains concurrent cloud send guards not owned by this increment; only the inspectConfiguration method and its two tests are included in this commit.",
+    "Receipt-focused regression passes nine groups with synthetic-session proof reset and retained-input 429 preview retry. The combined suite stopped earlier at receipt navigation and has NOT passed on this increment.",
+    "No push, CI, merge or deploy. Package/day/manual controls, remaining C08/mail/LINE and full acceptance stay open."
+  ]
+}

@@ -5,7 +5,7 @@
 export const satangToBaht = (satang: number) =>
   '฿' + (satang / 100).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** Prefill/placeholder value for the baht input — no separators (it is an <input type="number">),
+/** Prefill/placeholder value for the baht input — no separators,
  *  and satang are shown, never rounded away: an override of 200050 must round-trip as 2000.50. */
 export const satangToBahtInput = (satang: number) =>
   satang % 100 === 0 ? String(satang / 100) : (satang / 100).toFixed(2);
@@ -20,7 +20,7 @@ const BAHT_INPUT = /^(\d+)(?:\.(\d{1,2}))?$/;
 
 /**
  * Empty means "clear the override and inherit the platform default" (the API's `null`).
- * Anything else must be baht ≥ 1 with at most two decimals — a third decimal is rejected, never
+ * Anything else must be exact, safely representable baht ≥ 1 with at most two decimals — a third decimal is rejected, never
  * silently rounded. The ceiling is enforced server-side so the operator always sees the API's
  * own 422 wording for it.
  */
@@ -31,12 +31,13 @@ export function parseBudgetBahtInput(raw: string): BudgetInputParse {
   if (!parts) {
     return {
       ok: false,
-      message: 'Enter an amount in baht with at most two decimals (for example 2000.50), or leave the field empty to inherit the platform default.',
+      message: 'กรอกจำนวนเงินเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง เช่น 2000.50',
     };
   }
   const satang = Number(parts[1]) * 100 + Number((parts[2] ?? '').padEnd(2, '0'));
+  if (!Number.isSafeInteger(satang)) return { ok: false, message: 'จำนวนเงินมากเกินไป กรุณาตรวจตัวเลขแล้วกรอกใหม่' };
   if (satang < 100) {
-    return { ok: false, message: 'Enter at least ฿1. Switching AI off is a feature entitlement (ai_line_assistant), not a budget of zero.' };
+    return { ok: false, message: 'กรอกงบตั้งแต่ 1 บาท หากต้องการหยุดใช้ AI ให้ปิดสิทธิ์ผู้ช่วย AI ของบริษัท' };
   }
   return { ok: true, monthlyBudgetSatang: satang };
 }

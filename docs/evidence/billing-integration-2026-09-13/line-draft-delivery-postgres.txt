@@ -1,0 +1,98 @@
+# Subtest: LINE draft edit preview→confirm on real PostgreSQL
+    # Subtest: previews without writing, applies on confirm, and refuses a stale or non-editable record
+    ok 1 - previews without writing, applies on confirm, and refuses a stale or non-editable record
+ok 1 - LINE draft edit preview→confirm on real PostgreSQL
+# Subtest: LINE delivery actor access on isolated PostgreSQL
+    # Subtest: sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+    ok 1 - sends with current access, retains the outcome, and never forwards the old private answer into a second turn
+    # Subtest: suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+    ok 2 - suppresses a prepared answer after actual DB role revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+    ok 3 - suppresses a prepared answer after actual DB membership revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+    ok 4 - suppresses a prepared answer after actual DB company revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+    ok 5 - suppresses a prepared answer after actual DB branch revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+    ok 6 - suppresses a prepared answer after actual DB feature revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+    ok 7 - suppresses a prepared answer after actual DB unlink revocation and preserves the original business outcome
+    # Subtest: suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+    ok 8 - suppresses a prepared answer after actual DB optout revocation and preserves the original business outcome
+ok 2 - LINE delivery actor access on isolated PostgreSQL
+# Subtest: LINE queued exact-delivery reservation on isolated PostgreSQL
+    # Subtest: retains first output and fences stale/concurrent producers independently for each stream entry
+        # Subtest: one concurrent producer owns an entry and cannot accept before send
+        ok 1 - one concurrent producer owns an entry and cannot accept before send
+        # Subtest: expired producer cannot overwrite or send a replacement producer result
+        ok 2 - expired producer cannot overwrite or send a replacement producer result
+        # Subtest: sub-requests sharing a webhook do not overwrite one another or cross streams
+        ok 3 - sub-requests sharing a webhook do not overwrite one another or cross streams
+        # Subtest: expired context and malformed or oversized messages cannot become a send
+        ok 4 - expired context and malformed or oversized messages cannot become a send
+        # Subtest: live and queued final producers cannot both claim the same outward notification
+        ok 5 - live and queued final producers cannot both claim the same outward notification
+        # Subtest: an already stored live outcome blocks a new queued owner before any send
+        ok 6 - an already stored live outcome blocks a new queued owner before any send
+    ok 1 - retains first output and fences stale/concurrent producers independently for each stream entry
+ok 3 - LINE queued exact-delivery reservation on isolated PostgreSQL
+# Subtest: LINE original-source recheck on isolated PostgreSQL
+    # Subtest: uses the actual expense read and current scopes, retaining only bounded inputs and a result digest
+        # Subtest: unchanged source and observation timestamp/key-order changes still verify
+        ok 1 - unchanged source and observation timestamp/key-order changes still verify
+        # Subtest: API evidence cannot be hidden or substituted by gateway telemetry
+        ok 2 - API evidence cannot be hidden or substituted by gateway telemetry
+        # Subtest: same actor and unchanged scopes cannot reuse a record moved to another branch
+        ok 3 - same actor and unchanged scopes cannot reuse a record moved to another branch
+        # Subtest: a changed result with identical record counts and later restoration is observed
+        ok 4 - a changed result with identical record counts and later restoration is observed
+        # Subtest: missing/duplicate/foreign-request and expired evidence cannot authorize a read
+        ok 5 - missing/duplicate/foreign-request and expired evidence cannot authorize a read
+        # Subtest: proof cannot turn a preview/mutation category into a read executor
+        ok 6 - proof cannot turn a preview/mutation category into a read executor
+        # Subtest: bounded inputs and evidence reservation do not let concurrent writers exceed64
+        ok 7 - bounded inputs and evidence reservation do not let concurrent writers exceed64
+        # Subtest: live producer-to-delivery with actual DB and expense API: unchanged
+        ok 8 - live producer-to-delivery with actual DB and expense API: unchanged
+        # Subtest: live producer-to-delivery with actual DB and expense API: branch
+        ok 9 - live producer-to-delivery with actual DB and expense API: branch
+        # Subtest: live producer-to-delivery with actual DB and expense API: amount
+        ok 10 - live producer-to-delivery with actual DB and expense API: amount
+        # Subtest: live producer-to-delivery with actual DB and expense API: handoff
+        ok 11 - live producer-to-delivery with actual DB and expense API: handoff
+        # Subtest: live producer-to-delivery with actual DB and expense API: fallback
+        ok 12 - live producer-to-delivery with actual DB and expense API: fallback
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay
+        ok 13 - live producer-to-delivery with actual DB and expense API: replay
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-branch
+        ok 14 - live producer-to-delivery with actual DB and expense API: replay-branch
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-role
+        ok 15 - live producer-to-delivery with actual DB and expense API: replay-role
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-group
+        ok 16 - live producer-to-delivery with actual DB and expense API: replay-group
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-channel
+        ok 17 - live producer-to-delivery with actual DB and expense API: replay-channel
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-unlink
+        ok 18 - live producer-to-delivery with actual DB and expense API: replay-unlink
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-disabled-with-alias
+        ok 19 - live producer-to-delivery with actual DB and expense API: replay-disabled-with-alias
+        # Subtest: live producer-to-delivery with actual DB and expense API: replay-legacy
+        ok 20 - live producer-to-delivery with actual DB and expense API: replay-legacy
+        # Subtest: queued actual PostgreSQL and LINE adapter preserve one answer: unknown
+        ok 21 - queued actual PostgreSQL and LINE adapter preserve one answer: unknown
+        # Subtest: queued actual PostgreSQL and LINE adapter preserve one answer: source-changed
+        ok 22 - queued actual PostgreSQL and LINE adapter preserve one answer: source-changed
+        # Subtest: queued actual PostgreSQL and LINE adapter preserve one answer: accepted-ack-lost
+        ok 23 - queued actual PostgreSQL and LINE adapter preserve one answer: accepted-ack-lost
+        # Subtest: disabled current actor and deleted source both fail revalidation
+        ok 24 - disabled current actor and deleted source both fail revalidation
+    ok 1 - uses the actual expense read and current scopes, retaining only bounded inputs and a result digest
+ok 4 - LINE original-source recheck on isolated PostgreSQL
+# tests 41
+# suites 4
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2801.27225

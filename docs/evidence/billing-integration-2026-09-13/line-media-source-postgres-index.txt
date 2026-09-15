@@ -1,0 +1,1 @@
+ok 1 - commits OCR and duplicates together and refuses stale follow-up summaries without losing human edits

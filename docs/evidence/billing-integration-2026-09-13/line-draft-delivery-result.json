@@ -1,0 +1,52 @@
+{
+  "status": "LOCAL_LINE_DRAFT_DELIVERY_SLICE_PASS",
+  "recordedAt": "2026-09-15T09:29:39.427669+00:00",
+  "baseCommit": "3dd81869dabb383a7b1040bf7af750beda23590f",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/services/line-draft-preview.store.ts": "4c35e856f7ac69f9cf714301fb965becf68233fec1f29642c489db0321a00bbb",
+    "apps/api/src/modules/expenses/application/use-cases/line-draft-update.use-case.ts": "9c15bd4052aec910d9ba980f725d9bf88f392bb2905ece6ac69f2f5801464ec1",
+    "apps/api/src/modules/expenses/application/use-cases/line-draft-update.security.spec.ts": "88b00b2729c869b1444343607f8bd18ad913ae41bf8046903f1dc9473f204713",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "fa48b38eca54c5448b93c1df7f1d22541fa121eb19abdfa1f0d6df49d00c3ef6",
+    "apps/api/src/modules/line-ai/application/line-read-evidence.service.ts": "ccd6068e0cfa5de1e8c88335cbd95db9ccb5bada2de63b55cf91e3e2d9e98d2f",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "76adf000a1abae9b58244af0770352577d03d46bf8856b9ec3029e9ebfc3fc44",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "ccaf309080adc96b3ffcedd8d7965cd527054edc50a57b9e361e0675da6f1c1d",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "b2a98096615460736670d56c41dd16664b7f58cbf9791a493f0b9caf6a5600e9",
+    "apps/api/src/modules/line-ai/line-delivery-access.pg.spec.ts": "aac57ddae628345818ca9ffef79cebe5a04070920f5628d2a7ea5746902c8a4e",
+    "apps/api/src/modules/line-ai/line-ledger-delivery.pg.spec.ts": "accd825c8e9e7a90259681cb67ef2249055f5b26a386677666ef9e2fd00a3914",
+    "apps/api/src/modules/line-ai/application/use-cases/drain-line-ledger.use-case.spec.ts": "e004f0fdab16a8beab6b5747ddad310b7b6f7bbb3a974525851a8e37f0c6e5cc",
+    "apps/api/src/modules/line-ai/application/use-cases/recover-orphan-line-events.use-case.spec.ts": "782a692c625b4410b088128ffe27331f563d3db7d2b5e961d8c3064fe0d9becf"
+  },
+  "runs": {
+    "unit": {
+      "tests": 399,
+      "pass": 399,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-memory-unit.tap",
+      "logSha256": "bec56a523ec2e9e70689ccea65982f5f543e95157c37485fef80c362e7984e8c",
+      "resultIndex": "line-draft-delivery-unit.txt"
+    },
+    "postgres": {
+      "tests": 41,
+      "pass": 41,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-source-current.tap",
+      "logSha256": "4fdef5647e68dfc4aacd67ce3dfadf601dd7b8cb6956433c3d3c87efae543d04",
+      "resultIndex": "line-draft-delivery-postgres.txt"
+    }
+  },
+  "apiTypecheck": "PASS; final runtime checked; later test-only expected rejection adjustment verified by source test runner",
+  "fixes": [
+    "Disabled canonical LINE identity takes precedence over an old active alias during original-source replay.",
+    "Pending and applied draft memory require exact actor/company/chat binding, current edit permission, current scoped record and original source revision.",
+    "Deterministic and gateway preview/confirmation delivery revalidates after handoff preparation and before reply-token fallback without rerunning any mutation.",
+    "Unrelated read evidence cannot authorize persisted mixed read/draft outcome replay."
+  ],
+  "limits": [
+    "PostgreSQL fixtures run only against localhost:15432/mangmee_billing_20260912. Provider and model transports simulated.",
+    "PostgreSQL draft fixture exercises real expense transactions and uses a test audit port; it is not proof of the production audit repository.",
+    "No native LINE, browser acceptance, full AP21-24 intake/capture matrix, current combined billing acceptance, CI, push, merge or deployment in this checkpoint.",
+    "Remaining paid free-day collection policy and local mail retention window await the already asked Owner replies."
+  ]
+}

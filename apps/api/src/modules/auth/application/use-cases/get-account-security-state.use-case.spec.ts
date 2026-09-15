@@ -9,7 +9,7 @@ function makeUseCase(lineIdentity: { linkedAt: Date } | null, emailProvider?: 'd
       user: { findUnique: async () => ({ email: 'a@b.co', emailVerifiedAt: null, aiAssistantOptOutAt: null }) },
       emailVerificationToken: { findFirst: async () => null },
       externalIdentity: {
-        findFirst: async (args: any) => { identityQueries.push(args); return lineIdentity; },
+        findMany: async (args: any) => { identityQueries.push(args); return lineIdentity ? [lineIdentity] : []; },
       },
     },
   } as any;
@@ -68,4 +68,14 @@ describe('GetAccountSecurityStateUseCase email delivery capability', () => {
 
     assert.equal((await useCase.execute('user-1')).emailDeliveryEnabled, true);
   });
+});
+
+for (const channel of ['current', 'legacy']) it(`separates linked identity from ${channel} Messaging readiness`, async () => {
+  const useCase = new GetAccountSecurityStateUseCase({ client: {
+    user: { findUnique: async () => ({}) }, emailVerificationToken: { findFirst: async () => null },
+    externalIdentity: { findMany: async () => [{ linkedAt: new Date(), providerChannelId: channel }] },
+  } } as any, { lineMessagingChannelId: 'current' } as any);
+  const state = await useCase.execute('user');
+  assert.equal(state.lineLinked, true);
+  assert.equal(state.lineMessagingReady, channel === 'current');
 });

@@ -22,6 +22,7 @@ function makePrisma(opts: {
 } = {}) {
   const writes = { profileUpdate: undefined as any, userUpdate: undefined as any, membershipUpdate: undefined as any, scopeDeletes: 0, scopeCreates: undefined as any, auditArgs: undefined as any, assignedRoleIds: undefined as any, transactions: 0 };
   const tx = {
+    $queryRaw: async () => [],
     employeeAccessProfile: { update: async (args: any) => { writes.profileUpdate = args; return {}; } },
     user: { update: async (args: any) => { writes.userUpdate = args; return {}; } },
     membershipRole: {

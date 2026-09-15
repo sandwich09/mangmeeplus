@@ -18,6 +18,15 @@ export function readTokenParam(token: string | null): string | null {
   return value.length > 0 ? value : null;
 }
 
+/** Fragment proof for new mail, with unambiguous compatibility for old query links. */
+export function readEmailLinkToken(search: string, hash: string): string | null {
+  const query = new URLSearchParams(search).getAll('token');
+  const fragment = new URLSearchParams(hash.replace(/^#/, '')).getAll('token');
+  if (query.length > 1 || fragment.length > 1) return null;
+  if (query.length && fragment.length && query[0] !== fragment[0]) return null;
+  return readTokenParam(fragment[0] ?? query[0] ?? null);
+}
+
 // Tokens live in httpOnly cookies (set by the BFF); only the post-change redirect path
 // is remembered client-side for the forced password-change flow.
 export function rememberPendingRedirect(

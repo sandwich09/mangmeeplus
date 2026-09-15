@@ -1,0 +1,45 @@
+{
+  "recordedAt": "2026-09-14T12:03:43.709707+00:00",
+  "baseCommit": "d422ab1e",
+  "result": "PASS",
+  "checks": {
+    "sourceRegression": {
+      "tests": 661,
+      "failed": 0,
+      "skipped": 0,
+      "command": "pnpm --dir apps/api exec tsx --test src/spec-suite-coverage.spec.ts src/modules/auth/infrastructure/system-line-push.spec.ts src/modules/auth/auth-endpoints.spec.ts src/modules/auth/line-login-callback.spec.ts src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts src/modules/line-ai/line-first-signup-webhook.spec.ts src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts"
+    },
+    "postgresql": {
+      "tests": 1,
+      "failed": 0,
+      "skipped": 0,
+      "database": "localhost:15432/mangmee_billing_20260912",
+      "test": "apps/api/src/modules/auth/line-binding.pg.spec.ts"
+    },
+    "apiTypecheck": "PASS",
+    "maintenancePins": "PASS",
+    "diffCheck": "PASS"
+  },
+  "boundaries": [
+    "Source regression uses simulated database/provider/AI collaborators; PostgreSQL test uses actual identity rows with simulated LINE verification and session issuance.",
+    "Covers canonical inactive precedence at login and text/media/legal/support AI resolution, plus revocation during AI work.",
+    "No new combined HTTP/browser proof; combined161 belongs to ef7dd3d9.",
+    "Latest completed CI34827265627 failed the test ownership guard. Six Messaging resolver tests moved into existing maintained system-line-push.spec.ts; unchanged ownership guard passed locally.",
+    "Admin QR legacy repair and remaining recipient readiness are not yet implemented. No merge or deploy."
+  ],
+  "sources": {
+    ".github/workflows/ci.yml": "379607f3aa9984fca4533fe064e2bf82390f47b029acc12f73dd03eb537785b7",
+    "apps/api/src/modules/auth/application/use-cases/exchange-line-token.use-case.ts": "56d101fbc1033ca2ec26875ab278e12c66ee358944844f240ce3a615f4351115",
+    "apps/api/src/modules/auth/auth-endpoints.spec.ts": "bd70da20f0248ba7c43635c85e5bd72711654ac8b9fa2547144178c37e93b4b5",
+    "apps/api/src/modules/auth/infrastructure/system-line-push.spec.ts": "38eb0c9c6c92857e203130aa73480254bee660f7d6e55e13843e152ecc5ba86e",
+    "apps/api/src/modules/auth/line-binding.pg.spec.ts": "e8af3cd6a920947a52d463e719bee024565a7993a732c3b0bfdb78b754cb0711",
+    "apps/api/src/modules/auth/line-login-callback.spec.ts": "e818d005e895189ef24c3d0764f54464fcb36fd51132583334512f78495276db",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "45bf55e4d76f656b56d7de8b97feec83736a47bf53a8fad4ca96513614884ad3",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "036b64a7915bca2a195101e104c5f1b2e11f467279ab37d40ad34f1366fac208",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "ccf6a7ce0ea8372fcc2373cbd3957320d6f67f5e33dc4a2dfb314f9c535ab101",
+    "apps/api/src/modules/line-ai/line-first-signup-webhook.spec.ts": "1dce5745a71f6db938062f38b6868699573f4972317f6536f27a4f58db9d43ba",
+    "docs/plans/mangmee-billing-controls-plan-th.md": "e06271ee18facbc2fbf4c7675be999d037e3464f551df244c2c144daefbf79fe",
+    "docs/specs/mangmee-billing-controls-spec-th.md": "9f3ac34b1f052a34d99cf37c2a613b5188506996ecb844aba1af78ce3295fef9"
+  },
+  "removedSource": "apps/api/src/common/config/line-messaging-credentials.service.spec.ts"
+}

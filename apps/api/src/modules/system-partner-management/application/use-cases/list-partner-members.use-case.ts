@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { PartnerMembersDto } from '@watchdog-bms/contracts';
 
 @Injectable()
 export class ListPartnerMembersUseCase {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, @Optional() @Inject(AppConfigService) private readonly config: AppConfigService | null = null) {}
 
   async execute(companyId: string): Promise<PartnerMembersDto> {
     const company = await this.prisma.client.company.findUnique({
@@ -28,7 +29,7 @@ export class ListPartnerMembersUseCase {
             phoneNumber: true,
             externalIdentities: {
               where: { provider: 'LINE', status: 'ACTIVE' },
-              select: { id: true },
+              select: { id: true, providerChannelId: true },
             },
             // hasTempPassword only — the encrypted blob never leaves the API
             credential: {
@@ -49,6 +50,7 @@ export class ListPartnerMembersUseCase {
         membershipStatus: m.status as PartnerMembersDto['items'][number]['membershipStatus'],
         roles: m.roles.map((r) => r.role.key),
         lineLinked: m.user.externalIdentities.length > 0,
+        lineMessagingReady: Boolean(this.config?.lineMessagingChannelId && m.user.externalIdentities.some(identity => identity.providerChannelId === this.config?.lineMessagingChannelId)),
         credential: m.user.credential
           ? {
               status: m.user.credential.status as 'ACTIVE' | 'TEMPORARY' | 'DISABLED',

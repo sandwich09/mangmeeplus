@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+ok 1 - overdue cancellation deletes without final invoice/proration and recovers lost response without changing paid expiry
+  ---
+  duration_ms: 5.11375
+  type: 'test'
+  ...
+# Subtest: a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+ok 2 - a completed scheduled cancellation is observed even when recovery runs after Stripe terminates the subscription
+  ---
+  duration_ms: 0.3355
+  type: 'test'
+  ...
+# Subtest: old ambiguous command never posts again without an observed result
+ok 3 - old ambiguous command never posts again without an observed result
+  ---
+  duration_ms: 0.2155
+  type: 'test'
+  ...
+# Subtest: a hold or closed action gate appearing after confirmation prevents external mutation
+ok 4 - a hold or closed action gate appearing after confirmation prevents external mutation
+  ---
+  duration_ms: 0.353584
+  type: 'test'
+  ...
+# Subtest: a stale worker lease cannot mutate the provider or release another command reservation
+ok 5 - a stale worker lease cannot mutate the provider or release another command reservation
+  ---
+  duration_ms: 0.22975
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 215.539334

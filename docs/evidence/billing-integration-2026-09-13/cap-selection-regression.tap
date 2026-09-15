@@ -1,0 +1,1113 @@
+TAP version 13
+# Subtest: AuthGuard
+    # Subtest: leaves public internal machine routes to their controller credential checks while customer access is closed
+    ok 1 - leaves public internal machine routes to their controller credential checks while customer access is closed
+      ---
+      duration_ms: 1.249541
+      type: 'test'
+      ...
+    # Subtest: keeps login/status public but blocks other public routes while customer access is closed
+    ok 2 - keeps login/status public but blocks other public routes while customer access is closed
+      ---
+      duration_ms: 0.498583
+      type: 'test'
+      ...
+    # Subtest: allows only SYSTEM_ADMIN protected sessions while customer access is closed
+    ok 3 - allows only SYSTEM_ADMIN protected sessions while customer access is closed
+      ---
+      duration_ms: 0.3945
+      type: 'test'
+      ...
+    # Subtest: returns true for @Public() routes
+    ok 4 - returns true for @Public() routes
+      ---
+      duration_ms: 0.052875
+      type: 'test'
+      ...
+    # Subtest: throws UnauthorizedException when Authorization header is missing
+    ok 5 - throws UnauthorizedException when Authorization header is missing
+      ---
+      duration_ms: 0.137708
+      type: 'test'
+      ...
+    # Subtest: throws UnauthorizedException when both verifiers fail
+    ok 6 - throws UnauthorizedException when both verifiers fail
+      ---
+      duration_ms: 0.077
+      type: 'test'
+      ...
+    # Subtest: dev auth is not tried when APP_ENV is not local
+    ok 7 - dev auth is not tried when APP_ENV is not local
+      ---
+      duration_ms: 0.162625
+      type: 'test'
+      ...
+    # Subtest: attaches context when watchdog verifier succeeds
+    ok 8 - attaches context when watchdog verifier succeeds
+      ---
+      duration_ms: 0.153334
+      type: 'test'
+      ...
+    # Subtest: accepts the watchdog_token cookie when no Authorization header is present
+    ok 9 - accepts the watchdog_token cookie when no Authorization header is present
+      ---
+      duration_ms: 0.556625
+      type: 'test'
+      ...
+    # Subtest: re-joins a chunked watchdog_token.0..N cookie (large tokens exceed the 4KB cookie limit)
+    ok 10 - re-joins a chunked watchdog_token.0..N cookie (large tokens exceed the 4KB cookie limit)
+      ---
+      duration_ms: 0.455125
+      type: 'test'
+      ...
+    # Subtest: prefers the Bearer header over the cookie when both are present
+    ok 11 - prefers the Bearer header over the cookie when both are present
+      ---
+      duration_ms: 0.121125
+      type: 'test'
+      ...
+    # Subtest: uses route companyId as membership hint when x-company-id is absent
+    ok 12 - uses route companyId as membership hint when x-company-id is absent
+      ---
+      duration_ms: 0.227583
+      type: 'test'
+      ...
+    # Subtest: rejects conflicting header and route companies before resolving request context
+    ok 13 - rejects conflicting header and route companies before resolving request context
+      ---
+      duration_ms: 0.272042
+      type: 'test'
+      ...
+    # Subtest: names the requested company only on a scoped auth/me access denial
+    ok 14 - names the requested company only on a scoped auth/me access denial
+      ---
+      duration_ms: 0.888
+      type: 'test'
+      ...
+    # Subtest: authenticates before reporting a conflicting company selector
+    ok 15 - authenticates before reporting a conflicting company selector
+      ---
+      duration_ms: 0.184042
+      type: 'test'
+      ...
+    # Subtest: rejects a revoked session token before protected route handling
+    ok 16 - rejects a revoked session token before protected route handling
+      ---
+      duration_ms: 0.2125
+      type: 'test'
+      ...
+    # Subtest: rejects a sid-less token and never resolves a request context
+    ok 17 - rejects a sid-less token and never resolves a request context
+      ---
+      duration_ms: 0.148417
+      type: 'test'
+      ...
+    # Subtest: does not fall back to dev auth when watchdog verifier rejects a refresh token in production
+    ok 18 - does not fall back to dev auth when watchdog verifier rejects a refresh token in production
+      ---
+      duration_ms: 0.186917
+      type: 'test'
+      ...
+    # Subtest: does not block a LINE-login session that still has mustChangePassword set
+    ok 19 - does not block a LINE-login session that still has mustChangePassword set
+      ---
+      duration_ms: 0.132542
+      type: 'test'
+      ...
+    # Subtest: blocks password-login and legacy (no provider claim) sessions that must change password
+    ok 20 - blocks password-login and legacy (no provider claim) sessions that must change password
+      ---
+      duration_ms: 0.2775
+      type: 'test'
+      ...
+    # Subtest: blocks business routes of an expired company with company_term_expired
+    ok 21 - blocks business routes of an expired company with company_term_expired
+      ---
+      duration_ms: 0.193375
+      type: 'test'
+      ...
+    # Subtest: blocks on the exact hour: one millisecond before termEndsAt still passes
+    ok 22 - blocks on the exact hour: one millisecond before termEndsAt still passes
+      ---
+      duration_ms: 0.119166
+      type: 'test'
+      ...
+    # Subtest: keeps login, me, the company switcher, logout and the notice endpoint working when expired
+    ok 23 - keeps login, me, the company switcher, logout and the notice endpoint working when expired
+      ---
+      duration_ms: 0.251667
+      type: 'test'
+      ...
+    # Subtest: a company with NO term row is untouched by the expiry check
+    ok 24 - a company with NO term row is untouched by the expiry check
+      ---
+      duration_ms: 0.087209
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ADMIN is never locked out by a term expiry — the console that fixes it must stay reachable
+    ok 25 - SYSTEM_ADMIN is never locked out by a term expiry — the console that fixes it must stay reachable
+      ---
+      duration_ms: 0.151584
+      type: 'test'
+      ...
+    # Subtest: blocks protected business routes with a stable legal_acceptance_required response
+    ok 26 - blocks protected business routes with a stable legal_acceptance_required response
+      ---
+      duration_ms: 0.1485
+      type: 'test'
+      ...
+    # Subtest: keeps the legal acceptance status/write path available while acceptance is pending
+    ok 27 - keeps the legal acceptance status/write path available while acceptance is pending
+      ---
+      duration_ms: 0.070667
+      type: 'test'
+      ...
+    # Subtest: lets a pending-acceptance user approve a desktop QR login (UAT 2026-09-01)
+    ok 28 - lets a pending-acceptance user approve a desktop QR login (UAT 2026-09-01)
+      ---
+      duration_ms: 0.072209
+      type: 'test'
+      ...
+    # Subtest: does not exempt unrelated authenticated /v1/auth mutations from the legal gate
+    ok 29 - does not exempt unrelated authenticated /v1/auth mutations from the legal gate
+      ---
+      duration_ms: 0.260875
+      type: 'test'
+      ...
+    1..29
+ok 1 - AuthGuard
+  ---
+  duration_ms: 9.021625
+  type: 'suite'
+  ...
+# Subtest: DenyByDefaultGuard
+    # Subtest: throws ForbiddenException when protected route has no permission metadata
+    ok 1 - throws ForbiddenException when protected route has no permission metadata
+      ---
+      duration_ms: 0.330917
+      type: 'test'
+      ...
+    # Subtest: throws ForbiddenException when required permission is missing
+    ok 2 - throws ForbiddenException when required permission is missing
+      ---
+      duration_ms: 0.129083
+      type: 'test'
+      ...
+    # Subtest: accepts any one explicitly equivalent permission and rejects callers holding neither
+    ok 3 - accepts any one explicitly equivalent permission and rejects callers holding neither
+      ---
+      duration_ms: 0.109125
+      type: 'test'
+      ...
+    # Subtest: returns feature_not_enabled only when every missing permission was granted then entitlement-filtered
+    ok 4 - returns feature_not_enabled only when every missing permission was granted then entitlement-filtered
+      ---
+      duration_ms: 0.190041
+      type: 'test'
+      ...
+    # Subtest: does not mislabel a partial role grant as feature_not_enabled
+    ok 5 - does not mislabel a partial role grant as feature_not_enabled
+      ---
+      duration_ms: 0.08925
+      type: 'test'
+      ...
+    # Subtest: allows protected route when required permission exists
+    ok 6 - allows protected route when required permission exists
+      ---
+      duration_ms: 0.129208
+      type: 'test'
+      ...
+    1..6
+ok 2 - DenyByDefaultGuard
+  ---
+  duration_ms: 1.105209
+  type: 'suite'
+  ...
+# Subtest: billing recovery boundaries
+    # Subtest: permits only callback POST routes during platform closure; controllers still verify provider credentials
+    ok 1 - permits only callback POST routes during platform closure; controllers still verify provider credentials
+      ---
+      duration_ms: 0.343459
+      type: 'test'
+      ...
+    # Subtest: bounds recovery to implemented methods and preserves business and legal gates
+    ok 2 - bounds recovery to implemented methods and preserves business and legal gates
+      ---
+      duration_ms: 0.490125
+      type: 'test'
+      ...
+    1..2
+ok 3 - billing recovery boundaries
+  ---
+  duration_ms: 0.89925
+  type: 'suite'
+  ...
+# Subtest: selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+ok 4 - selection refuses stale, cross-company, duplicate, missing OWNER/head office and implicit scope widening
+  ---
+  duration_ms: 1.897833
+  type: 'test'
+  ...
+# Subtest: existing pending work must remain and limited users may only keep a currently authorized retained branch
+ok 5 - existing pending work must remain and limited users may only keep a currently authorized retained branch
+  ---
+  duration_ms: 0.519333
+  type: 'test'
+  ...
+# Subtest: PrismaBranchRepository tax identity coupling
+    # Subtest: persists a tax code as a VAT establishment and exposes the status
+    ok 1 - persists a tax code as a VAT establishment and exposes the status
+      ---
+      duration_ms: 0.760791
+      type: 'test'
+      ...
+    # Subtest: does not clear the coupling during an unrelated update
+    ok 2 - does not clear the coupling during an unrelated update
+      ---
+      duration_ms: 0.245667
+      type: 'test'
+      ...
+    # Subtest: clears both fields only when the caller explicitly sends null
+    ok 3 - clears both fields only when the caller explicitly sends null
+      ---
+      duration_ms: 0.111625
+      type: 'test'
+      ...
+    1..3
+ok 6 - PrismaBranchRepository tax identity coupling
+  ---
+  duration_ms: 1.72425
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase
+    # Subtest: creates user, membership, role assignment, and access profile as a draft
+    ok 1 - creates user, membership, role assignment, and access profile as a draft
+      ---
+      duration_ms: 84.40775
+      type: 'test'
+      ...
+    # Subtest: rejects multiple or repeated roles before creating any employee records
+    ok 2 - rejects multiple or repeated roles before creating any employee records
+      ---
+      duration_ms: 0.386208
+      type: 'test'
+      ...
+    # Subtest: issues a single-use LINE link QR package bound to the new user
+    ok 3 - issues a single-use LINE link QR package bound to the new user
+      ---
+      duration_ms: 34.247167
+      type: 'test'
+      ...
+    # Subtest: never persists the plaintext identity number
+    ok 4 - never persists the plaintext identity number
+      ---
+      duration_ms: 29.027667
+      type: 'test'
+      ...
+    # Subtest: writes an audit log without the password or identity number
+    ok 5 - writes an audit log without the password or identity number
+      ---
+      duration_ms: 32.313875
+      type: 'test'
+      ...
+    # Subtest: rejects when a role id is unknown
+    ok 6 - rejects when a role id is unknown
+      ---
+      duration_ms: 0.139625
+      type: 'test'
+      ...
+    # Subtest: rejects granting OWNER through employee provisioning
+    ok 7 - rejects granting OWNER through employee provisioning
+      ---
+      duration_ms: 0.085125
+      type: 'test'
+      ...
+    # Subtest: rejects granting SYSTEM_ADMIN through employee provisioning
+    ok 8 - rejects granting SYSTEM_ADMIN through employee provisioning
+      ---
+      duration_ms: 0.282583
+      type: 'test'
+      ...
+    # Subtest: rejects granting permissions the requester does not hold
+    ok 9 - rejects granting permissions the requester does not hold
+      ---
+      duration_ms: 0.28525
+      type: 'test'
+      ...
+    # Subtest: allows a role when the resolver proves its disabled-feature permission belongs to the requester
+    ok 10 - allows a role when the resolver proves its disabled-feature permission belongs to the requester
+      ---
+      duration_ms: 31.07325
+      type: 'test'
+      ...
+    # Subtest: requires owner approval to grant FINANCE even when the requester holds its permissions
+    ok 11 - requires owner approval to grant FINANCE even when the requester holds its permissions
+      ---
+      duration_ms: 0.17675
+      type: 'test'
+      ...
+    # Subtest: rejects duplicate identity number within the company
+    ok 12 - rejects duplicate identity number within the company
+      ---
+      duration_ms: 0.172208
+      type: 'test'
+      ...
+    # Subtest: rejects duplicate phone number within the company
+    ok 13 - rejects duplicate phone number within the company
+      ---
+      duration_ms: 0.263417
+      type: 'test'
+      ...
+    # Subtest: resumes the same draft identity instead of creating a duplicate employee
+    ok 14 - resumes the same draft identity instead of creating a duplicate employee
+      ---
+      duration_ms: 54.30075
+      type: 'test'
+      ...
+    # Subtest: widens a narrowed draft membership when the resumed draft carries an all-branch role
+    ok 15 - widens a narrowed draft membership when the resumed draft carries an all-branch role
+      ---
+      duration_ms: 55.962916
+      type: 'test'
+      ...
+    # Subtest: leaves a resumed draft with a branch-scopable role narrowed as it was
+    ok 16 - leaves a resumed draft with a branch-scopable role narrowed as it was
+      ---
+      duration_ms: 52.936875
+      type: 'test'
+      ...
+    # Subtest: activates both the employee profile and membership only when the draft is completed
+    ok 17 - activates both the employee profile and membership only when the draft is completed
+      ---
+      duration_ms: 26.859583
+      type: 'test'
+      ...
+    # Subtest: does not let activation bypass a restricted creator branch assignment
+    ok 18 - does not let activation bypass a restricted creator branch assignment
+      ---
+      duration_ms: 26.17675
+      type: 'test'
+      ...
+    # Subtest: still rejects the identity after its draft has been completed
+    ok 19 - still rejects the identity after its draft has been completed
+      ---
+      duration_ms: 27.267375
+      type: 'test'
+      ...
+    # Subtest: rejects when no roles are provided
+    ok 20 - rejects when no roles are provided
+      ---
+      duration_ms: 0.103292
+      type: 'test'
+      ...
+    # Subtest: prompts to confirm (employee_existing_user) when the username matches an existing account and linkExistingUser is not set
+    ok 21 - prompts to confirm (employee_existing_user) when the username matches an existing account and linkExistingUser is not set
+      ---
+      duration_ms: 24.939
+      type: 'test'
+      ...
+    # Subtest: attaches an existing user as a second-company draft without a new login or credential reset
+    ok 22 - attaches an existing user as a second-company draft without a new login or credential reset
+      ---
+      duration_ms: 27.377125
+      type: 'test'
+      ...
+    # Subtest: requires a company email that differs from the existing account when attaching
+    ok 23 - requires a company email that differs from the existing account when attaching
+      ---
+      duration_ms: 55.193291
+      type: 'test'
+      ...
+    # Subtest: resumes an attached user draft without resetting the shared login
+    ok 24 - resumes an attached user draft without resetting the shared login
+      ---
+      duration_ms: 57.071541
+      type: 'test'
+      ...
+    # Subtest: persists the additive wizard fields (email on the user, the rest on the profile)
+    ok 25 - persists the additive wizard fields (email on the user, the rest on the profile)
+      ---
+      duration_ms: 29.504583
+      type: 'test'
+      ...
+    1..25
+ok 7 - CreateEmployeeUseCase
+  ---
+  duration_ms: 653.562875
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase title prefix
+    # Subtest: stores the title beside the name, leaving displayName free of it
+    ok 1 - stores the title beside the name, leaving displayName free of it
+      ---
+      duration_ms: 28.672
+      type: 'test'
+      ...
+    # Subtest: carries a corrected title through a resumed draft
+    ok 2 - carries a corrected title through a resumed draft
+      ---
+      duration_ms: 56.107667
+      type: 'test'
+      ...
+    # Subtest: leaves the column empty when no title is sent, rather than inventing one
+    ok 3 - leaves the column empty when no title is sent, rather than inventing one
+      ---
+      duration_ms: 26.953917
+      type: 'test'
+      ...
+    1..3
+ok 8 - CreateEmployeeUseCase title prefix
+  ---
+  duration_ms: 111.849042
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase job title
+    # Subtest: updates a descriptive job title without changing the assigned role
+    ok 1 - updates a descriptive job title without changing the assigned role
+      ---
+      duration_ms: 57.838375
+      type: 'test'
+      ...
+    1..1
+ok 9 - CreateEmployeeUseCase job title
+  ---
+  duration_ms: 57.910875
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase P29 seat cap
+    # Subtest: a company with no plan-term row is unlimited
+    ok 1 - a company with no plan-term row is unlimited
+      ---
+      duration_ms: 31.589541
+      type: 'test'
+      ...
+    # Subtest: under the limit still creates
+    ok 2 - under the limit still creates
+      ---
+      duration_ms: 29.261958
+      type: 'test'
+      ...
+    # Subtest: at the limit throws 422 with the Thai package message and writes nothing
+    ok 3 - at the limit throws 422 with the Thai package message and writes nothing
+      ---
+      duration_ms: 26.311041
+      type: 'test'
+      ...
+    # Subtest: already OVER the limit blocks only the new employee; existing ones are untouched
+    ok 4 - already OVER the limit blocks only the new employee; existing ones are untouched
+      ---
+      duration_ms: 28.523417
+      type: 'test'
+      ...
+    # Subtest: resuming an existing DRAFT is never blocked — it adds no seat
+    ok 5 - resuming an existing DRAFT is never blocked — it adds no seat
+      ---
+      duration_ms: 57.968042
+      type: 'test'
+      ...
+    1..5
+ok 10 - CreateEmployeeUseCase P29 seat cap
+  ---
+  duration_ms: 173.844042
+  type: 'suite'
+  ...
+# Subtest: CreateEmployeeUseCase P29 seat cap on completeDraft
+    # Subtest: a company with no plan-term row completes drafts unlimited
+    ok 1 - a company with no plan-term row completes drafts unlimited
+      ---
+      duration_ms: 31.848041
+      type: 'test'
+      ...
+    # Subtest: under the cap completes, and the completed draft is the seat that lands on the limit
+    ok 2 - under the cap completes, and the completed draft is the seat that lands on the limit
+      ---
+      duration_ms: 28.207916
+      type: 'test'
+      ...
+    # Subtest: at the cap refuses the completion with the same 422 the create path throws
+    ok 3 - at the cap refuses the completion with the same 422 the create path throws
+      ---
+      duration_ms: 27.4105
+      type: 'test'
+      ...
+    # Subtest: closes the stacked-draft loophole: drafts created under the cap cannot all be finished
+    ok 4 - closes the stacked-draft loophole: drafts created under the cap cannot all be finished
+      ---
+      duration_ms: 54.617041
+      type: 'test'
+      ...
+    # Subtest: keeps Finish idempotent at the cap for an already-active employee
+    ok 5 - keeps Finish idempotent at the cap for an already-active employee
+      ---
+      duration_ms: 26.124667
+      type: 'test'
+      ...
+    1..5
+ok 11 - CreateEmployeeUseCase P29 seat cap on completeDraft
+  ---
+  duration_ms: 168.357459
+  type: 'suite'
+  ...
+# Subtest: company employee draft removal
+    # Subtest: removes only this company draft, releases its identity/phone, revokes pending tokens and audits without PII
+    ok 1 - removes only this company draft, releases its identity/phone, revokes pending tokens and audits without PII
+      ---
+      duration_ms: 27.318625
+      type: 'test'
+      ...
+    # Subtest: keeps the existing login and existing-account confirmation/email policy when recreating the deleted identity
+    ok 2 - keeps the existing login and existing-account confirmation/email policy when recreating the deleted identity
+      ---
+      duration_ms: 101.918542
+      type: 'test'
+      ...
+    # Subtest: returns the same safe not-found result for an unknown, cross-company or already-deleted draft
+    ok 3 - returns the same safe not-found result for an unknown, cross-company or already-deleted draft
+      ---
+      duration_ms: 26.18875
+      type: 'test'
+      ...
+    # Subtest: denies missing permissions, owner/platform targets and privileged targets without role-management authority
+    ok 4 - denies missing permissions, owner/platform targets and privileged targets without role-management authority
+      ---
+      duration_ms: 26.2465
+      type: 'test'
+      ...
+    # Subtest: never deletes a non-draft profile or an active membership, and rolls back token revocation on rejection
+    ok 5 - never deletes a non-draft profile or an active membership, and rolls back token revocation on rejection
+      ---
+      duration_ms: 185.905583
+      type: 'test'
+      ...
+    # Subtest: rolls back removal and revocation if the audit cannot be retained
+    ok 6 - rolls back removal and revocation if the audit cannot be retained
+      ---
+      duration_ms: 26.49225
+      type: 'test'
+      ...
+    # Subtest: rechecks Finish after a deletion wins, and rejects deletion when Finish wins
+    ok 7 - rechecks Finish after a deletion wins, and rejects deletion when Finish wins
+      ---
+      duration_ms: 53.905458
+      type: 'test'
+      ...
+    # Subtest: does not let a stale resume recreate a removed draft or reset a completed employee credential
+    ok 8 - does not let a stale resume recreate a removed draft or reset a completed employee credential
+      ---
+      duration_ms: 105.797375
+      type: 'test'
+      ...
+    # Subtest: does not issue an orphan token after deletion, and revokes a token issued just before deletion
+    ok 9 - does not issue an orphan token after deletion, and revokes a token issued just before deletion
+      ---
+      duration_ms: 56.605625
+      type: 'test'
+      ...
+    1..9
+ok 12 - company employee draft removal
+  ---
+  duration_ms: 610.629875
+  type: 'suite'
+  ...
+# Subtest: validates exactly one role at both employee HTTP write boundaries
+ok 13 - validates exactly one role at both employee HTTP write boundaries
+  ---
+  duration_ms: 2.031584
+  type: 'test'
+  ...
+# Subtest: binds draft deletion to the existing disable permission and forwards only trusted request context
+ok 14 - binds draft deletion to the existing disable permission and forwards only trusted request context
+  ---
+  duration_ms: 0.741125
+  type: 'test'
+  ...
+# Subtest: SetEmployeeStatusUseCase
+    # Subtest: disables both the access profile and the underlying membership together
+    ok 1 - disables both the access profile and the underlying membership together
+      ---
+      duration_ms: 0.946541
+      type: 'test'
+      ...
+    # Subtest: re-enabling sets both back to ACTIVE
+    ok 2 - re-enabling sets both back to ACTIVE
+      ---
+      duration_ms: 0.204958
+      type: 'test'
+      ...
+    # Subtest: does not change draft status outside the employee wizard
+    ok 3 - does not change draft status outside the employee wizard
+      ---
+      duration_ms: 0.395166
+      type: 'test'
+      ...
+    # Subtest: never suspends/disables an OWNER target (last-owner lockout protection)
+    ok 4 - never suspends/disables an OWNER target (last-owner lockout protection)
+      ---
+      duration_ms: 0.100334
+      type: 'test'
+      ...
+    # Subtest: blocks a Manager (no access.role.manage) from suspending a people-manager target
+    ok 5 - blocks a Manager (no access.role.manage) from suspending a people-manager target
+      ---
+      duration_ms: 0.090084
+      type: 'test'
+      ...
+    # Subtest: seat cap on re-enable
+        # Subtest: refuses a re-enable past the cap with the same 422 the create path throws
+        ok 1 - refuses a re-enable past the cap with the same 422 the create path throws
+          ---
+          duration_ms: 0.2245
+          type: 'test'
+          ...
+        # Subtest: allows the re-enable that lands exactly on the cap
+        ok 2 - allows the re-enable that lands exactly on the cap
+          ---
+          duration_ms: 0.218
+          type: 'test'
+          ...
+        # Subtest: leaves a grandfathered company with no plan-term row unlimited
+        ok 3 - leaves a grandfathered company with no plan-term row unlimited
+          ---
+          duration_ms: 0.24275
+          type: 'test'
+          ...
+        # Subtest: keeps re-activating an already-ACTIVE employee a no-op success at the cap
+        ok 4 - keeps re-activating an already-ACTIVE employee a no-op success at the cap
+          ---
+          duration_ms: 0.105542
+          type: 'test'
+          ...
+        # Subtest: never blocks suspend or disable at the cap — they free a seat, they do not take one
+        ok 5 - never blocks suspend or disable at the cap — they free a seat, they do not take one
+          ---
+          duration_ms: 0.180208
+          type: 'test'
+          ...
+        1..5
+    ok 6 - seat cap on re-enable
+      ---
+      duration_ms: 1.151667
+      type: 'suite'
+      ...
+    # Subtest: lets a Manager suspend a plain Sales employee
+    ok 7 - lets a Manager suspend a plain Sales employee
+      ---
+      duration_ms: 0.060708
+      type: 'test'
+      ...
+    1..7
+ok 15 - SetEmployeeStatusUseCase
+  ---
+  duration_ms: 3.159459
+  type: 'suite'
+  ...
+# Subtest: IssueEmployeeLineLinkTokenUseCase
+    # Subtest: issues a token and returns a URL embedding it, never the raw token alone in the audit log
+    ok 1 - issues a token and returns a URL embedding it, never the raw token alone in the audit log
+      ---
+      duration_ms: 8.963083
+      type: 'test'
+      ...
+    # Subtest: revokes prior pending tokens for the same membership before issuing a new one
+    ok 2 - revokes prior pending tokens for the same membership before issuing a new one
+      ---
+      duration_ms: 9.94775
+      type: 'test'
+      ...
+    1..2
+ok 16 - IssueEmployeeLineLinkTokenUseCase
+  ---
+  duration_ms: 18.986833
+  type: 'suite'
+  ...
+# Subtest: UpdateEmployeeUseCase branch scope
+    # Subtest: denies and audits a restricted manager granting another active company branch, including to themselves
+    ok 1 - denies and audits a restricted manager granting another active company branch, including to themselves
+      ---
+      duration_ms: 0.930542
+      type: 'test'
+      ...
+    # Subtest: denies and audits a restricted manager granting all branches, including to themselves
+    ok 2 - denies and audits a restricted manager granting all branches, including to themselves
+      ---
+      duration_ms: 0.09075
+      type: 'test'
+      ...
+    # Subtest: denies and audits a restricted manager granting an out-of-scope default, including to themselves
+    ok 3 - denies and audits a restricted manager granting an out-of-scope default, including to themselves
+      ---
+      duration_ms: 0.111916
+      type: 'test'
+      ...
+    # Subtest: denies and audits a restricted manager granting retained out-of-scope rows, including to themselves
+    ok 4 - denies and audits a restricted manager granting retained out-of-scope rows, including to themselves
+      ---
+      duration_ms: 0.057166
+      type: 'test'
+      ...
+    # Subtest: preserves a restricted manager assigning only branches they hold
+    ok 5 - preserves a restricted manager assigning only branches they hold
+      ---
+      duration_ms: 1.085167
+      type: 'test'
+      ...
+    # Subtest: rejects branches that are not ACTIVE branches of this company
+    ok 6 - rejects branches that are not ACTIVE branches of this company
+      ---
+      duration_ms: 0.102542
+      type: 'test'
+      ...
+    # Subtest: rejects SELECTED_BRANCHES that would leave zero scope rows (employee lockout)
+    ok 7 - rejects SELECTED_BRANCHES that would leave zero scope rows (employee lockout)
+      ---
+      duration_ms: 0.087375
+      type: 'test'
+      ...
+    # Subtest: rejects DEFAULT_BRANCH_ONLY without a default branch
+    ok 8 - rejects DEFAULT_BRANCH_ONLY without a default branch
+      ---
+      duration_ms: 0.621542
+      type: 'test'
+      ...
+    # Subtest: replaces the scope set atomically and audits at HIGH risk
+    ok 9 - replaces the scope set atomically and audits at HIGH risk
+      ---
+      duration_ms: 0.537125
+      type: 'test'
+      ...
+    1..9
+ok 17 - UpdateEmployeeUseCase branch scope
+  ---
+  duration_ms: 4.5405
+  type: 'suite'
+  ...
+# Subtest: UpdateEmployeeUseCase role assignment guards
+    # Subtest: blocks a requester from assigning a permission they do not hold
+    ok 1 - blocks a requester from assigning a permission they do not hold
+      ---
+      duration_ms: 0.466167
+      type: 'test'
+      ...
+    # Subtest: lets the same requester assign a non-privileged role (Sales)
+    ok 2 - lets the same requester assign a non-privileged role (Sales)
+      ---
+      duration_ms: 0.536625
+      type: 'test'
+      ...
+    # Subtest: rejects empty, multiple, repeated and null roles without mutating access
+    ok 3 - rejects empty, multiple, repeated and null roles without mutating access
+      ---
+      duration_ms: 0.479334
+      type: 'test'
+      ...
+    # Subtest: replaces legacy multiple roles with the one explicitly selected and audits the removed role
+    ok 4 - replaces legacy multiple roles with the one explicitly selected and audits the removed role
+      ---
+      duration_ms: 0.454
+      type: 'test'
+      ...
+    # Subtest: does not rewrite legacy roles on a profile-only edit
+    ok 5 - does not rewrite legacy roles on a profile-only edit
+      ---
+      duration_ms: 0.168417
+      type: 'test'
+      ...
+    # Subtest: allows an update when the resolver proves the disabled-feature role permission belongs to the requester
+    ok 6 - allows an update when the resolver proves the disabled-feature role permission belongs to the requester
+      ---
+      duration_ms: 0.186542
+      type: 'test'
+      ...
+    # Subtest: lets an access.role.manage holder (Admin) assign the ADMIN role
+    ok 7 - lets an access.role.manage holder (Admin) assign the ADMIN role
+      ---
+      duration_ms: 0.204042
+      type: 'test'
+      ...
+    # Subtest: never lets anyone change the role assignment of an OWNER target
+    ok 8 - never lets anyone change the role assignment of an OWNER target
+      ---
+      duration_ms: 1.612125
+      type: 'test'
+      ...
+    # Subtest: blocks every self role mutation
+    ok 9 - blocks every self role mutation
+      ---
+      duration_ms: 0.298583
+      type: 'test'
+      ...
+    # Subtest: allows self profile edits when submitted role IDs are unchanged and skips role writes
+    ok 10 - allows self profile edits when submitted role IDs are unchanged and skips role writes
+      ---
+      duration_ms: 1.88875
+      type: 'test'
+      ...
+    # Subtest: lets HR reassign an operational target to another operational role
+    ok 11 - lets HR reassign an operational target to another operational role
+      ---
+      duration_ms: 0.512458
+      type: 'test'
+      ...
+    # Subtest: blocks HR from changing an employee who currently holds a privileged role
+    ok 12 - blocks HR from changing an employee who currently holds a privileged role
+      ---
+      duration_ms: 0.100959
+      type: 'test'
+      ...
+    # Subtest: still lets HR edit a privileged employee profile when the role is unchanged
+    ok 13 - still lets HR edit a privileged employee profile when the role is unchanged
+      ---
+      duration_ms: 0.201708
+      type: 'test'
+      ...
+    # Subtest: blocks a company-custom role even when it reuses an operational system key
+    ok 14 - blocks a company-custom role even when it reuses an operational system key
+      ---
+      duration_ms: 0.131791
+      type: 'test'
+      ...
+    # Subtest: requires owner approval for FINANCE update even when the requester holds its permissions
+    ok 15 - requires owner approval for FINANCE update even when the requester holds its permissions
+      ---
+      duration_ms: 0.134541
+      type: 'test'
+      ...
+    # Subtest: audits granter, grantee, and the exact role diff
+    ok 16 - audits granter, grantee, and the exact role diff
+      ---
+      duration_ms: 0.191708
+      type: 'test'
+      ...
+    1..16
+ok 18 - UpdateEmployeeUseCase role assignment guards
+  ---
+  duration_ms: 8.040041
+  type: 'suite'
+  ...
+# Subtest: UpdateEmployeeUseCase display name
+    # Subtest: syncs the renamed employee onto User so /auth/me (sidebar, header) is not stale
+    ok 1 - syncs the renamed employee onto User so /auth/me (sidebar, header) is not stale
+      ---
+      duration_ms: 0.158583
+      type: 'test'
+      ...
+    # Subtest: stores a corrected คำนำหน้า in its own column, not glued onto the name
+    ok 2 - stores a corrected คำนำหน้า in its own column, not glued onto the name
+      ---
+      duration_ms: 0.14175
+      type: 'test'
+      ...
+    # Subtest: leaves a cross-company shared login with its own account name
+    ok 3 - leaves a cross-company shared login with its own account name
+      ---
+      duration_ms: 0.057292
+      type: 'test'
+      ...
+    1..3
+ok 19 - UpdateEmployeeUseCase display name
+  ---
+  duration_ms: 0.412208
+  type: 'suite'
+  ...
+# Subtest: UpdateEmployeeUseCase identity editing
+    # Subtest: encrypts a changed identity and never stores the raw value
+    ok 1 - encrypts a changed identity and never stores the raw value
+      ---
+      duration_ms: 1.4705
+      type: 'test'
+      ...
+    # Subtest: rejects an identity already used by another employee in the company
+    ok 2 - rejects an identity already used by another employee in the company
+      ---
+      duration_ms: 0.176083
+      type: 'test'
+      ...
+    1..2
+ok 20 - UpdateEmployeeUseCase identity editing
+  ---
+  duration_ms: 1.709
+  type: 'suite'
+  ...
+# Subtest: UpdateEmployeeUseCase all-branch role guardrail
+    # Subtest: rejects narrowing the scope of a membership that already holds an all-branch role
+    ok 1 - rejects narrowing the scope of a membership that already holds an all-branch role
+      ---
+      duration_ms: 0.199708
+      type: 'test'
+      ...
+    # Subtest: rejects narrowing in the same write that assigns the all-branch role
+    ok 2 - rejects narrowing in the same write that assigns the all-branch role
+      ---
+      duration_ms: 0.152292
+      type: 'test'
+      ...
+    # Subtest: widens a narrowed membership on role assignment, in the same transaction as the role write
+    ok 3 - widens a narrowed membership on role assignment, in the same transaction as the role write
+      ---
+      duration_ms: 0.1225
+      type: 'test'
+      ...
+    # Subtest: leaves the five branch-scopable roles free to be narrowed
+    ok 4 - leaves the five branch-scopable roles free to be narrowed
+      ---
+      duration_ms: 0.07075
+      type: 'test'
+      ...
+    1..4
+ok 21 - UpdateEmployeeUseCase all-branch role guardrail
+  ---
+  duration_ms: 0.595084
+  type: 'suite'
+  ...
+# Subtest: PrismaReimbursementRepository aggregate transaction
+    # Subtest: rolls a new header back when line replacement fails
+    ok 1 - rolls a new header back when line replacement fails
+      ---
+      duration_ms: 1.905291
+      type: 'test'
+      ...
+    # Subtest: rolls header and prior lines back together when replacement fails
+    ok 2 - rolls header and prior lines back together when replacement fails
+      ---
+      duration_ms: 0.401917
+      type: 'test'
+      ...
+    # Subtest: does not touch prior lines when the header update fails
+    ok 3 - does not touch prior lines when the header update fails
+      ---
+      duration_ms: 0.105
+      type: 'test'
+      ...
+    1..3
+ok 22 - PrismaReimbursementRepository aggregate transaction
+  ---
+  duration_ms: 3.13575
+  type: 'suite'
+  ...
+# Subtest: GenerateIdentityReconciliationUseCase
+    # Subtest: writes items and nothing else
+    ok 1 - writes items and nothing else
+      ---
+      duration_ms: 1.391459
+      type: 'test'
+      ...
+    # Subtest: is re-runnable: a second pass over unchanged data creates nothing
+    ok 2 - is re-runnable: a second pass over unchanged data creates nothing
+      ---
+      duration_ms: 0.21525
+      type: 'test'
+      ...
+    # Subtest: closes an item whose drift has disappeared
+    ok 3 - closes an item whose drift has disappeared
+      ---
+      duration_ms: 0.358542
+      type: 'test'
+      ...
+    # Subtest: opens a NEW item when drift returns after a resolve
+    ok 4 - opens a NEW item when drift returns after a resolve
+      ---
+      duration_ms: 0.334041
+      type: 'test'
+      ...
+    1..4
+ok 23 - GenerateIdentityReconciliationUseCase
+  ---
+  duration_ms: 2.838542
+  type: 'suite'
+  ...
+# Subtest: ResolveIdentityReconciliationUseCase — tax id
+    # Subtest: writes the winner to both sides and closes the item
+    ok 1 - writes the winner to both sides and closes the item
+      ---
+      duration_ms: 0.851292
+      type: 'test'
+      ...
+    # Subtest: does not move the legal fence date for a data reconciliation
+    ok 2 - does not move the legal fence date for a data reconciliation
+      ---
+      duration_ms: 0.346291
+      type: 'test'
+      ...
+    # Subtest: moves the fence date for a legal change and records the date
+    ok 3 - moves the fence date for a legal change and records the date
+      ---
+      duration_ms: 6.979083
+      type: 'test'
+      ...
+    # Subtest: replays the original answer for the same command id
+    ok 4 - replays the original answer for the same command id
+      ---
+      duration_ms: 0.475042
+      type: 'test'
+      ...
+    # Subtest: conflicts on a different command id against an already resolved item
+    ok 5 - conflicts on a different command id against an already resolved item
+      ---
+      duration_ms: 0.490333
+      type: 'test'
+      ...
+    # Subtest: refuses a stale source fingerprint
+    ok 6 - refuses a stale source fingerprint
+      ---
+      duration_ms: 0.194
+      type: 'test'
+      ...
+    1..6
+ok 24 - ResolveIdentityReconciliationUseCase — tax id
+  ---
+  duration_ms: 9.967667
+  type: 'suite'
+  ...
+# Subtest: ResolveIdentityReconciliationUseCase — repair-tax-id
+    # Subtest: appends a reconciliation correction without a fence
+    ok 1 - appends a reconciliation correction without a fence
+      ---
+      duration_ms: 0.994125
+      type: 'test'
+      ...
+    # Subtest: replays by command id without appending a second revision
+    ok 2 - replays by command id without appending a second revision
+      ---
+      duration_ms: 0.166375
+      type: 'test'
+      ...
+    # Subtest: refuses a stale identity version
+    ok 3 - refuses a stale identity version
+      ---
+      duration_ms: 0.125042
+      type: 'test'
+      ...
+    1..3
+ok 25 - ResolveIdentityReconciliationUseCase — repair-tax-id
+  ---
+  duration_ms: 1.37075
+  type: 'suite'
+  ...
+# Subtest: ResolveIdentityReconciliationUseCase — vat hint
+    # Subtest: confirming creates a dated fact, bumps the state and updates the mirror
+    ok 1 - confirming creates a dated fact, bumps the state and updates the mirror
+      ---
+      duration_ms: 0.7165
+      type: 'test'
+      ...
+    # Subtest: dismissing writes no fact and leaves the status unknown
+    ok 2 - dismissing writes no fact and leaves the status unknown
+      ---
+      duration_ms: 0.156167
+      type: 'test'
+      ...
+    1..2
+ok 26 - ResolveIdentityReconciliationUseCase — vat hint
+  ---
+  duration_ms: 0.948667
+  type: 'suite'
+  ...
+1..26
+# tests 157
+# suites 23
+# pass 157
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2064.848042

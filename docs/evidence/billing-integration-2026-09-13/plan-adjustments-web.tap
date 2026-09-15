@@ -1,0 +1,438 @@
+TAP version 13
+# Subtest: billing rate limit displays only the bounded wait and preserves a route to retry
+ok 1 - billing rate limit displays only the bounded wait and preserves a route to retry
+  ---
+  duration_ms: 1.492167
+  type: 'test'
+  ...
+# Subtest: explains document VAT acceptance without suggesting a bypass of Tax Code rules
+ok 2 - explains document VAT acceptance without suggesting a bypass of Tax Code rules
+  ---
+  duration_ms: 0.28
+  type: 'test'
+  ...
+# Subtest: explains stale draft removal without a misleading generic concurrency error
+ok 3 - explains stale draft removal without a misleading generic concurrency error
+  ---
+  duration_ms: 0.121083
+  type: 'test'
+  ...
+# Subtest: explains source-draft validation, completion, and item races in plain Thai
+ok 4 - explains source-draft validation, completion, and item races in plain Thai
+  ---
+  duration_ms: 0.330167
+  type: 'test'
+  ...
+# Subtest: distinguishes a wrong current password from an expired session
+ok 5 - distinguishes a wrong current password from an expired session
+  ---
+  duration_ms: 0.457834
+  type: 'test'
+  ...
+# Subtest: explains missing and invalid transaction source branches in plain Thai
+ok 6 - explains missing and invalid transaction source branches in plain Thai
+  ---
+  duration_ms: 0.100042
+  type: 'test'
+  ...
+# Subtest: explains only supplier source-number duplicates without relabeling unrelated conflicts
+ok 7 - explains only supplier source-number duplicates without relabeling unrelated conflicts
+  ---
+  duration_ms: 0.437875
+  type: 'test'
+  ...
+# Subtest: translates a known API sentence to Thai
+ok 8 - translates a known API sentence to Thai
+  ---
+  duration_ms: 0.046125
+  type: 'test'
+  ...
+# Subtest: explains duplicate category, branch validation, and quotation self-approval in context
+ok 9 - explains duplicate category, branch validation, and quotation self-approval in context
+  ---
+  duration_ms: 0.158375
+  type: 'test'
+  ...
+# Subtest: prefers the error code over the message
+ok 10 - prefers the error code over the message
+  ---
+  duration_ms: 0.271666
+  type: 'test'
+  ...
+# Subtest: matches a conflict code that carries its detail inline
+ok 11 - matches a conflict code that carries its detail inline
+  ---
+  duration_ms: 0.1365
+  type: 'test'
+  ...
+# Subtest: translates chart-template and posting-readiness failures
+ok 12 - translates chart-template and posting-readiness failures
+  ---
+  duration_ms: 0.090959
+  type: 'test'
+  ...
+# Subtest: translates partial-payment validation and settlement-route failures
+ok 13 - translates partial-payment validation and settlement-route failures
+  ---
+  duration_ms: 0.08025
+  type: 'test'
+  ...
+# Subtest: fails closed to the status copy for every unknown API message
+ok 14 - fails closed to the status copy for every unknown API message
+  ---
+  duration_ms: 0.121625
+  type: 'test'
+  ...
+# Subtest: hides the exact unknown-property validation diagnostic and retains no technical token
+ok 15 - hides the exact unknown-property validation diagnostic and retains no technical token
+  ---
+  duration_ms: 0.186458
+  type: 'test'
+  ...
+# Subtest: uses the validation fallback for a second unknown validation array from details
+ok 16 - uses the validation fallback for a second unknown validation array from details
+  ---
+  duration_ms: 0.12
+  type: 'test'
+  ...
+# Subtest: supports statusCode and hides unknown 5xx diagnostics
+ok 17 - supports statusCode and hides unknown 5xx diagnostics
+  ---
+  duration_ms: 0.110541
+  type: 'test'
+  ...
+# Subtest: maps boundary-tagged network errors without guessing from TypeError
+ok 18 - maps boundary-tagged network errors without guessing from TypeError
+  ---
+  duration_ms: 0.18175
+  type: 'test'
+  ...
+# Subtest: maps malformed successful responses to safe server copy
+ok 19 - maps malformed successful responses to safe server copy
+  ---
+  duration_ms: 0.061958
+  type: 'test'
+  ...
+# Subtest: keeps reviewed local non-API validation copy unchanged
+ok 20 - keeps reviewed local non-API validation copy unchanged
+  ---
+  duration_ms: 0.380125
+  type: 'test'
+  ...
+# Subtest: unknown stable codes never reach the user as snake_case
+ok 21 - unknown stable codes never reach the user as snake_case
+  ---
+  duration_ms: 0.103417
+  type: 'test'
+  ...
+# Subtest: translates LINE signup recovery failures without exposing backend codes
+ok 22 - translates LINE signup recovery failures without exposing backend codes
+  ---
+  duration_ms: 0.306209
+  type: 'test'
+  ...
+# Subtest: translates the document-number 409 family
+ok 23 - translates the document-number 409 family
+  ---
+  duration_ms: 0.049042
+  type: 'test'
+  ...
+# Subtest: renders parameterized sentences with the parameter kept visible
+ok 24 - renders parameterized sentences with the parameter kept visible
+  ---
+  duration_ms: 0.158791
+  type: 'test'
+  ...
+# Subtest: translates the substitute-receipt eligibility refusals
+ok 25 - translates the substitute-receipt eligibility refusals
+  ---
+  duration_ms: 0.176375
+  type: 'test'
+  ...
+# Subtest: maps substitute-receipt render limits to stable actionable Thai copy
+ok 26 - maps substitute-receipt render limits to stable actionable Thai copy
+  ---
+  duration_ms: 0.081458
+  type: 'test'
+  ...
+# Subtest: unknown input passes through
+ok 27 - unknown input passes through
+  ---
+  duration_ms: 0.061417
+  type: 'test'
+  ...
+# Subtest: maps feature entitlement absence to its own Thai sentence
+ok 28 - maps feature entitlement absence to its own Thai sentence
+  ---
+  duration_ms: 0.057167
+  type: 'test'
+  ...
+# Subtest: purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+ok 29 - purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+  ---
+  duration_ms: 0.062541
+  type: 'test'
+  ...
+# Subtest: maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+ok 30 - maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+  ---
+  duration_ms: 0.073125
+  type: 'test'
+  ...
+# Subtest: maps a reimbursement edit/submit race to a reload-and-review instruction
+ok 31 - maps a reimbursement edit/submit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.049541
+  type: 'test'
+  ...
+# Subtest: maps an expense draft edit race to a reload-and-review instruction
+ok 32 - maps an expense draft edit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.049292
+  type: 'test'
+  ...
+# Subtest: maps an accounting document edit/issue race to a reload-and-review instruction
+ok 33 - maps an accounting document edit/issue race to a reload-and-review instruction
+  ---
+  duration_ms: 0.04925
+  type: 'test'
+  ...
+# Subtest: maps a conflicting quotation conversion to the persisted-target instruction
+ok 34 - maps a conflicting quotation conversion to the persisted-target instruction
+  ---
+  duration_ms: 0.049208
+  type: 'test'
+  ...
+# Subtest: explains the receipt-first order before voiding a received payment
+ok 35 - explains the receipt-first order before voiding a received payment
+  ---
+  duration_ms: 0.138667
+  type: 'test'
+  ...
+# Subtest: explains a changed CRM quotation retry without exposing an internal command code
+ok 36 - explains a changed CRM quotation retry without exposing an internal command code
+  ---
+  duration_ms: 0.082583
+  type: 'test'
+  ...
+# Subtest: maps the entitlement command conflicts and cascade preview
+ok 37 - maps the entitlement command conflicts and cascade preview
+  ---
+  duration_ms: 0.093625
+  type: 'test'
+  ...
+# Subtest: maps bounded report export failures to friendly Thai
+ok 38 - maps bounded report export failures to friendly Thai
+  ---
+  duration_ms: 0.090458
+  type: 'test'
+  ...
+# Subtest: maps AI needs-data and no-source safety refusals to actionable Thai
+ok 39 - maps AI needs-data and no-source safety refusals to actionable Thai
+  ---
+  duration_ms: 0.046917
+  type: 'test'
+  ...
+# Subtest: guides incomplete or stale evidence review back to the review action
+ok 40 - guides incomplete or stale evidence review back to the review action
+  ---
+  duration_ms: 0.128666
+  type: 'test'
+  ...
+# Subtest: preserves only known quota messages and translates positive plan limits
+ok 41 - preserves only known quota messages and translates positive plan limits
+  ---
+  duration_ms: 0.220542
+  type: 'test'
+  ...
+# Subtest: offer configuration bounds give specific Thai fields and preserve private diagnostics
+ok 42 - offer configuration bounds give specific Thai fields and preserve private diagnostics
+  ---
+  duration_ms: 0.144666
+  type: 'test'
+  ...
+# Subtest: plan term view
+    # Subtest: shows nothing for a company with no term row
+    ok 1 - shows nothing for a company with no term row
+      ---
+      duration_ms: 0.380375
+      type: 'test'
+      ...
+    # Subtest: shows nothing while the term is active
+    ok 2 - shows nothing while the term is active
+      ---
+      duration_ms: 0.051459
+      type: 'test'
+      ...
+    # Subtest: warns the owner and stays silent for staff
+    ok 3 - warns the owner and stays silent for staff
+      ---
+      duration_ms: 0.035667
+      type: 'test'
+      ...
+    # Subtest: sends everyone to the renewal page once the term has ended, staff included
+    ok 4 - sends everyone to the renewal page once the term has ended, staff included
+      ---
+      duration_ms: 0.082042
+      type: 'test'
+      ...
+    # Subtest: does not bounce the renewal page onto itself
+    ok 5 - does not bounce the renewal page onto itself
+      ---
+      duration_ms: 0.027375
+      type: 'test'
+      ...
+    1..5
+ok 43 - plan term view
+  ---
+  duration_ms: 0.952708
+  type: 'suite'
+  ...
+# Subtest: renewal path
+    # Subtest: derives the renewal page from the company in the path
+    ok 1 - derives the renewal page from the company in the path
+      ---
+      duration_ms: 0.125083
+      type: 'test'
+      ...
+    # Subtest: recognises the renewal page itself, with or without a trailing slash
+    ok 2 - recognises the renewal page itself, with or without a trailing slash
+      ---
+      duration_ms: 0.092083
+      type: 'test'
+      ...
+    1..2
+ok 44 - renewal path
+  ---
+  duration_ms: 0.559084
+  type: 'suite'
+  ...
+# Subtest: sidebar warning card
+    # Subtest: maps days left onto the 7/3/1 ladder
+    ok 1 - maps days left onto the 7/3/1 ladder
+      ---
+      duration_ms: 0.15425
+      type: 'test'
+      ...
+    # Subtest: stays collapsed only within the same ladder step, so each new step re-opens the card
+    ok 2 - stays collapsed only within the same ladder step, so each new step re-opens the card
+      ---
+      duration_ms: 0.141334
+      type: 'test'
+      ...
+    # Subtest: keeps the time-left bar visible even on the last day
+    ok 3 - keeps the time-left bar visible even on the last day
+      ---
+      duration_ms: 0.360583
+      type: 'test'
+      ...
+    1..3
+ok 45 - sidebar warning card
+  ---
+  duration_ms: 1.017458
+  type: 'suite'
+  ...
+# Subtest: planTermStatusChip
+    # Subtest: shows the days left in green while the term is healthy
+    ok 1 - shows the days left in green while the term is healthy
+      ---
+      duration_ms: 1.123125
+      type: 'test'
+      ...
+    # Subtest: keeps the same wording in yellow inside the warning window
+    ok 2 - keeps the same wording in yellow inside the warning window
+      ---
+      duration_ms: 0.060875
+      type: 'test'
+      ...
+    # Subtest: drops the countdown once the term is over
+    ok 3 - drops the countdown once the term is over
+      ---
+      duration_ms: 0.035417
+      type: 'test'
+      ...
+    1..3
+ok 46 - planTermStatusChip
+  ---
+  duration_ms: 1.750292
+  type: 'suite'
+  ...
+# Subtest: planTermDisabledChip
+    # Subtest: appears only for a company the expiry sweep paused
+    ok 1 - appears only for a company the expiry sweep paused
+      ---
+      duration_ms: 0.0555
+      type: 'test'
+      ...
+    1..1
+ok 47 - planTermDisabledChip
+  ---
+  duration_ms: 0.085583
+  type: 'suite'
+  ...
+# Subtest: planTermLimitsText
+    # Subtest: reads as one line of plan limits
+    ok 1 - reads as one line of plan limits
+      ---
+      duration_ms: 0.083916
+      type: 'test'
+      ...
+    1..1
+ok 48 - planTermLimitsText
+  ---
+  duration_ms: 0.109417
+  type: 'suite'
+  ...
+# Subtest: renewedEndsAt
+    # Subtest: extends from the current end while the term is still running
+    ok 1 - extends from the current end while the term is still running
+      ---
+      duration_ms: 1.564125
+      type: 'test'
+      ...
+    # Subtest: counts from now once the term has already expired
+    ok 2 - counts from now once the term has already expired
+      ---
+      duration_ms: 0.155042
+      type: 'test'
+      ...
+    # Subtest: keeps the exact hour rather than rounding to a date
+    ok 3 - keeps the exact hour rather than rounding to a date
+      ---
+      duration_ms: 0.069208
+      type: 'test'
+      ...
+    1..3
+ok 49 - renewedEndsAt
+  ---
+  duration_ms: 2.078875
+  type: 'suite'
+  ...
+# Subtest: input parsing
+    # Subtest: accepts whole positive days only
+    ok 1 - accepts whole positive days only
+      ---
+      duration_ms: 0.260209
+      type: 'test'
+      ...
+    # Subtest: rejects zero, negative and blank limits like the API
+    ok 2 - rejects zero, negative and blank limits like the API
+      ---
+      duration_ms: 0.368375
+      type: 'test'
+      ...
+    1..2
+ok 50 - input parsing
+  ---
+  duration_ms: 0.71075
+  type: 'suite'
+  ...
+1..50
+# tests 62
+# suites 8
+# pass 62
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 659.93175

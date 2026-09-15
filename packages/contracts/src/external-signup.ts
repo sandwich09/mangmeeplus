@@ -265,6 +265,13 @@ export type AdminSignupDecisionDto = {
 
 export type AdminSignupReissueDto = { requestId: string; state: string; claimEmailQueued: boolean };
 
+export type AdminSignupClaimHistoryDto = { requestId: string; state: string; version: number; latestAttemptId: string | null;
+  lastClaimSentAt: string | null; hasLegacySesReference: boolean;
+  items: Array<{ id: string; provider: string; generation: number; state: string; latest: boolean; possibleDuplicate: boolean;
+    createdAt: string; submittedAt: string | null; deliveredAt: string | null; suppressedAt: string | null;
+    deadlineAt: string | null; nextRecoveryAt: string | null; needsReview: boolean }>;
+  nextCursor: string | null };
+
 // ── Spec §4F account merge — what a merge would do, shown before it is confirmed ──
 
 /**
@@ -394,6 +401,8 @@ export type PackageChangeRequestDto = {
   companyId: string;
   requestedTierKey: string;
   status: PackageChangeRequestStatus;
+  /** Present only when the original request was fulfilled by an applied paid package. */
+  resolutionSource?: 'PAID_PURCHASE';
   note?: string;
   createdAt: string;
   decidedAt?: string;
@@ -404,6 +413,8 @@ export type AdminPackageChangeItemDto = PackageChangeRequestDto & {
   companyName: string;
   /** What the shop is on today, so the operator sees the move rather than only the destination. */
   currentTierKey?: string;
+  /** Paid sources use the reviewed control; a legacy direct approval cannot change purchased fields. */
+  billingReviewPath?: string;
   requestedByDisplayName?: string;
 };
 

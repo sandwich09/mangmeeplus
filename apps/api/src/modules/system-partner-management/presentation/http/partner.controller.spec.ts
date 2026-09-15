@@ -48,7 +48,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
-    uc.getPlanTerm, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
+    uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage,
   );
 }
@@ -133,7 +133,7 @@ describe('PartnerController', () => {
   it('setAiModelConfig() passes modelId to use case', async () => {
     let called: any;
     const ctrl = makeCtrl({ setAiModel: { execute: async (cmd: any) => { called = cmd; return { companyId: 'co-1', modelId: 'global.anthropic.claude-sonnet-4-6', monthlyBudgetSatang: null, updatedAt: '' }; } } as any });
-    await ctrl.setAiModelConfig('co-1', { modelId: 'global.anthropic.claude-sonnet-4-6' }, makeReq());
+    await ctrl.setAiModelConfig('co-1', { modelId: 'global.anthropic.claude-sonnet-4-6',expectedModelId:null,reason:'ปรับตามคำขอ' }, makeReq());
     assert.equal(called.modelId, 'global.anthropic.claude-sonnet-4-6');
     // Absent budget must stay absent — the use case reads `undefined` as "leave the override alone".
     assert.equal(called.monthlyBudgetSatang, undefined);
@@ -143,7 +143,7 @@ describe('PartnerController', () => {
     for (const monthlyBudgetSatang of [1_200_000, null]) {
       let called: any;
       const ctrl = makeCtrl({ setAiModel: { execute: async (cmd: any) => { called = cmd; return { companyId: 'co-1', modelId: null, monthlyBudgetSatang, updatedAt: '' }; } } as any });
-      await ctrl.setAiModelConfig('co-1', { monthlyBudgetSatang }, makeReq());
+      await ctrl.setAiModelConfig('co-1', { monthlyBudgetSatang,expectedMonthlyBudgetSatang:null,reason:'ปรับตามคำขอ' }, makeReq());
       assert.equal(called.monthlyBudgetSatang, monthlyBudgetSatang);
       assert.equal(called.modelId, undefined);
     }
@@ -163,9 +163,9 @@ describe('PartnerController', () => {
       called = cmd;
       return { enabled: cmd.enabled, monthlyLimit: cmd.monthlyLimit, version: 5, updatedAt: '' };
     } } as any });
-    await ctrl.setOcrConfiguration('co-1', { enabled: false, monthlyLimit: 25, expectedVersion: 4 }, makeReq());
+    await ctrl.setOcrConfiguration('co-1', { enabled: false, monthlyLimit: 25, expectedVersion: 4,reason:'ปรับตามคำขอ' }, makeReq());
     assert.deepEqual(called, {
-      companyId: 'co-1', enabled: false, monthlyLimit: 25,
+      companyId: 'co-1', enabled: false, monthlyLimit: 25,reason:'ปรับตามคำขอ',
       expectedVersion: 4,
       requestingAdminUserId: 'admin-1', requestId: 'req-1',
     });
@@ -174,7 +174,7 @@ describe('PartnerController', () => {
   it('the OCR config DTO accepts CAS version + null/unlimited and rejects missing or invalid fields', async () => {
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
     const run = (body: Record<string, unknown>) =>
-      pipe.transform(body, { type: 'body', metatype: SetOcrConfigBodyDto }) as Promise<any>;
+      pipe.transform({reason:'ปรับตามคำขอ',...body}, { type: 'body', metatype: SetOcrConfigBodyDto }) as Promise<any>;
     const unlimited = await run({ enabled: true, monthlyLimit: null, expectedVersion: 0 });
     assert.equal(unlimited.enabled, true);
     assert.equal(unlimited.monthlyLimit, null);
@@ -196,7 +196,7 @@ describe('PartnerController', () => {
     // The exact global pipe main.ts registers, against the DTO the ai-model route binds.
     const pipe = new ValidationPipe(GLOBAL_VALIDATION_PIPE_OPTIONS);
     const run = (body: Record<string, unknown>) =>
-      pipe.transform(body, { type: 'body', metatype: SetAiModelBodyDto }) as Promise<any>;
+      pipe.transform({reason:'ปรับตามคำขอ',...body}, { type: 'body', metatype: SetAiModelBodyDto }) as Promise<any>;
 
     const cleared = await run({ monthlyBudgetSatang: null });
     assert.equal(cleared.monthlyBudgetSatang, null, 'null must survive the pipe — it clears the override');
@@ -222,6 +222,7 @@ describe('PartnerController', () => {
       ['setFeatureEntitlements', 'system.partner_feature.manage'],
       ['setAiModelConfig', 'system.partner_ai_model.manage'],
       ['setOcrConfiguration', 'system.partner_ai_model.manage'],
+      ['aiAdjustments', 'system.partner_ai_model.manage'],
       // Read-only meter: reuses the partner detail read permission, no new permission (spec §7.7).
       ['aiUsage', 'system.partner_dashboard.read'],
       // Issuing a bearer QR is a member-management action, gated like unlink and password reset.

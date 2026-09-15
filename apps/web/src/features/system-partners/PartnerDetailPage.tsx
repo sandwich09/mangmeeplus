@@ -6,7 +6,11 @@ import {
   MENU_ENTITLEMENT_BINDINGS,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
+  partnerAdjustmentReason,
   type CompanyPlanTermDto,
+  type CompanyPlanTermViewDto,
+  type SetCompanyPlanTermBody,
+  type RenewCompanyPlanTermBody,
   type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
   type PartnerFeatureEntitlementDto,
@@ -24,6 +28,8 @@ import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
 import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
+import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
+import PartnerPlanAdjustmentHistory from './PartnerPlanAdjustmentHistory';
 import {
   getPartnerDetail,
   updatePartnerProfile,
@@ -62,7 +68,6 @@ import {
   OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
   parseOcrMonthlyLimitInput,
-  reloadAfterOcrConfigConflict,
   ocrRemaining,
   ocrUnsavedToggleMessage,
   ocrUsageTrackingNote,
@@ -79,7 +84,7 @@ import {
   type PlanTermChip,
   type PlanTermChipTone,
 } from './plan-term.logic';
-import { apiErrorMessage } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import {
   applyPreset,
   buildMenuCards,
@@ -193,7 +198,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
     setBusy(true);
     try {
       await setPartnerVatRegistration(companyId, { status, effectiveFrom, expectedVersion: value.version });
-      showToast('VAT registration saved.', 'success');
+      showToast('บันทึกสถานะจด VAT ของร้านแล้ว', 'success');
       await onSaved();
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -204,30 +209,25 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
 
   return (
     <div className="mt-4 border-t border-gray-100 pt-4">
-      <p className="text-xs text-gray-500 mb-2">
-        VAT Registration — decides whether this company is asked Thai VAT questions when recording
-        expenses, and whether it may claim input VAT. UNKNOWN is not &quot;not registered&quot;: it means nobody
-        has answered, and every reader keeps behaving as it does today.
-      </p>
+      <p className="text-base text-gray-600 mb-2">สถานะจด VAT ของร้าน — เลือกตามข้อมูลจริงของร้าน เว้นไว้ได้หากยังไม่มีข้อมูล</p>
       <div className="flex flex-wrap items-end gap-3">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Status</label>
-          <ThemedSelect className={inputClass} value={status} disabled={disabled || busy}
+          <label htmlFor={`partner-vat-status-${companyId}`} className="block text-base text-gray-600 mb-1">สถานะจด VAT</label>
+          <ThemedSelect id={`partner-vat-status-${companyId}`} className={inputClass} value={status} disabled={disabled || busy}
             onChange={(e) => setStatus(e.target.value as '' | 'REGISTERED' | 'NOT_REGISTERED')}>
-            <option value="">— UNKNOWN (unanswered) —</option>
-            <option value="REGISTERED">REGISTERED / จดทะเบียนแล้ว</option>
-            <option value="NOT_REGISTERED">NOT_REGISTERED / ยังไม่ได้จดทะเบียน</option>
+            <option value="">ยังไม่ระบุ</option>
+            <option value="REGISTERED">จด VAT แล้ว</option>
+            <option value="NOT_REGISTERED">ยังไม่ได้จด VAT</option>
           </ThemedSelect>
         </div>
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Effective From</label>
-          <ThemedDate className={inputClass} value={effectiveFrom} disabled={disabled || busy}
+          <label htmlFor={`partner-vat-from-${companyId}`} className="block text-base text-gray-600 mb-1">วันที่เริ่มมีผล</label>
+          <ThemedDate id={`partner-vat-from-${companyId}`} className={inputClass} value={effectiveFrom} disabled={disabled || busy}
             onChange={(e) => setEffectiveFrom(e.target.value)} />
         </div>
         <button type="button" className={btnPrimary} disabled={disabled || busy || !status} aria-busy={Boolean(busy)} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save VAT status'}
+          {busy ? 'กำลังบันทึก…' : 'บันทึกสถานะ VAT'}
         </button>
-        <span className="text-xs text-gray-400">v{value.version}</span>
       </div>
     </div>
   );
@@ -543,6 +543,9 @@ function MembersSection({
                         <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">Linked</span>
                       ) : (
                         <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500">Not linked</span>
+                      )}
+                      {m.lineLinked && m.lineMessagingReady === false && (
+                        <p className="mt-1 max-w-52 text-xs text-amber-800">ตรวจช่องทาง LINE ของระบบ แล้วออก QR ใหม่เพื่อซ่อมการเชื่อมต่อ</p>
                       )}
                     </td>
                     <td className="py-2.5 pr-4">
@@ -1266,10 +1269,12 @@ function AiUsageBudgetSection({
   companyId,
   fieldsLocked,
   showToast,
+  onChanged,
 }: {
   companyId: string;
   fieldsLocked: boolean;
   showToast: (message: string, variant: 'success' | 'error') => void;
+  onChanged: () => void;
 }) {
   const [usage, setUsage] = useState<PartnerAiUsageDto | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -1277,58 +1282,58 @@ function AiUsageBudgetSection({
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(true);
+  const [receiptQuotaMode, setReceiptQuotaMode] = useState('inherit');
   const [ocrLimitInput, setOcrLimitInput] = useState('');
   const [ocrLoading, setOcrLoading] = useState(false);
+  const [budgetReason,setBudgetReason]=useState(''),[ocrReason,setOcrReason]=useState('');
+  const generation=useRef(0);
   const { confirm, confirmDialog } = useConfirm();
 
   const loadUsage = async () => {
+    const token=++generation.current;
     setUsageLoading(true);
     try {
       const result = await getPartnerAiUsage(companyId);
+      if(token!==generation.current)return;
       setUsage(result);
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
       setOcrEnabled(result.ocr.config.enabled);
+      setReceiptQuotaMode(result.ocr.config.receiptQuotaEnforced == null ? 'inherit' : result.ocr.config.receiptQuotaEnforced ? 'enforce' : 'observe');
       setOcrLimitInput(result.ocr.config.monthlyLimit === null ? '' : String(result.ocr.config.monthlyLimit));
       setUsageError(null);
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
-      setUsageError(e.status === 403 ? 'You do not have permission to view AI usage.' : apiErrorMessage(err));
-    } finally { setUsageLoading(false); }
+      setUsageError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูการใช้งาน AI' : apiErrorMessage(err));
+    } finally { if(token===generation.current)setUsageLoading(false); }
   };
 
   useEffect(() => {
     void loadUsage();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBudgetSave = async () => {
-    const parsed = parseBudgetBahtInput(budgetInput);
-    if (!parsed.ok) {
-      showToast(parsed.message, 'error');
-      return;
-    }
+    if(!usage||fieldsLocked||budgetLoading||ocrLoading)return;
+    const reason=partnerAdjustmentReason(budgetReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
+    const parsed=parseBudgetBahtInput(budgetInput);
+    if(!parsed.ok){showToast(parsed.message, 'error');return;}
+    const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
+    const accepted=await confirm({title:'ตรวจงบ AI ก่อนบันทึก',message:`งบต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มงบหรือขึ้นเดือนใหม่':''}\nงบใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
-      const result = await setPartnerAiModel(companyId, { monthlyBudgetSatang: parsed.monthlyBudgetSatang });
-      setUsage((prev) => prev ? {
-        ...prev,
-        budget: {
-          ...prev.budget,
-          overrideSatang: result.monthlyBudgetSatang,
-          effectiveSatang: result.monthlyBudgetSatang ?? prev.budget.defaultSatang,
-        },
-      } : prev);
-      showToast(
-        result.monthlyBudgetSatang === null
-          ? 'Monthly AI budget cleared — this company now inherits the platform default.'
-          : `Monthly AI budget set to ${satangToBaht(result.monthlyBudgetSatang)}.`,
-        'success',
-      );
-    } catch (err) {
-      // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setBudgetLoading(false);
-    }
+      const result=await setPartnerAiModel(companyId,{monthlyBudgetSatang:parsed.monthlyBudgetSatang,expectedMonthlyBudgetSatang:usage.budget.overrideSatang,reason});
+      if(token!==generation.current)return;
+      setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
+      setBudgetReason('');onChanged();
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้งบ AI ตามค่าเริ่มต้นของระบบ':`บันทึกงบ AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+    }catch(err){
+      if(token!==generation.current)return;
+      showToast(apiErrorMessage(err),'error');
+      if(apiErrorCode(err)==='partner_ai_configuration_changed'){setBudgetLoading(false);await loadUsage();}
+    }finally{if(token===generation.current)setBudgetLoading(false);}
   };
 
   const spendSatang = usage?.current?.costSatang ?? 0;
@@ -1337,7 +1342,10 @@ function AiUsageBudgetSection({
   const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
 
   const handleOcrSave = async () => {
-    if (!usage) return;
+    if (!usage||fieldsLocked||ocrLoading||budgetLoading) return;
+    const reason=partnerAdjustmentReason(ocrReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับการอ่านเอกสาร','error');return;}
+    const token=generation.current;
     const parsed = parseOcrMonthlyLimitInput(ocrLimitInput);
     if (!parsed.ok) {
       showToast(parsed.message, 'error');
@@ -1350,7 +1358,7 @@ function AiUsageBudgetSection({
         confirmLabel: 'ปิด OCR',
         cancelLabel: 'ยังไม่ปิด',
       });
-      if (!accepted) return;
+      if (!accepted||token!==generation.current) return;
     }
     if (
       ocrEnabled
@@ -1364,32 +1372,40 @@ function AiUsageBudgetSection({
         confirmLabel: 'ยืนยันจำนวนนี้',
         cancelLabel: 'กลับไปแก้',
       });
-      if (!accepted) return;
+      if (!accepted||token!==generation.current) return;
     }
     setOcrLoading(true);
     try {
       const config = await setPartnerOcrConfig(companyId, {
+        reason,
         enabled: ocrEnabled,
+        ...(usage.ocr.planQuota ? { receiptQuotaEnforced: receiptQuotaMode === 'inherit' ? null : receiptQuotaMode === 'enforce' } : {}),
         monthlyLimit: parsed.monthlyLimit,
         expectedVersion: usage.ocr.config.version,
       });
+      if(token!==generation.current)return;
       setUsage((previous) => previous ? { ...previous, ocr: { ...previous.ocr, config } } : previous);
       setOcrEnabled(config.enabled);
       setOcrLimitInput(config.monthlyLimit === null ? '' : String(config.monthlyLimit));
       showToast('บันทึกการตั้งค่า OCR แล้ว', 'success');
+      setOcrReason('');onChanged();setOcrLoading(false);
+      await loadUsage();
     } catch (err) {
-      if (await reloadAfterOcrConfigConflict(err, loadUsage)) {
+      if(token!==generation.current)return;
+      setOcrLoading(false);
+      if (apiErrorCode(err)==='ocr_config_version_conflict') {
         showToast(OCR_CONFIG_STALE_MESSAGE, 'error');
+        await loadUsage();
       } else {
         showToast(apiErrorMessage(err), 'error');
       }
     } finally {
-      setOcrLoading(false);
+      if(token===generation.current)setOcrLoading(false);
     }
   };
 
   return (
-    <SectionCard title="AI Usage & Budget">
+    <SectionCard title="การใช้งานและงบ AI">
       {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
@@ -1415,11 +1431,11 @@ function AiUsageBudgetSection({
           <div>
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="text-sm text-gray-700">
-                Month to date{' '}
+                ใช้เดือนนี้{' '}
                 <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
-                {' of '}
+                {' จากงบ '}
                 <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
-                {usage.budget.overrideSatang === null ? ' (platform default)' : ' (company override)'}
+                {usage.budget.overrideSatang === null ? ' (ค่าเริ่มต้นของระบบ)' : ' (Admin ปรับให้)' }
               </p>
               <span className={`text-xs font-medium tabular-nums ${budgetTextClass(percent)}`}>{percent}%</span>
             </div>
@@ -1428,27 +1444,27 @@ function AiUsageBudgetSection({
             </div>
             <p className="mt-1 text-xs text-gray-400">
               {usage.current
-                ? `${formatThaiMonth(usage.current.monthKey)} · ${usage.current.callCount} calls · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
-                : 'No AI calls recorded this month.'}
+                ? `${formatThaiMonth(usage.current.monthKey)} · ${usage.current.callCount} ครั้ง · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
+                : 'เดือนนี้ยังไม่มีการใช้งาน AI'}
             </p>
           </div>
 
           <p className="text-sm text-gray-600">
             {usage.previous
-              ? <>Previous month ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} calls</>
-              : 'No AI spend recorded last month.'}
+              ? <>เดือนก่อน ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} ครั้ง</>
+              : 'เดือนก่อนยังไม่มีค่าใช้จ่าย AI'}
           </p>
 
           {usage.topTags.length === 0 ? (
-            <p className="text-sm text-gray-500">No AI usage recorded this month.</p>
+            <p className="text-sm text-gray-500">เดือนนี้ยังไม่มีการใช้งาน AI</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                    <th className="py-2 pr-4 font-medium">Tag</th>
-                    <th className="py-2 pr-4 font-medium">Cost</th>
-                    <th className="py-2 font-medium">Calls</th>
+                    <th className="py-2 pr-4 font-medium">ประเภทการใช้งาน</th>
+                    <th className="py-2 pr-4 font-medium">ค่าใช้จ่าย</th>
+                    <th className="py-2 font-medium">จำนวนครั้ง</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1464,35 +1480,35 @@ function AiUsageBudgetSection({
             </div>
           )}
 
-          <div className="flex items-end gap-3 border-t border-gray-100 pt-3">
+          <label className="block text-base">เหตุผลที่ปรับงบ AI
+            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||fieldsLocked} onChange={e=>setBudgetReason(e.target.value)} />
+          </label>
+          <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">Monthly Budget (฿)</label>
+              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">งบ AI ต่อเดือน (บาท)</label>
               <input
                 id="ai-monthly-budget"
-                className={inputClass}
-                type="number"
-                min={1}
-                step={0.01}
+                className={`${inputClass} min-h-11 text-base`}
+                type="text"
                 inputMode="decimal"
                 placeholder={satangToBahtInput(usage.budget.defaultSatang)}
                 value={budgetInput}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                disabled={budgetLoading || fieldsLocked}
+                disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               />
             </div>
             <button
               type="button"
-              className={btnPrimary}
-              disabled={budgetLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
+              className={`${btnPrimary} min-h-11 text-base`}
+              disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
-              {budgetLoading ? 'Saving…' : 'Save'}
+              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
             </button>
           </div>
-          <p className="text-xs text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
+          <p className="break-words text-sm text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
-            Leave empty to inherit the platform default {satangToBaht(usage.budget.defaultSatang)}.
-            Platform ceiling {satangToBaht(usage.budget.ceilingSatang)}.
+            เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>
 
           <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ocr-governance-title">
@@ -1506,7 +1522,7 @@ function AiUsageBudgetSection({
               <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
                 <EntitlementSwitch
                   checked={ocrEnabled}
-                  disabled={ocrLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                   label="เปิดให้ AI อ่านเอกสาร"
                   onClick={() => setOcrEnabled((value) => !value)}
                 />
@@ -1585,6 +1601,26 @@ function AiUsageBudgetSection({
               </p>
             </div>
 
+            <div className="space-y-2 border-t border-gray-100 pt-4">
+              <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">บังคับโควตาใบเสร็จของแพ็กเกจทดลอง / กำหนดเอง</label>
+              <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
+                onChange={(event) => setReceiptQuotaMode(event.target.value)}
+                disabled={ocrLoading || budgetLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
+                <option value="inherit">ตามค่าเริ่มต้นของระบบ</option>
+                <option value="enforce">บังคับ — ครบโควตาแล้วหยุดอ่านใบใหม่</option>
+                <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบโควตา</option>
+              </select>
+              <p className="text-sm leading-6 text-gray-600" data-testid="receipt-quota-effective">
+                {usage.ocr.planQuota
+                  ? `สถานะที่บันทึก: ${usage.ocr.planQuota.enforced ? 'บังคับโควตา' : 'นับอย่างเดียว'} · ${usage.ocr.planQuota.source === 'PAID_GRANTS' ? 'แพ็กเกจที่ชำระเงิน' : usage.ocr.planQuota.source === 'COMPANY' ? 'การตั้งค่าบริษัท' : 'ค่าเริ่มต้นของระบบ'}`
+                  : 'ยังโหลดสถานะการบังคับโควตาไม่ได้'}
+              </p>
+              <p className="text-xs leading-5 text-gray-500">มีผลกับคำขอใหม่จากเว็บและ LINE หลังบันทึก ไม่รีเซ็ตจำนวนที่ใช้ แพ็กเกจที่ชำระเงินบังคับโควตาและวันหมดอายุเสมอ ส่วนรูป statement ใช้เพดาน OCR ด้านล่าง</p>
+            </div>
+
+            <label className="block text-base">เหตุผลที่ปรับการอ่านเอกสาร
+              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={ocrLoading||budgetLoading||fieldsLocked} onChange={e=>setOcrReason(e.target.value)} />
+            </label>
             <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
               <div>
                 <label className="mb-1 block text-sm font-bold text-gray-700" htmlFor="ocr-monthly-limit">
@@ -1601,7 +1637,7 @@ function AiUsageBudgetSection({
                   placeholder="เว้นว่าง = ไม่จำกัด"
                   value={ocrLimitInput}
                   onChange={(event) => setOcrLimitInput(event.target.value)}
-                  disabled={ocrLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
                   เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน
@@ -1613,7 +1649,7 @@ function AiUsageBudgetSection({
               <button
                 type="button"
                 className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
+                disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 onClick={() => void handleOcrSave()}
               >
                 {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
@@ -1654,6 +1690,16 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 }) {
   // undefined = still loading; null = grandfathered company with no term row.
   const [term, setTerm] = useState<CompanyPlanTermDto | null | undefined>(undefined);
+  const [sourceVersion,setSourceVersion]=useState<string|null>(null);
+  const [reason,setReason]=useState('');
+  const [renewReason,setRenewReason]=useState('');
+  const [historyRevision,setHistoryRevision]=useState(0);
+  const [counts,setCounts]=useState({branches:0,members:0});
+  const [uncertain,setUncertain]=useState(false);
+  const pending=useRef<{kind:'set';body:SetCompanyPlanTermBody}|{kind:'renew';body:RenewCompanyPlanTermBody}|null>(null);
+  const generation=useRef(0);
+  const applyResult=(result:CompanyPlanTermViewDto)=>{setTerm(result.term);setSourceVersion(result.sourceVersion??null);
+    if(result.activeBranches!==undefined&&result.activeMembers!==undefined)setCounts({branches:result.activeBranches,members:result.activeMembers});};
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1670,19 +1716,25 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const [termDays, setTermDays] = useState('30');
 
   const load = async () => {
+    const token=++generation.current;
     setError(null);
     setTerm(undefined);
+    setSourceVersion(null);
     try {
-      setTerm((await getPartnerPlanTerm(companyId)).term);
+      const result=await getPartnerPlanTerm(companyId);if(token!==generation.current)return;
+      applyResult(result);
       setError(null);
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
       setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูแพ็กเกจของบริษัทนี้' : apiErrorMessage(err));
     }
   };
 
   useEffect(() => {
+    pending.current=null;setUncertain(false);setEditing(false);setRenewOpen(false);
     void load();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyTierPreset = (key: PlanTierKey) => {
@@ -1706,10 +1758,12 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       setWarningDays('7');
       setTermDays('30');
     }
+    setReason('');
     setEditing(true);
   };
 
   const handleSave = async () => {
+    if(pending.current){await sendPending();return;}
     const branch = parseLimitInput(branchLimit);
     const employee = parseLimitInput(employeeLimit);
     const slips = parseLimitInput(monthlySlipLimit);
@@ -1723,44 +1777,37 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       showToast('จำนวนวันที่ใช้งานต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
       return;
     }
-    setSaving(true);
-    try {
-      const result = await setPartnerPlanTerm(companyId, {
-        tierKey,
-        branchLimit: branch,
-        employeeLimit: employee,
-        monthlySlipLimit: slips,
-        warningDays: warn,
-        // An existing row keeps its start date; termDays only applies to the first one (§4A).
-        ...(term ? {} : { termDays: days ?? undefined }),
-      });
-      setTerm(result.term);
-      setEditing(false);
-      showToast('บันทึกแพ็กเกจและอายุการใช้งานแล้ว', 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setSaving(false);
-    }
+    if(!sourceVersion||!partnerAdjustmentReason(reason)){showToast('กรุณาระบุเหตุผล และโหลดข้อมูลล่าสุดก่อนบันทึก','error');return;}
+    pending.current??={kind:'set',body:{commandId:crypto.randomUUID(),expectedVersion:sourceVersion,reason,
+      tierKey,branchLimit:branch,employeeLimit:employee,monthlySlipLimit:slips,warningDays:warn,
+      ...(term?{}:{termDays:days??undefined})}};
+    await sendPending();
   };
 
   const handleRenew = async () => {
-    const days = parseDaysInput(renewDays);
-    if (days === null) {
-      showToast('จำนวนวันที่ต่ออายุต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
-      return;
-    }
-    setRenewing(true);
-    try {
-      const result = await renewPartnerPlanTerm(companyId, { days });
-      setTerm(result.term);
-      setRenewOpen(false);
-      showToast('ต่ออายุการใช้งานแล้ว', 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setRenewing(false);
-    }
+    if(pending.current){await sendPending();return;}
+    const days=parseDaysInput(renewDays);
+    if(days===null||!sourceVersion||!partnerAdjustmentReason(renewReason)){showToast('กรุณาระบุจำนวนวันและเหตุผลก่อนต่ออายุ','error');return;}
+    pending.current={kind:'renew',body:{commandId:crypto.randomUUID(),expectedVersion:sourceVersion,reason:renewReason,days}};
+    await sendPending();
+  };
+
+  const sendPending=async()=>{
+    const command=pending.current;if(!command||saving||renewing)return;
+    const token=generation.current;setSaving(command.kind==='set');setRenewing(command.kind==='renew');
+    try{
+      const result=command.kind==='set'?await setPartnerPlanTerm(companyId,command.body):await renewPartnerPlanTerm(companyId,command.body);
+      if(token!==generation.current)return;
+      applyResult(result);pending.current=null;setUncertain(false);setEditing(false);setRenewOpen(false);setHistoryRevision(n=>n+1);
+      showToast(result.replayed?'คำขอเดิมบันทึกแล้ว แสดงแพ็กเกจล่าสุดของร้าน':'บันทึกการปรับแพ็กเกจและวันใช้งานแล้ว','success');
+    }catch(err){
+      if(token!==generation.current)return;
+      const status=(err as {status?:number}).status;
+      if(isAmbiguousCommandFailure(status)){setUncertain(true);showToast('ยังยืนยันผลไม่ได้ กดลองคำขอเดิมได้ ระบบจะไม่เพิ่มวันซ้ำ','error');}
+      else{pending.current=null;setUncertain(false);showToast(apiErrorMessage(err),'error');
+        if(status===403){setTerm(undefined);setSourceVersion(null);setError('คุณไม่มีสิทธิ์แก้ไขแพ็กเกจของบริษัทนี้');setEditing(false);setRenewOpen(false);}
+        else if(status===409){setSaving(false);setRenewing(false);setEditing(false);setRenewOpen(false);await load();setHistoryRevision(n=>n+1);}}
+    }finally{if(token===generation.current){setSaving(false);setRenewing(false);}}
   };
 
   // P10-L §9 "ตรวจแล้ว". The warm-up bounds the damage of a shop nobody has looked at; once an
@@ -1768,7 +1815,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const handleEndWarmup = async () => {
     setEndingWarmup(true);
     try {
-      setTerm((await endPartnerPlanTermWarmup(companyId)).term);
+      await endPartnerPlanTermWarmup(companyId);
+      await load();
       showToast('ปลดโควตาอุ่นเครื่องแล้ว ร้านใช้เพดานของแพ็กเกจได้เต็มจำนวน', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -1783,7 +1831,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const warmupActive = Boolean(term?.warmupUntil && new Date(term.warmupUntil).getTime() > Date.now());
 
   return (
-    <SectionCard title="แพ็กเกจและอายุการใช้งาน">
+    <><SectionCard title="แพ็กเกจและอายุการใช้งาน">
+      {uncertain&&<div role="alert" className="rounded border border-amber-300 p-3 text-base"><p>ยังยืนยันผลคำขอเดิมไม่ได้ ตรวจคำขอเดิมก่อนเริ่มรายการใหม่</p><button type="button" className={`${btnPrimary} mt-2 min-h-11`} disabled={saving||renewing} aria-busy={Boolean(saving || renewing)} onClick={()=>void sendPending()}>ตรวจและลองคำขอเดิม</button></div>}
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>
@@ -1800,7 +1849,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <p className="text-sm text-gray-600">
                 ลูกค้าเดิม — ยังไม่กำหนดแพ็กเกจ/อายุการใช้งาน (ใช้ได้ไม่จำกัด)
               </p>
-              <button type="button" className={btnPrimary} onClick={startEditing} disabled={fieldsLocked}>
+              <button type="button" className={btnPrimary} onClick={startEditing} disabled={fieldsLocked||uncertain||!sourceVersion}>
                 ตั้งแพ็กเกจและอายุการใช้งาน
               </button>
             </div>
@@ -1815,9 +1864,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               </div>
 
               <p className="text-sm text-gray-700">{planTermLimitsText(term)}</p>
-              <p className="text-xs text-gray-500">
-                จำนวนสลิปเป็นค่าประกาศของแพ็กเกจ ยังไม่ตัดจริง
-              </p>
+              <p className="text-base text-gray-600">{term.paidPlan ? 'จำนวนใบเสร็จที่ใช้ได้จริง ดูจากหน้าการชำระเงินของบริษัท' : 'จำนวนใบเสร็จเป็นโควตาต่อเดือน การอ่านยังขึ้นกับการตั้งค่า AI ของร้าน'}</p>
+              {term.effectiveCapacity?.temporary&&<p className="rounded-lg border border-emerald-300 p-3 text-base">สิทธิ์ชั่วคราว: {PLAN_TIER_PRESETS[term.effectiveCapacity.tierKey].labelTh} · {term.effectiveCapacity.branchLimit} สาขา · {term.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {formatThaiDateTime(term.effectiveCapacity.temporary.expiresAt)}</p>}
 
               {warmupActive && (
                 <div className="flex flex-wrap items-center gap-2 rounded border border-amber-200 bg-amber-50 px-3 py-2">
@@ -1842,16 +1890,17 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 
               {!editing && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked}>
+                  {term.paidPlan ? <Link className={btnSecondary} href={`/system/billing/companies/${encodeURIComponent(companyId)}/plan-adjustments`}>ปรับแพ็กเกจชั่วคราวและดูประวัติ</Link> : <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked||uncertain||!sourceVersion}>
                     แก้ไขแพ็กเกจ
-                  </button>
+                  </button>}
                   {/* Deliberately not gated by fieldsLocked: renewing a company the expiry sweep
                       disabled is the recovery path (§4C), so it has to stay reachable while
                       DISABLED. The dialog warns when the disable came from an admin instead. */}
                   <button
                     type="button"
                     className={btnPrimary}
-                    onClick={() => { setRenewDays('30'); setRenewOpen(true); }}
+                    disabled={uncertain||!sourceVersion}
+                    onClick={() => { setRenewDays('30'); setRenewReason(''); setRenewOpen(true); }}
                   >
                     ต่ออายุ
                   </button>
@@ -1867,7 +1916,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 <ThemedSelect
                   className={inputClass}
                   value={tierKey}
-                  disabled={saving}
+                  disabled={saving||uncertain}
                   onChange={(e) => applyTierPreset(e.target.value as PlanTierKey)}
                 >
                   {(Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[]).map((key) => (
@@ -1881,36 +1930,37 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
                   <label htmlFor="plan-branchLimit" className="mb-1 block text-xs text-gray-500">จำนวนสาขา</label>
-                  <input id="plan-branchLimit" className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving}
+                  <input id="plan-branchLimit" className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving||uncertain}
                     onChange={(e) => setBranchLimit(e.target.value)} />
                 </div>
                 <div>
                   <label htmlFor="plan-employeeLimit" className="mb-1 block text-xs text-gray-500">จำนวนพนักงาน</label>
-                  <input id="plan-employeeLimit" className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving}
+                  <input id="plan-employeeLimit" className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving||uncertain}
                     onChange={(e) => setEmployeeLimit(e.target.value)} />
                 </div>
                 <div>
                   <label htmlFor="plan-monthlySlipLimit" className="mb-1 block text-xs text-gray-500">สลิปต่อเดือน</label>
-                  <input id="plan-monthlySlipLimit" className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving}
+                  <input id="plan-monthlySlipLimit" className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving||uncertain}
                     onChange={(e) => setMonthlySlipLimit(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="plan-warningDays" className="mb-1 block text-xs text-gray-500">แจ้งเตือนล่วงหน้า (วัน)</label>
-                  <input id="plan-warningDays" className={inputClass} inputMode="numeric" value={warningDays} disabled={saving}
+                  <input id="plan-warningDays" className={inputClass} inputMode="numeric" value={warningDays} disabled={saving||uncertain}
                     onChange={(e) => setWarningDays(e.target.value)} />
                 </div>
                 {!term && (
                   <div>
                     <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ใช้งาน</label>
-                    <input className={inputClass} inputMode="numeric" value={termDays} disabled={saving}
+                    <input className={inputClass} inputMode="numeric" value={termDays} disabled={saving||uncertain}
                       onChange={(e) => setTermDays(e.target.value)} />
                     <p className="mt-1 text-xs text-gray-500">นับจากเวลาที่บันทึก แก้ไขวันหมดอายุภายหลังได้ด้วยการต่ออายุ</p>
                   </div>
                 )}
               </div>
-              <div className="rounded border border-blue-200 bg-white p-3 text-sm" aria-live="polite">
+              <label className="block text-base">เหตุผลที่ปรับแพ็กเกจ<textarea aria-label="เหตุผลที่ปรับแพ็กเกจ" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={reason} disabled={saving||uncertain} onChange={e=>setReason(e.target.value)} /></label>
+              <div className="rounded border border-blue-200 bg-white p-3 text-base" aria-live="polite">
                 <p className="font-medium">การเปลี่ยนแปลง: ค่าเดิม → ค่าใหม่</p>
                 {[
                   ['แพ็กเกจโควตา', term ? PLAN_TIER_PRESETS[term.tierKey].labelTh : 'ยังไม่กำหนด', PLAN_TIER_PRESETS[tierKey].labelTh],
@@ -1921,13 +1971,13 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 ].filter(([, before, after]) => String(before) !== String(after)).map(([label, before, after]) => (
                   <p key={label}>{label}: {before} → {after || 'ยังไม่ได้กรอก'}</p>
                 ))}
-                <p className="mt-1 text-xs text-gray-500">สิทธิ์เมนูของบริษัทคงเดิม</p>
+                <p className="mt-2">ใช้อยู่ {counts.branches} สาขา · {counts.members} ผู้ใช้ รวมเจ้าของร้าน</p><p className="mt-1 text-gray-600">ข้อมูลและผู้ใช้เดิมยังอยู่ หากเกินจำนวนใหม่จะเพิ่มไม่ได้จนกว่าจะมีที่ว่าง สิทธิ์เมนูคงเดิม</p>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving} aria-busy={Boolean(saving)}>
                   {saving ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
-                <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving}>
+                <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving||uncertain}>
                   ยกเลิก
                 </button>
               </div>
@@ -1941,22 +1991,23 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
           open={renewOpen}
           title="ต่ออายุการใช้งาน"
           size="sm"
-          onClose={() => setRenewOpen(false)}
+          onClose={() => {if(!renewing)setRenewOpen(false);}}
           footer={(
             <>
               <button type="button" className={btnSecondary} onClick={() => setRenewOpen(false)} disabled={renewing}>
                 ยกเลิก
               </button>
               <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing} aria-busy={Boolean(renewing)}>
-                {renewing ? 'กำลังต่ออายุ...' : 'ต่ออายุ'}
+                {renewing ? 'กำลังต่ออายุ...' : uncertain ? 'ตรวจและลองคำขอเดิม' : 'ต่ออายุ'}
               </button>
             </>
           )}
         >
           <div className="space-y-3">
+            {uncertain&&<p role="alert" className="rounded border border-amber-300 p-3 text-base">ยังยืนยันผลไม่ได้ กดลองคำขอเดิมได้ ระบบจะไม่เพิ่มวันซ้ำ</p>}
             <div>
-              <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ต่อ</label>
-              <input className={inputClass} inputMode="numeric" value={renewDays} disabled={renewing}
+              <label className="mb-1 block text-base text-gray-600">จำนวนวันที่ต่อ</label>
+              <input className={inputClass} inputMode="numeric" value={renewDays} disabled={renewing||uncertain}
                 onChange={(e) => setRenewDays(e.target.value)} />
             </div>
             <p className="text-sm text-gray-600">
@@ -1964,6 +2015,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 ? 'กรุณากรอกจำนวนวันเป็นจำนวนเต็มมากกว่า 0'
                 : `ครบกำหนด: ${formatDate(term.termEndsAt)} → ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
             </p>
+            <label className="block text-base">เหตุผลที่ต่ออายุ<textarea aria-label="เหตุผลที่ต่ออายุ" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={renewReason} disabled={renewing||uncertain} onChange={e=>setRenewReason(e.target.value)} /></label>
+            <p className="text-base text-gray-600">ต่ออายุการใช้งานโดยผู้ดูแล ไม่ใช่การซื้อแพ็กเกจ ไม่มีการเรียกเก็บเงินหรือเพิ่มใบเสร็จจากรายการนี้</p>
             {adminDisabled && (
               <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
                 บริษัทนี้ถูกปิดโดยแอดมิน การต่ออายุจะไม่เปิดใช้งานอัตโนมัติ
@@ -1973,6 +2026,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
         </Modal>
       )}
     </SectionCard>
+    <PartnerPlanAdjustmentHistory key={`${companyId}-${historyRevision}`} companyId={companyId} /></>
   );
 }
 
@@ -1982,10 +2036,12 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
  */
 function ShopTimelineSection({ companyId }: { companyId: string }) {
   const [entries, setEntries] = useState<PartnerTimelineEntryDto[] | null>(null);
+  const [reload,setReload]=useState(0);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setEntries(null);setError(null);
     void (async () => {
       try {
         const result = await getPartnerTimeline(companyId);
@@ -1996,12 +2052,13 @@ function ShopTimelineSection({ companyId }: { companyId: string }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [companyId]);
+  }, [companyId,reload]);
 
   return (
     <SectionCard title="ประวัติร้าน">
+      <button type="button" className="mangmee-btn mangmee-btn-secondary mb-3 min-h-11 text-base" onClick={()=>{setEntries(null);setError(null);setReload(n=>n+1);}}>โหลดประวัติร้านล่าสุด</button>
       {error ? (
-        <p className="text-sm text-red-600">{error}</p>
+        <p role="alert" className="text-base text-red-600">{error}</p>
       ) : entries === null ? (
         <div className="h-16 animate-pulse rounded border border-gray-100" />
       ) : entries.length === 0 ? (
@@ -2013,10 +2070,10 @@ function ShopTimelineSection({ companyId }: { companyId: string }) {
               <span className="w-40 shrink-0 text-xs text-gray-500">
                 {entry.at ? formatThaiDateTime(entry.at) : 'ตอนนี้'}
               </span>
-              <span className={`text-sm ${entry.kind === 'ai_refusal' ? 'font-medium text-amber-700' : 'text-gray-900'}`}>
+              <span className={`text-base ${entry.kind === 'ai_refusal' ? 'font-medium text-amber-700' : 'text-gray-900'}`}>
                 {entry.label}
               </span>
-              {entry.detail && <span className="text-xs text-gray-500">{entry.detail}</span>}
+              {entry.detail && <span className="text-base text-gray-600">{entry.detail}</span>}
             </li>
           ))}
         </ol>
@@ -2115,6 +2172,10 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   supportAskerRef?: string;
 }) {
   const toast = useToast();
+  const generation=useRef(0);
+  const [aiHistoryRefresh,setAiHistoryRefresh]=useState(0);
+  const [aiModelReason,setAiModelReason]=useState('');
+  const {confirm:confirmAiModel,confirmDialog:aiModelConfirmDialog}=useConfirm();
   const [detail, setDetail] = useState<PartnerCompanyDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2147,24 +2208,28 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   const [aiModelInput, setAiModelInput] = useState('');
 
   const load = async () => {
+    const token=++generation.current;
     setLoading(true);
     setError(null);
     try {
       const d = await getPartnerDetail(companyId);
+      if(token!==generation.current)return;
       setDetail(d);
       setAiModelInput(d.aiConfiguration?.modelId ?? '');
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
       if (e.status === 403) setForbidden(true);
       else if (e.status === 404) setNotFound(true);
       else setError(apiErrorMessage(err));
     } finally {
-      setLoading(false);
+      if(token===generation.current)setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startEdit = () => {
@@ -2226,19 +2291,23 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   };
 
   const handleAiModelSave = async () => {
-    if (!aiModelInput) return;
+    if(!aiModelInput||!detail||aiModelLoading||fieldsLocked)return;
+    const reason=partnerAdjustmentReason(aiModelReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่เปลี่ยนรุ่น AI','error');return;}
+    const token=generation.current;
+    const accepted=await confirmAiModel({title:'ตรวจรุ่น AI ก่อนบันทึก',message:`${detail.aiConfiguration?.modelId??'ค่าเริ่มต้นของระบบ'} → ${aiModelInput}\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
     setAiModelLoading(true);
     try {
-      const result = await setPartnerAiModel(companyId, { modelId: aiModelInput });
-      if (detail) {
-        setDetail({ ...detail, aiConfiguration: { modelId: result.modelId, updatedAt: result.updatedAt } });
-      }
-      showToast(`AI model set to ${result.modelId}.`, 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setAiModelLoading(false);
-    }
+      const result=await setPartnerAiModel(companyId,{modelId:aiModelInput,expectedModelId:detail.aiConfiguration?.modelId??null,reason});
+      if(token!==generation.current)return;
+      if(result.updatedAt)setDetail(prev=>prev?{...prev,aiConfiguration:{modelId:result.modelId,updatedAt:result.updatedAt!}}:prev);
+      setAiModelReason('');setAiHistoryRefresh(n=>n+1);showToast('บันทึกรุ่น AI แล้ว','success');
+    }catch(err){
+      if(token!==generation.current)return;
+      showToast(apiErrorMessage(err),'error');
+      if(apiErrorCode(err)==='partner_ai_configuration_changed'){setAiModelLoading(false);await load();}
+    }finally{if(token===generation.current)setAiModelLoading(false);}
   };
 
   // -- render
@@ -2484,17 +2553,21 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         />
 
         {/* AI model */}
-        <SectionCard title="AI Model Configuration">
+        <SectionCard title="รุ่น AI ของบริษัท">
+          {aiModelConfirmDialog}
+          <label className="mb-3 block text-base">เหตุผลที่เปลี่ยนรุ่น AI
+            <textarea aria-label="เหตุผลที่เปลี่ยนรุ่น AI" className={`${inputClass} mt-1 min-h-20 text-base`} value={aiModelReason} maxLength={500} disabled={aiModelLoading||fieldsLocked} onChange={e=>setAiModelReason(e.target.value)} />
+          </label>
           <div className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1">Approved AI Model</label>
+              <label className="block text-xs text-gray-500 mb-1">รุ่น AI ที่เปิดให้ใช้</label>
               <ThemedSelect
                 className={inputClass}
                 value={aiModelInput}
                 onChange={(e) => setAiModelInput(e.target.value)}
                 disabled={aiModelLoading || fieldsLocked}
               >
-                <option value="">Select model…</option>
+                <option value="">เลือกรุ่น AI…</option>
                 {APPROVED_AI_MODELS.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
@@ -2506,7 +2579,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
               disabled={aiModelLoading || !aiModelInput || fieldsLocked} aria-busy={Boolean(aiModelLoading)}
               onClick={handleAiModelSave}
             >
-              {aiModelLoading ? 'Saving…' : 'Save'}
+              {aiModelLoading ? 'กำลังบันทึก…' : 'ตรวจรุ่นก่อนบันทึก'}
             </button>
           </div>
           {detail.aiConfiguration && (
@@ -2519,14 +2592,15 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         </SectionCard>
 
         {/* AI spend meter + monthly budget override */}
-        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
+        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
+        <PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId} />
 
         {/* LINE context health */}
         <SectionCard title="LINE Context">
           <div className="flex flex-wrap items-center justify-between">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">LINE Account Link Status</span>
+                <span className="text-sm text-gray-700">สถานะเชื่อมบัญชี LINE</span>
                 <LineContextBadge health={detail.lineContextHealth} />
               </div>
               <p className="text-xs text-gray-400">

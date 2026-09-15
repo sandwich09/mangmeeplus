@@ -1,33 +1,40 @@
 # P26 — Stripe implementation, business decisions และการทดสอบ
 
-> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](../specs/mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูปและใช้โควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full paid E2E ยัง NOT RUN; current tests ไม่แทน provider acceptance.
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
+> **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
+
+
+> **Owner amendment 2026-09-13:** [มติล่าสุด](../specs/mangmee-billing-pack-amendment-2026-09-12.md): ซื้อเริ่ม/จ่ายทันที, VAT OFF ปรับผ่าน Admin, upgrade จ่ายส่วนต่างเริ่มทันที/วันสิ้นรอบเดิม, downgrade สิ้นรอบที่จ่ายแล้ว, รายปีได้โควตา 12 เท่าทันที; ใช้หมดซื้อแพ็กเกจเต็มเพิ่ม ซื้อเฉพาะใบเป็น HIDDEN ตามมติล่าสุด: ซ่อนไว้ทุกช่องทางและยังไม่เปิดขาย. ซื้อแพ็กเกจเดิมซ้ำเพิ่มโควตาทันทีและต่ออายุจากวันหมดอายุเดิม; ยังไม่เปิดขายก่อน readiness. ไม่มี deploy; full paid E2E ยัง IN PROGRESS.
+
+> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](../specs/mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูป; มติ2026-09-13ให้ annual quota12เท่าทันทีและซื้อแพ็กเกจเต็มซ้ำต่ออายุจากวันเดิม. Trial/manualคงโควตารายเดือนเดิม. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full spec/native provider acceptance ยังไม่ครบ; local simulated browser/HTTP checkpoint ดูหลักฐาน integration ล่าสุด ไม่ใช้แทน native provider acceptance.
 
 > **Developer-readiness follow-up 2026-09-11:** [F01–F24 / DG01–DG08](../research/billing-developer-readiness-2026-09-11.md) ตรวจsignup→web/LINE→payment→access→operations/restore. ใช้ [control handoff §7](../specs/mangmee-billing-controls-spec-th.md) และ [preflight/DA01–DA08](mangmee-billing-controls-plan-th.md) ก่อนimplementจุดต่อ. Foundationเริ่มได้; E0/B01–B10/privilegedauth/provider setupยังต้องครบสำหรับbehaviorที่เกี่ยวข้อง. TestmatricesยังNOT RUN; ห้ามอ่านคำว่าdesigncompleteว่าruntimeพร้อมหรือทุกมติอนุมัติแล้ว.
 
-> **Controls 1–8 / no-deploy design 2026-09-11:** [C01–C08 spec](../specs/mangmee-billing-controls-spec-th.md) และ [implementation/CT01–CT32 plan](mangmee-billing-controls-plan-th.md) ครอบคลุมoverview, issue queue, safe repair, permissions, versioned policies, action gates, reconciliation และaudit/temporary overrides. Routine settingsผ่านเว็บหลังinitialimplementation; web/LINE/marketingอ่านapprovedrevisionเดียวกัน. ปิดขายใหม่ไม่หยุดpaid apply/recovery; rich menuเก่าต้องกลับไปstatus/supportได้. Target control suiteยังไม่implemented/NOT RUN; currentrepair evidenceแยกจากStripe/native acceptance.
+> **Controls 1–8 / no-deploy design 2026-09-11:** [C01–C08 spec](../specs/mangmee-billing-controls-spec-th.md) และ [implementation/CT01–CT32 plan](mangmee-billing-controls-plan-th.md) ครอบคลุมoverview, issue queue, safe repair, permissions, versioned policies, action gates, reconciliation และaudit/temporary overrides. Routine settingsผ่านเว็บหลังinitialimplementation; web/LINE/marketingอ่านapprovedrevisionเดียวกัน. ปิดขายใหม่ไม่หยุดpaid apply/recovery; rich menuเก่าต้องกลับไปstatus/supportได้. สถานะของ design note วันที่2026-09-11ถูกแทนที่ด้วย implementation notice และ C01–C08 plan ล่าสุด; local repair/Stripe simulation/native acceptance แยกกัน.
 
 > **Owned design + LINE/web audit 2026-09-11:** [Developer design](../specs/mangmee-owned-billing-integration-spec-th.md), [GW bug/impact register](../research/stripe-line-web-gap-closure-2026-09-11.md) and [local evidence](../evidence/stripe-line-web-gap-2026-09-11/README.md) add rich-menu/webhook/company-context and handoff recovery repairs. Full Stripe/native provider acceptance remains NOT RUN.
 
-> **S2/S4 design extension 2026-09-11:** ใช้ [LINE + web UI spec](../specs/mangmee-line-web-billing-ui-spec-th.md) และ [L0–L5 / LB01–LB20](mangmee-line-web-billing-ui-plan-th.md). L0 design DONE; app screens/LINE billing handoff/provider/device acceptance ยัง NOT STARTED / NOT RUN. เพิ่ม LINE-only expired OWNER, explicit company selection, external-browser session และ safe return; ไม่ใช้ S-pre results แทน.
+> **S2/S4 design extension 2026-09-11:** ใช้ [LINE + web UI spec](../specs/mangmee-line-web-billing-ui-spec-th.md) และ [L0–L5 / LB01–LB20](mangmee-line-web-billing-ui-plan-th.md). L0 design DONE; app screens/company picker/paid return มี local simulated browser proofแล้ว ส่วน full native LINE/device acceptance ยังไม่ครบ. เพิ่ม LINE-only expired OWNER, explicit company selection, external-browser session และ safe return; ไม่ใช้ S-pre results แทน.
 
-> **Postmark / Stripe document decision 2026-09-11:** [Postmark plan M3 / EM10–EM17](mangmee-transactional-email-provider-plan-th.md) กำหนดให้ Stripeสร้างและส่งInvoice/Receiptให้ลูกค้า; appแสดงproviderdocumentsหลังตรวจcompany permissionและตั้งStripe customer emailsให้ครบ. Receiptค่าPostmarkเป็นงานบัญชีบริษัทเรา ไม่ใช้Postmarkส่งreceiptซ้ำและไม่สร้างcustom PDF/numbering/e-Taxในscopeนี้. B06เรื่องราคา/ภาษี/ผู้ขายยังOPEN; ผล S-preไม่เปลี่ยน และเอกสาร/provider E2EยังNOT RUN.
+> **Postmark / Stripe document decision 2026-09-11:** [Postmark plan M3 / EM10–EM17](mangmee-transactional-email-provider-plan-th.md) กำหนดให้ Stripeสร้างและส่งInvoice/Receiptให้ลูกค้า; appแสดงproviderdocumentsหลังตรวจcompany permissionและตั้งStripe customer emailsให้ครบ. Receiptค่าPostmarkเป็นงานบัญชีบริษัทเรา ไม่ใช้Postmarkส่งreceiptซ้ำและไม่สร้างcustom PDF/numbering/e-Taxในscopeนี้. B06ให้ VAT OFF และ Admin preview/approval สำหรับเปิดภายหลัง; ข้อมูลนิติบุคคลและ provider document/email readiness ต้องยืนยันก่อนเปิด LIVE. ผล S-pre คงเป็นประวัติเดิม.
 
-สถานะ: **S-pre IMPLEMENTED + LOCAL ACCEPTANCE PASS 2026-09-11; STRIPE INTEGRATION NOT IMPLEMENTED** — ปิด loop spec → runtime repair → real DB/API/browser proof และแก้ pricing ของ `mangmee_web`. [ผลรอบแก้](../evidence/stripe-repair-2026-09-11/README.md): browser 20/20, PostgreSQL 15/15, focused tests 198/198, marketing 1440px/390px ผ่าน. S0–S5 ส่วน Stripe, B01–B10 และ provider acceptance ยังเปิด; paid offers disabled, ไม่มี deploy/charge. แผนนี้ขยาย [Billing spec](../specs/mangmee-billing-subscription-spec-th.md) และ [สเปกเว็บ official](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md).
+สถานะ ณ checkpoint เก่า 2026-09-11: **S-pre IMPLEMENTED + LOCAL ACCEPTANCE PASS; ก่อนเริ่ม Stripe implementation** — ปิด loop spec → runtime repair → real DB/API/browser proof และแก้ pricing ของ `mangmee_web`. [ผลรอบแก้](../evidence/stripe-repair-2026-09-11/README.md): browser 20/20, PostgreSQL 15/15, focused tests 198/198, marketing 1440px/390px ผ่าน. S0–S5 ส่วน Stripe, B01–B10 และ provider acceptance ยังเปิด; paid offers disabled, ไม่มี deploy/charge. แผนนี้ขยาย [Billing spec](../specs/mangmee-billing-subscription-spec-th.md) และ [สเปกเว็บ official](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md).
 
 Developer ใช้ [Stripe developer reference](../research/stripe-developer-reference-th.md) สำหรับ official API paths, request fields, event handling, version-sensitive object joins และ setup/test links; นโยบายและสถานะ acceptance ยังคงอยู่ในแผนนี้.
 
 ## 1. Readiness ที่ตรวจได้จริง
 
-| คำถาม | สถานะล่าสุด 2026-09-11 |
+| คำถาม | สถานะ implementation 2026-09-14 |
 |---|---|
-| เลือก provider/integration design แล้วหรือยัง | เลือก Stripe Payments + Billing + hosted Checkout/Customer Portal แล้ว; มี boundary และ acceptance |
-| Integration ใช้งานแล้วหรือยัง | ไม่พบ Stripe SDK/runtime/webhook/schema integration ใน `apps/`/`packages/`; ยังไม่พร้อมรับเงิน |
-| มีวิธีทดสอบจ่ายสำเร็จ/ไม่สำเร็จหรือไม่ | แผนด้านล่างระบุ sandbox, test cards, Test Clocks, API/browser/DB assertions แล้ว; ยังไม่ได้รัน Stripe |
-| Failure policy ครบหรือยัง | มี technical recovery; trial conversion/grace/debt/cancellation/refund/ภาษียังต้องตัดสินใจ |
-| E2E ผ่านแล้วหรือยัง | existing access simulation หลังแก้: browser 20/20, PostgreSQL 15/15; marketing 2 viewport ผ่าน; **Stripe E2E ยัง NOT RUN** |
-| จ่ายแล้วเปิดอัตโนมัติหรือไม่ | manual-renew driver เปิดบริษัทที่ term-disabled และทำ business action ผ่าน UI ได้แล้ว; ยังไม่มี Stripe invoice → paid period/แพ็กเกจ adapter และไม่เพิ่ม user roles |
+| เลือก provider/integration design แล้วหรือยัง | Stripe hosted Checkout/Billing; Portal จัดการวิธีชำระเงิน ส่วนซื้อซ้ำ/เปลี่ยนแพ็ก/ยกเลิกใช้คำสั่งของแอปตาม prepaid policy |
+| Integration ใช้งานแล้วหรือยัง | มี BillingModule, durable webhook/event, account/invoice/attempt/grant schema และหน้าเว็บจริง; ยังไม่เปิดรับเงินจริงหรือ deploy |
+| มีวิธีทดสอบจ่ายสำเร็จ/ไม่สำเร็จหรือไม่ | ชุด compiled AppModule + PostgreSQL + Next/Chromium ใช้ provider transport จำลอง; duplicate, lost response, stale quote, paid-held และ recovery อยู่ในหลักฐาน integration |
+| Failure policy ครบหรือยัง | B01–B08 มีมติแล้วตามตารางด้านล่างและ pack amendment; remaining operator/refund/debt/override controls ยังต้อง implement/verify ตาม C01–C08 |
+| E2E ผ่านแล้วหรือยัง | มี local simulated browser/API/PG checkpoints ตามหลักฐานล่าสุด; full matrix/native acceptance และ CI/merge ยังไม่ครบ ห้ามใช้จำนวนเคสเป็นการรับรองครบทุก flow |
+| จ่ายแล้วเปิดอัตโนมัติหรือไม่ | verified financial chain → atomic paid term/receipt grant/lifecycle; return แสดงผลจาก backend และไม่รออีเมล ไม่มีการเพิ่มบทบาทจากผู้จ่าย |
 
-หลักฐาน: `rg -l -i stripe apps packages` แบบจำกัดไฟล์ TS/TSX/Prisma/package.json ไม่พบ integration; ตรวจ `e2e/` และชื่อ test/evidence แล้วไม่พบ Stripe suite. มี `playwright.config.ts`, `e2e/harness/` และ `pnpm e2e` อยู่แล้ว. ไม่ได้สำรวจ cloud หรือ Stripe Dashboard; ไม่อนุมานว่าร้านที่มี tier paid ใน DB แปลว่าจ่ายเงินจริง.
+หลักฐานปัจจุบัน: [integration/evidence](../evidence/billing-integration-2026-09-13/README.md) และ [task status/CI](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผลค้นหาและ S-pre วันที่2026-09-11 เป็นประวัติก่อน implementation; ไม่ใช่สถานะโค้ดปัจจุบัน. ไม่อนุมานว่าร้านที่มี tier paid ใน DB จ่ายเงินจริง.
 
 ### Repair register — ปิด existing-access defects และ marketing ก่อนเปิด paid
 
@@ -47,14 +54,14 @@ Developer ใช้ [Stripe developer reference](../research/stripe-developer-re
 
 | ID | ต้องตัดสินใจ | ข้อเสนอสำหรับรุ่นแรก / เหตุผล |
 |---|---|---|
-| B01 | Signup/ผูกบัตร/ช่วง trial ที่เหลือ | **ตัดสินเพิ่ม 2026-09-11:** สมัครอย่างเดียวได้ starter7เมนู/15ใบ ไม่ผูกบัตรและไม่สร้าง Stripe subscription. **ยัง OPEN:** วันเริ่มเก็บเงินเมื่อ opt-in paid และ treatment วัน trial ที่เหลือ; ห้ามเริ่ม trial ซ้ำ |
-| B02 | รอบจ่ายเทียบ quota | **ตัดสินเพิ่ม:** รองรับ month/year และราคาตาม package amendment; quota เดือนปฏิทิน Bangkok เท่าเดิม ไม่มี12เท่า/rollover/resetจากซื้อ. แสดง used/limit/reset/remaining ก่อนยืนยัน; ภาษีและ plan-change/proration ใช้ B06/B05 ไม่เดา |
-| B03 | Grace/retry/access หลังจ่ายไม่ผ่าน | เสนอ grace 7 วันเฉพาะ renewal ของลูกค้าที่เคยจ่าย พร้อม bounded retries/เตือน/แก้บัตร; แยก initial failure และ service outage. วันเริ่ม grace, สิทธิ์ AI/ข้อมูลช่วงนี้และ final action ต้องยืนยันก่อน config; ห้ามถือว่าอนุมัติ 7 วันแล้ว |
-| B04 | ยกเลิกและป้องกันเก็บเงินเกิน | เสนอ cancel at period end, แสดงวันสุดท้าย/วันหยุดตัดและให้ถอน cancellation ก่อนมีผล; first unpaid/expired checkout ใช้การปิด attempt แยก. ต้องกำหนดผลของการยกเลิกชนกับ renewal และหนี้คงค้าง |
-| B05 | Upgrade/downgrade/เกิน limit | เสนอ phase แรกให้เปลี่ยนรอบถัดไปเพื่อลด proration; ถ้าต้อง upgrade ทันทีต้องแสดงยอดเพิ่มและรอ invoice นั้น paid ก่อนเพิ่มสิทธิ์. Downgrade ไม่ลบสาขา/พนักงาน/ข้อมูลเดิม; กติกาเกิน limit และ feature ถูกถอดต้องชัด |
-| B06 | ภาษีและผู้จ่าย | **เลือกแล้ว:** customer Invoice/Receipt ใช้ Stripe สร้าง/ส่ง. **ยัง OPEN:** นิติบุคคล/ข้อมูลภาษี/สาขา, รวม/บวกภาษี, correction และ withholding ที่ใช้จริง. ไม่หักยอดเอง/mark paidจากสลิปหรือตีความStripe documentเป็นใบกำกับไทยครบ. Custom fiscal PDF/e-Tax deferred ไม่เป็นงาน Postmark |
-| B07 | Refund/dispute/จ่ายซ้ำ | เสนอ workflow support ที่ตรวจ charge/invoice/เหตุผล/สิทธิ์ก่อนคืน, แยก full/partial/refund failure/chargeback; refund และ cancellation เป็นคนละ action. ต้องมีผู้รับผิดชอบและ treatment หลังคืนเงิน/แพ้ dispute |
-| B08 | หนี้เก่าและกลับมาหลังปิด | จ่าย invoice เก่าที่ period หมดแล้วไม่เท่ากับซื้อเดือนใหม่; เลือกว่าจะสะสางหนี้/void/credit/เริ่มสัญญาใหม่อย่างไร. ไม่ปล่อย invoice ใหม่และ auto-charge ต่อไม่จำกัดหลังปิดใช้; ตัดสิน final Stripe state ให้ตรง access policy |
+| B01 | Signup/ผูกบัตร/ช่วง trial ที่เหลือ | **มติ2026-09-13:** Signup ไม่ผูกบัตร/ไม่สร้าง subscription; starter7เมนู/15ใบตาม default. Ownerยืนยันซื้อระหว่างtrialเริ่มและจ่ายทันที ไม่ทบวันtrialและไม่เริ่มtrialซ้ำ |
+| B02 | รอบจ่ายเทียบ quota | **มติ2026-09-13:** Ownerยืนยันmonth/year; paidรายปีให้360/600/1200ใบทั้งก้อนทันที ไม่มีresetต้นเดือน. ซื้อแพ็กเดิมซ้ำเพิ่มโควตาทันทีและต่ออายุจากpaid expiry. Trial/manualคงBangkokmonthly. Receipt-only HIDDEN ทุกช่องทางและห้ามขายตามมติล่าสุด |
+| B03 | Grace/retry/access หลังจ่ายไม่ผ่าน | **มติ2026-09-13:** Ownerยืนยันdefault grace7วันเฉพาะrenewalลูกค้าที่เคยจ่าย พร้อมสิทธิ์แพ็กเดิม; ไม่สร้างโควตาจากinvoiceที่ยังไม่จ่าย. ครบกำหนดพักใช้และcancelStripeเพื่อหยุดหนี้ใหม่. Configแก้ผ่านAdminพร้อมpreview/approval; initialfailureไม่ให้grace |
+| B04 | ยกเลิกและป้องกันเก็บเงินเกิน | **มติ2026-09-13:** Ownerยืนยันcancelสิ้นรอบที่จ่ายแล้ว แสดงpaidThrough/nextchargeและถอนก่อนมีผลได้. ซื้อแพ็กเกจซ้ำต้องเลื่อนcollectionให้ตรงวันสะสม ไม่ตัดเงินซ้ำก่อนหมด. Pending cancellationและrenewal raceต้องreconcile |
+| B05 | Upgrade/downgrade/เกิน limit | **มติ2026-09-13:** Ownerยืนยันupgradeจ่ายส่วนต่างเริ่มทันที/วันสิ้นรอบเดิม และdowngradeสิ้นรอบที่จ่ายแล้ว. Upgradeหลังซื้ออายุล่วงหน้าคิดทุกช่วงที่ยังเหลือ. Downgradeมีเลือกสาขา/ผู้ใช้และover-cap recoveryไม่ลบข้อมูล. Mid-period interval switchยังปิดจนกำหนดanchor/credit |
+| B06 | ภาษีและผู้จ่าย | **มติ2026-09-13:** Invoice/Receiptลูกค้าใช้Stripe; VATปัจจุบันOFFเพราะบริษัทยังไม่จดVAT. Adminเปิดภายหลังต้องเลือกinclusive/exclusiveและข้อมูลกิจการพร้อมpreview/approval. เอกสารเก่าไม่ถูกเปลี่ยน; fiscal correction/withholdingตรวจเป็นกรณี ไม่ถือStripePDFเป็นใบกำกับไทยครบเอง |
+| B07 | Refund/dispute/จ่ายซ้ำ | **มติ2026-09-13:** Ownerยืนยันmanualreviewสำหรับrefund/dispute/จ่ายซ้ำ ตรวจcharge/invoice/รายการใช้ก่อนคืน พร้อมผู้รับผิดชอบ/audit/idempotency. Refundและcancelเป็นคนละaction; ไม่คืนquotaหรือปลดholdจากสถานะที่ยังไม่ยืนยัน |
+| B08 | หนี้เก่าและกลับมาหลังปิด | **มติ2026-09-13:** Ownerยืนยันmanualreviewหนี้เก่า/กลับมาใช้. Invoiceเก่าที่periodหมดไม่สร้างรอบใหม่หรือquotaใหม่; ไม่auto-resubscribe/เก็บหนี้ใหม่หลังgraceexpiryโดยไม่ผ่านrecovery. ผลต่อfinancial/accessแยกกัน |
 | B09 | ราคา/ข้อยกเว้น/สิทธิ์เจ้าของ | **ตัดสินเพิ่ม:** per-company month/year catalog; Enterpriseทั้งสองintervals + ภ.ง.ด.53/50ทวิ locked/Coming soon ห้าม custom checkout bypass. **ยัง OPEN:** legacy/custom override/grandfather/discount mapping. Payer ไม่ได้OWNERเพราะจ่าย; admin exceptionไม่ถูกoverwriteเงียบ ๆ |
 | B10 | Margin, cash flow และ support | รวม processing + Billing, OCR/AI ที่วัดหน่วยถูก, storage/LINE/support/refund/free-trial cost. Payout delay/reserve ไม่ใช่ payment failure; ต้องมี cash buffer/reconciliation และเวลารับเรื่อง paid-but-locked ที่ทำได้จริง |
 
@@ -62,7 +69,7 @@ Developer ใช้ [Stripe developer reference](../research/stripe-developer-re
 
 ## 3. แผน implementation ตามลำดับ
 
-**S-pre DONE (local)** และ pre-LIVE marketing ของ S4 DONE. ส่วน S0–S3/S5 และ app billing UI/paid handoff ใน S4 **NOT STARTED**. งานที่ขึ้นกับ B01–B10 ต้องได้ข้อสรุปของข้อนั้นก่อน implement; การผ่าน S-pre ไม่เลือก trial/grace/refund policy ใหม่.
+**S-pre DONE (local)**; S0–S4 มี implementation และ local simulation ตาม checkpoint ล่าสุดแล้ว แต่ยังไม่ครบทุก acceptance และ S5/merge ยังค้าง. งานที่ขึ้นกับ B01–B10 ต้องได้ข้อสรุปของข้อนั้นก่อน implement; การผ่าน S-pre ไม่เลือก trial/grace/refund policy ใหม่.
 
 | Slice | งาน | Exit ที่ต้องมี |
 |---|---|---|
@@ -127,9 +134,9 @@ Report แยก layer: UNIT/DB, PROVIDER-SANDBOX, BROWSER-E2E, UAT และ re
 
 ผลค้น official [Thai account support](https://support.stripe.com/questions/supported-payment-methods-currencies-and-businesses-for-stripe-accounts-in-thailand?locale=th-TH) ระบุ Visa/Mastercard; full-page fetch ของ support ให้ error ในรอบนี้ จึงต้องยืนยันรายการ brand/currency/capability กับ account จริงก่อน LIVE. อย่านำรายชื่อทุกบัตรจาก global test-card catalog มาโฆษณาว่าบัญชีไทยรับได้ทั้งหมด. T02 ต้องครอบคลุมบัตร/สกุลเงินที่ account เปิดจริง; fee table ประเทศไทยอยู่ B10/§2.
 
-## 5. Acceptance matrix — T01–T42 ทั้งหมดยัง NOT RUN
+## 5. Acceptance targets — T01–T42
 
-สถานะร่วม: **NOT RUN / ต้องมี implementation ก่อน**. ทุก case ที่ใช้กับรุ่นที่จะเปิดเป็น P0 release gate; cases ที่ขึ้นกับ B01–B10 ต้องมี policy answer หรือปิด feature นั้นอย่างพิสูจน์ได้และบันทึก DEFERRED พร้อมเหตุผลแทน PASS. ห้าม defer เส้นทางรับเงิน/เปิดสิทธิ์/ยกเลิก/recovery ที่รุ่นนั้นใช้งานจริง. Failure injection เป็น integration test คนละชั้นกับ browser/sandbox E2E.
+ตารางนี้เป็นเป้าหมาย acceptance ที่กำหนดเมื่อ 2026-09-11 ไม่ใช่ผลทดสอบปัจจุบัน. หลายส่วนมีโค้ดและ local/provider evidence แล้วตาม [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); การรับรองครบทุกเงื่อนไขของแต่ละแถวยังต้องเทียบ source และขอบเขตของผลล่าสุด. ทุก case ที่ใช้กับรุ่นที่จะเปิดเป็น P0 release gate; cases ที่ขึ้นกับ B01–B10 ต้องมี policy answer หรือปิด feature นั้นอย่างพิสูจน์ได้และบันทึก DEFERRED พร้อมเหตุผลแทน PASS. ห้าม defer เส้นทางรับเงิน/เปิดสิทธิ์/ยกเลิก/recovery ที่รุ่นนั้นใช้งานจริง. Failure injection เป็น integration test คนละชั้นกับ browser/sandbox E2E.
 
 | ID | สถานการณ์ | ผลที่ต้องตรวจ |
 |---|---|---|
@@ -236,7 +243,7 @@ Stripe ไม่รับประกันลำดับ event และ local
 
 ### 9C. Recovery API/UI contract และ terminal attempts
 
-- Reuse `GET /v1/plan-term/notice` สำหรับ P29 โดย selected company จาก route ต้องถูกส่งผ่าน `X-Company-Id`; API validate membership/permission ของบริษัทนั้น ไม่ fallback ไป default company เมื่อ explicit ID ไม่ถูกต้อง. Billing target routes เลือกหลังสำรวจ routing แล้วใน [UI spec §5](../specs/mangmee-line-web-billing-ui-spec-th.md); ต้องลง concrete DTO/error codes ใน `packages/contracts` และทำ backend ให้ตรงก่อน web consumer. ยังไม่ใช่ endpoints ที่ implement แล้ว.
+- Reuse `GET /v1/plan-term/notice` สำหรับ P29 โดย selected company จาก route ต้องถูกส่งผ่าน `X-Company-Id`; API validate membership/permission ของบริษัทนั้น ไม่ fallback ไป default company เมื่อ explicit ID ไม่ถูกต้อง. Billing target routes เลือกหลังสำรวจ routing แล้วใน [UI spec §5](../specs/mangmee-line-web-billing-ui-spec-th.md); ต้องลง concrete DTO/error codes ใน `packages/contracts` และทำ backend ให้ตรงก่อน web consumer. ใช้ runtime BillingController/BillingAdminController และ packages/contracts/src/billing.ts เป็น concrete endpoint/DTO contract; UI spec เก็บ journey และ error/recovery obligations.
 - Recovery scope ยกเว้นเฉพาะ term-expiry restriction สำหรับ authenticated current members; OWNER อ่านรายละเอียด/ทำ billing actions ที่เปิดแล้ว, employee เห็นข้อความกลางแต่สร้าง checkout/Portal ไม่ได้. รักษา membership revocation, tenant isolation, platform/security holds และ business routes. ไม่ทำ `@Public()` ให้ customer recovery route และไม่ขยาย bypass ให้ทุก route ของบริษัท DISABLED.
 - แยก `200 null` (ไม่มี term), `401` (login), `403` (ไม่มีสิทธิ์), `5xx`/network failure และ loaded OWNER/employee. Helper ของ decorative banner ที่คืน null ทุก error ใช้เป็น contract ของ recovery page ไม่ได้. ระหว่างเปลี่ยนบริษัทให้ยกเลิก/ignore response เก่าและ clear cache ด้วย company identity.
 - Checkout/status/Portal ต้องใช้ company/attempt ที่ backend ผูกไว้; ตรวจ OWNER ใหม่ทุกครั้งรวมหลังเปลี่ยนเจ้าของ. Client ส่งราคา, Stripe customer/subscription ID หรือ return URL เองเพื่อข้าม mapping ไม่ได้. สถานะส่ง server-derived next action + reference + observedAt; hosted URL อายุสั้นต้องสร้างหลัง authorization และไม่ลง analytics/log.
@@ -265,3 +272,21 @@ RG01–RG05 ขยาย existing browser/PG suites ใน S-pre เฉพาะ
 - **จบ S-pre — DONE local:** expanded browser 20/20 + PG 15/15 รวม baseline/RG01–RG05, focused 198/198, production-source typecheck API/web ผ่าน. [หลักฐาน](../evidence/stripe-repair-2026-09-11/README.md) มี source SHA/DB/API/UI/cleanup และ read-only legacy report. Disposable company/user/notification/audit เหลือ 0; legal evidence แบบ append-only คงตาม policy. Marketing pre-LIVE ผ่าน 2 viewport. ยังไม่ deploy.
 - **จบ integration:** S0–S5 ผ่าน, RG06 และ applicable T01–T42 มี provider sandbox + app DB/API/browser evidence, business policy/config ตรงทั้งสอง repo, R04 marketing ผ่านจริง. ห้ามนับ simulated manual renew เป็น Stripe PASS.
 - **เปิดใช้จริง:** ทำ operational acceptance §6 และ deployment protocol ของ repoครบ; เอกสารครบหรือ sandbox ผ่านยังไม่ใช่ LIVE acceptance. ไม่เปิด paid offers จากงาน review นี้.
+
+
+### Collection checkpoint and next restart slice — 2026-09-13
+
+49combinedHTTP/browsergroupsPASS with simulatedStripe;5focusedcollectionworkerfaulttestsPASS;API/webtypechecksPASS. Ordinary/prepaidcancel/resume, immutablecommandreservation/withdrawal/permanentUIlink, source/permission/leasefences and provider-observedrecovery are implemented. Separate nativeStripeTestClockproof confirms cancel_at at purchasedexpiry, resumewithoutcharge, and automatictermination. See integrationevidence/source receipt. This does not complete the full change-plan/operator/LINE matrix.
+
+Next implement explicit restart after expired and terminalStripecollection: samecustomer/newsubscription under a fresh reviewed purchase, old invoice/contract history preserved, no expired quota revival, currentpaid/grace/security/source checks, duplicate/debt/refund/dispute refusal, new paid evidence before switching contract/applying access. Lower-cap restart uses the same explicit branch/seat selection required by downgrade. Never clear old baseSubscriptionId just to bypass a guard. Continue remaining full-scope work and CI/merges;NO DEPLOY.
+
+### Notification execution slice — 2026-09-13, verification in progress
+
+Restart and mapped financial observations now have the 60-group checkpoint recorded in integration evidence. The next slice wires the existing payment outbox to current OWNER web/LINE notification rows and verified-email Postmark status notices. Test actual AppModule/PostgreSQL worker routes with synthetic Stripe, LINE and Postmark transports: duplicate/resolved event replay, stable LINE retry after lost response or crashed worker, wrong channel, owner withdrawal, unverified/suppressed email, Postmark unknown lookup, gate close/reopen and expired retry binding. Verify all notification failures leave paid term and receipt grants unchanged. No native LINE/inbox claim, no deployment. Operator delivery history and controlled retry remain part of the remaining control work.
+
+
+### Current execution: prepaid upgrade
+
+Implement the pack amendment's durable one-time difference payment with immutable paid-segment history and isolated Stripe invoice preview. Reuse repeat hold/journal/schedule/compensation, exact paid-chain parser and atomic grant rather than adding another payment engine. Required checks: monthly half-period and upfront annual, multiple prepaid years, repeated tier upgrades, consumed quota unchanged, exact next-renewal full price, stale quote/boundary/source/owner/tax changes, failed/expired/UNKNOWN/replay/concurrent request, wrong preview/payment, no access before confirmed payment/schedule, historical documents and web→LINE shared admission. Current status is implementation in progress, not acceptance PASS. No deploy.
+
+2026-09-14 capacity continuation: shared OWNER retained-resource DTO/source hash, read-only constraints/default-branch review, transactional paid application without history deletion, lower-cap restart and paid-held repair from original invoice, then scheduled downgrade using the same selection. Verify tenant/OWNER, stale selection, role/branch scope changes, concurrent activation, payment failure/replay, protected work, existing UI recovery and no second payment. Current78group checkpoint does not yet cover this selection addition.

@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createSign, generateKeyPairSync } from 'node:crypto';
-import { ForbiddenException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { SesEventsUseCase, expectedSesEventsTopicArn } from './ses-event.use-case';
 import { resetSnsCertificateCache, snsCanonicalString, type SnsEnvelope } from '../infrastructure/sns-signature';
 
@@ -42,13 +42,14 @@ function bounceEvent(bounceType: string, messageId = SES_MESSAGE_ID) {
   };
 }
 
-function harness(options: { state?: string | null } = {}) {
+function harness(options: { state?: string | null; currentAttempt?: string; changedBeforeAdvance?: boolean } = {}) {
   const advanced: any[] = [];
   const audits: any[] = [];
   const fetched: string[] = [];
   const logs: any[] = [];
 
-  const row = options.state === null ? null : { id: 'signup-1', state: options.state ?? 'EMAIL_PENDING' };
+  const row = options.state === null ? null : { id: 'signup-1', state: options.state ?? 'EMAIL_PENDING',
+    claimEmailSesMessageId: SES_MESSAGE_ID, latestClaimEmailAttemptId: options.currentAttempt ?? null };
   const prisma = {
     client: {
       companySignupRequest: { findUnique: async () => row },
@@ -56,7 +57,10 @@ function harness(options: { state?: string | null } = {}) {
     },
   } as any;
   const core = {
-    advance: async (id: string, to: string, correlationRequestId: string, failureCode?: string) => {
+    advance: async (id: string, to: string, correlationRequestId: string, failureCode?: string, guard?: any, extras?: any) => {
+      if (row && options.changedBeforeAdvance) row.latestClaimEmailAttemptId = 'new-postmark-attempt';
+      if (guard && !guard(row)) throw new ConflictException(guard.rejectionCode);
+      await extras?.alsoInTransaction?.(prisma.client);
       advanced.push({ id, to, correlationRequestId, failureCode });
       return {};
     },
@@ -177,6 +181,15 @@ describe('SesEventsUseCase subscription confirmation', () => {
 });
 
 describe('SesEventsUseCase SES events', () => {
+  it('ignores an old SES bounce after Postmark reserves a new claim, including a concurrent provider switch', async () => {
+    for (const options of [{ currentAttempt: 'new-postmark-attempt' }, { changedBeforeAdvance: true }]) {
+      const h = harness(options);
+      const result = await withTopicArn(TOPIC_ARN, () => h.useCase.handle(envelope(bounceEvent('Permanent')), 'req-1'));
+      assert.deepEqual(result, { handled: 'ignored' });
+      assert.deepEqual(h.advanced, []);
+      assert.deepEqual(h.audits, []);
+    }
+  });
   it('fails the awaiting-claim request on a permanent bounce and records why', async () => {
     const h = harness();
     const result = await withTopicArn(TOPIC_ARN, () => h.useCase.handle(envelope(bounceEvent('Permanent')), 'req-1'));

@@ -1,0 +1,58 @@
+{
+  "status": "LOCAL_ADMIN_AI_SUPPORT_SLICE_PASS",
+  "recordedAt": "2026-09-15T07:49:11.384224+00:00",
+  "baseCommit": "77cfa59941914bbe16dbfa6fba4a4256d628e936",
+  "sourceSha256": {
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-timeline.use-case.ts": "d27e7ccde31bb862a03a19551663387647758b56d9506e85b65c13a3557a749b",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner-support-tools.spec.ts": "4657d34c06013027d28a14f908456aa8fa432ca731abe3aa1ee6435c35aa1177",
+    "apps/api/src/scripts/partner-plan-adjustments-smoke.ts": "fb5e6b1e8aa74e71f32ce17d560eb57add1eff575f0a60a52fc8a16655d9bd2c",
+    "apps/api/src/scripts/partner-ai-support-smoke.ts": "353642b663d624500d376cc65882c26476ac124263fdd03867ff7e3cd277e5f8",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "b7428094a72dd29cb8af9aef15b68b3abb510ee2280e25454b2af07a49fe8cdd"
+  },
+  "focused": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "manual-plan-required-reason-command-and-explicit-absent-source-create-replay",
+      "manual-renew-concurrent-original-command-one-extension-fresh-http-correlation-and-actor-body-source-conflicts",
+      "manual-plan-current-source-cas-retains-resources-and-real-audit-failure-rolls-back-days",
+      "manual-line-request-term-and-both-audits-commit-together-or-rollback-open-concurrent-replay-once",
+      "manual-plan-original-line-request-provenance-shared-quota-and-concurrent-paid-conversion-refused",
+      "manual-plan-safe-history-25-row-pages-and-foreign-company-cursor-refusal",
+      "browser-manual-plan-immutable-response-loss-retry-once-reason-renew-history-reload-stale-recovery-and-mobile",
+      "admin-ai-support-paid-admission-exhaustion-and-additional-grant-do-not-use-legacy-monthly-cap-or-block-all-chat",
+      "admin-ai-support-current-budget-ocr-switch-and-company-hold-have-distinct-explanations",
+      "browser-admin-ai-support-reloads-current-grant-budget-and-ocr-facts-without-restart"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "checks": {
+    "unit": {
+      "pass": 31,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "ai-support-unit.tap"
+    }
+  },
+  "captures": [
+    "admin-ai-support-status-mobile.png"
+  ],
+  "commands": [
+    "BILLING_CONFIG_ONLY=1 BILLING_MANUAL_PLAN_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "corepack pnpm --dir apps/api exec tsx --tsconfig tsconfig.json --test src/modules/system-partner-management/presentation/http/partner-support-tools.spec.ts",
+    "API/web tsc --noEmit; SWC build"
+  ],
+  "boundaries": [
+    "Current paid receipt grants and actual OCR admission, rather than legacy monthly receipt caps, drive Admin support explanations. Receipt exhaustion/OCR switches/feature access and all-AI spending or company holds have distinct Thai labels. Live platform budget is read without a stale cache.",
+    "Actual HTTP/PostgreSQL/Next/Chromium; provider adapters are simulated. Fixture grants are TEST_ONLY, not a native paid invoice. Ten groups include seven manual-plan regressions and three AI-support groups; counts overlap.",
+    "Unit cases cover annual1200 allowance, additional1200 receipts, shadow enforcement, current LINE channel, features, OCR and live platform budget. Browser/DB cases cover actual paid-grant consumption, additive recovery, budget raise, OCR off and company hold.",
+    "The Admin browser reload reads current facts without restart and discards prior-shop responses. The inspected390px capture includes Thai VAT and LINE labels; VAT policy, stored option values and financial amounts are unchanged.",
+    "This is a support projection, not a guarantee that every provider or deployment gate is healthy. Earlier combined276 predates manual/AI support changes; no new full combined run is claimed.",
+    "No native payment, mail or LINE delivery; no CI, push, merge or deployment. Manual/trial additive receipts, paid free-day collection coordination, original paid LINE request closure and remaining controls/mail/LINE acceptance remain open."
+  ]
+}

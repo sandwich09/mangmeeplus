@@ -1,0 +1,725 @@
+TAP version 13
+# Subtest: AuthGuard
+    # Subtest: leaves public internal machine routes to their controller credential checks while customer access is closed
+    ok 1 - leaves public internal machine routes to their controller credential checks while customer access is closed
+      ---
+      duration_ms: 2.138041
+      type: 'test'
+      ...
+    # Subtest: keeps login/status public but blocks other public routes while customer access is closed
+    ok 2 - keeps login/status public but blocks other public routes while customer access is closed
+      ---
+      duration_ms: 0.413083
+      type: 'test'
+      ...
+    # Subtest: allows only SYSTEM_ADMIN protected sessions while customer access is closed
+    ok 3 - allows only SYSTEM_ADMIN protected sessions while customer access is closed
+      ---
+      duration_ms: 1.12075
+      type: 'test'
+      ...
+    # Subtest: returns true for @Public() routes
+    ok 4 - returns true for @Public() routes
+      ---
+      duration_ms: 0.175459
+      type: 'test'
+      ...
+    # Subtest: throws UnauthorizedException when Authorization header is missing
+    ok 5 - throws UnauthorizedException when Authorization header is missing
+      ---
+      duration_ms: 0.242625
+      type: 'test'
+      ...
+    # Subtest: throws UnauthorizedException when both verifiers fail
+    ok 6 - throws UnauthorizedException when both verifiers fail
+      ---
+      duration_ms: 0.185291
+      type: 'test'
+      ...
+    # Subtest: dev auth is not tried when APP_ENV is not local
+    ok 7 - dev auth is not tried when APP_ENV is not local
+      ---
+      duration_ms: 0.376458
+      type: 'test'
+      ...
+    # Subtest: attaches context when watchdog verifier succeeds
+    ok 8 - attaches context when watchdog verifier succeeds
+      ---
+      duration_ms: 0.47275
+      type: 'test'
+      ...
+    # Subtest: accepts the watchdog_token cookie when no Authorization header is present
+    ok 9 - accepts the watchdog_token cookie when no Authorization header is present
+      ---
+      duration_ms: 0.551583
+      type: 'test'
+      ...
+    # Subtest: re-joins a chunked watchdog_token.0..N cookie (large tokens exceed the 4KB cookie limit)
+    ok 10 - re-joins a chunked watchdog_token.0..N cookie (large tokens exceed the 4KB cookie limit)
+      ---
+      duration_ms: 0.935834
+      type: 'test'
+      ...
+    # Subtest: prefers the Bearer header over the cookie when both are present
+    ok 11 - prefers the Bearer header over the cookie when both are present
+      ---
+      duration_ms: 0.85575
+      type: 'test'
+      ...
+    # Subtest: uses route companyId as membership hint when x-company-id is absent
+    ok 12 - uses route companyId as membership hint when x-company-id is absent
+      ---
+      duration_ms: 0.4595
+      type: 'test'
+      ...
+    # Subtest: rejects conflicting header and route companies before resolving request context
+    ok 13 - rejects conflicting header and route companies before resolving request context
+      ---
+      duration_ms: 0.433416
+      type: 'test'
+      ...
+    # Subtest: names the requested company only on a scoped auth/me access denial
+    ok 14 - names the requested company only on a scoped auth/me access denial
+      ---
+      duration_ms: 1.388334
+      type: 'test'
+      ...
+    # Subtest: authenticates before reporting a conflicting company selector
+    ok 15 - authenticates before reporting a conflicting company selector
+      ---
+      duration_ms: 0.452709
+      type: 'test'
+      ...
+    # Subtest: rejects a revoked session token before protected route handling
+    ok 16 - rejects a revoked session token before protected route handling
+      ---
+      duration_ms: 0.223875
+      type: 'test'
+      ...
+    # Subtest: rejects a sid-less token and never resolves a request context
+    ok 17 - rejects a sid-less token and never resolves a request context
+      ---
+      duration_ms: 0.103875
+      type: 'test'
+      ...
+    # Subtest: does not fall back to dev auth when watchdog verifier rejects a refresh token in production
+    ok 18 - does not fall back to dev auth when watchdog verifier rejects a refresh token in production
+      ---
+      duration_ms: 0.110959
+      type: 'test'
+      ...
+    # Subtest: does not block a LINE-login session that still has mustChangePassword set
+    ok 19 - does not block a LINE-login session that still has mustChangePassword set
+      ---
+      duration_ms: 0.167
+      type: 'test'
+      ...
+    # Subtest: blocks password-login and legacy (no provider claim) sessions that must change password
+    ok 20 - blocks password-login and legacy (no provider claim) sessions that must change password
+      ---
+      duration_ms: 0.662417
+      type: 'test'
+      ...
+    # Subtest: blocks business routes of an expired company with company_term_expired
+    ok 21 - blocks business routes of an expired company with company_term_expired
+      ---
+      duration_ms: 0.245042
+      type: 'test'
+      ...
+    # Subtest: blocks on the exact hour: one millisecond before termEndsAt still passes
+    ok 22 - blocks on the exact hour: one millisecond before termEndsAt still passes
+      ---
+      duration_ms: 0.191791
+      type: 'test'
+      ...
+    # Subtest: keeps login, me, the company switcher, logout and the notice endpoint working when expired
+    ok 23 - keeps login, me, the company switcher, logout and the notice endpoint working when expired
+      ---
+      duration_ms: 0.2215
+      type: 'test'
+      ...
+    # Subtest: a company with NO term row is untouched by the expiry check
+    ok 24 - a company with NO term row is untouched by the expiry check
+      ---
+      duration_ms: 0.092959
+      type: 'test'
+      ...
+    # Subtest: SYSTEM_ADMIN is never locked out by a term expiry — the console that fixes it must stay reachable
+    ok 25 - SYSTEM_ADMIN is never locked out by a term expiry — the console that fixes it must stay reachable
+      ---
+      duration_ms: 0.17275
+      type: 'test'
+      ...
+    # Subtest: blocks protected business routes with a stable legal_acceptance_required response
+    ok 26 - blocks protected business routes with a stable legal_acceptance_required response
+      ---
+      duration_ms: 0.156083
+      type: 'test'
+      ...
+    # Subtest: keeps the legal acceptance status/write path available while acceptance is pending
+    ok 27 - keeps the legal acceptance status/write path available while acceptance is pending
+      ---
+      duration_ms: 0.3045
+      type: 'test'
+      ...
+    # Subtest: lets a pending-acceptance user approve a desktop QR login (UAT 2026-09-01)
+    ok 28 - lets a pending-acceptance user approve a desktop QR login (UAT 2026-09-01)
+      ---
+      duration_ms: 0.060541
+      type: 'test'
+      ...
+    # Subtest: does not exempt unrelated authenticated /v1/auth mutations from the legal gate
+    ok 29 - does not exempt unrelated authenticated /v1/auth mutations from the legal gate
+      ---
+      duration_ms: 0.201459
+      type: 'test'
+      ...
+    1..29
+ok 1 - AuthGuard
+  ---
+  duration_ms: 14.893042
+  type: 'suite'
+  ...
+# Subtest: DenyByDefaultGuard
+    # Subtest: throws ForbiddenException when protected route has no permission metadata
+    ok 1 - throws ForbiddenException when protected route has no permission metadata
+      ---
+      duration_ms: 1.04025
+      type: 'test'
+      ...
+    # Subtest: throws ForbiddenException when required permission is missing
+    ok 2 - throws ForbiddenException when required permission is missing
+      ---
+      duration_ms: 0.113458
+      type: 'test'
+      ...
+    # Subtest: accepts any one explicitly equivalent permission and rejects callers holding neither
+    ok 3 - accepts any one explicitly equivalent permission and rejects callers holding neither
+      ---
+      duration_ms: 0.265292
+      type: 'test'
+      ...
+    # Subtest: returns feature_not_enabled only when every missing permission was granted then entitlement-filtered
+    ok 4 - returns feature_not_enabled only when every missing permission was granted then entitlement-filtered
+      ---
+      duration_ms: 0.208542
+      type: 'test'
+      ...
+    # Subtest: does not mislabel a partial role grant as feature_not_enabled
+    ok 5 - does not mislabel a partial role grant as feature_not_enabled
+      ---
+      duration_ms: 0.099834
+      type: 'test'
+      ...
+    # Subtest: allows protected route when required permission exists
+    ok 6 - allows protected route when required permission exists
+      ---
+      duration_ms: 0.057708
+      type: 'test'
+      ...
+    1..6
+ok 2 - DenyByDefaultGuard
+  ---
+  duration_ms: 1.933042
+  type: 'suite'
+  ...
+# Subtest: billing recovery boundaries
+    # Subtest: permits only callback POST routes during platform closure; controllers still verify provider credentials
+    ok 1 - permits only callback POST routes during platform closure; controllers still verify provider credentials
+      ---
+      duration_ms: 0.500833
+      type: 'test'
+      ...
+    # Subtest: bounds recovery to implemented methods and preserves business and legal gates
+    ok 2 - bounds recovery to implemented methods and preserves business and legal gates
+      ---
+      duration_ms: 0.723791
+      type: 'test'
+      ...
+    1..2
+ok 3 - billing recovery boundaries
+  ---
+  duration_ms: 1.298833
+  type: 'suite'
+  ...
+# Subtest: GetLineSignupStatusUseCase
+    # Subtest: answers for the LINE account the token proves and no other
+    ok 1 - answers for the LINE account the token proves and no other
+      ---
+      duration_ms: 3.040584
+      type: 'test'
+      ...
+    # Subtest: hands back the shop id once it exists, so the page can open it
+    ok 2 - hands back the shop id once it exists, so the page can open it
+      ---
+      duration_ms: 0.216333
+      type: 'test'
+      ...
+    # Subtest: reports that this request created a shop without offering entry after current access is gone
+    ok 3 - reports that this request created a shop without offering entry after current access is gone
+      ---
+      duration_ms: 0.080542
+      type: 'test'
+      ...
+    # Subtest: does not offer an endless retry for a migrated intake missing a required field
+    ok 4 - does not offer an endless retry for a migrated intake missing a required field
+      ---
+      duration_ms: 0.065167
+      type: 'test'
+      ...
+    # Subtest: answers null for a LINE account that never applied
+    ok 5 - answers null for a LINE account that never applied
+      ---
+      duration_ms: 0.101709
+      type: 'test'
+      ...
+    # Subtest: returns proven memberships even when the account has no signup request
+    ok 6 - returns proven memberships even when the account has no signup request
+      ---
+      duration_ms: 0.13875
+      type: 'test'
+      ...
+    # Subtest: charges its own per-account read quota, never the submit one
+    ok 7 - charges its own per-account read quota, never the submit one
+      ---
+      duration_ms: 0.055541
+      type: 'test'
+      ...
+    # Subtest: reads nothing once that quota is spent
+    ok 8 - reads nothing once that quota is spent
+      ---
+      duration_ms: 0.354208
+      type: 'test'
+      ...
+    # Subtest: reads nothing when the token does not verify
+    ok 9 - reads nothing when the token does not verify
+      ---
+      duration_ms: 0.357833
+      type: 'test'
+      ...
+    1..9
+ok 4 - GetLineSignupStatusUseCase
+  ---
+  duration_ms: 5.740875
+  type: 'suite'
+  ...
+# Subtest: PackageChangeRequestUseCase
+    # Subtest: opens a request and audits it without touching the tier
+    ok 1 - opens a request and audits it without touching the tier
+      ---
+      duration_ms: 1.070625
+      type: 'test'
+      ...
+    # Subtest: refuses a member who can edit settings but does not own the shop
+    ok 2 - refuses a member who can edit settings but does not own the shop
+      ---
+      duration_ms: 0.62075
+      type: 'test'
+      ...
+    # Subtest: lets a shop whose trial expired ask, which is the whole point of the button
+    ok 3 - lets a shop whose trial expired ask, which is the whole point of the button
+      ---
+      duration_ms: 0.367334
+      type: 'test'
+      ...
+    # Subtest: refuses a caller with no active membership in the company at all
+    ok 4 - refuses a caller with no active membership in the company at all
+      ---
+      duration_ms: 0.126917
+      type: 'test'
+      ...
+    # Subtest: refuses a tier that is not in the catalog
+    ok 5 - refuses a tier that is not in the catalog
+      ---
+      duration_ms: 0.200083
+      type: 'test'
+      ...
+    # Subtest: is idempotent: a second ask returns the OPEN request rather than queueing a duplicate
+    ok 6 - is idempotent: a second ask returns the OPEN request rather than queueing a duplicate
+      ---
+      duration_ms: 0.234709
+      type: 'test'
+      ...
+    # Subtest: surfaces a unique violation with no OPEN row behind it instead of inventing one
+    ok 7 - surfaces a unique violation with no OPEN row behind it instead of inventing one
+      ---
+      duration_ms: 0.241708
+      type: 'test'
+      ...
+    # Subtest: lists a company own requests newest first
+    ok 8 - lists a company own requests newest first
+      ---
+      duration_ms: 0.132959
+      type: 'test'
+      ...
+    1..8
+ok 5 - PackageChangeRequestUseCase
+  ---
+  duration_ms: 3.264834
+  type: 'suite'
+  ...
+# Subtest: GET /system/package-change-requests
+    # Subtest: shows a paid purchase source without exposing financial references or sending a second approval notice
+    ok 1 - shows a paid purchase source without exposing financial references or sending a second approval notice
+      ---
+      duration_ms: 2.127333
+      type: 'test'
+      ...
+    # Subtest: shows the shop, the move and who asked for it
+    ok 2 - shows the shop, the move and who asked for it
+      ---
+      duration_ms: 0.395333
+      type: 'test'
+      ...
+    # Subtest: falls back to OPEN rather than trusting an unknown status from the query string
+    ok 3 - falls back to OPEN rather than trusting an unknown status from the query string
+      ---
+      duration_ms: 0.204
+      type: 'test'
+      ...
+    1..3
+ok 6 - GET /system/package-change-requests
+  ---
+  duration_ms: 3.557292
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — APPROVE
+    # Subtest: moves the tier through the ONE plan-term writer, with that tier preset
+    ok 1 - moves the tier through the ONE plan-term writer, with that tier preset
+      ---
+      duration_ms: 2.999833
+      type: 'test'
+      ...
+    # Subtest: tells the shop, in the tier label it will recognise
+    ok 2 - tells the shop, in the tier label it will recognise
+      ---
+      duration_ms: 1.188917
+      type: 'test'
+      ...
+    # Subtest: is idempotent: repeating the decision buys no second tier change
+    ok 3 - is idempotent: repeating the decision buys no second tier change
+      ---
+      duration_ms: 0.196292
+      type: 'test'
+      ...
+    # Subtest: two operators on one row produce one tier change, not two
+    ok 4 - two operators on one row produce one tier change, not two
+      ---
+      duration_ms: 0.224917
+      type: 'test'
+      ...
+    # Subtest: puts the row back in the queue when the tier write fails
+    ok 5 - puts the row back in the queue when the tier write fails
+      ---
+      duration_ms: 0.62725
+      type: 'test'
+      ...
+    # Subtest: refuses a tier that is not in the catalog before touching anything
+    ok 6 - refuses a tier that is not in the catalog before touching anything
+      ---
+      duration_ms: 0.4425
+      type: 'test'
+      ...
+    # Subtest: 404s on a request that does not exist
+    ok 7 - 404s on a request that does not exist
+      ---
+      duration_ms: 0.131166
+      type: 'test'
+      ...
+    1..7
+ok 7 - POST /system/package-change-requests/:id/decision — APPROVE
+  ---
+  duration_ms: 7.159917
+  type: 'suite'
+  ...
+# Subtest: POST /system/package-change-requests/:id/decision — REJECT
+    # Subtest: closes the row without moving the tier, and says so politely
+    ok 1 - closes the row without moving the tier, and says so politely
+      ---
+      duration_ms: 0.28425
+      type: 'test'
+      ...
+    # Subtest: holds the note to the SEC-05 fence, before anything is claimed
+    ok 2 - holds the note to the SEC-05 fence, before anything is claimed
+      ---
+      duration_ms: 0.409083
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours in the note
+    ok 3 - refuses a second URL glued onto one of ours in the note
+      ---
+      duration_ms: 0.663042
+      type: 'test'
+      ...
+    # Subtest: refuses the same paragraph the message box refuses, with the same code
+    ok 4 - refuses the same paragraph the message box refuses, with the same code
+      ---
+      duration_ms: 0.078792
+      type: 'test'
+      ...
+    # Subtest: records the note text in the audit, not merely that one existed
+    ok 5 - records the note text in the audit, not merely that one existed
+      ---
+      duration_ms: 0.112458
+      type: 'test'
+      ...
+    # Subtest: stays silent when the shop has no linked LINE owner
+    ok 6 - stays silent when the shop has no linked LINE owner
+      ---
+      duration_ms: 0.152125
+      type: 'test'
+      ...
+    # Subtest: still decides when no LINE channel is configured at all
+    ok 7 - still decides when no LINE channel is configured at all
+      ---
+      duration_ms: 0.125208
+      type: 'test'
+      ...
+    1..7
+ok 8 - POST /system/package-change-requests/:id/decision — REJECT
+  ---
+  duration_ms: 1.89825
+  type: 'suite'
+  ...
+# Subtest: keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+ok 9 - keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop
+  ---
+  duration_ms: 0.119041
+  type: 'test'
+  ...
+# Subtest: GET /system/partners/:id/timeline — §8
+    # Subtest: distinguishes paid package fulfillment from an Admin approval in the shop history
+    ok 1 - distinguishes paid package fulfillment from an Admin approval in the shop history
+      ---
+      duration_ms: 1.51625
+      type: 'test'
+      ...
+    # Subtest: tells the shop story in order, from rows that already exist
+    ok 2 - tells the shop story in order, from rows that already exist
+      ---
+      duration_ms: 0.786709
+      type: 'test'
+      ...
+    # Subtest: says the shop was opened by an admin when there is no application behind it
+    ok 3 - says the shop was opened by an admin when there is no application behind it
+      ---
+      duration_ms: 0.240042
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 4 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.355292
+      type: 'test'
+      ...
+    1..4
+ok 10 - GET /system/partners/:id/timeline — §8
+  ---
+  duration_ms: 3.33225
+  type: 'suite'
+  ...
+# Subtest: the timeline last line: why the assistant is refusing right now
+    # Subtest: is absent for a healthy shop
+    ok 1 - is absent for a healthy shop
+      ---
+      duration_ms: 0.235458
+      type: 'test'
+      ...
+    # Subtest: names a disabled company first, because nothing else matters then
+    ok 2 - names a disabled company first, because nothing else matters then
+      ---
+      duration_ms: 0.103625
+      type: 'test'
+      ...
+    # Subtest: names an expired term
+    ok 3 - names an expired term
+      ---
+      duration_ms: 0.091333
+      type: 'test'
+      ...
+    # Subtest: names an unlinked shop
+    ok 4 - names an unlinked shop
+      ---
+      duration_ms: 0.241875
+      type: 'test'
+      ...
+    # Subtest: uses the actual trial allowance during a legacy warmup-ten window
+    ok 5 - uses the actual trial allowance during a legacy warmup-ten window
+      ---
+      duration_ms: 0.305625
+      type: 'test'
+      ...
+    # Subtest: names the AI budget, against the shop own override
+    ok 6 - names the AI budget, against the shop own override
+      ---
+      duration_ms: 0.291
+      type: 'test'
+      ...
+    1..6
+ok 11 - the timeline last line: why the assistant is refusing right now
+  ---
+  duration_ms: 1.47475
+  type: 'suite'
+  ...
+# Subtest: current Admin AI support explanation
+    # Subtest: uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal
+    ok 1 - uses remaining annual/repurchased grants instead of a monthly cap, and does not call receipt exhaustion a chat refusal
+      ---
+      duration_ms: 0.464375
+      type: 'test'
+      ...
+    # Subtest: honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget
+    ok 2 - honours current enforcement, OCR switch/operations limit, feature entitlement and live platform budget
+      ---
+      duration_ms: 0.934542
+      type: 'test'
+      ...
+    1..2
+ok 12 - current Admin AI support explanation
+  ---
+  duration_ms: 1.554833
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/line-message — SEC-05
+    # Subtest: pushes to the shop OWNERs, signed with the operator name, and audits the text
+    ok 1 - pushes to the shop OWNERs, signed with the operator name, and audits the text
+      ---
+      duration_ms: 0.762708
+      type: 'test'
+      ...
+    # Subtest: leaves the request OPEN when the message reached nobody
+    ok 2 - leaves the request OPEN when the message reached nobody
+      ---
+      duration_ms: 0.17775
+      type: 'test'
+      ...
+    # Subtest: never broadcasts an answer to everyone else waiting on the shop
+    ok 3 - never broadcasts an answer to everyone else waiting on the shop
+      ---
+      duration_ms: 0.172542
+      type: 'test'
+      ...
+    # Subtest: reaches the one requester the operator named, alongside the shop OWNERs
+    ok 4 - reaches the one requester the operator named, alongside the shop OWNERs
+      ---
+      duration_ms: 0.192542
+      type: 'test'
+      ...
+    # Subtest: sends one message, not two, when the OWNER is the person who asked
+    ok 5 - sends one message, not two, when the OWNER is the person who asked
+      ---
+      duration_ms: 0.119458
+      type: 'test'
+      ...
+    # Subtest: answers an employee-raised request even when no OWNER has LINE linked
+    ok 6 - answers an employee-raised request even when no OWNER has LINE linked
+      ---
+      duration_ms: 0.09775
+      type: 'test'
+      ...
+    # Subtest: marks the named request answered, with the button's own audit
+    ok 7 - marks the named request answered, with the button's own audit
+      ---
+      duration_ms: 0.172917
+      type: 'test'
+      ...
+    # Subtest: is idempotent on a request that was already answered
+    ok 8 - is idempotent on a request that was already answered
+      ---
+      duration_ms: 0.419375
+      type: 'test'
+      ...
+    # Subtest: refuses a request belonging to another shop, rather than pushing across tenants
+    ok 9 - refuses a request belonging to another shop, rather than pushing across tenants
+      ---
+      duration_ms: 0.109458
+      type: 'test'
+      ...
+    # Subtest: refuses a request that is already CLOSED, which nobody is waiting on
+    ok 10 - refuses a request that is already CLOSED, which nobody is waiting on
+      ---
+      duration_ms: 0.091917
+      type: 'test'
+      ...
+    # Subtest: refuses a request id that does not exist
+    ok 11 - refuses a request id that does not exist
+      ---
+      duration_ms: 0.062334
+      type: 'test'
+      ...
+    # Subtest: refuses a message longer than the bound, before it reaches LINE
+    ok 12 - refuses a message longer than the bound, before it reaches LINE
+      ---
+      duration_ms: 0.099167
+      type: 'test'
+      ...
+    # Subtest: refuses a second URL glued onto one of ours
+    ok 13 - refuses a second URL glued onto one of ours
+      ---
+      duration_ms: 0.570875
+      type: 'test'
+      ...
+    # Subtest: refuses a link outside our own domains
+    ok 14 - refuses a link outside our own domains
+      ---
+      duration_ms: 0.079833
+      type: 'test'
+      ...
+    # Subtest: sends to nobody, and records the failure, when no OWNER has LINE linked
+    ok 15 - sends to nobody, and records the failure, when no OWNER has LINE linked
+      ---
+      duration_ms: 0.092959
+      type: 'test'
+      ...
+    # Subtest: 404s for a company that does not exist
+    ok 16 - 404s for a company that does not exist
+      ---
+      duration_ms: 0.086041
+      type: 'test'
+      ...
+    1..16
+ok 13 - POST /system/partners/:id/line-message — SEC-05
+  ---
+  duration_ms: 3.527458
+  type: 'suite'
+  ...
+# Subtest: POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+    # Subtest: moves the ceiling to now and records who lifted it
+    ok 1 - moves the ceiling to now and records who lifted it
+      ---
+      duration_ms: 0.507541
+      type: 'test'
+      ...
+    # Subtest: is a no-op on a warm-up that already ended
+    ok 2 - is a no-op on a warm-up that already ended
+      ---
+      duration_ms: 0.136459
+      type: 'test'
+      ...
+    # Subtest: is a no-op for a shop that never had a warm-up
+    ok 3 - is a no-op for a shop that never had a warm-up
+      ---
+      duration_ms: 0.116958
+      type: 'test'
+      ...
+    # Subtest: 404s for a grandfathered company with no term row
+    ok 4 - 404s for a grandfathered company with no term row
+      ---
+      duration_ms: 0.156458
+      type: 'test'
+      ...
+    1..4
+ok 14 - POST /system/partners/:id/plan-term/end-warmup — §9 "ตรวจแล้ว"
+  ---
+  duration_ms: 1.024625
+  type: 'suite'
+  ...
+1..14
+# tests 104
+# suites 13
+# pass 104
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 990.295916

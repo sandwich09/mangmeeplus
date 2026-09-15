@@ -1,3 +1,5 @@
+import {planTermSourceVersion} from '../plan-term-adjustment';
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -35,6 +37,7 @@ afterEach(() => { globalThis.fetch = originalFetch; });
 
 function harness(options: {
   row?: any | null;
+  paid?: boolean;
   rows?: any[];
   /** Simulates losing the OPEN→decided race: the CAS matches nothing. */
   claimWins?: boolean;
@@ -49,6 +52,8 @@ function harness(options: {
 
   const prisma = {
     client: {
+      companyPlanTerm: {findUnique: async () => options.paid?{billingReceiptAccountId:'paid-account'}:null},
+      branch:{count:async()=>1},
       packageChangeRequest: {
         findUnique: async () => (current ? { ...current } : null),
         findMany: async () => options.rows ?? [],
@@ -64,6 +69,7 @@ function harness(options: {
       user: { findMany: async () => [{ id: 'owner-1', displayName: 'คุณนิด' }] },
       auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
       companyMembership: {
+        count:async()=>1,findFirst:async()=>({id:'admin-membership'}),
         findMany: async () => (options.ownerLineUserIds ?? ['Uowner-1']).map(() => ({ userId: 'owner-1' })),
       },
       externalIdentity: {
@@ -71,6 +77,9 @@ function harness(options: {
       },
     },
   } as any;
+
+  prisma.client.$queryRaw=async()=>[];
+  prisma.client.$transaction=async(fn:any)=>{const before=current?{...current}:null,n=audits.length;try{return await fn(prisma.client);}catch(error){current=before;audits.splice(n);throw error;}};
 
   const setPlanTerm = {
     execute: async (cmd: any) => {
@@ -81,13 +90,13 @@ function harness(options: {
   } as any;
 
   const config = {
-    lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
+    lineMessagingChannelId: 'synthetic', lineMessagingChannelAccessToken: options.token === undefined ? 'token-1' : options.token ?? undefined,
     // Without this the SEC-05 allow-list is LIFF-only, and a note naming our own web app would be
     // refused for the wrong reason — hiding whether the glued-URL rule works at all.
     sesWebBaseUrl: 'https://app.mangmeeplus.com',
   } as any;
   const logs: any[] = [];
-  const useCase = new PackageChangeDecisionUseCase(prisma, setPlanTerm, config, {
+  const useCase = new PackageChangeDecisionUseCase(lineMessagingCredentialsFixture(config), prisma, setPlanTerm, config, {
     warn: (fields: any) => logs.push(fields),
     error: (fields: any) => logs.push(fields),
   } as any);
@@ -100,6 +109,17 @@ function harness(options: {
 }
 
 describe('GET /system/package-change-requests', () => {
+  it('shows a paid purchase source without exposing financial references or sending a second approval notice', async () => {
+    const row={...OPEN_ROW,status:'APPROVED',paymentState:'STRIPE_APPLIED',paymentRef:'private-invoice',decidedAt:new Date()};
+    const h=harness({row,rows:[row],paid:true});
+    const {items}=await h.controller.list('APPROVED');
+    assert.equal(items[0]!.resolutionSource,'PAID_PURCHASE');
+    assert.doesNotMatch(JSON.stringify(items),/private-invoice|paymentRef/);
+    assert.equal((await h.controller.decide(row.id,{action:'APPROVE'},REQ)).status,'APPROVED');
+    assert.equal(h.planTermCalls.length,0);assert.equal(pushes.length,0);
+    const manual=await harness({rows:[{...row,paymentState:'NONE'}]}).controller.list('APPROVED');
+    assert.equal(manual.items[0]!.resolutionSource,undefined);
+  });
   it('shows the shop, the move and who asked for it', async () => {
     const h = harness({ rows: [{ ...OPEN_ROW }] });
     const { items } = await h.controller.list('OPEN');
@@ -129,6 +149,7 @@ describe('POST /system/package-change-requests/:id/decision — APPROVE', () => 
     assert.equal(result.status, 'APPROVED');
     assert.equal(h.planTermCalls.length, 1, 'exactly one tier change');
     assert.deepEqual(h.planTermCalls[0], {
+      commandId:'line-package-pcr-1',expectedVersion:planTermSourceVersion('co-1',null),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:'pcr-1',
       companyId: 'co-1',
       tierKey: 'PRO_999',
       branchLimit: PLAN_TIER_PRESETS.PRO_999.branchLimit,
@@ -286,4 +307,10 @@ describe('POST /system/package-change-requests/:id/decision — REJECT', () => {
     assert.equal(h.planTermCalls.length, 1, 'the tier change does not depend on LINE being up');
     assert.deepEqual(pushes, []);
   });
+});
+
+it('keeps a paid LINE package request OPEN and returns review guidance without claiming it or notifying the shop', async()=>{
+  const h=harness({paid:true});
+  await assert.rejects(h.controller.decide('pcr-1',{action:'APPROVE'},REQ),(e:any)=>e.getStatus()===409&&e.getResponse().code==='paid_plan_review_required');
+  assert.equal(h.row().status,'OPEN');assert.equal(h.updates.length,0);assert.equal(h.planTermCalls.length,0);assert.equal(h.audits.length,0);assert.equal(pushes.length,0);
 });

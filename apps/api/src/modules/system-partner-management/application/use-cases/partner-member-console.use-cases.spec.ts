@@ -25,14 +25,15 @@ function makePrisma(opts: {
   const contextDeletes: any[] = [];
   const handoffRevokes: any[] = [];
   const ops = {
+    passwordResetToken: { updateMany: async () => ({ count: 0 }) },
     companyMembership: {
       findFirst: async () =>
         opts.member === false ? null : { id: 'mem-1', user: { username: 'somchai.x' } },
       findMany: async () => [],
     },
     externalIdentity: {
-      findFirst: async () => (opts.identity === false ? null : { id: 'identity-1', providerUserId: 'Uline-1' }),
-      update: async (args: any) => { identityUpdates.push(args); return {}; },
+      findFirst: async () => (opts.identity === false ? null : { id: 'identity-1', providerUserId: 'Uline-1', updatedAt: new Date(0) }),
+      updateMany: async (args: any) => { identityUpdates.push(args); return { count: 1 }; },
     },
     // line-support-request-spec-th §2.5: the selected-company row goes with the identity.
     lineCompanyContext: {

@@ -7,6 +7,47 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  partner_plan_term_changed: 'มีการเปลี่ยนแพ็กเกจหรือวันใช้งานแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',
+  partner_plan_term_command_required: 'โหลดข้อมูลแพ็กเกจล่าสุด แล้วตรวจสอบคำขอก่อนบันทึกอีกครั้ง',
+  partner_plan_term_command_conflict: 'คำขอนี้ไม่ตรงกับรายการเดิม โหลดข้อมูลและประวัติล่าสุดก่อนเริ่มรายการใหม่',
+  paid_plan_review_required: 'แพ็กเกจนี้มีรายการชำระเงิน เปิดหน้าปรับแพ็กเกจชั่วคราวจากการชำระเงินของบริษัทเพื่อตรวจและอนุมัติ',
+  partner_adjustment_reason_required: 'กรุณาระบุเหตุผลที่ปรับ ตั้งแต่ 1 ถึง 500 ตัวอักษร',
+  partner_ai_previous_value_required: 'โหลดข้อมูล AI ล่าสุดก่อนตรวจสอบและบันทึกอีกครั้ง',
+  partner_ai_configuration_changed: 'มีผู้แก้การตั้งค่า AI แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',
+  CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
+  CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',
+  CONTROL_OFFER_CAPACITY_INVALID: 'กรอกเพดานสาขาและผู้ใช้ให้ครบทั้งสองช่อง เป็นจำนวนเต็มตั้งแต่ 1 ถึง 1,000 ผู้ใช้นับรวมเจ้าของ',
+  email_reset_invalid: 'ลิงก์นี้หมดอายุ ถูกใช้แล้ว หรือข้อมูลบัญชีเปลี่ยน กรุณาขอลิงก์กู้รหัสผ่านใหม่',
+  CONTROL_CONFIGURATION_CHECK_ACTIVE: 'มีรายการตรวจที่กำลังทำอยู่ โหลดประวัติแล้วเปิดรายการเดิมเพื่อดูผล',
+  CONTROL_CONFIGURATION_CHECK_REVIEW: 'ยังบันทึกผลตรวจไม่ได้ โหลดการตั้งค่าล่าสุด ยกเลิกรายการเดิม แล้วเริ่มตรวจใหม่',
+  LINE_CHANNEL_MIGRATION_REQUIRED: 'ใช้ Channel ID ปัจจุบัน การเปลี่ยนบัญชีทางการ LINE ต้องให้ผู้ดูแลระบบตรวจแผนย้ายบัญชีที่เชื่อมไว้ก่อน',
+  LINE_CREDENTIAL_CHANGED: 'มีผู้แก้การตั้งค่า LINE แล้ว กรุณาโหลดข้อมูลล่าสุดและตรวจสอบก่อนยืนยันใหม่',
+  LINE_CREDENTIAL_KIND_UNSUPPORTED: 'หน้านี้รองรับเฉพาะข้อมูลรับรอง Messaging ของบัญชี LINE ปัจจุบัน กรุณากลับไปเลือกการตั้งค่าที่รองรับ',
+  LINE_CREDENTIAL_RATE_LIMIT: 'ตรวจข้อมูลรับรอง LINE ถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
+  LINE_CREDENTIAL_UNAVAILABLE: 'อ่านการตั้งค่า LINE ไม่ได้ ให้ผู้ดูแลระบบตรวจการเชื่อมต่อแล้วลองรายการเดิมอีกครั้ง',
+  LINE_REAUTH_FAILED: 'ยืนยันรหัสผ่านปัจจุบันไม่สำเร็จ กรุณาตรวจรหัสผ่านแล้วลองอีกครั้ง',
+  LINE_TOKEN_CHANNEL_OR_EXPIRY: 'Token ไม่ตรงกับ Channel ปัจจุบันหรือใกล้หมดอายุ กรุณาใช้ Token ใหม่ของ Channel นี้จาก LINE Developers',
+  LINE_TOKEN_CHECK_UNAVAILABLE: 'ยังตรวจ Token กับ LINE ไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง',
+  LINE_TOKEN_REJECTED: 'LINE ไม่ยอมรับ Token นี้ กรุณาใช้ short-lived หรือ long-lived token ของ Channel ปัจจุบันจาก LINE Developers',
+  EMPLOYEE_BRANCH_SCOPE_UNAVAILABLE: 'กรุณาแก้สาขาที่พนักงานมีสิทธิ์และสาขาเริ่มต้นให้ใช้งานได้ ก่อนเปิดสิทธิ์อีกครั้ง',
+  BILLING_RATE_LIMIT: 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง',
+  CONTROL_ACTION_NOT_SUPPORTED: 'เปลี่ยนแพ็กเกจผ่านหน้ามั่งมี โดยใช้ตัวเลือกซื้อซ้ำและเปลี่ยนแพ็กเกจ',
+  CONTROL_POLICY_NOT_READY: 'การตั้งค่ายังไม่ครบ บันทึกฉบับร่างแล้วเติมข้อมูลก่อนตรวจผลกระทบอีกครั้ง',
+  CONTROL_IMPACT_NOT_READY: 'ตรวจผลกระทบจากฉบับร่างก่อนเปิดรายชื่อรายการที่เกี่ยวข้อง',
+  CONTROL_GATE_POLICY_STALE: 'นโยบายเปลี่ยนแล้ว โหลดการตั้งค่าล่าสุดก่อนบันทึกหรือคัดลอกร่างค่าสวิตช์อีกครั้ง',
+  CONTROL_PREVIEW_STALE: 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุ โหลดข้อมูลล่าสุดและตรวจผลกระทบใหม่',
+  CONTROL_SLA_REVIEW: 'ไม่พบเกณฑ์เวลาเดิม กรุณาระบุเวลาติดตามก่อนเปลี่ยนระดับความสำคัญ',
+  CONTROL_SCHEDULE_TIME: 'เลือกเวลาล่วงหน้าอย่างน้อยหนึ่งนาทีและไม่เกินหนึ่งปี แล้วตรวจผลกระทบใหม่',
+  CONTROL_SCHEDULE_NOT_DUE: 'ยังไม่ถึงเวลาที่อนุมัติไว้',
+  CONTROL_SCHEDULE_REVIEW: 'ยังใช้ค่าตามกำหนดไม่ได้ ตรวจข้อมูลล่าสุดและสร้างฉบับร่างจากคำขอเดิมเพื่อขออนุมัติใหม่',
+  CONTROL_REAUTH_REQUIRED: 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง',
+  CONTROL_REAUTH_FAILED: 'ยืนยันรหัสผ่านไม่ได้ ตรวจสอบรหัสผ่านหรือใช้หน้ากู้บัญชี',
+  BILLING_PLAN_CHANGE_REQUIRED: 'เลือกแพ็กเกจและรอบชำระจากหน้าจัดการแพ็กเกจ แล้วตรวจผลกระทบก่อนยืนยัน',
+  CONTROL_SALES_COMPANY_INVALID: 'มีบริษัทที่ไม่พบแล้ว กรุณาเลือกบริษัทใหม่และตรวจผลกระทบอีกครั้ง',
+  BILLING_COMPANY_SALES_CLOSED: 'ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบรายการเดิมได้',
+  BILLING_SALES_CLOSED: 'ยังไม่เปิดรับชำระเงินใหม่ กรุณาติดต่อทีมงาน',
+  BILLING_QUOTE_STALE: 'รายการหมดอายุหรือข้อมูลเปลี่ยน กรุณาเลือกราคาและยืนยันใหม่',
+  BILLING_CAP_SELECTION_REQUIRED: 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาเลือกสิทธิ์ที่จะใช้ต่อก่อนยืนยัน',
   reimbursement_source_unavailable: 'ไม่พบค่าใช้จ่ายต้นทางที่เปิดได้ กรุณาเลือกใหม่',
   reimbursement_source_currency_mismatch: 'สกุลเงินของค่าใช้จ่ายต้องตรงกับใบเบิก',
   reimbursement_source_already_settled: 'รายการนี้บันทึกบัญชี จ่ายเงิน หรือปิดรายการแล้ว จึงนำมาเบิกซ้ำไม่ได้',
@@ -412,6 +453,9 @@ const CODE_LABELS: Record<string, string> = {
   partner_line_message_external_link: 'ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF เท่านั้น กรุณาลบลิงก์ภายนอกออก',
   line_messaging_channel_not_configured: 'ยังไม่ได้ตั้งค่าช่องทาง LINE ของระบบ จึงส่งข้อความไม่ได้',
   package_change_request_not_found: 'ไม่พบคำขอเปลี่ยนแพ็กเกจนี้ อาจถูกดำเนินการไปแล้ว กรุณาโหลดหน้าใหม่',
+  line_identity_changed: 'การเชื่อมต่อ LINE เปลี่ยนแล้ว กรุณาโหลดข้อมูลล่าสุดแล้วลองอีกครั้ง',
+  line_identity_review_required: 'การเชื่อมต่อ LINE เดิมต้องให้ผู้ดูแลตรวจสอบ กรุณาติดต่อผู้ดูแลเพื่อออก QR เชื่อม LINE ใหม่',
+  line_link_retry: 'ยังเชื่อม LINE ไม่สำเร็จ กรุณาลองสแกน QR เดิมอีกครั้ง หากหมดอายุให้ผู้ดูแลออก QR ใหม่',
   line_linked_elsewhere: 'LINE นี้เชื่อมกับบัญชีอื่นอยู่แล้ว เลือกได้ว่าจะรวมเป็นบัญชีเดียวหรือใช้แยกกันต่อ',
   // Provisioning refused the LINE identity by name instead of letting a unique violation become
   // "ข้อมูลซ้ำ" — an operator reading that had nothing to do next. Both say what to change.
@@ -494,6 +538,11 @@ const UPLOAD_CONTENT_REJECTED =
 
 /** Full English messages the user can actually hit in the expense/substitute journeys. */
 const MESSAGE_LABELS: Record<string, string> = {
+  'Receipt access changed. Reload and check your permissions.': 'สิทธิ์ใช้งานเปลี่ยนแล้ว โหลดข้อมูลล่าสุด หากยังอัปโหลดไม่ได้ ให้ติดต่อผู้ดูแลบริษัท',
+  'Signature access changed.': 'สิทธิ์ใช้งานเปลี่ยนแล้ว โหลดข้อมูลล่าสุดก่อนบันทึกลายเซ็นอีกครั้ง',
+  'Signature belongs to another owner.': 'บันทึกลายเซ็นนี้ไม่ได้ กรุณาใช้รูปที่คุณอัปโหลดเอง',
+  'Expense revision unavailable. Reload before uploading.': 'ยังตรวจข้อมูลล่าสุดไม่ได้ โหลดรายการใหม่ก่อนอัปโหลดอีกครั้ง',
+  'Expense changed. Reload and review before uploading again.': 'รายการถูกแก้ไขแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนอัปโหลดอีกครั้ง',
   'WHT amount cannot exceed the accepted pre-VAT amount.': 'ยอดภาษีหัก ณ ที่จ่ายเกินฐานที่ใช้คำนวณ กรุณาตรวจยอดและฐานภาษี',
   'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดภาษีหัก ณ ที่จ่ายเกินยอดเอกสาร กรุณาตรวจยอดและฐานภาษี',
   'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',
@@ -797,11 +846,18 @@ export function apiErrorMessage(e: unknown, locale: 'th' | 'en' = 'th'): string 
     statusCode?: unknown;
     kind?: unknown;
     details?: unknown;
+    retryAfterSeconds?: unknown;
   } | null | undefined;
   const details = error?.details && typeof error.details === 'object'
     ? error.details as typeof error
     : undefined;
   const code = apiErrorCode(e);
+  if (code === 'BILLING_RATE_LIMIT') {
+    const seconds = details?.retryAfterSeconds ?? error?.retryAfterSeconds;
+    if (typeof seconds === 'number' && Number.isInteger(seconds) && seconds >= 1 && seconds <= 300) {
+      return `ทำรายการถี่เกินไป กรุณารอ ${seconds} วินาที แล้วลองรายการเดิมอีกครั้ง`;
+    }
+  }
   if (typeof code === 'string') {
     if (locale === 'en' && SUBSTITUTE_ERROR_LABELS_EN[code]) return SUBSTITUTE_ERROR_LABELS_EN[code]!;
     const byCode = translateApiError(code);

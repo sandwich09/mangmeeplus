@@ -5,6 +5,11 @@ import { LINE_ALLOWED_TOOL_CATEGORIES, LINE_DRAFT_UPDATE_TOOLS, LINE_DRAFT_UPDAT
 
 /** Constructor arity of the controller's tool list. Bumped whenever a tool is wired. */
 const WIRED_TOOL_COUNT = 61;
+function makeController(...args: any[]) {
+  const controller = new (InternalToolsController as any)(...args);
+  controller.readEvidence = { record: async () => 'synthetic-evidence' };
+  return controller;
+}
 import { SECURITY_EVENT } from '../../../../common/logger/security-event';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { InternalToolsController } from './internal-tools.controller';
@@ -81,17 +86,45 @@ function failingAudit(failsOn: (entry: any) => boolean = () => true) {
 /** `loadEntitledFeatureKeys` returns null for a company with no entitlement rows — the legacy
  *  fail-open case every pre-existing test here assumes. Pass rows to switch features on/off. */
 function fakePrisma(rows: Array<{ featureKey: string; enabled: boolean }> = []) {
-  return { client: { companyFeatureEntitlement: { findMany: async () => rows } } } as any;
+  return { client: { user: { findUnique: async () => ({ status: 'ACTIVE', aiAssistantOptOutAt: null }) }, companyFeatureEntitlement: { findMany: async () => rows } } } as any;
 }
 
 const okAudit = { log: async () => undefined, logOrThrow: async () => undefined } as any;
 
 const STUBS = Array.from({ length: 55 }, () => ({}) as any);
 
+describe('AP22 authoritative source producer', () => {
+  for (const fault of ['none', 'store-failed', 'tool-mismatch', 'actor-disabled', 'actor-optout'] as const) {
+    it(`records exact server-resolved input before releasing a private result: ${fault}`, async () => {
+      const prisma = fakePrisma(), { events, audit } = recordingAudit();
+      let calls = 0;
+      prisma.client.user.findUnique = async () => ({ status: fault === 'actor-disabled' ? 'DISABLED' : 'ACTIVE', aiAssistantOptOutAt: fault === 'actor-optout' ? new Date() : null });
+      const controller = makeController({ aiGatewayInternalSecret: 'secret' }, prisma, audit,
+        fakeResolver({ permissions: [AI, 'expense.read_own'], branchIds: ['allowed'], roles: ['STAFF'] }), fakeDelegation(),
+        ...Array.from({ length: WIRED_TOOL_COUNT }, () => ({})));
+      controller.toolMap.set('expense.get_detail', { execute: async () => { calls++; return { toolName: fault === 'tool-mismatch' ? 'expense.list_recent' : 'expense.get_detail', status: 'ok', data: { secret: 'private-source' }, sourceRefs: [], asOf: new Date().toISOString() }; } });
+      const records: any[] = [];
+      controller.readEvidence = { record: async (...args: any[]) => { records.push(args); if (fault === 'store-failed') throw new Error('unavailable'); return 'evidence-1'; } };
+      const result = await controller.invoke('secret', DELEGATION, { toolName: 'expense.get_detail', input: { expenseId: 'expense-1' },
+        context: { requestId: 'verified-request', companyId: 'c1', userId: 'u1', membershipId: 'm1', permissions: ['everything'], branchIds: ['forged'], locale: 'th' } });
+      if (fault === 'none') {
+        assert.equal(result.status, 'ok'); assert.equal(records.length, 1);
+        assert.equal(records[0][0].requestId, 'verified-request'); assert.deepEqual(records[0][0].branchIds, ['allowed']);
+        assert.deepEqual(records[0][1], { expenseId: 'expense-1' });
+      } else {
+        assert.notEqual(result.status, 'ok'); assert.equal(result.data, undefined);
+        assert.ok(events.some(event => event.result === 'DENIED' || event.result === 'FAILED'));
+        if (fault.startsWith('actor-')) assert.equal(calls, 0);
+        if (fault === 'tool-mismatch') assert.equal(records.length, 0);
+      }
+    });
+  }
+});
+
 describe('InternalToolsController', () => {
   it('fails closed when internal secret is not configured', async () => {
     const stub = {} as any;
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: '' } as any,
       fakePrisma(),
       okAudit,
@@ -108,7 +141,7 @@ describe('InternalToolsController', () => {
 
   it('denies at the execution boundary when the resolved access lacks ai.tool.invoke', async () => {
     const stub = {} as any;
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       okAudit,
@@ -129,7 +162,7 @@ describe('InternalToolsController', () => {
 
   it('fails closed when the caller has no active company membership', async () => {
     const stub = {} as any;
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       okAudit,
@@ -149,7 +182,7 @@ describe('InternalToolsController', () => {
 
   it('returns unsupported_module for known tools whose source module is not wired yet', async () => {
     const stub = {} as any;
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       okAudit,
@@ -169,7 +202,7 @@ describe('InternalToolsController', () => {
 
   it('requires every registry permission before dispatching a tax tool', async () => {
     const stub = {} as any;
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       okAudit,
@@ -199,7 +232,7 @@ describe('InternalToolsController', () => {
         return { toolName: 'tax.get_tax_code_profile', status: 'ok', data: { reviewRequired: false }, sourceRefs: [], asOf: new Date().toISOString() };
       },
     };
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' },
       fakePrisma(),
       okAudit,
@@ -227,7 +260,7 @@ describe('InternalToolsController', () => {
       },
     };
     const auditEvents: any[] = [];
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' },
       fakePrisma(),
       { log: async (entry: any) => { auditEvents.push(entry); }, logOrThrow: async (entry: any) => { auditEvents.push(entry); } },
@@ -268,7 +301,7 @@ describe('InternalToolsController', () => {
 
   it('writes no durable audit row when the actor delegation itself is invalid', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -295,7 +328,7 @@ describe('InternalToolsController', () => {
     let executed = 0;
     const tools: any[] = Array.from({ length: 55 }, () => ({}));
     tools[11] = { execute: async () => { executed += 1; return { toolName: 'sales.get_sales_summary', status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }; } };
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       failingAudit(),
@@ -316,7 +349,7 @@ describe('InternalToolsController', () => {
 
   it('does NOT return a quiet forbidden when the denial row cannot be written', async () => {
     // Only the DENIED row fails: the delegation-consume row lands, so this exercises the gate.
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       failingAudit((entry) => entry.result === 'DENIED'),
@@ -336,7 +369,7 @@ describe('InternalToolsController', () => {
 
   it('audits a stale actor delegation as DENIED before rejecting the request', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -370,7 +403,7 @@ describe('InternalToolsController', () => {
 
   it('audits the deny when the caller has no authoritative access, without a caller-claimed companyId', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -398,7 +431,7 @@ describe('InternalToolsController', () => {
 
   it('audits the deny when the resolved access lacks the ai.tool.invoke gate', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -426,7 +459,7 @@ describe('InternalToolsController', () => {
 
   it('audits the deny when an ERP registry permission is missing', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -450,7 +483,7 @@ describe('InternalToolsController', () => {
 
   it('audits unknown and not-yet-wired tools at LOW risk with distinct reason codes', async () => {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -475,7 +508,7 @@ describe('InternalToolsController', () => {
     const tools: any[] = Array.from({ length: 55 }, () => ({}));
     tools[11] = { execute: async () => { throw new Error('boom'); } };
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       { aiGatewayInternalSecret: 'secret' } as any,
       fakePrisma(),
       audit,
@@ -512,7 +545,7 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
 
   function build(options: { permissions: string[]; finalMutationEnabled?: boolean; draftEditEnabled?: boolean; tools?: unknown[] }) {
     const { events, audit } = recordingAudit();
-    const controller = new (InternalToolsController as any)(
+    const controller = makeController(
       {
         aiGatewayInternalSecret: 'secret',
         aiFinalMutationEnabled: options.finalMutationEnabled ?? false,
@@ -525,6 +558,9 @@ describe('InternalToolsController — L-08 mutation classification at the ERP ex
       fakeDelegation(),
       ...(options.tools ?? Array.from({ length: WIRED_TOOL_COUNT }, () => OK_TOOL)),
     );
+    if (!options.tools) for (const name of controller.toolMap.keys()) {
+      controller.toolMap.set(name, { execute: async () => ({ toolName: name, status: 'ok', sourceRefs: [], asOf: new Date().toISOString() }) });
+    }
     return { controller, events };
   }
 
@@ -730,7 +766,7 @@ describe('InternalToolsController — company feature entitlement', () => {
     tools[17] = {
       execute: async () => ({ toolName: 'tax.get_tax_code_profile', status: 'ok', data: { reviewRequired: false }, sourceRefs: [], asOf: new Date().toISOString() }),
     };
-    return new (InternalToolsController as any)(
+    return makeController(
       { aiGatewayInternalSecret: 'secret' },
       fakePrisma(rows),
       okAudit,

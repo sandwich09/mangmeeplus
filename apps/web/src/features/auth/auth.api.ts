@@ -26,6 +26,8 @@ export type AccountSecurityState = {
   aiAssistantOptOutAt: string | null;
   /** Self-service LINE link: an ACTIVE LINE identity exists for this user. */
   lineLinked: boolean;
+  /** Current Messaging identity binding; provider delivery readiness is separate. */
+  lineMessagingReady?: boolean;
   lineLinkedAt: string | null;
 };
 
@@ -73,8 +75,12 @@ export async function refreshSessionSilently(): Promise<boolean> {
 }
 
 /** Always resolves with the same generic message — the API never reveals whether the username exists. */
-export function requestPasswordReset(username: string): Promise<{ message: string }> {
-  return publicApi.post<{ message: string }>('/api/v1/auth/password/reset-request', { username });
+export function requestPasswordReset(username: string, channel: 'EMAIL' | 'LINE' = 'LINE'): Promise<{ message: string }> {
+  return publicApi.post<{ message: string }>(channel === 'EMAIL' ? '/api/v1/auth/password/email-reset-request' : '/api/v1/auth/password/reset-request', { username });
+}
+
+export function confirmEmailPasswordReset(token: string, newPassword: string): Promise<{ completed: true }> {
+  return publicApi.post('/api/v1/auth/password/email-reset-confirm', { token, newPassword });
 }
 
 export function confirmEmailVerification(token: string): Promise<{ email: string; verifiedAt: string }> {

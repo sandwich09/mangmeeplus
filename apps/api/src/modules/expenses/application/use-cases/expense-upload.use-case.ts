@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { PrismaAttachmentRepository } from '../../../data-model-core/infrastructure/repositories/prisma-attachment.repository';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -14,6 +14,8 @@ import { assertExpenseRootOpen } from '../expense-launch-gate';
 import type { RequestContext } from '@watchdog-bms/contracts';
 import type { ExpenseRecord } from '../../domain/models/expense.model';
 import { civilDateToUtcDate, coerceCivilDate } from '@watchdog-bms/contracts';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
+import { lockFundingEvidence } from '../../infrastructure/substitute-funding.guard';
 import { observeCustomerJourney } from '../../../../common/observability/customer-journey-audit';
 
 export type InitReceiptUploadResult = {
@@ -167,11 +169,13 @@ export class CompleteReceiptUploadUseCase {
     private readonly outbox: OutboxAppendService,
     private readonly attachments: PrismaAttachmentRepository,
     private readonly prisma: PrismaService,
+    private readonly permissionResolver: PermissionResolverService,
   ) {}
 
   async execute(
     ctx: RequestContext,
     cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
+    options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
     return observeCustomerJourney(
       this.audit,
@@ -179,7 +183,7 @@ export class CompleteReceiptUploadUseCase {
         key: 'receipt-intake', requestId: ctx.requestId, targetType: 'expense_record', targetId: cmd.expenseId,
         companyId: ctx.companyId, actorUserId: ctx.userId,
       },
-      () => this.complete(ctx, cmd),
+      () => this.complete(ctx, cmd, options),
       () => ({ outcome: 'uploaded' }),
     );
   }
@@ -187,9 +191,12 @@ export class CompleteReceiptUploadUseCase {
   private async complete(
     ctx: RequestContext,
     cmd: { expenseId: string; attachmentId: string; checksumSha256?: string; byteSize?: number; purpose?: string },
+    options?: { beforeCommit: () => Promise<void> },
   ): Promise<ExpenseRecord> {
     const expense = await this.repo.findById(ctx.companyId, cmd.expenseId);
     if (!expense) throw new NotFoundException(`Expense ${cmd.expenseId} not found`);
+    if (!isBranchInScope(ctx.scopes ?? {}, expense.branchId)) throw new ForbiddenException('Branch is outside your assigned branch scope.');
+    if (!expense.updatedAt) throw new ConflictException('Expense revision unavailable. Reload before uploading.');
 
     const canUpload = (ctx.permissions.includes('expense.receipt.upload') || ctx.permissions.includes('expense.receipt.line_upload')) && expense.createdByUserId === ctx.userId;
     const canReview = ctx.permissions.includes('expense.review');
@@ -208,24 +215,38 @@ export class CompleteReceiptUploadUseCase {
     if (!['expense.receipt.primary', 'expense.receipt.supporting', 'expense.payment.evidence'].includes(purpose)) {
       throw new BadRequestException('Unsupported expense attachment purpose.');
     }
-    await this.repo.linkAttachment(cmd.expenseId, cmd.attachmentId, purpose, ctx.companyId, ctx.userId);
-
-    // Set primary attachment if this is the primary receipt
-    let updated = expense;
-    let retiredAttachmentIds: string[] = [];
-    if (purpose === 'expense.receipt.primary') {
-      retiredAttachmentIds = await this.retireReplacedPrimaryReceipts(ctx, expense, cmd.attachmentId);
-      updated = await this.repo.updateExpense({
-        id: cmd.expenseId,
-        companyId: ctx.companyId,
-        updatedByUserId: ctx.userId,
-        primaryAttachmentId: cmd.attachmentId,
-        // Move to NEEDS_REVIEW now that we have an attachment
-        status: expense.status === 'DRAFT' ? 'NEEDS_REVIEW' : expense.status,
-      });
-      await reconcileExpenseDuplicateCandidates(this.repo, ctx.companyId, cmd.expenseId, ctx.userId, ctx.scopes ?? {});
-      updated = await this.repo.findById(ctx.companyId, cmd.expenseId) ?? updated;
+    const current = await this.permissionResolver.resolveAccess(ctx.userId, ctx.companyId);
+    const activeUser = await this.prisma.client.user.findFirst({ where: { id: ctx.userId, status: 'ACTIVE' }, select: { id: true } });
+    const mayUpload = (current.permissions.includes('expense.receipt.upload') || current.permissions.includes('expense.receipt.line_upload')) && expense.createdByUserId === ctx.userId;
+    if (!activeUser || current.companyId !== ctx.companyId || ctx.membershipId && current.membershipId !== ctx.membershipId
+      || (!mayUpload && !current.permissions.includes('expense.review')) || !isBranchInScope(current.scopes ?? {}, expense.branchId)) {
+      throw new ForbiddenException('Receipt access changed. Reload and check your permissions.');
     }
+    await options?.beforeCommit();
+    // Storage is complete. Bind every database effect to the revision the upload began with.
+    // A late upload must not roll back human review or partially retire the previous receipt.
+    let retiredAttachmentIds: string[] = [];
+    const updated = await this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${ctx.companyId}:duplicate-reconciliation`}))`;
+      await lockFundingEvidence(tx, ctx.companyId, { expenseIds: [cmd.expenseId], attachmentIds: [cmd.attachmentId] });
+      await this.repo.updateExpense({
+        id: cmd.expenseId, companyId: ctx.companyId, updatedByUserId: ctx.userId,
+        expectedUpdatedAt: expense.updatedAt,
+        ...(purpose === 'expense.receipt.primary' ? {
+          primaryAttachmentId: cmd.attachmentId,
+          status: expense.status === 'DRAFT' ? 'NEEDS_REVIEW' as const : expense.status,
+        } : {}),
+      }, async db => {
+        await this.repo.linkAttachment(cmd.expenseId, cmd.attachmentId, purpose, ctx.companyId, ctx.userId, db);
+        if (purpose === 'expense.receipt.primary') {
+          retiredAttachmentIds = await this.retireReplacedPrimaryReceipts(ctx, expense, cmd.attachmentId, db);
+          await reconcileExpenseDuplicateCandidates(this.repo, ctx.companyId, cmd.expenseId, ctx.userId, current.scopes ?? {}, db);
+        }
+      }, tx);
+      const saved = await this.repo.findById(ctx.companyId, cmd.expenseId, tx);
+      if (!saved) throw new ConflictException('Expense changed. Reload and review before uploading again.');
+      return saved;
+    });
 
     void this.audit.log({
       companyId: ctx.companyId, actorUserId: ctx.userId,
@@ -259,33 +280,32 @@ export class CompleteReceiptUploadUseCase {
     ctx: RequestContext,
     expense: { id: string; status: string },
     keepAttachmentId: string,
+    tx: any,
   ): Promise<string[]> {
     if (expense.status !== 'DRAFT' && expense.status !== 'NEEDS_REVIEW') return [];
     const link = { companyId: ctx.companyId, targetType: 'expense.record', targetId: expense.id };
-    return this.prisma.client.$transaction(async (tx) => {
-      const stale = await tx.attachmentLink.findMany({
-        where: {
-          ...link,
-          purpose: 'expense.receipt.primary',
-          attachmentId: { not: keepAttachmentId },
-          attachment: { companyId: ctx.companyId, status: 'ACTIVE' },
-        },
-        select: { attachmentId: true },
-      });
-      const retired: string[] = [];
-      for (const { attachmentId } of stale) {
-        const sharedLinks = await tx.attachmentLink.count({
-          where: { companyId: ctx.companyId, attachmentId, NOT: { targetType: link.targetType, targetId: link.targetId } },
-        });
-        if (sharedLinks > 0) continue;
-        const hold = await this.attachments.findSubstituteEvidenceRetentionHold({ id: attachmentId, companyId: ctx.companyId }, tx);
-        if (hold) continue;
-        await tx.attachmentLink.deleteMany({ where: { ...link, attachmentId } });
-        await this.attachments.markDeleted({ id: attachmentId, companyId: ctx.companyId }, tx);
-        retired.push(attachmentId);
-      }
-      return retired;
+    const stale = await tx.attachmentLink.findMany({
+      where: {
+        ...link,
+        purpose: 'expense.receipt.primary',
+        attachmentId: { not: keepAttachmentId },
+        attachment: { companyId: ctx.companyId, status: 'ACTIVE' },
+      },
+      select: { attachmentId: true },
     });
+    const retired: string[] = [];
+    for (const { attachmentId } of stale) {
+      const sharedLinks = await tx.attachmentLink.count({
+        where: { companyId: ctx.companyId, attachmentId, NOT: { targetType: link.targetType, targetId: link.targetId } },
+      });
+      if (sharedLinks > 0) continue;
+      const hold = await this.attachments.findSubstituteEvidenceRetentionHold({ id: attachmentId, companyId: ctx.companyId }, tx);
+      if (hold) continue;
+      await tx.attachmentLink.deleteMany({ where: { ...link, attachmentId } });
+      await this.attachments.markDeleted({ id: attachmentId, companyId: ctx.companyId }, tx);
+      retired.push(attachmentId);
+    }
+    return retired;
   }
 }
 

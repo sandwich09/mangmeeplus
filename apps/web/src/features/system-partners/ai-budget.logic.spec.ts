@@ -63,19 +63,27 @@ describe('parseBudgetBahtInput', () => {
   it('rejects a third decimal rather than rounding it away silently', () => {
     const parsed = parseBudgetBahtInput('2000.505');
     assert.equal(parsed.ok, false);
-    assert.match((parsed as { message: string }).message, /at most two decimals/);
+    assert.match((parsed as { message: string }).message, /ทศนิยมไม่เกิน 2 ตำแหน่ง/);
   });
 
   it('rejects zero without pretending AI can be switched off here', () => {
     const parsed = parseBudgetBahtInput('0');
     assert.equal(parsed.ok, false);
-    assert.match((parsed as { message: string }).message, /feature entitlement/);
+    assert.match((parsed as { message: string }).message, /ปิดสิทธิ์ผู้ช่วย AI/);
   });
 
   it('rejects anything that is not a plain baht amount', () => {
     for (const raw of ['-1', 'abc', '1e', '1e3', '1,000', '๑๐๐', '0.5', '.5', '5.']) {
       assert.equal(parseBudgetBahtInput(raw).ok, false, `expected "${raw}" to be rejected`);
     }
+  });
+
+  it('rejects nonempty amounts that cannot survive JSON as an exact satang value', () => {
+    for (const raw of ['9'.repeat(400), '90071992547409.92', '90071992547409.93']) {
+      assert.equal(parseBudgetBahtInput(raw).ok, false, 'an invalid amount must not become a null override');
+    }
+    const valid = parseBudgetBahtInput('2000.50');
+    assert.deepEqual(JSON.parse(JSON.stringify(valid)), { ok: true, monthlyBudgetSatang: 200050 });
   });
 });
 

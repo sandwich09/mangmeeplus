@@ -1,0 +1,25 @@
+ok 1 - returns the exact committed revision and only referenced category identities with its reply
+ok 2 - binds multiple draft choices to the original ordered records without writing
+ok 16 - refuses stale draft routing after question changes during intake without executing or recapturing
+ok 17 - refuses stale draft routing after label changes during intake without executing or recapturing
+ok 18 - refuses stale draft routing after status changes during intake without executing or recapturing
+ok 19 - refuses stale draft routing after order changes during intake without executing or recapturing
+ok 20 - refuses stale draft routing after added changes during intake without executing or recapturing
+ok 21 - refuses stale draft routing after missing changes during intake without executing or recapturing
+ok 22 - refuses stale draft routing after unavailable changes during intake without executing or recapturing
+ok 23 - refuses stale draft routing after access changes during intake without executing or recapturing
+ok 24 - refuses a numbered draft selection if the order changes before deterministic execution
+ok 1 - deterministic continuation delivery validates unchanged without replaying the update
+ok 2 - deterministic continuation delivery validates revision without replaying the update
+ok 3 - deterministic continuation delivery validates category without replaying the update
+ok 4 - deterministic continuation delivery validates choices without replaying the update
+ok 5 - deterministic continuation delivery validates missing without replaying the update
+ok 6 - deterministic continuation delivery validates access without replaying the update
+ok 7 - deterministic continuation delivery validates fallback without replaying the update
+ok 8 - routed continuation delivery validates unchanged without replaying the update
+ok 9 - routed continuation delivery validates revision without replaying the update
+ok 10 - routed continuation delivery validates category without replaying the update
+ok 11 - routed continuation delivery validates choices without replaying the update
+ok 12 - routed continuation delivery validates missing without replaying the update
+ok 13 - routed continuation delivery validates access without replaying the update
+ok 14 - routed continuation delivery validates fallback without replaying the update

@@ -26,16 +26,17 @@ const SUPPORT_REQUESTS_HREF = '/system/support-requests';
  * `system.partner_company.update`) or an outage leaves `null`, which renders no badge at all
  * rather than a confident zero.
  */
-function useOpenSupportCount(pathname: string): number | null {
+function useOpenSupportCount(pathname: string, enabled: boolean): number | null {
   const [openCount, setOpenCount] = useState<number | null>(null);
-  useEffect(() => subscribeSupportOpenCount(setOpenCount), []);
+  useEffect(() => enabled ? subscribeSupportOpenCount(setOpenCount) : undefined, [enabled]);
   useEffect(() => {
+    if (!enabled) { setOpenCount(null); return; }
     const controller = new AbortController();
     getSupportOpenCount({ signal: controller.signal })
       .then((result) => { if (!controller.signal.aborted) setOpenCount(result.open); })
       .catch(() => { if (!controller.signal.aborted) setOpenCount(null); });
     return () => controller.abort();
-  }, [pathname]);
+  }, [pathname, enabled]);
   return openCount;
 }
 
@@ -43,25 +44,21 @@ const SECTIONS = [
   { href: '/system/platform-access', label: 'เปิด–ปิดระบบ' },
   { href: '/system/partners', label: 'พาร์ทเนอร์' },
   { href: '/system/signup-requests', label: 'คำขอสมัครใช้งาน' },
+  { href: '/system/email-delivery', label: 'สถานะอีเมล' },
   { href: SUPPORT_REQUESTS_HREF, label: 'คำขอคุยกับเจ้าหน้าที่' },
   // ค้นหาผู้ใช้ is a section on the partners page, not a tab — /system/users redirects there.
   { href: '/system/company-onboardings/new', label: 'เปิดบริษัทใหม่' },
   { href: '/system/data-rights', label: 'สิทธิข้อมูล' },
-  // Audit H-14: the shared LINE credential screen is hidden until it can actually rotate a
-  // credential. Saving there writes the database, but the webhook verifies signatures with the
-  // channel secret from AWS/env, so a successful save changed nothing — a screen that reports
-  // success without doing the work is worse than one that is absent. Rotation stays where it
-  // already works: update the secret and redeploy. See SharedLineSettingsPage for the two changes
-  // that have to land before this comes back.
-  // { href: '/system/line-settings', label: 'LINE' },
+  { href: '/system/line-settings', label: 'LINE' },
   { href: '/system/ai-budget', label: 'AI Budget' },
+  { href: '/system/billing', label: 'การชำระเงิน' },
 ];
 
-const SystemHeader: React.FC = () => {
+const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; emailAllowed?: boolean }> = ({ billingOnly = false, billingAllowed = false, emailAllowed = false }) => {
   const [signingOut, setSigningOut] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
   const pathname = usePathname();
-  const openSupportCount = useOpenSupportCount(pathname);
+  const openSupportCount = useOpenSupportCount(pathname, !billingOnly);
 
   const handleSignOut = async () => {
     if (signingOut) return;
@@ -76,11 +73,12 @@ const SystemHeader: React.FC = () => {
   return (
     <header className="sticky top-0 z-40 flex w-full flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-3 lg:px-6">
       <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <Link href="/system/partners" className="mr-1 text-sm font-semibold text-gray-900">
-          WatchDog System Admin
+        <Link href={billingOnly ? "/system/billing" : "/system/partners"} className="mr-1 text-sm font-semibold text-gray-900">
+          {billingOnly ? 'มั่งมี · ดูแลการชำระเงิน' : 'มั่งมี · ผู้ดูแลระบบ'}
         </Link>
         <nav aria-label="ส่วนงานผู้ดูแลระบบ" className="no-scrollbar flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap md:max-w-none md:overflow-x-visible md:whitespace-normal">
-          {SECTIONS.map((section) => {
+          {SECTIONS.filter(section => billingOnly ? section.href === '/system/billing' :
+            (section.href !== '/system/billing' || billingAllowed) && (section.href !== '/system/email-delivery' || emailAllowed)).map((section) => {
             const active = pathname.startsWith(section.href);
             return (
               <Link

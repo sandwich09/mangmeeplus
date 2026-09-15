@@ -75,8 +75,30 @@ export type LineSubstituteReceiptContinuation = {
 
 export type LineSubstituteReceiptBlocker = { code: string; message: string; collectableInLine: boolean };
 
+export type LineSubstituteReplySource = {
+  records: Array<{ id: string; revision: string; evidenceHash: string; attachmentsHash: string }>;
+  categoriesHash?: string;
+  policy?: { branchId: string | null; payerUserId: string | null; hash: string };
+  signatureAvailable?: boolean;
+};
+
+function sourceHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value ?? null)).digest('hex');
+}
+
+function attachmentSource(expense: ExpenseRecordWithRelations) {
+  return expense.attachments.map(({ id, purpose, status }) => ({ id, purpose, status }))
+    .sort((a, b) => a.id.localeCompare(b.id) || a.purpose.localeCompare(b.purpose));
+}
+
+export function substituteReplySource(expense: ExpenseRecordWithRelations, revision = expense.updatedAt): LineSubstituteReplySource {
+  return { records: [{ id: expense.id, revision: revision.toISOString(),
+    evidenceHash: sourceHash(expense.substituteReceiptEvidence), attachmentsHash: sourceHash(attachmentSource(expense)) }] };
+}
+
 export type LineSubstituteReceiptContinuationResult = {
   handled: true;
+  source?: LineSubstituteReplySource;
   status: 'READY_FOR_WEB' | 'BLOCKED' | 'INELIGIBLE' | 'FORBIDDEN' | 'TARGET_REQUIRED' | 'PAUSED' | 'CANCELLED' | 'STALE';
   replyText: string;
   /** §13: the state badge the card renders above the body. Additive — absent means no badge row. */
@@ -1175,6 +1197,30 @@ export class LineSubstituteReceiptContinuationUseCase {
     private readonly review: UpdateExpenseDraftUseCase,
   ) {}
 
+  /** Re-read only the sources used by this reply; never run a workflow again to validate it. */
+  async replySourcesCurrent(ctx: RequestContext, source: LineSubstituteReplySource | undefined): Promise<boolean> {
+    if (!source || source.records.length > 5 || !ctx.permissions.includes('expense.review')) return false;
+    for (const proof of source.records) {
+      const expense = await this.repo.findByIdWithRelations(ctx.companyId, proof.id, undefined, ctx.scopes ?? {});
+      if (!expense || expense.id !== proof.id || expense.companyId !== ctx.companyId || expense.updatedAt.toISOString() !== proof.revision
+        || sourceHash(expense.substituteReceiptEvidence) !== proof.evidenceHash
+        || sourceHash(attachmentSource(expense)) !== proof.attachmentsHash) return false;
+    }
+    if (source.categoriesHash && sourceHash(offeredCategories(await this.repo.listCategories(ctx.companyId))) !== source.categoriesHash) return false;
+    if (source.signatureAvailable !== undefined
+      && Boolean(await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId)) !== source.signatureAvailable) return false;
+    if (source.policy) {
+      const { branchId, payerUserId, hash } = source.policy;
+      const facts = await Promise.all([
+        this.repo.getSubstituteReceiptPolicy(ctx.companyId),
+        this.repo.listEligibleSubstituteReceiptApprovers(ctx.companyId, branchId),
+        payerUserId ? this.repo.findActiveMemberIdentity(ctx.companyId, payerUserId, branchId) : Promise.resolve(null),
+      ]);
+      if (sourceHash(facts) !== hash) return false;
+    }
+    return true;
+  }
+
   /** Starts the plain-language three-way decision immediately after LINE captures a check bill. */
   async startFromCheckBill(ctx: RequestContext, input: {
     expenseId: string;
@@ -1211,7 +1257,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     });
     const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
     return {
-      handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+      handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
       acceptedFields: [], blockers: [], pendingQuestion: CHECK_BILL_PAYMENT_QUESTION,
       webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
       replyText: checkBillPaymentReply(expense.id, input.webBaseUrl, ctx.companyId),
@@ -1443,6 +1489,8 @@ export class LineSubstituteReceiptContinuationUseCase {
     messageText: string;
     chatKeyHash: string;
     recentCandidates: Array<{ id: string; label: string }>;
+    /** Original ordered shortlist from a source-verified waiting question. */
+    boundCandidateExpenseIds?: string[];
     webBaseUrl?: string;
     /** The PRIMARY semantic dispatcher sets this so a FRESH start driven by the model's route ALONE (a
      *  paraphrase matching none of the deterministic entry phrases) asks ONE bounded confirmation before it
@@ -1473,21 +1521,31 @@ export class LineSubstituteReceiptContinuationUseCase {
       .filter((item): item is { row: typeof rows[number]; state: LineSubstituteReceiptContinuation } =>
         !!item.state && ACTIVE_STATUSES.has(item.state.status));
     const selection = ordinalSelection(input.messageText, Math.max(states.length, input.recentCandidates.length));
-    let selected = states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
+    const boundIds = input.boundCandidateExpenseIds;
+    if (boundIds && (boundIds.length === 0 || boundIds.length > 5 || new Set(boundIds).size !== boundIds.length
+      || JSON.stringify(boundIds) !== JSON.stringify(input.recentCandidates.map(item => item.id)))) {
+      return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เคยให้เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
+    }
+    const chosenId = boundIds?.[selection ?? (boundIds.length === 1 ? 0 : -1)];
+    let selected = boundIds ? states.find(item => item.state.expenseId === chosenId)
+      : states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
     // A brand-new OPEN workflow (none → OPEN) is a real state transition that may persist even without an
     // accepted field value; an EXISTING workflow writes ONLY on an actual accepted change (below).
     let startedNew = false;
 
-    if (!selected && states.length > 1) {
+    if (!selected && states.length > 1 && !boundIds) {
       // The question is pending so the dispatcher keeps the clarification open and routes “1” back here.
       // candidateExpenseIds pins the offered shortlist so the ordinal binds to the SAME id next turn.
       const question = 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)';
+      const choices = await Promise.all(states.map(item => this.repo.findByIdWithRelations(ctx.companyId, item.state.expenseId, undefined, ctx.scopes ?? {})));
+      if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการงานที่ค้างเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
       return {
         handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [], pendingQuestion: question,
         candidateExpenseIds: states.map((item) => item.state.expenseId),
+        source: { records: choices.flatMap(item => substituteReplySource(item!).records) },
         replyText: formatStandalone({
           headline: 'มีงานใบรับรองที่ยังค้างมากกว่า 1 รายการ ยังไม่ทราบว่าจะทำงานไหนต่อค่ะ',
-          choices: states.map((item) => item.state.expenseId),
+          choices: choices.map(item => `${expenseLabel(item!)}${item!.expenseNumber ? ` · ${bahtAmount(item!)}` : ''}`),
           question,
         }),
       };
@@ -1504,9 +1562,12 @@ export class LineSubstituteReceiptContinuationUseCase {
           ? 'ตอบหมายเลขรายการที่ต้องการค่ะ (เช่น “1”)'
           : 'พิมพ์ยอดและรายละเอียดค่าใช้จ่ายในแชทนี้ได้เลยค่ะ เช่น “ค่าวินมอไซค์ 50 บาท”';
         const categories = offeredCategories(await this.repo.listCategories(ctx.companyId));
+        const choices = await Promise.all(input.recentCandidates.map(item => this.repo.findByIdWithRelations(ctx.companyId, item.id, undefined, ctx.scopes ?? {})));
+        if (choices.some(item => !item)) return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
         return {
           handled: true,
           status: 'TARGET_REQUIRED',
+          source: { records: choices.flatMap(item => substituteReplySource(item!).records), categoriesHash: sourceHash(categories) },
           // Nothing is persisted without a target, so the values are echoed back instead of dropped.
           replyText: formatStandalone({
             echoed: extractValues(input.messageText, null, ctx.userId, categories),
@@ -1514,7 +1575,7 @@ export class LineSubstituteReceiptContinuationUseCase {
             headline: hasChoices
               ? 'ยังไม่ทราบว่าจะทำใบรับรองให้รายการค่าใช้จ่ายไหนค่ะ'
               : 'ยังไม่พบรายการค่าใช้จ่ายในแชทนี้ที่จะทำใบรับรองให้ค่ะ',
-            choices: input.recentCandidates.map((item) => item.label),
+            choices: choices.map(item => `${expenseLabel(item!)}${item!.expenseNumber ? ` · ${bahtAmount(item!)}` : ''}`),
             question,
             webPath: absoluteLink(input.webBaseUrl, `/companies/${ctx.companyId}/expenses/substitute-receipts/new`),
           }),
@@ -1586,7 +1647,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       return {
         handled: true, status: 'TARGET_REQUIRED', acceptedFields: [], blockers: [],
         replyText: confirmQuestion, pendingQuestion: confirmQuestion,
-        expenseId: expense.id, candidateExpenseIds: [expense.id],
+        expenseId: expense.id, candidateExpenseIds: [expense.id], source: substituteReplySource(expense),
       };
     }
     // Anchored NFC-safe controls: our natural “พัก … ใบรับรองแทนใบเสร็จ …”/English forms PLUS develop's
@@ -1604,7 +1665,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       );
       if (controlIssues.some((issue) => INELIGIBLE_CODES.has(issue.code))) {
         return {
-          handled: true, status: 'INELIGIBLE', expenseId: expense.id, workflowId: selected.state.workflowId,
+          handled: true, status: 'INELIGIBLE', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
           acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath,
           replyText: formatResult({ status: 'INELIGIBLE', expense, state: selected.state, acceptedFields: [], blockers: controlIssues.map((issue) => blocker(issue.code, issue.message)), webPath }),
         };
@@ -1623,12 +1684,12 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       const state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       const status = pause ? 'PAUSED' as const : 'CANCELLED' as const;
-      return { handled: true, status, expenseId: expense.id, workflowId: state.workflowId, acceptedFields: [], blockers: [], webPath,
+      return { handled: true, status, expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense, saved.updatedAt), acceptedFields: [], blockers: [], webPath,
         replyText: formatResult({ status, expense, state, acceptedFields: [], blockers: [], webPath }) };
     }
     if (selected.state.targetRevision !== expense.updatedAt.toISOString()) {
       return {
-        handled: true, status: 'STALE', expenseId: expense.id, workflowId: selected.state.workflowId,
+        handled: true, status: 'STALE', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
         replyText: formatResult({ status: 'STALE', expense, state: selected.state, acceptedFields: [], blockers: [], webPath }),
         acceptedFields: [], blockers: [], webPath,
       };
@@ -1642,7 +1703,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const wrongDocument = payeeCouldSignHeadline(input.messageText);
     if (wrongDocument) {
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: selected.state.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: selected.state.workflowId, source: substituteReplySource(expense),
         acceptedFields: [], blockers: [], webPath, pendingQuestion: PAYEE_COULD_SIGN_QUESTION,
         resumeCapsule: resumeCapsule(expense, selected.state, [], webPath),
         replyText: formatStandalone({ headline: wrongDocument, question: PAYEE_COULD_SIGN_QUESTION, webPath }),
@@ -1727,6 +1788,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const statusChanged = selected.state.status !== nextState.status;
     const decisionChanged = selected.state.pendingDecision !== nextState.pendingDecision;
     let state = nextState;
+    let producedRevision = expense.updatedAt;
     if (!forbidden && !ineligible && ((startedNew && startConfirmed) || hasAcceptedChange || statusChanged || decisionChanged)) {
       const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
@@ -1738,6 +1800,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         ...(acceptedNow.expenseCategoryId ? { expenseCategoryId: acceptedNow.expenseCategoryId } : {}),
       });
       state = saved.continuation as unknown as LineSubstituteReceiptContinuation;
+      producedRevision = saved.updatedAt;
     }
     const status = forbidden ? 'FORBIDDEN' as const : ineligible ? 'INELIGIBLE' as const : blockers.length ? 'BLOCKED' as const : 'READY_FOR_WEB' as const;
     const targetPath = forbidden
@@ -1752,6 +1815,10 @@ export class LineSubstituteReceiptContinuationUseCase {
       && Boolean(await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId));
     return {
       handled: true, status, workflowId: state.workflowId, expenseId: expense.id,
+      source: { ...substituteReplySource(expense, producedRevision), categoriesHash: sourceHash(categories),
+        policy: { branchId: expense.branchId ?? null, payerUserId: acceptedValues.payerUserId ?? null, hash: sourceHash([policyRow, eligibleApprovers, payer]) },
+        ...(state.pendingDecision === 'ISSUE_CONFIRM' ? { signatureAvailable: hasReusableSignature } : {}),
+      },
       acceptedFields: Object.keys(acceptedNow), blockers, webPath: targetPath,
       ...(badge ? { badge } : {}),
       policy: policyFacts,
@@ -1799,7 +1866,7 @@ export class LineSubstituteReceiptContinuationUseCase {
           : 'เตรียมและจองเลขที่ไว้แล้ว เหลือลงนามรับรองและอนุมัติในเว็บ',
     ];
     return {
-      handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath,
+      handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, acceptedFields: [], blockers: [], webPath, source: substituteReplySource(expense),
       ...(badge ? { badge } : {}),
       replyText: formatStandalone({
         headline: headline.join('\n'),
@@ -1832,7 +1899,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     if (!choice) {
       const waitingForPhoto = state.pendingDecision === 'CHECK_BILL_FINAL_RECEIPT';
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),
         acceptedFields: [], blockers: [],
         pendingQuestion: waitingForPhoto ? 'ส่งรูปใบเสร็จฉบับสุดท้ายเข้ามาในแชทนี้ได้เลยค่ะ' : CHECK_BILL_PAYMENT_QUESTION,
         webPath,
@@ -1846,7 +1913,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       };
     }
     if (choice === 'UNPAID') {
-      await this.repo.saveLineSubstituteContinuation({
+      const saved = await this.repo.saveLineSubstituteContinuation({
         companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
         expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
         continuation: {
@@ -1854,7 +1921,7 @@ export class LineSubstituteReceiptContinuationUseCase {
         } as unknown as Record<string, unknown>,
       });
       return {
-        handled: true, status: 'PAUSED', expenseId: expense.id, workflowId: state.workflowId,
+        handled: true, status: 'PAUSED', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [],
         replyText: formatStandalone({
           headline: '⏸️ เก็บรายการนี้เป็นฉบับร่างไว้แล้วค่ะ ยังไม่บันทึกว่าเป็นค่าใช้จ่ายที่จ่ายแล้ว',
@@ -1874,7 +1941,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: next.pendingQuestion ?? undefined, webPath,
         replyText: formatStandalone({
           headline: '📷 ได้เลยค่ะ ระบบจะใช้ใบเสร็จฉบับสุดท้ายแทนหลักฐานหลักในรายการเดิม',
@@ -1938,6 +2005,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       const signature = await this.repo.findReusableSignatureAsset(ctx.companyId, ctx.userId);
       return {
         handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
+        source: { ...substituteReplySource(expense), signatureAvailable: Boolean(signature) },
         acceptedFields: [], blockers: [], pendingQuestion: ISSUE_DECISION_QUESTION, webPath,
         ...(sideAnswer ? { sideQuestionAnswered: true } : {}),
         // S1: nothing in this message answers the open decision. The dispatcher needs that fact —
@@ -1968,7 +2036,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: question,
         webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
         resumeCapsule: resumeCapsule(expense, next, [], workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId)),
@@ -1993,7 +2061,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       const next = saved.continuation as unknown as LineSubstituteReceiptContinuation;
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: next.workflowId, source: substituteReplySource(expense, saved.updatedAt),
         acceptedFields: [], blockers: [], pendingQuestion: question,
         webPath: workflowLink(input.webBaseUrl, ctx.companyId, expense.id, next.workflowId),
         replyText: formatStandalone({
@@ -2030,13 +2098,15 @@ export class LineSubstituteReceiptContinuationUseCase {
     // A3: written once, so the photo that arrives next has a numbered choice that can become a
     // signature. Best-effort by design — a stale-revision refusal here must not swallow the ask
     // itself, and `loadOpenMediaContext` re-checks the live signature anyway.
+    let producedRevision = expense.updatedAt;
     if (state.signatureRequested !== true) {
       try {
-        await this.repo.saveLineSubstituteContinuation({
+        const saved = await this.repo.saveLineSubstituteContinuation({
           companyId: ctx.companyId, expenseId: expense.id, actorUserId: ctx.userId,
           expectedUpdatedAt: expense.updatedAt, scopes: ctx.scopes ?? {},
           continuation: { ...state, signatureRequested: true } as unknown as Record<string, unknown>,
         });
+        producedRevision = saved.updatedAt;
       } catch {
         // Left unrecorded: the sender still gets the ask, and the caption route still works.
       }
@@ -2045,6 +2115,7 @@ export class LineSubstituteReceiptContinuationUseCase {
     const signatureBlocker = blocker('reusable_signature_required', 'ยังไม่มีลายเซ็นที่บันทึกไว้', true);
     return {
       handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+      source: { ...substituteReplySource(expense, producedRevision), signatureAvailable: false },
       acceptedFields: [],
       badge: substituteReceiptBadge({ status: 'BLOCKED', blockers: [signatureBlocker] }),
       blockers: [signatureBlocker],
@@ -2145,6 +2216,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       });
       return {
         handled: true, status: 'READY_FOR_WEB', expenseId: expense.id, workflowId: state.workflowId,
+        source: substituteReplySource({ ...expense, substituteReceiptEvidence: evidence }, new Date(evidence.expenseUpdatedAtAtPreparation)),
         acceptedFields: [], blockers: [], webPath,
         ...(badge ? { badge } : {}),
         replyText: formatStandalone({
@@ -2167,7 +2239,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       const webPath = workflowLink(input.webBaseUrl, ctx.companyId, expense.id, state.workflowId);
       if (error instanceof ConflictException) {
         return {
-          handled: true, status: 'STALE', expenseId: expense.id, workflowId: state.workflowId,
+          handled: true, status: 'STALE', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),
           acceptedFields: [], blockers: [], webPath,
           replyText: formatResult({ status: 'STALE', expense, state, acceptedFields: [], blockers: [], webPath }),
         };
@@ -2175,7 +2247,7 @@ export class LineSubstituteReceiptContinuationUseCase {
       // Generic Thai only — the raw API error is often English and never belongs in a customer chat.
       const blockers = [blocker('substitute_prepare_failed', 'ยังเตรียมเอกสารไม่ได้ในตอนนี้ค่ะ ตรวจสอบและดำเนินการต่อในเว็บได้เลย')];
       return {
-        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId,
+        handled: true, status: 'BLOCKED', expenseId: expense.id, workflowId: state.workflowId, source: substituteReplySource(expense),
         acceptedFields: [], blockers, webPath,
         // A structural failure means the same “1) ออกเอกสาร” would fail again, so the decision is
         // cleared for this reply rather than re-offered as a one-tap retry; the web page is the way on.

@@ -1,0 +1,126 @@
+{
+  "status": "LOCAL_CAPACITY_POLICY_SLICE_PASS",
+  "recordedAt": "2026-09-15T09:09:04.808313+00:00",
+  "baseCommit": "1c8dd5139bd45779068c005045245533eabd1396",
+  "sourceSha256": {
+    "packages/contracts/src/billing.ts": "7ef4f8ac98c8c76c265379b000664997421c09037da96f93b4624631a4d1fd37",
+    "apps/api/src/modules/billing/domain/billing-policy.ts": "aa9643b3f5046d8f86c97031bf5ca8d12d1e57c48c16ce2ec8354c9530a44c88",
+    "apps/api/src/modules/billing/domain/billing-package.spec.ts": "94ba81e2ef5d7c8745adfe4b840900cbf5a60de18c52033330ff5837ed8bb4de",
+    "apps/api/src/modules/billing/application/billing-capacity.ts": "706258c3d52afa7ed5ac3790705e93989ee03d7c8662398da7522a07cadf41f9",
+    "apps/api/src/modules/billing/application/billing-capacity.spec.ts": "3b636fe08753d055e04104c59fabe0c9c79d80abd6ae29cc609bbcc4826f10a8",
+    "apps/api/src/modules/billing/application/billing.service.ts": "15d9523e2b0997b5f056b4e64a904fd36aac363853798a180ab8a9da0903d9d7",
+    "apps/api/src/modules/billing/application/billing-repeat.ts": "21c63d35c1c02410de60cfb0f737223daa6a2deb7ec7693701d376fda52d6587",
+    "apps/api/src/modules/billing/application/billing-configuration.service.ts": "ae67f878a58e7277cbfba61a50896472a52e422de2c7085fcb2d40b8bc11133d",
+    "apps/api/src/scripts/billing-offer-terms-smoke.ts": "0e8dbb180cc5543ced42aa308e64e24928d86a730a2162e780e82ce7c4416fb0",
+    "apps/api/src/scripts/billing-marketing-smoke.ts": "5f9303da65c50ce37be95017e7a9cd3ff8385fce4f7d0217fcd78ca362431194",
+    "apps/api/src/scripts/billing-plan-change-smoke.ts": "3c8844340e831e789688c9b52541cce48e8fd2ab54405e9b7bf3bff2edff09f8",
+    "apps/web/src/features/billing-admin/BillingOfferTermsEditor.tsx": "d9cae10a76c899ca79855b2510f8bc438f20b05926b3f0233fc32cc2c84e04b9",
+    "apps/web/src/features/billing-admin/BillingConfigurationPage.tsx": "81eb94eee59aa8f95b816950cb7e6515991c10a211d464bfcfb663230311de15",
+    "apps/web/src/features/billing/BillingPage.tsx": "64b153a3aeab9062eb605e841b941df32ff51465aa23d3864f566f3d95a50d26",
+    "apps/web/src/common/api/api-error-message.ts": "0547bbc48f2e27052083bbed17e3d56a70799fdda0eec3bc4ccb8429ac17eeb7"
+  },
+  "runs": {
+    "offerTerms": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "offer-terms-strict-typed-allowlist-bounds-and-provider-price-mismatch-before-publication",
+        "browser-offer-terms-invalid-input-draft-reload-exact-money-quota-independent-approval-and-mobile-return",
+        "offer-terms-public-catalog-revision-shared-default-trial-and-enterprise-lock-without-financial-mutation",
+        "offer-terms-marketing-actual-bundle-public-bff-trial-seven-annual-upfront-test-sales-closed",
+        "offer-terms-marketing-revision-change-before-click-stays-on-review",
+        "offer-terms-marketing-unavailable-stale-fail-closed-and-retry-recovers",
+        "offer-terms-marketing-mobile-and-paid-intent-to-real-authenticated-company-picker",
+        "browser-web-and-line-entry-show-current-approved-price-and-1500-upfront-receipts",
+        "offer-terms-issued-checkout-replay-and-paid-historical-1500-grant-survive-published-default-reversion",
+        "offer-terms-repeat-adds-current-1200-to-original-1500-without-resizing-original-grant-and-extends-original-expiry",
+        "capacity-published-lower-limits-preserve-paid-baseline-and-original-gift-expiry-on-repeat",
+        "browser-configuration-late-real-preview-after-leave-original-history-return-and-cancel",
+        "offer-terms-retains-other-company-paid-invoices-terms-and-receipt-grants"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "planChange": {
+      "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+      "passed": [
+        "real-session-tenant-and-expired-owner-recovery",
+        "hidden-enterprise-and-forged-price-rejected",
+        "browser-owner-company-picker-retains-plan-interval-and-line-origin",
+        "browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart",
+        "browser-real-cookie-csrf-expired-owner-quote-consent-checkout",
+        "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+        "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+        "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+        "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+        "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+        "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+        "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+        "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+        "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+        "browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return",
+        "apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort",
+        "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+        "historical-paid-invoice-survives-replaced-subscription-item",
+        "original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history",
+        "historical-paid-replay-preserves-newer-and-foreign-package-requests",
+        "downgrade-owner-tenant-target-capacity-and-stale-selection-before-provider",
+        "ordinary-downgrade-lost-create-update-same-command-one-subscription-no-charge-or-cap-change",
+        "downgrade-cancel-resume-preserves-target-explicit-cancel-restores-accepted-price",
+        "downgrade-repeat-expiry-restores-old-date-paid-repeat-adds-quota-extends-date-preserves-target",
+        "downgrade-pending-upgrade-charges-delta-retains-lower-target-and-paid-end",
+        "downgrade-accepted-capacity-survives-catalog-change-repeat-and-upgrade",
+        "downgrade-mobile-selection-review-confirm-cancel-reschedule-round-trip",
+        "failed-lower-renewal-grace-retains-old-tier-without-free-target-quota",
+        "paid-lower-renewal-stale-selection-held-original-invoice-repair-atomic-cap-and-one-grant"
+      ],
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false,
+      "browserE2E": true
+    }
+  },
+  "checks": {
+    "unit": {
+      "passed": 17,
+      "failed": 0,
+      "skipped": 0,
+      "artifact": "capacity-policy-unit.tap"
+    },
+    "postgres": {
+      "passed": 37,
+      "failed": 0,
+      "skipped": 0,
+      "artifact": "capacity-policy-postgres.tap"
+    }
+  },
+  "capturesSha256": {
+    "capacity-policy-admin-mobile.png": "0452eab87c597835d6a9e0a9f181f80cfbef0c45168552aa875b00390a20c6f4",
+    "capacity-policy-marketing-mobile.png": "9bee7e9570a8eb24a24e82e5f6574be5f49b364e5debf3382bcc68674f2b984b"
+  },
+  "builds": {
+    "contracts": "PASS",
+    "apiTypecheck": "PASS",
+    "webTypecheck": "PASS",
+    "swc": "PASS"
+  },
+  "commands": {
+    "offerTerms": "BILLING_CONFIG_ONLY=1 BILLING_OFFER_TERMS_ONLY=1 BILLING_BROWSER_E2E=1 MANGMEE_MARKETING_DIR=/Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912 node /tmp/mangmee-run-billing-smoke.mjs",
+    "planChange": "BILLING_PLAN_CHANGE_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "postgres": "guarded localhost15432/mangmee_billing_20260912: billing-caps.pg.spec.ts, billing-grace.pg.spec.ts, billing-receipts.pg.spec.ts"
+  },
+  "limits": [
+    "Actual local Nest/PostgreSQL/Next/Chromium and isolated marketing; Stripe/Postmark/LINE transport simulated. Counts overlap, not unique flow totals.",
+    "Temporary gift and catalog change in the downgrade regression are explicit TEST_ONLY source fixtures; reviewed Admin publication is exercised separately in offerTerms.",
+    "Mobile inputs inspected at original resolution. Full-page Admin capture contains the sticky navigation at its captured scroll position. Marketing capture shows stale-catalog recovery; current PRO capacities are asserted in the actual bundle DOM.",
+    "No new full combined or native payment/delivery acceptance; final CI-qualified develop/main merges remain open. No push, CI or deploy.",
+    "No paid free-day/collection policy selected; prior Owner question remains pending."
+  ]
+}

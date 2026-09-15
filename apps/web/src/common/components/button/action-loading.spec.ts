@@ -102,7 +102,7 @@ test('AI usage retry has visible pending and releases after a rejected read', as
   let busy = false;
   const wait = deferred<unknown>();
   const { loadUsage } = handlers('system-partners/PartnerDetailPage.tsx', ['loadUsage'], {
-    companyId: 'company', getPartnerAiUsage: () => wait.promise,
+    companyId: 'company', generation: {current:0}, getPartnerAiUsage: () => wait.promise,
     setUsageLoading: (value: boolean) => { busy = value; }, setUsageError: () => {}, apiErrorMessage: String,
   });
   const first = loadUsage(); assert.equal(busy, true);

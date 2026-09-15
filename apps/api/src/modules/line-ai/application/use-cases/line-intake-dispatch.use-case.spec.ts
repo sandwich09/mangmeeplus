@@ -1,12 +1,16 @@
+import { evaluateEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
+import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
+import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
+import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { CaptureLineExpenseNoteUseCase, LineTextExpenseCaptureIncompleteError } from '../../../expenses/application/use-cases/expense-document.use-case';
 
 // Router-driven webhook dispatch tests (item 10B LINE Intake Router front stage).
@@ -61,9 +65,9 @@ function makePrisma(opts: {
   const prisma = {
     client: {
       // Consumption markers commit with the terminal outcome; the fake runs the callback inline.
-      $transaction: async (work: (tx: any) => Promise<unknown>) => work({
-        outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
-      }),
+      $transaction: async (work: (tx: any) => Promise<unknown>) => work(prisma.client),
+      $executeRaw: async () => undefined,
+      outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
       // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06). These
       // fixtures are receipts, not support threads, so the answer is "nobody" and nothing is written.
       lineSupportRequest: { findFirst: async () => null },
@@ -79,7 +83,7 @@ function makePrisma(opts: {
         findMany: async (args: any) => branchRows.filter((row) => !args?.where?.id?.in || args.where.id.in.includes(row.id)),
       },
       externalIdentity: {
-        findFirst: async () => ({ userId: 'user-1', user: { status: 'ACTIVE' } }),
+        findFirst: async () => ({ status: 'ACTIVE', userId: 'user-1', user: { status: 'ACTIVE' } }),
       },
       companyMembership: {
         findMany: async () => [{ companyId: 'company-1', company: { name: 'c1', brandName: null }, roles: [{ role: { key: 'OWNER' } }] }],
@@ -89,9 +93,9 @@ function makePrisma(opts: {
       lineCompanyContext: { findUnique: async () => null, upsert: async (args: unknown) => args },
       companyFeatureEntitlement: { findMany: async () => [] },
       expenseRecord: { update: async (args: any) => { recordUpdates.push(args); return args; } },
-      attachmentLink: { findFirst: async () => null },
+      attachmentLink: { findFirst: async () => null, findMany: async () => [] },
       // §11: the checksum the wet-signed scan is recorded with comes off the stored attachment.
-      attachmentObject: { findFirst: async () => ({ checksumSha256: 'scan-checksum' }) },
+      attachmentObject: { findFirst: async (args: any) => ({ id: args?.where?.id, checksumSha256: 'scan-checksum' }) },
       aiConversation: { upsert: async (args: any) => ({ id: args.where.id }) },
       aiTurn: { create: async (args: any) => { turnCreates.push(args); return { id: 'turn-1' }; }, findMany: async () => [], update: async (args: any) => args },
       aiToolInvocation: { createMany: async (args: unknown) => args },
@@ -162,6 +166,8 @@ function makeHarness(opts: {
   routePlan?: LineIntakeRoutePlan;
   correctionOutcome?: any;
   openWaiting?: any[];
+  /** Preserve deliberately missing/corrupt provenance for refusal tests. */
+  unprovenWaiting?: boolean;
   recentCaptures?: Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; sourceDocumentType: string | null; createdAt: Date }>;
   routeThrows?: boolean;
   uploadThrows?: boolean;
@@ -205,6 +211,7 @@ function makeHarness(opts: {
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
+  const capturedRows = new Map<string, any>();
   const signatureCreated: any[] = [];
   const routeRequests: any[] = [];
   const turnRequests: any[] = [];
@@ -229,6 +236,21 @@ function makeHarness(opts: {
   const sentMessages: unknown[][] = [];
   const ledgerAcks: Array<{ entryId: string; outcome: string }> = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
+  const emptyMedia = (id: string, input: any = {}) => ({ id, companyId: 'company-1', createdByUserId: 'user-1',
+    captureSource: 'LINE_UPLOAD', status: 'DRAFT', primaryAttachmentId: 'att-1',
+    expenseDate: new Date('2026-09-15'), updatedAt: new Date('2026-09-15T00:00:00Z'),
+    grandTotalAmount: '0', vatAmount: '0', whtAmount: '0', netPayableAmount: '0', discountAmount: '0', vatMode: 'NO_VAT',
+    lines: [], attachments: [], charges: [], sourceChannelMetadataJson: {}, ...input });
+  const recordUpdate = prisma.client.expenseRecord.update;
+  prisma.client.expenseRecord.update = async (args: any) => {
+    const saved = capturedRows.get(args.where.id);
+    if (saved && args.where.updatedAt) assert.equal(args.where.updatedAt.getTime(), saved.updatedAt.getTime());
+    const result = await recordUpdate(args);
+    if (!saved) return result;
+    Object.assign(saved, args.data, { updatedAt: new Date(saved.updatedAt.getTime() + 1) });
+    return structuredClone(saved);
+  };
+
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
   if (opts.entitlementRows) prisma.client.companyFeatureEntitlement.findMany = async () => opts.entitlementRows;
 
@@ -258,22 +280,40 @@ function makeHarness(opts: {
   const expenseRepo = {
     resolveCreateBranchId: async (companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null) =>
       resolveTransactionBranchId(branchDb, companyId, scopes, selectedBranchId),
+    findActiveAttachmentObject: async (_companyId: string, id: string) => id === 'pending-att-1' ? { id, checksumSha256: 'hash' } : null,
     listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
-    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
+    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return (opts.recentCaptures ?? []).filter(row => !input.expenseIds || input.expenseIds.includes(row.id)); },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
     recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
-    findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
+    findByLineMessageId: async (companyId: string, lineMessageId: string) => {
+      const found = await opts.findExpenseByLineMessageId?.(companyId, lineMessageId);
+      if (!found) return null;
+      if (!capturedRows.has(found.id)) capturedRows.set(found.id, emptyMedia(found.id, {
+        primaryAttachmentId: null, lineMessageId, sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) }, ...found,
+      }));
+      return structuredClone(capturedRows.get(found.id));
+    },
     runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
       const matched = await detectWithinTx({ marker: 'tx' });
-      return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
+      const duplicateStatus = matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH';
+      if (capturedRows.has(_input.expenseId)) capturedRows.get(_input.expenseId).duplicateStatus = duplicateStatus;
+      return { openCandidates: matched.length, duplicateStatus };
     },
-    createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
-    linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
+    createExpense: async (input: any) => { createExpenseCalls.push(input); const saved = emptyMedia('expense-clarified-1', { primaryAttachmentId: null, ...input }); capturedRows.set(saved.id, saved); return structuredClone(saved); },
+    linkAttachment: async (...args: any[]) => {
+      linkAttachmentCalls.push(args);
+      const saved = capturedRows.get(args[0]);
+      if (saved) saved.attachments.push({ id: args[1], purpose: args[2], checksumSha256: 'hash', perceptualHash: '8f00aa55cc33f00f' });
+    },
     updateExpense: async (input: any) => {
       updateExpenseCalls.push(input);
-      return { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', ...input };
+      const saved = { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', createdByUserId: 'user-1',
+        branchId: legacyBranchIds[0], captureSource: 'LINE_UPLOAD', updatedAt: new Date(), ...input };
+      if (input.sourceChannelMetadataJson?.kind === 'text_note') capturedRows.set(saved.id, saved);
+      else if (capturedRows.has(input.id)) { const current = capturedRows.get(input.id); Object.assign(current, input, { updatedAt: new Date(current.updatedAt.getTime() + 1) }); return structuredClone(current); }
+      return structuredClone(saved);
     },
-    findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? ({
+    findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? structuredClone(capturedRows.get(expenseId)) ?? ({
       id: expenseId,
       primaryAttachmentId: 'pending-att-1',
       attachments: [{
@@ -294,6 +334,20 @@ function makeHarness(opts: {
     createDuplicateCandidate: async () => undefined,
   } as any;
 
+  const substituteOutcome = (ctx: any, input: any, result: any) => {
+    if (!result || Object.hasOwn(result, 'source') || result.status === 'FORBIDDEN') return result;
+    const ids: string[] = result.status === 'TARGET_REQUIRED' && !result.candidateExpenseIds?.length ? []
+      : result.candidateExpenseIds?.length ? result.candidateExpenseIds
+      : [result.expenseId ?? input.recentCandidates?.[0]?.id ?? 'expense-substitute-1'];
+    const records = ids.flatMap(id => {
+      const saved = { ...emptyMedia(id), ...capturedRows.get(id),
+        ...(typeof opts.expenseDetail === 'object' && opts.expenseDetail?.id === id ? opts.expenseDetail : {}), companyId: ctx.companyId,
+        createdByUserId: ctx.userId, sourceChannelMetadataJson: { ...capturedRows.get(id)?.sourceChannelMetadataJson, chatKeyHash: input.chatKeyHash } };
+      capturedRows.set(id, saved); return substituteReplySource(saved).records;
+    });
+    return { ...result, source: { records } };
+  };
+
   // Only repositories, audit and outbox are doubled: the eligibility gate, hint validation and
   // draft-line construction are the production ones.
   const realCaptureExpenseNote = new CaptureLineExpenseNoteUseCase(
@@ -303,7 +357,17 @@ function makeHarness(opts: {
     { append: async () => undefined } as any,
   );
 
-  const useCase = new ProcessLineWebhookUseCase(
+  const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({
+      webBaseUrl: 'https://app.example.com',
+      lineMessagingChannelAccessToken: 'line-token',
+      lineExpenseDraftConversationEnabled: opts.expenseDraftConversationEnabled ?? true,
+      lineAiReimbursementSemanticMode: opts.lineAiReimbursementSemanticMode ?? 'off',
+      lineAiExactGreetingEnabled: opts.lineAiExactGreetingEnabled ?? false,
+      lineAiMultipartTerminalFlexEnabled: opts.lineAiMultipartTerminalFlexEnabled ?? false,
+      // No `?? 'off'` on purpose: leaving it undefined models a config double / older deployment that
+      // never heard of the flag, which must still resolve to the legacy advisor-off capability.
+      lineAiAdvisorMode: opts.lineAiAdvisorMode,
+    } as any),
     prisma,
     {
       webBaseUrl: 'https://app.example.com',
@@ -353,7 +417,18 @@ function makeHarness(opts: {
         return opts.lineReplyResult ?? 'ok';
       },
     } as any,
-    { apply: async () => { if (opts.receiptApplyError) throw opts.receiptApplyError; return opts.receiptApplyOutcome ?? { candidatesCreated: 0 }; } } as any,
+    { apply: async (_ctx: any, id: string, fields: any, options: any) => {
+      if (opts.receiptApplyError) throw opts.receiptApplyError;
+      const saved = capturedRows.get(id); assert.ok(saved);
+      assert.equal(options.expectedUpdatedAt.getTime(), saved.updatedAt.getTime());
+      const result = opts.receiptApplyOutcome ?? { candidatesCreated: 0 };
+      if (!result.staleSkipped) Object.assign(saved, {
+        vendorNameSnapshot: fields.vendorName, grandTotalAmount: fields.grandTotalAmount ?? '0',
+        expenseDate: fields.expenseDate ? new Date(fields.expenseDate) : saved.expenseDate,
+        expenseCategoryId: result.categoryId ?? null, updatedAt: new Date(saved.updatedAt.getTime() + 1),
+      });
+      return { ...result, committedUpdatedAt: saved.updatedAt };
+    } } as any,
     { assertClean: async () => undefined } as any,
     acceptedLegal,
     shadowProbe,
@@ -364,20 +439,27 @@ function makeHarness(opts: {
     // survived every spec in the repo.
     {
       execute: async (ctx: any, cmd: any) => {
-        await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
+        const branchId = await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
+        capturedRows.set('expense-1', emptyMedia('expense-1', { companyId: ctx.companyId, createdByUserId: ctx.userId, branchId,
+          sourceChannelMetadataJson: { chatKeyHash: cmd.lineCapture.chatKeyHash } }));
         initCalls.push(cmd);
         return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() };
       },
     } as any,
-    { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,
+    { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return structuredClone(capturedRows.get(cmd.expenseId)); } } as any,
     // captureExpenseNote
     {
       execute: async (ctx: any, cmd: any) => {
         if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
         if (opts.realCapture) return realCaptureExpenseNote.execute(ctx, cmd);
+        const saved = { id: 'expense-note-1', companyId: ctx.companyId, createdByUserId: ctx.userId, branchId: cmd.branchId ?? legacyBranchIds[0],
+          captureSource: 'LINE_UPLOAD', updatedAt: new Date(), sourceChannelMetadataJson: { chatKeyHash: cmd.chatKeyHash },
+          sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' };
+        capturedRows.set(saved.id, saved);
         return {
-          expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
+          expense: structuredClone(saved),
+          categoryNameSourceId: 'cat-meals',
           warnings: [],
           insertedAmount: '65.0000',
           categoryId: 'cat-meals',
@@ -403,7 +485,7 @@ function makeHarness(opts: {
     (opts.openWaiting || opts.captureLedger
       ? {
         enabled: true,
-        openWaitingUser: async () => opts.openWaiting ?? [],
+        openWaitingUser: async () => waitingFixture,
         ack: async (entry: any, _state: string, meta: any) => { ledgerAcks.push({ entryId: entry?.id, outcome: meta?.outcome }); },
         appendTurn: async () => null,
         appendSubRequests: async (input: any) => { opts.captureLedger?.push(input); },
@@ -418,7 +500,12 @@ function makeHarness(opts: {
     {
       execute: async (_ctx: any, cmd: any) => {
         correctionCalls.push(cmd);
-        return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
+        const result = opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
+        if (result.status !== 'applied' || Object.hasOwn(result, 'source')) return result;
+        const saved = emptyMedia(result.expenseId, { companyId: _ctx.companyId, createdByUserId: _ctx.userId,
+          branchId: legacyBranchIds[0], sourceChannelMetadataJson: { chatKeyHash: cmd.chatKeyHash } });
+        capturedRows.set(saved.id, saved);
+        return { ...result, source: { id: saved.id, updatedAt: new Date(saved.updatedAt) } };
       },
     } as any,
     (opts.substituteResult || opts.substituteThrows || opts.substituteMediaContext
@@ -426,8 +513,9 @@ function makeHarness(opts: {
         execute: async (_ctx: any, input: any) => {
           substituteCalls.push(input);
           if (opts.substituteThrows) throw opts.substituteThrows;
-          return opts.substituteResult;
+          return substituteOutcome(_ctx, input, opts.substituteResult);
         },
+        replySourcesCurrent: (ctx: any, source: any) => LineSubstituteReceiptContinuationUseCase.prototype.replySourcesCurrent.call({ repo: expenseRepo } as any, ctx, source),
         loadOpenMediaContext: async (_ctx: any, chatKeyHash: string) => {
           mediaContextCalls.push(chatKeyHash);
           return opts.substituteMediaContext;
@@ -435,7 +523,7 @@ function makeHarness(opts: {
         hasPendingIssueDecision: async () => false,
         startFromCheckBill: async (_ctx: any, input: any) => {
           checkBillStarts.push(input);
-          return { handled: true, status: 'OPEN', expenseId: input.expenseId, acceptedFields: [], blockers: [], replyText: '' };
+          return substituteOutcome(_ctx, input, { handled: true, status: 'OPEN', expenseId: input.expenseId, acceptedFields: [], blockers: [], replyText: '' });
         },
         attachMedia: async (_ctx: any, input: any) => {
           attachMediaCalls.push(input);
@@ -449,8 +537,33 @@ function makeHarness(opts: {
         },
       }
       : undefined) as any,
-    opts.expenseDraftConversation,
+    opts.expenseDraftConversation ? {
+      ...opts.expenseDraftConversation,
+      ...(opts.expenseDraftConversation.execute ? { execute: async (ctx: any, input: any) => {
+        const result = await opts.expenseDraftConversation.execute(ctx, input);
+        if (!result.handled || ['STALE', 'NOT_FOUND'].includes(result.status) || Object.hasOwn(result, 'source')) return result;
+        // Presentation fixtures stand in for a committed producer. Store its original record
+        // so the production delivery guard still performs a real scoped read in this harness.
+        const saved = emptyMedia(result.expenseId ?? 'expense-continuation-1', { companyId: ctx.companyId,
+          createdByUserId: ctx.userId, sourceChannelMetadataJson: { chatKeyHash: input.chatKeyHash } });
+        capturedRows.set(saved.id, saved);
+        return { ...result, source: { records: [{ id: saved.id, updatedAt: saved.updatedAt }], categories: [] } };
+      } } : {}),
+    } as any : undefined,
   );
+  (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
+  // Historical unit scenarios seed an original question at harness construction. Actual two-turn
+  // tests carry the producer's exact sourceContext and must never mint a replacement on read.
+  const waitingFixture = (opts.openWaiting ?? []).map(item => ({ ...item, entry: { ...item.entry } }));
+  for (const item of waitingFixture) if (!opts.unprovenWaiting && !Object.hasOwn(item.entry, 'sourceContext')) {
+    item.entry.sourceContext = JSON.stringify({ v: 1, userId: 'user-1', companyId: 'company-1',
+      fingerprint: resolvedLineDeliveryAccessFingerprint('user-1', 'company-1', {
+        membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {},
+      } as any, evaluateEntitledFeatureKeys(opts.entitlementRows ?? [])),
+      chatKeyHash: chatKeyHashOf(TEXT_EVENT), recipientHash: lineDeliveryRecipientHash(TEXT_EVENT.lineUserId, TEXT_EVENT.lineUserId, (TEXT_EVENT as any).messagingChannelId ?? ''), contentHash: lineClarificationContentHash(item),
+    });
+  }
+
   // The dispatcher's own logger, so a test can assert what an operator sees at level 40.
   const warnings: any[] = [];
   (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), error: () => {}, log: () => {}, debug: () => {} };
@@ -625,6 +738,45 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     assert.match(h.replies[0] ?? '', /expense-1/);
   });
 
+  for (const fault of ['unchanged', 'revision', 'missing', 'access', 'fallback']) it(`correction confirmation validates its producing source: ${fault}`, async () => {
+    let changed = false, privateAttempts = 0; const accepted: unknown[] = [];
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'],
+      routePlan: { ...CORRECTION_PLAN, correctionHints: { expenseDate: { to: '2026-07-20' } } },
+      recentCaptures: [capturedRow('expense-1')], correctionOutcome: { status: 'applied', expenseId: 'expense-1',
+        fields: { expenseDate: { from: '2026-06-17T00:00:00.000Z', to: '2026-07-20' } } },
+    });
+    const uc = h.useCase as any, execute = uc.correctExpense.execute, read = uc.expenseRepo.findByIdWithRelations;
+    uc.correctExpense.execute = async (...args: unknown[]) => {
+      const result = await execute(...args); return fault === 'missing' ? { ...result, source: undefined } : result;
+    };
+    uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+      const row = await read(...args); return changed && row && ['revision', 'fallback'].includes(fault)
+        ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+    };
+    const access = uc.permissionResolver.resolveAccess;
+    uc.permissionResolver.resolveAccess = async (...args: unknown[]) => changed && fault === 'access'
+      ? { membershipId: 'revoked', roles: [], permissions: [], scopes: {} } : access(...args);
+    if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+      wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+    };
+    uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+      if (/แก้ไขรายการเดิมให้แล้ว/.test(JSON.stringify(messages))) {
+        privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; }
+      }
+      accepted.push(messages); return 'ok';
+    };
+    uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+    const run = h.useCase.execute({ ...TEXT_EVENT, messageText: 'วันที่ต้องเป็น 20 กรกฎาคม 2569' });
+    if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+    assert.equal(h.correctionCalls.length, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
+    if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว/);
+    else {
+      assert.doesNotMatch(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว|expense-1/);
+      assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+    }
+  });
+
   it('falls back to guidance when a guard refuses, never to a create', async () => {
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'],
@@ -720,6 +872,17 @@ describe('LINE intake dispatch – text path', () => {
     assert.match(h.replies[0] ?? '', /ติดต่อผู้ดูแลระบบของบริษัท/);
   });
 
+  it('reduces a stored capability reply to a fixed hint without copying any trailing private facts', async () => {
+    const h = makeHarness({ permissions: ['line.ai.query'], conversationTurns: [{ ...CAPABILITY_TURN[0],
+      replyPreview: `${CAPABILITY_TURN[0]!.replyPreview}\nข้อมูลลับจากสาขาเดิม 987654 บาท`,
+    }] });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ดูรายการที่มีสิทธิ์' });
+    const history = h.routeRequests[0]?.conversationContext?.recentTurns;
+    assert.equal(history?.[0]?.intent, 'CAPABILITY_OVERVIEW');
+    assert.equal(history?.[0]?.assistantReplyPreview, undefined);
+    assert.doesNotMatch(JSON.stringify(h.routeRequests), /987654|ข้อมูลลับ/);
+  });
+
   it('does not treat the same vague text as capability follow-up without the delivered capability marker', () => {
     assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', undefined), false);
     assert.equal(isDeliveredCapabilityFollowUp('อย่างไหร่', {
@@ -750,9 +913,11 @@ describe('LINE intake dispatch – text path', () => {
       }],
       expenseDetail: {
         id: 'expense-royal', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1',
+        captureSource: 'LINE_UPLOAD', updatedAt: new Date('2026-09-15T00:00:00Z'),
         sourceDocumentType: 'RECEIPT', grandTotalAmount: '2890.00', currency: 'THB',
         expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
         sourceChannelMetadataJson: {
+          chatKeyHash: chatKeyHashOf(TEXT_EVENT),
           lineReceiptContinuation: {
             kind: 'CAPTURED_EXPENSE', expenseId: 'expense-royal', userId: 'user-1',
             chatKeyHash: '20cb92ee125850e6', deliveredOutcomeId: 'opaque-outcome',
@@ -936,7 +1101,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
 
-  it('keeps group and room chats on the single-turn path in phase 1', async () => {
+  it('refuses a group capture before mutation and delivers only a private-chat instruction', async () => {
     let contextLoads = 0;
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
@@ -952,7 +1117,8 @@ describe('LINE intake dispatch – text path', () => {
     await h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' });
 
     assert.equal(contextLoads, 0);
-    assert.equal(h.captured[0].draftConversationEnabled, false);
+    assert.equal(h.captured.length, 0, 'private-chat restriction is checked before any capture');
+    assert.match(h.replies[0] ?? '', /แชตส่วนตัว/);
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
 
@@ -972,6 +1138,57 @@ describe('LINE intake dispatch – text path', () => {
     assert.equal(h.routeRequests.length, 0, 'stable ids do not require a model call');
     assert.equal(calls[0].webhookEventId, TEXT_EVENT.webhookEventId);
     assert.match(h.replies[0] ?? '', /I01-PRICE/u);
+  });
+
+  for (const fault of ['question', 'label', 'status', 'order', 'added', 'missing', 'unavailable', 'access'] as const) {
+    it(`refuses stale draft routing after ${fault} changes during intake without executing or recapturing`, async () => {
+      const contexts = ['one', 'two'].map(expenseId => ({ expenseId, label: expenseId, status: 'OPEN',
+        questions: [{ id: 'I01-QTY', prompt: 'จำนวนกระดาษ?', itemRef: 'I01' }] }));
+      let changed = false;
+      let executed = 0;
+      const h = makeHarness({
+        permissions: ['expense.receipt.line_upload'],
+        routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+        expenseDraftConversation: {
+          routeContexts: async () => {
+            if (!changed) return fault === 'added' ? [] : structuredClone(contexts);
+            if (fault === 'unavailable') throw new Error('source unavailable');
+            const next = structuredClone(contexts);
+            if (fault === 'question') next[0].questions[0].prompt = 'จำนวนคน?';
+            if (fault === 'label') next[0].label = 'คนละใบ';
+            if (fault === 'status') next[0].status = 'PAUSED';
+            return fault === 'order' ? next.reverse() : fault === 'missing' ? [] : next;
+          },
+          execute: async () => { executed += 1; return { handled: true, status: 'UPDATED', replyTexts: ['ข้อมูลลับจากร่างเก่า'], acceptedFields: [] }; },
+        },
+      });
+      const gateway = (h.useCase as any).aiGateway;
+      const route = gateway.requestLineIntakeRoute;
+      gateway.requestLineIntakeRoute = async (...args: any[]) => {
+        const result = await route(...args); changed = true;
+        if (fault === 'access') (h.useCase as any).permissionResolver.resolveAccess = async () => ({ membershipId: 'revoked', roles: [], permissions: [], scopes: {} });
+        return result;
+      };
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: 'กระดาษเอา 5 รีม' });
+      assert.equal(executed, 0);
+      assert.equal(h.captured.length, 0);
+      assert.equal(h.createExpenseCalls.length, 0);
+      assert.equal(h.turnRequests.length, 0);
+      assert.doesNotMatch(h.replies.join(''), /ข้อมูลลับจากร่างเก่า/);
+      assert.ok(h.replies.length > 0, 'the user receives a recovery path');
+    });
+  }
+
+  it('refuses a numbered draft selection if the order changes before deterministic execution', async () => {
+    let reads = 0, executed = 0;
+    const contexts = ['one', 'two'].map(expenseId => ({ expenseId, label: expenseId, status: 'OPEN', questions: [] }));
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], expenseDraftConversation: {
+      routeContexts: async () => ++reads === 1 ? contexts : [...contexts].reverse(),
+      execute: async () => { executed += 1; return { handled: true, status: 'UPDATED', replyTexts: ['wrong draft'], acceptedFields: [] }; },
+    } });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'ร่าง 1' });
+    assert.equal(executed, 0); assert.equal(h.routeRequests.length, 0); assert.equal(h.captured.length, 0);
+    assert.ok(h.replies.length > 0); assert.doesNotMatch(h.replies.join(''), /wrong draft/);
   });
 
   it('a passive draft rejected by the edit boundary does not turn unrelated chat into another questionnaire', async () => {
@@ -1486,8 +1703,8 @@ describe('LINE intake dispatch – text path', () => {
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],
       routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
       openWaiting: [{
-        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ไฟล์ที่ผู้ใช้ส่งมา', askedAt: new Date().toISOString(),
-        pendingMedia: { pendingMediaId: 'pending-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
+        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ยอดขายเดือนนี้เท่าไหร่', askedAt: new Date().toISOString(),
+        pendingMedia: { pendingMediaId: 'pm-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
         entry: { id: 'media-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
       }],
       prisma,
@@ -1606,7 +1823,7 @@ describe('LINE intake dispatch – the substitute request survives the clarify t
   const carried = (item: any) => ({
     id: 'sub-carry-1', question: item.clarifyQuestion, text: item.text, askedAt: new Date().toISOString(),
     clarifyForIntent: item.clarifyForIntent,
-    entry: { id: 'sub-carry-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+    entry: { sourceContext: item.sourceContext, id: 'sub-carry-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
   });
 
   it('parks the request as a clarification when the chat has nothing to make the document for', async () => {
@@ -1754,7 +1971,7 @@ describe('LINE intake dispatch – “what do I do next?”', () => {
           },
         },
       }],
-      expenseDetail: { id: 'expense-open', createdByUserId: 'user-1', substituteReceiptEvidence: { id: 'ev-1', status: 'PREPARED' } },
+      expenseDetail: { id: 'expense-open', companyId: 'company-1', createdByUserId: 'user-1', updatedAt: new Date('2026-09-15T00:00:00Z'), attachments: [], substituteReceiptEvidence: { id: 'ev-1', status: 'PREPARED' } },
       substituteResult: statusCard,
     });
 
@@ -1964,14 +2181,17 @@ describe('LINE intake dispatch – media path', () => {
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {
     let lookupCount = 0;
+    const saved = { id: 'expense-1', companyId: 'company-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
+      createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1', captureSource: 'LINE_UPLOAD',
+      updatedAt: new Date('2026-09-15T00:00:00Z'), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) } };
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
       findExpenseByLineMessageId: async (_companyId, lineMessageId) => {
         lookupCount += 1;
-        return lookupCount === 1 ? null : { id: 'expense-1', lineMessageId, sourceDocumentType: 'RECEIPT',
-          status: 'CONFIRMED', createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' };
+        return lookupCount === 1 ? null : { ...saved, lineMessageId };
       },
+      expenseDetail: saved,
     });
 
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -2503,6 +2723,21 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.match(h.replies[0] ?? '', /expense-existing-1/);
   });
 
+  it('a pending confirmation for an already reviewed receipt returns the saved record without resetting review or linking again', async () => {
+    const { prisma, pendingMediaRows } = makePrisma(); seedPendingRow(pendingMediaRows);
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], prisma,
+      findExpenseByLineMessageId: async () => ({ id: 'reviewed-original', lineMessageId: 'msg-media-1',
+        primaryAttachmentId: 'pending-att-1', status: 'CONFIRMED', reviewedAt: new Date(),
+        grandTotalAmount: '777', aiVerificationSummaryJson: { humanReview: true },
+        attachments: [{ id: 'pending-att-1', purpose: 'expense.receipt.primary' }] }),
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-reviewed-retry', messageText: 'ใช่ ใบเสร็จ' });
+    assert.equal(h.createExpenseCalls.length, 0); assert.equal(h.linkAttachmentCalls.length, 0); assert.equal(h.updateExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.match(h.replies.at(-1)!, /เก็บรายการนี้ไว้แล้ว/); assert.match(h.replies.at(-1)!, /reviewed-original/);
+    assert.doesNotMatch(h.replies.at(-1)!, /เบื้องต้น|รอตรวจสอบ/);
+  });
+
   it('Fix #5: a link failure on first resolve leaves the row PENDING; the retry repairs the link and only then resolves (receipt never detached)', async () => {
     const { prisma, pendingMediaRows } = makePrisma();
     seedPendingRow(pendingMediaRows);
@@ -2905,11 +3140,14 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
 
     // The same photo redelivered after the substitute work opened: it is already an expense.
     const redelivered = makePrisma();
+    const saved = { id: 'expense-1', companyId: 'company-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
+      createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1', captureSource: 'LINE_UPLOAD',
+      updatedAt: new Date('2026-09-15T00:00:00Z'), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) } };
     const again = makeHarness({
       permissions: SUBSTITUTE_PERMISSIONS, prisma: redelivered.prisma, substituteMediaContext: AWAITING,
       routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
-      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
-        createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' }),
+      findExpenseByLineMessageId: async () => saved,
+      expenseDetail: saved,
     });
     await again.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-redelivered' });
     assert.equal(redelivered.pendingMediaRows.length, 0, 'no second copy of an already-captured photo');
@@ -4107,7 +4345,7 @@ describe('LINE usable receipt allowance settlement', () => {
       });
       await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `settle-${scenario}-${enabled}` },
         substitute ? scenario === 'substitute_support' ? 'หลักฐานค่าที่จอดรถค่ะ' : 'สลิปโอนค่ะ' : undefined);
-      const retained = ['success', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support'].includes(scenario);
+      const retained = ['success', 'summary_failure', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support'].includes(scenario);
       assert.equal(used, retained ? 1 : 0);
       assert.equal(events.length, retained ? 1 : 0);
       assert.equal(credits.filter((entry) => entry.action === 'receipt.ocr.admission.compensated').length, retained ? 0 : 1);
@@ -4137,9 +4375,51 @@ describe('receipt progress grounded in persisted records', () => {
   const recent = (id: string) => ({ id, expenseDate: new Date(), grandTotalAmount: '100.00', sourceDocumentType: 'RECEIPT', createdAt: new Date() });
   const detail = (id: string) => ({
     id, companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+    updatedAt: new Date('2026-09-15T00:00:00Z'),
     status: 'DRAFT', captureSource: 'LINE_UPLOAD', grandTotalAmount: '100.00', currency: 'THB', vendorDocumentNumber: id,
     sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) },
   });
+
+  it('reads a fresh receipt after silently pausing the same draft conversation', async () => {
+    const row = { ...detail('paused'), expenseCategoryId: null, sourceDocumentType: 'RECEIPT',
+      sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT), lineReceiptContinuation: {
+        expenseId: 'paused', userId: 'user-1', chatKeyHash: chatKeyHashOf(TEXT_EVENT), deliveredOutcomeId: 'original',
+      } }, aiVerificationSummaryJson: { recognizedFields: { vendorName: 'Current vendor' } } };
+    let pauses = 0;
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [recent('paused')],
+      expenseDetail: () => structuredClone(row), expenseDraftConversationEnabled: true, expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'paused', status: 'OPEN', label: 'ร่าง', questions: [] }],
+        interruptOpen: async () => { pauses++; row.updatedAt = new Date('2026-09-15T00:00:01Z'); return undefined; },
+      } });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อ่านใบเสร็จนี้ให้หน่อยว่าเป็นประเภทไหน และจะนำมาเป็นค่าใช้จ่ายของบริษัทอย่างไร' });
+    assert.equal(pauses, 1); assert.match(h.replies.join(' '), /Current vendor/);
+    assert.doesNotMatch(h.replies.join(' '), /ข้อมูลต้นทางเปลี่ยน/);
+    assert.equal(h.captured.length + h.ocrRequests.length + h.turnRequests.length, 0);
+  });
+
+  for (const change of ['branch', 'revision', 'creator', 'chat', 'missing-revision', 'read-error'] as const)
+    it(`withholds a prepared receipt answer when its original source changes: ${change}`, async () => {
+      let changed = false, reads = 0;
+      const row: any = detail('private');
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload'], scopes: { branchIds: ['branch-1'] },
+        recentCaptures: [recent('private')], expenseDetail: () => {
+          reads++; if (changed && change === 'read-error') throw new Error('source database unavailable'); return row;
+        } });
+      (h.useCase as any).handoffLinks = { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => {
+        changed = true;
+        if (change === 'branch') row.branchId = 'branch-private';
+        if (change === 'revision') row.updatedAt = new Date('2026-09-15T00:00:01Z');
+        if (change === 'creator') row.createdByUserId = 'another-user';
+        if (change === 'chat') row.sourceChannelMetadataJson = { chatKeyHash: 'another-chat' };
+        if (change === 'missing-revision') row.updatedAt = undefined;
+        return messages;
+      } };
+      await assert.rejects(h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' }), /LINE_DELIVERY_FAILED_PERMANENT/);
+      assert.ok(reads >= 2);
+      assert.doesNotMatch(h.replies.join('\n'), /\/expenses\/private|100\.00|source database/);
+      assert.match(h.replies.join('\n'), /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(h.turnRequests.length + h.routeRequests.length + h.ocrRequests.length + h.captured.length, 0);
+    });
 
   it('answers the three-receipt incident without requiring a delivered continuation or invoking AI', async () => {
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], scopes: { branchIds: ['branch-1'] },
@@ -4232,5 +4512,354 @@ describe('receipt progress grounded in persisted records', () => {
     const binding = updates.find((update) => update.data.companyId === 'company-1' && !update.data.status);
     assert.ok(binding, 'company bound before delivery, without clearing envelope or advancing status');
     assert.equal(binding.data.payloadJson, undefined);
+  });
+});
+
+describe('LINE candidate source at intake and delivery boundaries', () => {
+  const plan = (intent: string) => ({ status: 'ROUTED', intent, language: 'th', confidence: 0.95,
+    clarifyQuestion: 'เลือกบิล 876,543.00 บาท', clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION' }) as LineIntakeRoutePlan;
+  const rows = () => ['expense-first', 'expense-second'].map(id => ({ id, expenseDate: new Date('2026-09-15T00:00:00Z'),
+    grandTotalAmount: '876543.00', sourceDocumentType: 'RECEIPT', createdAt: new Date() }));
+  for (const path of ['selection', 'next-step', 'guidance', 'clarification'])
+    for (const fault of ['unchanged', 'amount', 'reorder', 'unavailable', 'fallback']) it(`${path} verifies the exact candidate facts before delivery: ${fault}`, async () => {
+      const recentCaptures = rows();
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'], recentCaptures,
+        routePlan: plan(path === 'clarification' ? 'CLARIFY' : 'EXPENSE_CAPTURE_CORRECTION') });
+      const uc = h.useCase as any, accepted: unknown[] = [], ledgered: unknown[] = [];
+      const change = () => { if (fault === 'unavailable') uc.expenseRepo.listRecentLineCaptures = async () => { throw new Error('read unavailable'); };
+        else if (fault === 'reorder') recentCaptures.reverse(); else recentCaptures[0]!.grandTotalAmount = '7'; };
+      let privateAttempts = 0;
+      uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+        if (/876,543|expense-first/.test(JSON.stringify(messages))) {
+          privateAttempts++; if (fault === 'fallback') { change(); return 'failed_token'; }
+        }
+        accepted.push(messages); return 'ok';
+      };
+      uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+      uc.ledger = { openWaitingUser: async () => [], appendSubRequests: async (input: unknown) => { ledgered.push(input); } };
+      if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+        wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { change(); return messages; },
+      };
+      const run = h.useCase.execute({ ...TEXT_EVENT, messageText: path === 'selection' ? 'ใบนี้เป็นเอกสารประเภทอะไร'
+        : path === 'next-step' ? 'ต้องทำยังไงต่อ' : 'แก้วันที่หน่อย' });
+      if (fault === 'unchanged') await run;
+      else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+      if (fault === 'unchanged') { assert.match(JSON.stringify(accepted), /876,543|expense-first/); assert.equal(privateAttempts, 1); }
+      else { assert.doesNotMatch(JSON.stringify(accepted), /876,543|expense-first/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+        assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0); assert.equal(ledgered.length, 0); }
+      assert.equal(h.captured.length, 0); assert.equal(h.draftsCreated.length, 0);
+    });
+
+  for (const fault of ['amount', 'disappeared', 'permission']) it(`rejects a stale intake result before correction or capture: ${fault}`, async () => {
+    const recentCaptures = rows();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'], recentCaptures,
+      routePlan: plan('EXPENSE_CAPTURE_CORRECTION') });
+    const uc = h.useCase as any, route = uc.aiGateway.requestLineIntakeRoute;
+    uc.aiGateway.requestLineIntakeRoute = async (...args: unknown[]) => {
+      const result = await route(...args);
+      if (fault === 'amount') recentCaptures[0]!.grandTotalAmount = '7';
+      else if (fault === 'disappeared') recentCaptures.splice(0);
+      else uc.permissionResolver.resolveAccess = async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: [], scopes: {} });
+      return result;
+    };
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'แก้วันที่หน่อย' });
+    assert.equal(h.routeRequests.length, 1); assert.equal(h.correctionCalls.length, 0); assert.equal(h.captured.length, 0);
+    assert.match(h.replies.join('\n'), fault === 'permission' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+    assert.doesNotMatch(h.replies.join('\n'), /876,543|expense-first/);
+  });
+});
+
+describe('LINE text capture confirms only its current committed source', () => {
+  for (const fault of ['unchanged', 'branch', 'revision', 'category', 'fallback']) it(`committed text capture delivery: ${fault}`, async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], scopes: { branchIds: ['branch-1'] },
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+        captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' } } });
+    const uc = h.useCase as any, read = uc.expenseRepo.findByIdWithRelations, accepted: unknown[] = [];
+    let changed = false, privateAttempts = 0;
+    uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+      const row = await read(...args);
+      if (!changed || !row) return row;
+      return fault === 'branch' ? { ...row, branchId: 'branch-other' }
+        : fault === 'category' ? row : { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1), grandTotalAmount: '7' };
+    };
+    const categories = uc.expenseRepo.listCategories;
+    uc.expenseRepo.listCategories = async () => changed && fault === 'category' ? [{ id: 'cat-meals', name: 'ชื่อหมวดเปลี่ยน' }] : categories();
+    if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+      wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+    };
+    uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+      if (/expense-note-1/.test(JSON.stringify(messages))) { privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; } }
+      accepted.push(messages); return 'ok';
+    };
+    uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+    const run = h.useCase.execute({ ...TEXT_EVENT });
+    if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+    if (fault === 'unchanged') { assert.match(JSON.stringify(accepted), /expense-note-1/); assert.equal(privateAttempts, 1); }
+    else { assert.doesNotMatch(JSON.stringify(accepted), /expense-note-1|ค่าอาหาร/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0); }
+    assert.equal(h.captured.length, 1, 'delivery validation never invokes capture again');
+  });
+});
+
+describe('LINE continuation replies retain their producing source', () => {
+  for (const lane of ['deterministic', 'routed'] as const) {
+    for (const fault of ['unchanged', 'revision', 'category', 'choices', 'missing', 'access', 'fallback'] as const) {
+      it(`${lane} continuation delivery validates ${fault} without replaying the update`, async () => {
+        let changed = false, executed = 0, privateAttempts = 0;
+        const accepted: unknown[] = [];
+        const contexts = [{ expenseId: 'expense-continuation-1', label: 'ร่างที่เลือก', status: 'OPEN', questions: [] }];
+        const h = makeHarness({ permissions: ['expense.receipt.line_upload'],
+          routePlan: { status: 'ROUTED', intent: 'EXPENSE_DRAFT_CONTINUATION', language: 'th', confidence: 0.95 },
+          expenseDraftConversation: {
+            routeContexts: async () => changed && fault === 'choices' ? [] : contexts,
+            execute: async () => { executed += 1; return { handled: true, status: 'UPDATED',
+              replyTexts: ['ข้อมูลร่างที่บันทึก ค่าอาหาร'], acceptedFields: [] }; },
+          },
+        });
+        const uc = h.useCase as any, execute = uc.expenseDraftConversation.execute;
+        uc.expenseDraftConversation.execute = async (...args: unknown[]) => {
+          const result = await execute(...args);
+          if (fault === 'missing') return { ...result, source: undefined };
+          result.source.categories = [{ id: 'cat-meals', name: 'ค่าอาหาร' }];
+          if (fault === 'choices') result.source.choices = structuredClone(contexts);
+          return result;
+        };
+        const read = uc.expenseRepo.findByIdWithRelations, categories = uc.expenseRepo.listCategories;
+        uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+          const row = await read(...args);
+          return changed && row && ['revision', 'fallback'].includes(fault)
+            ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+        };
+        uc.expenseRepo.listCategories = async () => changed && fault === 'category'
+          ? [{ id: 'cat-meals', name: 'หมวดที่แก้แล้ว' }] : categories();
+        const access = uc.permissionResolver.resolveAccess;
+        uc.permissionResolver.resolveAccess = async (...args: unknown[]) => changed && fault === 'access'
+          ? { membershipId: 'revoked', roles: [], permissions: [], scopes: {} } : access(...args);
+        if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+          wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+        };
+        uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+          if (/ข้อมูลร่างที่บันทึก/.test(JSON.stringify(messages))) {
+            privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; }
+          }
+          accepted.push(messages); return 'ok';
+        };
+        uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+        const run = h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'deterministic' ? 'ต่อ' : 'เติมจำนวนกระดาษให้หน่อย' });
+        if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+        assert.equal(executed, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
+        if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /ข้อมูลร่างที่บันทึก/);
+        else {
+          assert.doesNotMatch(JSON.stringify(accepted), /ข้อมูลร่างที่บันทึก|ค่าอาหาร/);
+          assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+          assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+        }
+      });
+    }
+  }
+});
+
+describe('LINE substitute results and resume capsules retain their producing source', () => {
+  for (const lane of ['legacy', 'primary', 'resume'] as const) {
+    it(`parks the previous questionnaire before producing ${lane} facts`, async () => {
+      let paused = false; const steps: string[] = [];
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.review', 'line.ai.query'],
+        routePlan: { status: 'ROUTED', intent: lane === 'resume' ? 'BUSINESS_READ_QUESTION' : 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.95 },
+        expenseDraftConversation: {
+          routeContexts: async () => [{ expenseId: 'expense-1', label: 'ร่างเดิม', status: paused ? 'PAUSED' : 'OPEN', questions: [] }],
+          interruptOpen: async () => { steps.push('pause'); paused = true; },
+        },
+        ...(lane === 'resume' ? { openWaiting: [{ id: 'sub-1', question: 'เหตุผลคืออะไร?', text: 'ทำใบรับรองต่อ', askedAt: new Date().toISOString(),
+          clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION', entry: { id: 'sub-1', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' } }] } : {}),
+        substituteResult: { handled: true, status: 'TARGET_REQUIRED', expenseId: 'expense-1', candidateExpenseIds: ['expense-1'],
+          acceptedFields: [], blockers: [], replyText: 'ข้อมูลรายการ EXP-001 ที่เลือก', pendingQuestion: 'ทำใบรับรองให้รายการนี้ไหมคะ?',
+          resumeCapsule: 'ข้อมูลรายการ EXP-001 ที่เลือก ยังทำต่อได้' },
+      });
+      const uc = h.useCase as any, execute = uc.substituteReceiptContinuation.execute, read = uc.expenseRepo.findByIdWithRelations;
+      uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+        const row = await read(...args); return row && paused ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+      };
+      uc.substituteReceiptContinuation.execute = async (ctx: any, input: any) => {
+        steps.push('produce'); const result = await execute(ctx, input);
+        return { ...result, source: substituteReplySource(await uc.expenseRepo.findByIdWithRelations(ctx.companyId, result.expenseId)) };
+      };
+      if (lane === 'primary') {
+        uc.config.lineAiSubstituteSemanticRoutingMode = 'primary';
+        uc.substituteReceiptContinuation.substituteContext = (ctx: any, input: any) =>
+          LineSubstituteReceiptContinuationUseCase.prototype.substituteContext.call({ repo: uc.expenseRepo } as any, ctx, input);
+      }
+      await h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ยอดขายเดือนนี้เท่าไหร่?' : 'ทำใบรับรองต่อ' });
+      assert.deepEqual(steps, ['pause', 'produce']);
+      assert.match(h.replies.join('\n'), /ข้อมูลรายการ EXP-001/);
+      assert.doesNotMatch(h.replies.join('\n'), /ข้อมูลต้นทางเปลี่ยน/);
+      if (lane === 'resume') assert.equal(h.routeRequests[0].activeExpenseDrafts[0].status, 'PAUSED');
+      assert.equal(h.captured.length, 0);
+    });
+  }
+  for (const lane of ['legacy', 'primary', 'resume'] as const) {
+    for (const fault of ['unchanged', 'revision', 'evidence', 'missing', 'access', 'fallback'] as const) {
+      it(`${lane} validates ${fault} before reply and push without repeating the workflow`, async () => {
+        let changed = false, privateAttempts = 0;
+        const accepted: unknown[] = [], captureLedger: any[] = [];
+        const h = makeHarness({ permissions: ['expense.review', 'line.ai.query'], captureLedger,
+          routePlan: { status: 'ROUTED', intent: lane === 'resume' ? 'BUSINESS_READ_QUESTION' : 'SUBSTITUTE_RECEIPT_CONTINUATION', language: 'th', confidence: 0.95 },
+          ...(lane === 'resume' ? { openWaiting: [{
+            id: 'sub-clarify-1', question: 'เหตุผลคืออะไร?', text: 'ทำใบรับรองต่อ', askedAt: new Date().toISOString(),
+            clarifyForIntent: 'SUBSTITUTE_RECEIPT_CONTINUATION',
+            entry: { id: 'sub-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+          }] } : {}),
+          substituteResult: { handled: true, status: 'BLOCKED', workflowId: 'wf-1', expenseId: 'expense-1',
+            replyText: 'ข้อมูลใบรับรอง EXP-001 ที่บันทึกไว้', acceptedFields: [], blockers: [],
+            pendingQuestion: 'เหตุผลที่ไม่มีใบเสร็จคืออะไรคะ?', sideQuestionAnswered: false,
+            resumeCapsule: '↩️ ข้อมูลใบรับรอง EXP-001 ที่บันทึกไว้ ยังทำต่อได้',
+          },
+        });
+        const uc = h.useCase as any, execute = uc.substituteReceiptContinuation.execute;
+        if (lane === 'primary') {
+          uc.config.lineAiSubstituteSemanticRoutingMode = 'primary';
+          uc.substituteReceiptContinuation.substituteContext = (ctx: any, input: any) =>
+            LineSubstituteReceiptContinuationUseCase.prototype.substituteContext.call({ repo: uc.expenseRepo } as any, ctx, input);
+        }
+        uc.substituteReceiptContinuation.execute = async (...args: unknown[]) => {
+          const result = await execute(...args); return fault === 'missing' ? { ...result, source: undefined } : result;
+        };
+        const read = uc.expenseRepo.findByIdWithRelations;
+        uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+          const row = await read(...args);
+          if (!changed || !row) return row;
+          if (fault === 'evidence') return { ...row, substituteReceiptEvidence: { id: 'evidence-1', status: 'ISSUED' } };
+          return ['revision', 'fallback'].includes(fault) ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+        };
+        const access = uc.permissionResolver.resolveAccess;
+        uc.permissionResolver.resolveAccess = async (...args: unknown[]) => changed && fault === 'access'
+          ? { membershipId: 'revoked', roles: [], permissions: [], scopes: {} } : access(...args);
+        if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+          wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+        };
+        uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+          if (/ข้อมูลใบรับรอง EXP-001/.test(JSON.stringify(messages))) {
+            privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; }
+          }
+          accepted.push(messages); return 'ok';
+        };
+        uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+        const run = h.useCase.execute({ ...TEXT_EVENT, messageText: lane === 'resume' ? 'ยอดขายเดือนนี้เท่าไหร่?' : 'ทำใบรับรองต่อ' });
+        if (fault === 'unchanged' || lane === 'resume') await run;
+        else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+        assert.equal(h.substituteCalls.length, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
+        if (lane !== 'legacy') assert.equal(h.routeRequests.length, 1, 'the routed and side-question paths run their normal router');
+        if (fault === 'unchanged') {
+          assert.match(JSON.stringify(accepted), /ข้อมูลใบรับรอง EXP-001/);
+          if (lane === 'resume') assert.match(JSON.stringify(accepted), /turn-answer/);
+        } else {
+          assert.doesNotMatch(JSON.stringify(accepted), /EXP-001|expense-1|wf-1/);
+          assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+          assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+          assert.equal(captureLedger.length, 0, 'an unsent question does not create a new clarification');
+        }
+      });
+    }
+  }
+});
+
+describe('Stored clarification provenance across fresh LINE events', () => {
+  for (const fault of ['none', 'missing', 'corrupt', 'oversized', 'wording', 'intent', 'ordered_ids', 'amount', 'after_route', 'access', 'channel'] as const) {
+    it(`keeps the original question binding and safely recovers after ${fault}`, async () => {
+      const stored: any[] = [];
+      const recent = ['expense-a', 'expense-b'].map((id, index) => ({ id, expenseDate: new Date('2026-09-15'),
+        grandTotalAmount: String(65 + index), sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date('2026-09-15') }));
+      const options: Parameters<typeof makeHarness>[0] = {
+        permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.update'], captureLedger: stored, recentCaptures: recent,
+        routePlan: { status: 'ROUTED', intent: 'CLARIFY', confidence: 1, language: 'th',
+          clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION', clarifyQuestion: 'ต้องการแก้รายการที่ 1 หรือ 2 คะ?' },
+      };
+      const h = makeHarness(options), uc = h.useCase as any;
+      await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `source-ask-${fault}`, messageText: 'แก้วันที่ใบเสร็จ' });
+      const item = stored[0]?.items[0]; assert.ok(item?.sourceContext, 'actual producer stored original source');
+      const original = JSON.parse(item.sourceContext);
+      assert.deepEqual(JSON.parse(original.candidates).map((row: any) => row.id), ['expense-a', 'expense-b']);
+      const open = [{ ...item, id: 'old-question', question: item.clarifyQuestion, askedAt: new Date().toISOString(),
+        entry: { ...item, id: 'old-question', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'prior', kind: 'sub_request', userId: 'user-1' } }];
+      uc.ledger.openWaitingUser = async () => open.filter(item => !h.ledgerAcks.some(ack => ack.entryId === item.id));
+      if (fault === 'missing') delete open[0].entry.sourceContext;
+      if (fault === 'corrupt') open[0].entry.sourceContext = '{broken';
+      if (fault === 'oversized') open[0].entry.sourceContext = 'ก'.repeat(6000);
+      if (fault === 'wording') { open[0].question = 'จ่ายแล้วใช่ไหม'; open[0].clarifyQuestion = open[0].question; }
+      if (fault === 'intent') open[0].clarifyForIntent = 'EXPENSE_DOCUMENT_CAPTURE';
+      if (fault === 'ordered_ids') open[0].candidateExpenseIds = ['expense-b', 'expense-a'];
+      if (fault === 'amount') recent[0].grandTotalAmount = '999';
+      if (fault === 'access') options.permissions = ['line.ai.query'];
+      const route = uc.aiGateway.requestLineIntakeRoute;
+      if (fault === 'after_route') uc.aiGateway.requestLineIntakeRoute = async (input: any) => {
+        const result = await route(input); recent[0].grandTotalAmount = '999'; return result;
+      };
+      // A newer capture changes current recency order, not the original offered list.
+      if (fault === 'none') recent.unshift({ ...recent[0], id: 'expense-new' });
+      options.routePlan = { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', confidence: 1, language: 'th',
+        resolvedClarificationIds: ['old-question'], correctionHints: { expenseId: 'expense-a', expenseDate: '2026-09-14' } } as any;
+      const replyEvent = { ...TEXT_EVENT, webhookEventId: `source-answer-${fault}`, messageText: '1 วันที่ 14 กันยายน 2569',
+        ...(fault === 'channel' ? { messagingChannelId: 'different-channel' } : {}) };
+      await h.useCase.execute(replyEvent);
+      if (fault === 'none') {
+        assert.equal(h.correctionCalls.length, 1);
+        assert.deepEqual(h.correctionCalls[0].candidates.map((row: any) => row.id), ['expense-a', 'expense-b']);
+        assert.equal(h.routeRequests[1]?.openClarifications[0].sourceContext, undefined, 'opaque proof never reaches AI');
+      } else {
+        assert.equal(h.correctionCalls.length, 0); assert.equal(h.captured.length, 0);
+        assert.equal(h.routeRequests.length, fault === 'after_route' ? 2 : 1, 'stale wording is not routed');
+        assert.ok(h.ledgerAcks.some(ack => ack.entryId === 'old-question' && ack.outcome === 'clarification_source_changed'));
+        assert.match(h.replies.at(-1) ?? '', /ข้อมูลต้นทางเปลี่ยน|ตรวจสอบไม่ได้/);
+        // Durable retirement leaves a route for a fresh request; no loop on the unsafe question.
+        uc.aiGateway.requestLineIntakeRoute = route;
+        options.routePlan = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th' };
+        await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `source-fresh-${fault}`, messageText: 'ยอดขายวันนี้เท่าไหร่' });
+        assert.match(h.replies.at(-1) ?? '', /turn-answer/);
+      }
+    });
+  }
+
+  it('rechecks a reviewer without capture permission after routing before substitute effects', async () => {
+    const options: Parameters<typeof makeHarness>[0] = { permissions: ['line.ai.query', 'expense.review'],
+      substituteResult: { handled: true, status: 'OPEN', expenseId: 'exp-review', replyText: 'ต่อได้', acceptedFields: [], blockers: [] },
+      routePlan: { status: 'ROUTED', intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', confidence: 1, language: 'th' } };
+    const h = makeHarness(options), uc = h.useCase as any;
+    uc.config.lineAiSubstituteSemanticRoutingMode = 'primary';
+    uc.substituteReceiptContinuation.substituteContext = async () => ({ workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 0 });
+    const route = uc.aiGateway.requestLineIntakeRoute;
+    uc.aiGateway.requestLineIntakeRoute = async (input: any) => { const result = await route(input); options.permissions = ['line.ai.query']; return result; };
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'review-revoked-during-route', messageText: 'จ่ายเองค่ะ' });
+    assert.equal(h.substituteCalls.length, 0); assert.equal(h.captured.length, 0);
+    assert.match(h.replies.at(-1) ?? '', /สิทธิ์|เปลี่ยน/);
+  });
+});
+
+describe('Stored question facts survive the composer and reply fallback boundary', () => {
+  for (const fault of ['none', 'composer', 'fallback'] as const) it(`checks original facts at ${fault}`, async () => {
+    const stored: any[] = [];
+    const recent = [{ id: 'expense-original', expenseDate: new Date('2026-09-15'), grandTotalAmount: '65', sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date('2026-09-15') }];
+    const options: Parameters<typeof makeHarness>[0] = { permissions: ['line.ai.query', 'expense.receipt.line_upload'], recentCaptures: recent, captureLedger: stored,
+      routePlan: { status: 'ROUTED', intent: 'CLARIFY', confidence: 1, language: 'th', clarifyQuestion: 'ต้องการถามเกี่ยวกับบิลนี้ใช่ไหมคะ?' } };
+    const h = makeHarness(options), uc = h.useCase as any;
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `ask-composer-${fault}`, messageText: 'ช่วยอธิบายบิลหน่อย' });
+    const item = stored[0].items[0];
+    const open = { ...item, id: 'question-1', question: item.clarifyQuestion, askedAt: new Date().toISOString(),
+      entry: { ...item, id: 'question-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', userId: 'user-1', turnId: 'prior', kind: 'sub_request' } };
+    uc.ledger.openWaitingUser = async () => [open];
+    options.routePlan = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th', resolvedClarificationIds: ['question-1'] };
+    const gateway = uc.aiGateway.requestLineTurn;
+    uc.aiGateway.requestLineTurn = async (input: any) => { const answer = await gateway(input); if (fault === 'composer') recent[0].grandTotalAmount = '999'; return answer; };
+    let pushes = 0;
+    uc.lineReply.sendPush = async () => { pushes++; return 'ok'; };
+    if (fault === 'fallback') {
+      const reply = uc.lineReply.sendReply;
+      uc.lineReply.sendReply = async (...args: any[]) => {
+        if (JSON.stringify(args).includes('turn-answer')) { recent[0].grandTotalAmount = '999'; return 'failed_token'; }
+        return reply(...args);
+      };
+    }
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `answer-composer-${fault}`, messageText: 'ใช่ค่ะ' });
+    assert.equal(h.captured.length, 0); assert.equal(h.turnRequests.length, 1); assert.equal(pushes, 0);
+    if (fault === 'none') assert.match(h.replies.at(-1) ?? '', /turn-answer/);
+    else { assert.match(h.replies.at(-1) ?? '', /ข้อมูลต้นทางเปลี่ยน|ตรวจสอบไม่ได้/); assert.equal(h.ledgerAcks.length, 0, 'undelivered outcome does not consume the original question'); }
   });
 });

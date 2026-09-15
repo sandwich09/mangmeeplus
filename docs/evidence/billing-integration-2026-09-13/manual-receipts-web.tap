@@ -1,0 +1,40 @@
+TAP version 13
+# Subtest: only navigation in this tab abandons pending billing work; same links and modified clicks remain active
+ok 1 - only navigation in this tab abandons pending billing work; same links and modified clicks remain active
+  ---
+  duration_ms: 1.129625
+  type: 'test'
+  ...
+# Subtest: provider acceptance, destination delivery and web recording remain different facts
+ok 2 - provider acceptance, destination delivery and web recording remain different facts
+  ---
+  duration_ms: 0.254042
+  type: 'test'
+  ...
+# Subtest: paid invoice with held access never displays a successful grant
+ok 3 - paid invoice with held access never displays a successful grant
+  ---
+  duration_ms: 0.364667
+  type: 'test'
+  ...
+# Subtest: unrecognized provider states stay readable without exposing technical content
+ok 4 - unrecognized provider states stay readable without exposing technical content
+  ---
+  duration_ms: 0.223958
+  type: 'test'
+  ...
+# Subtest: monthly receipts and fixed Admin gifts are described with separate renewal clocks
+ok 5 - monthly receipts and fixed Admin gifts are described with separate renewal clocks
+  ---
+  duration_ms: 15.094291
+  type: 'test'
+  ...
+1..5
+# tests 5
+# suites 0
+# pass 5
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 475.38875

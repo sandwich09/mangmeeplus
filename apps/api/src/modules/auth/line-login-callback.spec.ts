@@ -119,7 +119,7 @@ describe('ExchangeLineTokenUseCase nonce', () => {
     const prisma = {
       client: {
         externalIdentity: {
-          findFirst: async () => ({ id: 'ei-1', user: { id: 'user-1', status: 'ACTIVE' } }),
+          findFirst: async () => ({ id: 'ei-1', status: 'ACTIVE', user: { id: 'user-1', status: 'ACTIVE' } }),
         },
       },
     } as any;

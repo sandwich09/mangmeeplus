@@ -87,11 +87,11 @@ export class ExchangeLineTokenUseCase {
   }
 
   /**
-   * LINE userIds are channel-scoped, so resolve against the canonical
-   * messaging channel first (P12.1). Identities linked before
+   * LINE userIds are provider-scoped; our approved binding is the canonical
+   * Messaging channel (P12.1). Identities linked before
    * `providerChannelId` was recorded fall back to the channel-agnostic query
-   * with a warn — same shape as webhook/notification resolution — until the
-   * migration backfill lands.
+   * with a warn until their proof-backed Admin QR repair. A canonical
+   * unlink/disable always takes precedence over that compatibility fallback.
    */
   private async resolveActiveIdentity(lineUserId: string) {
     const where = { provider: 'LINE' as const, providerUserId: lineUserId, status: 'ACTIVE' as const };
@@ -104,10 +104,11 @@ export class ExchangeLineTokenUseCase {
       return this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
     }
     const scoped = await this.prisma.client.externalIdentity.findFirst({
-      where: { ...where, providerChannelId: canonicalChannelId },
+      where: { provider: 'LINE', providerUserId: lineUserId, providerChannelId: canonicalChannelId },
       include: { user: true },
     });
-    if (scoped) return scoped;
+    // An explicit unlink/disable must not resurrect an older ACTIVE legacy alias.
+    if (scoped) return scoped.status === 'ACTIVE' ? scoped : null;
     const fallback = await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
     if (fallback) {
       console.warn(`[line-exchange] line_identity_channel_agnostic_fallback identityId=${fallback.id}`);

@@ -186,7 +186,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
         }
         headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
         banner={<PlanTermBanner companyId={companyId} />}
-        sidebarFooter={<PlanTermSidebarCard companyId={companyId} />}
+        sidebarFooter={<>{session.roles.includes('OWNER') && <a href={`/companies/${companyId}/billing`} className="m-3 block rounded-xl border px-4 py-3 text-sm font-semibold">แพ็กเกจและการชำระเงิน</a>}<PlanTermSidebarCard companyId={companyId} /></>}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.

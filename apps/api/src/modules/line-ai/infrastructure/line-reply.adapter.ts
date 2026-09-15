@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 /**
  * LINE reply adapter – sends reply/push messages via Messaging API.
  * Does not log access tokens or authorization headers.
@@ -116,7 +117,7 @@ export class LineReplyAdapter {
   private readonly LINE_PUSH_URL = 'https://api.line.me/v2/bot/message/push';
   private readonly LINE_LOADING_URL = 'https://api.line.me/v2/bot/chat/loading/start';
 
-  constructor(private readonly config: AppConfigService) {}
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService, private readonly config: AppConfigService) {}
 
   async sendReply(replyToken: string, messages: LineReplyMessage[]): Promise<LineDeliveryResult> {
     return this.postMessage(this.LINE_REPLY_URL, { replyToken, messages: providerMessages(messages) }, 'reply', messages);
@@ -133,9 +134,9 @@ export class LineReplyAdapter {
    *  the request (its successful HTTP response) so the caller can record `loading_accepted`
    *  server-side (latency/autonomy §12); device-visible render timing stays UAT-only. */
   async startLoadingAnimation(chatId: string): Promise<boolean> {
-    const accessToken = this.config.lineMessagingChannelAccessToken;
-    if (!accessToken) return false;
     try {
+      const accessToken = (await this.lineCredentials.get()).accessToken;
+      if (!accessToken) return false;
       const response = await fetch(this.LINE_LOADING_URL, {
         method: 'POST',
         headers: {
@@ -163,7 +164,8 @@ export class LineReplyAdapter {
     messages?: LineReplyMessage[],
     retryKey?: string,
   ): Promise<LineDeliveryResult> {
-    const accessToken = this.config.lineMessagingChannelAccessToken;
+    let accessToken: string | undefined;
+    try { accessToken = (await this.lineCredentials.get()).accessToken; } catch { return 'failed_other'; }
     if (!accessToken) {
       this.logger.warn({ msg: `LINE access token not configured; skipping ${kind}` });
       return 'skipped';

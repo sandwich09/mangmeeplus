@@ -100,6 +100,7 @@ export class EmployeeController {
       employeeId,
       requestingUserId: ctx.userId,
       requesterPermissions: ctx.permissions,
+      requesterBranchIds: ctx.scopes.branchIds,
       requestId: ctx.requestId,
       status: body.status ?? 'DISABLED',
       reason: body.reason,

@@ -1,0 +1,276 @@
+TAP version 13
+# Subtest: uses unpublished environment only; each request resolves the current published revision and exact signature observation
+ok 1 - uses unpublished environment only; each request resolves the current published revision and exact signature observation
+  ---
+  duration_ms: 2.203208
+  type: 'test'
+  ...
+# Subtest: fails closed for published decrypt without environment fallback
+ok 2 - fails closed for published decrypt without environment fallback
+  ---
+  duration_ms: 0.296334
+  type: 'test'
+  ...
+# Subtest: fails closed for published database without environment fallback
+ok 3 - fails closed for published database without environment fallback
+  ---
+  duration_ms: 0.04975
+  type: 'test'
+  ...
+# Subtest: fails closed for published wrong-channel without environment fallback
+ok 4 - fails closed for published wrong-channel without environment fallback
+  ---
+  duration_ms: 0.094917
+  type: 'test'
+  ...
+# Subtest: fails closed for published expired without environment fallback
+ok 5 - fails closed for published expired without environment fallback
+  ---
+  duration_ms: 0.150958
+  type: 'test'
+  ...
+# Subtest: fails closed for published unsupported without environment fallback
+ok 6 - fails closed for published unsupported without environment fallback
+  ---
+  duration_ms: 0.099208
+  type: 'test'
+  ...
+# Subtest: ProcessDueNotificationDeliveriesUseCase (A4)
+    # Subtest: processes every due delivery and reports the count
+    ok 1 - processes every due delivery and reports the count
+      ---
+      duration_ms: 0.801542
+      type: 'test'
+      ...
+    # Subtest: one delivery failure never aborts the rest of the sweep
+    ok 2 - one delivery failure never aborts the rest of the sweep
+      ---
+      duration_ms: 0.109125
+      type: 'test'
+      ...
+    # Subtest: empty due set is a no-op
+    ok 3 - empty due set is a no-op
+      ---
+      duration_ms: 0.043042
+      type: 'test'
+      ...
+    1..3
+ok 7 - ProcessDueNotificationDeliveriesUseCase (A4)
+  ---
+  duration_ms: 1.22725
+  type: 'suite'
+  ...
+# Subtest: CreateOrUpdateNotificationEventUseCase recipients
+    # Subtest: creates deliveries only for distinct ACTIVE company members
+    ok 1 - creates deliveries only for distinct ACTIVE company members
+      ---
+      duration_ms: 0.273042
+      type: 'test'
+      ...
+    1..1
+ok 8 - CreateOrUpdateNotificationEventUseCase recipients
+  ---
+  duration_ms: 0.299958
+  type: 'suite'
+  ...
+# Subtest: ProcessQueuedDeliveryUseCase LINE target resolution
+    # Subtest: delivers through the configured shared OA channel when the company has no binding row
+    ok 1 - delivers through the configured shared OA channel when the company has no binding row
+      ---
+      duration_ms: 17.714292
+      type: 'test'
+      ...
+    # Subtest: records a 409 with LINE accepted-request evidence as sent
+    ok 2 - records a 409 with LINE accepted-request evidence as sent
+      ---
+      duration_ms: 0.738833
+      type: 'test'
+      ...
+    # Subtest: keeps a bare LINE 409 as a failed delivery
+    ok 3 - keeps a bare LINE 409 as a failed delivery
+      ---
+      duration_ms: 0.394125
+      type: 'test'
+      ...
+    # Subtest: claims a non-customer LINE delivery so overlapping workers push once
+    ok 4 - claims a non-customer LINE delivery so overlapping workers push once
+      ---
+      duration_ms: 5.5295
+      type: 'test'
+      ...
+    # Subtest: does not send cached CRM customer PII when erasure suppresses the delivery before the final lock
+    ok 5 - does not send cached CRM customer PII when erasure suppresses the delivery before the final lock
+      ---
+      duration_ms: 0.287958
+      type: 'test'
+      ...
+    # Subtest: suppresses customer-linked LINE egress when the recipient membership is no longer active
+    ok 6 - suppresses customer-linked LINE egress when the recipient membership is no longer active
+      ---
+      duration_ms: 0.182125
+      type: 'test'
+      ...
+    # Subtest: re-reads a live CRM notification under the customer lock before LINE egress
+    ok 7 - re-reads a live CRM notification under the customer lock before LINE egress
+      ---
+      duration_ms: 0.275625
+      type: 'test'
+      ...
+# {"event":"notification_sweep_company_failed","sweep":"snapshot","companyId":"co-1","error":"one company failed"}
+# {"event":"notification_sweep_company_failed","sweep":"daily_owner_summary","companyId":"co-1","error":"one company failed"}
+    # Subtest: claims and persists a CRM LINE outcome inside the customer lock so overlapping workers push once
+    ok 8 - claims and persists a CRM LINE outcome inside the customer lock so overlapping workers push once
+      ---
+      duration_ms: 5.429084
+      type: 'test'
+      ...
+    1..8
+ok 9 - ProcessQueuedDeliveryUseCase LINE target resolution
+  ---
+  duration_ms: 30.713375
+  type: 'suite'
+  ...
+# Subtest: notification producer sweeps
+    # Subtest: uses the stable period key for daily-summary identity and keeps the snapshot in source refs
+    ok 1 - uses the stable period key for daily-summary identity and keeps the snapshot in source refs
+      ---
+      duration_ms: 0.111708
+      type: 'test'
+      ...
+    # Subtest: generates today snapshots for every active company and isolates failures
+    ok 2 - generates today snapshots for every active company and isolates failures
+      ---
+      duration_ms: 0.256
+      type: 'test'
+      ...
+    # Subtest: runs the stock-low scan for every active company
+    ok 3 - runs the stock-low scan for every active company
+      ---
+      duration_ms: 0.064667
+      type: 'test'
+      ...
+    # Subtest: creates Bangkok-day summaries only for companies with an enabled rule
+    ok 4 - creates Bangkok-day summaries only for companies with an enabled rule
+      ---
+      duration_ms: 0.772083
+      type: 'test'
+      ...
+    1..4
+ok 10 - notification producer sweeps
+  ---
+  duration_ms: 1.253417
+  type: 'suite'
+  ...
+# Subtest: notification sweeps shadow coverage (piece 5)
+    # Subtest: records one observation per due delivery, and processes them all
+    ok 1 - records one observation per due delivery, and processes them all
+      ---
+      duration_ms: 0.12075
+      type: 'test'
+      ...
+    # Subtest: records a delivery that then fails — the observation is about the guard, not the outcome
+    ok 2 - records a delivery that then fails — the observation is about the guard, not the outcome
+      ---
+      duration_ms: 0.041167
+      type: 'test'
+      ...
+    # Subtest: gives each shared-helper sweep its own surface name
+    ok 3 - gives each shared-helper sweep its own surface name
+      ---
+      duration_ms: 0.109542
+      type: 'test'
+      ...
+    # Subtest: flushes the daily-summary sweep even though it re-throws on partial failure
+    ok 4 - flushes the daily-summary sweep even though it re-throws on partial failure
+      ---
+      duration_ms: 0.247125
+      type: 'test'
+      ...
+    # Subtest: flushes on any escape from inside the sweep loop (finally, mutation-proved)
+    ok 5 - flushes on any escape from inside the sweep loop (finally, mutation-proved)
+      ---
+      duration_ms: 0.078333
+      type: 'test'
+      ...
+    # Subtest: flushes the delivery sweep on any escape from inside its loop (finally, mutation-proved)
+    ok 6 - flushes the delivery sweep on any escape from inside its loop (finally, mutation-proved)
+      ---
+      duration_ms: 0.097458
+      type: 'test'
+      ...
+    # Subtest: completes every delivery when the real probe cannot read the launch tables
+    ok 7 - completes every delivery when the real probe cannot read the launch tables
+      ---
+      duration_ms: 0.242625
+      type: 'test'
+      ...
+    # Subtest: runs every company in a shared-helper sweep when the real probe cannot read
+    ok 8 - runs every company in a shared-helper sweep when the real probe cannot read
+      ---
+      duration_ms: 0.095083
+      type: 'test'
+      ...
+    1..8
+ok 11 - notification sweeps shadow coverage (piece 5)
+  ---
+  duration_ms: 1.090625
+  type: 'suite'
+  ...
+# Subtest: shared Messaging publication
+    # Subtest: encrypts publication, distinguishes token/signature and replays the exact save without another provider read
+    ok 1 - encrypts publication, distinguishes token/signature and replays the exact save without another provider read
+      ---
+      duration_ms: 110.110791
+      type: 'test'
+      ...
+    # Subtest: denies copied role context, different channel and wrong password before provider I/O
+    ok 2 - denies copied role context, different channel and wrong password before provider I/O
+      ---
+      duration_ms: 45.780041
+      type: 'test'
+      ...
+    # Subtest: does not publish after wrong-channel
+    ok 3 - does not publish after wrong-channel
+      ---
+      duration_ms: 45.01275
+      type: 'test'
+      ...
+    # Subtest: does not publish after bad-expiry
+    ok 4 - does not publish after bad-expiry
+      ---
+      duration_ms: 44.705167
+      type: 'test'
+      ...
+    # Subtest: does not publish after unavailable
+    ok 5 - does not publish after unavailable
+      ---
+      duration_ms: 43.723708
+      type: 'test'
+      ...
+    # Subtest: does not publish after revoked
+    ok 6 - does not publish after revoked
+      ---
+      duration_ms: 44.347583
+      type: 'test'
+      ...
+    # Subtest: does not publish after credential-changed
+    ok 7 - does not publish after credential-changed
+      ---
+      duration_ms: 44.246375
+      type: 'test'
+      ...
+    1..7
+ok 12 - shared Messaging publication
+  ---
+  duration_ms: 378.355125
+  type: 'suite'
+  ...
+1..12
+# tests 37
+# suites 6
+# pass 37
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1118.767167

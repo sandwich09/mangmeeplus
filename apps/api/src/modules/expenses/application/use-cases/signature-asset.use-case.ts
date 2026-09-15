@@ -1,5 +1,6 @@
 import { Inject, Injectable, ForbiddenException, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
+import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
 import { PrismaExpenseRepository } from '../../infrastructure/prisma-expense.repository';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
@@ -150,6 +151,7 @@ export class CreateSignatureAssetUseCase {
     private readonly completeUpload: CompleteAttachmentUploadUseCase,
     private readonly audit: AuditService,
     @Inject(ATTACHMENT_STORAGE) private readonly storage: AttachmentStoragePort,
+    private readonly permissionResolver: PermissionResolverService,
   ) {}
 
   async execute(
@@ -163,13 +165,19 @@ export class CreateSignatureAssetUseCase {
        *  so there is no upload left to finish. */
       attachmentAlreadyActive?: boolean;
     },
+    options?: { beforeCommit: () => Promise<void> },
   ): Promise<SignatureAssetRecord> {
     assertSignatureOwner(ctx);
 
     // LINE retries must not create duplicate assets.
     if (cmd.lineMessageId) {
       const existing = await this.repo.findSignatureAssetByLineMessageId(ctx.companyId, cmd.lineMessageId);
-      if (existing) return existing;
+      if (existing) {
+        await this.currentOwner(ctx);
+        if (existing.submittedByUserId !== ctx.userId) throw new ForbiddenException('Signature belongs to another owner.');
+        await options?.beforeCommit();
+        return existing;
+      }
     }
 
     if (!cmd.attachmentAlreadyActive) {
@@ -180,11 +188,13 @@ export class CreateSignatureAssetUseCase {
       });
     }
 
+    const identity = await this.currentOwner(ctx);
+    await options?.beforeCommit();
     let asset: SignatureAssetRecord;
     try {
       asset = await this.repo.createSignatureAsset({
         companyId: ctx.companyId,
-        label: cmd.label ?? await this.defaultLabel(ctx),
+        label: cmd.label ?? `${identity.displayName} ${todayCivilDate()}`,
         originalAttachmentId: cmd.attachmentId,
         submittedByUserId: ctx.userId,
         submittedFromChannel: cmd.submittedFromChannel ?? 'WEB',
@@ -199,7 +209,10 @@ export class CreateSignatureAssetUseCase {
       // creating the twin. Hand back the winner: this call's job is done either way.
       if ((error as { code?: string }).code === 'P2002' && cmd.lineMessageId) {
         const winner = await this.repo.findSignatureAssetByLineMessageId(ctx.companyId, cmd.lineMessageId);
-        if (winner) return winner;
+        if (winner) {
+          if (winner.submittedByUserId !== ctx.userId) throw new ForbiddenException('Signature belongs to another owner.');
+          return winner;
+        }
       }
       throw error;
     }
@@ -226,10 +239,13 @@ export class CreateSignatureAssetUseCase {
       : asset;
   }
 
-  /** A14: a LINE asset arrived with no label at all, so its owner saw "ลายเซ็นไม่มีชื่อ". */
-  private async defaultLabel(ctx: RequestContext): Promise<string | undefined> {
+  private async currentOwner(ctx: RequestContext) {
+    const current = await this.permissionResolver.resolveAccess(ctx.userId, ctx.companyId);
     const identity = await this.repo.findActiveMemberIdentity(ctx.companyId, ctx.userId, null);
-    return identity ? `${identity.displayName} ${todayCivilDate()}` : undefined;
+    if (!identity || identity.userId !== ctx.userId || current.companyId !== ctx.companyId
+      || ctx.membershipId && current.membershipId !== ctx.membershipId) throw new ForbiddenException('Signature access changed.');
+    assertSignatureOwner({ ...ctx, permissions: current.permissions });
+    return identity;
   }
 
   /**

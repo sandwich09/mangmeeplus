@@ -1,3 +1,4 @@
+import { lineMessagingCredentialsFixture } from '../../common/config/line-messaging-credentials.fixture';
 /** Duplicate-email routing uses committed PostgreSQL evidence, never email ownership proof. */
 import { describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -450,7 +451,7 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
     assert.equal(pending.state, 'PENDING_REVIEW');
 
     const prisma = { client } as any;
-    const lineNotify = new LineSignupNotifyService(
+    const lineNotify = new LineSignupNotifyService(lineMessagingCredentialsFixture({} as any),
       prisma,
       new PrismaOutboxRepository(prisma),
       {} as any,

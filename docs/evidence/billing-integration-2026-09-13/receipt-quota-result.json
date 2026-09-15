@@ -1,0 +1,39 @@
+{
+  "status": "PASS for bounded runtime quota control",
+  "apiTypecheck": "PASS",
+  "webTypecheck": "PASS",
+  "contractsBuild": "PASS",
+  "focusedRegression": {
+    "files": 5,
+    "tests": 139,
+    "passed": 139,
+    "skipped": 0
+  },
+  "combinedBrowserGroups": 133,
+  "focusedBrowserGroups": 4,
+  "noProviderCallInQuotaFixture": true,
+  "scope": [
+    "Admin true/false/null and current source",
+    "same OCR lock/CAS and before/after audit",
+    "old-client omission preserved",
+    "web/LINE admissions without restart; no usage reset",
+    "paid balance and expiry not bypassed",
+    "real mobile save/reload/stale/review/return and paid control disabled"
+  ],
+  "limitation": "Actual shared OCR admission called directly after Admin HTTP in the quota fixture; this is not a native LINE image upload or OCR provider acceptance.",
+  "sources": {
+    "apps/api/prisma/migrations/20260914170000_receipt_quota_runtime/migration.sql": "9105abadacfd7553e0bf88a87d85e86d622a8a33462df008d5672381eb6f0012",
+    "packages/contracts/src/partner-management.ts": "f0204b45ee958c25353cbfb6911db5ad71aa461b76fd472f892ae82c6e1652d4",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ocr-config.use-case.ts": "0bebd1bdd20cc9c9515666715144ef47f56bf30c65cad4eddf14ede80a15709f",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts": "1dcb98e0d10ba3bc8d89c1b6e7ac388ae1995467d23563db69126835fcfde29a",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts": "e50c5111b2f8e6284cf94444794290c724aff97509c1bd02c827b6acf725b4fe",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.spec.ts": "9e16d31a19c755793af0da0f0dfaeb0170c056e344afbf25367519d2a7d930b4",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner.controller.ts": "0bf3e785b2df205a0568721f153ae9b04a7d78076546004384b501831b989aa0",
+    "apps/api/src/modules/line-ai/application/company-ocr-governance.ts": "3bad726950e73fadc52a9aa66444d5d14e1f3365f907974da8f1b04cefe0a7b3",
+    "apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts": "4db36c6409c9bf77981d0d08df9e74f0aad0afb4ad1c37be920d33f20d5176c3",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "446cb3ad6fc6ad0d2176efe5e015cfe0533d8fb43c004b7bd6bc6818a5cc557b",
+    "apps/api/src/scripts/receipt-quota-runtime-smoke.ts": "cac36a64042c21052e3a2ef40d679f62ab7168b3c58773c2b9822c6fbe648748",
+    "apps/api/src/scripts/billing-http-smoke.ts": "094be34c27791d18402bec5b22a0cfb2c302a50f06003c2f49238cc84d45e0fd",
+    "apps/api/prisma/schema.prisma": "6c014413ebd4213e18af8ff985ef216038419e0aa8111c5a87dc9aed116fdf37"
+  }
+}

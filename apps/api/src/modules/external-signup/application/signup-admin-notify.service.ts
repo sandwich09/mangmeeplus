@@ -1,3 +1,4 @@
+import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
@@ -45,7 +46,7 @@ function sourceTag(source: string | undefined): string {
 
 @Injectable()
 export class SignupAdminNotifyService {
-  constructor(
+  constructor(private readonly lineCredentials: LineMessagingCredentialsService,
     private readonly prisma: PrismaService,
     private readonly outbox: PrismaOutboxRepository,
     private readonly notifications: CreateOrUpdateNotificationEventUseCase,
@@ -160,10 +161,11 @@ export class SignupAdminNotifyService {
      */
     options?: { skipProviderUserIdHash?: string },
   ): Promise<number> {
-    const token = this.config.lineMessagingChannelAccessToken;
-    if (!token) return 0;
+    const credentials = await this.lineCredentials.get().catch(() => null);
+    const token = credentials?.accessToken;
+    if (!token || !credentials?.channelId) return 0;
     const identities = await this.prisma.client.externalIdentity.findMany({
-      where: { userId: { in: userIds }, provider: 'LINE', status: 'ACTIVE' },
+      where: { userId: { in: userIds }, provider: 'LINE', providerChannelId: credentials.channelId, status: 'ACTIVE' },
       select: { providerUserId: true },
     });
     let sent = 0;

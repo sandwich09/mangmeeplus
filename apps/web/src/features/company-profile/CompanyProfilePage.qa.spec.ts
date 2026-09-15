@@ -291,7 +291,8 @@ describe('the email block matches the state the account is actually in', () => {
     assert.match(html, /owner@example\.com/);
     assert.match(html, /ยังไม่ยืนยัน/);
     assert.match(html, /แก้ไขอีเมลบัญชี/);
-    assert.match(html, /ยืนยันอีเมลเพื่อกู้บัญชี/);
+    assert.match(html, /ยืนยันอีเมลสำหรับบัญชีนี้/);
+    assert.doesNotMatch(html, /ยืนยันอีเมลเพื่อกู้บัญชี/);
     assert.match(html, /ส่งลิงก์ยืนยัน/);
   });
 

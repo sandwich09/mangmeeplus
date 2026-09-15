@@ -1,0 +1,55 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+  "passed": [
+    "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+    "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+    "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+    "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+    "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+    "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+    "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+    "browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Stripe",
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderPayment": false,
+  "status": "PASS8 new groups in the full158 run, including final capability-list correction; full C03/controls still IN PROGRESS",
+  "baseCommit": "6da6514887cc4b7f258e633650d50cd44eda7b17",
+  "viewport": {
+    "width": 390,
+    "height": 844
+  },
+  "apiTypecheck": "PASS",
+  "webTypecheck": "PASS",
+  "billingAndDtoTests": 29,
+  "postgresqlTests": 35,
+  "pinCheck": "PASS",
+  "sources": {
+    ".github/workflows/ci.yml": "00407db42a1e607780b78333e84e32e27fc1e321d9b8bee2d0bc3bac52160dcf",
+    "apps/api/src/modules/billing/application/billing-financial.ts": "8de6481720ce044311456cacf796d26aa02100357df3ef26e8527e477756e823",
+    "apps/api/src/modules/billing/application/billing-operations.service.ts": "fa8ec6e7e184725089b886a68e839d66eaae94f7074664a8aa5469e4e7cc5b53",
+    "apps/api/src/modules/billing/application/billing-reconciler.service.ts": "8fbc2ab596f695fd8ac741e851b2c3e20225a432359a7eed8524997614a1d5ae",
+    "apps/api/src/modules/billing/application/billing-repeat.ts": "91d095791c25f8c61bf1bfacc18d6a9c310f0420c2071ff8fdeeffe7a0e47d88",
+    "apps/api/src/modules/billing/domain/paid-invoice.ts": "b4e9cb3754edbb16aef540dcababd0dbd39c26514b4d0a6bcd6ecd016f550605",
+    "apps/api/src/modules/billing/presentation/billing.controller.ts": "a6b95026bb258dd3c4a5c04e7c8b532ff4b3de5410066ff6ce16ee972a7534cf",
+    "apps/api/src/modules/billing/presentation/billing.dto.ts": "ccdcb65eeb2dbfdb5c2bebc1e81628b2230eb95039b291078d2445c964f956e9",
+    "apps/api/src/scripts/billing-apply-retry-smoke.ts": "99edc02026da6934505eefa82310da71c7c72910e0024d53d8a7fe54b41f312c",
+    "apps/api/src/scripts/billing-http-smoke.ts": "e37a258572c76c5457171699cddd47782ef25930e27574ca3697185d84604a2e",
+    "apps/api/src/scripts/signup-journey-smoke.ts": "4c2850f71fdb41c6f55efbcd5c565584e847f20ccc05300f2132fe414872f37b",
+    "apps/web/app/system/billing/companies/[id]/apply-invoices/[invoiceId]/page.tsx": "59214bce384622fa18e0f76775c57da6a8e49f70d2412734e370051d7aad5fe1",
+    "apps/web/app/system/billing/companies/[id]/apply-invoices/page.tsx": "bc5d3aeb1126a82890d32e9abe8f1c1e1e95df4c903054b6d0a366e64f442677",
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "1ee312d0997c960cd6a9d3caa858c42391dc8239957f347c77bfa7844d1a0aa5",
+    "apps/web/src/features/billing-admin/BillingApplyInvoicesPage.tsx": "b12a191e9c3303d489332f334b0786411fd0f078810305223772ee5048457d2b",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "72a42576adbdb4f49ff01e37f821a9ffa16e8bfa6324fef67e3ad427f5c94ea9",
+    "packages/contracts/src/billing.ts": "bb29c8b1f23eba44cfc68d7bd402f3c3d08612bca33a85b22fd3f4b5eb95b65e"
+  },
+  "limitations": [
+    "Provider transports simulated, actual HTTP/PG/Next/Chromium; no live charge or real recipient send",
+    "Direct Admin recovery of held repeat purchases, aged uncertainty/support outcomes and remaining C05-C08/mail/LINE acceptance still need completion",
+    "Root CI needs a new run after signup fixture correction; both PRs remain drafts and unmerged"
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-09-14",
+  "method": "Chrome Developer, read-only repository Settings > GitHub Apps",
+  "repositories": [
+    {
+      "repository": "MangmeeDev/mangmee_web",
+      "url": "https://github.com/MangmeeDev/mangmee_web/settings/installations",
+      "observed": "There are no GitHub Apps installed on this repository."
+    },
+    {
+      "repository": "MangmeeDev/mangmeeplus",
+      "url": "https://github.com/MangmeeDev/mangmeeplus/settings/installations",
+      "observed": "There are no GitHub Apps installed on this repository."
+    }
+  ],
+  "otherEvidence": "Earlier repository API checks found no repository webhooks. Marketing Pages disabled, no deployment/check-run integration observed. Root deploy workflows require explicit dispatch/call; ordinary PR CI is not a deployment.",
+  "limit": "Checks cover configured GitHub integration surfaces; they do not prove absence of arbitrary external polling. No setting, credential, service, workflow, push, merge or deployment was changed by these reads."
+}

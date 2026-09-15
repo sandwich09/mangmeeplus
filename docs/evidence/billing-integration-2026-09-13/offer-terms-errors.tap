@@ -1,0 +1,262 @@
+TAP version 13
+# Subtest: billing rate limit displays only the bounded wait and preserves a route to retry
+ok 1 - billing rate limit displays only the bounded wait and preserves a route to retry
+  ---
+  duration_ms: 0.61375
+  type: 'test'
+  ...
+# Subtest: explains document VAT acceptance without suggesting a bypass of Tax Code rules
+ok 2 - explains document VAT acceptance without suggesting a bypass of Tax Code rules
+  ---
+  duration_ms: 0.0895
+  type: 'test'
+  ...
+# Subtest: explains stale draft removal without a misleading generic concurrency error
+ok 3 - explains stale draft removal without a misleading generic concurrency error
+  ---
+  duration_ms: 0.034792
+  type: 'test'
+  ...
+# Subtest: explains source-draft validation, completion, and item races in plain Thai
+ok 4 - explains source-draft validation, completion, and item races in plain Thai
+  ---
+  duration_ms: 0.106917
+  type: 'test'
+  ...
+# Subtest: distinguishes a wrong current password from an expired session
+ok 5 - distinguishes a wrong current password from an expired session
+  ---
+  duration_ms: 0.170666
+  type: 'test'
+  ...
+# Subtest: explains missing and invalid transaction source branches in plain Thai
+ok 6 - explains missing and invalid transaction source branches in plain Thai
+  ---
+  duration_ms: 0.02825
+  type: 'test'
+  ...
+# Subtest: explains only supplier source-number duplicates without relabeling unrelated conflicts
+ok 7 - explains only supplier source-number duplicates without relabeling unrelated conflicts
+  ---
+  duration_ms: 0.273209
+  type: 'test'
+  ...
+# Subtest: translates a known API sentence to Thai
+ok 8 - translates a known API sentence to Thai
+  ---
+  duration_ms: 0.027
+  type: 'test'
+  ...
+# Subtest: explains duplicate category, branch validation, and quotation self-approval in context
+ok 9 - explains duplicate category, branch validation, and quotation self-approval in context
+  ---
+  duration_ms: 0.14125
+  type: 'test'
+  ...
+# Subtest: prefers the error code over the message
+ok 10 - prefers the error code over the message
+  ---
+  duration_ms: 0.20225
+  type: 'test'
+  ...
+# Subtest: matches a conflict code that carries its detail inline
+ok 11 - matches a conflict code that carries its detail inline
+  ---
+  duration_ms: 0.036375
+  type: 'test'
+  ...
+# Subtest: translates chart-template and posting-readiness failures
+ok 12 - translates chart-template and posting-readiness failures
+  ---
+  duration_ms: 0.034417
+  type: 'test'
+  ...
+# Subtest: translates partial-payment validation and settlement-route failures
+ok 13 - translates partial-payment validation and settlement-route failures
+  ---
+  duration_ms: 0.035625
+  type: 'test'
+  ...
+# Subtest: fails closed to the status copy for every unknown API message
+ok 14 - fails closed to the status copy for every unknown API message
+  ---
+  duration_ms: 0.047875
+  type: 'test'
+  ...
+# Subtest: hides the exact unknown-property validation diagnostic and retains no technical token
+ok 15 - hides the exact unknown-property validation diagnostic and retains no technical token
+  ---
+  duration_ms: 0.082917
+  type: 'test'
+  ...
+# Subtest: uses the validation fallback for a second unknown validation array from details
+ok 16 - uses the validation fallback for a second unknown validation array from details
+  ---
+  duration_ms: 0.050958
+  type: 'test'
+  ...
+# Subtest: supports statusCode and hides unknown 5xx diagnostics
+ok 17 - supports statusCode and hides unknown 5xx diagnostics
+  ---
+  duration_ms: 0.048542
+  type: 'test'
+  ...
+# Subtest: maps boundary-tagged network errors without guessing from TypeError
+ok 18 - maps boundary-tagged network errors without guessing from TypeError
+  ---
+  duration_ms: 0.073667
+  type: 'test'
+  ...
+# Subtest: maps malformed successful responses to safe server copy
+ok 19 - maps malformed successful responses to safe server copy
+  ---
+  duration_ms: 0.026167
+  type: 'test'
+  ...
+# Subtest: keeps reviewed local non-API validation copy unchanged
+ok 20 - keeps reviewed local non-API validation copy unchanged
+  ---
+  duration_ms: 0.17575
+  type: 'test'
+  ...
+# Subtest: unknown stable codes never reach the user as snake_case
+ok 21 - unknown stable codes never reach the user as snake_case
+  ---
+  duration_ms: 0.042209
+  type: 'test'
+  ...
+# Subtest: translates LINE signup recovery failures without exposing backend codes
+ok 22 - translates LINE signup recovery failures without exposing backend codes
+  ---
+  duration_ms: 0.147709
+  type: 'test'
+  ...
+# Subtest: translates the document-number 409 family
+ok 23 - translates the document-number 409 family
+  ---
+  duration_ms: 0.0185
+  type: 'test'
+  ...
+# Subtest: renders parameterized sentences with the parameter kept visible
+ok 24 - renders parameterized sentences with the parameter kept visible
+  ---
+  duration_ms: 0.068375
+  type: 'test'
+  ...
+# Subtest: translates the substitute-receipt eligibility refusals
+ok 25 - translates the substitute-receipt eligibility refusals
+  ---
+  duration_ms: 0.129709
+  type: 'test'
+  ...
+# Subtest: maps substitute-receipt render limits to stable actionable Thai copy
+ok 26 - maps substitute-receipt render limits to stable actionable Thai copy
+  ---
+  duration_ms: 0.04875
+  type: 'test'
+  ...
+# Subtest: unknown input passes through
+ok 27 - unknown input passes through
+  ---
+  duration_ms: 0.035542
+  type: 'test'
+  ...
+# Subtest: maps feature entitlement absence to its own Thai sentence
+ok 28 - maps feature entitlement absence to its own Thai sentence
+  ---
+  duration_ms: 0.030041
+  type: 'test'
+  ...
+# Subtest: purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+ok 29 - purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+  ---
+  duration_ms: 0.032584
+  type: 'test'
+  ...
+# Subtest: maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+ok 30 - maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+  ---
+  duration_ms: 0.038166
+  type: 'test'
+  ...
+# Subtest: maps a reimbursement edit/submit race to a reload-and-review instruction
+ok 31 - maps a reimbursement edit/submit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.023917
+  type: 'test'
+  ...
+# Subtest: maps an expense draft edit race to a reload-and-review instruction
+ok 32 - maps an expense draft edit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.0225
+  type: 'test'
+  ...
+# Subtest: maps an accounting document edit/issue race to a reload-and-review instruction
+ok 33 - maps an accounting document edit/issue race to a reload-and-review instruction
+  ---
+  duration_ms: 0.022875
+  type: 'test'
+  ...
+# Subtest: maps a conflicting quotation conversion to the persisted-target instruction
+ok 34 - maps a conflicting quotation conversion to the persisted-target instruction
+  ---
+  duration_ms: 0.0245
+  type: 'test'
+  ...
+# Subtest: explains the receipt-first order before voiding a received payment
+ok 35 - explains the receipt-first order before voiding a received payment
+  ---
+  duration_ms: 0.04475
+  type: 'test'
+  ...
+# Subtest: explains a changed CRM quotation retry without exposing an internal command code
+ok 36 - explains a changed CRM quotation retry without exposing an internal command code
+  ---
+  duration_ms: 0.022
+  type: 'test'
+  ...
+# Subtest: maps the entitlement command conflicts and cascade preview
+ok 37 - maps the entitlement command conflicts and cascade preview
+  ---
+  duration_ms: 0.03925
+  type: 'test'
+  ...
+# Subtest: maps bounded report export failures to friendly Thai
+ok 38 - maps bounded report export failures to friendly Thai
+  ---
+  duration_ms: 0.034625
+  type: 'test'
+  ...
+# Subtest: maps AI needs-data and no-source safety refusals to actionable Thai
+ok 39 - maps AI needs-data and no-source safety refusals to actionable Thai
+  ---
+  duration_ms: 0.020917
+  type: 'test'
+  ...
+# Subtest: guides incomplete or stale evidence review back to the review action
+ok 40 - guides incomplete or stale evidence review back to the review action
+  ---
+  duration_ms: 0.05875
+  type: 'test'
+  ...
+# Subtest: preserves only known quota messages and translates positive plan limits
+ok 41 - preserves only known quota messages and translates positive plan limits
+  ---
+  duration_ms: 0.102584
+  type: 'test'
+  ...
+# Subtest: offer configuration bounds give specific Thai fields and preserve private diagnostics
+ok 42 - offer configuration bounds give specific Thai fields and preserve private diagnostics
+  ---
+  duration_ms: 0.042208
+  type: 'test'
+  ...
+1..42
+# tests 42
+# suites 0
+# pass 42
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 239.327667

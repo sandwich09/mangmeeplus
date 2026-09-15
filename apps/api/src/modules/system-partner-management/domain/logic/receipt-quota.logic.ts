@@ -45,7 +45,9 @@ export function effectiveMonthlySlipLimit(term: ReceiptQuotaTerm | null, now: Da
  * actually counted and says what a receipt costs. The number comes from the term, never the
  * sentence: an admin-capped shop can meet this at 10 and a STARTER shop at 30.
  */
-export function receiptQuotaExceededTextTh(limit: number | null, tierKey?: string | null): string {
+export function receiptQuotaExceededTextTh(limit: number | null, tierKey?: string | null, cadence?: 'PAID_GRANTS', hasMonthlyGift = false): string {
+  if (hasMonthlyGift) return 'ใช้ใบเสร็จรายเดือนและใบที่ผู้ดูแลเพิ่มให้ครบแล้วค่ะ ดูสถานะและแพ็กเกจที่ซื้อเพิ่มได้เลย';
+  if (cadence === 'PAID_GRANTS') return `ใช้โควตาอ่านใบเสร็จ${limit !== null ? `ครบ ${limit} ใบ` : 'ครบจำนวน'}แล้วค่ะ ดูสถานะและซื้อแพ็กเกจเพิ่มได้เลย`;
   const trial = tierKey === TRIAL_COUNTER_TIER_KEY;
   const tail = '(ใบเสร็จ 1 ใบ = 1 ครั้ง) ดูแพ็กเกจที่ใหญ่ขึ้นได้เลย';
   if (limit === null) {
@@ -64,7 +66,9 @@ export function receiptQuotaExceededTextTh(limit: number | null, tierKey?: strin
  * "ช่วงทดลอง" is the free trial's word and nobody else's — a STARTER_249 shop that meets its own
  * 30 is a paying customer, and telling it the trial ran out is both wrong and a reason to churn.
  */
-export function receiptQuotaExceededShortTextTh(limit: number | null, tierKey?: string | null): string {
+export function receiptQuotaExceededShortTextTh(limit: number | null, tierKey?: string | null, cadence?: 'PAID_GRANTS', hasMonthlyGift = false): string {
+  if (hasMonthlyGift) return 'ใบเสร็จที่ใช้ได้หมดแล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" เพื่อดูแพ็กเกจได้เลย';
+  if (cadence === 'PAID_GRANTS') return 'โควตาอ่านใบเสร็จหมดแล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" เพื่อดูแพ็กเกจที่ซื้อเพิ่มได้';
   const scope = tierKey === TRIAL_COUNTER_TIER_KEY ? 'ในช่วงทดลอง' : 'ของแพ็กเกจเดือนนี้';
   const amount = limit === null ? 'ครบจำนวน' : `ครบ ${limit} ครั้ง`;
   return `ให้ AI อ่านรูป${amount}${scope}แล้วค่ะ พิมพ์ "ขอเปลี่ยนแพ็กเกจ" ได้เลยนะคะ`;
@@ -78,7 +82,8 @@ export function receiptQuotaExceededShortTextTh(limit: number | null, tierKey?: 
  * gone does the copy drop the number entirely. Never zero: "อ่านรูปได้ 0 ครั้ง" reads as a broken
  * product to the one customer least willing to forgive it.
  */
-export function displayReceiptQuotaLimit(planLimit: number | null, tierKey?: string | null): number | null {
+export function displayReceiptQuotaLimit(planLimit: number | null, tierKey?: string | null, cadence?: 'PAID_GRANTS'): number | null {
+  if (cadence === 'PAID_GRANTS') return planLimit !== null && planLimit > 0 ? planLimit : null;
   if (planLimit !== null && planLimit > 0) return planLimit;
   return isPlanTierKey(tierKey) ? PLAN_TIER_PRESETS[tierKey].monthlySlipLimit : null;
 }

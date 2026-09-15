@@ -3,6 +3,13 @@ import { test } from 'node:test';
 
 import { apiErrorMessage, translateApiError } from './api-error-message';
 
+test('billing rate limit displays only the bounded wait and preserves a route to retry', () => {
+  const error = (seconds: unknown) => Object.assign(new Error('internal diagnostic'), { status: 429, code: 'BILLING_RATE_LIMIT', details: { retryAfterSeconds: seconds } });
+  assert.equal(apiErrorMessage(error(31)), 'ทำรายการถี่เกินไป กรุณารอ 31 วินาที แล้วลองรายการเดิมอีกครั้ง');
+  for (const invalid of ['secret', 0, -1, 301, NaN, 1.5]) assert.equal(apiErrorMessage(error(invalid)), 'ทำรายการถี่เกินไป กรุณารอสักครู่แล้วลองรายการเดิมอีกครั้ง');
+  assert.match(apiErrorMessage({ code: 'CONTROL_ACTION_NOT_SUPPORTED' }), /หน้ามั่งมี/);
+});
+
 const apiError = (message: string, extra: Record<string, unknown> = {}) => Object.assign(new Error(message), extra);
 
 test('explains document VAT acceptance without suggesting a bypass of Tax Code rules', () => {
@@ -412,4 +419,10 @@ test('preserves only known quota messages and translates positive plan limits', 
   ]) assert.equal(apiErrorMessage(apiError(message, { status: 422 })), message);
   assert.match(apiErrorMessage(apiError('branchLimit must be a whole number of at least 1.', { status: 422 })), /จำนวนสาขา.*1/);
   assert.doesNotMatch(apiErrorMessage(apiError('ข้อมูลภายใน database secret', { status: 422 })), /database|secret/);
+});
+
+
+test('offer configuration bounds give specific Thai fields and preserve private diagnostics',()=>{
+  assert.match(apiErrorMessage({code:'CONTROL_OFFER_PRICE_INVALID',message:'private provider debug'}),/ยอดรวมภาษี.*10.*999,999.99/);
+  assert.match(apiErrorMessage({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'private quota debug'}),/จำนวนเต็ม.*รายปีคูณ 12/);
 });

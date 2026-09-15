@@ -166,7 +166,18 @@ export class AppConfigService {
   get watchdogJwtSecret(): string | undefined { return this.config.WATCHDOG_JWT_SECRET_ARN; }
   /** Single signing/verifying secret resolver; both sides must always use the same key. */
   get authJwtSecret(): string | undefined { return this.watchdogJwtSecret ?? this.devAuthSecret; }
-  get emailProvider(): 'disabled' | 'local-console' | 'ses' { return this.config.EMAIL_PROVIDER; }
+  get emailProvider(): 'disabled' | 'local-console' | 'ses' | 'postmark' { return this.config.EMAIL_PROVIDER; }
+  get billingMode(): 'disabled' | 'test' | 'live' { return this.config.BILLING_MODE; }
+  get stripeAccountId(): string | undefined { return this.config.STRIPE_ACCOUNT_ID; }
+  get stripeSecretKey(): string | undefined { return this.config.STRIPE_SECRET_KEY; }
+  get stripeWebhookSecret(): string | undefined { return this.config.STRIPE_WEBHOOK_SECRET; }
+  get postmarkServerToken(): string | undefined { return this.config.POSTMARK_SERVER_TOKEN; }
+  get postmarkServerId(): number | undefined { return this.config.POSTMARK_SERVER_ID; }
+  get postmarkMessageStream(): string { return this.config.POSTMARK_MESSAGE_STREAM; }
+  get postmarkFromAddress(): string | undefined { return this.config.POSTMARK_FROM_ADDRESS; }
+  get postmarkFromName(): string { return this.config.POSTMARK_FROM_NAME; }
+  get postmarkWebhookUsername(): string | undefined { return this.config.POSTMARK_WEBHOOK_USERNAME; }
+  get postmarkWebhookPassword(): string | undefined { return this.config.POSTMARK_WEBHOOK_PASSWORD; }
   get sesRegion(): string | undefined { return this.config.SES_REGION; }
   get sesFromAddress(): string | undefined { return this.config.SES_FROM_ADDRESS; }
   /** SES links require an explicit frontend URL, never the public API-origin fallback. */

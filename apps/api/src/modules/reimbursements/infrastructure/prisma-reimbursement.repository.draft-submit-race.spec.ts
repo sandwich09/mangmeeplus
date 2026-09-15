@@ -61,11 +61,12 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
     }
     reachable = true;
     // Confirmation writes its real audit in the aggregate transaction.
-    await clients[0]!.user.create({ data: { id: `${TAG}-finance`, displayName: 'Race Finance' } });
+    await clients[0]!.user.createMany({ data: [{ id: `${TAG}-finance`, displayName: 'Race Finance' }, { id: `${TAG}-user`, displayName: 'Race User' }] });
     companyId = (await clients[0]!.company.create({
       data: { name: TAG, status: 'ACTIVE' },
       select: { id: true },
     })).id;
+    await clients[0]!.companyMembership.createMany({ data: ['finance', 'user'].map(suffix => ({ companyId, userId: `${TAG}-${suffix}`, status: 'ACTIVE' as const })) });
     branchId = (await clients[0]!.branch.create({
       data: { companyId, code: 'QA-RACE', name: TAG },
       select: { id: true },
@@ -81,7 +82,7 @@ describe('reimbursement draft edit vs submit (real PostgreSQL)', () => {
       await clients[0]!.auditLog.deleteMany({ where: { companyId } });
       await clients[0]!.expenseSubstituteReceiptEvidence.deleteMany({ where: { companyId } });
       await clients[0]!.company.deleteMany({ where: { id: companyId } });
-      await clients[0]!.user.deleteMany({ where: { id: `${TAG}-finance` } });
+      await clients[0]!.user.deleteMany({ where: { id: { in: [`${TAG}-finance`, `${TAG}-user`] } } });
     }
     await Promise.all(clients.map((client) => client.$disconnect().catch(() => undefined)));
   });

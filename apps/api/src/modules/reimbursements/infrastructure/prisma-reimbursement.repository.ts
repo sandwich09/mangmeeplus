@@ -3,6 +3,7 @@ import { PrismaAuditRepository } from '../../audit/infrastructure/prisma-audit.r
 import { civilPeriodKey, todayCivilDate, LEDGER_SEQUENCE_KEY } from '@watchdog-bms/contracts';
 import { expenseDraftNumberingEnabled, expenseNumberInTransaction } from '../../expenses/infrastructure/expense-number';
 import { resolveReimbursementSourceLines, assertReimbursementSources, readReimbursementSource, sourceError, type SourceLine } from './reimbursement-source';
+import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { isDeepStrictEqual } from 'node:util';
 import { lockFundingEvidence } from '../../expenses/infrastructure/substitute-funding.guard';
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -348,6 +349,14 @@ export class PrismaReimbursementRepository {
     requireTransactionBranchId(data.branchId);
     const client = this.prisma.client as any;
     const row = await client.$transaction(async (tx: any) => {
+      await lockPlanTermCompany(tx, data.companyId);
+      if (!await tx.branch.findFirst({ where: { id: data.branchId, companyId: data.companyId, status: 'ACTIVE' }, select: { id: true } }))
+        throw sourceError('branch_inactive');
+      if (!await tx.companyMembership.findFirst({ where: { companyId: data.companyId, userId: data.requesterUserId, status: 'ACTIVE', user: { status: 'ACTIVE' }, OR: [
+        { branchScopeMode: 'ALL_BRANCHES' }, { branchScopeMode: 'DEFAULT_BRANCH_ONLY', defaultBranchId: data.branchId },
+        { branchScopeMode: 'SELECTED_BRANCHES', branchScopes: { some: { branchId: data.branchId } } },
+      ] }, select: { id: true } }) || !await tx.companyMembership.findFirst({ where: { companyId: data.companyId, userId: data.createdByUserId,
+        status: 'ACTIVE', user: { status: 'ACTIVE' } }, select: { id: true } })) throw sourceError('reimbursement_requester_unavailable');
       await assertReimbursementSources(tx, data);
       const created = await tx.reimbursementRequest.create({
         data: {

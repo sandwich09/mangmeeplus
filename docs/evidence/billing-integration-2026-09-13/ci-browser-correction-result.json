@@ -1,0 +1,513 @@
+{
+  "status": "LOCAL_BROWSER_CI_CORRECTION_PASS",
+  "recordedAt": "2026-09-15T20:50:46.391320+00:00",
+  "baseCommit": "a14736fd70cdafb4bc352e91690e03e0ac7836c6",
+  "productSourceUnchangedSince": "bcb11ae7a96c769be3b23d45ae147640d20dd381",
+  "sourceChangesSinceOriginalCombined": {
+    "apps/api/src/scripts/billing-provider-events-smoke.ts": {
+      "combinedSha256": "71f8115c22475db00b9ee88be30d80efe6d2bf1c9642d2484f5ab33098368afd",
+      "currentSha256": "235e8e980a81d14895d5d691e4a031722816af6824f16ce609196735a2247378"
+    },
+    "apps/api/src/scripts/billing-support-sla-smoke.ts": {
+      "combinedSha256": "dff2ecc941e934a6a9831ff2cc1d02126598f3123f307f8ef937e4edb035a87f",
+      "currentSha256": "9ae8fb6ed6764144aed24f420dc329c23f8e15e4e9d7b271b051b9898164e209"
+    }
+  },
+  "failedCi": {
+    "id": 35015360774,
+    "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/35015360774",
+    "stage": "Test approved cohorts, case deadlines, policy schedule and Stripe configuration with browser recovery",
+    "observed": "Support SLA browser missed first-page button after next-page click. Previous HTTP/provider-event correction and preceding browser stages passed."
+  },
+  "reproduction": {
+    "status": "EXPECTED_RED",
+    "logSha256": "2bd21898cd24d2670348f55b534a915f30408f6329a63de2f41160428d2ab676",
+    "actualPath": "/system/billing/issues",
+    "actualContentType": "text/x-component",
+    "expectedPath": "/api/v1/system/billing/issues",
+    "mechanism": "The broad URL predicate accepted the Next.js page RSC response before the API and rendered queue were ready. Local CPU6x diagnostic reproduced this exact response mismatch; an unchanged normal run had passed."
+  },
+  "correction": "Bind both GET response waits to the exact API path, queue and cursor; wait for the actual rows and URL before paging. No timeouts increased, no action retries, and no application/runtime/workflow changes. Slow-rendering opt-in restores CDP CPU settings on teardown. Related browser response predicates were reviewed: other GET queue reads already use exact API paths or endpoints without a page counterpart.",
+  "slowBrowser": {
+    "groups": 9,
+    "result": {
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "passed": [
+        "sla-legacy-off-and-strict-three-priority-integer-bounds",
+        "browser-sla-draft-reload-impact-independent-approval-result-return-mobile",
+        "sla-episode-priority-original-policy-and-duplicate-clock-assignment-preservation",
+        "sla-manual-override-clear-original-deadline-and-concurrent-priority-cas",
+        "sla-missing-original-policy-manual-recovery-corrupt-config-case-survival-and-revoked-authority",
+        "sla-reopen-current-policy-and-turn-off-new-episodes-without-erasing-existing-deadlines",
+        "browser-sla-manual-clear-reload-overdue-pagination-case-return-mobile",
+        "browser-sla-slow-rendering-api-response-bound-paging",
+        "sla-read-time-overdue-worker-off-scope-pagination-audit-and-no-financial-provider-mutation"
+      ],
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false
+    },
+    "logSha256": "72aea5039aa68ab16c783e4cd9b60f07cf638b2a81503fe5d8c0ac3c5c522045"
+  },
+  "ciSequence": [
+    {
+      "stage": "cohort",
+      "state": "PASS",
+      "groups": 75,
+      "log": "/tmp/mangmee-ci-final-cohort-pass.log",
+      "flags": {
+        "BILLING_SALES_COHORT_ONLY": "1",
+        "BILLING_BROWSER_E2E": "1"
+      },
+      "startedAt": "2026-09-15T20:43:31.171Z",
+      "endedAt": "2026-09-15T20:46:41.754Z",
+      "proof": {
+        "groups": 75,
+        "result": {
+          "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+          "passed": [
+            "real-session-tenant-and-expired-owner-recovery",
+            "hidden-enterprise-and-forged-price-rejected",
+            "browser-owner-company-picker-retains-plan-interval-and-line-origin",
+            "browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart",
+            "browser-real-cookie-csrf-expired-owner-quote-consent-checkout",
+            "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+            "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+            "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+            "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+            "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+            "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+            "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+            "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+            "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+            "browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return",
+            "apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort",
+            "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+            "historical-paid-invoice-survives-replaced-subscription-item",
+            "original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history",
+            "historical-paid-replay-preserves-newer-and-foreign-package-requests",
+            "billing-web-verified-owner-email-and-line-lost-response-stable-key",
+            "billing-outbox-replay-preserves-resolved-event-and-sent-deliveries",
+            "billing-notification-gate-close-reopen-resumes-existing-intents",
+            "billing-wrong-line-channel-owner-withdrawal-and-unverified-email-do-not-send",
+            "billing-postmark-unknown-lookup-recovers-same-message-without-resend",
+            "billing-line-crashed-worker-recovers-aged-or-changed-intent-requires-review",
+            "billing-concurrent-workers-claim-once-and-cannot-consume-other-mode",
+            "billing-security-hold-and-missing-owner-defer-with-recoverable-original-intents",
+            "billing-quiet-hours-defer-and-explicit-line-preference-suppresses",
+            "billing-mail-suppression-keeps-paid-term-and-receipt-grants-unchanged",
+            "billing-company-notification-retry-cannot-bypass-billing-command",
+            "ordinary-notification-retry-preserves-budget-and-concurrent-cas",
+            "browser-billing-notification-center-link-returns-to-authoritative-paid-status",
+            "verified-payment-atomic-automatic-unlock-and-shared-web-line-quota",
+            "browser-return-verified-unlock-documents-and-mobile-layout",
+            "browser-forged-missing-and-expired-return-never-reuse-an-old-payment-success",
+            "protected-invoice-pdf-receipt-tenant-owner-and-url-allowlist",
+            "collection-ordinary-cancel-lost-response-owner-revocation-and-reconcile",
+            "collection-ordinary-reservation-withdraw-resume-preserves-paid-days-and-receipts",
+            "collection-ordinary-provider-drift-before-and-after-command-cannot-overwrite-or-falsely-succeed",
+            "failed-renewal-not-hidden-by-prior-paid-invoice",
+            "callback-persistence-failure-is-retryable",
+            "repeat-renewal-race-blocks-checkout-and-restores-original-collection",
+            "repeat-exact-held-renewal-finalized-without-charge-and-voided",
+            "repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases",
+            "repeat-concurrent-intent-reservation",
+            "repeat-expired-checkout-restores-collection-without-quota",
+            "repeat-lost-checkout-response-reuses-single-session",
+            "repeat-paid-schedule-and-unpause-crash-recovery-grants-once",
+            "repeat-calendar-extension-old-quota-carry-and-invoice-receipt",
+            "browser-repeat-quote-and-verified-return",
+            "repeat-apply-original-checkout-invoice-binding-refuses-redirect-without-grant",
+            "repeat-apply-original-schedule-resume-response-loss-same-operation-one-purchase-grant",
+            "browser-repeat-apply-preview-unknown-reload-retry-original-invoice-company-return",
+            "collection-prepaid-cancel-lost-response-owner-revocation-and-reconcile",
+            "collection-prepaid-reservation-withdraw-resume-preserves-paid-days-and-receipts",
+            "collection-prepaid-provider-drift-before-and-after-command-cannot-overwrite-or-falsely-succeed",
+            "collection-prepaid-unapproved-extra-line-and-duplicate-subscription-rejected",
+            "browser-prepaid-resume-confirm-worker-observed-and-mobile",
+            "admin-system-role-company-mode-scope-and-owner-negative",
+            "admin-support-financial-redaction-and-expired-revoked-scope",
+            "admin-case-version-audit-and-no-false-resolution",
+            "admin-operation-preview-dedupe-and-competing-resource-reservation",
+            "admin-operation-provider-failure-permission-revoke-and-same-command-retry",
+            "admin-operation-cancel-before-work-and-no-extra-quota",
+            "browser-admin-preview-queue-observed-result-and-back",
+            "browser-delegated-billing-shell-case-assignment-and-mobile",
+            "cohort-historical-default-strict-bounds-existing-company-validation-platform-scope-and-directory-pagination",
+            "cohort-material-company-change-refuses-approval-and-keeps-active-revision",
+            "browser-cohort-company-selection-lost-draft-response-same-command-reload-independent-approval-permanent-result-mobile",
+            "cohort-selected-excluded-company-public-redaction-empty-close-stale-web-line-checkout-no-attempt",
+            "cohort-removal-preserves-paid-history-and-cancellation-while-new-downgrade-is-closed",
+            "browser-cohort-excluded-line-entry-readable-history-refresh-and-return-to-admin-reopen",
+            "cohort-approved-reopen-without-restart-and-unchanged-paid-term-receipt-grants",
+            "cohort-approved-close-during-customer-request-blocks-checkout-at-final-barrier-and-releases-unpaid-reservation"
+          ],
+          "browserE2E": true,
+          "simulatedProviders": [
+            "Stripe",
+            "Postmark",
+            "LINE"
+          ],
+          "realProviderPayment": false
+        },
+        "logSha256": "e1975d0184369d3b87136195dfefe6d35eadf2b03acbf36f5ad3d7ae246adbe6"
+      }
+    },
+    {
+      "stage": "sla",
+      "state": "PASS",
+      "groups": 8,
+      "log": "/tmp/mangmee-ci-final-sla-pass.log",
+      "flags": {
+        "BILLING_SALES_COHORT_ONLY": "1",
+        "BILLING_BROWSER_E2E": "1",
+        "BILLING_CONFIG_ONLY": "1",
+        "BILLING_SUPPORT_SLA_ONLY": "1"
+      },
+      "startedAt": "2026-09-15T20:46:42.048Z",
+      "endedAt": "2026-09-15T20:46:54.594Z",
+      "proof": {
+        "groups": 8,
+        "result": {
+          "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+          "passed": [
+            "sla-legacy-off-and-strict-three-priority-integer-bounds",
+            "browser-sla-draft-reload-impact-independent-approval-result-return-mobile",
+            "sla-episode-priority-original-policy-and-duplicate-clock-assignment-preservation",
+            "sla-manual-override-clear-original-deadline-and-concurrent-priority-cas",
+            "sla-missing-original-policy-manual-recovery-corrupt-config-case-survival-and-revoked-authority",
+            "sla-reopen-current-policy-and-turn-off-new-episodes-without-erasing-existing-deadlines",
+            "browser-sla-manual-clear-reload-overdue-pagination-case-return-mobile",
+            "sla-read-time-overdue-worker-off-scope-pagination-audit-and-no-financial-provider-mutation"
+          ],
+          "browserE2E": true,
+          "simulatedProviders": [
+            "Stripe",
+            "Postmark",
+            "LINE"
+          ],
+          "realProviderPayment": false
+        },
+        "logSha256": "47dd44fa8222fd113788e04f24d0e9b6416e20fdd7b0535211b8edba6fad535a"
+      }
+    },
+    {
+      "stage": "scheduled",
+      "state": "PASS",
+      "groups": 12,
+      "log": "/tmp/mangmee-ci-final-scheduled-pass.log",
+      "flags": {
+        "BILLING_SALES_COHORT_ONLY": "1",
+        "BILLING_BROWSER_E2E": "1",
+        "BILLING_CONFIG_ONLY": "1",
+        "BILLING_SCHEDULED_POLICY_ONLY": "1"
+      },
+      "startedAt": "2026-09-15T20:46:54.866Z",
+      "endedAt": "2026-09-15T20:48:00.845Z",
+      "proof": {
+        "groups": 12,
+        "result": {
+          "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+          "passed": [
+            "browser-schedule-timezone-draft-reload-hash-independent-approval-mobile",
+            "schedule-strict-date-range-self-approval-idempotence-future-refusal-and-no-early-publication",
+            "schedule-worker-off-late-manual-apply-after-preview-expiry-result-reload-exactly-once",
+            "schedule-original-approver-cancel-preserves-policy-and-prevents-worker-publication",
+            "schedule-concurrent-workers-publish-once-with-service-audit",
+            "schedule-emergency-close-stale-source-deduplicated-case-copy-new-review-cancel-return",
+            "schedule-current-requester-approver-system-role-and-credential-version-revocation",
+            "schedule-provider-readiness-failure-blocks-without-changing-active-settings",
+            "schedule-authority-rechecked-after-provider-io-before-publication",
+            "schedule-running-cancel-race-lease-expiry-old-worker-fence-and-manual-reclaim",
+            "schedule-audit-failure-rolls-back-revision-settings-and-success-before-retained-case",
+            "schedule-material-impact-change-expired-approval-immediate-compatibility-and-no-financial-writes"
+          ],
+          "browserE2E": true,
+          "simulatedProviders": [
+            "Stripe",
+            "Postmark",
+            "LINE"
+          ],
+          "realProviderPayment": false
+        },
+        "logSha256": "34bbfe7cd35a5f3e565b75efd1ba128c75968c8aab00069fe6928b227ec633ae"
+      }
+    },
+    {
+      "stage": "readiness",
+      "state": "PASS",
+      "groups": 18,
+      "log": "/tmp/mangmee-ci-final-readiness-pass.log",
+      "flags": {
+        "BILLING_SALES_COHORT_ONLY": "1",
+        "BILLING_BROWSER_E2E": "1",
+        "BILLING_CONFIG_ONLY": "1",
+        "BILLING_READINESS_ONLY": "1"
+      },
+      "startedAt": "2026-09-15T20:48:01.108Z",
+      "endedAt": "2026-09-15T20:49:16.011Z",
+      "proof": {
+        "groups": 18,
+        "result": {
+          "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+          "passed": [
+            "original-request-idempotency-strict-input-single-active-cursor-binding-and-current-match",
+            "provider-unavailable-versus-wrong-account-no-cross-account-reads-and-deduplicated-review-case",
+            "paid-price-mode-prepaid-product-and-portal-mode-drift",
+            "source-version-fences-before-and-after-provider-read-retain-review-and-cancel-blocked",
+            "current-platform-permission-rechecked-after-provider-read",
+            "single-live-lease-expired-writer-refused-manual-reclaim-and-current-match-resolves-case",
+            "queued-cancellation-and-bounded-worker-drain",
+            "audit-failure-rolls-back-observation-and-case-resolution",
+            "corrupt-policy-closes-sales-keeps-admin-repair-and-observation-available",
+            "browser-lost-create-response-original-link-reload-run-history-mobile-44px-and-failed-refresh-clears-result",
+            "configuration-observation-never-mutates-provider-money-or-customer-rights",
+            "portal-publication-and-customer-use-share-strict-identity-mode-object-and-explicit-flags",
+            "portal-session-wrong-customer-configuration-mode-object-return-and-url-refused",
+            "portal-current-customer-and-emergency-gate-rechecked-before-create-and-after-provider-response",
+            "portal-current-owner-and-administrative-hold-refused-with-expiry-only-recovery-preserved",
+            "portal-audit-failure-withholds-capability-retry-and-no-secret-url-in-audit",
+            "browser-portal-failure-retry-stripe-return-reload-mobile-and-late-response-after-company-picker",
+            "portal-access-never-mutates-money-quota-or-paid-rights"
+          ],
+          "browserE2E": true,
+          "simulatedProviders": [
+            "Stripe",
+            "Postmark",
+            "LINE"
+          ],
+          "realProviderPayment": false
+        },
+        "logSha256": "fc29c456f7ba4535d707075731e9cbac481b2fabfc7d3ec8b0bc07dbf1c9bf00"
+      }
+    },
+    {
+      "stage": "adjustments",
+      "state": "PASS",
+      "groups": 27,
+      "log": "/tmp/mangmee-ci-final-adjustments-pass.log",
+      "flags": {
+        "BILLING_ADJUSTMENTS_ONLY": "1",
+        "BILLING_BROWSER_E2E": "1"
+      },
+      "startedAt": "2026-09-15T20:49:16.295Z",
+      "endedAt": "2026-09-15T20:50:37.536Z",
+      "proof": {
+        "groups": 27,
+        "result": {
+          "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+          "passed": [
+            "real-session-tenant-and-expired-owner-recovery",
+            "hidden-enterprise-and-forged-price-rejected",
+            "browser-owner-company-picker-retains-plan-interval-and-line-origin",
+            "browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart",
+            "browser-real-cookie-csrf-expired-owner-quote-consent-checkout",
+            "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+            "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+            "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+            "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+            "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+            "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+            "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+            "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+            "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+            "browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return",
+            "apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort",
+            "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+            "historical-paid-invoice-survives-replaced-subscription-item",
+            "original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history",
+            "historical-paid-replay-preserves-newer-and-foreign-package-requests",
+            "adjustment-original-invoice-refund-statuses-credit-notes-25-plus-2-redacted-current-pages",
+            "adjustment-foreign-company-cursors-provider-binding-duplicates-incomplete-page-rejected",
+            "adjustment-finance-read-document-separation-four-provider-documents-audit-unsafe-url",
+            "adjustment-post-provider-membership-scope-and-document-permission-revocation",
+            "browser-line-origin-refund-history-pagination-error-retry-reload-back-and-admin-credit-note-document-return",
+            "adjustment-expired-and-term-disabled-owner-keeps-web-line-document-return-business-stays-blocked",
+            "adjustment-observation-and-document-access-never-mutates-provider-money-grants-or-paid-term"
+          ],
+          "browserE2E": true,
+          "simulatedProviders": [
+            "Stripe",
+            "Postmark",
+            "LINE"
+          ],
+          "realProviderPayment": false
+        },
+        "logSha256": "d815d960150f5aa67e33d3a17d88d7646b1e5f41f85045e9babe4f2797ac6f41"
+      }
+    }
+  ],
+  "ciTail": {
+    "commands": [
+      {
+        "command": [
+          "bash",
+          "infra/security/provision-legal-release-evidence.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 1.09
+      },
+      {
+        "command": [
+          "bash",
+          "infra/security/validate-legal-release-readiness.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.83
+      },
+      {
+        "command": [
+          "bash",
+          "infra/docker/production-image-security.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 143.33
+      },
+      {
+        "command": [
+          "bash",
+          "infra/prod-ecs-express/production-serving-mode.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.56
+      },
+      {
+        "command": [
+          "bash",
+          "infra/prod-ecs-express/maintenance-preflight.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.07
+      },
+      {
+        "command": [
+          "bash",
+          "infra/prod-ecs-express/wait-production-maintenance-ingress-drain.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.04
+      },
+      {
+        "command": [
+          "bash",
+          "infra/prod-ecs-express/verify-production-maintenance.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 1.72
+      },
+      {
+        "command": [
+          "bash",
+          "infra/prod-ecs-express/system-admin-cutover.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.18
+      },
+      {
+        "command": [
+          "bash",
+          "infra/security/validate-production-maintenance-release.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 4.11
+      },
+      {
+        "command": [
+          "bash",
+          "infra/security/sync-production-maintenance-release-pins.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.4
+      },
+      {
+        "command": [
+          "bash",
+          "infra/ai-gateway/line-ai-release-manifest.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.13
+      },
+      {
+        "command": [
+          "bash",
+          "infra/ai-gateway/agentcore-candidate-binding.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.13
+      },
+      {
+        "command": [
+          "bash",
+          "infra/uat/agentcore-candidate-policy.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.08
+      },
+      {
+        "command": [
+          "bash",
+          "infra/security/uat-release-passport-v2.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 0.58
+      },
+      {
+        "command": [
+          "bash",
+          "infra/security/production-a5-current-health.spec.sh"
+        ],
+        "exit": 0,
+        "seconds": 4.61
+      },
+      {
+        "command": [
+          "node",
+          "--test",
+          "infra/api-web/web-api-proxy.spec.mjs"
+        ],
+        "exit": 0,
+        "seconds": 0.19
+      },
+      {
+        "command": [
+          "pnpm",
+          "--filter",
+          "@watchdog-bms/ai-gateway",
+          "exec",
+          "tsx",
+          "--test",
+          "src/common/http/production-maintenance.middleware.spec.ts"
+        ],
+        "exit": 0,
+        "seconds": 0.88
+      }
+    ],
+    "logSha256": "b3092076c6bf642eaf4d1503141cd6b836b275e501f1b9597d925ddecb20c0f3",
+    "scope": "Local contract/fixture tests only; mocked AWS/curl and render-only fixtures, no cloud deployment."
+  },
+  "apiTypecheck": {
+    "status": "PASS",
+    "logSha256": "37971471564e3fe443fc97004c55f1fc169afae2086a459e75068c988e07c6b3"
+  },
+  "captures": [
+    {
+      "path": "ci-sla-slow-mobile.png",
+      "sha256": "cfcf5b3d517097e1ccf7a56e97647da8b2c1dc31ea4990fa261a9cc9fa80275d",
+      "inspected": true
+    },
+    {
+      "path": "ci-sla-mobile.png",
+      "sha256": "dadebdda77ab1c8964ac4784cba9a36ef0011d9d280d8a3cf796ab4bce013d5a",
+      "inspected": true
+    }
+  ],
+  "limits": [
+    "Original333 browser and256 HTTP evidence retains its source binding. Only two test files differ from original combined source; the provider-event change already passed CI35015360774.",
+    "Provider transports simulated; real local HTTP/PostgreSQL/Next/Chromium. No deploy, live payment or provider activation.",
+    "Core corrected-head CI and Admin merges are subsequent delivery steps; marketing is already merged on both branches."
+  ]
+}

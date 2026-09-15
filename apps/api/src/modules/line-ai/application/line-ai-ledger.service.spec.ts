@@ -298,11 +298,11 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
     assert.equal(redis.streams.get(ledgerKey('c1', 'chat1'))?.length, 5, 'stream bounded at MAXLEN');
   });
 
-  it('fails open on every operation when Redis is down (turn proceeds unledgered)', async () => {
+  it('keeps append/ack best-effort but never treats an unreadable question as no question', async () => {
     const { service, redis } = makeService();
     redis.failing = true;
     assert.equal(await service.appendTurn({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', text: 'x', now: NOW }), null);
-    assert.deepEqual(await service.openWaitingUser('c1', 'chat1', 'u1', NOW), []);
+    await assert.rejects(service.openWaitingUser('c1', 'chat1', 'u1', NOW), /consumption_marker_unavailable/);
     assert.deepEqual(await service.claimOpenEntries(10, 1000), []);
     await service.ack({ key: ledgerKey('c1', 'chat1'), id: '1-0', companyId: 'c1', turnId: 't1', kind: 'turn' }, 'acked');
   });
@@ -353,5 +353,29 @@ describe('LineAiLedgerService (item 10F, fake Redis)', () => {
     await service.appendTurn({ companyId: 'c1', chatKey: 'chat1', turnId: 't1', webhookEventId: 'e1', userId: 'u1', text: 'x', now: NOW });
     const [row] = redis.streams.get(key)!;
     assert.equal(fieldsToEntry(key, row.id, row.fields)?.intakeIntent, undefined);
+  });
+});
+
+describe('Stored question source transport', () => {
+  it('round-trips original proof byte-for-byte and refuses oversized UTF-8 proof without losing the question', async () => {
+    const { service, redis } = makeService();
+    const sourceContext = JSON.stringify({ original: 'คำถามต้นทาง', records: ['expense-1', 'expense-2'] });
+    await service.appendSubRequests({ companyId: 'company-1', chatKey: 'private-chat', userId: 'user-1', turnId: 'turn-1', webhookEventId: 'event-1', now: NOW,
+      items: [{ text: 'เลือกใบเสร็จ', state: 'waiting_user', clarifyQuestion: 'รายการไหน?', sourceContext },
+        { text: 'คำถามยาว', state: 'waiting_user', clarifyQuestion: 'รายการไหน?', sourceContext: 'ก'.repeat(6000) }] });
+    const questions = await service.openWaitingUser('company-1', 'private-chat', 'user-1', NOW);
+    assert.equal(questions.length, 2);
+    assert.equal(questions[0].entry.sourceContext, sourceContext);
+    assert.equal(questions[1].entry.sourceContext, undefined, 'webhook must retire the unproven question; it is never silently an empty context');
+    const row = redis.streams.get(ledgerKey('company-1', 'private-chat'))![0];
+    assert.equal(fieldsToEntry(ledgerKey('company-1', 'private-chat'), row.id, [...row.fields, 'sourceContext', 'ก'.repeat(6000)])?.sourceContext, undefined);
+  });
+
+  it('an enabled unavailable Redis client fails closed; an explicitly disabled ledger remains empty', async () => {
+    const { service } = makeService();
+    (service as any).client = null; (service as any).clientFailed = true;
+    await assert.rejects(service.openWaitingUser('company-1', 'chat', 'user-1'), /consumption_marker_unavailable/);
+    const disabled = makeService({ lineAiLedgerEnabled: false }).service;
+    assert.deepEqual(await disabled.openWaitingUser('company-1', 'chat', 'user-1'), []);
   });
 });

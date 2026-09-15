@@ -17,6 +17,8 @@ import {
 import { encryptCredential } from '../../../system-partner-management/domain/logic/credential-cipher.logic';
 import { assertEmployeeLimit } from '../../../system-partner-management/application/plan-term-limit';
 import { lockEmployeeProfile } from '../lock-employee-profile';
+import { assertEmployeeActivationScope } from '../employee-activation-scope';
+import { lockPlanTermCompany } from '../../../system-partner-management/application/lock-plan-term-company';
 import { uniqueConstraintFields } from '../../../../common/database/prisma-error';
 
 export type CreateEmployeeCommand = {
@@ -142,6 +144,7 @@ export class CreateEmployeeUseCase {
         })) > 0;
       try {
         await this.prisma.client.$transaction(async (tx) => {
+          await lockPlanTermCompany(tx, cmd.companyId);
           const current = await lockEmployeeProfile(tx, cmd.companyId, duplicateIdentity.id);
           if (current.status !== 'DRAFT') throw new ConflictException(IDENTITY_CONFLICT);
           const previousRoleIds = (await tx.membershipRole.findMany({
@@ -529,6 +532,7 @@ export class CreateEmployeeUseCase {
     requestId: string;
   }): Promise<CompleteEmployeeDraftResult> {
     await this.prisma.client.$transaction(async (tx) => {
+      await lockPlanTermCompany(tx, cmd.companyId);
       const draft = await lockEmployeeProfile(tx, cmd.companyId, cmd.employeeId);
       if (draft.status === 'ACTIVE') return;
       if (draft.status !== 'DRAFT') throw new ConflictException('Only an employee draft can be completed.');
@@ -542,24 +546,10 @@ export class CreateEmployeeUseCase {
       // completion would be the one to pass the limit — at limit 2 with 2 seats taken, the third
       // Finish fails; with 1 taken it succeeds and lands on 2. No off-by-one either way.
       //
-      // Placed after the `status === 'ACTIVE'` early return so re-Finishing an already-active
-      // employee stays idempotent at the cap, and run on `tx` so it sits inside the row lock the
-      // line above took — two concurrent Finishes cannot both read the same pre-flip count.
+      // The company lock serializes different employees competing for the same final seat.
+      // The profile lock also keeps re-Finishing the same already-active employee idempotent.
       await assertEmployeeLimit({ client: tx }, cmd.companyId);
-      // A draft starts all-branch until the wizard saves scope. Activation must not bypass that save.
-      if (cmd.requesterBranchIds !== undefined) {
-        const membership = await tx.companyMembership.findUniqueOrThrow({
-          where: { id: draft.membershipId },
-          select: { branchScopeMode: true, defaultBranchId: true, branchScopes: { select: { branchId: true } } },
-        });
-        const branchIds = membership.branchScopeMode === 'DEFAULT_BRANCH_ONLY'
-          ? (membership.defaultBranchId ? [membership.defaultBranchId] : [])
-          : membership.branchScopes.map((scope) => scope.branchId);
-        if (membership.branchScopeMode === 'ALL_BRANCHES' || branchIds.length === 0
-          || [...branchIds, ...(membership.defaultBranchId ? [membership.defaultBranchId] : [])].some((id) => !cmd.requesterBranchIds!.includes(id))) {
-          throw new ForbiddenException("Cannot activate access outside the requester's branch scope.");
-        }
-      }
+      await assertEmployeeActivationScope(tx, cmd.companyId, draft.membershipId, cmd.requesterBranchIds);
       await tx.employeeAccessProfile.update({
         where: { id: draft.id },
         data: { status: 'ACTIVE', updatedByUserId: cmd.requestingUserId },
@@ -586,4 +576,3 @@ export class CreateEmployeeUseCase {
     return { employeeId: cmd.employeeId, status: 'ACTIVE' };
   }
 }
-

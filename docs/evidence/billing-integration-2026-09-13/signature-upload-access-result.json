@@ -1,0 +1,110 @@
+{
+  "recordedAt": "2026-09-15T14:24:52.096544+00:00",
+  "baseCommit": "bba55f6c5ba19d282e7269860b4d7bdb5308c2c4",
+  "status": "LOCAL_SIGNATURE_AND_SUPPORTING_MEDIA_ACCESS_PASS",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/signature-asset.use-case.ts": "b182f6ea7a59aa5c59163a512475e1af40f73d60c9a128ce245dd4f234100802",
+    "apps/api/src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts": "0556cad20b505f5d87434126a70a501467dd1e088933498c78dbc2882e3a4d4c",
+    "apps/api/src/modules/expenses/application/use-cases/line-substitute-receipt-continuation.use-case.spec.ts": "a13edecb6fd21b86fa05a5ecdcfb2dee4be36ed74f7b0832ee4eea3deae9c7ca",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "9abae334054965e323232137836805fb782f5397d78af51b3b1bd87d8265cc04",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "e7b9ee2ef62c7c207e58f7c77f017f777c07d98e6781032a8334b73c5a3060dd"
+  },
+  "runs": {
+    "signatureContinuationWebhook": {
+      "localLog": "/tmp/mangmee-signature-source-final-unit.tap",
+      "sha256": "df65c89256725e956f23af2ad0b906ba03cd0624cdee5fe5d557af84bead5e84",
+      "tests": 598,
+      "pass": 598,
+      "fail": 0,
+      "skipped": 0
+    },
+    "compiledApplicationRestartHTTP": {
+      "localLog": "/tmp/mangmee-upload-signature-restart-http-pass.log",
+      "sha256": "d490679f45c3f1d121fbc23dd22d0eaafbfc3eb7d2d12df250392a1071bebaff",
+      "groups": 53,
+      "passed": [
+        "real-session-tenant-and-expired-owner-recovery",
+        "hidden-enterprise-and-forged-price-rejected",
+        "quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock",
+        "closed-platform-signed-durable-webhook-dedupe-worker-credential",
+        "apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination",
+        "apply-invoice-source-changes-block-submit-and-execute-cancel-preserves-paid-case",
+        "apply-invoice-legacy-targetless-command-read-cancel-no-automatic-latest-selection",
+        "apply-invoice-current-authority-and-selected-held-outcome-ignore-other-applied-invoice",
+        "apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant",
+        "apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion",
+        "apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io",
+        "apply-invoice-original-paid-capacity-repair-and-grant-survive-closed-sales-cohort",
+        "initial-paid-held-capacity-retains-original-command-and-repairs-without-repayment",
+        "historical-paid-invoice-survives-replaced-subscription-item",
+        "original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history",
+        "historical-paid-replay-preserves-newer-and-foreign-package-requests",
+        "verified-payment-atomic-automatic-unlock-and-shared-web-line-quota",
+        "protected-invoice-pdf-receipt-tenant-owner-and-url-allowlist",
+        "restart-unproven-original-dispute-state-refuses-new-sale-without-changing-paid-history",
+        "restart-terminal-collection-debt-refund-dispute-and-complete-history-fences",
+        "unknown-checkout-status-preserves-original-attempt-case-and-rights-until-original-source-recovers",
+        "restart-open-and-expired-checkout-preserve-old-contract-without-unlock",
+        "restart-terminal-unpaid-subscription-releases-only-after-exact-zero-paid-void-proof",
+        "capacity-lower-restart-source-fence-owner-foreign-duplicate-and-no-unpaid-suspension",
+        "capacity-paid-apply-atomic-suspension-defaults-history-and-global-user-preserved",
+        "restart-lost-response-binding-cap-race-paid-held-repair-and-exactly-once-new-contract",
+        "restart-preserves-old-documents-and-next-repeat-uses-new-anniversary",
+        "runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation",
+        "runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion",
+        "runtime-receipt-quota-paid-grants-cannot-bypass",
+        "admin-ai-reason-source-current-value-and-idempotent-replay",
+        "admin-ai-history-25-row-pagination-safe-fields-and-foreign-cursor",
+        "admin-ai-current-shared-admission-follows-raised-and-lowered-budget",
+        "admin-ai-adjustment-preserves-paid-term-and-receipt-grants",
+        "provider-event-platform-scope-mode-redaction-pagination",
+        "provider-event-preview-stale-lease-dedupe-and-cancel",
+        "provider-event-reauthorization-unavailable-unmapped-same-command-recovery",
+        "provider-event-shared-worker-lease-loss-and-processed-replay",
+        "provider-event-evidenced-case-resolution-audit-and-no-manual-grant",
+        "claim-history-current-global-role-and-revocation",
+        "claim-history-request-purpose-cursor-redaction-and-recorded-delivery-facts",
+        "claim-history-read-only-no-provision-send-proof-or-window-change",
+        "email-monitor-current-global-role-dedicated-permission-and-strict-query",
+        "email-monitor-seven-day-facts-all-history-cursors-purpose-server-stream-and-safe-projection",
+        "email-monitor-original-billing-link-current-permission-and-provider-account-boundary",
+        "email-monitor-deduplicated-late-unmapped-callback-disabled-outbound-and-missing-config",
+        "email-monitor-native-safe-identity-unknown-failure-final-authority-and-throttle-no-send",
+        "provider-discovery-platform-scope-strict-window-idempotent-redacted-admission",
+        "provider-discovery-webhook-race-original-evidence-and-financials-preserved",
+        "provider-discovery-page-checkpoint-429-backoff-resume-worker-race",
+        "provider-discovery-cancel-lost-lease-and-revoked-actor-before-read-or-commit",
+        "provider-discovery-invalid-mode-duplicate-empty-page-and-retention-remain-incomplete",
+        "provider-discovery-cursor-scope-pagination-and-active-admission-cap"
+      ],
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "browserE2E": false
+    }
+  },
+  "typecheck": {
+    "localLog": "/tmp/mangmee-signature-source-final-typecheck.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "swc": {
+    "localLog": "/tmp/mangmee-upload-signature-final-swc.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "compiledDirectory": "/tmp/mangmee-postmark-api-build",
+  "verified": [
+    "Personal signature activation rechecks current membership, active member identity and capability after object storage; LINE replay cannot return another submitter’s asset.",
+    "Both routed and explicit-caption LINE uploads pass the original event to a pre-activation callback. Actual webhook execution with unlink during simulated storage creates no active signature and sends no false success.",
+    "Pending image answers use the text answer event for authorization and the original image message id for dedupe. Revocation before consumption keeps the pending row; revocation before activation creates no signature and preserves the existing no-reuse rule for consumed rows.",
+    "Supporting/payment media recheck their original LINE event before attachment and retain parked bytes on refusal.",
+    "Existing signature normalization, current personal-signing policy, continuation and webhook suites pass without new dependencies or provider operations."
+  ],
+  "limits": [
+    "598 tests overlap other suites; they are not 598 new business flows. Repository/provider/storage collaborators are simulated in this focused suite; receipt PostgreSQL proof is separate.",
+    "Current compiled AppModule bootstrap and53 HTTP/PG restart groups pass. The complete local billing/marketing browser run subsequently passed308 groups on the frozen signature build; see combined-upload-access-result.json. Later Admin budget UI has separate focused evidence.",
+    "No native LINE/LIFF, real mail/payment, clean-source CI, merge or deployment claim."
+  ],
+  "combinedEvidence": "combined-upload-access-result.json"
+}

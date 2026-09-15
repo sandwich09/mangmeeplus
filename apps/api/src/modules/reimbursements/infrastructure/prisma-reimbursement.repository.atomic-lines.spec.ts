@@ -14,6 +14,9 @@ function cloneState(state: State): State {
 function fakePrisma(options: { failLineUpsert?: boolean; failHeaderUpdate?: boolean } = {}) {
   let state: State = { headers: new Map(), lines: new Map() };
   const tx = {
+    $queryRaw: async () => [],
+    branch: { findFirst: async () => ({ id: 'branch-1' }) },
+    companyMembership: { findFirst: async () => ({ id: 'member-1' }) },
     $executeRaw: async () => [{ locked: true }],
     reimbursementRequest: {
       create: async ({ data }: any) => {

@@ -18,6 +18,14 @@ export type SharedLineCredentialMetadataDto = {
   updatedAt: string;
 };
 
+export type SharedLineMessagingSettings = {
+  kind: 'LINE_MESSAGING_API'; version: number; channelId: string | null;
+  runtimeStatus: 'AVAILABLE' | 'INCOMPLETE' | 'UNAVAILABLE';
+  source: 'ENVIRONMENT' | 'DATABASE'; publishedAt: string | null;
+  tokenValidatedAt: string | null; inboundVerifiedAt: string | null;
+  canReplace: boolean; updatedAt: string | null;
+};
+
 /** @deprecated per-partner LINE credentials replaced by shared-OA platform credentials */
 export type LineCredentialMetadataDto = SharedLineCredentialMetadataDto;
 
@@ -112,6 +120,8 @@ export type PartnerMemberDto = {
   membershipStatus: PartnerMembershipStatus;
   roles: string[];
   lineLinked: boolean;
+  /** Current Messaging identity binding; provider delivery readiness is separate. */
+  lineMessagingReady?: boolean;
   credential?: PartnerMemberCredentialDto;
 };
 
@@ -163,13 +173,31 @@ export type SetPartnerFeaturesResultDto = {
  * company inherits the platform default again (metering spec §7.7).
  */
 export type SetPartnerAiModelDto = {
+  reason: string;
   modelId?: string;
   monthlyBudgetSatang?: number | null;
+  expectedModelId?: string | null;
+  expectedMonthlyBudgetSatang?: number | null;
+};
+
+export const PARTNER_ADJUSTMENT_REASON_MAX_LENGTH = 500;
+export function partnerAdjustmentReason(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= PARTNER_ADJUSTMENT_REASON_MAX_LENGTH
+    ? value.trim() : null;
+}
+export type PartnerAiAdjustmentField = 'modelId' | 'monthlyBudgetSatang' | 'enabled' | 'monthlyLimit' | 'receiptQuotaEnforced';
+export type PartnerAiAdjustmentHistory = {
+  items: Array<{ id:string; recordedAt:string; actorId:string|null; actorName:string|null; source:'ADMIN_ADJUSTMENT'|'LEGACY_ADMIN'; reason:string|null;
+    changes:Array<{field:PartnerAiAdjustmentField;before:string|number|boolean|null;after:string|number|boolean|null}> }>;
+  nextCursor:string|null;
 };
 
 /** Platform-admin OCR control. Both fields are absolute desired state; replaying the same body is a no-op. */
 export type SetPartnerOcrConfigDto = {
+  reason: string;
   enabled: boolean;
+  /** Trial/manual receipts only. null inherits startup; omitted preserves the saved override. */
+  receiptQuotaEnforced?: boolean | null;
   /** null = unlimited; otherwise 1..1,000,000 reads per Bangkok calendar month. */
   monthlyLimit: number | null;
   /** CAS fence from the latest partner AI-usage read. */
@@ -178,6 +206,7 @@ export type SetPartnerOcrConfigDto = {
 
 export type PartnerOcrConfigDto = {
   enabled: boolean;
+  receiptQuotaEnforced?: boolean | null;
   monthlyLimit: number | null;
   /** Dedicated OCR-config CAS version; starts at 0 and increments only on a real config change. */
   version: number;
@@ -211,6 +240,8 @@ export type PartnerAiUsageDto = {
   topTags: Array<{ tag: string; costSatang: number; calls: number }>;
   ocr: {
     config: PartnerOcrConfigDto;
+    /** Observed enforcement, independent from the operational OCR cap. Paid grants cannot be bypassed. */
+    planQuota?: { enforced: boolean; source: 'PAID_GRANTS' | 'COMPANY' | 'DEFAULT'; defaultEnforced: boolean };
     current: PartnerOcrUsageMonthDto;
     previous: PartnerOcrUsageMonthDto;
   };

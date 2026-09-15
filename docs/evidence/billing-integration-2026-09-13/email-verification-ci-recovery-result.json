@@ -1,0 +1,21 @@
+{
+  "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+  "passed": [
+    "email-verification-postmark-fragment-open-reload-no-mutation",
+    "browser-email-explicit-confirm-service-error-retry-single-use",
+    "browser-email-resend-revokes-old-proof-lost-response-account-return",
+    "browser-email-legacy-conflicting-used-expired-recovery-mobile",
+    "email-verification-purpose-double-claim-current-user-expiry-revocation-and-unique-conflict",
+    "email-resend-stale-source-confirmed-or-suspended-cannot-mint-or-send"
+  ],
+  "browserE2E": true,
+  "simulatedProviders": [
+    "Postmark",
+    "LINE"
+  ],
+  "realProviderDelivery": false,
+  "status": "PASS6 after the fixture waits for the authenticated landing before opening profile; no application permission or timeout relaxed.",
+  "sources": {
+    "apps/api/src/scripts/email-verification-smoke.ts": "e9325bcad84cf899b456728505a85ff57f5b27ae97190836ee1d3ea34cd71417"
+  }
+}

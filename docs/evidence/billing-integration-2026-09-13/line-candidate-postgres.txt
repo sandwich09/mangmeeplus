@@ -1,0 +1,19 @@
+# New PostgreSQL candidate regression cases (full suite totals below; log hash is in the result manifest)
+        ok 35 - candidate selection uses current actual scoped facts and recovers: unchanged
+        ok 36 - candidate selection uses current actual scoped facts and recovers: metadata
+        ok 37 - candidate selection uses current actual scoped facts and recovers: branch
+        ok 38 - candidate selection uses current actual scoped facts and recovers: amount
+        ok 39 - candidate selection uses current actual scoped facts and recovers: status
+        ok 40 - candidate selection uses current actual scoped facts and recovers: fallback
+        ok 41 - candidate selection uses current actual scoped facts and recovers: intake
+        ok 42 - candidate clarification uses current actual scoped facts and recovers: unchanged
+        ok 43 - candidate clarification uses current actual scoped facts and recovers: metadata
+        ok 44 - candidate clarification uses current actual scoped facts and recovers: branch
+        ok 45 - candidate clarification uses current actual scoped facts and recovers: amount
+        ok 46 - candidate clarification uses current actual scoped facts and recovers: status
+        ok 47 - candidate clarification uses current actual scoped facts and recovers: fallback
+        ok 48 - candidate clarification uses current actual scoped facts and recovers: intake
+# tests 69
+# pass 69
+# fail 0
+# skipped 0

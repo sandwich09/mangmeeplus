@@ -270,6 +270,45 @@ const HARNESS: Record<string, () => Harness> = {
 };
 
 describe('LINE draft edit — frozen security eval', () => {
+  it('does not return a stored preview after permission, branch or source revision changes', async () => {
+    const h = build();
+    assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    assert.equal(await h.useCase.pendingPreview(ctx({ permissions: [] }), CHAT), null);
+    h.record.branchId = 'outside' as any;
+    assert.equal(await h.useCase.pendingPreview(ctx({ scopes: { branchIds: ['allowed'] } }), CHAT), null);
+    h.record.branchId = null;
+    h.moveRecordInWeb();
+    assert.equal(await h.useCase.pendingPreview(ctx(), CHAT), null);
+    assert.equal(h.applies(), 0);
+  });
+
+  it('rechecks applied-memory permission, source and exact committed revision without another write', async () => {
+    const h = build();
+    assert.equal((await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'))).status, 'preview');
+    assert.equal((await h.useCase.apply(ctx(), CHAT, 'first')).status, 'applied');
+    assert.equal((await h.useCase.apply(ctx(), CHAT, 'same')).status, 'applied');
+    const denied = await h.useCase.apply(ctx({ permissions: [] }), CHAT, 'revoked');
+    assert.equal(denied.status, 'blocked');assert.doesNotMatch(JSON.stringify(denied), /BHC|1789/);
+    h.record.branchId = 'outside' as any;
+    assert.equal((await h.useCase.apply(ctx({ scopes: { branchIds: ['allowed'] } }), CHAT, 'branch')).status, 'blocked');
+    h.record.branchId = null;h.moveRecordInWeb();
+    assert.equal((await h.useCase.apply(ctx(), CHAT, 'changed')).status, 'changed');
+    assert.equal(h.applies(), 1);
+  });
+
+  it('keeps legacy and foreign applied memory from returning stored financial facts', async () => {
+    const h = build();
+    await h.useCase.preview(ctx(), charge('ค่าบริการ 10%'));
+    const stored = (await h.store.load('co-1', CHAT))!;
+    await h.store.discard('co-1', CHAT);
+    await h.store.remember('co-1', CHAT, stored);
+    assert.equal((await h.useCase.apply(ctx(), CHAT, 'legacy')).status, 'changed');
+    await h.store.remember('co-1', CHAT, { ...stored, companyId: 'foreign', appliedExpenseUpdatedAt: h.record.updatedAt.toISOString() });
+    const foreign = await h.useCase.apply(ctx(), CHAT, 'foreign');
+    assert.equal(foreign.status, 'expired');assert.doesNotMatch(JSON.stringify(foreign), /BHC|1789/);
+    assert.equal(h.applies(), 0);
+  });
+
   it('executes every frozen case, and none of them writes', async () => {
     for (const testCase of LINE_AI_DRAFT_UPDATE_SECURITY_EVAL_CASES) {
       const run = CASES[testCase.id];
@@ -342,6 +381,11 @@ describe('LINE draft edit — frozen security eval', () => {
     assert.equal(second.status, 'applied');
     assert.equal((second as any).replayed, true);
     assert.equal(harness.applies(), 1, 'and the record is written exactly once');
+    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT)).status, 'applied');
+    harness.moveRecordInWeb();
+    assert.equal((await harness.useCase.appliedResult(ctx(), CHAT)).status, 'changed');
+    assert.equal((await harness.useCase.appliedResult(ctx({ permissions: [] }), CHAT)).status, 'blocked');
+    assert.equal(harness.applies(), 1, 'delivery validation is read only');
   });
 
   it('has a runner for every frozen case and no runner without one', () => {

@@ -7,7 +7,7 @@ import type { SignupClaimInfoDto, SignupClaimResultDto } from '@watchdog-bms/con
 import { Button } from '@/common/components/button';
 import { TextField } from '@/common/components/field';
 import { trimmed } from '@/common/forms/trim';
-import { readTokenParam } from '@/features/auth/auth.logic';
+import { readEmailLinkToken } from '@/features/auth/auth.logic';
 import { attachSignupClaimToExistingUser, getSignupClaimInfo, setSignupClaimPassword } from './external-signup.api';
 import { rememberClaimedCompany } from './welcome-handoff.logic';
 import { SignupBrandHeader } from './SignupChrome';
@@ -286,24 +286,41 @@ function ClaimCard({ token, info }: { token: string; info: SignupClaimInfoDto })
 
 function ClaimAccount() {
   const searchParams = useSearchParams();
-  const token = readTokenParam(searchParams.get('token'));
+  const [token, setToken] = useState<string | null>();
+  useEffect(() => {
+    const read = () => {
+      const url = new URL(window.location.href);
+      const value = readEmailLinkToken(url.search, url.hash);
+      if (value && url.searchParams.has('token')) {
+        url.searchParams.delete('token');
+        url.hash = new URLSearchParams({ token: value }).toString();
+        window.history.replaceState(window.history.state, '', url);
+      }
+      setToken(value);
+    };
+    read();
+    window.addEventListener('hashchange', read);
+    return () => window.removeEventListener('hashchange', read);
+  }, [searchParams]);
   // R12: the claim mail carries the request id beside the token, so a link that turns out to be
   // spent still knows which status page to send its holder to. Never PII, and the status endpoint
   // answers with a coarse state only.
   const statusRequestId = searchParams.get('r')?.trim() || undefined;
-  const [info, setInfo] = useState<SignupClaimInfoDto | null>(null);
-  const [unusable, setUnusable] = useState(!token);
+  const [info, setInfo] = useState<{ token: string; data: SignupClaimInfoDto } | null>(null);
+  const [unusable, setUnusable] = useState(false);
   const [checkFailed, setCheckFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!token) return;
     let active = true;
+    setUnusable(false);
+    setInfo(null);
     setCheckFailed(false);
     void getSignupClaimInfo(token)
       .then((result) => {
         if (!active) return;
-        if (result.valid) setInfo(result);
+        if (result.valid) setInfo({ token, data: result });
         else setUnusable(true);
       })
       .catch((cause) => {
@@ -322,12 +339,12 @@ function ClaimAccount() {
       <SignupBrandHeader />
       <main className="mx-auto w-full max-w-md px-4 py-6 sm:py-12">
         <div className="rounded-2xl border border-gray-200 bg-white p-5 sm:p-8">
-          {unusable ? (
+          {token === null || (token !== undefined && unusable) ? (
             <UnusableLinkView {...(statusRequestId ? { statusRequestId } : {})} />
           ) : checkFailed ? (
             <ClaimCheckFailedView onRetry={() => setAttempt((count) => count + 1)} />
-          ) : info && token ? (
-            <ClaimCard token={token} info={info} />
+          ) : info && token && info.token === token ? (
+            <ClaimCard key={token} token={token} info={info.data} />
           ) : (
             <p className="text-[15px] text-gray-500">กำลังตรวจสอบลิงก์…</p>
           )}
