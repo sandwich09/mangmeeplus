@@ -51,6 +51,6 @@
     "607 focused,1343 module and93 PostgreSQL tests overlap. The PostgreSQL set includes17 existing source-draft cases; the final webhook transport is separately simulated in unit tests, not claimed as one end-to-end real mutation/send transaction.",
     "The input projection check does not validate historical stored-question lineage or make a later bare ordinal safe after its original offered choices are lost.",
     "Substitute/correction result sources, pending-media partial repair and later storage permission races remain separate. Native LINE/LIFF/provider and full AP01–AP24/browser acceptance remain open.",
-    "A full combined billing run is currently in progress against this compiled build. No CI/push/merge/deploy."
+    "The attempted full combined run was manually aborted while suspected stalled; no product root cause was established. A subsequent bounded focused refund run passed (refund-bounded-browser-result.json). A new full combined pass is still owed. No CI/push/merge/deploy."
   ]
 }

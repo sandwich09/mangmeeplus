@@ -3232,13 +3232,20 @@ export class PrismaExpenseRepository {
     });
   }
 
-  async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
-    await this.linkAttachmentToTarget(attachmentId, 'expense.record', expenseId, purpose, companyId, actorUserId);
+  async linkAttachment(expenseId: string, attachmentId: string, purpose: string, companyId: string, actorUserId: string, db?: ExpenseDb): Promise<void> {
+    await this.linkAttachmentToTarget(attachmentId, 'expense.record', expenseId, purpose, companyId, actorUserId, db);
   }
 
-  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string): Promise<void> {
-    const conflict = await findAttachmentLinkConflict(this.prisma.client, { companyId, attachmentId, targetType });
+  async linkAttachmentToTarget(attachmentId: string, targetType: string, targetId: string, purpose: string, companyId: string, actorUserId: string, db?: ExpenseDb): Promise<void> {
+    const conflict = await findAttachmentLinkConflict(db ?? this.prisma.client, { companyId, attachmentId, targetType });
     if (conflict) throw new BadRequestException(conflict);
+    // A partial LINE repair may already have this link. Catching P2002 inside PostgreSQL's
+    // transaction aborts the remaining repair, so retain the original link with an empty upsert.
+    if (db) {
+      await db.attachmentLink.upsert({ where: { attachmentId_targetType_targetId_purpose: { attachmentId, targetType, targetId, purpose } },
+        create: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId }, update: {} });
+      return;
+    }
     await this.prisma.client.attachmentLink.create({ data: { attachmentId, targetType, targetId, purpose, companyId, linkedByUserId: actorUserId } });
   }
 

@@ -304,7 +304,12 @@ describe('check-bill LINE reply UX', () => {
       sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(event) }, aiVerificationSummaryJson: { humanReview: true } };
     (useCase as any).expenseRepo.findByLineMessageId = async () => structuredClone(saved);
     (useCase as any).expenseRepo.findByIdWithRelations = async () => structuredClone(saved);
-    (useCase as any).completeReceiptDraft = async () => assert.fail('saved attachment must not reset current status or review');
+    saved.lineMessageId = 'line-msg-check'; saved.primaryAttachmentId = 'att-1';
+    saved.attachments = [{ id: 'att-1', purpose: 'expense.receipt.primary' } as any];
+    (useCase as any).prisma.client.$executeRaw = async () => undefined;
+    (useCase as any).prisma.client.attachmentLink = { findMany: async () => [] };
+    (useCase as any).prisma.client.attachmentObject = { findFirst: async () => ({ id: 'att-1' }) };
+    (useCase as any).prisma.client.$transaction = async (work: any) => work((useCase as any).prisma.client);
     (useCase as any).receiptOcrApply.apply = async () => assert.fail('saved check bill must not reapply old OCR');
     await (useCase as any).resolvePendingCheckBillAction(event, ctx,
       { membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.receipt.line_upload'], scopes: {} },

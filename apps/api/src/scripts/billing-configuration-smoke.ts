@@ -59,6 +59,8 @@ export async function checkBillingConfiguration(input: {
     if (process.env.BILLING_MANUAL_PLAN_ONLY === '1' || process.env.BILLING_PLAN_ADJUSTMENTS_ONLY === '1' || process.env.BILLING_RECEIPT_ADJUSTMENTS_ONLY === '1' || process.env.BILLING_OFFER_TERMS_ONLY === '1' || process.env.BILLING_BATCHES_ONLY === '1' || process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' || process.env.BILLING_SETTLEMENT_ONLY === '1' || process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       if (browser) {
         secondBrowser = await browser.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
+        secondBrowser.setDefaultTimeout(30000);
+        secondBrowser.setDefaultNavigationTimeout(60000);
         await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
           { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
         await secondBrowser.newPage();
@@ -128,6 +130,8 @@ export async function checkBillingConfiguration(input: {
     if (browser) {
       const engine = browser.page.context().browser()!;
       secondBrowser = await engine.newContext({ viewport: { width: 390, height: 844 } });
+      secondBrowser.setDefaultTimeout(30000);
+      secondBrowser.setDefaultNavigationTimeout(60000);
       await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
         { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
       const page = await secondBrowser.newPage();

@@ -62,9 +62,9 @@ function makePrisma(opts: {
   const prisma = {
     client: {
       // Consumption markers commit with the terminal outcome; the fake runs the callback inline.
-      $transaction: async (work: (tx: any) => Promise<unknown>) => work({
-        outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
-      }),
+      $transaction: async (work: (tx: any) => Promise<unknown>) => work(prisma.client),
+      $executeRaw: async () => undefined,
+      outboxEvent: { create: async () => undefined, findMany: async () => [], findFirst: async () => null },
       // Every media turn asks whether a human is waiting on this LINE user (UAT 2026-09-06). These
       // fixtures are receipts, not support threads, so the answer is "nobody" and nothing is written.
       lineSupportRequest: { findFirst: async () => null },
@@ -90,9 +90,9 @@ function makePrisma(opts: {
       lineCompanyContext: { findUnique: async () => null, upsert: async (args: unknown) => args },
       companyFeatureEntitlement: { findMany: async () => [] },
       expenseRecord: { update: async (args: any) => { recordUpdates.push(args); return args; } },
-      attachmentLink: { findFirst: async () => null },
+      attachmentLink: { findFirst: async () => null, findMany: async () => [] },
       // §11: the checksum the wet-signed scan is recorded with comes off the stored attachment.
-      attachmentObject: { findFirst: async () => ({ checksumSha256: 'scan-checksum' }) },
+      attachmentObject: { findFirst: async (args: any) => ({ id: args?.where?.id, checksumSha256: 'scan-checksum' }) },
       aiConversation: { upsert: async (args: any) => ({ id: args.where.id }) },
       aiTurn: { create: async (args: any) => { turnCreates.push(args); return { id: 'turn-1' }; }, findMany: async () => [], update: async (args: any) => args },
       aiToolInvocation: { createMany: async (args: unknown) => args },
@@ -279,12 +279,21 @@ function makeHarness(opts: {
     listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
     recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
-    findByLineMessageId: opts.findExpenseByLineMessageId ?? (async () => null),
+    findByLineMessageId: async (companyId: string, lineMessageId: string) => {
+      const found = await opts.findExpenseByLineMessageId?.(companyId, lineMessageId);
+      if (!found) return null;
+      if (!capturedRows.has(found.id)) capturedRows.set(found.id, emptyMedia(found.id, {
+        primaryAttachmentId: null, lineMessageId, sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) }, ...found,
+      }));
+      return structuredClone(capturedRows.get(found.id));
+    },
     runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
       const matched = await detectWithinTx({ marker: 'tx' });
-      return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
+      const duplicateStatus = matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH';
+      if (capturedRows.has(_input.expenseId)) capturedRows.get(_input.expenseId).duplicateStatus = duplicateStatus;
+      return { openCandidates: matched.length, duplicateStatus };
     },
-    createExpense: async (input: any) => { createExpenseCalls.push(input); const saved = emptyMedia('expense-clarified-1', input); capturedRows.set(saved.id, saved); return structuredClone(saved); },
+    createExpense: async (input: any) => { createExpenseCalls.push(input); const saved = emptyMedia('expense-clarified-1', { primaryAttachmentId: null, ...input }); capturedRows.set(saved.id, saved); return structuredClone(saved); },
     linkAttachment: async (...args: any[]) => {
       linkAttachmentCalls.push(args);
       const saved = capturedRows.get(args[0]);
@@ -2636,6 +2645,21 @@ describe('LINE intake dispatch – RECEIPT-05 media-clarify follow-up', () => {
     assert.equal(h.createExpenseCalls.length, 0, 'no second draft');
     assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
     assert.match(h.replies[0] ?? '', /expense-existing-1/);
+  });
+
+  it('a pending confirmation for an already reviewed receipt returns the saved record without resetting review or linking again', async () => {
+    const { prisma, pendingMediaRows } = makePrisma(); seedPendingRow(pendingMediaRows);
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], prisma,
+      findExpenseByLineMessageId: async () => ({ id: 'reviewed-original', lineMessageId: 'msg-media-1',
+        primaryAttachmentId: 'pending-att-1', status: 'CONFIRMED', reviewedAt: new Date(),
+        grandTotalAmount: '777', aiVerificationSummaryJson: { humanReview: true },
+        attachments: [{ id: 'pending-att-1', purpose: 'expense.receipt.primary' }] }),
+    });
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'evt-reviewed-retry', messageText: 'ใช่ ใบเสร็จ' });
+    assert.equal(h.createExpenseCalls.length, 0); assert.equal(h.linkAttachmentCalls.length, 0); assert.equal(h.updateExpenseCalls.length, 0);
+    assert.equal(pendingMediaRows[0].status, 'RESOLVED_RECEIPT');
+    assert.match(h.replies.at(-1)!, /เก็บรายการนี้ไว้แล้ว/); assert.match(h.replies.at(-1)!, /reviewed-original/);
+    assert.doesNotMatch(h.replies.at(-1)!, /เบื้องต้น|รอตรวจสอบ/);
   });
 
   it('Fix #5: a link failure on first resolve leaves the row PENDING; the retry repairs the link and only then resolves (receipt never detached)', async () => {

@@ -30,6 +30,7 @@ import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-updat
 import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
+import { ProcessLineWebhookUseCase } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 
 const databaseUrl = process.env['LINE_DRAFT_EDIT_TEST_DATABASE_URL'];
@@ -69,6 +70,82 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
       await client.company.deleteMany({ where: { id: companyId } });
       await client.user.deleteMany({ where: { id: { in: [userId, foreign] } } });
       await client.$disconnect();
+    }
+  });
+
+  it('repairs only the original pending attachment atomically and leaves a completed human review unchanged', async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(/^\/watchdog_bms(_[a-z0-9_]+)?$/.test(url.pathname)
+      || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const tag = `pending-repair-${randomUUID()}`, companyId = `${tag}-co`, userId = `${tag}-user`;
+    const repo = new PrismaExpenseRepository({ client } as never);
+    // The production shared completion method and ERP repository execute against real PG;
+    // provider transport and LINE delivery are exercised separately in dispatcher tests.
+    const webhook = Object.assign(Object.create(ProcessLineWebhookUseCase.prototype), { prisma: { client }, expenseRepo: repo }) as any;
+    try {
+      await client.company.create({ data: { id: companyId, name: 'Pending repair fixture' } });
+      await client.user.create({ data: { id: userId, displayName: 'Pending repair fixture' } });
+      const branch = await client.branch.create({ data: { companyId, code: 'REPAIR', name: 'Original branch', type: 'BRANCH' } });
+      const attachment = await client.attachmentObject.create({ data: { companyId, uploadedByUserId: userId, status: 'ACTIVE',
+        storageProvider: 'local', bucket: 'synthetic', objectKey: tag, originalFileName: 'receipt.png', mimeType: 'image/png', byteSize: 20 } });
+      const expense = await client.expenseRecord.create({ data: { companyId, branchId: branch.id, createdByUserId: userId,
+        expenseDate: new Date('2026-09-15'), status: 'DRAFT', captureSource: 'LINE_UPLOAD', lineMessageId: tag,
+        sourceChannelMetadataJson: { chatKeyHash: CHAT } } });
+      const pending = { attachmentId: attachment.id, lineMessageId: tag }, scopes = { branchIds: [branch.id] };
+      const repair = (change: Record<string, any> = {}) => webhook.completeReceiptDraft(expense.id, change.pending ?? pending,
+        change.companyId ?? companyId, change.userId ?? userId, change.scopes ?? scopes, change.chat ?? CHAT);
+      const read = () => client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+      const links = () => client.attachmentLink.findMany({ where: { companyId, targetId: expense.id } });
+      const original = await read(), duplicate = repo.runDuplicateCheck.bind(repo);
+      repo.runDuplicateCheck = async (...args: Parameters<typeof repo.runDuplicateCheck>) => {
+        await duplicate(...args); throw new Error('synthetic pending duplicate failure');
+      };
+      await assert.rejects(() => repair(), /synthetic pending duplicate failure/);
+      assert.deepEqual(await read(), original); assert.deepEqual(await links(), [], 'link rolls back with summary and duplicate state');
+      repo.runDuplicateCheck = duplicate;
+      for (const change of [{ companyId: 'foreign' }, { userId: 'foreign' }, { chat: 'foreign' }, { scopes: { branchIds: [] } },
+        { pending: { ...pending, lineMessageId: 'foreign' } }, { pending: { ...pending, attachmentId: 'missing' } }]) {
+        await assert.rejects(() => repair(change)); assert.deepEqual(await read(), original); assert.deepEqual(await links(), []);
+      }
+      await client.attachmentObject.update({ where: { id: attachment.id }, data: { uploadedByUserId: 'foreign' } });
+      await assert.rejects(() => repair(), /attachment is unavailable/);
+      await client.attachmentObject.update({ where: { id: attachment.id }, data: { uploadedByUserId: userId, status: 'DELETED' } });
+      await assert.rejects(() => repair(), /attachment is unavailable/);
+      await client.attachmentObject.update({ where: { id: attachment.id }, data: { status: 'ACTIVE' } });
+
+      // An edit between reading and writing must preserve the new facts and roll back our link.
+      const link = repo.linkAttachment.bind(repo);
+      repo.linkAttachment = async (...args: Parameters<typeof repo.linkAttachment>) => {
+        await link(...args);
+        await client.expenseRecord.update({ where: { id: expense.id }, data: {
+          vendorNameSnapshot: 'Human edit during repair', updatedAt: new Date(original.updatedAt.getTime() + 1000) } });
+      };
+      await assert.rejects(() => repair(), /changed by another user/);
+      assert.equal((await read()).vendorNameSnapshot, 'Human edit during repair'); assert.deepEqual(await links(), []);
+      repo.linkAttachment = link;
+      // A link left by the old non-atomic implementation is reused, not a caught P2002 in an aborted transaction.
+      await repo.linkAttachment(expense.id, attachment.id, 'expense.receipt.primary', companyId, userId);
+      const originalLink = await links();
+      assert.equal(await repair(), false); assert.deepEqual(await links(), originalLink);
+      const completed = await read(); assert.equal(completed.primaryAttachmentId, attachment.id);
+      assert.equal(completed.status, 'NEEDS_REVIEW'); assert.equal(completed.vendorNameSnapshot, 'Human edit during repair');
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { status: 'CONFIRMED', reviewedAt: new Date(),
+        grandTotalAmount: '777', aiVerificationSummaryJson: { humanReview: true } } });
+      const reviewed = await read(); await repair(); assert.deepEqual(await read(), reviewed); assert.deepEqual(await links(), originalLink);
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { primaryAttachmentId: null } });
+      const incompleteReviewed = await read(); await assert.rejects(() => repair(), /Receipt changed/); assert.deepEqual(await read(), incompleteReviewed);
+      await client.expenseRecord.update({ where: { id: expense.id }, data: { primaryAttachmentId: 'different', status: 'DRAFT', reviewedAt: null } });
+      const replaced = await read(); await assert.rejects(() => repair(), /Receipt changed/); assert.deepEqual(await read(), replaced);
+    } finally {
+      await client.expenseDuplicateCandidate.deleteMany({ where: { companyId } });
+      await client.attachmentLink.deleteMany({ where: { companyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.attachmentObject.deleteMany({ where: { companyId } });
+      await client.branch.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.user.deleteMany({ where: { id: userId } }); await client.$disconnect();
     }
   });
 

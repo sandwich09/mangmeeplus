@@ -88,6 +88,7 @@ export async function checkBillingApplyRetry(input:{
     cases.push('apply-invoice-owner-delegate-company-mode-safe-projection-and-25-plus-one-pagination');
     if(browser){
       context=await browser.page.context().browser()!.newContext({viewport:{width:390,height:844}});
+      context.setDefaultTimeout(30000);context.setDefaultNavigationTimeout(60000);
       await context.addCookies([{name:'watchdog_token',value:token,url:browser.origin,httpOnly:true,sameSite:'Lax'},
         {name:'watchdog_csrf',value:'synthetic-apply-csrf',url:browser.origin,sameSite:'Lax'}]);
       const page=await context.newPage();

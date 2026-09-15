@@ -76,6 +76,7 @@ import { LineExpenseDraftConversationUseCase, type LineExpenseDraftConversationR
 import { splitLineExpenseDraftReply, isDeterministicLineExpenseDraftInput } from '../../../expenses/domain/logic/line-expense-draft-conversation.logic';
 import { InitSignatureUploadUseCase, CreateSignatureAssetUseCase, maySubmitSignature } from '../../../expenses/application/use-cases/signature-asset.use-case';
 import { PrismaExpenseRepository } from '../../../expenses/infrastructure/prisma-expense.repository';
+import { lockFundingEvidence } from '../../../expenses/infrastructure/substitute-funding.guard';
 import type { ExpenseRecordWithRelations } from '../../../expenses/domain/models/expense.model';
 import { CreateUploadIntentUseCase } from '../../../data-model-core/application/use-cases/create-upload-intent.use-case';
 import { CompleteAttachmentUploadUseCase } from '../../../data-model-core/application/use-cases/complete-attachment-upload.use-case';
@@ -5958,7 +5959,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
-  private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string, questionText?: string): Promise<string[]> {
+  private async savedReceiptReplies(event: LineReceiptUploadEvent | LineTextEvent, companyId: string, expenseId: string, questionText?: string): Promise<string[]> {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
     try {
@@ -6510,7 +6511,7 @@ ${link}`, ctx.companyId, access);
     const existing = await this.expenseRepo.findByLineMessageId(ctx.companyId, pending.lineMessageId);
     let expenseId: string;
     if (existing) {
-      if (!existing.primaryAttachmentId) await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes);
+      await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes, chatKeyHash);
       expenseId = existing.id;
     } else {
       ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
@@ -6814,12 +6815,11 @@ ${link}`, ctx.companyId, access);
     // REPAIRS a partial draft instead of rubber-stamping it (Fix #5).
     const existing = await this.expenseRepo.findByLineMessageId(companyId, pending.lineMessageId);
     let expenseId: string;
-    let hasDuplicate: boolean;
     if (existing) {
-      hasDuplicate = await this.completeReceiptDraft(existing.id, pending, companyId, userId, access.scopes);
+      await this.completeReceiptDraft(existing.id, pending, companyId, userId, access.scopes, chatKeyHashOf(event));
       expenseId = existing.id;
     } else {
-      ({ expenseId, hasDuplicate } = await this.createReceiptDraftFromPendingMedia(
+      ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
         requestId,
         userId,
         companyId,
@@ -6830,7 +6830,7 @@ ${link}`, ctx.companyId, access);
         access.membershipId,
       ));
     }
-    let reply = formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, { hasDuplicate });
+    let reply = (await this.savedReceiptReplies(event, companyId, expenseId)).join("\n");
     let pendingQuestion: string | undefined;
     if (additionalText && this.substituteReceiptContinuation && isSubstituteReceiptConversationText(additionalText)) {
       try {
@@ -7010,7 +7010,7 @@ ${link}`, ctx.companyId, access);
     lineEventId: string,
     pending: { attachmentId: string; lineMessageId: string; mimeType: string },
     scopes: { branchIds?: string[] },
-    chatKeyHash?: string,
+    chatKeyHash: string,
     membershipId?: string,
   ): Promise<{ expenseId: string; hasDuplicate: boolean }> {
     const expense = await this.expenseRepo!.createExpense({
@@ -7034,7 +7034,7 @@ ${link}`, ctx.companyId, access);
       // so omitting it here would make clarified receipts uncorrectable.
       ...(chatKeyHash ? { sourceChannelMetadataJson: { channel: 'LINE', kind: 'pending_media', chatKeyHash } } : {}),
     });
-    const hasDuplicate = await this.completeReceiptDraft(expense.id, pending, companyId, userId, scopes);
+    const hasDuplicate = await this.completeReceiptDraft(expense.id, pending, companyId, userId, scopes, chatKeyHash);
     await this.audit.log({
       companyId, actorUserId: userId, action: 'expense.line_upload.receive', targetType: 'expense_record',
       targetId: expense.id, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM',
@@ -7043,42 +7043,64 @@ ${link}`, ctx.companyId, access);
     return { expenseId: expense.id, hasDuplicate };
   }
 
-  /** RECEIPT-05 (Fix #5): idempotently link the persisted attachment to the draft and set
-   *  primaryAttachmentId. Shared by first-time create and the partial-failure repair path — the
-   *  attachment link tolerates its unique-constraint replay and the update is a plain set, so a
-   *  retry always converges the draft to "complete with its attachment" before the pending row is
-   *  marked RESOLVED_RECEIPT. */
+  /** Repair only the original incomplete receipt. Retrying a completed upload never resets
+   * human review; link, primary attachment, initial summary and duplicate facts commit together. */
   private async completeReceiptDraft(
     expenseId: string,
-    pending: { attachmentId: string },
+    pending: { attachmentId: string; lineMessageId: string },
     companyId: string,
     userId: string,
     scopes: { branchIds?: string[] },
+    chatKeyHash: string,
   ): Promise<boolean> {
     const repo = this.expenseRepo!;
-    try {
-      await repo.linkAttachment(expenseId, pending.attachmentId, 'expense.receipt.primary', companyId, userId);
-    } catch (err) {
-      // Link already exists from a partial first resolve — repair is idempotent, keep going.
-      if ((err as { code?: string }).code !== 'P2002') throw err;
-    }
-    await repo.updateExpense({
-      id: expenseId, companyId, updatedByUserId: userId,
-      primaryAttachmentId: pending.attachmentId, status: 'NEEDS_REVIEW', aiVerificationStatus: 'NEEDS_REVIEW',
+    return this.prisma.client.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:duplicate-reconciliation`}))`;
+      // Match funding/substitute/retention writers before locking the attachment row.
+      await lockFundingEvidence(tx, companyId, { expenseIds: [expenseId], attachmentIds: [pending.attachmentId] });
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${expenseId}:substitute-receipt`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${companyId}:${pending.attachmentId}:attachment-retention`}))`;
+      const current = await repo.findByIdWithRelations(companyId, expenseId, tx, scopes);
+      if (!current || current.companyId !== companyId || current.createdByUserId !== userId
+        || current.captureSource !== 'LINE_UPLOAD' || current.lineMessageId !== pending.lineMessageId
+        || current.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHash || !isBranchInScope(scopes, current.branchId)) {
+        throw new ForbiddenException('Receipt is outside your capture scope.');
+      }
+      await tx.$executeRaw`SELECT id FROM "AttachmentObject" WHERE id = ${pending.attachmentId} AND "companyId" = ${companyId} FOR SHARE`;
+      const attachment = await tx.attachmentObject.findFirst({ where: {
+        id: pending.attachmentId, companyId, uploadedByUserId: userId, status: 'ACTIVE',
+      }, select: { id: true } });
+      if (!attachment) throw new ConflictException('The original receipt attachment is unavailable.');
+      const linked = current.attachments.some(item => item.id === pending.attachmentId && item.purpose === 'expense.receipt.primary');
+      if (current.primaryAttachmentId === pending.attachmentId && linked) {
+        return current.duplicateStatus === 'POSSIBLE_DUPLICATE' || Boolean(current.duplicateOfExpenseId);
+      }
+      if (current.primaryAttachmentId && current.primaryAttachmentId !== pending.attachmentId
+        || !['DRAFT', 'NEEDS_REVIEW'].includes(current.status) || current.reviewedAt) {
+        throw new ConflictException('Receipt changed. Review the original record in the web app.');
+      }
+      await repo.linkAttachment(expenseId, pending.attachmentId, 'expense.receipt.primary', companyId, userId, tx);
+      await repo.updateExpense({
+        id: expenseId, companyId, updatedByUserId: userId, expectedUpdatedAt: current.updatedAt,
+        primaryAttachmentId: pending.attachmentId,
+        ...(!current.aiVerificationSummaryJson ? { status: 'NEEDS_REVIEW', aiVerificationStatus: 'NEEDS_REVIEW' } : {}),
+      }, undefined, tx);
+      const duplicate = await reconcileExpenseDuplicateCandidates(repo, companyId, expenseId, userId, scopes, tx);
+      const saved = await repo.findByIdWithRelations(companyId, expenseId, tx, scopes);
+      if (!saved) throw new ConflictException('Receipt changed during attachment repair.');
+      await repo.updateExpense({
+        id: expenseId, companyId, updatedByUserId: userId, expectedUpdatedAt: saved.updatedAt,
+        aiVerificationSummaryJson: {
+          ...(current.aiVerificationSummaryJson ?? {
+            status: 'NOT_REQUESTED',
+            missingFields: ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category'],
+            nextAction: 'review_in_web', resolvedVia: 'line_clarify_receipt',
+          }),
+          duplicateWarning: duplicate.openCandidates > 0,
+        },
+      }, undefined, tx);
+      return duplicate.openCandidates > 0;
     });
-    const duplicateResult = await reconcileExpenseDuplicateCandidates(repo, companyId, expenseId, userId, scopes);
-    const hasDuplicate = duplicateResult.openCandidates > 0;
-    await repo.updateExpense({
-      id: expenseId, companyId, updatedByUserId: userId,
-      aiVerificationSummaryJson: {
-        status: 'NOT_REQUESTED',
-        missingFields: ['vendor', 'expenseDate', 'documentNumber', 'grandTotalAmount', 'vatAmount', 'category'],
-        duplicateWarning: hasDuplicate,
-        nextAction: 'review_in_web',
-        resolvedVia: 'line_clarify_receipt',
-      },
-    });
-    return hasDuplicate;
   }
 
   /**

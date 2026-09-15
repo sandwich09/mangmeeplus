@@ -5,6 +5,10 @@ import {STRIPE_API_VERSION} from '@watchdog-bms/contracts';
 
 /** Actual HTTP/PG/UI with an original-invoice provider simulation; never calls a native money endpoint. */
 export async function checkBillingRefunds(input:Parameters<typeof checkBillingConfigurationDrafts>[0]){
+  const bounded=<T>(work:Promise<T>,stage:string)=>new Promise<T>((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(new Error(`Refund browser timed out: ${stage}`)),30000);
+    work.then(resolve,reject).finally(()=>clearTimeout(timer));
+  });
   const {request,approveRequest,browser,companyId,stripeAccountId,password}=input,db=input.prisma.client,base='/v1/system/billing',run=randomUUID().replace(/-/g,'');
   const cases:string[]=[],settings=async()=>(await request(`${base}/settings`)).body,initial=await settings();
   const originalAccount=await db.billingAccount.findFirstOrThrow({where:{companyId,stripeAccountId,livemode:false}}),customerId=originalAccount.customerId??`cus_Refund${run}`;
@@ -187,7 +191,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
           try{
             if(tries===0)await navigate();else await target.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();
             const form=target.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}),limited=target.getByRole('alert').filter({hasText:'กรุณารอ'});
-            await form.or(limited).first().waitFor();const observed=await Promise.all(responses);
+            await form.or(limited).first().waitFor();const observed=await bounded(Promise.all(responses),'review response bodies');
             // A superseded development-mode read may receive429 while the current read succeeds.
             if(await form.isVisible()){assert.ok(observed.some(r=>r.status===200&&r.body?.invoiceId===local.id&&r.body?.companyId===companyId&&r.body?.canCreate===true),'Visible original form needs actual successful review HTTP evidence');return;}
             const seconds=Number((await limited.innerText()).match(/กรุณารอ (\d+) วินาที/)?.[1]);
@@ -216,7 +220,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
               else{await route.fulfill({response});accepted(result);}
             }catch(error){accepted({status:0,body:null,error});await route.abort().catch(()=>{});}
           },{times:1});
-          await page.getByRole('button',{name:'ตรวจยอดและผลกระทบ',exact:true}).click();const result=await ready;if(result.error)throw result.error;
+          await page.getByRole('button',{name:'ตรวจยอดและผลกระทบ',exact:true}).click();const result=await bounded(ready,'held preview response');if(result.error)throw result.error;
           if(result.status===200){createdId=result.body.id;break;}
           assert.equal(result.status,429,JSON.stringify(result));assert.equal(result.body.code,'BILLING_RATE_LIMIT');
           const seconds=result.body.retryAfterSeconds;assert.ok(Number.isInteger(seconds)&&seconds>=1&&seconds<=60);
@@ -227,7 +231,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
         }
         assert.ok(createdId,'A successful original preview must be retained after bounded rate-limit recovery');
         await page.getByRole('link',{name:'กลับไปบริษัท',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/companies/${companyId}`);
-        const delivered=page.waitForResponse(r=>r.url().endsWith('/refund-preview'));release();await (await delivered).finished();await page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r()))));
+        const delivered=page.waitForResponse(r=>r.url().endsWith('/refund-preview'));release();await bounded((await delivered).finished(),'late response finished');await bounded(page.evaluate(()=>new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r())))),'late navigation render');
         assert.equal(new URL(page.url()).pathname,`/system/billing/companies/${companyId}`);
       }finally{release();await page.unroute('**/refund-preview');}
       await openReview(page,()=>page.goto(`${browser.origin}/system/billing/companies/${companyId}/invoices/${local.id}/refund`,{waitUntil:'domcontentloaded'}));

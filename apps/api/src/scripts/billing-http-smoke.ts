@@ -17,6 +17,7 @@ import { BillingService } from '../modules/billing/application/billing.service';
 import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { NestFactory } from '@nestjs/core';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -561,6 +562,14 @@ async function main() {
     cases.push(...await checkProviderScans());
     console.log(JSON.stringify({ layer: 'real-Nest-HTTP-PostgreSQL-provider-simulation', passed: cases,
       simulatedProviders: ['Stripe', 'Postmark', 'LINE'], realProviderPayment: false, browserE2E: Boolean(browser) }));
+  } catch (error) {
+    if (browser) {
+      await browser.page.screenshot({ path: `${browser.evidenceDir}/failure.png`, fullPage: true, timeout: 10000 }).catch(() => {});
+      writeFileSync(`${browser.evidenceDir}/failure.json`, JSON.stringify({
+        pathname: new URL(browser.page.url()).pathname, error: error instanceof Error ? error.message : 'Billing smoke failed',
+      }, null, 2), { mode: 0o600 });
+    }
+    throw error;
   } finally {
     await browser?.close();
     await client.companyOcrUsageEvent.deleteMany({ where: { companyId: { in: companyIds } } });

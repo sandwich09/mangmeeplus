@@ -40,6 +40,8 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
     if (!ready) throw new Error('Next dev readiness timed out');
     browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+    context.setDefaultTimeout(30000);
+    context.setDefaultNavigationTimeout(60000);
     await context.addCookies([{ name: 'watchdog_token', value: input.token, url: origin, httpOnly: true, sameSite: 'Lax' },
       { name: 'watchdog_csrf', value: 'synthetic-billing-csrf', url: origin, sameSite: 'Lax' }]);
     const page = await context.newPage();
