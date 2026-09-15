@@ -1,6 +1,6 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: APPROVED SOURCE IMPLEMENTED; local acceptance PASS. Final readiness CI and Admin merges develop/main in both repositories are next. No deploy or provider activation.
+Status: APPROVED SOURCE IMPLEMENTED; local browser/API acceptance and CI fixture correction PASS. Marketing Admin merged develop/main. Core corrected-head CI, develop merge and main promotion remain. No deploy or provider activation.
 Owner: Codex / repository owner.
 Scope: Approved Stripe packages, Postmark, Admin C01–C08, web/LINE permissions, existing signup/claim and approved email recovery; code and aligned docs in both repos.
 Decisions: No pending Owner answer. Gift days shift service and next collection equally with no receipt/AI grant. Collection pause/resume uses reviewed keep_as_draft and an explicit resume date. Local ordinary mail history180days/OFF. OTP/passwordless email auto-provision is separate work and is not claimed as delivered by this billing integration branch.
@@ -29,3 +29,17 @@ Buy/charge immediately; trial days do not carry. Repeat full package adds quota 
 3. Record final PR/CI/merge IDs in local handoff evidence and report actual results. Native Stripe capability/live money, deployed Postmark secret/webhook/inbox and native LINE return remain release acceptance.
 
 [Historical checkpoint](stripe-postmark-implementation-history-through-controls-2026-09-15.md). Historical percentages or open questions do not override this state.
+
+## Final delivery — CI dispatched2026-09-16
+
+Core revision `bcb11ae7a96c769be3b23d45ae147640d20dd381` pushed to existing PR558 branch; final CI35009007986 in progress. Marketing revision `4163e8ce3a0020f943043ef3f87661d245fe1814` pushed to existing PR2; final CI35009018640 in progress. Both PRs ready. One readiness push per repository after local333 combined + signup8/verification6/recovery7 passed. Settlement forced13 and scoped collection/gift27 pass. No deploy. Wait exact-head CI success, Admin merge develop, create/promote main PRs, wait CI and Admin merge. This post-commit delivery journal is local to avoid a new CI for status only.
+
+Marketing completed: PR2 Admin merged develop after CI35009018640 success; PR3 Admin merged main after CI35009177590 success. Develop942411ba and mainf8d7c9b3 have identical treefb3eb5bf. Core CI35009007986 still running Typecheck and Test; other required jobs success. Exact delivery IDs in local `../evidence/billing-integration-2026-09-13/final-delivery-result.json`. No deployment.
+
+## CI35009007986 failure and local reproduction
+
+CI failed at billing-provider-events-smoke cancellation after18min of HTTP scenarios: expected409, received400 because the preceding preview was429 and its body was used without status validation. CI completed typechecks, full package tests, whole-chain, boot, Postmark HTTP and preceding PostgreSQL stages successfully. No core merge. Marketing both merges remain complete. Local forced real limiter reproduction34995 on SWC11 produced429 at the new preview-status assertion, saved `/tmp/mangmee-ci-provider-event-rate-red.log`. Fixture now waits only bounded BILLING_RATE_LIMIT and repeats the same arguments, asserts preview/cancel success, one original operation, and no cancelled dispatch. Only test harness source changed; production code unchanged frombcb11ae7. SWC12 PASS; next forced HTTP, forced browser, full CI-equivalent non-browser locally, then one corrected readiness push/CI. Do not rerun `/tmp/mangmee-complete-local-docs.py` or rewrite the historical333 proof.
+
+Correction focused HTTP6 and browser7 PASS; API typecheck PASS. Sequential runner24009 now running CI-equivalent default non-browser billing HTTP since2026-09-15T19:23:38Z. Logs `/tmp/mangmee-ci-provider-events-forced-pass.log`, `/tmp/mangmee-ci-provider-events-browser-pass.log`, `/tmp/mangmee-ci-correction-typecheck.log`; full default PASS target `/tmp/mangmee-ci-default-billing-pass.log`. New corrected source fingerprint `/tmp/mangmee-ci-correction-source.json`, SWC12. Only billing-provider-events-smoke.ts differs from prior source receipt. No second CI dispatched yet.
+
+CI correction local closure: forced HTTP6, forced browser7, full CI-default non-browser256 PASS. Evidence `../evidence/billing-integration-2026-09-13/ci-correction-result.json`. Only one test file changed sincebcb11ae7; all product hashes unchanged. Next selectively commit this fixture and correction docs (keep final-delivery-result.json local), update PR558 evidence, one corrected push, wait exact-head CI and Admin merge core develop/main. Marketing already complete.

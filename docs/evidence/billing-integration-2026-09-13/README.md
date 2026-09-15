@@ -1,6 +1,8 @@
 # Stripe/Postmark final local acceptance
 
-สถานะ 2026-09-16: โค้ดตามขอบเขตที่อนุมัติและการตรวจภายในเครื่องผ่านแล้ว กำลังส่งตรวจ CI ก่อน Admin merge develop/main ทั้งสอง repo. ยังไม่ deploy หรือเปิดรับเงินจริง.
+> **CI fixture correction — 2026-09-16:** แก้ตัวทดสอบที่ใช้ preview429 ต่อโดยไม่ตรวจผล; โค้ดผลิตภัณฑ์ไม่เปลี่ยนจากbcb11ae7. ตรวจ forced HTTP6, browser7 และชุด API เต็มแบบ CI256 กลุ่มผ่านแล้ว ดู [หลักฐานแก้ CI](ci-correction-result.json). Marketing merge develop/main แล้ว; core รอ CI ของ revision แก้ก่อน Admin merge. ผล333กลุ่มด้านล่างยังเป็นหลักฐาน source ที่ระบุไว้เดิม.
+
+สถานะ 2026-09-16: โค้ดตามขอบเขตที่อนุมัติและการตรวจภายในเครื่องผ่านแล้ว Marketing merge develop/main หลัง CI ผ่านแล้ว; ระบบหลักกำลังส่ง revision แก้ตัวทดสอบเข้า CI ก่อน Admin merge develop/main. ยังไม่ deploy หรือเปิดรับเงินจริง.
 
 - [ผลปัจจุบันและคำสั่งทดสอบ](final-integration-result.json): ชุดรวม 333 กลุ่ม, ชุดสิทธิ์พักเก็บเงิน/แถมวัน 27 กลุ่ม, สมัคร 8 กลุ่ม, ยืนยันอีเมล 6 กลุ่ม และกู้รหัส 7 กลุ่ม. จำนวนซ้ำกัน ห้ามรวมเป็นจำนวน flow.
 - [แผนที่ 57 กลุ่ม acceptance](final-acceptance-map.md): CT 33 กลุ่ม รวม CT24a และ AP 24 กลุ่ม ผูก implementation กับหลักฐานจริง และระบุจุดที่ใช้ regression แทน browser.

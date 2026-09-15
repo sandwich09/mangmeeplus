@@ -64,6 +64,10 @@
 | AP23 | รูป/PDF/draft/final action → permission/quota/current source | [line-media-source](line-media-source-result.json), [line-continuation-source](line-continuation-source-result.json), [receipt-upload-source](receipt-upload-source-result.json) |
 | AP24 | identity / กลุ่ม / เลือกบริษัท / unlink / กลับเว็บ | [line-canonical-binding](line-canonical-binding-result.json), [line-admin-qr-repair](line-admin-qr-repair-result.json), [line-queued-billing-browser](line-queued-billing-browser-result.json) |
 
+## CI fixture correction
+
+[Current correction evidence](ci-correction-result.json) covers CT24a with real429, original preview/cancel and no provider dispatch, plus the complete non-browser CI path. Product source is unchanged from the333-group browser run.
+
 ## Contract clarifications
 
 - AP04: commercial entitlement และ launch gate เป็นคนละชั้น. Admin เปลี่ยนเมนูไม่สามารถเปิด launch gate ที่ CLOSED; execution ถูกปฏิเสธตาม launch guard. Dependency cascade ต้องยืนยัน ส่วน parent-off ใช้ parent+child guard ไม่จำเป็นต้องเขียน child-off ทับทุกตัวโดยอัตโนมัติ. Preset บันทึก explicit17keys ตามที่แสดง.
