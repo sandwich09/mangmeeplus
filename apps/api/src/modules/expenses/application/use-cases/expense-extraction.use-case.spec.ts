@@ -106,6 +106,7 @@ function makeUseCase(options: {
   };
   const prisma = {
     client: {
+      billingReceiptGrant: { findMany: async () => [] },
       companyOcrUsageEvent: { count: async () => options.used ?? 0 },
       companyPlanTerm: {
         findUnique: async () => options.planTerm

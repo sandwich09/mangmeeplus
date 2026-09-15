@@ -72,6 +72,7 @@ function fakeOcrPrisma(input: {
   let lockCalls = 0;
   const lockKeys: string[] = [];
   const tx = {
+    billingReceiptGrant: { findMany: async () => [] },
     $executeRaw: async (_strings: TemplateStringsArray, key: string) => { lockCalls += 1; lockKeys.push(key); },
     companyOcrUsageEvent: {
       count: async () => (input.receiptUsed ?? input.used ?? 0) + events.filter((event) => event.sourceRoute !== 'bank-statement-extract').length,

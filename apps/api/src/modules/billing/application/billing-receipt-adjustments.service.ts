@@ -10,15 +10,15 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 import { BillingService } from './billing.service';
 import { BillingAdminService } from './billing-admin.service';
 import { BillingConfigurationService } from './billing-configuration.service';
-import { paidReceiptBalance } from './billing-receipt-grants';
+import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
 import { assertKeys, billingError, hashBilling, configurationHash } from '../domain/billing-policy';
 
 const types=['GRANT_RECEIPTS','REVOKE_RECEIPTS'];
 const stale=()=>billingError('CONTROL_PREVIEW_STALE','ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว โหลดข้อมูลล่าสุดและตรวจใหม่');
 const json=(value:unknown)=>value as Prisma.InputJsonValue;
-type Proposed={accountId:string;membershipId:string;actorCompanyId:string;sourceHash:string;units:number;grantExpiresAt:string;
-  beforeRemaining:number;grantId:string|null;grantSourceHash:string|null};
-type Journal={requesterCredentialVersion?:string;approverCredentialVersion?:string;approvedAt?:string;observedRemaining?:number;grantId?:string};
+type Proposed={accountId:string|null;membershipId:string;actorCompanyId:string;sourceHash:string;units:number;grantExpiresAt:string;
+  beforeRemaining:number|null;grantId:string|null;grantSourceHash:string|null};
+type Journal={requesterCredentialVersion?:string;approverCredentialVersion?:string;approvedAt?:string;observedRemaining?:number|null;grantId?:string};
 
 @Injectable()
 export class BillingReceiptAdjustmentsService {
@@ -45,18 +45,27 @@ export class BillingReceiptAdjustmentsService {
   private source(s:Awaited<ReturnType<BillingReceiptAdjustmentsService['scope']>>){
     const a=s.account,t=s.company.planTerm;
     return hashBilling([s.company.id,s.company.status,a?.id,a?.stripeAccountId,a?.livemode,a?.paidThrough,a?.baseSubscriptionId,
-      a?.activeAttemptId,a?.activeCollectionOperationId,t?.tierKey,t?.billingReceiptAccountId,t?.termEndsAt,t?.termDisabledAt]);
+      a?.activeAttemptId,a?.activeCollectionOperationId,t?.tierKey,t?.billingReceiptAccountId,t?.termEndsAt,t?.termDisabledAt,t?.monthlySlipLimit,t?.warmupUntil,t?.warmupSlipLimit]);
   }
   private blocked(s:Awaited<ReturnType<BillingReceiptAdjustmentsService['scope']>>){
     const a=s.account,t=s.company.planTerm,now=new Date();
-    if(!a||!t?.billingReceiptAccountId||t.billingReceiptAccountId!==a.id||!a.paidThrough||a.paidThrough<=now||t.termEndsAt<=now)
+    if(!t||t.termEndsAt<=now)return 'CONTROL_RECEIPT_TERM_REQUIRED';
+    if(t.billingReceiptAccountId&&(!a||t.billingReceiptAccountId!==a.id||!a.paidThrough||a.paidThrough<=now))
       return 'CONTROL_PAID_RECEIPTS_REQUIRED';
     if(s.company.status!=='ACTIVE'||t.termDisabledAt)return 'CONTROL_COMPANY_HELD';
-    if(a.activeAttemptId||a.activeCollectionOperationId)return 'CONTROL_OPERATION_IN_PROGRESS';
+    if(a?.activeAttemptId||a?.activeCollectionOperationId)return 'CONTROL_OPERATION_IN_PROGRESS';
     return null;
   }
-  private async grant(tx:Prisma.TransactionClient,companyId:string,accountId:string,id:string){
-    const row=await tx.billingReceiptGrant.findFirst({where:{id,companyId,billingAccountId:accountId,kind:'ADMIN_ADJUSTMENT'},include:{_count:{select:{admissions:true}}}});
+  private maxExpiry(s:Awaited<ReturnType<BillingReceiptAdjustmentsService['scope']>>){
+    const t=s.company.planTerm;if(!t)return null;
+    return new Date(Math.min(t.termEndsAt.getTime(),t.billingReceiptAccountId?s.account?.paidThrough?.getTime()??0:Infinity));
+  }
+  private async remaining(tx:Prisma.TransactionClient,companyId:string){
+    const q=await receiptQuotaSnapshot({client:tx} as PrismaService,companyId);
+    return q.planLimit===null?null:Math.max(0,q.planLimit-q.usedCount);
+  }
+  private async grant(tx:Prisma.TransactionClient,companyId:string,accountId:string|null,id:string){
+    const row=await tx.billingReceiptGrant.findFirst({where:{id,companyId,kind:'ADMIN_ADJUSTMENT',OR:[{billingAccountId:accountId},{billingAccountId:null}]},include:{_count:{select:{admissions:true}}}});
     if(!row)throw new NotFoundException();return row;
   }
   private grantView(row:Awaited<ReturnType<BillingReceiptAdjustmentsService['grant']>>):BillingAdminReceiptGrant {
@@ -89,9 +98,11 @@ export class BillingReceiptAdjustmentsService {
     if(anchor&&anchor.companyId!==companyId)throw new NotFoundException();
     const rows=await this.prisma.client.billingOperation.findMany({where:{companyId,type:{in:types},stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,
       ...anchor?{OR:[{createdAt:{lt:anchor.createdAt}},{createdAt:anchor.createdAt,id:{lt:anchor.id}}]}:{}},orderBy:[{createdAt:'desc'},{id:'desc'}],take:26});
-    const blockedReason=this.blocked(s),balance=s.account?await paidReceiptBalance(this.prisma.client,companyId,s.account.id):null;
+    const blockedReason=this.blocked(s),quota=await receiptQuotaSnapshot(this.prisma,companyId);
+    const remaining=quota.planLimit===null?null:Math.max(0,quota.planLimit-quota.usedCount);
     const warnings=await this.readWarnings(companyId,this.prisma.client);
-    return {companyId,companyName:s.company.name,sourceHash:this.source(s),paidThrough:s.account?.paidThrough?.toISOString()??null,maxGrantExpiresAt:s.account?.paidThrough&&s.company.planTerm?new Date(Math.min(s.account.paidThrough.getTime(),s.company.planTerm.termEndsAt.getTime())).toISOString():null,remaining:balance?.remaining??null,
+    return {companyId,companyName:s.company.name,sourceHash:this.source(s),paidThrough:s.account?.paidThrough?.toISOString()??null,maxGrantExpiresAt:this.maxExpiry(s)?.toISOString()??null,remaining,
+      ...(quota.monthlyAllowance?{monthlyAllowance:quota.monthlyAllowance}:{}),
       canCreate:!blockedReason&&s.access.capabilities.includes('system.billing.override.manage'),blockedReason,readWarnings:warnings,
       items:await Promise.all(rows.slice(0,25).map(row=>this.view(context,row,this.prisma.client,warnings))),nextCursor:rows.length>25?rows[24]!.id:null};
   }
@@ -102,23 +113,23 @@ export class BillingReceiptAdjustmentsService {
     const row=await this.prisma.client.$transaction(async tx=>{
       await this.lock(tx,companyId);const s=await this.scope(context,companyId,tx);await this.admin.access(context,'system.billing.override.manage',tx);
       const blocked=this.blocked(s);if(blocked)throw billingError(blocked,'ตรวจสถานะแพ็กเกจและรายการเดิมก่อนเพิ่มใบเสร็จ');
-      if(this.source(s)!==input.sourceHash)throw stale();const a=s.account!,now=new Date();
+      if(this.source(s)!==input.sourceHash)throw stale();const accountId=s.company.planTerm!.billingReceiptAccountId,now=new Date();
       let units:number,expiry:Date,grantId:string|null=null,grantSourceHash:string|null=null;
       if(input.type==='GRANT_RECEIPTS'){
         if(input.grantId!==undefined||!Number.isSafeInteger(input.units)||input.units!<1||input.units!>2147483647||typeof input.expiresAt!=='string')throw new BadRequestException();
         units=input.units!;expiry=new Date(input.expiresAt);
         if(!Number.isFinite(expiry.getTime())||expiry.toISOString()!==input.expiresAt)throw new BadRequestException();
-        if(expiry<=now||expiry>a.paidThrough!||expiry>s.company.planTerm!.termEndsAt)throw stale();
+        if(expiry<=now||expiry>this.maxExpiry(s)!)throw stale();
       }else{
         if(input.units!==undefined||input.expiresAt!==undefined||typeof input.grantId!=='string'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.grantId))throw new BadRequestException();
-        const g=await this.grant(tx,companyId,a.id,input.grantId);if(g.revokedAt||g.expiresAt<=now)throw stale();
+        const g=await this.grant(tx,companyId,accountId,input.grantId);if(g.revokedAt||g.expiresAt<=now)throw stale();
         units=g.units;expiry=g.expiresAt;grantId=g.id;grantSourceHash=g.sourceHash;
       }
-      const balance=await paidReceiptBalance(tx,companyId,a.id),id=randomUUID();
-      const p:Proposed={accountId:a.id,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:input.sourceHash,units,
-        grantExpiresAt:expiry.toISOString(),beforeRemaining:balance.remaining,grantId,grantSourceHash};
-      return tx.billingOperation.create({data:{id,companyId,stripeAccountId:a.stripeAccountId,livemode:a.livemode,type:input.type,referenceId:grantId,
-        proposedJson:json(p),sourceVersion:a.version,reason:input.reason.trim(),initiatorUserId:context.userId,
+      const remaining=await this.remaining(tx,companyId),id=randomUUID();
+      const p:Proposed={accountId,membershipId:context.membershipId,actorCompanyId:context.companyId,sourceHash:input.sourceHash,units,
+        grantExpiresAt:expiry.toISOString(),beforeRemaining:remaining,grantId,grantSourceHash};
+      return tx.billingOperation.create({data:{id,companyId,stripeAccountId:this.billing.stripe.accountId,livemode:this.billing.stripe.livemode,type:input.type,referenceId:grantId,
+        proposedJson:json(p),sourceVersion:s.account?.version??0,reason:input.reason.trim(),initiatorUserId:context.userId,
         requestHash:configurationHash([id,input.type,p,input.reason.trim()]),expiresAt:new Date(now.getTime()+600000)}});
     });return this.view(context,row);
   }
@@ -157,7 +168,7 @@ export class BillingReceiptAdjustmentsService {
           if(this.blocked(s)||new Date(p.grantExpiresAt)<=new Date())throw stale();
           await this.configuration.requireProof(context,tx);
           j.approverCredentialVersion=(await tx.userCredential.findUniqueOrThrow({where:{userId:context.userId}})).updatedAt.toISOString();j.approvedAt=new Date().toISOString();
-          before=(await paidReceiptBalance(tx,row.companyId!,p.accountId)).remaining;
+          before=await this.remaining(tx,row.companyId!);
           if(row.type==='GRANT_RECEIPTS'){
             const now=new Date(),expiry=new Date(p.grantExpiresAt);
             const g=await tx.billingReceiptGrant.create({data:{companyId:row.companyId!,billingAccountId:p.accountId,sourceKey:row.id,sourceHash:row.requestHash,
@@ -167,7 +178,7 @@ export class BillingReceiptAdjustmentsService {
             if(g.revokedAt||g.expiresAt<=new Date()||g.sourceHash!==p.grantSourceHash)throw stale();
             await tx.billingReceiptGrant.update({where:{id:g.id},data:{revokedAt:new Date()}});
           }
-          after=(await paidReceiptBalance(tx,row.companyId!,p.accountId)).remaining;
+          after=await this.remaining(tx,row.companyId!);
           j.observedRemaining=after;j.grantId=grantId!;
         }
       }

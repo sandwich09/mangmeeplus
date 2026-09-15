@@ -7,6 +7,7 @@ import { PLAN_TERM_CONTACT_EMAIL, PLAN_TERM_RENEW_PHONE } from '@/features/plan-
 import { billingApi, type BillingHistory } from './billing.api';
 import BillingCollectionPanel from './BillingCollectionPanel';
 import BillingCapacityPicker from './BillingCapacityPicker';
+import {billingMonthlyAllowanceText} from './billing-display';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
 const money = (satang: number) => new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(satang / 100);
@@ -151,6 +152,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.effectiveCapacity?.temporary&&<section className="space-y-2 rounded-xl border border-emerald-300 p-3" aria-label="สิทธิ์แพ็กเกจชั่วคราว"><p>ผู้ดูแลให้สิทธิ์ {PLAN_TIER_PRESETS[status.effectiveCapacity.tierKey].labelTh} ชั่วคราว</p><p>{status.effectiveCapacity.branchLimit} สาขา · {status.effectiveCapacity.employeeLimit} ผู้ใช้ ถึง {date(status.effectiveCapacity.temporary.expiresAt)}</p><p>เมื่อครบกำหนดจะใช้แพ็กเกจที่ซื้ออยู่ล่าสุด การซื้อเพิ่มด้านล่างคิดจากแพ็กเกจที่ชำระเงิน</p></section>}
 
         <p>ใบเสร็จคงเหลือ {status.usage.remaining ?? 'ไม่จำกัด'} {status.usage.remaining !== null && 'ใบ'}{quotaReset ? ` · รอบใหม่ ${date(quotaReset)}` : quotaExpiry ? ` · ใบที่หมดอายุก่อนใช้ได้ถึง ${date(quotaExpiry)}` : ''}</p>
+        {status.usage.monthlyAllowance&&<p>{billingMonthlyAllowanceText(status.usage)}</p>}
         {status.nextChargeAt && <p>เรียกเก็บเงินครั้งถัดไป {date(status.nextChargeAt)}</p>}
         {status.graceEndsAt && <p>ระยะผ่อนผันถึง {date(status.graceEndsAt)} · ใช้ยอดใบเสร็จเดิมที่เหลือได้ ไม่มีการเติมโควตาจนกว่าจะชำระสำเร็จ</p>}
         {status.purchaseEligibility === 'COMPANY_SALES_CLOSED' && <p role="status">ยังไม่เปิดรับรายการซื้อใหม่สำหรับบริษัทนี้ กรุณาติดต่อทีมงาน คุณยังตรวจสอบสถานะและรายการเดิมด้านล่างได้</p>}

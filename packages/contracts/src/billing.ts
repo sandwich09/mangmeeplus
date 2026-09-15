@@ -89,6 +89,8 @@ export const BILLING_DRAFT_POLICY: BillingPolicy = {
 export type BillingReceiptUsage = {
   used: number; limit: number | null; remaining: number | null;
   cadence: 'LEGACY_MONTH' | 'PAID_GRANTS'; resetsAt: string | null; expiresAt: string | null;
+  /** Monthly base and fixed Admin gifts have separate clocks; absent for purchased allowances. */
+  monthlyAllowance?: { limit: number | null; used: number; additionalRemaining: number; additionalExpiresAt: string | null };
 };
 export type BillingQuote = {
   quoteId: string; companyId: string; companyName: string; policyRevision: string; expiresAt: string;
@@ -276,9 +278,10 @@ export type BillingReceiptReadWarning = 'OCR_DISABLED'|'OCR_LIMIT_REACHED'|'AI_B
 export type BillingReceiptAdjustmentInput = {type:'GRANT_RECEIPTS'|'REVOKE_RECEIPTS';units?:number;expiresAt?:string;grantId?:string;sourceHash:string;reason:string};
 export type BillingAdminReceiptGrant = {id:string;units:number;used:number;remaining:number;expiresAt:string;revokedAt:string|null;active:boolean};
 export type BillingReceiptAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;units:number;grantExpiresAt:string;
-  beforeRemaining:number;observedRemaining:number|null;requesterName:string|null;approverName:string|null;
+  beforeRemaining:number|null;observedRemaining:number|null;requesterName:string|null;approverName:string|null;
   grant:BillingAdminReceiptGrant|null;readWarnings:BillingReceiptReadWarning[];allowedActions:('submit'|'approve'|'cancel')[]};
 export type BillingReceiptAdjustments = {companyId:string;companyName:string;sourceHash:string;paidThrough:string|null;maxGrantExpiresAt:string|null;
+  monthlyAllowance?: BillingReceiptUsage['monthlyAllowance'];
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
 
 export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number};

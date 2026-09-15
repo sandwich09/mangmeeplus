@@ -62,6 +62,11 @@ describe('effective monthly slip limit (P10-L §15.1)', () => {
 });
 
 describe('receipt quota copy (spec §7)', () => {
+  it('does not advertise a fixed Admin gift as recurring monthly allowance', () => {
+    const text=receiptQuotaExceededTextTh(25,'STARTER_249',undefined,true);
+    assert.match(text,/ผู้ดูแลเพิ่ม/);assert.doesNotMatch(text,/25 ครั้งต่อเดือน/);
+    assert.match(receiptQuotaExceededShortTextTh(25,'FREE_TRIAL_15',undefined,true),/ใบเสร็จที่ใช้ได้หมด/);
+  });
   it('carries the ACTUAL ceiling, not a hard-coded 15', () => {
     assert.match(receiptQuotaExceededTextTh(15), /15 ครั้ง/);
     // The warm-up wall is 10, and a shop that meets it must not be told it read 15.

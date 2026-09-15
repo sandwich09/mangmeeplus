@@ -163,3 +163,64 @@ test('paid package quota on real PostgreSQL (internal payment-apply seam, not St
     await client.$disconnect();
   }
 });
+
+
+test('manual/trial receipt gifts on real PostgreSQL (no paid account or provider)', {skip:!databaseUrl},async(t)=>{
+  const url=new URL(databaseUrl!);assert.ok(['localhost','127.0.0.1'].includes(url.hostname));
+  assert.ok(['/mangmee_billing_20260912','/watchdog_postmark_ci'].includes(url.pathname));
+  const client=new PrismaClient({adapter:new PrismaPg({connectionString:databaseUrl!})}),prisma={client} as PrismaService;
+  const companyId=`manual-receipts-${randomUUID()}`,now=new Date(),end=new Date(now.getTime()+30*86400000),giftEnd=new Date(now.getTime()+10*86400000);
+  const read=(route:'receipt-ocr-web'|'receipt-ocr-line'='receipt-ocr-web',monthKey='2026-09',enforceReceiptQuota=true)=>
+    admitCompanyOcr(prisma,{companyId,sourceRoute:route,requestId:randomUUID(),monthKey,enforceReceiptQuota});
+  let giftId='',accountId='';
+  try{
+    await client.company.create({data:{id:companyId,name:'Synthetic manual receipt gift'}});
+    await client.companyPlanTerm.create({data:{companyId,tierKey:'FREE_TRIAL_15',branchLimit:1,employeeLimit:2,monthlySlipLimit:15,termStartAt:now,termEndsAt:end}});
+    await t.test('base15 first, no billing account, additive gift and concurrent final web/LINE unit',async()=>{
+      for(let i=0;i<15;i++)assert.equal((await read()).allowed,true);
+      assert.equal((await read()).allowed,false);
+      const gift={companyId,billingAccountId:null,sourceKey:'TEST_ONLY_MANUAL_GIFT',sourceHash:'TEST_ONLY',kind:'ADMIN_ADJUSTMENT',units:2,serviceStart:now,serviceEnd:giftEnd,availableAt:now,expiresAt:giftEnd,policyRevisionId:'ADMIN_APPROVED'};
+      giftId=(await client.billingReceiptGrant.create({data:gift})).id;
+      await assert.rejects(client.billingReceiptGrant.create({data:gift}));
+      await assert.rejects(client.billingReceiptGrant.create({data:{...gift,sourceKey:'INVALID_PAID',kind:'INITIAL'}}));
+      assert.equal((await receiptQuotaSnapshot(prisma,companyId,'2026-09')).monthlyAllowance?.additionalRemaining,2);
+      assert.equal((await read()).allowed,true);
+      const race=await Promise.all([read(),read('receipt-ocr-line')]);assert.equal(race.filter(r=>r.allowed).length,1);
+      assert.equal(await client.companyOcrUsageEvent.count({where:{companyId,billingReceiptGrantId:giftId}}),2);
+      assert.equal(await client.billingAccount.count({where:{companyId}}),0);
+    });
+    await t.test('exact failed gift reservation releases once; monthly rollover renews only base allowance',async()=>{
+      const event=await client.companyOcrUsageEvent.findFirstOrThrow({where:{companyId,billingReceiptGrantId:giftId}});
+      const release={companyId,sourceRoute:event.sourceRoute as 'receipt-ocr-web'|'receipt-ocr-line',requestId:event.requestId,eventId:event.id};
+      assert.equal(await releaseCompanyOcrAdmission(prisma,release),true);assert.equal(await releaseCompanyOcrAdmission(prisma,release),true);
+      const next=await receiptQuotaSnapshot(prisma,companyId,'2026-10');assert.equal(next.monthlyAllowance?.additionalRemaining,1);assert.equal(next.planLimit!-next.usedCount,16);
+      for(let i=0;i<15;i++)assert.equal((await read('receipt-ocr-line','2026-10')).allowed,true);
+      assert.equal((await receiptQuotaSnapshot(prisma,companyId,'2026-10')).monthlyAllowance?.additionalRemaining,1);
+      assert.equal((await read('receipt-ocr-line','2026-10')).allowed,true);assert.equal((await read('receipt-ocr-line','2026-10')).allowed,false);
+    });
+    await t.test('shadow reads do not spend a gift; lowering base quota does not erase remaining gifts',async()=>{
+      await client.billingReceiptGrant.update({where:{id:giftId},data:{units:4}});
+      assert.equal((await read('receipt-ocr-web','2026-10',false)).allowed,true);
+      const snapshot=await receiptQuotaSnapshot(prisma,companyId,'2026-10');assert.equal(snapshot.planLimit!-snapshot.usedCount,2);
+      await client.companyPlanTerm.update({where:{companyId},data:{monthlySlipLimit:10}});
+      const lowered=await receiptQuotaSnapshot(prisma,companyId,'2026-10');assert.equal(lowered.planLimit!-lowered.usedCount,2);
+      await client.company.update({where:{id:companyId},data:{status:'DISABLED'}});assert.equal((await read('receipt-ocr-web','2026-10')).allowed,false);
+      await client.company.update({where:{id:companyId},data:{status:'ACTIVE'}});
+      assert.equal((await read('receipt-ocr-web','2026-10')).allowed,true);
+    });
+    await t.test('paid conversion keeps the same fixed gift and consumption, without carrying monthly base',async()=>{
+      const account=await client.billingAccount.create({data:{companyId,stripeAccountId:`acct_fixture_${randomUUID()}`,livemode:false}});accountId=account.id;
+      await client.$transaction(tx=>grantPaidPackageReceipts(tx,{companyId,billingAccountId:accountId,sourceKey:'TEST_ONLY_CONVERSION',policyRevisionId:'TEST_ONLY',kind:'INITIAL',units:30,serviceStart:now,serviceEnd:end,availableAt:now,expiresAt:end}));
+      const q=await receiptQuotaSnapshot(prisma,companyId,'2026-10');assert.equal(q.cadence,'PAID_GRANTS');assert.equal(q.planLimit!-q.usedCount,31);
+      assert.equal(q.monthlyAllowance,undefined);assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:giftId}})).expiresAt.toISOString(),giftEnd.toISOString());
+      assert.equal((await paidReceiptBalance(client,companyId,accountId,new Date(giftEnd.getTime()+1))).remaining,30);
+      await client.billingReceiptGrant.update({where:{id:giftId},data:{revokedAt:new Date()}});
+      assert.equal((await paidReceiptBalance(client,companyId,accountId)).remaining,30);
+      assert.equal(await client.companyOcrUsageEvent.count({where:{companyId,billingReceiptGrantId:giftId}}),3);
+    });
+  }finally{
+    await client.companyOcrUsageEvent.deleteMany({where:{companyId}});await client.companyPlanTerm.deleteMany({where:{companyId}});
+    await client.billingReceiptGrant.deleteMany({where:{companyId}});if(accountId)await client.billingAccount.deleteMany({where:{id:accountId}});
+    await client.company.deleteMany({where:{id:companyId}});await client.$disconnect();
+  }
+});

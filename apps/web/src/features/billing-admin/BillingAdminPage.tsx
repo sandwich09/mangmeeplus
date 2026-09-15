@@ -1,5 +1,5 @@
 'use client';
-import {billingLeavesPage} from '../billing/billing-display';
+import {billingLeavesPage,billingMonthlyAllowanceText} from '../billing/billing-display';
 import { billingControl, billingLabel, billingPlanLabel, billingIssueLabel } from '../billing/billing-display';
 import BillingSupportOutcomesPanel from './BillingSupportOutcomesPanel';
 import { useEffect, useRef, useState } from 'react';
@@ -106,6 +106,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       <h2 className="text-xl font-bold">{company.companyName}</h2><p>{billingLabel('mode',company.mode)} · {billingLabel('company',company.companyStatus)} · {billingLabel('subscription',company.subscriptionState)}</p>
       <p>แพ็กเกจ {billingPlanLabel(company.tierKey)} · ใช้สิทธิ์ได้ถึง {time(company.termEndsAt)}{company.paidThrough&&` · ชำระไว้ถึง ${time(company.paidThrough)}`}</p>
       <p>ใบเสร็จเหลือ {company.usage.remaining ?? 'ไม่จำกัด'}{company.usage.remaining!==null&&' ใบ'}{company.nextChargeAt&&` · ตัดเงินถัดไป ${time(company.nextChargeAt)}`}</p>
+      {company.usage.monthlyAllowance&&<p>{billingMonthlyAllowanceText(company.usage)}</p>}
       <p>แหล่งสิทธิ์ {sourceLabel(company.source)} · ช่องทางซื้อ {company.origin?billingLabel('channel',company.origin):'ยังไม่มีรายการซื้อ'}</p>
       <p>ชำระเงิน {billingLabel('payment',company.paymentState)} · สิทธิ์จากยอดชำระ: {billingLabel('apply',company.applyState)} · {billingLabel('access',company.accessState)}</p>
       {company.graceEndsAt&&<p>ระยะผ่อนผันถึง {time(company.graceEndsAt)}</p>}{company.cancelEffectiveAt&&<p>ยกเลิกมีผล {time(company.cancelEffectiveAt)}</p>}

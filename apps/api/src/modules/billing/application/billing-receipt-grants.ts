@@ -5,9 +5,11 @@ import { lockPlanTermCompany } from '../../system-partner-management/application
 type GrantDb = Pick<Prisma.TransactionClient, 'billingReceiptGrant'>;
 
 /** The caller holds partner-ocr-config when reserving, applying, revoking or extending grants. */
-export async function paidReceiptBalance(db: GrantDb, companyId: string, billingAccountId: string, now = new Date()) {
+export async function paidReceiptBalance(db: GrantDb, companyId: string, billingAccountId: string | null, now = new Date()) {
   const grants = await db.billingReceiptGrant.findMany({
-    where: { companyId, billingAccountId, availableAt: { lte: now }, expiresAt: { gt: now }, revokedAt: null },
+    where: { companyId, ...(billingAccountId === null ? { billingAccountId: null, kind: 'ADMIN_ADJUSTMENT' }
+      : { OR: [{ billingAccountId }, { billingAccountId: null, kind: 'ADMIN_ADJUSTMENT' }] }),
+      availableAt: { lte: now }, expiresAt: { gt: now }, revokedAt: null },
     orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true, units: true, expiresAt: true, _count: { select: { admissions: true } } },
   });

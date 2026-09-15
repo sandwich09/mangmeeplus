@@ -1,7 +1,7 @@
 import { currentCapacityOverride } from '../../system-partner-management/domain/logic/plan-capacity';
 import { randomUUID } from 'node:crypto';
 import { Logger } from '@nestjs/common';
-import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, isReceiptOcrRetryableFailure } from '@watchdog-bms/contracts';
+import { AI_RECEIPT_OCR_CLIENT_TIMEOUT_MS, isReceiptOcrRetryableFailure, type BillingReceiptUsage } from '@watchdog-bms/contracts';
 import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import type { PrismaService } from '../../../common/database/prisma.service';
 import { effectiveMonthlySlipLimit } from '../../system-partner-management/domain/logic/receipt-quota.logic';
@@ -24,8 +24,9 @@ export type CompanyOcrSourceRoute = 'receipt-ocr-web' | 'receipt-ocr-line' | 'ba
 const PLAN_QUOTA_ROUTES = new Set<CompanyOcrSourceRoute>(['receipt-ocr-web', 'receipt-ocr-line']);
 
 /** The commercial allowance excludes bank statements; the operational aggregate still includes them. */
-export function countReceiptOcrAdmissions(db: Pick<PrismaService['client'], 'companyOcrUsageEvent'>, companyId: string, monthKey?: string): Promise<number> {
-  return db.companyOcrUsageEvent.count({ where: { companyId, ...(monthKey ? { monthKey } : {}), sourceRoute: { in: [...PLAN_QUOTA_ROUTES] } } });
+export function countReceiptOcrAdmissions(db: Pick<PrismaService['client'], 'companyOcrUsageEvent'>, companyId: string, monthKey?: string, monthlyBaseOnly = false): Promise<number> {
+  return db.companyOcrUsageEvent.count({ where: { companyId, ...(monthKey ? { monthKey } : {}),
+    ...(monthlyBaseOnly ? { billingReceiptGrantId: null } : {}), sourceRoute: { in: [...PLAN_QUOTA_ROUTES] } } });
 }
 
 export type CompanyOcrAdmissionIdentity = { eventId: string; monthKey: string };
@@ -73,9 +74,10 @@ export async function receiptQuotaSnapshot(
   companyId: string,
   monthKey: string = bangkokMonthKey(),
   now: Date = new Date(),
-): Promise<{ usedCount: number; planLimit: number | null; tierKey: string | null; cadence?: 'PAID_GRANTS'; expiresAt?: string | null }> {
+): Promise<{ usedCount: number; planLimit: number | null; tierKey: string | null; cadence?: 'PAID_GRANTS'; expiresAt?: string | null;
+  monthlyAllowance?: BillingReceiptUsage['monthlyAllowance'] }> {
   const [usedCount, term] = await Promise.all([
-    countReceiptOcrAdmissions(prisma.client, companyId, monthKey),
+    countReceiptOcrAdmissions(prisma.client, companyId, monthKey, true),
     prisma.client.companyPlanTerm.findUnique({
       where: { companyId },
       select: { capacityOverride: true, tierKey: true, monthlySlipLimit: true, warmupUntil: true, warmupSlipLimit: true, billingReceiptAccountId: true, termEndsAt: true, termDisabledAt: true },
@@ -86,10 +88,14 @@ export async function receiptQuotaSnapshot(
     return { usedCount: balance.used, planLimit: balance.limit, tierKey: currentCapacityOverride(term)?.tierKey ?? term.tierKey,
       cadence: 'PAID_GRANTS', expiresAt: balance.expiresAt?.toISOString() ?? null };
   }
+  const baseLimit = effectiveMonthlySlipLimit(term, now);
+  const gift = term ? await paidReceiptBalance(prisma.client, companyId, null, now) : null;
   return {
-    usedCount,
-    planLimit: effectiveMonthlySlipLimit(term, now),
+    usedCount: gift?.limit ? (baseLimit === null ? usedCount : Math.min(usedCount, baseLimit)) + gift.used : usedCount,
+    planLimit: baseLimit === null ? null : baseLimit + (gift?.limit ?? 0),
     tierKey: term?.tierKey ?? null,
+    ...(gift?.limit ? { monthlyAllowance: { limit: baseLimit, used: usedCount,
+      additionalRemaining: gift.remaining, additionalExpiresAt: gift.expiresAt?.toISOString() ?? null } } : {}),
   };
 }
 
@@ -229,7 +235,8 @@ export async function admitCompanyOcr(
           const now = new Date();
           if (!grant || !term || company?.status !== 'ACTIVE' || term.termDisabledAt || term.termEndsAt <= now
             || grant.revokedAt || grant.expiresAt <= now || grant.availableAt > now
-            || grant.companyId !== input.companyId || grant.billingAccountId !== term.billingReceiptAccountId) {
+            || grant.companyId !== input.companyId || !(grant.billingAccountId === null && grant.kind === 'ADMIN_ADJUSTMENT')
+              && grant.billingAccountId !== term.billingReceiptAccountId) {
             return { allowed: false, reason: 'plan_inactive' } as const;
           }
         }
@@ -284,11 +291,17 @@ export async function admitCompanyOcr(
           billingReceiptGrantId = balance.nextGrantId;
         } else {
           const planLimit = effectiveMonthlySlipLimit(term, new Date());
-          const receiptCount = planLimit === null ? 0 : await countReceiptOcrAdmissions(tx, input.companyId, monthKey);
+          const receiptCount = planLimit === null ? 0 : await countReceiptOcrAdmissions(tx, input.companyId, monthKey, true);
           if (planLimit !== null && receiptCount >= planLimit) {
             if ((configuration?.receiptQuotaEnforced ?? input.enforceReceiptQuota) === true) {
-              return { allowed: false, reason: 'plan_exceeded', usedCount: receiptCount, monthlyLimit: planLimit, tierKey: term?.tierKey ?? null } as const;
-            }
+              const now = new Date(), gift = await paidReceiptBalance(tx, input.companyId, null, now);
+              if (!gift.nextGrantId) return { allowed: false, reason: 'plan_exceeded', usedCount: receiptCount + gift.used,
+                monthlyLimit: planLimit + gift.limit, tierKey: term?.tierKey ?? null } as const;
+              const company = await tx.company.findUnique({ where: { id: input.companyId }, select: { status: true } });
+              if (!term || company?.status !== 'ACTIVE' || term.termDisabledAt || term.termEndsAt <= now)
+                return { allowed: false, reason: 'plan_inactive' } as const;
+              billingReceiptGrantId = gift.nextGrantId;
+            } else {
             // Rollout mode: the read still happens, and the shop is told nothing. Read the marker
             // under the lock so the once-per-month decision cannot race itself.
             const audited = await tx.auditLog.findFirst({
@@ -296,6 +309,7 @@ export async function admitCompanyOcr(
               select: { id: true },
             });
             wouldBlock = { usedCount: receiptCount, planLimit, tierKey: term?.tierKey ?? null, audited: audited !== null };
+            }
           }
         }
       }

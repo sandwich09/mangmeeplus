@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BillingTimelineEntry } from '@watchdog-bms/contracts';
-import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingTimelineLabel,billingLeavesPage } from './billing-display';
+import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingTimelineLabel,billingLeavesPage,billingMonthlyAllowanceText } from './billing-display';
 import type {MouseEvent} from 'react';
 
 test('only navigation in this tab abandons pending billing work; same links and modified clicks remain active',()=>{
@@ -37,4 +37,11 @@ test('unrecognized provider states stay readable without exposing technical cont
     assert.equal(billingPermissionLabel(`system.billing.${value}`),'สิทธิ์อื่นที่ต้องตรวจสอบ');
     assert.equal(billingTimelineLabel({kind:'OPERATION',type:value,state:'UNKNOWN'} as BillingTimelineEntry).title,'คำสั่งเกี่ยวกับการชำระเงิน');
   }
+});
+
+
+test('monthly receipts and fixed Admin gifts are described with separate renewal clocks',()=>{
+  assert.equal(billingMonthlyAllowanceText({}),null);
+  const text=billingMonthlyAllowanceText({monthlyAllowance:{limit:15,used:15,additionalRemaining:4,additionalExpiresAt:'2026-10-01T00:00:00.000Z'}})!;
+  assert.match(text,/15 ใบต่อเดือน/);assert.match(text,/เหลือ 4 ใบ/);assert.match(text,/ไม่เติมใหม่ทุกเดือน/);assert.doesNotMatch(text,/19 ใบต่อเดือน/);
 });

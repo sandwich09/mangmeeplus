@@ -5,13 +5,13 @@ import {useRouter} from 'next/navigation';
 import type {BillingReceiptAdjustments,BillingReceiptAdjustmentOperation,BillingReceiptAdjustmentInput} from '@watchdog-bms/contracts';
 import {authedApiFetch} from '@/common/api/authed-fetch';
 import {apiErrorCode,apiErrorMessage} from '@/common/api/api-error-message';
-import {billingControl as button} from '@/features/billing/billing-display';
+import {billingControl as button,billingMonthlyAllowanceText} from '@/features/billing/billing-display';
 
 const field='mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const date=(value:string)=>new Date(value).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'});
 const state:Record<string,string>={PREVIEW:'ตรวจจำนวนก่อนส่งคำขอ',AWAITING_APPROVAL:'รอผู้อนุมัติอีกคน',SUCCEEDED:'ปรับใบเสร็จแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing${path}`,{cache:'no-store',suppressErrorToast:true,...body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...key?{'Idempotency-Key':key}:{}},body:JSON.stringify(body)}});
-const errors:Record<string,string>={CONTROL_PAID_RECEIPTS_REQUIRED:'หน้านี้เพิ่มใบเสร็จให้แพ็กเกจที่ชำระเงินและยังไม่หมดอายุ กรุณากลับไปดูสถานะแพ็กเกจ',CONTROL_COMPANY_HELD:'บริษัทนี้ถูกพักใช้งาน กรุณาตรวจสถานะบริษัทก่อน',CONTROL_OPERATION_IN_PROGRESS:'มีรายการเดิมกำลังดำเนินการ เปิดสถานะแพ็กเกจเพื่อตรวจให้เสร็จก่อน',CONTROL_PREVIEW_STALE:'ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว ยกเลิกคำขอเดิมและตรวจข้อมูลใหม่'};
+const errors:Record<string,string>={CONTROL_RECEIPT_TERM_REQUIRED:'ร้านนี้ยังไม่มีระยะใช้งานหรือหมดอายุแล้ว กลับไปตรวจและต่ออายุแพ็กเกจก่อน',CONTROL_PAID_RECEIPTS_REQUIRED:'หน้านี้เพิ่มใบเสร็จให้แพ็กเกจที่ชำระเงินและยังไม่หมดอายุ กรุณากลับไปดูสถานะแพ็กเกจ',CONTROL_COMPANY_HELD:'บริษัทนี้ถูกพักใช้งาน กรุณาตรวจสถานะบริษัทก่อน',CONTROL_OPERATION_IN_PROGRESS:'มีรายการเดิมกำลังดำเนินการ เปิดสถานะแพ็กเกจเพื่อตรวจให้เสร็จก่อน',CONTROL_PREVIEW_STALE:'ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว ยกเลิกคำขอเดิมและตรวจข้อมูลใหม่'};
 const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ร้านนี้ใช้งบ AI ครบแล้ว'};
 function message(error:unknown){return errors[apiErrorCode(error)??'']??apiErrorMessage(error);}
 
@@ -62,8 +62,9 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
       {(data?.readWarnings??operation?.readWarnings??[]).map(w=><p key={w}>{readWarnings[w]}</p>)}<p>เพิ่มใบเสร็จแล้วก็ยังติดการตั้งค่านี้ ติดต่อผู้ดูแลการตั้งค่า AI ก่อนให้ร้านอ่านเอกสารเพิ่ม</p>
     </section>}
     {data&&<>
-      <section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">{data.companyName}</h2><p>อ่านใบเสร็จได้อีก {data.remaining?.toLocaleString('th-TH')??'ยังไม่มียอด'} ใบ</p>
+      <section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">{data.companyName}</h2><p>อ่านใบเสร็จได้อีก {data.remaining?.toLocaleString('th-TH')??'ไม่จำกัด'}{data.remaining!==null&&' ใบ'}</p>
         {data.paidThrough&&<p>แพ็กเกจที่จ่ายแล้วใช้ได้ถึง {date(data.paidThrough)}</p>}
+        {data.monthlyAllowance&&<p>{billingMonthlyAllowanceText(data)}</p>}
         {data.blockedReason&&<p>{errors[data.blockedReason]??'กรุณาตรวจสถานะแพ็กเกจก่อนดำเนินการ'}</p>}
         {data.canCreate&&<form className="space-y-3" onSubmit={e=>{e.preventDefault();void preview();}}>
           <label className="block">เพิ่มใบเสร็จจำนวน<input className={field} inputMode="numeric" value={units} onChange={e=>setUnits(e.target.value)} disabled={busy} maxLength={10}/></label>
@@ -87,7 +88,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
     {operation&&<>
       <section className="space-y-3 rounded-xl border p-4" aria-label="ผลกระทบการปรับใบเสร็จ"><h2 className="font-bold">{state[operation.state]??'ต้องตรวจสอบคำขอ'}</h2><p>{operation.companyName}</p>
         <p>{operation.type==='GRANT_RECEIPTS'?'เพิ่ม':'ขอถอนส่วนที่ยังไม่ใช้จาก'} {operation.units.toLocaleString('th-TH')} ใบ · ใช้ได้ถึง {date(operation.grantExpiresAt)}</p>
-        <p>ตอนตรวจคำขอ เหลือทั้งหมด {operation.beforeRemaining.toLocaleString('th-TH')} ใบ</p>{operation.observedRemaining!==null&&<p>หลังดำเนินการ เหลือทั้งหมด {operation.observedRemaining.toLocaleString('th-TH')} ใบ</p>}
+        <p>ตอนตรวจคำขอ เหลือทั้งหมด {operation.beforeRemaining?.toLocaleString('th-TH')??'ไม่จำกัด'}{operation.beforeRemaining!==null&&' ใบ'}</p>{operation.state==='SUCCEEDED'&&<p>หลังดำเนินการ เหลือทั้งหมด {operation.observedRemaining?.toLocaleString('th-TH')??'ไม่จำกัด'}{operation.observedRemaining!==null&&' ใบ'}</p>}
         <p>ผู้ขอ: {operation.requesterName??'ไม่พบชื่อ'} · ผู้อนุมัติ: {operation.approverName??'ยังไม่มี'}</p><p>เหตุผล: {operation.reason}</p>
         {operation.grant&&<p>รายการที่ผู้ดูแลเพิ่มนี้ ใช้แล้ว {operation.grant.used.toLocaleString('th-TH')} ใบ · เหลือที่ยังใช้ได้ {operation.grant.remaining.toLocaleString('th-TH')} ใบ</p>}
         <p>วันหมดอายุแพ็กเกจและวันเก็บเงินครั้งถัดไปยังคงเดิม จำนวนที่ใช้แล้วเก็บไว้ในประวัติ</p>

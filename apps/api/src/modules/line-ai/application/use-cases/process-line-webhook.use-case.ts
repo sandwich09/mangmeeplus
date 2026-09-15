@@ -6968,8 +6968,8 @@ ${link}`, ctx.companyId, access);
     const limit = displayReceiptQuotaLimit(planLimit, tierKey, cadence);
     const first = await claimReceiptQuotaNotice(this.prisma, companyId, monthKey);
     const text = first
-      ? receiptQuotaExceededTextTh(limit, tierKey, cadence)
-      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence);
+      ? receiptQuotaExceededTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot)
+      : receiptQuotaExceededShortTextTh(limit, tierKey, cadence, 'monthlyAllowance' in snapshot);
     let delivered = true;
     try {
       if (first) await this.deliverRequiredMessages(event, [buildReceiptQuotaExceededMessage(text)]);

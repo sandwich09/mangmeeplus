@@ -9013,11 +9013,11 @@ model BillingAccount {
   @@index([observedAt])
 }
 
-/// Purchased package units. OCR events reserve/consume a grant; deleting the exact failed event releases it.
+/// Purchased or independently approved Admin units. Only a manual Admin grant has no paid account.
 model BillingReceiptGrant {
   id                String @id @default(uuid())
   companyId         String
-  billingAccountId  String
+  billingAccountId  String?
   sourceKey         String
   sourceHash        String
   kind              String
@@ -9030,7 +9030,7 @@ model BillingReceiptGrant {
   policyRevisionId  String
   createdAt         DateTime @default(now())
   company           Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  billingAccount    BillingAccount @relation(fields: [billingAccountId, companyId], references: [id, companyId], onDelete: Restrict)
+  billingAccount    BillingAccount? @relation(fields: [billingAccountId, companyId], references: [id, companyId], onDelete: Restrict)
   admissions        CompanyOcrUsageEvent[]
 
   @@unique([id, companyId])

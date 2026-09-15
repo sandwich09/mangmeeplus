@@ -26,6 +26,7 @@ import { PartnerLifecycleTransitionUseCase } from '../../system-partner-manageme
 
 import { termProjectionHash } from '../domain/paid-invoice';
 import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
+import { paidReceiptBalance } from './billing-receipt-grants';
 import { billingState } from '../domain/billing-state';
 import { detectBillingIssue } from './billing-issues';
 
@@ -105,7 +106,8 @@ export class BillingService {
     const quota = await receiptQuotaSnapshot(this.prisma, companyId, monthKey);
     const used = quota.usedCount, limit = quota.planLimit;
     return { used, limit, remaining: limit === null ? null : Math.max(0, limit - used),
-      resetsAt: quota.cadence ? null : resetsAt, cadence: quota.cadence ?? 'LEGACY_MONTH', expiresAt: quota.expiresAt ?? null };
+      resetsAt: quota.cadence ? null : resetsAt, cadence: quota.cadence ?? 'LEGACY_MONTH', expiresAt: quota.expiresAt ?? null,
+      ...(quota.monthlyAllowance ? { monthlyAllowance: quota.monthlyAllowance } : {}) };
   }
 
   async capacity(context: RequestContext, offerKey: string, interval: string) {
@@ -255,7 +257,8 @@ export class BillingService {
     const impact = fullPackagePurchaseImpact({ tier, interval, offer, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
       paidThrough: repeat ? new Date(repeat.paidThrough) : null, remainingPaidReceipts: repeat ? quote.usage.remaining ?? 0 : 0, anchorDay: repeat?.anchorDay });
     quote.purchase = { kind: repeat ? 'REPEAT' : restart ? 'RESTART' : 'INITIAL', previousPaidThrough: repeat?.paidThrough ?? restart?.paidThrough ?? null,
-      projectedPaidThrough: impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded, projectedRemainingReceipts: impact.remainingReceipts };
+      projectedPaidThrough: impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded,
+      projectedRemainingReceipts: impact.remainingReceipts + (repeat ? 0 : (await paidReceiptBalance(this.prisma.client,company.id,null)).remaining) };
     if (upgrade) {
       quote.expiresAt = new Date(Date.parse(upgrade.prorationAt)+600000).toISOString();
       quote.purchase = { kind: 'UPGRADE', previousPaidThrough: repeat!.paidThrough, projectedPaidThrough: repeat!.paidThrough,

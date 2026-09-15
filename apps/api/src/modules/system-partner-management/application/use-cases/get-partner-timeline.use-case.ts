@@ -179,7 +179,7 @@ export class GetPartnerTimelineUseCase {
     if(aiConfig?.ocrEnabled===false)return receipt('ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
     if(aiConfig?.ocrMonthlyLimit!=null&&(ocrUsage?.usedCount??0)>=aiConfig.ocrMonthlyLimit)return receipt('ใช้จำนวนครั้งอ่านเอกสารของเดือนนี้ครบแล้ว');
     const enforced=quota.cadence==='PAID_GRANTS'||(aiConfig?.receiptQuotaEnforced??this.config.receiptQuotaEnforced)===true;
-    if(enforced&&quota.planLimit!==null&&quota.usedCount>=quota.planLimit)return receipt(quota.cadence==='PAID_GRANTS'
+    if(enforced&&quota.planLimit!==null&&quota.usedCount>=quota.planLimit)return receipt(quota.cadence==='PAID_GRANTS'||quota.monthlyAllowance
       ?'ใช้จำนวนใบเสร็จที่มีอยู่ครบแล้ว':`อ่านใบเสร็จครบ ${quota.planLimit} ใบของเดือนนี้แล้ว`);
     return null;
   }

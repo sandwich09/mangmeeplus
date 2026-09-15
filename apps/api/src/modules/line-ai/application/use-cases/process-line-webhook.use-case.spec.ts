@@ -475,6 +475,7 @@ function makePrisma(opts: {
         update: async (args: unknown) => args,
       },
       // P10-L §15.1 — what `receiptQuotaSnapshot` and the once-a-month notice claim read.
+      billingReceiptGrant: { findMany: async () => [] },
       companyOcrUsageEvent: { count: async () => receiptsUsed },
       companyPlanTerm: {
         findUnique: async () => planTerm && { warmupUntil: null, warmupSlipLimit: null, ...planTerm },

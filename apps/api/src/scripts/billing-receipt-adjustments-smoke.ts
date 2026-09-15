@@ -1,3 +1,4 @@
+import {checkManualReceiptAdjustments} from './manual-receipt-adjustments-smoke';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
@@ -19,6 +20,7 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
     const ownerRole=await db.role.create({data:{companyId,scopeKey:companyId,key:'OWNER',name:'Synthetic receipt owner',permissions:{create:{permissionId:sessionPermission.id}}}});ownerRoleId=ownerRole.id;
     const owner=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:ownerRole.id}}}});
     await input.recordLegal(input.userIds[0]!,owner.id,companyId);
+    cases.push(...await checkManualReceiptAdjustments(input,companyId));
     const account=await db.billingAccount.create({data:{companyId,stripeAccountId,livemode:false,paidThrough:end,nextChargeAt:end,baseSubscriptionId:`sub_ReceiptFixture${randomUUID()}`}});accountId=account.id;
     await db.companyPlanTerm.create({data:{companyId,tierKey:'PRO_999',branchLimit:5,employeeLimit:10,monthlySlipLimit:100,
       termStartAt:now,termEndsAt:end,billingReceiptAccountId:account.id}});
