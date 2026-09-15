@@ -13,6 +13,20 @@ import { bangkokMonthKey } from '../company-ai-usage-meter';
 const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 const CLEAN_SCANNER = { assertClean: async () => undefined } as any;
 
+function savedMediaFixture(id: string) {
+  return { id, companyId: 'company-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD', status: 'DRAFT',
+    expenseDate: new Date('2026-09-15'), updatedAt: new Date('2026-09-15T00:00:00Z'),
+    primaryAttachmentId: 'saved-attachment', sourceDocumentType: 'NEEDS_REVIEW',
+    sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf({ lineUserId: 'line-user-secret' }) },
+    grandTotalAmount: '0', vatAmount: '0', whtAmount: '0', netPayableAmount: '0', discountAmount: '0', vatMode: 'NO_VAT',
+    lines: [], attachments: [], charges: [] } as any;
+}
+function updateSavedMedia(expense: any, { where, data }: any) {
+  if (where.updatedAt) assert.equal(where.updatedAt.getTime(), expense.updatedAt.getTime(), 'original source version required');
+  Object.assign(expense, data, { updatedAt: new Date(expense.updatedAt.getTime() + 1) });
+  return structuredClone(expense);
+}
+
 /**
  * Shadow probe double (piece 5). The employee LINE webhook records one `ai_line_assistant`
  * observation per resolved turn, UPSTREAM of the `lineAssistantDisabled` refusal. Recording into a
@@ -243,7 +257,7 @@ describe('check-bill LINE reply UX', () => {
       permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create'],
       receiptOcrApply: {
         apply: async () => ({
-          candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false,
+          committedUpdatedAt: new Date('2026-09-15T00:00:00.001Z'), candidatesCreated: 0, categoryId: null, categoryName: null, categoryAutoFilled: false,
           chargeReconciliationStatus: 'RECONCILED_ITEM_LINES', chargesApplied: 1, charges,
           reviewReasons: [reviewReason],
           dateVerified: true, dateAssumed: false, dateStatus: 'verified',
@@ -251,6 +265,8 @@ describe('check-bill LINE reply UX', () => {
       },
       expenseRepo: {
         findByLineMessageId: async () => null,
+        findByIdWithRelations: async () => ({ ...savedMediaFixture('expense-check-bill'), createdByUserId: 'u1',
+          sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(BASE_EVENT) } }),
         updateExpense: async (input: any) => { updates.push(input); return input; },
       },
       substituteReceiptContinuation: {
@@ -284,6 +300,18 @@ describe('check-bill LINE reply UX', () => {
       'the reasons the apply raised must survive the summary write');
     assert.match(replies.join('\n'), /➕ ค่าใช้จ่ายเพิ่ม \(1 รายการ รวม 72\.00\):/);
     assert.match(replies.join('\n'), /• ค่าบริการ – 72\.00/);
+    const saved = { ...savedMediaFixture('expense-check-bill'), createdByUserId: 'u1', charges,
+      sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(event) }, aiVerificationSummaryJson: { humanReview: true } };
+    (useCase as any).expenseRepo.findByLineMessageId = async () => structuredClone(saved);
+    (useCase as any).expenseRepo.findByIdWithRelations = async () => structuredClone(saved);
+    (useCase as any).completeReceiptDraft = async () => assert.fail('saved attachment must not reset current status or review');
+    (useCase as any).receiptOcrApply.apply = async () => assert.fail('saved check bill must not reapply old OCR');
+    await (useCase as any).resolvePendingCheckBillAction(event, ctx,
+      { membershipId: 'mem-1', roles: ['STAFF'], permissions: ['expense.receipt.line_upload'], scopes: {} },
+      { id: 'pending-1', attachmentId: 'att-1', lineMessageId: 'line-msg-check', mimeType: 'image/jpeg' }, '1',
+      { kind: 'CHECK_BILL_ACTION', ocrFields: { grandTotalAmount: '999999' } });
+    assert.equal(updates.length, 1, 'retry preserves the current saved review');
+    assert.match(replies.at(-1)!, /• ค่าบริการ – 72\.00/);
   });
 });
 
@@ -3599,6 +3627,8 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('creates LINE upload expense draft with line_upload permission only', async () => {
     const { prisma, updates } = makePrisma();
+    const saved = savedMediaFixture('expense-line-1');
+    prisma.client.expenseRecord.update = async (args: any) => updateSavedMedia(saved, args);
     const replies: any[] = [];
     const initInputs: any[] = [];
     const completeInputs: any[] = [];
@@ -3628,7 +3658,7 @@ describe('ProcessLineWebhookUseCase', () => {
           return 'ok';
         },
       } as any,
-      { apply: async () => ({ candidatesCreated: 0 }) } as any,
+      { apply: async () => ({ candidatesCreated: 0, committedUpdatedAt: saved.updatedAt }) } as any,
       CLEAN_SCANNER,
     acceptedLegal,
     shadowProbe,
@@ -3642,10 +3672,11 @@ describe('ProcessLineWebhookUseCase', () => {
       {
         execute: async (_ctx: any, input: any) => {
           completeInputs.push(input);
-          return { id: 'expense-line-1' };
+          return structuredClone(saved);
         },
       } as any,
     );
+    (useCase as any).expenseRepo = { findByIdWithRelations: async () => structuredClone(saved), listCategories: async () => [], findByLineMessageId: async () => null };
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
     (useCase as any).downloadLineMedia = async () => ({
       fileName: 'receipt.jpg',
@@ -3678,21 +3709,25 @@ describe('ProcessLineWebhookUseCase', () => {
 
   it('applies OCR fields from AI Gateway to LINE receipt draft', async () => {
     const { prisma } = makePrisma();
+    const saved = savedMediaFixture('expense-ocr-1');
+    prisma.client.expenseRecord.update = async (args: any) => updateSavedMedia(saved, args);
     const replies: any[] = [];
     const receiptOcrRequests: any[] = [];
     const recordUpdates: any[] = [];
     const lineCreates: any[] = [];
     (prisma.client as any).$transaction = async (fn: (tx: any) => Promise<void>) => fn({
+      $executeRaw: async () => 0,
       expenseRecord: {
-        findFirst: async () => ({ expenseCategoryId: null, expenseCategory: null }),
-        update: async (args: any) => { recordUpdates.push(args); return args; },
+        findFirst: async () => ({ ...saved, expenseCategoryId: null, expenseCategory: null }),
+        findFirstOrThrow: async () => structuredClone(saved),
+        update: async (args: any) => { recordUpdates.push(args); return updateSavedMedia(saved, args); },
       },
       expenseCategory: {
         findFirst: async () => ({ id: 'cat-meals', name: 'ค่าอาหาร', companyId: 'company-1' }),
       },
       expenseLine: {
         deleteMany: async () => undefined,
-        create: async (args: any) => { lineCreates.push(args); return args; },
+        create: async (args: any) => { lineCreates.push(args); saved.lines.push(args.data); return args; },
       },
     });
     const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://app.example.com', lineMessagingChannelAccessToken: 'line-token' } as any),
@@ -3746,8 +3781,8 @@ describe('ProcessLineWebhookUseCase', () => {
         },
       } as any,
       new ReceiptOcrApplyService(prisma, {
-        runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
-          const matched = await detectWithinTx({ marker: 'tx' });
+        runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>, db: any) => {
+          assert.ok(db); const matched = await detectWithinTx(db);
           return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
         },
         findByIdWithRelations: async () => ({
@@ -3770,11 +3805,12 @@ describe('ProcessLineWebhookUseCase', () => {
     shadowProbe,
     openLaunchGate,
       { execute: async () => ({ expenseId: 'expense-ocr-1', attachmentId: 'att-ocr-1', uploadUrl: 'https://storage.example.com/upload', uploadMethod: 'PUT' }) } as any,
-      { execute: async () => ({ id: 'expense-ocr-1' }) } as any,
+      { execute: async () => structuredClone(saved) } as any,
       undefined,
       undefined,
       undefined,
       {
+        findByIdWithRelations: async () => structuredClone(saved),
         listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
         findByLineMessageId: async () => null,
         findNearDuplicates: async () => [],
@@ -5683,7 +5719,8 @@ it('keeps the shared event literals frozen so execute() cannot mutate them', () 
 });
 
 describe('receipt reliability: saved facts, notification and provider-input continuity', () => {
-  function receiptHarness(options: { replay?: boolean; draft?: boolean; applyFails?: boolean; sendFails?: boolean; completeFailsAfterCommit?: boolean } = {}) {
+  function receiptHarness(options: { replay?: boolean; draft?: boolean; applyFails?: boolean; sendFails?: boolean; completeFailsAfterCommit?: boolean;
+    changeBefore?: 'capture-summary' | 'ocr-apply' | 'final-summary' } = {}) {
     const base = makePrisma();
     let expense: any = null;
     let downloads = 0;
@@ -5710,7 +5747,13 @@ describe('receipt reliability: saved facts, notification and provider-input cont
         return { count: 1 };
       },
     };
-    base.prisma.client.expenseRecord.update = async ({ data }: any) => { Object.assign(expense, data); return { ...expense }; };
+    const humanEdit = () => Object.assign(expense, { vendorNameSnapshot: 'ร้านที่เจ้าของแก้ล่าสุด', grandTotalAmount: '777',
+      status: 'READY_FOR_CONFIRMATION', sourceChannelMetadataJson: { ...expense.sourceChannelMetadataJson, humanNote: 'keep' },
+      aiVerificationSummaryJson: { humanReview: true }, updatedAt: new Date(expense.updatedAt.getTime() + 1) });
+    base.prisma.client.expenseRecord.update = async (args: any) => {
+      if (options.changeBefore === (args.data.captureSource ? 'final-summary' : 'capture-summary')) humanEdit();
+      return updateSavedMedia(expense, args);
+    };
     const run = makeUseCase(base.prisma, {
       permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'expense.create', 'attachment.create'],
       config: { lineAiTerminalOutcomeReplayEnabled: options.replay ?? false, lineExpenseDraftConversationEnabled: options.draft ?? false },
@@ -5727,16 +5770,19 @@ describe('receipt reliability: saved facts, notification and provider-input cont
         return { expenseId: expense.id, attachmentId: 'original-attachment' };
       } },
       completeReceiptUpload: { execute: async () => { completed += 1; expense.primaryAttachmentId = 'original-attachment'; if (options.completeFailsAfterCommit) throw new Error('post-commit duplicate check unavailable'); return { ...expense }; } },
-      receiptOcrApply: { apply: async () => {
+      receiptOcrApply: { apply: async (_ctx: unknown, _id: string, _fields: unknown, applyOptions: any) => {
         applied += 1;
         if (options.applyFails) throw Object.assign(new Error('Invalid Prisma input raw-receipt-secret unitPrice NaN'), { code: 'P2009' });
+        if (options.changeBefore === 'ocr-apply') { humanEdit(); return { staleSkipped: true }; }
+        assert.equal(applyOptions.expectedUpdatedAt.getTime(), expense.updatedAt.getTime());
         expense.grandTotalAmount = '120.0000';
-        return { candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', charges: [] };
+        expense.updatedAt = new Date(expense.updatedAt.getTime() + 1);
+        return { committedUpdatedAt: expense.updatedAt, candidatesCreated: 0, dateVerified: true, dateStatus: 'verified', charges: [] };
       } },
       expenseRepo: {
         findByLineMessageId: async (_companyId: string, messageId: string) => expense?.lineMessageId === messageId ? { ...expense } : null,
         findById: async () => expense ? { ...expense } : null,
-        findByIdWithRelations: async () => expense ? { ...expense, lines: [], attachments: [] } : null,
+        findByIdWithRelations: async () => expense ? { ...expense, lines: expense.lines ?? [], attachments: [] } : null,
         listCategories: async () => [],
         findExpenseIdsByAttachmentChecksum: async (_company: string, _exclude: string, checksum: string) => expense && checksum === 'same-bytes' ? [expense.id] : [],
       },
@@ -5760,6 +5806,92 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
+
+  for (const changeBefore of ['capture-summary', 'ocr-apply', 'final-summary'] as const) {
+    it(`preserves a human edit before ${changeBefore} and recovers the saved media without OCR replay`, async () => {
+      const h = receiptHarness({ draft: true, changeBefore });
+      await h.useCase.executeReceiptUpload(h.event());
+      assert.equal(h.expense().vendorNameSnapshot, 'ร้านที่เจ้าของแก้ล่าสุด');
+      assert.equal(h.expense().grandTotalAmount, '777');
+      assert.equal(h.expense().status, 'READY_FOR_CONFIRMATION');
+      assert.equal(h.expense().sourceChannelMetadataJson.humanNote, 'keep');
+      assert.deepEqual(h.expense().aiVerificationSummaryJson, { humanReview: true });
+      assert.equal(h.counts().draftStarts, 0);
+      assert.doesNotMatch(JSON.stringify(h.sends), /120\.00|เก็บรูปและร่างแล้ว/);
+      assert.match(JSON.stringify(h.sends), /saved-expense/);
+      const before = h.counts();
+      await h.useCase.executeReceiptUpload(h.event(`recover-${changeBefore}`));
+      assert.deepEqual(h.counts(), before, 'recovery reads the original record without capture/model/apply');
+    });
+  }
+
+  it('rechecks new photo and PDF summaries after link rendering and before reply-token fallback', async () => {
+    for (const mediaType of ['image', 'file'] as const) for (const fault of ['unchanged', 'revision', 'category', 'fallback'] as const) {
+      const h = receiptHarness();
+      const accepted: unknown[] = [];
+      const category = { id: 'current-category', name: 'หมวดหมู่ล่าสุด' };
+      const useCase = h.useCase as any;
+      useCase.expenseRepo.listCategories = async () => [category];
+      const apply = useCase.receiptOcrApply.apply;
+      useCase.receiptOcrApply.apply = async (...args: any[]) => {
+        const result = await apply(...args); h.expense().expenseCategoryId = category.id;
+        return { ...result, categoryId: category.id, categoryName: category.name };
+      };
+      if (mediaType === 'file') useCase.downloadLineMedia = async () => ({ fileName: 'receipt.pdf', mimeType: 'application/pdf',
+        byteSize: 8, checksumSha256: 'pdf-bytes', bytes: Buffer.from('%PDF-1.4'), contentBase64: Buffer.from('%PDF-1.4').toString('base64') });
+      useCase.handoffLinks = { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => {
+        if (/120\.00/.test(JSON.stringify(messages))) {
+          if (fault === 'revision') h.expense().updatedAt = new Date(h.expense().updatedAt.getTime() + 1);
+          if (fault === 'category') category.name = 'เปลี่ยนหมวดหมู่ระหว่างส่ง';
+        }
+        return messages;
+      } };
+      let tokenFailures = 0;
+      useCase.lineReply.sendReply = async (_token: string, messages: unknown) => {
+        if (fault === 'fallback' && /120\.00/.test(JSON.stringify(messages))) {
+          tokenFailures++; h.expense().updatedAt = new Date(h.expense().updatedAt.getTime() + 1); return 'failed_token';
+        }
+        accepted.push(messages); return 'ok';
+      };
+      useCase.lineReply.sendPush = async (_to: string, messages: unknown) => { accepted.push(messages); return 'ok'; };
+      await useCase.executeReceiptUpload({ ...h.event(), messageType: mediaType, ...(mediaType === 'file' ? { fileName: 'receipt.pdf', fileSize: 8 } : {}) });
+      if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /120\.00/);
+      else { assert.doesNotMatch(JSON.stringify(accepted), /120\.00|หมวดหมู่ล่าสุด/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/); }
+      assert.equal(tokenFailures, fault === 'fallback' ? 1 : 0);
+      assert.equal(h.counts().initialized, 1); assert.equal(h.counts().applied, 1);
+    }
+  });
+
+  for (const phase of ['route', 'ocr'] as const) it(`does not capture media after access changes during ${phase}`, async () => {
+    const h = receiptHarness(), useCase = h.useCase as any;
+    const method = phase === 'route' ? 'requestLineIntakeRoute' : 'requestReceiptOcr';
+    const run = useCase.aiGateway[method].bind(useCase.aiGateway);
+    const resolve = useCase.permissionResolver.resolveAccess.bind(useCase.permissionResolver);
+    useCase.aiGateway[method] = async (...args: any[]) => {
+      const result = await run(...args);
+      useCase.permissionResolver.resolveAccess = async (...input: any[]) => ({ ...await resolve(...input), permissions: [] });
+      return result;
+    };
+    await useCase.executeReceiptUpload(h.event());
+    assert.equal(h.counts().initialized, 0); assert.equal(h.counts().applied, 0);
+    assert.equal(h.counts().ocrReads, phase === 'route' ? 0 : 1);
+    assert.match(JSON.stringify(h.sends), /สิทธิ์หรือร้านที่เลือกเปลี่ยน/);
+    assert.doesNotMatch(JSON.stringify(h.sends), /120\.00|saved-expense/);
+  });
+
+  it('suppresses an exact-byte duplicate receipt when its saved source changes during rendering', async () => {
+    const h = receiptHarness(), useCase = h.useCase as any;
+    await useCase.executeReceiptUpload(h.event());
+    useCase.handoffLinks = { wrapOutgoingLineContent: async (_to: unknown, messages: unknown) => {
+      if (/รูปนี้ตรงกับบิล/.test(JSON.stringify(messages))) h.expense().updatedAt = new Date(h.expense().updatedAt.getTime() + 1);
+      return messages;
+    } };
+    const before = h.sends.length;
+    await useCase.executeReceiptUpload(h.event('exact-byte-repeat', 'new-image-message'));
+    assert.equal(h.counts().initialized, 1); assert.equal(h.counts().applied, 1);
+    assert.doesNotMatch(JSON.stringify(h.sends.slice(before)), /รูปนี้ตรงกับบิล|120\.00/);
+    assert.match(JSON.stringify(h.sends.slice(before)), /ข้อมูลต้นทางเปลี่ยน/);
+  });
 
   it('delivery failure after commit preserves the one saved receipt with both runtime flags enabled and disabled', async () => {
     for (const replay of [false, true]) for (const draft of [false, true]) {
@@ -5832,6 +5964,24 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     assert.match(card.contents.footer.contents[0].action.uri, /\/companies\/company-1\/expenses\/saved-expense$/);
     assert.match(card.canonicalText, /\/companies\/company-1\/expenses\/saved-expense/);
     assert.equal(h.counts().draftStarts, 0);
+  });
+
+  it('lists current saved products and charges once without replaying old OCR items', async () => {
+    const h = receiptHarness();
+    const event = h.event();
+    await h.useCase.executeReceiptUpload(event);
+    h.expense().lines = [
+      { description: 'สินค้าที่แก้แล้ว', quantity: '2', unitPrice: '60', lineTotalAmount: '120', chargeKind: null },
+      { description: 'ค่าบริการจากแถวจริง', quantity: '1', unitPrice: '12', lineTotalAmount: '12', chargeKind: 'SERVICE_CHARGE' },
+    ];
+    h.expense().charges = [{ kind: 'SERVICE_CHARGE', label: 'ค่าบริการ', amount: '12.0000', vatAmount: '0' }];
+    const replies = await (h.useCase as any).savedReceiptReplies({ ...event, handoff: { userId: 'user-1' } }, 'company-1', 'saved-expense', 'บิลนี้มีรายการอะไรบ้าง');
+    assert.match(replies[0], /สินค้าที่แก้แล้ว × 2/);
+    assert.match(replies[0], /ค่าใช้จ่ายเพิ่ม \(1 รายการ/);
+    assert.equal(replies[0].split('• ค่าบริการ –').length - 1, 1);
+    assert.doesNotMatch(replies[0], /ค่าบริการจากแถวจริง/);
+    assert.equal(h.counts().ocrReads, 1);
+    assert.equal(h.counts().applied, 1);
   });
 
   it('an exact-image duplicate shows current saved facts and final status instead of old OCR', async () => {

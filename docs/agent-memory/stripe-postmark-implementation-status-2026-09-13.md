@@ -6,9 +6,9 @@ Scope: approved Stripe packages, Postmark, Admin C01–C08, web and LINE access,
 
 ## Current checkpoint — 2026-09-15
 
-- Core local HEAD5277d30d; marketing local HEAD6a5408f. Marketing runtime remains969e4c0.
+- Core checkpoint parent a86aada7; marketing checkpoint parent53725ae. Marketing runtime remains969e4c0.
 - Checkout source fix verified: null/missing/unknown Session status preserves UNKNOWN attempt/case until the original Session recovers. Focused restart74 and settlement83 HTTP/PG/Next/Chromium/marketing groups PASS (counts overlap; providers simulated). Full combined failed earlier at settlement browser create429; bounded real retry now verifies retained reason/window. No rate-limit change. Source/log details: checkout-observation-result.json.
-- LINE media root change IN PROGRESS: shared OCR/duplicate transaction now returns its committed revision; web/LINE summaries use that version, new-media replies read current saved facts, passive drafts refresh from current fields. Focused484/PG75 PASS so far; broader module exposed incomplete shared media fixtures, now being corrected without weakening guards. Final unit/module/typecheck evidence is pending.
+- LINE media source increment locally verified: atomic OCR/duplicate producing revision, web/LINE summary CAS, current saved photo/PDF facts, duplicate/actor/fallback checks and no repeated completed check-bill OCR. Focused735/module1320/PG75 PASS/0skip; API typecheck/SWC PASS. Exact sources and remaining limits: line-media-source-result.json.
 - Final source freeze: /tmp/mangmee-current-billing-source-freeze.json (core tracked runtime and marketing files; includes concurrent tracked environment/mail changes, which are not owned by this task). It is working-tree evidence, not clean-commit or CI proof.
 
 ## Latest verified work
@@ -20,6 +20,7 @@ Scope: approved Stripe packages, Postmark, Admin C01–C08, web and LINE access,
 | Restart charge evidence | restart-source-result.json;69 HTTP/browser groups including17 browser,12 unit/4 catalog | Explicit disputed=false; same original evidence recovers; simulated providers |
 | LINE draft/receipt sources | line-draft-delivery-result.json and line-receipt-source-result.json | Current identity/access/revision/category at final send/fallback; no replayed mutation |
 | LINE candidate inputs/replies | line-candidate-source-result.json;553 focused/69 PG/8 reader | Exact scoped facts/order, stable same-time order, before intake dispatch and final advisory delivery |
+| LINE media source | line-media-source-result.json;735 focused/1320 module/75 PG | Atomic producing revision/current saved facts; pending repair/continuation/native boundaries remain separate |
 | LINE text-capture source | line-text-source-result.json;594 focused/74 PG | Scoped duplicate recovery and current header;5 PG source cases use a simulated committed-capture producer |
 
 All source-suite counts overlap. API typechecks PASS; no overall completion percentage is derived from test counts. Evidence files live in [billing integration evidence](../evidence/billing-integration-2026-09-13/README.md). The earlier full combined276 predates these increments; the current full combined run failed at settlement browser rate-limit handling; focused recovery suites passed, but a new combined pass is still owed.
@@ -30,9 +31,9 @@ Initial/repeat/upgrade/downgrade/restart/cancel/resume packages; strict paid inv
 
 ## Remaining work
 
-1. LINE source boundaries: active questionnaire route context and returned continuation facts, new photo/PDF/caption capture replies, substitute/correction result sources, and stored clarification lineage. Candidate and text-capture increments above must not be listed as missing again. Use existing ERP domain/scoped readers and committed revisions; no mutation/model/OCR replay for validation.
+1. LINE source boundaries: active questionnaire route context and returned continuation facts, pending-media partial attachment repair, substitute/correction result sources, later storage permission races, and stored clarification lineage. Candidate and text-capture increments above must not be listed as missing again. Use existing ERP domain/scoped readers and committed revisions; no mutation/model/OCR replay for validation.
 2. Current AP01–AP24 browser/API/PG cross-layer acceptance and remaining native device/LINE/LIFF/provider matrix. Historical sandbox proofs exist; they do not prove the final current tree. Fix actual failures without inventing a broader product policy.
-3. Review current financial reconciliation evidence, finish the Checkout-state regression and settlement browser retry, and reconcile the exact implemented controls against C01–C08. Existing old-debt/refund policy is manual review; no new debt forgiveness or arbitrary paid-state override is approved.
+3. Review current financial reconciliation evidence and reconcile the exact implemented controls against C01–C08. Checkout-state regression and settlement browser retry are locally verified; a new full combined result remains pending. Existing old-debt/refund policy is manual review; no new debt forgiveness or arbitrary paid-state override is approved.
 4. Paid Admin free-day/next-collection behavior and local mail-history retention need the earlier Owner answers below before dependent implementation.
 5. Final clean-source verification, one readiness-driven CI cycle, review and authorized develop/main merges in BOTH repositories. No intermediate push/CI and no deployment.
 

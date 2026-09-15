@@ -5357,6 +5357,7 @@ export class ProcessLineWebhookUseCase {
       if (!exact || exact.createdByUserId !== ctx.userId || exact.captureSource !== 'LINE_UPLOAD'
         || !isBranchInScope(ctx.scopes ?? {}, exact.branchId)
         || exact.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
+      this.rememberReceiptDeliverySource(event, ctx, exact);
       await this.deliverCompletedReply(event, [
         '📷 รูปนี้ตรงกับบิลที่เก็บไว้แล้วค่ะ',
         ...(exact.vendorNameSnapshot ? [`ผู้ขาย – ${exact.vendorNameSnapshot}`] : []),
@@ -5396,6 +5397,7 @@ export class ProcessLineWebhookUseCase {
     });
 
     admissionAttempt.receiptRequested = routePlan.intent === 'EXPENSE_DOCUMENT_CAPTURE';
+    if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
 
     // F8: a signature photo filed on ANY route should steer the sender back to “ตอบ 1” exactly when a
     // substitute workflow in this chat is parked at the issue decision — not only on the numbered
@@ -5609,6 +5611,7 @@ export class ProcessLineWebhookUseCase {
       return;
     }
 
+    if (!await this.mayDeliverBusinessReply(event)) { admissionAttempt.receiptRequested = true; return; }
     const decision = decideLineBusinessDocument(routePlan, ocr, caption.length > 0);
     if (ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW' && isSuccessfulNonReceiptClassification(ocr.classification)) {
       admissionAttempt.receiptRequested = false;
@@ -5740,8 +5743,9 @@ export class ProcessLineWebhookUseCase {
     }));
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: intent.expenseId, companyId, uploaded: true };
     const ocrFields = decision.manualReview ? null : ocr.fields;
-    await this.prisma.client.expenseRecord.update({
-      where: { id: intent.expenseId },
+    if (!completedExpense.updatedAt) throw new ConflictException('Receipt upload revision unavailable');
+    const capturedRevision = await this.prisma.client.expenseRecord.update({
+      where: { id: intent.expenseId, companyId, updatedAt: completedExpense.updatedAt },
       data: { aiVerificationStatus: 'NEEDS_REVIEW', aiVerificationSummaryJson: {
         status: ocr.status, recognizedFields: ocrFields ?? undefined,
         missingFields: ocrFields?.missingFields ?? ['vendor', 'expenseDate', 'grandTotalAmount', 'category'],
@@ -5751,7 +5755,7 @@ export class ProcessLineWebhookUseCase {
 
 
     // ponytail: web and LINE share upload and post-OCR duplicate detection.
-    let ocrApplied = false;
+    let sourceUpdatedAt = capturedRevision.updatedAt;
     let hasDuplicate = completedExpense.duplicateStatus === 'POSSIBLE_DUPLICATE';
 
     // Route hints are AI suggestions; deterministic guards decide what is stored.
@@ -5787,12 +5791,9 @@ export class ProcessLineWebhookUseCase {
     let dateAssumptions: string[] | undefined;
     let reviewReasons: string[] = [];
     let chargeReconciliation: { status: string; chargesApplied: number; itemsSumAmount?: string } | undefined;
-    /** Spec §5.1: the charge rows the apply WROTE, for the card to print. Stays `[]` when the apply
-     *  folded them (or was skipped as stale) — the card then says so rather than listing them. */
-    let appliedCharges: ExpenseChargeSummary[] = [];
-    let acceptedAmounts: ReceiptOcrApplyOutcome['acceptedAmounts'];
     if (ocrFields) {
       const applyOutcome = await this.timeStage(event.webhookEventId, 'receipt_ocr_apply', () => this.receiptOcrApply.apply(ctx, intent.expenseId, ocrFields, {
+        expectedUpdatedAt: sourceUpdatedAt,
         ...(hintedCategory
           ? {
               fallbackCategorySuggestion: {
@@ -5802,9 +5803,13 @@ export class ProcessLineWebhookUseCase {
             }
           : {}),
       }));
-      // Stale means a correction landed during the OCR round trip; keep the draft as captured.
-      const duplicateResult = isStaleOcrApply(applyOutcome) ? null : applyOutcome;
-      ocrApplied = duplicateResult !== null;
+      if (isStaleOcrApply(applyOutcome) || !applyOutcome.committedUpdatedAt) {
+        throw new ConflictException('Receipt changed before OCR could be saved');
+      }
+      const duplicateResult = applyOutcome;
+      sourceUpdatedAt = applyOutcome.committedUpdatedAt;
+      admissionAttempt.usablePersisted = ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
+        && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields.grandTotalAmount);
       hasDuplicate ||= (duplicateResult?.candidatesCreated ?? 0) > 0;
       reviewReasons = duplicateResult?.reviewReasons ?? [];
       dateVerified = duplicateResult?.dateVerified ?? false;
@@ -5819,8 +5824,6 @@ export class ProcessLineWebhookUseCase {
             ...(duplicateResult.itemsSumAmount ? { itemsSumAmount: duplicateResult.itemsSumAmount } : {}),
           }
         : undefined;
-      appliedCharges = duplicateResult?.charges ?? [];
-      acceptedAmounts = duplicateResult?.acceptedAmounts;
       categorySuggestion = duplicateResult?.categorySuggestion;
       effectiveCategory = duplicateResult?.categoryId
         ? {
@@ -5844,7 +5847,7 @@ export class ProcessLineWebhookUseCase {
     if (!dateVerified) missingFields.add('expenseDate');
 
     await this.prisma.client.expenseRecord.update({
-      where: { id: intent.expenseId },
+      where: { id: intent.expenseId, companyId, updatedAt: sourceUpdatedAt },
       data: {
         captureSource: 'LINE_UPLOAD',
         ...(expenseDraftConversationEnabled ? { status: 'DRAFT' } : {}),
@@ -5895,8 +5898,6 @@ export class ProcessLineWebhookUseCase {
         },
       },
     });
-    admissionAttempt.usablePersisted = ocrApplied && ocr.status === 'OCR_EXTRACTED_NEEDS_REVIEW'
-      && isExpenseExtractionEligible(ocr.classification ?? undefined, ocrFields?.grandTotalAmount);
     await this.audit.log({ companyId, actorUserId: identity.userId, action: 'expense.line_upload.receive', targetType: 'expense_record', targetId: intent.expenseId, requestId, result: 'SUCCESS', riskLevel: 'MEDIUM', metadataJson: { lineMessageId: '[REDACTED]', mimeType: media.mimeType, byteSize: media.byteSize, sourceDocumentType: hintedDocType } });
     const purposeHint = routePlan.captureHints?.businessPurpose?.trim();
     const groundedPurpose = purposeHint && normalizeLineText(caption).toLocaleLowerCase('th-TH')
@@ -5914,22 +5915,7 @@ export class ProcessLineWebhookUseCase {
         ...(draftSuggestedCategoryId ? { suggestedCategoryId: draftSuggestedCategoryId } : {}),
       });
     // Source facts remain durable and editable, but sending a photo never starts a questionnaire.
-    const replyTexts = [formatPaypersReply(this.config.webBaseUrl, companyId, intent.expenseId, {
-      hasDuplicate,
-      acceptedAmounts,
-      fields: ocrFields,
-      // Spec §5.1: what the record CARRIES, not what the extractor suggested (UAT 2026-09-06).
-      charges: appliedCharges,
-      // …and the outcome that says whether THIS apply folded them, so the card only claims a fold
-      // that actually happened (F5).
-      ...(chargeReconciliation ? { chargeReconciliation } : {}),
-      sourceDocumentType: hintedDocType !== 'NEEDS_REVIEW' ? hintedDocType : undefined,
-      categoryName: effectiveCategory?.name || null,
-      questionText: caption,
-      // Spec §5.2: the card says what the stored date IS — read, assumed, placeholder or absurd —
-      // instead of printing whatever string happens to be there as though the page stated it.
-      dateStatus,
-    })];
+    const replyTexts = await this.savedReceiptReplies(event, companyId, intent.expenseId, caption);
     await this.deliverCompletedReply(event, replyTexts[0]!, companyId, access);
     await this.recordDeliveredReceiptContinuation(event, companyId, identity.userId, intent.expenseId, access.scopes);
     await this.persistIntakeTurn({
@@ -5940,7 +5926,7 @@ export class ProcessLineWebhookUseCase {
   }
 
   /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
-  private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string): Promise<string[]> {
+  private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string, questionText?: string): Promise<string[]> {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
     const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
     try {
@@ -5954,14 +5940,24 @@ export class ProcessLineWebhookUseCase {
         userId: event.handoff.userId, companyId, membershipId: access.membershipId, roles: access.roles,
         permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, expense, category);
       if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
+      const summary = expense.aiVerificationSummaryJson;
+      const reconciliation = summary?.chargeReconciliation as { status?: unknown; chargesApplied?: unknown } | undefined;
       return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
+        questionText,
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
         categoryName: category?.name,
-        fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
+        fields: { ...(summary?.recognizedFields as ReceiptOcrFieldResult | undefined),
+          vendorName: expense.vendorNameSnapshot ?? undefined, documentNumber: expense.vendorDocumentNumber ?? undefined,
+          expenseDate: expense.expenseDate.toISOString().slice(0, 10),
+          description: undefined, quantity: undefined, unitPrice: undefined,
+          lines: expense.lines.filter(line => !line.chargeKind).map(line => ({ description: line.description, quantity: line.quantity,
+            unitPrice: line.unitPrice, amount: line.lineTotalAmount, evidenceSignal: line.sourceLineText ?? line.description })) },
         charges: expense.charges,
-        hasDuplicate: Boolean(expense.duplicateOfExpenseId),
-        dateStatus: expense.aiVerificationSummaryJson?.dateStatus as ExpenseDocumentDateStatus | undefined,
+        ...(reconciliation && typeof reconciliation.status === 'string' && typeof reconciliation.chargesApplied === 'number'
+          ? { chargeReconciliation: { status: reconciliation.status, chargesApplied: reconciliation.chargesApplied } } : {}),
+        hasDuplicate: Boolean(expense.duplicateOfExpenseId) || expense.duplicateStatus === 'POSSIBLE_DUPLICATE',
+        dateStatus: (summary?.dateStatus as ExpenseDocumentDateStatus | undefined) ?? (expense.reviewedAt ? 'verified' : 'unverified'),
       })];
     } catch (error) {
       this.logger.warn({ msg: 'line_receipt_summary_unavailable', companyId, expenseId, ...safeLineErrorDetails(error) });
@@ -6482,7 +6478,7 @@ ${link}`, ctx.companyId, access);
     const existing = await this.expenseRepo.findByLineMessageId(ctx.companyId, pending.lineMessageId);
     let expenseId: string;
     if (existing) {
-      await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes);
+      if (!existing.primaryAttachmentId) await this.completeReceiptDraft(existing.id, pending, ctx.companyId, ctx.userId, access.scopes);
       expenseId = existing.id;
     } else {
       ({ expenseId } = await this.createReceiptDraftFromPendingMedia(
@@ -6499,13 +6495,21 @@ ${link}`, ctx.companyId, access);
     // Spec §5.1/§5.2: the SAME apply as the photo lane runs here, so it raises the same review
     // reasons and writes the same charge rows. Both used to be thrown away with the outcome — the
     // summary JSON below was composed from scratch and the reply never named the charge.
-    const applied = asked.ocrFields ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields) : undefined;
-    const appliedOutcome = applied && !isStaleOcrApply(applied) ? applied : undefined;
+    const captured = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, ctx.scopes ?? {});
+    if (!captured || captured.createdByUserId !== ctx.userId || captured.captureSource !== 'LINE_UPLOAD'
+      || captured.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHash) throw new ForbiddenException('Receipt is outside your capture scope.');
+    // A saved check bill may have been edited since the original answer. Resume it without
+    // applying its old pending OCR or replacing its current review metadata a second time.
+    const applied = !existing && asked.ocrFields
+      ? await this.receiptOcrApply.apply(ctx, expenseId, asked.ocrFields, { expectedUpdatedAt: captured.updatedAt }) : undefined;
+    if (applied && (isStaleOcrApply(applied) || !applied.committedUpdatedAt)) throw new ConflictException('Receipt changed before OCR could be saved');
+    const appliedOutcome = applied;
     const classification = asked.classification ?? { documentKind: 'ORDER_OR_CHECK_BILL' };
-    await this.expenseRepo.updateExpense({
+    if (!existing) await this.expenseRepo.updateExpense({
       id: expenseId,
       companyId: ctx.companyId,
       updatedByUserId: ctx.userId,
+      expectedUpdatedAt: appliedOutcome?.committedUpdatedAt ?? captured.updatedAt,
       sourceDocumentType: 'NEEDS_REVIEW',
       taxEvidenceStatus: 'NEEDS_REVIEW',
       inputVatClaimStatus: 'NEEDS_REVIEW',
@@ -6538,7 +6542,7 @@ ${link}`, ctx.companyId, access);
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? []);
+    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? captured.charges ?? []);
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {

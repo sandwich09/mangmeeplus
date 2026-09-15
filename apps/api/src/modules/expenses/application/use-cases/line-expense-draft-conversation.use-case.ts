@@ -188,7 +188,9 @@ export class LineExpenseDraftConversationUseCase {
       },
       categories,
     });
-    state = bindSourceDraftLines(state, expense);
+    state = refreshExpenseSourceDraft(bindSourceDraftLines(state, expense), expense, categories);
+    // The caption is the user's current instruction; only OCR-derived facts yield to saved data.
+    if (input.businessPurpose) state.header.businessPurpose = input.businessPurpose;
     // Capturing an image preserves editable facts; only the user can start the conversation.
     state.status = 'PAUSED';
     state.unresolvedQuestions = collectLineExpenseDraftQuestions(state, categories);

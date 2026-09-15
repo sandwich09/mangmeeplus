@@ -1,0 +1,58 @@
+{
+  "status": "LOCAL_MEDIA_SOURCE_PASS",
+  "recordedAt": "2026-09-15T11:09:51.176331+00:00",
+  "baseCommit": "a86aada752d7be271274eeaec9f2cb4d771c17b4",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.ts": "221edef34c170617f53028d50d86a003eff96e6b22c28f5933278345a73ef56f",
+    "apps/api/src/modules/expenses/application/services/receipt-ocr-apply.service.spec.ts": "4e93e6b6427b305d0fb58d067e3e407c76d975574881cfc32f5ff8dbde6aa54d",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.ts": "508062e411dc9cf7844294e52b0d5469c269f02b8d7850177c9ee069817266f5",
+    "apps/api/src/modules/expenses/application/use-cases/expense-extraction.use-case.spec.ts": "a171aa8ecbc5ee624892db5b158462626bc5010a66eca5aee288acb294761fe6",
+    "apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.ts": "5704b1e742d3c9a5ce69e3a283a69e99fd94dbb1c38256387ee82af769b5f4a6",
+    "apps/api/src/modules/expenses/application/use-cases/line-expense-draft-conversation.use-case.spec.ts": "94b315bcd1772bd5901d22d20fb6cf50158228e229a0f70aa64f0c62c9bbac2d",
+    "apps/api/src/modules/expenses/line-draft-update.pg.spec.ts": "c6f005ffe2f700b8cc158b31216a76a3424cff3ae2ff2742d6c9eda5baac83aa",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "3f55cf9d7d07157a4bdf84d98ed8e40382ae968eb29c82f13411abaa01b0ed52",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "3896d5affa446208d0b84586440c9aea7e16cec832df17e08f791402c07bc74a",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "4e50efb2d059e36bf991a6ff0a0c354e7e49155bb136375907552366fb7c5fce"
+  },
+  "runs": {
+    "unit": {
+      "tests": 735,
+      "pass": 735,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-media-source-unit.tap",
+      "sha256": "d8e1aa77f225f9449f51267d67999bb03b820f6e1eea6bcbc8856756e1738449"
+    },
+    "module": {
+      "tests": 1320,
+      "pass": 1320,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-media-module.tap",
+      "sha256": "fc4318cfa755b717246ee24ead4b5180047888f52c6f3633975d9117ab04cfac"
+    },
+    "postgres": {
+      "tests": 75,
+      "pass": 75,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-media-source-postgres.tap",
+      "sha256": "c1130b60b7eb58b382784981d93654671ee42407432e1a717c9f7c40c04de890"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": [
+    "OCR header, lines and duplicate reconciliation commit together and return the producing updatedAt. Real PostgreSQL stale input, late human edit and duplicate failure rollback are covered.",
+    "Web, new LINE photo/PDF and newly created check-bill OCR summaries compare that producing revision. Usable committed OCR retains its receipt admission if later summary saving fails.",
+    "New media and saved recovery read scoped current fields, amounts, category, charge and date evidence. Only ordinary product rows enter the product list; charges appear in their own block.",
+    "Current actor/access is rechecked after routing and separate OCR; exact-byte duplicate and photo/PDF replies recheck original record/category at final send and fallback.",
+    "Passive initialization refreshes current header without writing financial rows; unmatched old OCR line hints remain explicitly review-required. Existing completed check bills skip attachment reset/OCR/summary replay."
+  ],
+  "limits": [
+    "735 focused, 1320 module and 75 PostgreSQL tests overlap; these are not distinct product-flow counts. The module includes two actual PostgreSQL quota checks.",
+    "LINE/model/OCR/provider transports are simulated. No new browser/native acceptance is claimed by these unit/PG runs.",
+    "Continuation result, route-context and stored clarification lineage, pending-media partial attachment repair and later storage/continuation permission races remain open.",
+    "No full current combined billing acceptance, clean-commit CI, push, merge or deploy. Concurrent environment/mail/config work remains outside this task."
+  ]
+}

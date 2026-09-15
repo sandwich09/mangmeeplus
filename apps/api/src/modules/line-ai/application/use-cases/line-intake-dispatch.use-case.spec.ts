@@ -231,6 +231,21 @@ function makeHarness(opts: {
   const sentMessages: unknown[][] = [];
   const ledgerAcks: Array<{ entryId: string; outcome: string }> = [];
   const prisma = opts.prisma ?? makePrisma().prisma;
+  const emptyMedia = (id: string, input: any = {}) => ({ id, companyId: 'company-1', createdByUserId: 'user-1',
+    captureSource: 'LINE_UPLOAD', status: 'DRAFT', primaryAttachmentId: 'att-1',
+    expenseDate: new Date('2026-09-15'), updatedAt: new Date('2026-09-15T00:00:00Z'),
+    grandTotalAmount: '0', vatAmount: '0', whtAmount: '0', netPayableAmount: '0', discountAmount: '0', vatMode: 'NO_VAT',
+    lines: [], attachments: [], charges: [], sourceChannelMetadataJson: {}, ...input });
+  const recordUpdate = prisma.client.expenseRecord.update;
+  prisma.client.expenseRecord.update = async (args: any) => {
+    const saved = capturedRows.get(args.where.id);
+    if (saved && args.where.updatedAt) assert.equal(args.where.updatedAt.getTime(), saved.updatedAt.getTime());
+    const result = await recordUpdate(args);
+    if (!saved) return result;
+    Object.assign(saved, args.data, { updatedAt: new Date(saved.updatedAt.getTime() + 1) });
+    return structuredClone(saved);
+  };
+
   if (opts.conversationTurns) prisma.client.aiTurn.findMany = async () => opts.conversationTurns;
   if (opts.entitlementRows) prisma.client.companyFeatureEntitlement.findMany = async () => opts.entitlementRows;
 
@@ -269,13 +284,18 @@ function makeHarness(opts: {
       const matched = await detectWithinTx({ marker: 'tx' });
       return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
     },
-    createExpense: async (input: any) => { createExpenseCalls.push(input); return { id: 'expense-clarified-1' }; },
-    linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
+    createExpense: async (input: any) => { createExpenseCalls.push(input); const saved = emptyMedia('expense-clarified-1', input); capturedRows.set(saved.id, saved); return structuredClone(saved); },
+    linkAttachment: async (...args: any[]) => {
+      linkAttachmentCalls.push(args);
+      const saved = capturedRows.get(args[0]);
+      if (saved) saved.attachments.push({ id: args[1], purpose: args[2], checksumSha256: 'hash', perceptualHash: '8f00aa55cc33f00f' });
+    },
     updateExpense: async (input: any) => {
       updateExpenseCalls.push(input);
       const saved = { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', createdByUserId: 'user-1',
         branchId: legacyBranchIds[0], captureSource: 'LINE_UPLOAD', updatedAt: new Date(), ...input };
       if (input.sourceChannelMetadataJson?.kind === 'text_note') capturedRows.set(saved.id, saved);
+      else if (capturedRows.has(input.id)) { const current = capturedRows.get(input.id); Object.assign(current, input, { updatedAt: new Date(current.updatedAt.getTime() + 1) }); return structuredClone(current); }
       return structuredClone(saved);
     },
     findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? structuredClone(capturedRows.get(expenseId)) ?? ({
@@ -368,7 +388,18 @@ function makeHarness(opts: {
         return opts.lineReplyResult ?? 'ok';
       },
     } as any,
-    { apply: async () => { if (opts.receiptApplyError) throw opts.receiptApplyError; return opts.receiptApplyOutcome ?? { candidatesCreated: 0 }; } } as any,
+    { apply: async (_ctx: any, id: string, fields: any, options: any) => {
+      if (opts.receiptApplyError) throw opts.receiptApplyError;
+      const saved = capturedRows.get(id); assert.ok(saved);
+      assert.equal(options.expectedUpdatedAt.getTime(), saved.updatedAt.getTime());
+      const result = opts.receiptApplyOutcome ?? { candidatesCreated: 0 };
+      if (!result.staleSkipped) Object.assign(saved, {
+        vendorNameSnapshot: fields.vendorName, grandTotalAmount: fields.grandTotalAmount ?? '0',
+        expenseDate: fields.expenseDate ? new Date(fields.expenseDate) : saved.expenseDate,
+        expenseCategoryId: result.categoryId ?? null, updatedAt: new Date(saved.updatedAt.getTime() + 1),
+      });
+      return { ...result, committedUpdatedAt: saved.updatedAt };
+    } } as any,
     { assertClean: async () => undefined } as any,
     acceptedLegal,
     shadowProbe,
@@ -379,12 +410,14 @@ function makeHarness(opts: {
     // survived every spec in the repo.
     {
       execute: async (ctx: any, cmd: any) => {
-        await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
+        const branchId = await expenseRepo.resolveCreateBranchId(ctx.companyId, ctx.scopes ?? {}, cmd.branchId);
+        capturedRows.set('expense-1', emptyMedia('expense-1', { companyId: ctx.companyId, createdByUserId: ctx.userId, branchId,
+          sourceChannelMetadataJson: { chatKeyHash: cmd.lineCapture.chatKeyHash } }));
         initCalls.push(cmd);
         return { expenseId: 'expense-1', attachmentId: 'att-1', uploadUrl: '/u', uploadMethod: 'PUT', expiresAt: new Date() };
       },
     } as any,
-    { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return { id: 'expense-1' }; } } as any,
+    { execute: async (_ctx: any, cmd: any) => { completeCalls.push(cmd); return structuredClone(capturedRows.get(cmd.expenseId)); } } as any,
     // captureExpenseNote
     {
       execute: async (ctx: any, cmd: any) => {
@@ -4141,11 +4174,6 @@ describe('LINE usable receipt allowance settlement', () => {
         governReceiptAdmission: true, expenseDraftConversationEnabled: enabled,
         expenseDraftConversation: enabled ? { startFromReceipt: async () => ({ replyTexts: ['บันทึกร่างแล้ว'], expenseId: 'expense-1' }) } : undefined,
         receiptApplyError: scenario === 'apply_failure' ? new Error('synthetic apply failure') : undefined,
-        ...(['apply_failure', 'summary_failure'].includes(scenario) ? { expenseDetail: {
-          id: 'expense-1', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD',
-          updatedAt: new Date('2026-09-15T00:00:00Z'), status: 'DRAFT', primaryAttachmentId: 'pending-att-1',
-          sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) },
-        } } : {}),
         lineReplyResult: scenario === 'delivery_failure' ? 'failed_other' : 'ok',
         routePlan: { status: 'ROUTED', intent: scenario === 'generic_reference' ? 'BUSINESS_DOCUMENT_REFERENCE' : 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 },
         receiptOcrResult: scenario === 'empty' || scenario === 'substitute_failure' ? { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }
@@ -4154,7 +4182,7 @@ describe('LINE usable receipt allowance settlement', () => {
       });
       await h.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: `settle-${scenario}-${enabled}` },
         substitute ? scenario === 'substitute_support' ? 'หลักฐานค่าที่จอดรถค่ะ' : 'สลิปโอนค่ะ' : undefined);
-      const retained = ['success', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support'].includes(scenario);
+      const retained = ['success', 'summary_failure', 'delivery_failure', 'generic_reference', 'substitute_payment', 'substitute_support'].includes(scenario);
       assert.equal(used, retained ? 1 : 0);
       assert.equal(events.length, retained ? 1 : 0);
       assert.equal(credits.filter((entry) => entry.action === 'receipt.ocr.admission.compensated').length, retained ? 0 : 1);

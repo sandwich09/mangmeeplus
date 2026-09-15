@@ -85,6 +85,7 @@ function makeUseCase(options: {
     apply: mock.fn(async (...args: any[]) => {
       applyCalls.push(args);
       return {
+        committedUpdatedAt: new Date('2026-09-15T00:00:00.001Z'),
         candidatesCreated: 0,
         categoryId: null,
         categoryName: null,
@@ -615,7 +616,7 @@ describe('ReceiptOcrClient failure boundary', () => {
         const client = new ReceiptOcrClient({ aiGatewayInternalSecret: 'synthetic', aiGatewayInternalUrl: 'http://ai.invalid', aiMonthlyBudgetSatang: 1_000_000, aiThbPerUsd: 35, isProduction: false } as any, undefined, state.prisma);
         const useCase = new RequestReceiptExtractionUseCase(fixture.repo as any, fixture.storage as any, client, fixture.applyService as any, fixture.audit as any, state.prisma);
         await useCase.execute(ctx(['expense.ocr.request']), 'expense-1').catch(() => undefined);
-        const retained = ['success', 'notification_failure', 'generic_image'].includes(scenario);
+        const retained = ['success', 'summary_failure', 'notification_failure', 'generic_image'].includes(scenario);
         assert.equal(state.usedCount(), retained ? 1 : 0, scenario);
         assert.equal(state.events.length, retained ? 1 : 0, 'fence matches retained commercial use');
         if (scenario !== 'malformed') {

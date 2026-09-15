@@ -30,11 +30,65 @@ import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-updat
 import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
+import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 
 const databaseUrl = process.env['LINE_DRAFT_EDIT_TEST_DATABASE_URL'];
 const CHAT = 'chat-hash-abc';
 
 describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databaseUrl }, () => {
+  it('commits OCR and duplicates together and refuses stale follow-up summaries without losing human edits', async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(/^\/watchdog_bms(_[a-z0-9_]+)?$/.test(url.pathname)
+      || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const tag = `ocr-source-${randomUUID()}`, companyId = `${tag}-co`, userId = `${tag}-user`;
+    const repo = new PrismaExpenseRepository({ client } as never);
+    const service = new ReceiptOcrApplyService({ client } as never, repo);
+    try {
+      await client.company.create({ data: { id: companyId, name: 'OCR source fixture' } });
+      await client.user.create({ data: { id: userId, displayName: 'OCR source fixture' } });
+      const initial = await client.expenseRecord.create({ data: { companyId, createdByUserId: userId,
+        expenseDate: new Date('2026-09-15'), status: 'DRAFT', captureSource: 'LINE_UPLOAD' } });
+      const ctx = { companyId, userId }, fields = { vendorName: 'OCR shop', grandTotalAmount: '120', expenseDate: '2026-09-15' };
+      const read = () => client.expenseRecord.findUniqueOrThrow({ where: { id: initial.id }, include: { lines: true } });
+      const edited = await client.expenseRecord.update({ where: { id: initial.id }, data: {
+        vendorNameSnapshot: 'Owner edit before OCR', updatedAt: new Date(initial.updatedAt.getTime() + 1) } });
+      const beforeStale = await read();
+      assert.equal((await service.apply(ctx, initial.id, fields, { expectedUpdatedAt: initial.updatedAt })).staleSkipped, true);
+      assert.deepEqual(await read(), beforeStale, 'stale apply writes no header, line or duplicate state');
+      const applied = await service.apply(ctx, initial.id, fields, { expectedUpdatedAt: edited.updatedAt });
+      const committed = await read();
+      assert.equal(committed.grandTotalAmount.toString(), '120'); assert.equal(committed.lines.length, 1);
+      assert.deepEqual(applied.committedUpdatedAt, committed.updatedAt);
+      const human = await repo.updateExpense({ id: initial.id, companyId, expectedUpdatedAt: committed.updatedAt,
+        updatedByUserId: userId, vendorNameSnapshot: 'Owner edit after OCR',
+        updatedAt: new Date(committed.updatedAt.getTime() + 1), aiVerificationSummaryJson: { humanReview: true } });
+      const beforeSummary = await read();
+      await assert.rejects(() => repo.updateExpense({ id: initial.id, companyId, expectedUpdatedAt: applied.committedUpdatedAt,
+        updatedByUserId: userId, aiVerificationSummaryJson: { recognizedFields: fields } }), /changed by another user/);
+      assert.deepEqual(await read(), beforeSummary, 'late summary cannot replace the human review');
+      await repo.updateExpense({ id: initial.id, companyId, expectedUpdatedAt: human.updatedAt,
+        updatedByUserId: userId, note: 'User resumes the same record' });
+
+      const beforeFailure = await read();
+      const originalDuplicate = repo.runDuplicateCheck.bind(repo);
+      repo.runDuplicateCheck = async (...args: Parameters<typeof repo.runDuplicateCheck>) => {
+        await originalDuplicate(...args); throw new Error('synthetic duplicate-stage failure');
+      };
+      await assert.rejects(() => service.apply(ctx, initial.id, { ...fields, grandTotalAmount: '999' },
+        { expectedUpdatedAt: beforeFailure.updatedAt }), /synthetic duplicate-stage failure/);
+      assert.deepEqual(await read(), beforeFailure, 'duplicate-stage failure rolls back the header and lines too');
+    } finally {
+      await client.expenseDuplicateCandidate.deleteMany({ where: { companyId } });
+      await client.expenseLine.deleteMany({ where: { companyId } });
+      await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } });
+      await client.user.deleteMany({ where: { id: userId } });
+      await client.$disconnect();
+    }
+  });
+
   it('previews without writing, applies on confirm, and refuses a stale or non-editable record', async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only an explicit local test database is allowed');

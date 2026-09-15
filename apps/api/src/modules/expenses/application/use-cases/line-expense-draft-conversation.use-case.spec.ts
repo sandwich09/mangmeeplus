@@ -49,6 +49,28 @@ function harness(count = 1, expenseNote?: string, passive = false) {
 }
 
 describe('LineExpenseDraftConversationUseCase', () => {
+  it('initializes a passive draft from current saved facts when old OCR hints disagree', async () => {
+    const h = harness();
+    const repo = (h.useCase as any).repo;
+    const read = repo.findByIdWithRelations;
+    repo.findByIdWithRelations = async (...args: any[]) => ({ ...(await read(...args)),
+      sourceChannelMetadataJson: { chatKeyHash: 'chat' }, expenseDate: new Date('2026-09-15'),
+      vendorNameSnapshot: 'ร้านที่เจ้าของแก้ล่าสุด',
+      lines: [{ id: 'current-line', lineNumber: 1, description: 'กระดาษ A4', quantity: '5', unitPrice: '150', lineTotalAmount: '750', expenseCategoryId: 'cat-office' }],
+    });
+    await h.useCase.startFromReceipt(ctx, { expenseId: 'e1', chatKeyHash: 'chat', webhookEventId: 'old-ocr',
+      ocrFields: { vendorName: 'ร้านจาก OCR เก่า', expenseDate: '2026-08-18',
+        lines: [{ description: 'กระดาษ A4', quantity: '2', unitPrice: '120', amount: '240', evidenceSignal: 'old OCR' }] } });
+    const saved = h.updates[0].options.lineDraftCollection.sourceChannelMetadataJson.lineExpenseDraftContinuation;
+    assert.equal(saved.header.vendorName, 'ร้านที่เจ้าของแก้ล่าสุด');
+    assert.equal(saved.header.expenseDate, '2026-09-15');
+    // Without a proven binding, old OCR is unresolved evidence, never silently mapped onto
+    // the owner's different financial row by position or description alone.
+    assert.equal(saved.items[0].reviewRequired, true); assert.equal(saved.items[0].lineId, undefined);
+    assert.equal(saved.status, 'PAUSED');
+    assert.deepEqual(h.updates[0].input, { expectedUpdatedAt: '2026-08-18T00:00:00.000Z' }, 'initialization does not rewrite money or identity');
+  });
+
   it('loads persistent route context without any AiTurn/Redis context', async () => {
     const { useCase } = harness();
     const contexts = await useCase.routeContexts(ctx, 'chat');
@@ -80,7 +102,8 @@ describe('LineExpenseDraftConversationUseCase', () => {
       expenseDate: new Date('2026-08-18T00:00:00.000Z'),
       sourceChannelMetadataJson: { channel: 'LINE', kind: 'media' },
       aiVerificationSummaryJson: {},
-      lines: [],
+      vendorNameSnapshot: 'ร้าน ABC',
+      lines: [{ id: 'line-1', lineNumber: 1, description: 'กระดาษ A4', quantity: '2', unitPrice: '120', lineTotalAmount: '240', expenseCategoryId: 'cat-office' }],
     });
 
     const result = await h.useCase.startFromReceipt(ctx, {

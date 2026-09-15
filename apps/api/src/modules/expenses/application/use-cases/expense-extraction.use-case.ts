@@ -200,13 +200,15 @@ export class RequestReceiptExtractionUseCase {
       const applyOutcome = await this.applyService.apply(ctx, expenseId, response.fields, {
         ...(expense.updatedAt ? { expectedUpdatedAt: expense.updatedAt } : {}),
       });
-      if (isStaleOcrApply(applyOutcome)) {
+      if (isStaleOcrApply(applyOutcome) || !applyOutcome.committedUpdatedAt) {
         // A correction landed while the model was thinking. Writing this result — header, lines,
         // duplicates OR the summary below — would undo it, so the whole write set is abandoned.
         await this.auditOutcome(ctx, expenseId, 'apply_skipped_stale');
         return this.finish(ctx, expenseId, 'failed', attachment.id, response.modelLineage);
       }
       const duplicateResult = applyOutcome;
+      // The usable header/lines already committed, even if a later human edit refuses this summary.
+      usablePersisted = true;
       const missingFields = withEffectiveMissingFields(
         response.fields.missingFields,
         duplicateResult.categoryId ?? expense.expenseCategoryId,
@@ -231,6 +233,7 @@ export class RequestReceiptExtractionUseCase {
         id: expenseId,
         companyId: ctx.companyId,
         updatedByUserId: ctx.userId,
+        expectedUpdatedAt: duplicateResult.committedUpdatedAt,
         ...(taxEvidence ? {
           sourceDocumentType: suggestedDocType,
           taxEvidenceStatus: taxEvidence.taxEvidenceStatus,
