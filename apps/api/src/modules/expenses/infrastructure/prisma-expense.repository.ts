@@ -2922,7 +2922,7 @@ export class PrismaExpenseRepository {
         sourceChannelMetadataJson: { path: ['chatKeyHash'], equals: input.chatKeyHash },
         ...branchScopeWhere(input.scopes),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: input.take,
       // ponytail: served by the existing (companyId, captureSource) index plus a filter+sort;
       // fine at SME LINE-capture volumes. Add (companyId, captureSource, createdAt) if a company's

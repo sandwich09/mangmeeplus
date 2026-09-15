@@ -4314,3 +4314,57 @@ describe('receipt progress grounded in persisted records', () => {
     assert.equal(binding.data.payloadJson, undefined);
   });
 });
+
+describe('LINE candidate source at intake and delivery boundaries', () => {
+  const plan = (intent: string) => ({ status: 'ROUTED', intent, language: 'th', confidence: 0.95,
+    clarifyQuestion: 'เลือกบิล 876,543.00 บาท', clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION' }) as LineIntakeRoutePlan;
+  const rows = () => ['expense-first', 'expense-second'].map(id => ({ id, expenseDate: new Date('2026-09-15T00:00:00Z'),
+    grandTotalAmount: '876543.00', sourceDocumentType: 'RECEIPT', createdAt: new Date() }));
+  for (const path of ['selection', 'next-step', 'guidance', 'clarification'])
+    for (const fault of ['unchanged', 'amount', 'reorder', 'unavailable', 'fallback']) it(`${path} verifies the exact candidate facts before delivery: ${fault}`, async () => {
+      const recentCaptures = rows();
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'], recentCaptures,
+        routePlan: plan(path === 'clarification' ? 'CLARIFY' : 'EXPENSE_CAPTURE_CORRECTION') });
+      const uc = h.useCase as any, accepted: unknown[] = [], ledgered: unknown[] = [];
+      const change = () => { if (fault === 'unavailable') uc.expenseRepo.listRecentLineCaptures = async () => { throw new Error('read unavailable'); };
+        else if (fault === 'reorder') recentCaptures.reverse(); else recentCaptures[0]!.grandTotalAmount = '7'; };
+      let privateAttempts = 0;
+      uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+        if (/876,543|expense-first/.test(JSON.stringify(messages))) {
+          privateAttempts++; if (fault === 'fallback') { change(); return 'failed_token'; }
+        }
+        accepted.push(messages); return 'ok';
+      };
+      uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+      uc.ledger = { openWaitingUser: async () => [], appendSubRequests: async (input: unknown) => { ledgered.push(input); } };
+      if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+        wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { change(); return messages; },
+      };
+      const run = h.useCase.execute({ ...TEXT_EVENT, messageText: path === 'selection' ? 'ใบนี้เป็นเอกสารประเภทอะไร'
+        : path === 'next-step' ? 'ต้องทำยังไงต่อ' : 'แก้วันที่หน่อย' });
+      if (fault === 'unchanged') await run;
+      else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+      if (fault === 'unchanged') { assert.match(JSON.stringify(accepted), /876,543|expense-first/); assert.equal(privateAttempts, 1); }
+      else { assert.doesNotMatch(JSON.stringify(accepted), /876,543|expense-first/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+        assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0); assert.equal(ledgered.length, 0); }
+      assert.equal(h.captured.length, 0); assert.equal(h.draftsCreated.length, 0);
+    });
+
+  for (const fault of ['amount', 'disappeared', 'permission']) it(`rejects a stale intake result before correction or capture: ${fault}`, async () => {
+    const recentCaptures = rows();
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'], recentCaptures,
+      routePlan: plan('EXPENSE_CAPTURE_CORRECTION') });
+    const uc = h.useCase as any, route = uc.aiGateway.requestLineIntakeRoute;
+    uc.aiGateway.requestLineIntakeRoute = async (...args: unknown[]) => {
+      const result = await route(...args);
+      if (fault === 'amount') recentCaptures[0]!.grandTotalAmount = '7';
+      else if (fault === 'disappeared') recentCaptures.splice(0);
+      else uc.permissionResolver.resolveAccess = async () => ({ membershipId: 'mem-1', roles: ['STAFF'], permissions: [], scopes: {} });
+      return result;
+    };
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'แก้วันที่หน่อย' });
+    assert.equal(h.routeRequests.length, 1); assert.equal(h.correctionCalls.length, 0); assert.equal(h.captured.length, 0);
+    assert.match(h.replies.join('\n'), fault === 'permission' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+    assert.doesNotMatch(h.replies.join('\n'), /876,543|expense-first/);
+  });
+});

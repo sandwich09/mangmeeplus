@@ -267,6 +267,67 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
             assert.equal(modelCalls, 0); assert.equal(await client.expenseRecord.count({ where: { companyId } }), before);
           });
 
+      for (const path of ['selection', 'clarification'] as const)
+        for (const fault of ['unchanged', 'metadata', 'branch', 'amount', 'status', 'fallback', 'intake'] as const)
+          await t.test(`candidate ${path} uses current actual scoped facts and recovers: ${fault}`, async () => {
+            const lineUserId = `U${randomUUID().replaceAll('-', '')}`, webhookEventId = randomUUID();
+            lineUsers.push(lineUserId); eventIds.push(webhookEventId);
+            const event = { webhookEventId, lineUserId, replyToken: 'synthetic-reply', messagingChannelId: 'synthetic-channel',
+              messageText: path === 'selection' ? 'ใบนี้เป็นเอกสารประเภทอะไร' : 'ช่วยเลือกรายการให้หน่อย' };
+            const chatKeyHash = chatKeyHashOf(event), accepted: unknown[] = [];
+            const quiet = { log() {}, warn() {}, error() {}, debug() {}, info() {} };
+            await client.externalIdentity.create({ data: { userId, provider: 'LINE', providerUserId: lineUserId, providerChannelId: 'synthetic-channel' } });
+            await client.lineCompanyContext.create({ data: { lineUserId, companyId } });
+            const rows: Awaited<ReturnType<typeof client.expenseRecord.create>>[] = [];
+            const createdAt = new Date();
+            for (let i = 0; i < 2; i++) rows.push(await client.expenseRecord.create({ data: { companyId, branchId: branch.id, createdByUserId: userId,
+              expenseDate: new Date(), createdAt, captureSource: 'LINE_UPLOAD', sourceDocumentType: 'RECEIPT', grandTotalAmount: '876543',
+              sourceChannelMetadataJson: { chatKeyHash } } }));
+            const before = await client.expenseRecord.count({ where: { companyId } });
+            let modelCalls = 0, privateAttempts = 0, recovery = false;
+            const changed = async () => client.expenseRecord.update({ where: { id: rows[0]!.id }, data: fault === 'metadata'
+              ? { note: 'Unrelated internal questionnaire note' } : fault === 'status' ? { status: 'CONFIRMED' }
+                : fault === 'branch' || fault === 'fallback' ? { branchId: otherBranch.id } : { grandTotalAmount: '7' } });
+            const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://synthetic.example.test' } as any), prisma,
+              { webBaseUrl: 'https://synthetic.example.test' } as any, resolver, new AuditService(new PrismaAuditRepository(prisma), quiet as any),
+              { requestLineIntakeRoute: async () => {
+                modelCalls++; assert.equal(path, 'clarification'); if (fault === 'intake' && !recovery) await changed();
+                return { status: 'ROUTED', intent: 'CLARIFY', language: 'th', confidence: 0.95, clarifyQuestion: 'เลือกใบเสร็จ 876,543.00 บาท' };
+              }, requestLineTurn: async () => assert.fail('candidate flow must not invoke another model'),
+              requestReceiptOcr: async () => assert.fail('candidate flow must not rerun OCR') } as any,
+              { buildTextMessage: (text: string) => ({ type: 'text', text }), sendReply: async (_token: string, messages: unknown) => {
+                if (/876,543/.test(JSON.stringify(messages))) {
+                  privateAttempts++; if (fault === 'fallback' && !recovery) { await changed(); return 'failed_token'; }
+                }
+                accepted.push(messages); return 'ok';
+              }, sendPush: async (_to: string, messages: unknown) => { accepted.push(messages); return 'ok'; } } as any,
+              {} as any, {} as any, { isRequired: async () => false } as any,
+              { startSweep: () => ({ record: async () => {}, flush: async () => {} }) } as any, { assertLaunchRouteOpen: async () => {} } as any);
+            (useCase as any).logger = quiet; (useCase as any).readEvidence = service;
+            (useCase as any).expenseRepo = new PrismaExpenseRepository(prisma);
+            (useCase as any).captureExpenseNote = { execute: async () => assert.fail('candidate flow must not create another expense') };
+            (useCase as any).correctExpense = { execute: async () => assert.fail('candidate flow must not apply a correction') };
+            if (!['unchanged', 'fallback'].includes(fault) && !(fault === 'intake' && path === 'clarification')) (useCase as any).handoffLinks = {
+              wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { if (!recovery) await changed(); return messages; },
+            };
+            const positive = fault === 'unchanged' || fault === 'metadata';
+            const run = useCase.execute(event);
+            if (positive || fault === 'intake' && path === 'clarification') await run;
+            else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+            if (positive) { assert.match(JSON.stringify(accepted), /876,543/); assert.equal(privateAttempts, 1); }
+            else {
+              assert.doesNotMatch(JSON.stringify(accepted), /876,543/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+              assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+              assert.equal((await client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId } })).errorCode, 'LINE_DELIVERY_SOURCE_CHANGED');
+              await client.expenseRecord.update({ where: { id: rows[0]!.id }, data: { branchId: branch.id, status: rows[0]!.status, grandTotalAmount: rows[0]!.grandTotalAmount } });
+              recovery = true; const retryId = randomUUID(); eventIds.push(retryId);
+              await useCase.execute({ ...event, webhookEventId: retryId });
+              assert.match(JSON.stringify(accepted), /876,543/, 'a new question reads restored original sources without creating another record');
+            }
+            assert.equal(modelCalls, path === 'clarification' ? positive ? 1 : 2 : 0);
+            assert.equal(await client.expenseRecord.count({ where: { companyId } }), before);
+          });
+
       for (const failure of ['unknown', 'source-changed', 'accepted-ack-lost'] as const) await t.test(`queued actual PostgreSQL and LINE adapter preserve one answer: ${failure}`, async () => {
         const lineUserId = `U${randomUUID().replaceAll('-', '')}`; lineUsers.push(lineUserId);
         await client.externalIdentity.create({ data: { userId, provider: 'LINE', providerUserId: lineUserId, providerChannelId: 'synthetic-channel' } });

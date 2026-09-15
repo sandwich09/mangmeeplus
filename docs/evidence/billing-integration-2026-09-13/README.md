@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+[Candidate-source proof](line-candidate-source-result.json): local553 unit/69 PostgreSQL/8 shared-reader tests PASS/0skip, API typecheck PASS. Candidate selection and intake race recovery are covered; continuation/new-capture/full acceptance remain separate.
+
 [Restart source proof](restart-source-result.json): explicit non-disputed charge evidence, original-history preservation and restored-evidence recovery. Local69 HTTP/browser groups (17 browser),12 unit/4 catalog PASS; typecheck/SWC PASS. Simulated providers; not full combined acceptance.
 
 [Receipt-source delivery proof](line-receipt-source-result.json): current own-chat record revisions/category names guard progress, follow-up and saved-media recovery; silent questionnaire pause does not invalidate the answer.525 focused/55 PostgreSQL/1338 module tests PASS/0skip (overlapping counts), API typecheck PASS.14 new actual PostgreSQL scenarios; transport simulated. Separate PG harnesses and full native/browser acceptance remain explicit in the receipt.

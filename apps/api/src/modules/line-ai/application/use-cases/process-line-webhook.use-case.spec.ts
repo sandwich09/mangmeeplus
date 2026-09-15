@@ -4954,6 +4954,7 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     const { useCase: ucA } = makeUseCase(makePrisma().prisma, { ...PC, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: realSub, substituteLedger: ledA.ledger, intakeRouteFn: SUB_ROUTE, aiGatewayFn: aiTurn });
     (ucA as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
     (ucA as any).loadCorrectionCandidates = async () => [{ id: 'exp-1', label: 'ค่าวิน · 200' }, { id: 'exp-2', label: 'ค่ากาแฟ · 65' }];
+    (ucA as any).expenseRepo = repo;
     await ucA.execute({ ...BASE_EVENT, webhookEventId: 'evt-mc-a', messageText: 'ทำใบทดแทนของค่าใช้จ่าย' });
     assert.equal(saves.length, 0, 'target selection writes nothing');
     assert.deepEqual(ledA.appended[0].items[0].candidateExpenseIds, ['exp-1', 'exp-2'], 'the offered shortlist is pinned on the clarification');
@@ -4964,6 +4965,7 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     const { useCase: ucB } = makeUseCase(makePrisma().prisma, { ...PC, config: { lineAiSubstituteSemanticRoutingMode: 'primary' }, substituteContinuation: realSub, substituteLedger: ledB.ledger, intakeRouteFn: () => SUB_ROUTE({ resolvedClarificationIds: ['clar-A'] }), aiGatewayFn: aiTurn });
     (ucB as any).logger = { log: () => undefined, warn: () => undefined, error: () => undefined };
     (ucB as any).loadCorrectionCandidates = async () => [{ id: 'exp-2', label: 'ค่ากาแฟ · 65' }, { id: 'exp-1', label: 'ค่าวิน · 200' }];
+    (ucB as any).expenseRepo = repo;
     await ucB.execute({ ...BASE_EVENT, webhookEventId: 'evt-mc-b', messageText: '1' });
     assert.equal(saves.length, 0, 'the ordinal selection still confirms first (no write)');
     assert.deepEqual(ledB.appended[0].items[0].candidateExpenseIds, ['exp-1'], 'ordinal "1" binds to the FIRST pinned id (exp-1), never the shuffled recency head (exp-2)');

@@ -1408,6 +1408,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null> }>();
+  private readonly deliveryCandidates = new WeakMap<object, { context: RequestContext; chatKeyHash: string; snapshot: string }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
@@ -2773,6 +2774,12 @@ export class ProcessLineWebhookUseCase {
         sourcesCurrent = sourcesCurrent && await this.receiptDeliverySourcesCurrent(event);
         if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
       }
+      const candidates = this.deliveryCandidates.get(event);
+      if (candidates) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sourcesCurrent && await this.correctionCandidatesCurrent(candidates.context, candidates.chatKeyHash, candidates.snapshot);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
       const identity = await this.resolveLineIdentity(event);
       if (sourcesCurrent && identity?.userId === original.userId && identity.user.status === 'ACTIVE' && !identity.user.aiAssistantOptOutAt
         && (!event.pushTargetId || event.pushTargetId === event.lineUserId)) {
@@ -2799,6 +2806,18 @@ export class ProcessLineWebhookUseCase {
     proof.records.set(expense.id, proof.records.has(expense.id) && proof.records.get(expense.id) !== revision ? null : revision);
     if (category) proof.categories.set(category.id, proof.categories.has(category.id) && proof.categories.get(category.id) !== category.name ? null : category.name);
     this.deliveryReceiptSources.set(event, proof);
+  }
+
+  private rememberCandidateDeliverySources(event: LineTextEvent, context: RequestContext, candidates: LineIntakeCorrectionCandidate[]) {
+    this.deliveryCandidates.set(event, { context, chatKeyHash: chatKeyHashOf(event), snapshot: JSON.stringify(candidates) });
+  }
+
+  private async correctionCandidatesCurrent(ctx: RequestContext, chatKeyHash: string, snapshot: string): Promise<boolean> {
+    if (!this.expenseRepo || !RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))) return false;
+    try {
+      // Compare the facts/ordering actually used, not unrelated questionnaire metadata writes.
+      return JSON.stringify(await this.loadCorrectionCandidates(ctx.companyId, ctx.userId, chatKeyHash, ctx.scopes ?? {})) === snapshot;
+    } catch { return false; }
   }
 
   /** Read only: never recapture an expense merely to validate a prepared receipt answer. */
@@ -2883,7 +2902,7 @@ export class ProcessLineWebhookUseCase {
       }
       const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
       const authorizationJson = { v: 1, producerId,
-        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) ? { read: {
+        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
           recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
@@ -3559,6 +3578,7 @@ export class ProcessLineWebhookUseCase {
 
     if (this.expenseRepo && isGroundedReceiptFollowUp(normalizedText) && !isSubstituteReceiptConversationText(normalizedText)) {
       if (recentCapturedExpenses.length > 1) {
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
         const reply = ['พบรายการล่าสุดมากกว่า 1 รายการ กรุณาระบุรายการก่อนค่ะ', ...recentCapturedExpenses.map((item, index) => `${index + 1}) ${item.label}`)].join('\n');
         await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
         await this.persistIntakeTurn({
@@ -3780,6 +3800,7 @@ export class ProcessLineWebhookUseCase {
     // both wrong and a dead end. With no capture to name, the question falls through untouched: the
     // AI owns intent whenever it is reachable, and this is only the floor under it.
     if (nextStepQuestion && !nextStepSubstituteTarget && recentCapturedExpenses.length > 0) {
+      this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const reply = formatNextStepGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses[0]);
       await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
       await this.persistIntakeTurn({
@@ -3841,6 +3862,14 @@ export class ProcessLineWebhookUseCase {
       ...(substituteMode === 'primary' ? { substituteContext } : {}),
       busyWaitDeadlineMs,
     }));
+
+    if (recentCapturedExpenses.length) {
+      if (!await this.correctionCandidatesCurrent(expenseDraftCtx, chatKeyHashOf(event), JSON.stringify(recentCapturedExpenses))) {
+        await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+        return;
+      }
+      if (!await this.mayDeliverBusinessReply(event)) return;
+    }
 
     // Advisor Slice A (spec §9.1 row 7 / §9.2): a routed ADVISOR_CONVERSATION whose bounded social
     // draft passes every delivery-time gate is answered HERE from the single intake call — no
@@ -4355,6 +4384,7 @@ export class ProcessLineWebhookUseCase {
       } else if (applied.status === 'clarify') {
         reply = CORRECTION_DIRECTION_CLARIFY_REPLY;
       } else {
+        this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
         reply = formatCorrectionGuidanceReply(this.config.webBaseUrl, companyId, recentCapturedExpenses, canEdit, applied.reason);
         await this.consumeClarifications(companyId, chatKey, identity.userId, openWaiting, routePlan.resolvedClarificationIds, 'correction_guidance');
       }
@@ -4403,6 +4433,7 @@ export class ProcessLineWebhookUseCase {
 
     if (routePlan.status === 'ROUTED' && routePlan.intent === 'CLARIFY') {
       // Discovery: prefer the router's own clarifying question (bounded at parse) over the template.
+      if (recentCapturedExpenses.length) this.rememberCandidateDeliverySources(event, expenseDraftCtx, recentCapturedExpenses);
       const clarifyReply = routePlan.clarifyQuestion ?? CLARIFY_REPLY;
       await this.deliverReply(event, clarifyReply);
       await this.persistIntakeTurn({
