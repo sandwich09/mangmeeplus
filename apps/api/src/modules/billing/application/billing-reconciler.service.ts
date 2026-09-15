@@ -176,6 +176,7 @@ export class BillingReconcilerService {
         if (sessions.length !== 1) throw new Error('billing.checkout_unknown');
         const session = sessions[0]!;
         if (session.object !== 'checkout.session' || session.mode !== 'subscription' || session.livemode !== account.livemode ||
+          !['open', 'complete', 'expired'].includes(session.status) ||
           session.client_reference_id !== attempt.id || stripeId(session.customer) !== account.customerId ||
           session.metadata?.billingAccountId !== account.id || session.metadata?.billingAttemptId !== attempt.id) throw new Error('billing.session_binding');
         if (session.status === 'expired' && !session.subscription) {

@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+[Checkout observation proof](checkout-observation-result.json): original UNKNOWN source recovery and settlement retry. Focused restart74/settlement83 groups PASS; previous combined run FAILED at a fixture429 expectation. Counts overlap; pre-media compiled build and simulated providers.
+
 [Text-capture source proof](line-text-source-result.json): current committed record/category and scoped duplicate recovery.594 focused/74 PostgreSQL tests PASS, typecheck/SWC PASS. Five PG source cases use a simulated capture producer; no full/native acceptance claim.
 
 [Candidate-source proof](line-candidate-source-result.json): local553 unit/69 PostgreSQL/8 shared-reader tests PASS/0skip, API typecheck PASS. Candidate selection and intake race recovery are covered; continuation/new-capture/full acceptance remain separate.

@@ -124,8 +124,21 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
     if(browser){const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/settlements`,{waitUntil:'domcontentloaded'});
       await page.getByLabel('เริ่มช่วงเวลา',{exact:true}).fill(new Date((stamp-60)*1000-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16));
       await page.getByLabel('สิ้นสุดช่วงเวลา',{exact:true}).fill(new Date((stamp+120)*1000-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16));
-      await page.getByLabel('เหตุผล',{exact:true}).fill(body.reason);const created=page.waitForResponse(r=>r.url().endsWith('/settlements')&&r.request().method()==='POST');
-      await page.getByRole('button',{name:'เริ่มตรวจยอด',exact:true}).click();const result=await created;assert.equal(result.status(),200);const browserRun=(await result.json()).id;ids.push(browserRun);
+      await page.getByLabel('เหตุผล',{exact:true}).fill(body.reason);
+      const originalWindow=await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue()));
+      let browserRun='';
+      for(let attempt=0;attempt<3;attempt++){
+        const created=page.waitForResponse(r=>r.url().endsWith('/settlements')&&r.request().method()==='POST');
+        await page.getByRole('button',{name:'เริ่มตรวจยอด',exact:true}).click();const result=await created,value=await result.json();
+        if(result.status()===429){
+          assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(value.retryAfterSeconds)&&value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
+          await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();assert.equal(await page.getByLabel('เหตุผล',{exact:true}).inputValue(),body.reason);
+          assert.deepEqual(await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue())),originalWindow);
+          await new Promise(resolve=>setTimeout(resolve,(value.retryAfterSeconds+1)*1000));continue;
+        }
+        assert.equal(result.status(),200,JSON.stringify(value));browserRun=value.id;break;
+      }
+      assert.ok(browserRun,'Original settlement creation must recover within bounded retries');ids.push(browserRun);
       await page.waitForURL(`${browser.origin}/system/billing/settlements/${browserRun}`);
       const browserNext=async()=>{
         for(let attempt=0;attempt<3;attempt++){

@@ -123,7 +123,24 @@ export async function checkBillingRestart(input: {
   } else expired = await checkout(q.body);
   assert.equal(expired.status, 200, JSON.stringify(expired.body));
   await input.reconcile(account.id); assert.equal((await readAccount()).activeAttemptId, expired.body.attemptId, 'open restart cannot fall through to old canceled subscription');
-  const expiredSession = provider.sessions!.find(s => s.metadata.billingAttemptId === expired.body.attemptId)!; expiredSession.status = 'expired';
+  const expiredSession = provider.sessions!.find(s => s.metadata.billingAttemptId === expired.body.attemptId)!;
+  const unknownAttempt = await client.billingAttempt.update({ where: { id: expired.body.attemptId }, data: { status: 'UNKNOWN' } });
+  const unknownIssue = await client.billingIssue.create({ data: { companyId, stripeAccountId: account.stripeAccountId, livemode: false,
+    kind: 'UNKNOWN_ATTEMPT', referenceId: unknownAttempt.id } });
+  for (const status of [undefined, null, '', 'pending', 0]) {
+    expiredSession.status = status;
+    await assert.rejects(() => input.reconcile(account.id), /billing.session_binding/);
+    assert.deepEqual(await client.billingAttempt.findUniqueOrThrow({ where: { id: unknownAttempt.id } }), unknownAttempt);
+    assert.deepEqual(await client.billingIssue.findUniqueOrThrow({ where: { id: unknownIssue.id } }), unknownIssue);
+    assert.equal((await readAccount()).activeAttemptId, unknownAttempt.id);
+    assert.equal((await readAccount()).baseSubscriptionId, old.sub.id);
+    assert.equal(await client.billingReceiptGrant.count({ where: { billingAccountId: account.id } }), 1);
+  }
+  expiredSession.status = 'open'; await input.reconcile(account.id);
+  assert.equal((await client.billingAttempt.findUniqueOrThrow({ where: { id: unknownAttempt.id } })).status, 'OPEN');
+  assert.equal((await client.billingIssue.findUniqueOrThrow({ where: { id: unknownIssue.id } })).state, 'RESOLVED');
+  cases.push('unknown-checkout-status-preserves-original-attempt-case-and-rights-until-original-source-recovers');
+  expiredSession.status = 'expired';
   await input.reconcile(account.id); assert.equal((await readAccount()).activeAttemptId, null); assert.equal((await readAccount()).baseSubscriptionId, old.sub.id);
   assert.equal(await client.billingReceiptGrant.count({ where: { billingAccountId: account.id } }), 1);
   cases.push('restart-open-and-expired-checkout-preserve-old-contract-without-unlock');
