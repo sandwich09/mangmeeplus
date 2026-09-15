@@ -87,3 +87,9 @@ Next: Finish current regressions, native config preflight source checks, broader
 Final local check update: repeat purchase/paid repair/notification/admin browser regression passed (`/tmp/email-otp-repeat-final.log`); final API and web TypeScript both exited 0. Guard/runner wiring has 41 passed/0 failed/0 skipped. All 47 maintenance pins are current. These complete the scoped local checks; remote CI and dependency integration remain required.
 
 Next: record exact commit/PR/CI state, then follow the user's CI-before-admin-merge instruction. Preserve the concurrent root checkout; do not deploy or claim native readiness.
+
+## Commit and integration preparation — 2026-09-16
+
+- Feature commit: `b89652ee` (113 scoped files). Integrated current origin/develop `647a3db4` in merge commit `494df47e`; kept the newer account OTP UI and predecessor shared LINE controls while retaining develop's loading/accessibility changes and native Postmark evidence. No new package.json change; the integration merge carries develop's existing pdfjs lockfile patch.
+- After conflict resolution, web TypeScript passed (`/tmp/email-otp-web-typecheck-integrated.log`), Kamal tests passed 23/23 (`/tmp/email-otp-kamal-integrated.log`), and full 47-file maintenance validation passed (`/tmp/email-otp-maintenance-integrated-full.log`). Provider/mail/ERP source was not altered by those UI conflict resolutions.
+- Prepare a draft PR to develop for review and exact-head CI. Its full diff necessarily contains unmerged Billing/Postmark predecessors; the feature commit above isolates this task's implementation. Do not admin merge the broad dependency diff until the prerequisite scope is resolved and required CI is green. PR creation, push and CI outcomes are pending at this commit.
