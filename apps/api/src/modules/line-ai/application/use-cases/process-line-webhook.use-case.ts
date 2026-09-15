@@ -1409,6 +1409,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
     records: Map<string, string | null>; categories: Map<string, string | null>; draftChoices?: LineExpenseDraftRouteContext[] }>();
+  private readonly deliverySubstituteSources = new WeakMap<object, Array<{ context: RequestContext; source: LineSubstituteReceiptContinuationResult['source'] }>>();
   private readonly deliveryCandidates = new WeakMap<object, { context: RequestContext; chatKeyHash: string; snapshot: string }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
@@ -2775,6 +2776,13 @@ export class ProcessLineWebhookUseCase {
         sourcesCurrent = sourcesCurrent && await this.receiptDeliverySourcesCurrent(event);
         if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
       }
+      const substitute = this.deliverySubstituteSources.get(event);
+      if (substitute) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        for (const proof of substitute) sourcesCurrent = sourcesCurrent
+          && Boolean(await this.substituteReceiptContinuation?.replySourcesCurrent(proof.context, proof.source));
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
       const candidates = this.deliveryCandidates.get(event);
       if (candidates) {
         denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
@@ -2823,6 +2831,13 @@ export class ProcessLineWebhookUseCase {
       for (const category of source.categories) this.rememberReceiptDeliverySource(event, context, record, category);
     }
     if (source.choices) this.deliveryReceiptSources.get(event)!.draftChoices = source.choices;
+  }
+
+  private rememberSubstituteDeliverySource(event: LineTextEvent, context: RequestContext, result: LineSubstituteReceiptContinuationResult) {
+    if (!result.source && !result.expenseId && !result.candidateExpenseIds?.length && !result.resumeCapsule) return;
+    if (result.status === 'FORBIDDEN' && !result.source) return; // Static permission guidance only.
+    const proofs = this.deliverySubstituteSources.get(event) ?? [];
+    proofs.push({ context, source: result.source }); this.deliverySubstituteSources.set(event, proofs);
   }
 
   private rememberCandidateDeliverySources(event: LineTextEvent, context: RequestContext, candidates: LineIntakeCorrectionCandidate[]) {
@@ -2921,7 +2936,7 @@ export class ProcessLineWebhookUseCase {
       }
       const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
       const authorizationJson = { v: 1, producerId,
-        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
+        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) && !this.deliverySubstituteSources.has(event) && !this.deliveryCandidates.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
           recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
@@ -3512,10 +3527,10 @@ export class ProcessLineWebhookUseCase {
       membershipId: resolvedAccess.membershipId, roles: resolvedAccess.roles,
       permissions: resolvedAccess.permissions, scopes: resolvedAccess.scopes, authProvider: 'line',
     };
-    const activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
+    let activeExpenseDrafts = expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation
       ? await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event))
       : [];
-    const draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+    let draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
     const draftRouteCurrent = async () => {
       if (!expenseDraftConversationEnabled || !canCaptureExpense || !this.expenseDraftConversation) return true;
       try {
@@ -3713,7 +3728,14 @@ export class ProcessLineWebhookUseCase {
       const captured = await this.captureBeforeSubstituteContinuation(
         event, continuationCtx, normalizedText, captureFirstAmount, carriedSubstituteIntent,
       );
-      const captureReply = captured
+      // Park older questionnaires before producing source-bound substitute facts. If this turns
+      // out to be a side question, the later router must receive the resulting current context.
+      const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
+      if (expenseDraftConversationEnabled && canCaptureExpense && this.expenseDraftConversation) {
+        activeExpenseDrafts = await this.expenseDraftConversation.routeContexts(expenseDraftCtx, chatKeyHashOf(event));
+        draftRouteSnapshot = JSON.stringify(activeExpenseDrafts);
+      }
+      let captureReply = captured
         ? formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {
           textOnly: true,
           amount: captured.insertedAmount,
@@ -3745,6 +3767,7 @@ export class ProcessLineWebhookUseCase {
       } catch (error) {
         // The draft is already committed; a continuation failure degrades, it never sinks the capture.
         if (!captureReply) throw error;
+        if (captured) this.rememberReceiptDeliverySource(event, continuationCtx, captured.expense);
         this.logger.warn({ msg: 'line_substitute_continuation_after_capture_failed', requestId, ...safeLineErrorDetails(error) });
         const degraded = `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
         await this.deliverCompletedReply(event, degraded, companyId, resolvedAccess);
@@ -3755,6 +3778,8 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'completed', undefined, companyId);
         return;
       }
+      this.rememberSubstituteDeliverySource(event, continuationCtx, result);
+      if (captured) captureReply = (await this.savedReceiptReplies(event, companyId, captured.expense.id)).join('\n');
       // A FORBIDDEN outcome answers nothing and carries no resume capsule, so it must be delivered
       // through the normal branch instead of being reduced to a side-question interruption.
       //
@@ -3779,7 +3804,6 @@ export class ProcessLineWebhookUseCase {
       if (routeSideQuestion) {
         substituteInterruption = result;
       } else {
-        const interruption = await interruptExpenseDraft(captured ? [captured.expense.id] : []);
         const merged = `${captureReply ? `${captureReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n` : ''}${result.replyText}`;
         const replyText = `${merged}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess, result.badge);
@@ -3988,6 +4012,7 @@ export class ProcessLineWebhookUseCase {
         // The continuation use case re-reads authoritative state and rejects on permission/feature/
         // eligibility BEFORE any save; a question/negation/denied result writes nothing. An affirmative
         // to a pending start clarification confirms the paraphrase start for that ONE bound expense.
+        const interruption = await interruptExpenseDraft();
         const result = await this.substituteReceiptContinuation.execute(continuationCtx, {
           messageText: normalizedText,
           chatKeyHash: chatKeyHashOf(event),
@@ -3997,12 +4022,12 @@ export class ProcessLineWebhookUseCase {
           requireStartConfirmation: true,
           confirmedStart,
         });
+        this.rememberSubstituteDeliverySource(event, continuationCtx, result);
         // PRECEDENCE when BOTH a substitute workflow AND an expense draft are open: the substitute path
         // (semantic route, OR the narrow canonical fallback taken because the provider was UNAVAILABLE)
         // wins THIS turn, and any OPEN expense draft is INTERRUPTED — paused with a note appended to the
         // reply, never silently dropped. So even with the router unreachable, a canonical substitute
         // command deterministically handles the substitute and preserves the draft to resume later.
-        const interruption = await interruptExpenseDraft();
         const replyText = `${result.replyText}${interruption ? `\n\n${interruption}` : ''}`;
         await this.deliverCompletedReply(event, replyText, companyId, resolvedAccess);
         await this.persistIntakeTurn({
@@ -6578,7 +6603,11 @@ ${link}`, ctx.companyId, access);
           webBaseUrl: this.config.webBaseUrl,
           confirmedStart: true,
         });
-    const reply = formatCheckBillDraftCreatedReply(continuation, appliedOutcome?.charges ?? captured.charges ?? []);
+    this.rememberSubstituteDeliverySource(event, ctx, continuation);
+    const completed = await this.expenseRepo.findByIdWithRelations(ctx.companyId, expenseId, undefined, access.scopes);
+    if (!completed) throw new ConflictException('Receipt changed before the reply.');
+    this.rememberReceiptDeliverySource(event, ctx, completed);
+    const reply = formatCheckBillDraftCreatedReply(continuation, completed.charges ?? []);
     if (continuation.pendingQuestion && !['FORBIDDEN', 'INELIGIBLE', 'STALE'].includes(continuation.status)) {
       await this.deliverReply(event, reply);
     } else {
@@ -6833,7 +6862,7 @@ ${link}`, ctx.companyId, access);
         access.membershipId,
       ));
     }
-    let reply = (await this.savedReceiptReplies(event, companyId, expenseId)).join("\n");
+    let additionalReply: string | undefined;
     let pendingQuestion: string | undefined;
     if (additionalText && this.substituteReceiptContinuation && isSubstituteReceiptConversationText(additionalText)) {
       try {
@@ -6847,13 +6876,17 @@ ${link}`, ctx.companyId, access);
           recentCandidates: [{ id: expenseId, label: `รายการที่เพิ่งบันทึก ${expenseId}` }],
           webBaseUrl: this.config.webBaseUrl,
         });
-        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${continuation.replyText}`;
+        this.rememberSubstituteDeliverySource(event, { requestId, authSubject: userId, userId, companyId,
+          membershipId: access.membershipId, roles: access.roles, permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, continuation);
+        additionalReply = continuation.replyText;
         pendingQuestion = continuation.pendingQuestion;
       } catch (error) {
         this.logger.warn({ msg: 'line_substitute_continuation_additional_outcome_failed', requestId, ...safeLineErrorDetails(error) });
-        reply = `${reply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED}`;
+        additionalReply = SUBSTITUTE_ADDITIONAL_OUTCOME_DEGRADED;
       }
     }
+    const receiptReply = (await this.savedReceiptReplies(event, companyId, expenseId)).join('\n');
+    const reply = additionalReply ? `${receiptReply}\n\n${SUBSTITUTE_ADDITIONAL_OUTCOME_LABEL}\n${additionalReply}` : receiptReply;
     await this.deliverCompletedReply(event, reply, companyId, access);
     await this.prisma.client.lineIntakePendingMedia.updateMany({
       where: { id: pending.id, status: 'PENDING' },

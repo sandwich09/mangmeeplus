@@ -24,6 +24,7 @@ import { PrepareSubstituteReceiptUseCase } from './substitute-receipt.use-case';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { PDFDocument } from 'pdf-lib';
 import { CreateSignatureAssetUseCase } from './signature-asset.use-case';
+import { toSubstituteEvidenceSummary } from '../../infrastructure/prisma-expense.repository';
 
 const WEB_BASE = 'https://app.example.com';
 
@@ -131,13 +132,15 @@ function harness(overrides: {
           } : {}),
         },
       };
-      return {
+      const created = {
         ...input, id: 'evidence-1', version: 1, status: 'PREPARED', documentNumber: 'SUB-202608-00007',
         preparedAt: at, expenseUpdatedAtAtPreparation: at, updatedAt: at,
         payerPosition: null, certifiedArtifactAttachmentId: null, certifiedArtifactChecksumSha256: null, certifiedAt: null,
         approverUserId: null, approverName: null, approverPosition: null, approvedAt: null,
         artifactAttachmentId: null, checksumSha256: null, issuedAt: null, supersedeReason: null,
       };
+      current = { ...current, substituteReceiptEvidence: toSubstituteEvidenceSummary(created) };
+      return created;
     },
     listLineSubstituteContinuationRows: async () => {
       const state = current.sourceChannelMetadataJson?.lineSubstituteReceiptContinuation;
@@ -547,7 +550,9 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
   });
 
   it('lists numbered candidates when the target is ambiguous and still resolves the chosen number', async () => {
-    const h = harness();
+    const h = harness(), read = h.repo.findByIdWithRelations;
+    h.repo.findByIdWithRelations = async (companyId: string, id: string) => id === 'expense-9'
+      ? expense({ id, expenseNumber: 'EXP-009', grandTotalAmount: '90' }) : read(companyId, id);
     const listed = await h.useCase.execute(ctx(), {
       messageText: 'ทำใบทดแทนใบเสร็จ', chatKeyHash: 'chat-hash', webBaseUrl: WEB_BASE,
       recentCandidates: [
@@ -745,9 +750,13 @@ describe('LineSubstituteReceiptContinuationUseCase', () => {
       { id: 'expense-1', updatedAt: current.updatedAt, sourceChannelMetadataJson: { lineSubstituteReceiptContinuation: state } },
       { id: 'expense-2', updatedAt: current.updatedAt, sourceChannelMetadataJson: { lineSubstituteReceiptContinuation: { ...state, workflowId: 'wf-2', expenseId: 'expense-2' } } },
     ];
+    const read = repo.findByIdWithRelations;
+    repo.findByIdWithRelations = async (companyId: string, id: string) => id === 'expense-2'
+      ? expense({ id, expenseNumber: 'EXP-002' }) : read(companyId, id);
     const result = await h.useCase.execute(ctx(), { messageText: 'ทำใบรับรองต่อ', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
     assert.equal(result.status, 'TARGET_REQUIRED');
-    assert.match(result.replyText, /1\).*expense-1[\s\S]*2\).*expense-2/);
+    assert.match(result.replyText, /1\).*EXP-001[\s\S]*2\).*EXP-002/);
+    assert.deepEqual(result.source?.records.map(item => item.id), ['expense-1', 'expense-2']);
     assert.equal(result.pendingQuestion, result.replyText.split('ทำต่อ: ')[1], 'the numbered choice stays pending');
     assert.equal(result.replyText.includes('/companies/'), false, 'an ambiguous target offers no link at all');
   });
@@ -2361,4 +2370,34 @@ describe('full funding declarations', () => {
       assert.equal(h.prepares.length, 0);
     });
   }
+});
+
+describe('substitute reply source facts', () => {
+  for (const fault of ['unchanged', 'revision', 'evidence', 'attachment', 'categories', 'policy', 'approvers', 'payer', 'signature', 'permission']) {
+    it(`retains the producing revision and validates ${fault} without saving or preparing again`, async () => {
+      const h = await readyHarness(); const source = h.asked.source;
+      assert.ok(source); assert.equal(source.records[0]!.revision, h.getExpense().updatedAt.toISOString());
+      assert.equal(await h.useCase.replySourcesCurrent(ctx(), source), true);
+      const savedCount = h.saves.length, preparedCount = h.prepares.length;
+      if (fault === 'revision') h.getExpense().updatedAt = new Date(h.getExpense().updatedAt.getTime() + 1);
+      if (fault === 'evidence') h.issue();
+      if (fault === 'attachment') h.getExpense().attachments[0].status = 'DELETED';
+      if (fault === 'categories') h.repo.listCategories = async () => [{ id: 'cat-travel', name: 'ชื่อใหม่' }];
+      if (fault === 'policy') h.repo.getSubstituteReceiptPolicy = async () => ({ approvalMode: 'DESIGNATED_APPROVERS' });
+      if (fault === 'approvers') h.repo.listEligibleSubstituteReceiptApprovers = async () => [];
+      if (fault === 'payer') { assert.equal(source.policy!.payerUserId, 'user-1'); h.repo.findActiveMemberIdentity = async () => null; }
+      if (fault === 'signature') { assert.equal(source.signatureAvailable, false); h.repo.findReusableSignatureAsset = async () => ({ id: 'new-signature' }); }
+      assert.equal(await h.useCase.replySourcesCurrent(fault === 'permission' ? ctx([]) : ctx(), source), fault === 'unchanged');
+      assert.equal(h.saves.length, savedCount); assert.equal(h.prepares.length, preparedCount);
+    });
+  }
+  it('binds a prepared document to its returned expense and evidence revisions', async () => {
+    const h = await readyHarness({ signature: { id: 'sig-1' } });
+    const result = await h.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash', recentCandidates: [], webBaseUrl: WEB_BASE });
+    assert.equal(result.status, 'READY_FOR_WEB'); assert.ok(result.source);
+    assert.equal(await h.useCase.replySourcesCurrent(ctx(), result.source), true);
+    const original = JSON.stringify(result.source); h.issue();
+    assert.equal(await h.useCase.replySourcesCurrent(ctx(), result.source), false);
+    assert.equal(JSON.stringify(result.source), original); assert.equal(h.prepares.length, 1);
+  });
 });

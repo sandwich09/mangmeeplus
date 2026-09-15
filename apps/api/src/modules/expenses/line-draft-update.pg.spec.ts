@@ -30,6 +30,7 @@ import { LineDraftUpdateUseCase } from './application/use-cases/line-draft-updat
 import { LineDraftPreviewStore } from './application/services/line-draft-preview.store';
 import { ExpenseTransactionTaxService } from './application/services/expense-transaction-tax.service';
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository';
+import { LineSubstituteReceiptContinuationUseCase } from './application/use-cases/line-substitute-receipt-continuation.use-case';
 import { ProcessLineWebhookUseCase } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 import { ReceiptOcrApplyService } from './application/services/receipt-ocr-apply.service';
 
@@ -146,6 +147,50 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
       await client.branch.deleteMany({ where: { companyId } });
       await client.company.deleteMany({ where: { id: companyId } });
       await client.user.deleteMany({ where: { id: userId } }); await client.$disconnect();
+    }
+  });
+
+  it('binds a saved substitute conversation to real current expense, attachment and permission sources', async () => {
+    const url = new URL(databaseUrl!);
+    assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
+    assert.ok(/^\/watchdog_bms(_[a-z0-9_]+)?$/.test(url.pathname)
+      || url.port === '15432' && url.pathname === '/mangmee_billing_20260912');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const tag = `sub-source-${randomUUID()}`, companyId = `${tag}-co`, userId = `${tag}-user`;
+    const repo = new PrismaExpenseRepository({ client } as never);
+    const service = new LineSubstituteReceiptContinuationUseCase(repo,
+      { execute: async () => assert.fail('blocked conversation never prepares') } as never,
+      { log: async () => undefined } as never, {} as never, {} as never);
+    try {
+      await client.company.create({ data: { id: companyId, name: 'Substitute source fixture' } });
+      await client.user.create({ data: { id: userId, displayName: 'Substitute source fixture' } });
+      const branch = await client.branch.create({ data: { companyId, code: 'SUB', name: 'Original branch', type: 'BRANCH' } });
+      const expense = await client.expenseRecord.create({ data: { companyId, branchId: branch.id, createdByUserId: userId,
+        status: 'NEEDS_REVIEW', sourceDocumentType: 'EXPENSE_NOTE_TEXT', captureSource: 'LINE_UPLOAD',
+        expenseDate: new Date('2026-09-15'), grandTotalAmount: '50', netPayableAmount: '50', sourceChannelMetadataJson: { chatKeyHash: CHAT } } });
+      const context = { companyId, userId, authSubject: userId, requestId: tag, membershipId: tag,
+        roles: ['OWNER'], permissions: ['expense.review'], scopes: { branchIds: [branch.id] }, authProvider: 'line' } as RequestContext;
+      const input = { messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: CHAT, recentCandidates: [{ id: expense.id, label: 'ค่าเดินทาง' }] };
+      const result = await service.execute(context, input); assert.equal(result.status, 'BLOCKED'); assert.ok(result.source);
+      const saved = await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } });
+      assert.equal(result.source.records[0]!.revision, saved.updatedAt.toISOString());
+      assert.equal(await service.replySourcesCurrent(context, result.source), true);
+      assert.equal(await service.replySourcesCurrent({ ...context, scopes: { branchIds: [] } }, result.source), false);
+      assert.equal(await service.replySourcesCurrent({ ...context, permissions: [] }, result.source), false);
+      const attachment = await client.attachmentObject.create({ data: { companyId, uploadedByUserId: userId, status: 'ACTIVE',
+        storageProvider: 'local', bucket: 'synthetic', objectKey: tag, originalFileName: 'receipt.png', mimeType: 'image/png', byteSize: 20 } });
+      await repo.linkAttachment(expense.id, attachment.id, 'expense.receipt.supporting', companyId, userId);
+      assert.equal((await client.expenseRecord.findUniqueOrThrow({ where: { id: expense.id } })).updatedAt.toISOString(), saved.updatedAt.toISOString());
+      assert.equal(await service.replySourcesCurrent(context, result.source), false, 'attachment change is detected without relying on the header revision');
+      const refreshed = await service.execute(context, input); assert.equal(await service.replySourcesCurrent(context, refreshed.source), true);
+      const source = JSON.stringify(refreshed.source);
+      await repo.updateExpense({ id: expense.id, companyId, updatedByUserId: userId, note: 'Human edit after reply',
+        updatedAt: new Date(Date.now() + 1000) });
+      assert.equal(await service.replySourcesCurrent(context, refreshed.source), false); assert.equal(JSON.stringify(refreshed.source), source);
+    } finally {
+      await client.attachmentLink.deleteMany({ where: { companyId } }); await client.expenseRecord.deleteMany({ where: { companyId } });
+      await client.attachmentObject.deleteMany({ where: { companyId } }); await client.branch.deleteMany({ where: { companyId } });
+      await client.company.deleteMany({ where: { id: companyId } }); await client.user.deleteMany({ where: { id: userId } }); await client.$disconnect();
     }
   });
 

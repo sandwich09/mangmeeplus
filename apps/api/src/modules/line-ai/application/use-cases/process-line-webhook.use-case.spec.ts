@@ -6,7 +6,7 @@ import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, for
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
-import { LineSubstituteReceiptContinuationUseCase } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
+import { LineSubstituteReceiptContinuationUseCase, substituteReplySource } from '../../../expenses/application/use-cases/line-substitute-receipt-continuation.use-case';
 import { buildLineAssistantTextCardMessage } from '../../domain/logic/line-business-card.logic';
 import { bangkokMonthKey } from '../company-ai-usage-meter';
 
@@ -265,7 +265,7 @@ describe('check-bill LINE reply UX', () => {
       },
       expenseRepo: {
         findByLineMessageId: async () => null,
-        findByIdWithRelations: async () => ({ ...savedMediaFixture('expense-check-bill'), createdByUserId: 'u1',
+        findByIdWithRelations: async () => ({ ...savedMediaFixture('expense-check-bill'), createdByUserId: 'u1', charges,
           sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(BASE_EVENT) } }),
         updateExpense: async (input: any) => { updates.push(input); return input; },
       },
@@ -4754,11 +4754,16 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
 
   function makeSub(result?: any, context?: any) {
     const executeCalls: any[] = [];
+    const saved = result?.expenseId ? savedMediaFixture(result.expenseId) : undefined;
     return {
       executeCalls,
       useCase: {
         substituteContext: async () => ({ workflowState: 'none', hasPendingQuestion: false, preparedState: 'none', recentCandidateCount: 0, ...(context ?? {}) }),
-        execute: async (_ctx: any, input: any) => { executeCalls.push(input); return result ?? { handled: true, status: 'BLOCKED', replyText: 'ระบุผู้จ่าย', acceptedFields: [], blockers: [], pendingQuestion: 'ระบุผู้จ่าย' }; },
+        execute: async (_ctx: any, input: any) => { executeCalls.push(input);
+          return result ? { ...result, ...(saved ? { source: substituteReplySource(saved) } : {}) }
+            : { handled: true, status: 'BLOCKED', replyText: 'ระบุผู้จ่าย', acceptedFields: [], blockers: [], pendingQuestion: 'ระบุผู้จ่าย' }; },
+        replySourcesCurrent: (ctx: any, source: any) => LineSubstituteReceiptContinuationUseCase.prototype.replySourcesCurrent.call(
+          { repo: { findByIdWithRelations: async () => saved } } as any, ctx, source),
       },
     };
   }
