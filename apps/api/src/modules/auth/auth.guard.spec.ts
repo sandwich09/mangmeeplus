@@ -636,6 +636,8 @@ describe('billing recovery boundaries', () => {
     await assert.rejects(guard.canActivate(makeContext({ path: '/v1/public/stripe-events/other', method: 'POST' })));
   });
   it('bounds recovery to implemented methods and preserves business and legal gates', async () => {
+    for(const method of ['GET','POST'])assert.equal(isBillingRecoveryRoute(method,'/v1/companies/c1/package-change-requests'),true);
+    for(const [method,path] of [['DELETE','/v1/companies/c1/package-change-requests'],['POST','/v1/companies/c1/package-change-requests/approve'],['GET','/v1/system/package-change-requests']])assert.equal(isBillingRecoveryRoute(method!,path!),false);
     for (const path of ['quote', 'checkout', 'portal', 'refresh', 'attempts/a/resume', 'attempts/a/capacity', 'collection/a/capacity', 'documents/d/open']) assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), true);
     assert.equal(isBillingRecoveryRoute('GET', '/v1/companies/c1/billing/capacity?offerKey=STARTER_249&interval=year'), true);
     for(const kind of ['refunds','credit-notes'])assert.equal(isBillingRecoveryRoute('GET',`/v1/companies/c1/billing/invoices/i1/adjustments/${kind}?cursor=re_1`),true);
@@ -648,10 +650,15 @@ describe('billing recovery boundaries', () => {
     const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired as any, acceptedLegal);
     assert.equal(await guard.canActivate(makeContext({ path: '/v1/companies/c1/billing', authHeader: 'Bearer token' })), true);
     assert.equal(recovery, true);
+    for(const method of ['GET','POST']){
+      assert.equal(await guard.canActivate(makeContext({path:'/v1/companies/c1/package-change-requests',method,authHeader:'Bearer token'})),true);
+      assert.equal(recovery,true);
+    }
     await assert.rejects(guard.canActivate(makeContext({ path: '/v1/companies/c1/expenses', authHeader: 'Bearer token' })), (e: any) => e.getResponse().code === 'company_term_expired');
     assert.equal(recovery, false);
     const legalRequired = { isRequired: async () => true } as any;
     const legalGuard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver, localConfig, expired as any, legalRequired);
     await assert.rejects(legalGuard.canActivate(makeContext({ path: '/v1/companies/c1/billing', authHeader: 'Bearer token' })), (e: any) => e.getResponse().code === 'legal_acceptance_required');
+    await assert.rejects(legalGuard.canActivate(makeContext({path:'/v1/companies/c1/package-change-requests',method:'POST',authHeader:'Bearer token'})),(e:any)=>e.getResponse().code==='legal_acceptance_required');
   });
 });

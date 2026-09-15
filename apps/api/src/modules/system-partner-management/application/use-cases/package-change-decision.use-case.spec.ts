@@ -109,6 +109,17 @@ function harness(options: {
 }
 
 describe('GET /system/package-change-requests', () => {
+  it('shows a paid purchase source without exposing financial references or sending a second approval notice', async () => {
+    const row={...OPEN_ROW,status:'APPROVED',paymentState:'STRIPE_APPLIED',paymentRef:'private-invoice',decidedAt:new Date()};
+    const h=harness({row,rows:[row],paid:true});
+    const {items}=await h.controller.list('APPROVED');
+    assert.equal(items[0]!.resolutionSource,'PAID_PURCHASE');
+    assert.doesNotMatch(JSON.stringify(items),/private-invoice|paymentRef/);
+    assert.equal((await h.controller.decide(row.id,{action:'APPROVE'},REQ)).status,'APPROVED');
+    assert.equal(h.planTermCalls.length,0);assert.equal(pushes.length,0);
+    const manual=await harness({rows:[{...row,paymentState:'NONE'}]}).controller.list('APPROVED');
+    assert.equal(manual.items[0]!.resolutionSource,undefined);
+  });
   it('shows the shop, the move and who asked for it', async () => {
     const h = harness({ rows: [{ ...OPEN_ROW }] });
     const { items } = await h.controller.list('OPEN');

@@ -155,7 +155,7 @@ async function main() {
     await client.externalIdentity.create({ data: { userId: userIds[0]!, provider: 'LINE', providerChannelId: `channel-${run}`, providerUserId: `U${run}` } });
     const permission = await client.permission.upsert({ where: { key: 'account.session.read' }, create: { key: 'account.session.read', description: 'Read own session' }, update: {} });
     const role = await client.role.create({ data: { companyId: companyIds[0]!, scopeKey: companyIds[0]!, key: 'OWNER', name: 'Synthetic owner', permissions: { create: { permissionId: permission.id } } } }); roleId = role.id;
-    for(const key of ['notification.read','notification.delivery.retry']){
+    for(const key of ['notification.read','notification.delivery.retry','company.setup.manage']){
       const noticePermission = await client.permission.upsert({ where: { key }, create: { key, description: key }, update: {} });
       await client.rolePermission.create({ data: { roleId, permissionId: noticePermission.id } });
     }
@@ -254,6 +254,11 @@ async function main() {
     assert.equal((await request(base, 'GET', undefined, { 'x-company-id': companyIds[1]! })).status, 403);
     const before = await request(base); assert.equal(before.status, 200); assert.equal(before.body.accessState, 'EXPIRED');
     cases.push('real-session-tenant-and-expired-owner-recovery');
+    const requestPath=`/v1/companies/${companyIds[0]}/package-change-requests`;
+    const originalRequest=await request(requestPath,'POST',{requestedTierKey:'PRO_999',note:'ขอซื้อ Pro เพื่อเพิ่มใบเสร็จให้ร้าน'});
+    assert.equal(originalRequest.status,201,JSON.stringify(originalRequest));assert.equal(originalRequest.body.status,'OPEN');
+    assert.equal((await request(requestPath,'POST',{requestedTierKey:'PRO_999'})).body.id,originalRequest.body.id);
+    const foreignRequest=await client.packageChangeRequest.create({data:{companyId:companyIds[1]!,requestedByUserId:userIds[0]!,requestedTierKey:'PRO_999'}});
     for (const offerKey of ['ENTERPRISE_1999', 'RECEIPT_ONLY']) assert.equal((await request(`${base}/quote`, 'POST', { offerKey, interval: 'year', billingEmail: 'owner@example.test' })).status, 409);
     assert.equal((await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test', amount: 1 })).status, 400);
     assert.equal(checkoutCalls, 0); cases.push('hidden-enterprise-and-forged-price-rejected');
@@ -310,6 +315,7 @@ async function main() {
     assert.equal((await request(`/v1/companies/${companyIds[1]}/billing/attempts/${checkout.body.attemptId}`)).status, 404);
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 0);
     assert.equal((await request(`${base}/attempts/${checkout.body.attemptId}`)).body.paymentState, 'PENDING');
+    assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:originalRequest.body.id}})).status,'OPEN');
     cases.push('quote-line-checkout-replay-cross-tenant-and-no-return-url-unlock');
     const session = provider.sessions[0]!, start = Math.floor(Date.now() / 1000) - 1, end = start + 365 * 86400;
     const subId = `sub_${run}`, invoiceId = `in_${run}`, intentId = `pi_${run}`, chargeId = `ch_${run}`;
@@ -348,6 +354,7 @@ async function main() {
     access.getStatus = nativeStatus;
     cases.push('closed-platform-signed-durable-webhook-dedupe-worker-credential');
     const initialHeld = await request(base); assert.equal(initialHeld.body.paymentState, 'PAID'); assert.equal(initialHeld.body.applyState, 'HELD');
+    assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:originalRequest.body.id}})).status,'OPEN');
     assert.equal(initialHeld.body.attemptId, checkout.body.attemptId); assert.equal(initialHeld.body.capacityRepair.attemptId, checkout.body.attemptId);
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 0);
     assert.equal((await request(`${base}/quote`, 'POST', { offerKey: 'PRO_999', interval: 'year', billingEmail: 'owner@example.test' })).body.code, 'BILLING_EXISTING_SUBSCRIPTION');
@@ -359,7 +366,8 @@ async function main() {
         memberships: initialOptions.memberships.map((m: any) => ({ id: m.id, defaultBranchId: null })) } }, { 'idempotency-key': randomUUID() });
     assert.equal(initialRepair.status, 202, JSON.stringify(initialRepair.body));
     };
-    cases.push(...await checkBillingApplyRetry({prisma,operations:app.get(BillingOperationsService),companyIds,stripeAccountId:accountId,origin,request,browser,
+    if(process.env.BILLING_PACKAGE_REQUEST_ONLY==='1')await repairInitialCapacity();
+    else cases.push(...await checkBillingApplyRetry({prisma,operations:app.get(BillingOperationsService),companyIds,stripeAccountId:accountId,origin,request,browser,
       signToken:(sid,userId)=>new JwtService().sign({sub:userId,sid},{secret,algorithm:'HS256',issuer:DEFAULT_JWT_ISSUER,audience:DEFAULT_JWT_AUDIENCE,expiresIn:3600}),
       recordLegal:(userId,membershipId,companyId)=>client.$transaction(tx=>app.get(LegalAcceptanceService).recordFromEvidence(tx,{userId,companyId,membershipId,
         requestId:run,evidence:{...release,locale:'th',legalAcceptedAt:new Date()}})).then(()=>{}),
@@ -380,6 +388,14 @@ async function main() {
     const paidAttempt = await request(`${base}/attempts/${checkout.body.attemptId}`);
     assert.equal(paidAttempt.body.paymentState, 'PAID'); assert.equal(paidAttempt.body.applyState, 'APPLIED');
     assert.ok(paidAttempt.body.invoiceReference);
+    const requestHistory=await request(requestPath);assert.equal(requestHistory.status,200,JSON.stringify(requestHistory));
+    const fulfilled=requestHistory.body.find((row:any)=>row.id===originalRequest.body.id);
+    assert.equal(fulfilled.status,'APPROVED');assert.equal(fulfilled.resolutionSource,'PAID_PURCHASE');assert.equal(fulfilled.note,originalRequest.body.note);
+    assert.doesNotMatch(JSON.stringify(fulfilled),/paymentRef|providerInvoiceId|receipt_url|hosted_invoice_url|totalSatang/);
+    assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:foreignRequest.id}})).status,'OPEN');
+    assert.equal(await client.auditLog.count({where:{companyId:companyIds[0],action:'billing.package_request.fulfilled'}}),1);
+    const nextRequest=await request(requestPath,'POST',{requestedTierKey:'PRO_999'});assert.equal(nextRequest.status,201);
+    assert.notEqual(nextRequest.body.id,originalRequest.body.id);assert.equal(nextRequest.body.status,'OPEN');
     await webhook(`evt_second${run}`); await request('/v1/internal/billing/drain', 'POST', {}, { 'x-worker-token': workerToken });
     await drainNotifications();
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
@@ -391,6 +407,15 @@ async function main() {
     assert.equal(historical.body.failed, 0, JSON.stringify(historical));
     assert.equal(await client.billingReceiptGrant.count({ where: { companyId: companyIds[0] } }), 1);
     cases.push('historical-paid-invoice-survives-replaced-subscription-item');
+    assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:nextRequest.body.id}})).status,'OPEN');
+    assert.equal(await client.auditLog.count({where:{companyId:companyIds[0],action:'billing.package_request.fulfilled'}}),1);
+    cases.push('original-line-request-stays-open-unpaid-and-held-then-fulfills-once-with-safe-purchase-history');
+    cases.push('historical-paid-replay-preserves-newer-and-foreign-package-requests');
+    // Independent later repurchase scenarios start without this synthetic next-request fixture.
+    await client.packageChangeRequest.deleteMany({where:{id:{in:[nextRequest.body.id,foreignRequest.id]}}});
+    if(process.env.BILLING_PACKAGE_REQUEST_ONLY==='1'){
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-provider-simulation',passed:cases,browserE2E:Boolean(browser),simulatedProviders:['Stripe','Postmark','LINE'],realProviderPayment:false}));return;
+    }
     if(process.env.BILLING_ADJUSTMENTS_ONLY==='1') {
       cases.push(...await checkBillingAdjustments({prisma,request,companyId:companyIds[0]!,foreignCompanyId:companyIds[1]!,userId:userIds[0]!,membershipId:memberId,provider,browser,
         transport:hook=>{journeyTransport=hook;},intercept:hook=>{providerCallHook=hook;}}));

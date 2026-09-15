@@ -1,0 +1,124 @@
+TAP version 13
+# Subtest: a phone number in the queue is a tap-to-call link, not text to retype
+ok 1 - a phone number in the queue is a tap-to-call link, not text to retype
+  ---
+  duration_ms: 0.508542
+  type: 'test'
+  ...
+# Subtest: the queue shows when the applicant accepted the terms
+ok 2 - the queue shows when the applicant accepted the terms
+  ---
+  duration_ms: 0.086625
+  type: 'test'
+  ...
+# Subtest: the reject dialog default comes from the rail, not from a hardcoded false
+ok 3 - the reject dialog default comes from the rail, not from a hardcoded false
+  ---
+  duration_ms: 0.092292
+  type: 'test'
+  ...
+# Subtest: the rejection paragraph is offered only where it can actually travel
+ok 4 - the rejection paragraph is offered only where it can actually travel
+  ---
+  duration_ms: 0.0385
+  type: 'test'
+  ...
+# Subtest: the two extra tabs load lazily, so a missing partner permission cannot break the queue
+ok 5 - the two extra tabs load lazily, so a missing partner permission cannot break the queue
+  ---
+  duration_ms: 0.066166
+  type: 'test'
+  ...
+# Subtest: an unopened tab shows no count rather than a confident zero
+ok 6 - an unopened tab shows no count rather than a confident zero
+  ---
+  duration_ms: 0.031916
+  type: 'test'
+  ...
+# Subtest: R13: the tab is asked of the server, not applied to whatever 200 rows arrived
+ok 7 - R13: the tab is asked of the server, not applied to whatever 200 rows arrived
+  ---
+  duration_ms: 0.055625
+  type: 'test'
+  ...
+# Subtest: R13: there is a way past the first page, and it continues rather than restarts
+ok 8 - R13: there is a way past the first page, and it continues rather than restarts
+  ---
+  duration_ms: 0.037042
+  type: 'test'
+  ...
+# Subtest: R13: "no applications here" is only said when the server counted zero
+ok 9 - R13: "no applications here" is only said when the server counted zero
+  ---
+  duration_ms: 0.110292
+  type: 'test'
+  ...
+# Subtest: a tab failure does not stay up over another tab
+ok 10 - a tab failure does not stay up over another tab
+  ---
+  duration_ms: 0.205333
+  type: 'test'
+  ...
+# Subtest: the package-change note is per row, not one box shared by every shop
+ok 11 - the package-change note is per row, not one box shared by every shop
+  ---
+  duration_ms: 0.168583
+  type: 'test'
+  ...
+# Subtest: the package-change tab offers the decision AND the partner page
+ok 12 - the package-change tab offers the decision AND the partner page
+  ---
+  duration_ms: 0.09425
+  type: 'test'
+  ...
+# Subtest: R10: approving asks for the business category the mapping could not read
+ok 13 - R10: approving asks for the business category the mapping could not read
+  ---
+  duration_ms: 0.101333
+  type: 'test'
+  ...
+# Subtest: a LINE review records one explicit outcome and only server-proven return targets
+ok 14 - a LINE review records one explicit outcome and only server-proven return targets
+  ---
+  duration_ms: 0.085917
+  type: 'test'
+  ...
+# Subtest: repeat trials and shared contact data require explicit recorded review
+ok 15 - repeat trials and shared contact data require explicit recorded review
+  ---
+  duration_ms: 0.10975
+  type: 'test'
+  ...
+# Subtest: recovery reuses the recorded review instead of posting fresh decision fields
+ok 16 - recovery reuses the recorded review instead of posting fresh decision fields
+  ---
+  duration_ms: 0.093333
+  type: 'test'
+  ...
+# Subtest: request info gathers all gaps together and reports queueing truthfully
+ok 17 - request info gathers all gaps together and reports queueing truthfully
+  ---
+  duration_ms: 0.091042
+  type: 'test'
+  ...
+# Subtest: the queue survives a 390px phone, which is where an operator reads it
+ok 18 - the queue survives a 390px phone, which is where an operator reads it
+  ---
+  duration_ms: 0.23775
+  type: 'test'
+  ...
+# Subtest: a package decision is confirmed before it moves what a customer pays
+ok 19 - a package decision is confirmed before it moves what a customer pays
+  ---
+  duration_ms: 0.124375
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 238.972875

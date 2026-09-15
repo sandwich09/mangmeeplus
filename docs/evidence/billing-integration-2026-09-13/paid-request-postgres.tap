@@ -1,0 +1,91 @@
+TAP version 13
+# (node:39657) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+# Subtest: renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+    # Subtest: paid renewal fulfills only the original matching request; replay leaves the next request open
+    ok 1 - paid renewal fulfills only the original matching request; replay leaves the next request open
+      ---
+      duration_ms: 338.085792
+      type: 'test'
+      ...
+    # Subtest: paid source guards preserve other tiers, legacy payment evidence and temporary gifts; audit failure rolls back paid apply
+    ok 2 - paid source guards preserve other tiers, legacy payment evidence and temporary gifts; audit failure rolls back paid apply
+      ---
+      duration_ms: 151.617833
+      type: 'test'
+      ...
+    # Subtest: verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift
+    ok 3 - verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift
+      ---
+      duration_ms: 65.98125
+      type: 'test'
+      ...
+    # Subtest: mapped financial sweep rotates beyond one page without minting access or duplicate cases
+    ok 4 - mapped financial sweep rotates beyond one page without minting access or duplicate cases
+      ---
+      duration_ms: 128.8535
+      type: 'test'
+      ...
+    # Subtest: renewal after a restarted contract does not reapply its old-subscription admission fence
+    ok 5 - renewal after a restarted contract does not reapply its old-subscription admission fence
+      ---
+      duration_ms: 59.596667
+      type: 'test'
+      ...
+    # Subtest: historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+    ok 6 - historical invoices keep accepted price while renewal selects the contract effective at its service boundary
+      ---
+      duration_ms: 79.718125
+      type: 'test'
+      ...
+    # Subtest: grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+    ok 7 - grace preserves old unspent quota across web and LINE without creating a new grant; recovery replaces it
+      ---
+      duration_ms: 107.097542
+      type: 'test'
+      ...
+    # Subtest: grace and recovery preserve the fixed expiry of Admin-granted receipts
+    ok 8 - grace and recovery preserve the fixed expiry of Admin-granted receipts
+      ---
+      duration_ms: 56.49875
+      type: 'test'
+      ...
+    # Subtest: admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+    ok 9 - admin hold, changed term, and unrelated invoice cannot unlock or extend a company
+      ---
+      duration_ms: 82.217291
+      type: 'test'
+      ...
+    # Subtest: grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+    ok 10 - grace cannot replenish exhausted receipts, and zero-day policy cancels without free days
+      ---
+      duration_ms: 73.584167
+      type: 'test'
+      ...
+    # Subtest: expired grace cancels collection once without new quota or deleting the unpaid invoice
+    ok 11 - expired grace cancels collection once without new quota or deleting the unpaid invoice
+      ---
+      duration_ms: 50.0115
+      type: 'test'
+      ...
+    # Subtest: a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+    ok 12 - a lost cancellation response remains UNKNOWN then resolves by rereading, without another DELETE
+      ---
+      duration_ms: 47.405916
+      type: 'test'
+      ...
+    1..12
+ok 1 - renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)
+  ---
+  duration_ms: 1332.635333
+  type: 'test'
+  ...
+1..1
+# tests 13
+# suites 0
+# pass 13
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1656.384458

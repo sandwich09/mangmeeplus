@@ -15,8 +15,8 @@ const UNIQUE_VIOLATION = 'P2002';
 
 /**
  * P10-L §3.7/§8. A shop asking to move tier. This use-case OPENS a request and nothing else: the
- * tier itself still changes only through `PUT /system/partners/:id/plan-term`, so there stays
- * exactly one place where a customer's limits can move (H-01).
+ * tier changes through the reviewed Admin writer or verified Stripe paid application. Opening
+ * a request never authorizes either mutation.
  */
 @Injectable()
 export class PackageChangeRequestUseCase {
@@ -76,7 +76,7 @@ export class PackageChangeRequestUseCase {
    * DISABLED belongs here (P10-L §3.7): a trial that ran out leaves the company DISABLED, and the
    * expiry message this flow sends carries a "ขอเปลี่ยนแพ็กเกจ" button — a shop that cannot ask
    * precisely when it most needs to would make that button decorative. Opening a queue row changes
-   * nothing by itself; the tier still moves only through the partner page.
+   * nothing by itself; the reviewed Admin or verified payment path must apply the tier.
    *
    * SUSPENDED and ARCHIVED stay out: those are an operator's decision, and the way back is a
    * conversation with the operator, not a request in the same queue.
@@ -107,6 +107,7 @@ function toDto(row: {
   companyId: string;
   requestedTierKey: string;
   status: string;
+  paymentState?: string;
   note: string | null;
   createdAt: Date;
   decidedAt: Date | null;
@@ -116,6 +117,7 @@ function toDto(row: {
     companyId: row.companyId,
     requestedTierKey: row.requestedTierKey,
     status: row.status as PackageChangeRequestDto['status'],
+    ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
     ...(row.note ? { note: row.note } : {}),
     createdAt: row.createdAt.toISOString(),
     ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),

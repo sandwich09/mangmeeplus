@@ -60,10 +60,11 @@ const TERM_RECOVERY_ROUTES = new Set([
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
 ]);
 
-// Only routes implemented by BillingController may recover a term hold. All still require
-// the live session, legal acceptance, platform access, tenant binding and a fresh OWNER check.
+// Only implemented billing and package-request read/create routes may recover a term hold.
+// Session, legal/platform access, tenant and route permissions still apply; mutations require OWNER.
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
+  if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
   const prefix = '/v1/companies/[^/]+/billing';
   return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
     : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);

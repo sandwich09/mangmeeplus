@@ -13,6 +13,7 @@ import { paidInvoiceEvidence, termProjectionHash } from './domain/paid-invoice';
 import { StripeRequestError, type StripeObject } from './infrastructure/stripe.client';
 import { admitCompanyOcr } from '../line-ai/application/company-ocr-governance';
 import { effectivePlanCapacity } from '../system-partner-management/domain/logic/plan-capacity';
+import { fulfillPaidPackageRequest } from './application/billing-package-request';
 
 const databaseUrl = process.env.BILLING_TEST_DATABASE_URL;
 test('renewal grace with real PostgreSQL and simulated Stripe (not native channel E2E)', { skip: !databaseUrl }, async t => {
@@ -101,6 +102,72 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       run: () => reconciler.reconcileAccount(account.id), deletes: () => deleteCalls, loseResponse: () => { loseDeleteResponse = true; } };
   }
   try {
+    await t.test('paid renewal fulfills only the original matching request; replay leaves the next request open', async () => {
+      const f = await fixture();
+      const request = await client.packageChangeRequest.create({data:{companyId:f.companyId,requestedByUserId:'synthetic-owner',
+        requestedTierKey:'BASIC_499',note:'ขอเพิ่มแพ็กเกจให้ร้าน'}});
+      await f.run();
+      assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
+      Object.assign(f.renewal,{status:'paid',amount_paid:49900,amount_remaining:0});f.subscription.status='active';
+      await f.run();await f.run();
+      const invoice=await client.billingInvoice.findFirstOrThrow({where:{billingAccountId:f.accountId,providerInvoiceId:f.renewal.id}});
+      const applied=await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}});
+      assert.equal(invoice.applyStatus,'APPLIED');assert.equal(applied.status,'APPROVED');assert.equal(applied.paymentState,'STRIPE_APPLIED');
+      assert.equal(applied.paymentRef,invoice.id);assert.equal(applied.decidedByUserId,null);assert.equal(applied.note,request.note);
+      assert.equal(applied.verifiedAt?.getTime(),invoice.appliedAt?.getTime());
+      assert.equal(await client.auditLog.count({where:{companyId:f.companyId,action:'billing.package_request.fulfilled'}}),1);
+      const next=await client.packageChangeRequest.create({data:{companyId:f.companyId,requestedByUserId:'synthetic-owner',requestedTierKey:'BASIC_499',
+        createdAt:new Date(invoice.appliedAt!.getTime()+1)}});
+      await f.run();
+      await client.$transaction(async tx=>{await tx.$executeRaw`SELECT id FROM "Company" WHERE id=${f.companyId} FOR UPDATE`;
+        await fulfillPaidPackageRequest(tx,f.companyId,f.accountId,invoice.id);});
+      assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:next.id}})).status,'OPEN');
+      assert.equal(await client.auditLog.count({where:{companyId:f.companyId,action:'billing.package_request.fulfilled'}}),1);
+      assert.equal(await client.outboxEvent.count({where:{companyId:f.companyId,eventType:'billing.invoice.applied'}}),1);
+    });
+    await t.test('paid source guards preserve other tiers, legacy payment evidence and temporary gifts; audit failure rolls back paid apply', async () => {
+      const f=await fixture(),request=await client.packageChangeRequest.create({data:{companyId:f.companyId,requestedByUserId:'synthetic-owner',requestedTierKey:'BASIC_499'}});
+      Object.assign(f.renewal,{status:'paid',amount_paid:49900,amount_remaining:0});f.subscription.status='active';
+      const trigger=`paid_request_${randomUUID().replaceAll('-','')}`;
+      await client.$executeRawUnsafe(`CREATE FUNCTION "${trigger}"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='billing.package_request.fulfilled' AND NEW."companyId"='${f.companyId}' THEN RAISE EXCEPTION 'synthetic paid request audit failure'; END IF; RETURN NEW; END $$`);
+      try {
+        await client.$executeRawUnsafe(`CREATE TRIGGER "${trigger}" BEFORE INSERT ON "AuditLog" FOR EACH ROW EXECUTE FUNCTION "${trigger}"()`);
+        await assert.rejects(f.run(),/synthetic paid request audit failure/);
+        assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
+        assert.equal(await client.billingReceiptGrant.count({where:{companyId:f.companyId,kind:'RENEWAL'}}),0);
+        assert.equal((await client.companyPlanTerm.findUniqueOrThrow({where:{companyId:f.companyId}})).termEndsAt.getTime(),f.end*1000);
+        assert.equal(await client.outboxEvent.count({where:{companyId:f.companyId,eventType:'billing.invoice.applied'}}),0);
+      } finally {
+        await client.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${trigger}" ON "AuditLog"`);
+        await client.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${trigger}"()`);
+      }
+      await client.packageChangeRequest.update({where:{id:request.id},data:{requestedTierKey:'PRO_999'}});
+      await f.run();
+      const invoice=await client.billingInvoice.findFirstOrThrow({where:{billingAccountId:f.accountId,providerInvoiceId:f.renewal.id}});
+      const term=await client.companyPlanTerm.findUniqueOrThrow({where:{companyId:f.companyId}});
+      await client.companyPlanTerm.update({where:{companyId:f.companyId},data:{capacityOverride:{operationId:randomUUID(),accountId:f.accountId,
+        tierKey:'PRO_999',branchLimit:5,employeeLimit:10,effectiveAt:new Date().toISOString(),expiresAt:term.termEndsAt.toISOString()}}});
+      const resolve=()=>client.$transaction(async tx=>{await tx.$executeRaw`SELECT id FROM "Company" WHERE id=${f.companyId} FOR UPDATE`;
+        await fulfillPaidPackageRequest(tx,f.companyId,f.accountId,invoice.id);});
+      await resolve();assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN','Pro gift is not a purchased Pro package');
+      await client.packageChangeRequest.update({where:{id:request.id},data:{requestedTierKey:'BASIC_499',paymentRef:'legacy-slip'}});
+      await resolve();assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
+      await client.packageChangeRequest.update({where:{id:request.id},data:{paymentRef:null}});
+      for(const data of [{applyStatus:'HELD'},{providerStatus:'open'},{refundedSatang:1},{disputed:true}]){
+        await client.billingInvoice.update({where:{id:invoice.id},data});await resolve();
+        assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
+        await client.billingInvoice.update({where:{id:invoice.id},data:{applyStatus:'APPLIED',providerStatus:'paid',refundedSatang:0,disputed:false}});
+      }
+      const grant=await client.billingReceiptGrant.findFirstOrThrow({where:{companyId:f.companyId,sourceKey:invoice.id}});
+      for(const data of [{kind:'ADMIN_ADJUSTMENT'},{expiresAt:new Date(Date.now()-1000),serviceEnd:new Date(Date.now()-1000)},{availableAt:new Date(Date.now()+86400000)},{revokedAt:new Date()}]){
+        await client.billingReceiptGrant.update({where:{id:grant.id},data});await resolve();
+        assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'OPEN');
+        await client.billingReceiptGrant.update({where:{id:grant.id},data:{kind:grant.kind,serviceEnd:grant.serviceEnd,expiresAt:grant.expiresAt,availableAt:grant.availableAt,revokedAt:null}});
+      }
+      await resolve();
+      assert.equal((await client.packageChangeRequest.findUniqueOrThrow({where:{id:request.id}})).status,'APPROVED');
+      assert.equal(await client.auditLog.count({where:{companyId:f.companyId,action:'billing.package_request.fulfilled'}}),1);
+    });
     await t.test('verified paid renewal keeps the purchased hash valid and cannot revive an expired Admin capacity gift', async () => {
       const f = await fixture(), before = await client.companyPlanTerm.findUniqueOrThrow({where:{companyId:f.companyId}});
       const gift = {operationId:randomUUID(),accountId:f.accountId,tierKey:'PRO_999',branchLimit:5,employeeLimit:10,

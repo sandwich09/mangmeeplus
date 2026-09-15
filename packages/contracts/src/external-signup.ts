@@ -401,6 +401,8 @@ export type PackageChangeRequestDto = {
   companyId: string;
   requestedTierKey: string;
   status: PackageChangeRequestStatus;
+  /** Present only when the original request was fulfilled by an applied paid package. */
+  resolutionSource?: 'PAID_PURCHASE';
   note?: string;
   createdAt: string;
   decidedAt?: string;

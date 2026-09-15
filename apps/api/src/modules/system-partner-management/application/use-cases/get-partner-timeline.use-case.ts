@@ -74,7 +74,7 @@ export class GetPartnerTimelineUseCase {
         where: { companyId },
         orderBy: { createdAt: 'desc' },
         take: 5,
-        select: { requestedTierKey: true, status: true, createdAt: true },
+        select: { requestedTierKey: true, status: true, createdAt: true, paymentState:true },
       }),
       this.prisma.client.companyPlanTerm.findUnique({
         where: { companyId },
@@ -128,7 +128,7 @@ export class GetPartnerTimelineUseCase {
         kind: 'package_change',
         label: `ขอเปลี่ยนแพ็กเกจเป็น ${label}`,
         at: change.createdAt.toISOString(),
-        detail: PACKAGE_CHANGE_STATUS_TH[change.status] ?? change.status,
+        detail: change.status==='APPROVED'&&change.paymentState==='STRIPE_APPLIED'?'ซื้อแพ็กเกจและเปิดสิทธิ์แล้ว':PACKAGE_CHANGE_STATUS_TH[change.status] ?? change.status,
       });
     }
 

@@ -16,6 +16,7 @@ import { BillingService, type BillingSnapshot } from './billing.service';
 import { restartFits, restartSource } from './billing-restart';
 import { observeBillingCharges, recordBillingFinancials } from './billing-financial';
 import { grantPaidPackageReceipts } from './billing-receipt-grants';
+import { fulfillPaidPackageRequest } from './billing-package-request';
 import { applyCapacity, attemptCapacity, capacityOptions, capacityValid } from './billing-capacity';
 
 export const BILLING_STRIPE_EVENTS = new Set(['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_succeeded',
@@ -563,6 +564,7 @@ export class BillingReconcilerService {
           termProjectionHash: termProjectionHash({ ...term, billingReceiptAccountId: account.id }), version: { increment: 1 } } });
       }
       await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null, version: { increment: 1 } } });
+      await fulfillPaidPackageRequest(tx,company.id,account.id,invoice.id);
       await tx.billingIssue.updateMany({ where: { companyId: company.id, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
         kind: 'PAID_HELD', referenceId: invoice.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
       await tx.auditLog.create({ data: { companyId: company.id, action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: invoice.id,

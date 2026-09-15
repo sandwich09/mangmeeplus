@@ -141,6 +141,15 @@ function harness(options: Options = {}) {
 }
 
 describe('GET /system/partners/:id/timeline — §8', () => {
+  it('distinguishes paid package fulfillment from an Admin approval in the shop history', async () => {
+    const h=harness({packageChanges:[
+      {requestedTierKey:'PRO_999',status:'APPROVED',paymentState:'STRIPE_APPLIED',createdAt:new Date('2026-09-15T05:00:00Z')},
+      {requestedTierKey:'BASIC_499',status:'APPROVED',paymentState:'NONE',createdAt:new Date('2026-09-15T06:00:00Z')},
+    ]});
+    const changes=(await h.controller.partnerTimeline('co-1')).entries.filter(row=>row.kind==='package_change');
+    assert.equal(changes[0]!.detail,'ซื้อแพ็กเกจและเปิดสิทธิ์แล้ว');
+    assert.notEqual(changes[1]!.detail,changes[0]!.detail);
+  });
   it('tells the shop story in order, from rows that already exist', async () => {
     const h = harness({
       signup: {

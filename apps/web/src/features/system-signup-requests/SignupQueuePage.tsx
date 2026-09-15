@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
   COMPANY_BUSINESS_CATEGORIES,
+  PLAN_TIER_PRESETS,
+  type PlanTierKey,
   SIGNUP_REJECTION_REASON_MAX_LENGTH,
   SIGNUP_RESOLUTION_NOTE_MAX_LENGTH,
   type AdminSignupDecisionBody,
@@ -879,7 +881,9 @@ export default function SignupQueuePage() {
                           />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
-                          {item.currentTierKey ? `${item.currentTierKey} → ` : ''}{item.requestedTierKey}
+                          {item.currentTierKey ? `${PLAN_TIER_PRESETS[item.currentTierKey as PlanTierKey]?.labelTh ?? item.currentTierKey} → ` : ''}
+                          {PLAN_TIER_PRESETS[item.requestedTierKey as PlanTierKey]?.labelTh ?? item.requestedTierKey}
+                          {item.billingReviewPath && <p className="mt-2 text-sm">คำขอนี้จะปิดเมื่อชำระเงินและเปิดสิทธิ์แล้ว การให้สิทธิ์ชั่วคราวยังคงคำขอนี้ไว้</p>}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">{item.requestedByDisplayName ?? '—'}</td>
                         <td className="px-4 py-3 text-xs text-gray-500">{formatThaiDateTime(item.createdAt)}</td>

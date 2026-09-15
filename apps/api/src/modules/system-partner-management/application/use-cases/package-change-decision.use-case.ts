@@ -80,6 +80,7 @@ export class PackageChangeDecisionUseCase {
           ? { requestedByDisplayName: nameByUserId.get(row.requestedByUserId)! }
           : {}),
         status: row.status as PackageChangeRequestStatus,
+        ...(row.status==='APPROVED'&&row.paymentState==='STRIPE_APPLIED'?{resolutionSource:'PAID_PURCHASE' as const}:{}),
         ...(row.note ? { note: row.note } : {}),
         createdAt: row.createdAt.toISOString(),
         ...(row.decidedAt ? { decidedAt: row.decidedAt.toISOString() } : {}),

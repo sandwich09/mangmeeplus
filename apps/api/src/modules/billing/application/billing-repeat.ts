@@ -12,6 +12,7 @@ import { paidPackageCheckoutEvidence, type PaidCheckoutEvidence } from '../domai
 import { detectBillingIssue } from './billing-issues';
 import { termProjectionHash } from '../domain/paid-invoice';
 import { grantPaidPackageReceipts, paidReceiptBalance } from './billing-receipt-grants';
+import { fulfillPaidPackageRequest } from './billing-package-request';
 import { assertMappedCharge, recordBillingFinancials } from './billing-financial';
 import { collectionContract, ownedSchedule, simpleCollection } from './billing-schedule';
 import { capacityOptions, capacityValid } from './billing-capacity';
@@ -473,6 +474,7 @@ export class BillingRepeat {
       await tx.billingAttempt.update({ where: { id: attempt.id }, data: { status: 'COMPLETED', errorCode: null, collectionJson: json(journal) } });
       await tx.billingAccount.update({ where: { id: account.id }, data: { paidThrough: end, nextChargeAt: end, activeAttemptId: null,
         termProjectionHash: termProjectionHash(term), observedAt: new Date(), version: { increment: 1 } } });
+      await fulfillPaidPackageRequest(tx,account.companyId,account.id,invoice.id);
       await tx.auditLog.create({ data: { companyId: account.companyId, actorUserId: attempt.initiatingUserId, action: snapshot.upgrade ? 'billing.package.upgraded' : 'billing.package.repeated',
         targetType: 'BillingInvoice', targetId: invoice.id, requestId: attempt.id, result: 'SUCCESS', riskLevel: 'CRITICAL',
         metadataJson: { receiptUnitsAdded: snapshot.upgrade?.receiptUnitsAdded ?? snapshot.quote.offer.receiptAllowance, paidThrough: end.toISOString() } } });
