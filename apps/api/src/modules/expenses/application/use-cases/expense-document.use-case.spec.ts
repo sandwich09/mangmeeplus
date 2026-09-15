@@ -1,3 +1,4 @@
+import { buildInitialLineExpenseDraftContinuation } from '../../domain/logic/line-expense-draft-conversation.logic';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CaptureLineExpenseNoteUseCase, CreateExpenseCategoryUseCase, UpdateExpenseCategoryUseCase, ListAllExpenseCategoriesUseCase, LineTextExpenseCaptureIncompleteError } from './expense-document.use-case';
@@ -52,6 +53,7 @@ describe('CaptureLineExpenseNoteUseCase', () => {
 
     assert.equal(result.insertedAmount, '65.0000');
     assert.equal(result.categoryId, 'cat-meals');
+    assert.equal(result.categoryNameSourceId, 'cat-meals');
     assert.deepEqual(result.replyTexts, []);
     assert.equal(updates.at(-1).status, 'NEEDS_REVIEW');
     assert.equal(updates.at(-1).sourceChannelMetadataJson.lineExpenseDraftContinuation, undefined);
@@ -405,7 +407,9 @@ describe('CaptureLineExpenseNoteUseCase', () => {
   });
 
   it('is idempotent by LINE message id', async () => {
-    const { repo } = makeRepo({ findByLineMessageId: async () => ({ id: 'existing-1', grandTotalAmount: '65.0000', expenseCategoryId: null }) });
+    const existing = { id: 'existing-1', companyId: 'company-1', createdByUserId: 'user-1',
+      captureSource: 'LINE_UPLOAD', branchId: null, grandTotalAmount: '65.0000', expenseCategoryId: null };
+    const { repo } = makeRepo({ findByLineMessageId: async () => existing, findByIdWithRelations: async () => existing });
     const useCase = new CaptureLineExpenseNoteUseCase(repo, createDraft, audit, outbox);
     const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
       draftConversationEnabled: true,
@@ -413,6 +417,50 @@ describe('CaptureLineExpenseNoteUseCase', () => {
     });
     assert.equal(result.expense.id, 'existing-1');
     assert.ok(result.warnings.includes('duplicate_line_message'));
+  });
+
+  it('refuses duplicate-message evidence outside the current record scope without creating or updating', async () => {
+    const original = { id: 'existing-1', companyId: 'company-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD',
+      branchId: 'branch-1', sourceChannelMetadataJson: { chatKeyHash: 'chat-original' } };
+    for (const changed of [null, { companyId: 'foreign' }, { createdByUserId: 'foreign' }, { captureSource: 'WEB' },
+      { branchId: 'branch-other' }, { sourceChannelMetadataJson: { chatKeyHash: 'foreign' } }]) {
+      const { repo, updates } = makeRepo({ findByLineMessageId: async () => original,
+        findByIdWithRelations: async (companyId: string, id: string, _tx: unknown, scopes: unknown) => {
+          assert.equal(companyId, 'company-1'); assert.equal(id, original.id); assert.deepEqual(scopes, { branchIds: ['branch-1'] });
+          return changed === null ? null : { ...original, ...changed };
+        } });
+      const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async () => assert.fail('must not recapture') } as any, audit, outbox);
+      await assert.rejects(() => useCase.execute({ ...ctx(['expense.receipt.line_upload'], 'line'), scopes: { branchIds: ['branch-1'] } }, {
+        messageText: 'ค่ากาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'chat-original',
+      }), /outside current ownership or chat/);
+      assert.equal(updates.length, 0);
+    }
+  });
+
+  it('a duplicate text capture formats the current saved header rather than stale questionnaire memory', async () => {
+    const revision = new Date('2026-09-15T00:00:00Z');
+    const state = buildInitialLineExpenseDraftContinuation({ workflowId: 'wf-original', companyId: 'company-1', userId: 'user-1',
+      expenseId: 'existing-1', chatKeyHash: 'chat-original', targetRevision: revision.toISOString(), provisionalExpenseDate: '2026-09-14',
+      messageText: 'ร้านเก่า กาแฟ 65 บาท', hints: { vendorName: 'ร้านเก่า', amount: '65' }, categories: [] });
+    const original = { id: 'existing-1', companyId: 'company-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD',
+      branchId: null, status: 'DRAFT', grandTotalAmount: '65', expenseCategoryId: null, updatedAt: new Date(revision.getTime() + 1000),
+      vendorNameSnapshot: 'ร้านแก้ไขจากเว็บ', expenseDate: new Date('2026-09-15T00:00:00Z'), note: null, lines: [],
+      sourceChannelMetadataJson: { chatKeyHash: 'chat-original', lineExpenseDraftContinuation: state } };
+    const { repo, updates } = makeRepo({ findByLineMessageId: async () => original, findByIdWithRelations: async () => original });
+    const useCase = new CaptureLineExpenseNoteUseCase(repo, { execute: async () => assert.fail('must not recapture') } as any, audit, outbox);
+    const result = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+      messageText: 'ร้านเก่า กาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'chat-original', draftConversationEnabled: true,
+    });
+    assert.match(result.replyTexts.join('\n'), /ร้านแก้ไขจากเว็บ/); assert.doesNotMatch(result.replyTexts.join('\n'), /ร้าน: ร้านเก่า/);
+    assert.equal(result.expense.updatedAt, original.updatedAt); assert.equal(updates.length, 0);
+    assert.equal(state.header.vendorName, 'ร้านเก่า', 'read-only refresh cannot rewrite the persisted original questionnaire');
+    for (const key of ['companyId', 'expenseId']) {
+      original.sourceChannelMetadataJson.lineExpenseDraftContinuation = { ...state, [key]: 'foreign' };
+      const foreign = await useCase.execute(ctx(['expense.receipt.line_upload'], 'line'), {
+        messageText: 'ร้านเก่า กาแฟ 65 บาท', lineMessageId: 'msg-1', lineEventId: 'evt-1', chatKeyHash: 'chat-original', draftConversationEnabled: true,
+      });
+      assert.deepEqual(foreign.replyTexts, [], 'foreign questionnaire facts cannot be borrowed for the owned expense');
+    }
   });
 
   it('denies capture without upload permission', async () => {

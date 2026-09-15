@@ -206,6 +206,7 @@ function makeHarness(opts: {
 }): Harness {
   const replies: string[] = [];
   const captured: any[] = [];
+  const capturedRows = new Map<string, any>();
   const signatureCreated: any[] = [];
   const routeRequests: any[] = [];
   const turnRequests: any[] = [];
@@ -272,9 +273,12 @@ function makeHarness(opts: {
     linkAttachment: async (...args: any[]) => { linkAttachmentCalls.push(args); },
     updateExpense: async (input: any) => {
       updateExpenseCalls.push(input);
-      return { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', ...input };
+      const saved = { id: input.id, expenseNumber: 'EXP-REAL-1', grandTotalAmount: '50.0000', createdByUserId: 'user-1',
+        branchId: legacyBranchIds[0], captureSource: 'LINE_UPLOAD', updatedAt: new Date(), ...input };
+      if (input.sourceChannelMetadataJson?.kind === 'text_note') capturedRows.set(saved.id, saved);
+      return structuredClone(saved);
     },
-    findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? ({
+    findByIdWithRelations: async (_companyId: string, expenseId: string) => (typeof opts.expenseDetail === 'function' ? opts.expenseDetail(expenseId) : opts.expenseDetail) ?? structuredClone(capturedRows.get(expenseId)) ?? ({
       id: expenseId,
       primaryAttachmentId: 'pending-att-1',
       attachments: [{
@@ -387,8 +391,13 @@ function makeHarness(opts: {
         if (opts.captureError) throw opts.captureError;
         captured.push(cmd);
         if (opts.realCapture) return realCaptureExpenseNote.execute(ctx, cmd);
+        const saved = { id: 'expense-note-1', companyId: ctx.companyId, createdByUserId: ctx.userId, branchId: cmd.branchId ?? legacyBranchIds[0],
+          captureSource: 'LINE_UPLOAD', updatedAt: new Date(), sourceChannelMetadataJson: { chatKeyHash: cmd.chatKeyHash },
+          sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' };
+        capturedRows.set(saved.id, saved);
         return {
-          expense: { id: 'expense-note-1', sourceDocumentType: 'EXPENSE_NOTE_TEXT', grandTotalAmount: '65.0000', expenseCategoryId: 'cat-meals' },
+          expense: structuredClone(saved),
+          categoryNameSourceId: 'cat-meals',
           warnings: [],
           insertedAmount: '65.0000',
           categoryId: 'cat-meals',
@@ -4366,5 +4375,37 @@ describe('LINE candidate source at intake and delivery boundaries', () => {
     assert.equal(h.routeRequests.length, 1); assert.equal(h.correctionCalls.length, 0); assert.equal(h.captured.length, 0);
     assert.match(h.replies.join('\n'), fault === 'permission' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
     assert.doesNotMatch(h.replies.join('\n'), /876,543|expense-first/);
+  });
+});
+
+describe('LINE text capture confirms only its current committed source', () => {
+  for (const fault of ['unchanged', 'branch', 'revision', 'category', 'fallback']) it(`committed text capture delivery: ${fault}`, async () => {
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], scopes: { branchIds: ['branch-1'] },
+      routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95,
+        captureHints: { description: 'ค่ากาแฟ', amount: '65', expenseCategoryId: 'cat-meals' } } });
+    const uc = h.useCase as any, read = uc.expenseRepo.findByIdWithRelations, accepted: unknown[] = [];
+    let changed = false, privateAttempts = 0;
+    uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+      const row = await read(...args);
+      if (!changed || !row) return row;
+      return fault === 'branch' ? { ...row, branchId: 'branch-other' }
+        : fault === 'category' ? row : { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1), grandTotalAmount: '7' };
+    };
+    const categories = uc.expenseRepo.listCategories;
+    uc.expenseRepo.listCategories = async () => changed && fault === 'category' ? [{ id: 'cat-meals', name: 'ชื่อหมวดเปลี่ยน' }] : categories();
+    if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+      wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+    };
+    uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+      if (/expense-note-1/.test(JSON.stringify(messages))) { privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; } }
+      accepted.push(messages); return 'ok';
+    };
+    uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+    const run = h.useCase.execute({ ...TEXT_EVENT });
+    if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+    if (fault === 'unchanged') { assert.match(JSON.stringify(accepted), /expense-note-1/); assert.equal(privateAttempts, 1); }
+    else { assert.doesNotMatch(JSON.stringify(accepted), /expense-note-1|ค่าอาหาร/); assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0); }
+    assert.equal(h.captured.length, 1, 'delivery validation never invokes capture again');
   });
 });

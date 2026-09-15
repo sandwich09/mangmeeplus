@@ -1,0 +1,39 @@
+{
+  "status": "LOCAL_TEXT_CAPTURE_SOURCE_PASS",
+  "recordedAt": "2026-09-15T10:16:56.199594+00:00",
+  "baseCommit": "49cceef3ebca9a23447a479241176dacba6f87ff",
+  "sourceSha256": {
+    "apps/api/src/modules/expenses/application/use-cases/expense-document.use-case.ts": "a2b9dbd6d0c28a424736e56384cd1d75da4fb82f8855eeaf6303818ee1347521",
+    "apps/api/src/modules/expenses/application/use-cases/expense-document.use-case.spec.ts": "9c7b0d4d3458e82fc6241b3dc2b37088c9311cfbf5a767ac2e5d73dc05d0b99e",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.ts": "7e084edd24d1144d2c83dac118b1a529e4388ea4c7e3b0fa27237e506f0f5fc2",
+    "apps/api/src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts": "93d40a271994f3c77584f5ed1a9e1c26569da3dd1a9664257db8a7833a46b9f5",
+    "apps/api/src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts": "256216c87a356de8c9ad58cf8144efac0629d0be7594506f1bba931d0b5ef958",
+    "apps/api/src/modules/line-ai/line-read-evidence.pg.spec.ts": "b37a287372ce9a35346d25fb6e4ff75364b63d1aa61958d2fe99d0dc679e074d"
+  },
+  "runs": {
+    "unit": {
+      "tests": 594,
+      "pass": 594,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-text-source-unit.tap",
+      "sha256": "09e9775f480d5b8d7cd764c794f906ca10a356fac51ce1e9d95b996ac75e9f95"
+    },
+    "postgres": {
+      "tests": 74,
+      "pass": 74,
+      "fail": 0,
+      "skipped": 0,
+      "localLog": "/tmp/mangmee-line-text-source-postgres.tap",
+      "sha256": "0b9643f0ebfcb1e1a3c37e6b08963758330c008393629d776902a55ef1e73ece"
+    }
+  },
+  "apiTypecheck": "PASS",
+  "swc": "PASS",
+  "proof": "Committed text capture revisions and original displayed-category identity guard final send/fallback. Duplicate message lookup must resolve the original scoped own-chat record; current full record refreshes remembered questionnaire fields without writing. Foreign questionnaire IDs are not reused.",
+  "limits": [
+    "Counts overlap with previous source suites. Seven new unit cases include six source denials; five PostgreSQL cases use actual stored records/repository/resolver/webhook and a simulated committed-capture producer, not a real new-write transaction.",
+    "Model/LINE transports simulated. Photo/PDF, continuation-result and persisted clarification source boundaries plus full combined/native acceptance remain separate.",
+    "No CI/push/merge/deploy."
+  ]
+}

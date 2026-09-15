@@ -204,13 +204,13 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         await client.expenseRecord.update({ where: { id: expense.id }, data: { branchId: branch.id, grandTotalAmount: '123.4500' } });
       });
 
-      for (const path of ['progress', 'follow-up', 'saved-media'] as const)
+      for (const path of ['progress', 'follow-up', 'saved-media', 'text-capture'] as const)
         for (const fault of (path === 'progress' ? ['unchanged', 'branch', 'revision', 'fallback'] : ['unchanged', 'branch', 'revision', 'fallback', 'category']))
           await t.test(`receipt ${path} rechecks its actual persisted source before delivery: ${fault}`, async () => {
             const lineUserId = `U${randomUUID().replaceAll('-', '')}`, webhookEventId = randomUUID(), lineMessageId = randomUUID();
             lineUsers.push(lineUserId); eventIds.push(webhookEventId);
             const event = { webhookEventId, lineUserId, replyToken: 'synthetic-reply', messagingChannelId: 'synthetic-channel',
-              lineMessageId, messageType: 'image' as const, messageText: path === 'progress' ? 'ใบเสร็จเสร็จหรือยัง'
+              lineMessageId, messageType: 'image' as const, messageText: path === 'progress' ? 'ใบเสร็จเสร็จหรือยัง' : path === 'text-capture' ? 'ค่าบริการทดสอบ 987654 บาท'
                 : 'อ่านใบเสร็จนี้ให้หน่อยว่าเป็นประเภทไหน และจะนำมาเป็นค่าใช้จ่ายของบริษัทอย่างไร' };
             const diagnostics: unknown[] = [];
             const chatKeyHash = chatKeyHashOf(event), quiet = { log() {}, warn() {}, error(value: unknown) { diagnostics.push(value); }, debug() {}, info() {} };
@@ -234,7 +234,8 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
               : client.expenseRecord.update({ where: { id: receipt.id }, data: fault === 'revision' ? { grandTotalAmount: '7' } : { branchId: otherBranch.id } });
             const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://synthetic.example.test' } as any), prisma,
               { webBaseUrl: 'https://synthetic.example.test' } as any, resolver, new AuditService(new PrismaAuditRepository(prisma), quiet as any),
-              { requestLineIntakeRoute: async () => { modelCalls++; assert.fail('receipt reads must not invoke the router'); },
+              { requestLineIntakeRoute: async () => { modelCalls++; assert.equal(path, 'text-capture', 'receipt reads must not invoke the router');
+                  return { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 }; },
                 requestLineTurn: async () => { modelCalls++; assert.fail('receipt reads must not invoke the model'); },
                 requestReceiptOcr: async () => { modelCalls++; assert.fail('saved receipt must not rerun OCR'); } } as any,
               { buildTextMessage: (text: string) => ({ type: 'text', text }), sendReply: async (_token: string, messages: unknown) => {
@@ -247,6 +248,11 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
               { startSweep: () => ({ record: async () => {}, flush: async () => {} }) } as any, { assertLaunchRouteOpen: async () => {} } as any);
             (useCase as any).logger = quiet; (useCase as any).readEvidence = service;
             (useCase as any).expenseRepo = new PrismaExpenseRepository(prisma);
+            if (path === 'text-capture') (useCase as any).captureExpenseNote = { execute: async () => ({
+              expense: await (useCase as any).expenseRepo.findByIdWithRelations(companyId, receipt.id, undefined, { branchIds: [branch.id] }),
+              warnings: [], insertedAmount: '987654', categoryId: category.id, categoryNameSourceId: category.id, categoryName: category.name,
+              replyTexts: ['บันทึก receipt-private-source 987654 บาทแล้ว'],
+            }) };
             (useCase as any).initReceiptUpload = { execute: async () => assert.fail('saved receipt must not create another upload') };
             (useCase as any).completeReceiptUpload = { execute: async () => assert.fail('saved receipt must not repeat upload completion') };
             if (!['unchanged', 'fallback'].includes(fault)) (useCase as any).handoffLinks = {
@@ -264,7 +270,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
               assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
               assert.equal((await client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId } })).errorCode, 'LINE_DELIVERY_SOURCE_CHANGED');
             }
-            assert.equal(modelCalls, 0); assert.equal(await client.expenseRecord.count({ where: { companyId } }), before);
+            assert.equal(modelCalls, path === 'text-capture' ? 1 : 0); assert.equal(await client.expenseRecord.count({ where: { companyId } }), before);
           });
 
       for (const path of ['selection', 'clarification'] as const)

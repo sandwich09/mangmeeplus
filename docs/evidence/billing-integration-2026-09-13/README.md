@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+[Text-capture source proof](line-text-source-result.json): current committed record/category and scoped duplicate recovery.594 focused/74 PostgreSQL tests PASS, typecheck/SWC PASS. Five PG source cases use a simulated capture producer; no full/native acceptance claim.
+
 [Candidate-source proof](line-candidate-source-result.json): local553 unit/69 PostgreSQL/8 shared-reader tests PASS/0skip, API typecheck PASS. Candidate selection and intake race recovery are covered; continuation/new-capture/full acceptance remain separate.
 
 [Restart source proof](restart-source-result.json): explicit non-disputed charge evidence, original-history preservation and restored-evidence recovery. Local69 HTTP/browser groups (17 browser),12 unit/4 catalog PASS; typecheck/SWC PASS. Simulated providers; not full combined acceptance.

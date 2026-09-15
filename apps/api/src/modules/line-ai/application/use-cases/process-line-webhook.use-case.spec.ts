@@ -5338,11 +5338,15 @@ function makeCapture(expense: Record<string, unknown> = {}) {
   return {
     calls,
     capture: {
-      execute: async (_ctx: any, input: any) => {
+      record: null as any,
+      execute: async function(ctx: any, input: any) {
         calls.push(input);
+        this.record = { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null,
+          companyId: ctx.companyId, createdByUserId: ctx.userId, branchId: null, captureSource: 'LINE_UPLOAD',
+          updatedAt: new Date(), sourceChannelMetadataJson: { chatKeyHash: input.chatKeyHash }, ...expense };
         return {
-          expense: { id: 'exp-1', sourceDocumentType: 'RECEIPT', expenseDate: null, vendorNameSnapshot: null, ...expense },
-          replyTexts: ['บันทึกแล้ว 200 บาท'], insertedAmount: '200', categoryName: 'ค่าเดินทาง',
+          expense: structuredClone(this.record),
+          replyTexts: ['บันทึกแล้ว 200 บาท'], insertedAmount: '200', categoryName: 'ค่าเดินทาง', categoryNameSourceId: 'cat-travel',
         };
       },
     } as any,
@@ -5427,7 +5431,10 @@ function makeIntakeStateUseCase(prisma: any, opts: {
     // Positional optionals: 3rd is captureExpenseNote, 7th is the ledger, 16th (last) is the
     // durable intake state repository.
     undefined, undefined, opts.capture,
-    undefined, undefined, undefined,
+    undefined, undefined, { listRecentLineCaptures: async () => [],
+      findByIdWithRelations: async () => structuredClone(opts.capture?.record),
+      listCategories: async () => [{ id: 'cat-travel', name: 'ค่าเดินทาง' }],
+    } as any,
     ledger,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     opts.stateRepo,

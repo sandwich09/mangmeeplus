@@ -4301,6 +4301,8 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
+      this.rememberReceiptDeliverySource(event, ctx, captured.expense,
+        captured.categoryNameSourceId && captured.categoryName ? { id: captured.categoryNameSourceId, name: captured.categoryName } : undefined);
       const replyTexts = captured.replyTexts.length
         ? captured.replyTexts
         : [formatPaypersReply(this.config.webBaseUrl, companyId, captured.expense.id, {

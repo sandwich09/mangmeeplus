@@ -15,6 +15,8 @@ import type {
   UpdateExpenseCategoryInput, ExpenseCategorySummary,
 } from '@watchdog-bms/contracts';
 import { todayCivilDate } from '@watchdog-bms/contracts';
+import { refreshExpenseSourceDraft } from '../../domain/logic/expense-source-draft.logic';
+import { isBranchInScope } from '../../../data-model-core/domain/logic/branch.logic';
 import {
   buildInitialLineExpenseDraftContinuation,
   formatLineExpenseDraftReply,
@@ -90,6 +92,7 @@ export class CaptureLineExpenseNoteUseCase {
     insertedAmount: string | null;
     categoryId: string | null;
     categoryName: string | null;
+    categoryNameSourceId: string | null;
     replyTexts: string[];
   }> {
     if (!hasPerm(ctx, 'expense.receipt.line_upload') && !hasPerm(ctx, 'expense.receipt.upload') && !hasPerm(ctx, 'expense.create')) {
@@ -98,14 +101,20 @@ export class CaptureLineExpenseNoteUseCase {
     const draftConversationEnabled = cmd.draftConversationEnabled === true;
 
     // Idempotency by LINE message id: retried webhooks return the existing draft.
-    const existing = await this.repo.findByLineMessageId(ctx.companyId, cmd.lineMessageId);
-    if (existing) {
+    const duplicate = await this.repo.findByLineMessageId(ctx.companyId, cmd.lineMessageId);
+    if (duplicate) {
+      const existing = await this.repo.findByIdWithRelations(ctx.companyId, duplicate.id, undefined, ctx.scopes ?? {});
+      if (!existing || existing.companyId !== ctx.companyId || existing.createdByUserId !== ctx.userId || existing.captureSource !== 'LINE_UPLOAD'
+        || !isBranchInScope(ctx.scopes ?? {}, existing.branchId)
+        || (cmd.chatKeyHash && existing.sourceChannelMetadataJson?.chatKeyHash !== cmd.chatKeyHash)) {
+        throw new ForbiddenException('Original LINE capture is outside current ownership or chat');
+      }
       const categories = await this.repo.listCategories(ctx.companyId);
       const state = parseLineExpenseDraftContinuation(existing.sourceChannelMetadataJson?.['lineExpenseDraftContinuation']);
       const replyTexts = draftConversationEnabled && existing.status === 'DRAFT' && state
-        && state.userId === ctx.userId
+        && state.userId === ctx.userId && state.companyId === ctx.companyId && state.expenseId === existing.id
         && (!cmd.chatKeyHash || state.chatKeyHash === cmd.chatKeyHash)
-        ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state, categories, label: existing.expenseNumber ?? existing.id }))
+        ? splitLineExpenseDraftReply(formatLineExpenseDraftReply({ state: refreshExpenseSourceDraft(state, existing, categories), categories, label: existing.expenseNumber ?? existing.id }))
         : [];
       return {
         expense: existing,
@@ -113,6 +122,7 @@ export class CaptureLineExpenseNoteUseCase {
         insertedAmount: Number(existing.grandTotalAmount) > 0 ? existing.grandTotalAmount : null,
         categoryId: existing.expenseCategoryId,
         categoryName: null,
+        categoryNameSourceId: null,
         replyTexts,
       };
     }
@@ -329,6 +339,7 @@ export class CaptureLineExpenseNoteUseCase {
       insertedAmount: state ? (draftLines.length ? updated.grandTotalAmount : null) : amount,
       categoryId: state ? updated.expenseCategoryId ?? null : validated.expenseCategoryId,
       categoryName,
+      categoryNameSourceId: categoryName ? suggestedCategoryId ?? null : null,
       replyTexts,
     };
   }
