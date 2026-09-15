@@ -438,8 +438,8 @@ export class BillingRepeat {
       } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval, offer:snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
         paidThrough: new Date(snapshot.repeat!.paidThrough), remainingPaidReceipts: balance.remaining, anchorDay: snapshot.repeat!.anchorDay });
       await tx.companyPlanTerm.update({ where: { companyId: account.companyId }, data: { termEndsAt: end, termDisabledAt: null,
-        ...(snapshot.upgrade ? { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,
-          employeeLimit: snapshot.quote.offer.employeeLimit, monthlySlipLimit: snapshot.quote.offer.monthlySlipLimit } : { lastRenewedAt: new Date(), renewCount: { increment: 1 } }),
+        branchLimit:snapshot.quote.offer.branchLimit,employeeLimit:snapshot.quote.offer.employeeLimit,monthlySlipLimit:snapshot.quote.offer.monthlySlipLimit,
+        ...(snapshot.upgrade ? { tierKey: snapshot.quote.offer.offerKey } : { lastRenewedAt: new Date(), renewCount: { increment: 1 } }),
         warn7SentAt: null, warn3SentAt: null, warn1SentAt: null, expiredNotifiedAt: null } });
       await grantPaidPackageReceipts(tx, { companyId: account.companyId, billingAccountId: account.id, sourceKey: invoice.id,
         policyRevisionId: attempt.policyRevisionId, kind: snapshot.upgrade ? 'UPGRADE' : 'REPEAT', units: snapshot.upgrade?.receiptUnitsAdded ?? snapshot.quote.offer.receiptAllowance,

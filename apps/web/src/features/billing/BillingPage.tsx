@@ -196,6 +196,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </section>}
       {quote && <section aria-label="ยืนยันซื้อแพ็กเกจ" className="space-y-3 rounded-2xl border-2 border-green-700 bg-white p-5">
         <h2 className="text-lg font-bold">ยืนยันซื้อ {quote.offer.label} {quote.offer.interval === 'year' ? 'รายปี' : 'รายเดือน'}</h2>
+        <p>สิทธิ์หลังชำระสำเร็จ: สูงสุด {quote.offer.branchLimit} สาขา · {quote.offer.employeeLimit} ผู้ใช้ รวมเจ้าของ</p>
+        {(quote.purchase?.kind==='REPEAT'||quote.purchase?.kind==='UPGRADE')&&<p>คงเพดานที่ซื้อไว้เดิมหากสูงกว่าแพ็กเกจปัจจุบัน สิทธิ์ชั่วคราวจากแอดมินยังหมดอายุตามเดิม</p>}
         <p>{quote.companyName} · {quote.billingEmail}</p><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
         <p className="text-xl font-bold">ชำระวันนี้ {money(quote.totalSatang)}</p>
         <p>{quote.taxTreatment === 'NOT_VAT_REGISTERED' ? 'บริษัทผู้ให้บริการยังไม่ได้จด VAT จึงไม่มีการเรียกเก็บ VAT' : quote.taxTreatment === 'INCLUSIVE_VAT_7' ? 'ราคารวม VAT 7% แล้ว' : 'ราคาเพิ่ม VAT 7%'}</p>

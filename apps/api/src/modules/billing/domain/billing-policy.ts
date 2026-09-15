@@ -41,7 +41,9 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
   if(p.offerTerms!=null){
     assertKeys(p.offerTerms,BILLING_PAID_TIERS);
     for(const terms of Object.values(p.offerTerms)){
-      assertKeys(terms,['monthlyPriceSatang','annualPriceSatang','monthlyReceiptAllowance']);
+      assertKeys(terms,['monthlyPriceSatang','annualPriceSatang','monthlyReceiptAllowance','branchLimit','employeeLimit']);
+      if(('branchLimit' in terms||'employeeLimit' in terms)&&[terms.branchLimit,terms.employeeLimit].some(limit=>!Number.isInteger(limit)||Number(limit)<1||Number(limit)>1000))
+        throw new BadRequestException({code:'CONTROL_OFFER_CAPACITY_INVALID',message:'Invalid package capacity'});
       if(!Number.isSafeInteger(terms.monthlyReceiptAllowance)||terms.monthlyReceiptAllowance<1||terms.monthlyReceiptAllowance>Math.floor(2147483647/12))
         throw new BadRequestException({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'Invalid purchased receipt allowance'});
       for(const amount of [terms.monthlyPriceSatang,terms.annualPriceSatang])

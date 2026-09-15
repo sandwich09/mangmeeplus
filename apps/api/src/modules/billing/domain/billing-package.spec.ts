@@ -162,3 +162,15 @@ test('approved offer prices and upfront quota share a snapshot and retain origin
   assert.throws(()=>parseBillingPolicy({...policy,taxTreatment:'EXCLUSIVE_VAT_7',taxRateId:'txr_test',offerTerms:{PRO_999:{...policy.offerTerms!.PRO_999,annualPriceSatang:99999999}}}));
   assert.deepEqual(billingOffer('PRO_999','year',{offerTerms:null}),original);
 });
+
+test('capacity policy accepts paired bounded limits without changing prices, receipt quantities or old defaults',()=>{
+  const terms={monthlyPriceSatang:99900,annualPriceSatang:999000,monthlyReceiptAllowance:100};
+  for(const limits of [{branchLimit:1,employeeLimit:1},{branchLimit:1000,employeeLimit:1000},{branchLimit:7,employeeLimit:25}]){
+    const policy=parseBillingPolicy({...BILLING_DRAFT_POLICY,offerTerms:{PRO_999:{...terms,...limits}}});
+    assert.deepEqual(billingOffer('PRO_999','year',policy),{...billingOffer('PRO_999','year'),...limits});
+  }
+  for(const limits of [{branchLimit:7},{employeeLimit:25},{branchLimit:null,employeeLimit:25},
+    ...[0,-1,1.5,1001,'5',true,Infinity].map(branchLimit=>({branchLimit,employeeLimit:25})),
+    ...[0,-1,1.5,1001,'25',true,Infinity].map(employeeLimit=>({branchLimit:7,employeeLimit}))])
+    assert.throws(()=>parseBillingPolicy({...BILLING_DRAFT_POLICY,offerTerms:{PRO_999:{...terms,...limits}}}));
+});

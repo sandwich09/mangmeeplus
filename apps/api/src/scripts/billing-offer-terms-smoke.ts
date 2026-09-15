@@ -6,7 +6,7 @@ import type {checkBillingConfigurationDrafts} from './billing-configuration-draf
 export async function checkBillingOfferTerms(input:Parameters<typeof checkBillingConfigurationDrafts>[0]){
   const {request,approveRequest,browser,provider}=input,db=input.prisma.client,base='/v1/system/billing',run=randomUUID().replaceAll('-',''),cases:string[]=[];
   const settings=async()=>(await request(`${base}/settings`)).body,initial=await settings(),viewport=browser?.page.viewportSize();
-  const terms={monthlyPriceSatang:109901,annualPriceSatang:1099001,monthlyReceiptAllowance:125};
+  const terms={monthlyPriceSatang:109901,annualPriceSatang:1099001,monthlyReceiptAllowance:125,branchLimit:7,employeeLimit:25};
   const priceId=`price_TermsPro${run}`,companyId=`offer-terms-${run}`,customerId=`cus_terms${run}`;
   const financial=async()=>({term:await db.companyPlanTerm.findUnique({where:{companyId:input.companyId}}),invoices:await db.billingInvoice.findMany({where:{billingAccountId:{in:(await db.billingAccount.findMany({where:{companyId:input.companyId},select:{id:true}})).map(row=>row.id)}},orderBy:{id:'asc'}}),grants:await db.billingReceiptGrant.findMany({where:{companyId:input.companyId},orderBy:{id:'asc'}})});
   const before=await financial();let mismatch=false,accountId='',writes=0;const ownedSessions=new Map<string,Record<string,any>>();
@@ -49,11 +49,11 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     assert.fail('Original offer configuration command did not recover within the actual rate limit');
   };
   try{
-    for(const offerTerms of [false,[],{PRO_999:{}},{ENTERPRISE_1999:terms},{PRO_999:{...terms,branchLimit:10}},{PRO_999:{...terms,monthlyReceiptAllowance:0}},{PRO_999:{...terms,annualPriceSatang:0.5}}])assert.equal((await preview({...policy,offerTerms})).status,400);
+    for(const offerTerms of [false,[],{PRO_999:{}},{ENTERPRISE_1999:terms},{PRO_999:{...terms,branchLimit:1001}},{PRO_999:{...terms,employeeLimit:0}},{PRO_999:{...terms,monthlyReceiptAllowance:0}},{PRO_999:{...terms,annualPriceSatang:0.5}}])assert.equal((await preview({...policy,offerTerms})).status,400);
     mismatch=true;assert.equal((await preview(policy)).body.code,'BILLING_PRICE_MISMATCH');mismatch=false;
     assert.equal(writes,0);assert.deepEqual(await financial(),before);cases.push('offer-terms-strict-typed-allowlist-bounds-and-provider-price-mismatch-before-publication');
     if(browser){const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/settings`,{waitUntil:'domcontentloaded'});
-      await page.getByText('ราคาและจำนวนใบเสร็จของแพ็กเกจ',{exact:true}).click();
+      await page.getByText('ราคาและสิทธิ์ของแพ็กเกจ',{exact:true}).click();
       const field=page.getByLabel('มืออาชีพ (PRO) · ราคารายปี (บาท)',{exact:true});await field.fill('10990.001');
       await page.getByLabel('เหตุผลการเปลี่ยนค่า',{exact:true}).fill('ปรับราคาและจำนวนใบเสร็จสำหรับรายการซื้อใหม่');
       const count=await db.billingOperation.count({where:{stripeAccountId:input.stripeAccountId,type:'PUBLISH_POLICY'}});
@@ -61,10 +61,14 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
       assert.equal(await db.billingOperation.count({where:{stripeAccountId:input.stripeAccountId,type:'PUBLISH_POLICY'}}),count);
       await field.fill('10990.01');await page.getByLabel('มืออาชีพ (PRO) · ราคารายเดือน (บาท)',{exact:true}).fill('1099.01');
       await page.getByLabel('มืออาชีพ (PRO) · ใบเสร็จที่ได้เมื่อซื้อรายเดือน',{exact:true}).fill('125');
+      await page.getByLabel('มืออาชีพ (PRO) · จำนวนสาขาสูงสุด',{exact:true}).fill('7');
+      await page.getByLabel('มืออาชีพ (PRO) · จำนวนผู้ใช้สูงสุด รวมเจ้าของ',{exact:true}).fill('25');
       await page.getByText('เชื่อมราคาและ Portal ของ Stripe',{exact:true}).click();await page.getByLabel('มืออาชีพ (PRO) · รายปี · ราคาเก็บเงิน',{exact:true}).fill(priceId);
       await press(page,'บันทึกฉบับร่าง','/configuration-drafts');await page.getByRole('status').filter({hasText:'ฉบับร่างที่บันทึกไว้'}).waitFor();
       const href=await page.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');assert.ok(href);await page.goto(`${browser.origin}${href}`,{waitUntil:'domcontentloaded'});
-      await page.getByText('ราคาและจำนวนใบเสร็จของแพ็กเกจ',{exact:true}).click();assert.equal(await field.inputValue(),'10990.01');
+      await page.getByText('ราคาและสิทธิ์ของแพ็กเกจ',{exact:true}).click();assert.equal(await field.inputValue(),'10990.01');
+      assert.equal(await page.getByLabel('มืออาชีพ (PRO) · จำนวนสาขาสูงสุด',{exact:true}).inputValue(),'7');
+      assert.equal(await page.getByLabel('มืออาชีพ (PRO) · จำนวนผู้ใช้สูงสุด รวมเจ้าของ',{exact:true}).inputValue(),'25');
       await page.getByText('ซื้อรายปีได้ 1,500 ใบทันที',{exact:true}).waitFor();
       await page.screenshot({fullPage:true,path:`${browser.evidenceDir}/admin-offer-terms-mobile.png`});
       await press(page,'ตรวจผลกระทบการตั้งค่า','/configuration-changes/preview');await page.getByRole('status').filter({hasText:'ตรวจผลกระทบก่อนส่ง'}).waitFor();
@@ -81,17 +85,18 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     }else await publish(policy);
     assert.deepEqual((await settings()).policy.offerTerms,policy.offerTerms);assert.deepEqual(await financial(),before);assert.equal(writes,0);
     const catalogResponse=await request('/v1/billing/catalog');assert.equal(catalogResponse.status,200,JSON.stringify(catalogResponse));const catalog=catalogResponse.body,offer=catalog.offers.find((o:any)=>o.offerKey==='PRO_999'&&o.interval==='year');
-    assert.equal(offer.priceSatang,1099001);assert.equal(offer.receiptAllowance,1500);assert.equal(offer.branchLimit,5);assert.equal(offer.employeeLimit,10);
+    assert.equal(offer.priceSatang,1099001);assert.equal(offer.receiptAllowance,1500);assert.equal(offer.branchLimit,7);assert.equal(offer.employeeLimit,25);
     assert.equal(catalog.offers.filter((o:any)=>o.offerKey==='ENTERPRISE_1999').every((o:any)=>o.availability==='COMING_SOON'),true);assert.equal(catalog.trial.monthlySlipLimit,15);
     cases.push('offer-terms-public-catalog-revision-shared-default-trial-and-enterprise-lock-without-financial-mutation');
 
-    if(browser&&process.env.MANGMEE_MARKETING_DIR){const {checkBillingMarketing}=await import('./billing-marketing-smoke');cases.push(...(await checkBillingMarketing({page:browser.page,appOrigin:browser.origin,directory:process.env.MANGMEE_MARKETING_DIR,evidenceDir:browser.evidenceDir,expectedPro:{monthlySatang:109901,annualSatang:1099001,annualReceipts:1500}})).map(name=>`offer-terms-${name}`));await browser.page.setViewportSize({width:390,height:844});}
+    if(browser&&process.env.MANGMEE_MARKETING_DIR){const {checkBillingMarketing}=await import('./billing-marketing-smoke');cases.push(...(await checkBillingMarketing({page:browser.page,appOrigin:browser.origin,directory:process.env.MANGMEE_MARKETING_DIR,evidenceDir:browser.evidenceDir,expectedPro:{monthlySatang:109901,annualSatang:1099001,annualReceipts:1500,branches:7,members:25}})).map(name=>`offer-terms-${name}`));await browser.page.setViewportSize({width:390,height:844});}
     input.companyIds.push(companyId);await db.company.create({data:{id:companyId,name:'ร้านทดสอบราคาและสิทธิ์ใหม่'}});
     const owner=await db.membershipRole.findFirstOrThrow({where:{membershipId:input.membershipId,role:{key:'OWNER'}}});
     const member=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:owner.roleId}}}});await input.recordLegal(input.userIds[0]!,member.id,companyId);
     await db.companyPlanTerm.create({data:{companyId,tierKey:'FREE_TRIAL_15',branchLimit:1,employeeLimit:2,monthlySlipLimit:15,termStartAt:new Date(Date.now()-86400000),termEndsAt:new Date(Date.now()+29*86400000)}});
     const own=`/v1/companies/${companyId}/billing`,newQuote=async()=>{const r=await request(`${own}/quote`,'POST',{offerKey:'PRO_999',interval:'year',billingEmail:'owner@example.test'});assert.equal(r.status,200,JSON.stringify(r));return r.body;};
-    const quote=await newQuote();assert.equal(quote.totalSatang,1099001);assert.equal(quote.purchase.receiptUnitsAdded,1500);assert.equal(quote.purchase.projectedRemainingReceipts,1500);
+    const quotaCapacity=(await request(`${own}/capacity?offerKey=PRO_999&interval=year`)).body;assert.equal(quotaCapacity.branchLimit,7);assert.equal(quotaCapacity.employeeLimit,25);
+    const quote=await newQuote();assert.equal(quote.offer.branchLimit,7);assert.equal(quote.offer.employeeLimit,25);assert.equal(quote.totalSatang,1099001);assert.equal(quote.purchase.receiptUnitsAdded,1500);assert.equal(quote.purchase.projectedRemainingReceipts,1500);
     if(browser){const page=browser.page;for(const channel of ['web','line']){await page.goto(`${browser.origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=${channel}`,{waitUntil:'domcontentloaded'});
         await page.getByLabel('อีเมลรับเอกสาร',{exact:true}).fill('owner@example.test');await page.getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();await page.getByRole('heading',{name:/ยืนยันซื้อ/}).waitFor();
         assert.match(await page.locator('main').last().innerText(),/1,500/);assert.match(await page.locator('main').last().innerText(),/10,990\.01/);}
@@ -112,12 +117,19 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     await input.reconcile(accountId);await input.reconcile(accountId);
     const originalGrant=await db.billingReceiptGrant.findFirstOrThrow({where:{companyId,kind:'INITIAL'}});assert.equal(originalGrant.units,1500);
     assert.equal((await request(own)).body.usage.remaining,1500);assert.equal((await db.billingInvoice.findFirstOrThrow({where:{providerInvoiceId:invoiceId,billingAccountId:accountId}})).applyStatus,'APPLIED');
+    const paidTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(paidTerm.branchLimit,7);assert.equal(paidTerm.employeeLimit,25);
+    const syntheticGift={operationId:randomUUID(),accountId,tierKey:'PRO_999',branchLimit:9,employeeLimit:40,effectiveAt:new Date().toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()};
+    await db.companyPlanTerm.update({where:{companyId},data:{capacityOverride:syntheticGift}}); // TEST_ONLY existing gift; reviewed Admin creation is proved separately.
     cases.push('offer-terms-issued-checkout-replay-and-paid-historical-1500-grant-survive-published-default-reversion');
-    const repeated=await newQuote();assert.equal(repeated.offer.receiptAllowance,1200);assert.equal(repeated.purchase.receiptUnitsAdded,1200);assert.equal(repeated.purchase.projectedRemainingReceipts,2700);assert.equal(repeated.totalSatang,999000);
+    const repeated=await newQuote();assert.equal(repeated.offer.branchLimit,7);assert.equal(repeated.offer.employeeLimit,25);
+    const retainedCapacity=(await request(`${own}/capacity?offerKey=PRO_999&interval=year`)).body;assert.equal(retainedCapacity.branchLimit,7);assert.equal(retainedCapacity.employeeLimit,25);
+    assert.equal(repeated.offer.receiptAllowance,1200);assert.equal(repeated.purchase.receiptUnitsAdded,1200);assert.equal(repeated.purchase.projectedRemainingReceipts,2700);assert.equal(repeated.totalSatang,999000);
     const repeat=await request(`${own}/checkout`,'POST',{quoteId:repeated.quoteId,consentRevision:repeated.consentRevision,accepted:true,channel:'web'},{'idempotency-key':randomUUID()});assert.equal(repeat.status,200,JSON.stringify(repeat));
     const repeatSession=provider.sessions!.find(s=>s.metadata?.billingAttemptId===repeat.body.attemptId)!;input.repeatFixture.complete(repeatSession);await input.reconcile(accountId);await input.reconcile(accountId);
     assert.equal((await request(own)).body.usage.remaining,2700);assert.deepEqual(await db.billingReceiptGrant.findUniqueOrThrow({where:{id:originalGrant.id}}),{...originalGrant,expiresAt:new Date(repeated.purchase.projectedPaidThrough)});
+    const repeatTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(repeatTerm.branchLimit,7);assert.equal(repeatTerm.employeeLimit,25);assert.equal(repeatTerm.monthlySlipLimit,100);assert.deepEqual(repeatTerm.capacityOverride,syntheticGift);
     cases.push('offer-terms-repeat-adds-current-1200-to-original-1500-without-resizing-original-grant-and-extends-original-expiry');
+    cases.push('capacity-published-lower-limits-preserve-paid-baseline-and-original-gift-expiry-on-repeat');
     if(browser){const page=browser.page,route='**/api/v1/system/billing/configuration-changes/preview';await page.goto(`${browser.origin}/system/billing/settings`,{waitUntil:'domcontentloaded'});
       await page.getByLabel('เหตุผลการเปลี่ยนค่า',{exact:true}).fill('ตรวจร่างต่อหลังกลับเข้าหน้าเดิม');
       let release!:()=>void,arrive!:(value:any)=>void;const held=new Promise<void>(r=>release=r);let late:any;

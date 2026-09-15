@@ -1,9 +1,19 @@
 import { BadRequestException } from '@nestjs/common';
-import type { BillingCapacityImpact, BillingCapacityOptions, BillingCapacitySelection, BillingOffer } from '@watchdog-bms/contracts';
-import type { BillingAttempt, Prisma } from '../../../generated/prisma/client';
+import { BILLING_PAID_TIERS, type BillingCapacityImpact, type BillingCapacityOptions, type BillingCapacitySelection, type BillingOffer } from '@watchdog-bms/contracts';
+import type { BillingAccount, BillingAttempt, CompanyPlanTerm, Prisma } from '../../../generated/prisma/client';
 import { PLATFORM_SEAT_EXEMPT_ROLE } from '../../system-partner-management/application/plan-term-limit';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import type { BillingSnapshot } from './billing.service';
+import { termProjectionHash } from '../domain/paid-invoice';
+
+/** Grandfather purchased limits only; temporary gifts and lower-tier changes are separate. */
+export function purchasedCapacityOffer(offer:BillingOffer,term:CompanyPlanTerm|null,account:BillingAccount|null,now=new Date()):BillingOffer {
+  const rank=BILLING_PAID_TIERS.indexOf(term?.tierKey as typeof BILLING_PAID_TIERS[number]);
+  if(!term||!account||rank<0||BILLING_PAID_TIERS.indexOf(offer.offerKey as typeof BILLING_PAID_TIERS[number])<rank||
+    term.companyId!==account.companyId||term.billingReceiptAccountId!==account.id||term.termDisabledAt||term.termEndsAt<=now||
+    !account.paidThrough||account.paidThrough<=now||termProjectionHash(term)!==account.termProjectionHash)return offer;
+  return {...offer,branchLimit:Math.max(term.branchLimit,offer.branchLimit),employeeLimit:Math.max(term.employeeLimit,offer.employeeLimit)};
+}
 
 const settled = ['PAID', 'REJECTED', 'CANCELLED', 'VOIDED'] as const;
 export const capacityReview = () => billingError('BILLING_CAP_SELECTION_REQUIRED', 'กรุณาตรวจและเลือกสาขากับผู้ใช้ที่จะคงสิทธิ์ก่อนยืนยัน');

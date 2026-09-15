@@ -115,11 +115,19 @@ export async function checkBillingPlanChange(input: {
   await accept('CANCEL_DOWNGRADE');assert.equal((await read()).pendingPlanChange,null);assert.equal(schedule.phases[1].items[0].price,'price_BasicYear');
   let active=await accept('SCHEDULE_DOWNGRADE');
   cases.push('downgrade-cancel-resume-preserves-target-explicit-cancel-restores-accepted-price');
+  // TEST_ONLY publication fixture: the already accepted downgrade must keep its original capacity contract.
+  const changedPolicy:BillingPolicy={...policy,offerTerms:{...policy.offerTerms,STARTER_249:{monthlyPriceSatang:24900,
+    annualPriceSatang:249000,monthlyReceiptAllowance:30,branchLimit:2,employeeLimit:3}}};
+  const changedRevision=await client.billingPolicyRevision.create({data:{stripeAccountId:source.stripeAccountId,livemode:false,
+    version:revision.version+1,state:'ACTIVE',policyJson:changedPolicy as unknown as Prisma.InputJsonValue,createdByUserId:input.userId}});
+  await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:changedRevision.id,version:{increment:1}}});
+  const newCapacity=await options();assert.equal(newCapacity.branchLimit,2);assert.equal(newCapacity.employeeLimit,3);
   const quote=async(tier:string)=>{const q=await request(`${base}/quote`,'POST',{offerKey:tier,interval:'year',billingEmail:'owner@example.test'});assert.equal(q.status,200,JSON.stringify(q));return q.body;};
   const checkout=(q:Obj)=>request(`${base}/checkout`,'POST',{quoteId:q.quoteId,consentRevision:q.consentRevision,accepted:true,channel:'web'},{'idempotency-key':randomUUID()});
   const session=(id:string)=>provider.sessions!.find(s=>s.metadata.billingAttemptId===id)!;
   const repeatQuote=await quote('BASIC_499');assert.equal(repeatQuote.pendingPlanChange.operationId,active.id);
   assert.equal(repeatQuote.pendingPlanChange.oldEffectiveAt,before.paidThrough);
+  assert.equal(repeatQuote.pendingPlanChange.offer.branchLimit,1);assert.equal(repeatQuote.pendingPlanChange.offer.employeeLimit,2);
   const aborted=await checkout(repeatQuote);assert.equal(aborted.body.state,'OPEN',JSON.stringify(aborted));session(aborted.body.attemptId).status='expired';await reconcile();
   assert.equal((await read()).pendingPlanChange.id,active.id);assert.equal((await read()).paidThrough,before.paidThrough);
   const bought=await checkout(await quote('BASIC_499'));assert.equal(bought.body.state,'OPEN',JSON.stringify(bought));fixture.complete(session(bought.body.attemptId));await reconcile();
@@ -132,6 +140,10 @@ export async function checkBillingPlanChange(input: {
   const pro=await read();assert.equal(pro.tierKey,'PRO_999');assert.equal(pro.paidThrough,extended.paidThrough);assert.equal(pro.pendingPlanChange.targetOffer.offerKey,'STARTER_249');
   assert.equal(schedule.phases[1].items[0].price,'price_StarterYear');active=pro.pendingPlanChange;
   cases.push('downgrade-pending-upgrade-charges-delta-retains-lower-target-and-paid-end');
+  assert.equal(pro.pendingPlanChange.targetOffer.branchLimit,1);assert.equal(pro.pendingPlanChange.targetOffer.employeeLimit,2);
+  cases.push('downgrade-accepted-capacity-survives-catalog-change-repeat-and-upgrade');
+  // Subsequent browser selection exercises a new consent against the original catalog again.
+  await client.billingSettings.update({where:{id:settings.id},data:{policyRevisionId:revision.id,version:{increment:1}}});
   if(browser){
     const page=browser.page;await page.setViewportSize({width:390,height:844});
     await page.goto(`${browser.origin}/companies/${companyId}/billing`,{waitUntil:'domcontentloaded'});

@@ -1,6 +1,8 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: IN PROGRESS. Manual/trial additive receipt checkpoint2026-09-15: the existing reviewed receipt action now grants company-owned fixed-expiry ADMIN_ADJUSTMENT units without creating a paid account or invoice. Monthly base is consumed first; gifts do not refill at rollover or extend during renewal/conversion. Current owner/Admin/LINE billing views separate the monthly base and gifted balance. Exact original-command approval/replay, current source conversion and shared web/LINE admission are locally proven. Final actual HTTP/PostgreSQL/Next/Chromium12 groups PASS (three manual plus nine paid receipt groups), PostgreSQL14, focused121, affected extraction/LINE338 and web display5 PASS/0skip. `manual-receipts-result.json` binds23 source files and two inspected mobile captures. Native gift-to-Checkout acceptance and the full current combined run are not claimed. Migration20260915100000 applied only to the guarded local fixture DB. Paid free-day/collection coordination, original paid LINE request closure and remaining controls/mail/LINE acceptance stay open. No CI/push/merge/deploy or native payment/message.
+Package capacity checkpoint2026-09-15: paired runtime branch/member limits now use existing saved/immediate/scheduled policy publication and independent approval. Public marketing, owner web/LINE review and capacity selection share the approved catalog. Original paid Checkout and renewal contracts are preserved; active repeat/upgrade retains higher purchased baseline, never temporary Admin gifts. Pending downgrade uses its original accepted limits after later catalog changes. Paid repeat updates accepted capacities/monthly-equivalent metadata atomically without rewriting old receipt grants. Actual local HTTP/PostgreSQL/Next/Chromium offer13 and plan-change29 groups PASS, with17 focused unit and37 PostgreSQL tests PASS/0skip; counts overlap. Contracts/API/web/SWC PASS. capacity-policy-result.json binds15 sources and two inspected mobile captures. No new full combined/native acceptance, CI/push/merge/deploy. Paid free-day collection policy remains pending.
+
+Status: IN PROGRESS. Original paid LINE package request checkpoint2026-09-15: both paid application writers now resolve only the matching original OPEN request after paid invoice, purchased term/account/hash and original grant agree. The request, paid rights, audit and existing billing outbox commit together; temporary Admin gifts, financial holds, legacy evidence, foreign sources and historical replay do not claim a new paid purchase. Fixed an actual403 recovery dead end on exact expired-company request POST/GET, retaining session/tenant/legal/platform/permission and OWNER creation checks. Safe company/Admin DTOs and partner history distinguish PAID_PURCHASE; the queue explains temporary gifts in Thai. Focused real local HTTP/PostgreSQL/Next/Chromium11 groups, unit104, PG13 and queue source QA19 PASS/0skip; contracts/API/web/SWC PASS. `paid-request-result.json` binds15 sources. Full current repeat/upgrade/downgrade/native acceptance and final combined are not claimed. No CI/push/merge/deploy or native charge/message.
 Owner: Codex / repository owner.
 Scope: Stripe packages/Postmark/Admin C01–C08/web/LINE, simulated E2E, bug/gap/UX fixes, authorized green-CI merges.
 
@@ -24,8 +26,8 @@ Preserve all unrelated tracked/untracked work, including cloud runbook/UAT, mark
 
 ## Repositories
 
-- Root branch codex/stripe-postmark-implementation-20260912; locale1e12795 (AI support checkpoint; manual gifts locally proven, awaiting commit). PR558 todevelop. Remote stilldef8470215f587632136d67288c2b38d199ac9f8.
-- Marketing isolated /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912; same branch, localca5f913 (AI support alignment), PR2 todevelop. Remote4169ea219b2b4c0163bdd747e05b6d1ffea44343; marketing runtime969e4c0 unchanged. Original dirty mangmee_web untouched.
+- Root branch codex/stripe-postmark-implementation-20260912; local1c8dd513 (paid original request closure; manual gifts and AI support committed locally). PR558 todevelop. Remote stilldef8470215f587632136d67288c2b38d199ac9f8.
+- Marketing isolated /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912; same branch, local8243fc7 (paid request alignment), PR2 todevelop. Remote4169ea219b2b4c0163bdd747e05b6d1ffea44343; marketing runtime969e4c0 unchanged. Original dirty mangmee_web untouched.
 - Prior local checkpoints: CSV/case namesa7137fef, refund-bound/scoped-proof87a9c5f2, owner UX36adec11, strict Portal/email loginf5c23b53, Postmark reset483fea8f. Resolve fresh hashes with git before future handoff.
 
 ## Implemented scope (not full completion)
@@ -49,12 +51,26 @@ Current owner UX: contextual Thai mode/payment/apply/access/subscription/deliver
 ## Remaining full task
 
 - C03 aged UNKNOWN recovery/compensation and historical financial exceptions beyond record-only import.
-- C05/C06 remaining typed runtime settings and capacity rollouts. Saved/immediate/scheduled publication, explicit cohort and optional SLA are done.
+- C05/C06 capacity settings and purchased-right preservation are now implemented locally (capacity-policy-result.json). Final current combined/native acceptance is still pending; saved/immediate/scheduled publication, explicit cohort and optional SLA were already done.
 - C07 further financial drift resolution; settlement observation and bounded reconciliation batches already have local source-bound evidence. Existing event/manual/scheduled discovery, invoice find/import HELD and configuration checks are done.
-- C08 debt, paid access-day/collection coordination, original legacy request closure from reviewed outcomes and remaining compensation/bulk acceptance. Paid temporary package/capacity override has focused proof; broad paid-repeat/reconcile acceptance is still being completed. Monetary refunds and bounded company history CSV are done. Business bounds stay unset/closed until independently approved Admin values; do not invent amounts/days.
+- C08 debt, paid access-day/collection coordination and remaining compensation/bulk acceptance. Paid temporary package/capacity override has focused proof; broad paid-repeat/reconcile acceptance is still being completed. Monetary refunds and bounded company history CSV are done. Business bounds stay unset/closed until independently approved Admin values; do not invent amounts/days.
 - Postmark retention/remaining EM09 identity variants; scoped read-only monitoring is implemented with six local HTTP/browser groups. Existing email password recovery is done, no LINE required. New signup OTP/self-link remain proposal, not an approved E0 choice.
 - LINE intake/draft/live capture/AP21–24/full rich-menu/webhook/Login/LIFF matrix through permission-checked ERP APIs. Parked Login/self-link stays closed, existing OAuth flag unchanged; Admin IssueLINEQR/Unlink repair is done.
 - Final current CI/review then authorized bothrepo develop/main merges with NO DEPLOY. Refresh read-only workflow/no-deploy preflight before remote events.
+
+## Historical implementation-only estimate — before the capacity checkpoint
+
+These are provisional effort weights against the whole coding scope, not measured checklist completion, test coverage or per-category completion percentages. Approximately85% implemented /15% remaining is the prior subjective estimate; the division below makes that estimate explicit without claiming a complete new code audit. Do not increase coding progress just because tests pass. Re-estimate transparently if the scope inventory changes.
+
+| Remaining coding category | Approximate weight of total code scope | Concrete remaining work |
+|---|---:|---|
+| Financial exceptions (C03/C07/C08) |5%| Long-lived UNKNOWN outcomes, old debt, remaining financial/access drift resolution and approved compensation. Existing refund commands, invoice history, settlement observations and reconciliation batches are already implemented. |
+| Paid Admin access-day/collection coordination |3%| Reviewed free-day extension for paid customers coordinated with the Stripe collection schedule and audit. Whether free days move the next charge is still awaiting the earlier Owner reply; manual/trial renewal is already implemented. |
+| Remaining package-level runtime settings (C05/C06) |2%| Typed branch/member capacity settings and their intended effective customer cohorts/boundaries. Price/receipt terms, saved/scheduled policy publication, VAT and existing sales gates are already implemented. |
+| Remaining LINE authorization boundaries (AP21–24) |3%| Remaining source/history reuse, current branch/role/company changes and final queued/live answer/draft authority gaps. Native device/provider matrix verification is separate and not counted as missing code. |
+| Mail retention |2%| Retention/cleanup of local delivery history according to approved policy. Postmark transport, recovery, monitoring and email password reset are already implemented; inbox/provider proof is separate. |
+
+Excluded from the15%: E2E/regressions, provider/sandbox/native acceptance, CI, review/merges, deployment, hidden receipt-only sales, Coming soon Enterprise/tax forms and unapproved OTP/self-link proposals. Newly discovered concrete bugs remain coding work and must change the estimate explicitly. The original paid package request closure/recovery is implemented at core1c8dd513 and marketing8243fc7 and must not remain listed as unimplemented.
 
 ## Local tools / boundaries
 

@@ -188,7 +188,8 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
             <h4 className="font-semibold">{billingOfferLabel(p.offerKey)}</h4><div className="grid grid-cols-2 gap-3">
               <div><p className="text-gray-600">เดิม</p><p>{money(p.beforeTotalSatang)}</p>{p.beforeReceiptAllowance!=null&&<p>{p.beforeReceiptAllowance.toLocaleString('th-TH')} ใบ</p>}</div>
               <div><p className="text-gray-600">ใหม่</p><p>{money(p.afterTotalSatang)}</p>{p.afterReceiptAllowance!=null&&<p>{p.afterReceiptAllowance.toLocaleString('th-TH')} ใบ</p>}</div>
-            </div></article>)}</div>
+            </div>{p.afterBranchLimit!=null&&<div className="grid grid-cols-2 gap-3"><p>{p.beforeBranchLimit} สาขา · {p.beforeEmployeeLimit} ผู้ใช้</p><p>{p.afterBranchLimit} สาขา · {p.afterEmployeeLimit} ผู้ใช้</p></div>}</article>)}</div>
+          <p>เพดานใหม่ไม่ลดสิทธิ์ที่ซื้อไว้แล้ว การซื้อซ้ำหรืออัปเกรดคงเพดานเดิมที่สูงกว่า การลดแพ็กเกจยังมีผลตามวันสิ้นรอบที่ยืนยัน</p>
         </section>}
         <section className="space-y-2" aria-label="กลุ่มบริษัทในคำขอ">
           <p>กลุ่มที่เสนอ: {operation.proposed.policy.salesCompanyIds == null ? 'ทุกบริษัท รวมบริษัทที่จะสมัครภายหลัง' : `${operation.proposed.policy.salesCompanyIds.length} บริษัทที่เลือก`}</p>

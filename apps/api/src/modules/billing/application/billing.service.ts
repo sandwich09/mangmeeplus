@@ -20,7 +20,7 @@ import { collectionContract, pendingChange, type ScheduledChange } from './billi
 import { restartFits, restartSource, type RestartSource } from './billing-restart';
 import { fullPackagePurchaseImpact } from '../domain/billing-package';
 import { isUpgrade, upgradeHistory, upgradePreview, type UpgradeSource } from './billing-upgrade';
-import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCapacitySelection } from './billing-capacity';
+import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCapacitySelection, purchasedCapacityOffer } from './billing-capacity';
 import type { BillingCapacitySelection } from '@watchdog-bms/contracts';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 
@@ -111,13 +111,15 @@ export class BillingService {
   }
 
   async capacity(context: RequestContext, offerKey: string, interval: string) {
-    const { offer } = paidVariant(offerKey, interval);
+    paidVariant(offerKey, interval);
     return this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, context.companyId); await this.assertOwner(context, tx);
       const company = await tx.company.findUniqueOrThrow({ where: { id: context.companyId }, include: { planTerm: true } });
       if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))
         throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
-      return capacityOptions(tx, context.companyId, offer);
+      const state=await this.settings(tx),account=await this.account(context.companyId,tx);
+      const {offer}=paidVariant(offerKey,interval,state.policy);
+      return capacityOptions(tx, context.companyId, purchasedCapacityOffer(offer,company.planTerm,account));
     });
   }
 
@@ -196,7 +198,7 @@ export class BillingService {
     if (!state.policy || !state.revision || !state.gates.new_sales) throw billingError('BILLING_SALES_CLOSED', 'ยังไม่เปิดรับชำระเงินใหม่');
     assertCompanyCanBuy(state.policy, context.companyId);
     assertPolicyReady(state.policy);
-    const offer=billingOffer(tier,interval,state.policy);
+    let offer=billingOffer(tier,interval,state.policy);
     if (state.policy.paidStart !== 'IMMEDIATE') throw billingError('CONTROL_POLICY_NOT_SUPPORTED', 'การเริ่มสมาชิกต้องชำระทันทีตามนโยบายปัจจุบัน');
     const priceId = state.policy.priceIds[`${tier}:${interval}`];
     if (!priceId) throw billingError('BILLING_OFFER_UNAVAILABLE', 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน');
@@ -209,6 +211,7 @@ export class BillingService {
       throw billingError('BILLING_LEGACY_REVIEW_REQUIRED', 'แพ็กเกจเดิมต้องให้ทีมงานตรวจสอบก่อนซื้อ');
     }
     const existing = await this.account(company.id);
+    offer=purchasedCapacityOffer(offer,term,existing);
     if(existing)await assertNoPendingRefund(this.prisma.client,existing);
     if (existing?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
     if (existing?.activeAttemptId) throw billingError('BILLING_EXISTING_SUBSCRIPTION', 'มีรายการเดิมอยู่แล้ว กรุณาตรวจสถานะหรือจัดการสมาชิก');
@@ -268,7 +271,7 @@ export class BillingService {
     }
     const pending = existing && repeat ? await pendingChange(this.prisma.client, existing) : null;
     if (pending) {
-      const options = await this.capacity(context, pending.proposed.snapshot.quote.offer.offerKey, pending.proposed.snapshot.quote.offer.interval);
+      const options = await capacityOptions(this.prisma.client, company.id, pending.proposed.snapshot.quote.offer);
       if (!pending.proposed.change.selection || !capacityValid(options, pending.proposed.change.selection)) throw capacityReview();
       quote.pendingPlanChange = { operationId: pending.row.id, oldEffectiveAt: pending.proposed.paidThrough, newEffectiveAt: quote.purchase!.projectedPaidThrough,
         offer: pending.proposed.snapshot.quote.offer, totalSatang: pending.proposed.snapshot.quote.totalSatang, capacity: capacityImpact(options, pending.proposed.change.selection) };

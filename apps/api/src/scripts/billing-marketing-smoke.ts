@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import type { Page } from '@playwright/test';
 import type { BillingCatalog } from '@watchdog-bms/contracts';
 
-export async function checkBillingMarketing(input: { page: Page; appOrigin: string; directory: string; evidenceDir: string; expectedPro?:{monthlySatang:number;annualSatang:number;annualReceipts:number} }) {
+export async function checkBillingMarketing(input: { page: Page; appOrigin: string; directory: string; evidenceDir: string; expectedPro?:{monthlySatang:number;annualSatang:number;annualReceipts:number;branches?:number;members?:number} }) {
   const expected=input.expectedPro??{monthlySatang:99900,annualSatang:999000,annualReceipts:1200};
   const price=(satang:number)=>`฿${(satang/100).toLocaleString('th-TH',{maximumFractionDigits:2})}`;
   const html = await readFile(resolve(input.directory, 'index.html'));
@@ -49,6 +49,7 @@ export async function checkBillingMarketing(input: { page: Page; appOrigin: stri
     await pricing.getByRole('button', { name: 'รายปี', exact: true }).click();
     await pro.getByText(price(expected.annualSatang), { exact: true }).waitFor();
     assert.ok((await pro.innerText()).includes(expected.annualReceipts.toLocaleString('th-TH')));assert.match(await pro.innerText(), /ทั้งก้อนทันที/);
+    assert.ok((await pro.innerText()).includes(`${expected.branches??5} สาขา · ${expected.members??10} บัญชีผู้ใช้รวมเจ้าของ`));
     assert.match(await enterprise.innerText(), /Coming soon/);
     assert.equal(await enterprise.getByRole('button').isDisabled(), true);
     cases.push('marketing-actual-bundle-public-bff-trial-seven-annual-upfront-test-sales-closed');

@@ -117,7 +117,9 @@ export class BillingConfigurationService {
       prices: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ offerKey: `${tier}:${interval}` as const,
         beforeTotalSatang: quoteTotals(billingOffer(tier, interval, before).priceSatang, before?.taxTreatment ?? null).totalSatang,
         afterTotalSatang: quoteTotals(billingOffer(tier, interval, policy).priceSatang, policy.taxTreatment).totalSatang,
-        beforeReceiptAllowance:billingOffer(tier,interval,before).receiptAllowance,afterReceiptAllowance:billingOffer(tier,interval,policy).receiptAllowance }))) };
+        beforeReceiptAllowance:billingOffer(tier,interval,before).receiptAllowance,afterReceiptAllowance:billingOffer(tier,interval,policy).receiptAllowance,
+        beforeBranchLimit:billingOffer(tier,interval,before).branchLimit,afterBranchLimit:billingOffer(tier,interval,policy).branchLimit,
+        beforeEmployeeLimit:billingOffer(tier,interval,before).employeeLimit,afterEmployeeLimit:billingOffer(tier,interval,policy).employeeLimit }))) };
   }
   private async validateProvider(policy: BillingPolicy) {
     assertPolicyReady(policy);
