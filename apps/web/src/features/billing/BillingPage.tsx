@@ -170,16 +170,16 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {status.reference && <p className="break-all text-xs text-gray-500">เลขอ้างอิง {status.reference}</p>}
         {returning && !confirmed && timedOut && <p role="status">ยังยืนยันผลไม่ได้ กรุณาตรวจสอบรายการเดิมก่อนชำระใหม่ หรือติดต่อทีมงานพร้อมเลขอ้างอิง</p>}
         <div className="flex flex-wrap gap-2">
-          <button className={button} disabled={busy} onClick={() => action(async () => { await api.refresh(); setReload(value => value + 1); })}>ตรวจสอบสถานะ</button>
-          {status.attemptId && <button className={button} disabled={busy} onClick={() => action(async navigate => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
-          {status.allowedActions.includes('portal_payment_method') && <button className={button} disabled={busy} onClick={() => action(async navigate => navigate((await api.portal()).url, 'portal'))}>จัดการบัตรชำระเงิน</button>}
+          <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { await api.refresh(); setReload(value => value + 1); })}>ตรวจสอบสถานะ</button>
+          {status.attemptId && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async navigate => { const result = await api.resume(status.attemptId!); if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else setReload(value => value + 1); })}>กลับไปยังรายการเดิม</button>}
+          {status.allowedActions.includes('portal_payment_method') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async navigate => navigate((await api.portal()).url, 'portal'))}>จัดการบัตรชำระเงิน</button>}
           {status.accessState === 'ACTIVE' && <a className={button} href={`/companies/${companyId}/dashboard`}>กลับไปใช้งาน</a>}
         </div>
       </section>
       <BillingCollectionPanel companyId={companyId} status={status} catalog={data.catalog} operationId={collectionId} onChange={collectionChanged} />
       {capacityNotice && status.attemptId && <p role="status">{capacityNotice}</p>}
       {status.capacityRepair && !capacity && <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4"><p>ชำระสำเร็จแล้ว แต่ข้อมูลสาขาหรือผู้ใช้เปลี่ยน กรุณาเลือกสิทธิ์ล่าสุดเพื่อเปิดใช้งานจากรายการเดิม</p>
-        <button className={button} disabled={busy} onClick={() => action(async () => { const repair = status.capacityRepair!; setCapacity({ options: await api.capacity(repair.offerKey, repair.interval), billingEmail: email, repair, key: crypto.randomUUID() }); })}>เลือกสิทธิ์สำหรับรายการที่จ่ายแล้ว</button></section>}
+        <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { const repair = status.capacityRepair!; setCapacity({ options: await api.capacity(repair.offerKey, repair.interval), billingEmail: email, repair, key: crypto.randomUUID() }); })}>เลือกสิทธิ์สำหรับรายการที่จ่ายแล้ว</button></section>}
       {capacity && <BillingCapacityPicker key={capacity.options.sourceHash + capacity.key} options={capacity.options} repair={!!capacity.repair} onCancel={() => setCapacity(null)}
         onRefresh={async () => { const latest = await api.status(), options = await api.capacity(capacity.options.offerKey, capacity.options.interval);
           if (capacity.repair && !latest.capacityRepair) { setCapacity(null); setReload(v => v+1); return; }
@@ -197,7 +197,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{data.catalog.offers.filter(offer => offer.interval === interval).map(offer => <article key={offer.offerKey} className="space-y-3 rounded-2xl border bg-white p-4">
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
           <p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p><p>{offer.availability === 'COMING_SOON' ? 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน' : `${offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ`}</p>
-          <button className={`${button} w-full`} disabled={busy || !emailReady || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} onClick={() => action(async () => {
+          <button className={`${button} w-full`} disabled={busy || !emailReady || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} aria-busy={Boolean(busy)} onClick={() => action(async () => {
             await requestQuote(offer.offerKey, interval, email);
           })}>{offer.availability === 'COMING_SOON' ? 'Coming soon' : offer.availability === 'AVAILABLE' ? 'ตรวจสอบราคา' : 'ยังไม่เปิดขาย'}</button>
         </article>)}</div>
@@ -216,7 +216,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p>คงผู้ใช้: {quote.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {quote.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p>
           {quote.capacity.defaults.map((item,index) => <p key={index}>สาขาเริ่มต้นของ {item.member}: {item.branch ?? 'เลือกเมื่อเข้าใช้งาน'}</p>)}<p>ข้อมูลและประวัติยังอยู่ครบ ระบบตรวจสิทธิ์อีกครั้งก่อนเปิดใช้งาน</p></div>}
         <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 size-5" checked={accepted} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขการชำระเงินและต่ออายุอัตโนมัติ</label>
-        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || !emailReady || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} onClick={() => action(async navigate => {
+        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || !emailReady || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} aria-busy={Boolean(busy)} onClick={() => action(async navigate => {
           const params = new URLSearchParams(window.location.search);
           const result = await api.checkout({ quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: params.get('channel') === 'line' ? 'line' : 'web' }, key.current);
           if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else { setQuote(null); setReload(value => value + 1); }
@@ -227,9 +227,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
         {data.history.items.map(invoice => <article key={invoice.id} className="space-y-2 rounded-xl border bg-white p-4"><p>{invoice.number ?? 'รายการชำระเงิน'} · {money(invoice.amountSatang)} · {date(invoice.createdAt)}</p>
           {(invoice.refundedSatang > 0 || invoice.disputed) && <p className="text-sm text-amber-900">{invoice.refundedSatang > 0 && `ยอดคืนเงินที่ Stripe บันทึก ${money(invoice.refundedSatang)} · `}{invoice.disputed && 'มีข้อพิพาทการชำระเงิน · '}ทีมงานตรวจสิทธิ์เป็นรายกรณี · ตรวจล่าสุด {date(invoice.financialObservedAt)}</p>}
           <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing/invoices/${encodeURIComponent(invoice.id)}`}>ตรวจการคืนเงินและเอกสารปรับยอด</Link>
-          {invoice.hasDocuments && <div className="flex flex-wrap gap-2">{(['invoice', 'receipt', 'pdf'] as const).map(kind => <button key={kind} className={button} disabled={busy} onClick={() => action(async navigate => navigate((await api.document(invoice.id, kind)).url, 'document'))}>{kind === 'invoice' ? 'เปิดใบแจ้งหนี้' : kind === 'receipt' ? 'เปิดใบเสร็จ' : 'ดาวน์โหลด PDF'}</button>)}</div>}
+          {invoice.hasDocuments && <div className="flex flex-wrap gap-2">{(['invoice', 'receipt', 'pdf'] as const).map(kind => <button key={kind} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async navigate => navigate((await api.document(invoice.id, kind)).url, 'document'))}>{kind === 'invoice' ? 'เปิดใบแจ้งหนี้' : kind === 'receipt' ? 'เปิดใบเสร็จ' : 'ดาวน์โหลด PDF'}</button>)}</div>}
         </article>)}
-        {data.history.nextCursor && <button className={button} disabled={busy} onClick={() => action(async () => { const page = await api.history(data.history.nextCursor!); setData(current => current && ({ ...current, history: { items: [...current.history.items, ...page.items], nextCursor: page.nextCursor } })); })}>รายการก่อนหน้า</button>}
+        {data.history.nextCursor && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => action(async () => { const page = await api.history(data.history.nextCursor!); setData(current => current && ({ ...current, history: { items: [...current.history.items, ...page.items], nextCursor: page.nextCursor } })); })}>รายการก่อนหน้า</button>}
       </section>
     </>}
     <footer className="space-y-2 border-t pt-5 text-sm"><p>ต้องการความช่วยเหลือ ติดต่อทีมมั่งมี พร้อมเลขอ้างอิงรายการ</p><div className="flex flex-wrap gap-4"><a className="underline" href={`tel:${PLAN_TERM_RENEW_PHONE.replaceAll('-', '')}`}>{PLAN_TERM_RENEW_PHONE}</a><a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>{PLAN_TERM_CONTACT_EMAIL}</a></div></footer>

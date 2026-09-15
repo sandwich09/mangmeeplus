@@ -35,7 +35,7 @@ function Confirmation({token}:{token:string|null}){
       <form onSubmit={event=>void submit(event)} className="space-y-4">
         <TextField className="sm:h-11 sm:text-base" label={t('auth.reset.new_password',locale)} type="password" name="new-password" autoComplete="new-password" required minLength={8} maxLength={128} value={password} disabled={busy||!!intent.current} onChange={event=>{setPassword(event.target.value);setError('');}}/>
         <TextField className="sm:h-11 sm:text-base" label={t('auth.reset.confirm_password',locale)} type="password" name="confirm-password" autoComplete="new-password" required minLength={8} maxLength={128} value={confirmation} disabled={busy||!!intent.current} onChange={event=>{setConfirmation(event.target.value);setError('');}}/>
-        <button className="min-h-11 w-full rounded-lg bg-brand-700 px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={busy}>{busy?text('กำลังบันทึก…','Saving…'):t('auth.reset.submit',locale)}</button>
+        <button className="min-h-11 w-full rounded-lg bg-brand-700 px-4 py-3 font-semibold text-white disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)}>{busy?text('กำลังบันทึก…','Saving…'):t('auth.reset.submit',locale)}</button>
       </form></>}
     <nav className="flex flex-wrap gap-4"><Link className="inline-flex min-h-11 items-center underline" href="/login">{t('auth.forgot.back_to_login',locale)}</Link>
       {!done&&<Link className="inline-flex min-h-11 items-center underline" href="/forgot-password">{text('ขอลิงก์กู้รหัสผ่านใหม่','Request a new reset link')}</Link>}</nav>

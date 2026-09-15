@@ -403,7 +403,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             hint="เผื่อวันหนึ่งเปลี่ยนมือถือแล้ว LINE หลุด จะได้กลับเข้าร้านได้ค่ะ"
           />
 
-          <AccountEmailOtpPanel onState={next => setAccount(current => current && ({ ...current, email: next.email, emailVerified: next.emailVerified, pendingEmail: next.emailRequirement === 'CHANGE_PENDING' ? next.challenge?.email ?? null : null }))} />
+          <AccountEmailOtpPanel onState={next => {
+            setAccount(current => current && ({ ...current, email: next.email, emailVerified: next.emailVerified, pendingEmail: next.emailRequirement === 'CHANGE_PENDING' ? next.challenge?.email ?? null : null }));
+            invalidateChecklist();
+          }} />
 
           <div className="mt-6 grid gap-4 border-t border-gray-200 pt-5">
             <TextField

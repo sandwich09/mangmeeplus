@@ -88,10 +88,10 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {overview?.platformScope && <Link onClick={leaving} href="/system/billing/settings" className={button}>ตั้งค่าการชำระเงิน</Link>}</nav>
     {loading && <p role="status">กำลังโหลดข้อมูล…</p>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-4">{error}</p>}
-    <button className={button} disabled={loading || saving} onClick={() => {invalidate();setReload(v => v + 1);}}>โหลดข้อมูลล่าสุด</button>
+    <button className={button} disabled={loading || saving} aria-busy={Boolean(loading || saving)} onClick={() => {invalidate();setReload(v => v + 1);}}>โหลดข้อมูลล่าสุด</button>
     {!loading && overview?.mode === 'DISABLED' && <p>ยังไม่ได้เปิดระบบชำระเงิน ติดต่อผู้ดูแลการตั้งค่า</p>}
     {!companyId&&!issueId&&!issuesOnly&&<form className="flex flex-wrap gap-3" onSubmit={e=>{e.preventDefault();setCursor(null);setQuery(search.trim());setReload(v=>v+1);}}>
-      <label>ค้นหาบริษัทในขอบเขต<input className="ml-2 min-h-11 rounded-lg border p-2" value={search} maxLength={100} onChange={e=>setSearch(e.target.value)}/></label><button className={button} disabled={loading}>ค้นหาบริษัท</button>
+      <label>ค้นหาบริษัทในขอบเขต<input className="ml-2 min-h-11 rounded-lg border p-2" value={search} maxLength={100} onChange={e=>setSearch(e.target.value)}/></label><button className={button} disabled={loading} aria-busy={Boolean(loading)}>ค้นหาบริษัท</button>
     </form>}
     {issuesOnly&&<label className="block">กรองคิว<select className="ml-2 min-h-11 rounded-lg border p-2" aria-label="กรองคิว" disabled={loading} value={queue} onChange={e=>router.replace(`/system/billing/issues${queueQuery(e.target.value,null)}`,{scroll:false})}>
       <option value="">เคสที่ยังเปิดทั้งหมด</option><option value="UNASSIGNED">ยังไม่มีผู้รับผิดชอบ</option><option value="OVERDUE">เลยเวลาติดตาม</option></select></label>}
@@ -158,26 +158,26 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       {issue.companyId&&issue.kind.startsWith('NOTIFICATION_')&&<Link onClick={leaving} className="block underline" href={`/system/billing/companies/${encodeURIComponent(issue.companyId)}/deliveries`}>ตรวจรายการแจ้งเตือนเดิม</Link>}
       {overview?.capabilities.includes('system.billing.issue.manage') && issue.state !== 'RESOLVED' && <div className="space-y-3">
         <label className="block">ค้นหาผู้รับผิดชอบ<input className="mt-2 block w-full rounded-lg border p-3" maxLength={100} value={operatorSearch} onChange={e=>setOperatorSearch(e.target.value)}/></label>
-        <button className={button} disabled={saving} onClick={()=>void findOperators()}>ค้นหาเจ้าหน้าที่ที่มีสิทธิ์</button>
+        <button className={button} disabled={saving} aria-busy={Boolean(saving)} onClick={()=>void findOperators()}>ค้นหาเจ้าหน้าที่ที่มีสิทธิ์</button>
         {(['assignee','backup'] as const).map(kind=><div key={kind}><label htmlFor={`billing-issue-${kind}`} className="block">{kind==='assignee'?'ผู้รับผิดชอบที่เลือก':'ผู้สำรองที่เลือก'}</label>
           <select id={`billing-issue-${kind}`} className="mt-2 block w-full rounded-lg border p-3" value={kind==='assignee'?assignee:backup} onChange={e=>kind==='assignee'?setAssignee(e.target.value):setBackup(e.target.value)}>
             <option value="">ยังไม่กำหนด</option>{[...new Set([assignee,backup,...operators?.items.map(o=>o.id)??[]].filter(Boolean))].map(id=><option key={id} value={id}>{operatorNames[id]??id}</option>)}
           </select></div>)}
-        {operators?.nextCursor&&<button className={button} disabled={saving} onClick={()=>void findOperators(operators.nextCursor!)}>รายชื่อผู้รับผิดชอบหน้าถัดไป</button>}
+        {operators?.nextCursor&&<button className={button} disabled={saving} aria-busy={Boolean(saving)} onClick={()=>void findOperators(operators.nextCursor!)}>รายชื่อผู้รับผิดชอบหน้าถัดไป</button>}
         <label className="block">ความเร่งด่วน<select aria-label="ความเร่งด่วน" className="ml-2 min-h-11 rounded-lg border p-2" value={priority} onChange={e=>setPriority(e.target.value)}><option value="NORMAL">ปกติ</option><option value="HIGH">สูง</option><option value="CRITICAL">เร่งด่วนมาก</option></select></label>
         <label className="block">เวลาติดตามภายใน<input type="datetime-local" className="mt-2 block rounded-lg border p-3" value={followUp} onChange={e=>{setFollowUp(e.target.value);setFollowUpChanged(true);}}/></label>
         {issue.slaDueAt&&<p className="text-base">เว้นว่างเพื่อใช้เกณฑ์ส่วนกลางของรอบนี้ การเปลี่ยนระดับความสำคัญคำนวณจากเวลาเริ่มรอบเดิม</p>}
         <p className="text-base text-gray-600">ใช้ติดตามงานภายใน ไม่ใช่การเปลี่ยนระยะผ่อนผันหรือกำหนดเวลาที่แจ้งลูกค้า</p>
         <label className="block">สถานะ<select aria-label="สถานะ" className="ml-3 min-h-11 rounded-lg border p-2" value={state} onChange={e => setState(e.target.value)}>{Object.entries(states).filter(([key]) => key !== 'RESOLVED').map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>
         <div><label className="block" htmlFor="billing-company-note">บันทึกการดำเนินการ</label><textarea id="billing-company-note" className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e => setNote(e.target.value)} /></div>
-        <div className="flex flex-wrap gap-2"><button className={button} disabled={saving || !note.trim()} onClick={() => void update('take')}>รับเคสนี้</button>
-          <button className={button} disabled={saving || !note.trim()} onClick={() => void update('save')}>บันทึกสถานะ</button><button className={button} disabled={saving||!note.trim()} onClick={()=>void update('return')}>คืนเคสเข้าคิว</button></div>
+        <div className="flex flex-wrap gap-2"><button className={button} disabled={saving || !note.trim()} aria-busy={Boolean(saving)} onClick={() => void update('take')}>รับเคสนี้</button>
+          <button className={button} disabled={saving || !note.trim()} aria-busy={Boolean(saving)} onClick={() => void update('save')}>บันทึกสถานะ</button><button className={button} disabled={saving||!note.trim()} aria-busy={Boolean(saving)} onClick={()=>void update('return')}>คืนเคสเข้าคิว</button></div>
         <p className="text-base text-gray-600">สถานะเคสแยกจากผลชำระเงินและการเปิดสิทธิ์ การปิดเคสต้องมีผลตรวจยืนยัน</p>
       </div>}
     </section>}
     {issue&&<BillingSupportOutcomesPanel key={issue.id} issue={issue} canManage={Boolean(overview?.capabilities.includes('system.billing.issue.manage'))} onRecorded={()=>setReload(v=>v+1)}/>}
-    {nextCursor && <button className={button} disabled={loading} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,nextCursor)}`,{scroll:false}):setCursor(nextCursor)}>หน้าถัดไป</button>}
-    {cursor && !issueId && <button className={button} disabled={loading} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,null)}`,{scroll:false}):setCursor(null)}>หน้าแรก</button>}
+    {nextCursor && <button className={button} disabled={loading} aria-busy={Boolean(loading)} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,nextCursor)}`,{scroll:false}):setCursor(nextCursor)}>หน้าถัดไป</button>}
+    {cursor && !issueId && <button className={button} disabled={loading} aria-busy={Boolean(loading)} onClick={() => issuesOnly?router.replace(`/system/billing/issues${queueQuery(queue,null)}`,{scroll:false}):setCursor(null)}>หน้าแรก</button>}
     <footer className="border-t pt-4 text-base"><a className="underline" href={`mailto:${PLAN_TERM_CONTACT_EMAIL}`}>ติดต่อผู้ดูแลพร้อมเลขอ้างอิง</a></footer>
   </main>;
 }

@@ -51,17 +51,17 @@ export default function BillingCollectionPanel({ companyId, status, catalog, ope
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {operationId && <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing`}>กลับหน้าจัดการแพ็กเกจ</Link>}
-    {!operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} onClick={() => void act('preview')}>
+    {!operationId && !status.collection && status.allowedActions.includes('portal_cancel_subscription') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>
       {status.cancelAtPeriodEnd ? 'ตรวจสอบการกลับมาต่ออายุ' : 'ตรวจสอบการหยุดต่ออายุ'}</button>}
     {status.pendingPlanChange && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รอเปลี่ยนเป็น {status.pendingPlanChange.targetOffer?.label} วันที่ {new Date(status.pendingPlanChange.effectiveAt).toLocaleString('th-TH')}</p>
       <p>ยอดต่ออายุ {new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(status.pendingPlanChange.nextRenewalTotalSatang / 100)} · สิทธิ์เดิมถึงวันมีผล</p>
       <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${status.pendingPlanChange.id}`}>ดูคำสั่งลดแพ็กเกจ</Link>
-      {status.allowedActions.includes('plan_changes') && <button className={button} disabled={busy} onClick={() => void act('cancel-downgrade')}>ตรวจสอบการยกเลิกลดแพ็กเกจ</button>}</div>}
+      {status.allowedActions.includes('plan_changes') && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('cancel-downgrade')}>ตรวจสอบการยกเลิกลดแพ็กเกจ</button>}</div>}
     {status.planCapacityRepair && <div className="space-y-2 rounded-xl bg-amber-50 p-4"><p>รับชำระรอบใหม่แล้ว กรุณาตรวจเลือกสาขาและผู้ใช้ก่อนเปิดสิทธิ์แพ็กเกจใหม่</p>
-      <button className={button} disabled={busy} onClick={() => { setBusy(true); const repair = status.planCapacityRepair!;
+      <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { setBusy(true); const repair = status.planCapacityRepair!;
         void api.capacity(repair.offerKey, repair.interval).then(options => setSelection({ options, repair, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false)); }}>เลือกสิทธิ์สำหรับรอบที่จ่ายแล้ว</button></div>}
     {!operationId && status.purchaseEligibility !== 'COMPANY_SALES_CLOSED' && status.allowedActions.includes('plan_changes') && targetOffers.length > 0 && <div className="space-y-2"><p>ลดแพ็กเกจเมื่อครบเวลาที่ซื้อไว้ทั้งหมด โดยเลือกรายชื่อที่จะคงสิทธิ์ก่อน</p>
-      <div className="flex flex-wrap gap-2">{targetOffers.map(offer => <button key={offer.offerKey} className={button} disabled={busy || offer.availability !== 'AVAILABLE' || Date.parse(catalog.validUntil) <= Date.now()} onClick={() => {
+      <div className="flex flex-wrap gap-2">{targetOffers.map(offer => <button key={offer.offerKey} className={button} disabled={busy || offer.availability !== 'AVAILABLE' || Date.parse(catalog.validUntil) <= Date.now()} aria-busy={Boolean(busy)} onClick={() => {
         setBusy(true); setError(''); void api.capacity(offer.offerKey, offer.interval).then(options => setSelection({ options, key: crypto.randomUUID() })).catch(e => setError(apiErrorMessage(e))).finally(() => setBusy(false));
       }}>ตรวจลดเป็น {offer.label}</button>)}</div></div>}
     {selection && <BillingCapacityPicker key={selection.options.sourceHash+selection.key} options={selection.options} repair={!!selection.repair} onCancel={() => setSelection(null)}
@@ -82,9 +82,9 @@ export default function BillingCollectionPanel({ companyId, status, catalog, ope
       {operation.state === 'PREVIEW' && <p>ตรวจและยืนยันได้ถึง {new Date(operation.expiresAt).toLocaleTimeString('th-TH')}</p>}
       {(ended || operation.state === 'UNKNOWN') && <p>กลับมาเปิดลิงก์รายการเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิงได้</p>}
       <p className="break-all text-sm">เลขอ้างอิง {operation.id}</p>
-      <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>
+      <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act(action)}>
         {action === 'withdraw' ? 'ถอนคำขอนี้' : `ยืนยัน${actionLabel(operation.action)}`}</button>)}
-        <button className={button} disabled={busy} onClick={() => void act('refresh')}>ตรวจผลการต่ออายุ</button></div>
+        <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act('refresh')}>ตรวจผลการต่ออายุ</button></div>
       <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing?collection=${operation.id}`}>เปิดรายการต่ออายุนี้</Link>
     </article>}
     {!operation && id && <button className={button} onClick={() => setReload(v => v + 1)}>โหลดคำขออีกครั้ง</button>}

@@ -56,7 +56,7 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
   return <main className="mx-auto max-w-3xl space-y-5 p-4 text-base">
     <Link onClick={leaving} className={button} href={companyPath}>กลับไปสถานะแพ็กเกจ</Link><h1 className="text-2xl font-bold">ปรับแพ็กเกจชั่วคราว</h1>
     <p>ปรับแพ็กเกจและจำนวนสาขา/ผู้ใช้ โดยผู้มีสิทธิ์อีกคนตรวจและอนุมัติ ไม่มีการเรียกเก็บเงินจากรายการนี้</p>
-    <button className={button} disabled={busy||loading} onClick={()=>{leaving();setData(null);setOperation(null);setLoading(true);setRefresh(n=>n+1);}}>โหลดข้อมูลล่าสุด</button>
+    <button className={button} disabled={busy||loading} aria-busy={Boolean(busy || loading)} onClick={()=>{leaving();setData(null);setOperation(null);setLoading(true);setRefresh(n=>n+1);}}>โหลดข้อมูลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลดข้อมูล…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}{notice&&<p role="status" className="rounded-lg bg-green-50 p-3">{notice}</p>}
     {(data?.unchanged??operation?.unchanged)&&(()=>{const v=(data?.unchanged??operation?.unchanged)!;return <details className="rounded-xl border p-4"><summary className="min-h-11 cursor-pointer font-semibold">ดูวันใช้งาน ใบเสร็จ และ AI ที่คงเดิม</summary><div className="space-y-2"><p>ใช้งานได้ถึง {date(v.termEndsAt)} · เก็บเงินครั้งถัดไป {v.nextChargeAt?date(v.nextChargeAt):'ยังไม่กำหนด'}</p><p>ใบเสร็จคงเหลือ {v.remainingReceipts} ใบ</p><p>อ่านเอกสารด้วย AI: {v.ocrEnabled?'เปิด':'ปิด'} · จำกัด {v.ocrMonthlyLimit===null?'ตามแพ็กเกจ':`${v.ocrMonthlyLimit} ครั้งต่อเดือน`}</p><p>งบ AI เดือนนี้ {(v.aiBudgetSatang/100).toLocaleString('th-TH')} บาท · ใช้แล้ว {(v.aiUsedSatang/100).toLocaleString('th-TH')} บาท</p></div></details>;})()}
     {data&&<>
@@ -72,14 +72,14 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
           <label className="block">ใช้ได้ถึง (เวลาประเทศไทย)<input className={field} type="datetime-local" value={expires} onChange={e=>setExpires(e.target.value)} disabled={busy}/></label><p>ไม่ระบุวัน: ใช้ได้ถึง {data.maxExpiresAt?date(data.maxExpiresAt):'วันหมดอายุแพ็กเกจปัจจุบัน'}</p>
           <div><label className="block" htmlFor="plan-adjustment-reason">เหตุผลที่ปรับสิทธิ์</label><textarea id="plan-adjustment-reason" className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></div>
           <p>หากลดต่ำกว่าจำนวนที่ใช้อยู่ ข้อมูลและผู้ใช้เดิมยังอยู่ครบ ระบบจะจำกัดการเพิ่มใหม่ตามเพดาน การซื้อแพ็กเกจเพิ่มจะไม่ยืดอายุสิทธิ์ชั่วคราวนี้</p>
-          <button className={button} disabled={busy}>ตรวจสิทธิ์ก่อนส่งคำขอ</button>{data.current?.temporary&&<button type="button" className={button} disabled={busy} onClick={()=>void preview(true)}>ขอคืนสิทธิ์ตามแพ็กเกจที่ซื้อ</button>}
+          <button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจสิทธิ์ก่อนส่งคำขอ</button>{data.current?.temporary&&<button type="button" className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void preview(true)}>ขอคืนสิทธิ์ตามแพ็กเกจที่ซื้อ</button>}
         </form>}
       </section>
       <section className="space-y-3" aria-label="ประวัติการปรับแพ็กเกจ"><h2 className="font-bold">ประวัติคำขอและผู้แก้</h2>{!data.items.length&&<p>ยังไม่มีคำขอ</p>}
         {data.items.map(item=><article key={item.id} className="space-y-2 rounded-xl border p-4"><Link onClick={leaving} className="block min-h-11 underline" href={`/system/billing/plan-adjustments/${encodeURIComponent(item.id)}`}>{item.type==='GRANT_OVERRIDE'?'ปรับสิทธิ์ชั่วคราว':'คืนสิทธิ์ตามแพ็กเกจที่ซื้อ'} · {state[item.state]??'ต้องตรวจสอบ'}</Link>
           <p>จาก {label(item.before)}</p><p>เป็น {label(item.after)}</p><p>ผู้ขอ: {item.requesterName??'ไม่พบชื่อ'} · {date(item.createdAt)}</p><p>ผู้อนุมัติ: {item.approverName??'ยังไม่มี'}</p><p>เหตุผล: {item.reason}</p>
         </article>)}
-        <div className="flex flex-wrap gap-3">{cursor&&<button className={button} disabled={busy} onClick={()=>{leaving();setData(null);setLoading(true);setCursor(null);}}>กลับหน้าแรก</button>}{data.nextCursor&&<button className={button} disabled={busy} onClick={()=>{leaving();setLoading(true);setCursor(data.nextCursor);setData(null);}}>ประวัติหน้าถัดไป</button>}</div>
+        <div className="flex flex-wrap gap-3">{cursor&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>{leaving();setData(null);setLoading(true);setCursor(null);}}>กลับหน้าแรก</button>}{data.nextCursor&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>{leaving();setLoading(true);setCursor(data.nextCursor);setData(null);}}>ประวัติหน้าถัดไป</button>}</div>
       </section>
     </>}
     {operation&&<>
@@ -97,8 +97,8 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
         <Link className={button} href={`/system/billing/plan-adjustments/${encodeURIComponent(operation.id)}`}>เปิดลิงก์คำขอนี้</Link>
       </section>
       {!!operation.allowedActions.length&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2>
-        <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password}>ยืนยันรหัสผ่าน</button><Link onClick={leaving} className={button} href="/forgot-password">กู้รหัสผ่าน</Link></form>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับสิทธิ์',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
+        <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link onClick={leaving} className={button} href="/forgot-password">กู้รหัสผ่าน</Link></form>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับสิทธิ์',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
       </section>}
       <Link onClick={leaving} className={button} href={`${companyPath}/plan-adjustments`}>กลับไปประวัติการปรับแพ็กเกจ</Link>
     </>}

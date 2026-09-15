@@ -72,7 +72,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
           <p>ไม่ระบุวัน: ใช้ได้ถึง {data.maxGrantExpiresAt?date(data.maxGrantExpiresAt):'วันหมดอายุแพ็กเกจปัจจุบัน'}</p>
           <div><label className="block" htmlFor="receipt-adjustment-reason">เหตุผลที่ปรับใบเสร็จ</label><textarea id="receipt-adjustment-reason" className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></div>
           <p>ใบที่เพิ่มใช้ได้ไม่เกินวันหมดอายุแพ็กเกจปัจจุบัน การซื้อแพ็กเกจเพิ่มจะไม่ต่ออายุใบที่ผู้ดูแลเพิ่มให้</p>
-          <button className={button} disabled={busy}>ตรวจจำนวนก่อนส่งคำขอ</button>
+          <button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจจำนวนก่อนส่งคำขอ</button>
         </form>}
       </section>
       <section className="scroll-mt-40 space-y-3" aria-label="ประวัติการเพิ่มใบเสร็จ"><h2 className="font-bold">ประวัติคำขอและผู้แก้</h2>
@@ -80,7 +80,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
         {data.items.map(item=><article key={item.id} className="space-y-2 rounded-xl border p-4"><Link onClick={leaving} className="block min-h-11 underline" href={`/system/billing/receipt-adjustments/${encodeURIComponent(item.id)}`}>{item.type==='GRANT_RECEIPTS'?'เพิ่มใบเสร็จ':'ถอนใบที่ยังไม่ใช้'} {item.units.toLocaleString('th-TH')} ใบ · {state[item.state]??'ต้องตรวจสอบ'}</Link>
           <p>ผู้ขอ: {item.requesterName??'ไม่พบชื่อ'} · {date(item.createdAt)}</p><p>ผู้อนุมัติ: {item.approverName??'ยังไม่มี'}</p><p>เหตุผล: {item.reason}</p>
           {item.grant&&<p>จากรายการนี้ ใช้แล้ว {item.grant.used} ใบ · เหลือ {item.grant.remaining} ใบ · {item.grant.revokedAt?'ถอนสิทธิ์แล้ว':item.grant.active?`ใช้ได้ถึง ${date(item.grant.expiresAt)}`:'หมดอายุแล้ว'}</p>}
-          {data.canCreate&&item.type==='GRANT_RECEIPTS'&&item.grant?.active&&<button className={button} disabled={busy} onClick={()=>void preview(item.grant!.id)}>ขอถอนใบที่ยังไม่ใช้จากรายการนี้</button>}
+          {data.canCreate&&item.type==='GRANT_RECEIPTS'&&item.grant?.active&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void preview(item.grant!.id)}>ขอถอนใบที่ยังไม่ใช้จากรายการนี้</button>}
         </article>)}
         <div className="flex flex-wrap gap-3">{cursor&&<button className={button} disabled={busy} onClick={()=>{generation.current++;setData(null);setLoading(true);setCursor(null);}}>กลับหน้าแรก</button>}{data.nextCursor&&<button className={button} disabled={busy} onClick={()=>{generation.current++;setLoading(true);setCursor(data.nextCursor);setData(null);}}>ประวัติหน้าถัดไป</button>}</div>
       </section>
@@ -96,8 +96,8 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
         <Link className={button} href={`/system/billing/receipt-adjustments/${encodeURIComponent(operation.id)}`}>เปิดลิงก์คำขอนี้</Link>
       </section>
       {!!operation.allowedActions.length&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2>
-        <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password}>ยืนยันรหัสผ่าน</button><Link className={button} onClick={leaving} href="/forgot-password">กู้รหัสผ่าน</Link></form>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับใบเสร็จ',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
+        <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link className={button} onClick={leaving} href="/forgot-password">กู้รหัสผ่าน</Link></form>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับใบเสร็จ',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
       </section>}
       <Link onClick={leaving} className={button} href={`${companyPath}/receipt-adjustments`}>กลับไปประวัติการเพิ่มใบเสร็จ</Link>
     </>}

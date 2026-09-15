@@ -25,6 +25,9 @@ All database tests below use synthetic records in a dedicated local Docker Postg
 | Upgrade HTTP/PG/Chromium regression | PASS: paid-source changes, lost response, explicit consent, no duplicate payment/grant/time extension | `/tmp/email-otp-upgrade-final.log` |
 | Plan change HTTP/PG/Chromium regression | PASS: downgrade, cancel/resume, stale capacity, paid repair and mobile round trip | `/tmp/email-otp-plan-final.log` |
 | Repeat purchase HTTP/PG/Chromium regression | PASS: renewal race, expired/lost checkout, original invoice repair, cancellation, notification delivery and admin recovery | `/tmp/email-otp-repeat-final.log` |
+| Complete web unit/render/contract runner after develop integration | 1,726 passed, 0 failed/skipped | `/tmp/email-otp-web-full2.log` |
+| Signup stale identity, support follow-up, and LINE binding PostgreSQL regressions | 14 + 19 + 15 passed, 0 failed/skipped; last-login rejection and legitimate unlink both covered | `/tmp/email-otp-stale-identity-final.log`, `/tmp/email-otp-support-pg-final.log`, `/tmp/email-otp-binding-pg-final.log` |
+| OTP browser after final profile/cache/loading integration | 10 scenario groups passed with simulated providers | `/tmp/email-otp-browser-final-ui.log` |
 
 Some rows overlap; do not add them into a unique test count. Earlier failed runs identified missing fixture prerequisites (LIFF ID, global OWNER role), retired UI assumptions and a real retained-submission correction defect. The larger billing regression exposed legacy fixed/missing customer email fixtures, corrected to the server-derived verified email. Browser regression also found recipient APIs absent from the expiry recovery allowlist; that source defect is fixed. The final rows above name corrected passing runs. The complete non-browser billing runner was not rerun end to end after the fixture fixes; targeted restart/upgrade/plan-change/repeat checks passed. Remote CI remains required before merge.
 
@@ -40,6 +43,11 @@ A separate empty database `email_otp_migration_test` received all previous migra
 - New billing authorization uses the current verified owner's email. Existing paid reconciliation and stop-renewal remain usable. Future company recipient changes require explicit company review/consent and exact provider readback; uncertain outcomes have tracked support issues and never become a new payment.
 - Legacy link/direct writers refuse; the legacy page directs to authenticated OTP. No new activation flag exists. Canonical sender/server/key version is environment-specific.
 - Expired companies can reach OTP status/request/confirm/cancel, fresh LINE reauthentication, and company recipient review/readback from billing. The browser test exercises a company disabled by the expiry sweep; security/legal/platform/membership checks remain in force. Ordinary ERP access is not restored by email recovery.
+- OTP state changes invalidate the profile completeness cache. Existing page assertions now render the shared OTP state and preserve shop/phone/password coverage. Integrated async buttons use develop's existing accessible loading contract; permission/validation-only disabling does not indicate an operation in progress.
+
+## CI observation
+
+[PR #575](https://github.com/MangmeeDev/mangmeeplus/pull/575), source `5dad75da34e5c2a7b2394ede061d54059c428257`, [CI 35003554327](https://github.com/MangmeeDev/mangmeeplus/actions/runs/35003554327) failed the stale LINE identity PostgreSQL suite: six legacy fixtures tried to self-unlink without a usable fallback login. The fixture changes retain the new last-login rule, add an explicit rejection assertion and pass the actual PostgreSQL tests above. Secret Scan, Security Audit, Migration Review and Production Config Validation passed on that head. Later corrected-head CI is still required; this failed run does not authorize merge.
 
 ## Unverified and release blockers
 

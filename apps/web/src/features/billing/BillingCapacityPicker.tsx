@@ -44,7 +44,7 @@ export default function BillingCapacityPicker({ options, repair, onConfirm, onRe
     <a className="inline-block underline" href={`/companies/${options.companyId}/reimbursements`}>ดูรายการเบิกเดิม</a>
     <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 size-5" checked={accepted} disabled={busy} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว</label>
     {error && <p role="alert" className="text-red-700">{error}</p>}
-    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || !valid || !accepted} onClick={() => run(() => onConfirm({ sourceHash: options.sourceHash, branchIds: branches, memberships: members }))}>{repair ? 'ยืนยันการเลือกสำหรับรายการที่จ่ายแล้ว' : 'ใช้การเลือกนี้และตรวจสอบราคา'}</button>
-      <button className={button} disabled={busy} onClick={() => run(onRefresh)}>โหลดข้อมูลล่าสุด</button><button className={button} disabled={busy} onClick={onCancel}>กลับ</button></div>
+    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy || !valid || !accepted} aria-busy={Boolean(busy)} onClick={() => run(() => onConfirm({ sourceHash: options.sourceHash, branchIds: branches, memberships: members }))}>{repair ? 'ยืนยันการเลือกสำหรับรายการที่จ่ายแล้ว' : 'ใช้การเลือกนี้และตรวจสอบราคา'}</button>
+      <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(onRefresh)}>โหลดข้อมูลล่าสุด</button><button className={button} disabled={busy} onClick={onCancel}>กลับ</button></div>
   </section>;
 }

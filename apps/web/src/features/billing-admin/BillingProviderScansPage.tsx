@@ -65,7 +65,7 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
       <label className="block">เริ่มช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></label>
       <label className="block">สิ้นสุดช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></label>
       <div><label className="block" htmlFor="provider-scan-reason">เหตุผล</label><textarea id="provider-scan-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></div>
-      <button className={button} disabled={busy}>{companyId?'เริ่มตรวจใบแจ้งหนี้':'เริ่มค้นหาเหตุการณ์'}</button>
+      <button className={button} disabled={busy} aria-busy={Boolean(busy)}>{companyId?'เริ่มตรวจใบแจ้งหนี้':'เริ่มค้นหาเหตุการณ์'}</button>
     </form>}
     {companyId&&!scanId&&list&&!list.canCreate&&<p>เริ่มงานใหม่ไม่ได้ในขณะนี้ ตรวจสิทธิ์ผู้ดูแลและบัญชี Stripe ของบริษัท หรือเปิดงานเดิมเพื่อดูผล</p>}
     {scan&&<section aria-label={companyId?'ผลการตรวจใบแจ้งหนี้':'ผลการค้นหาเหตุการณ์'} className="space-y-3 rounded-xl border p-4">
@@ -74,8 +74,8 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
       <p>ตรวจแล้ว {scan.pages} หน้า · พบ {scan.seen} {companyId?'ใบแจ้งหนี้':'เหตุการณ์'}</p>{scan.invoiceFindings?<p>ข้อมูลตรงกัน {scan.invoiceFindings.matched} · ยังไม่พบในระบบ {scan.invoiceFindings.missing} · ข้อมูลต่างกัน {scan.invoiceFindings.different}</p>:<p>รับเพิ่ม {scan.imported} · มีอยู่แล้ว {scan.known} · ไม่เกี่ยวข้อง {scan.ignored} · รุ่นข้อมูลที่ต้องตรวจเพิ่ม {scan.incompatible}</p>}
       {scan.retryAt&&<p>ตรวจต่อได้ตั้งแต่ {time(scan.retryAt)}</p>}
       {scan.errorCode&&<p role="alert">{scan.errorCode==='CONTROL_SOURCE_CHANGED'?'บัญชี Stripe ที่ผูกไว้เปลี่ยนแล้ว งานเดิมยังดูผลและยกเลิกได้ ให้เริ่มงานใหม่หลังตรวจบัญชีปัจจุบัน':scan.errorCode==='RETENTION_WINDOW_EXPIRED'?'ช่วงเวลาบางส่วนเกินอายุที่ค้นหาได้แล้ว งานนี้ยังไม่ครบ ให้เปิดงานใหม่สำหรับช่วงที่ยังค้นได้':scan.errorCode==='PAGE_LIMIT_REACHED'?'จำนวนรายการเกินขอบเขตของงานนี้ ให้เริ่มงานใหม่โดยแบ่งช่วงเวลาให้สั้นลง':scan.errorCode==='CONTROL_PERMISSION_CHANGED'?'ผู้เริ่มงานไม่มีสิทธิ์เดิมแล้ว ให้ผู้มีสิทธิ์ตรวจและเริ่มงานใหม่':'ยังตรวจไม่ครบ ความคืบหน้าที่บันทึกไว้ยังอยู่ ตรวจเงื่อนไขแล้วทำงานเดิมต่อได้'}</p>}
-      <div className="flex flex-wrap gap-2">{scan.canResume&&<button className={button} disabled={busy} onClick={()=>void act('resume')}>ทำงานเดิมต่อ</button>}
-        {scan.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>ยกเลิกงานตรวจ</button>}
+      <div className="flex flex-wrap gap-2">{scan.canResume&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('resume')}>ทำงานเดิมต่อ</button>}
+        {scan.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>ยกเลิกงานตรวจ</button>}
         <Link className="self-center underline" href={base}>เปิดรายการหรือเริ่มงานใหม่</Link></div>
       <p>กลับมาเปิดลิงก์นี้หรือกดโหลดเพื่อดูผลล่าสุดได้</p>
     </section>}

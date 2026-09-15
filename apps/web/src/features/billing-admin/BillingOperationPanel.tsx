@@ -71,7 +71,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
     {findingId&&<p>ตรวจหลักฐานการจ่ายฉบับเต็มแล้วบันทึกใบแจ้งหนี้เดิมไว้ให้ตรวจสิทธิ์ต่อ คำสั่งนี้ไม่เรียกเก็บเงินและไม่เพิ่มสิทธิ์</p>}
     {deliveryId&&(canRetry||canCheckDelivery)&&<p>{canCheckDelivery?'ตรวจสอบผลอีเมลเดิมกับ Postmark คำสั่งนี้ไม่ส่งอีเมลใหม่':'นำรายการแจ้งเตือนเดิมกลับเข้าคิว โดยคงผู้รับ ข้อความ และประวัติเดิม ไม่มีการเรียกเก็บเงินหรือเพิ่มสิทธิ์'}</p>}
     {(companyId||eventId) && (canReconcile||canRetry||canCheckDelivery) && <div className="space-y-3"><label className="block">เหตุผลการตรวจสอบ<input className="mt-2 block w-full rounded-lg border p-3" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} /></label>
-      <button className={button} disabled={busy || !reason.trim()} onClick={() => void act('preview')}>ตรวจสอบผลกระทบ</button></div>}
+      <button className={button} disabled={busy || !reason.trim()} aria-busy={Boolean(busy)} onClick={() => void act('preview')}>ตรวจสอบผลกระทบ</button></div>}
     {operation && matches && <article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="สถานะคำสั่ง">
       <h3 className="font-bold" role="status">{label(operation)}</h3>
       <p>{billingLabel('mode',operation.scope.mode)} · {operation.scope.kind === 'COMPANY' ? 'คำสั่งของบริษัทที่เลือก' : 'คำสั่งระดับระบบ'}</p>
@@ -90,7 +90,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&<p>ผลคำสั่งนี้ไม่ใช่หลักฐานว่าลูกค้าได้รับข้อความ ให้ตรวจสถานะรายการส่งเดิม</p>}
       {pollEnded && <p>ยังรอผล สามารถกลับมาเปิดคำสั่งเดิมหรือโหลดข้อมูลล่าสุดได้</p>}
       {operation.errorCode && <p>เปิดรายการต้นทางและเคสเพื่อตรวจเงื่อนไขก่อนดำเนินการต่อ</p>}
-      <div className="flex flex-wrap gap-2">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>{action === 'submit' ? 'ยืนยันส่งคำสั่งตรวจสอบ' : action === 'retry' ? 'ตรวจสอบคำสั่งเดิมอีกครั้ง' : 'ยกเลิกคำสั่งตรวจสอบ'}</button>)}</div>
+      <div className="flex flex-wrap gap-2">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void act(action)}>{action === 'submit' ? 'ยืนยันส่งคำสั่งตรวจสอบ' : action === 'retry' ? 'ตรวจสอบคำสั่งเดิมอีกครั้ง' : 'ยกเลิกคำสั่งตรวจสอบ'}</button>)}</div>
       <div className="flex flex-wrap gap-3"><Link onClick={leaving} className="underline" href={`/system/billing/operations/${operation.id}`}>เปิดลิงก์คำสั่งนี้</Link>
         {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/deliveries/${operation.referenceId}`}>เปิดรายการส่งเดิม</Link>}
         {operation.type==='IMPORT_INVOICE'&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<><Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/invoice-findings/${operation.referenceId}`}>กลับผลตรวจใบแจ้งหนี้เดิม</Link>
@@ -100,8 +100,8 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
         {operation.scope.kind === 'COMPANY' && <Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>
     </article>}
     {list && <div className="space-y-2">{list.items.map(item => <p key={item.id}><Link onClick={leaving} className="break-all underline" href={`/system/billing/operations/${item.id}`}>{label(item)} · {item.reason}</Link></p>)}</div>}
-    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => { invalidate();setError(''); setReload(v => v + 1); }}>โหลดคำสั่งล่าสุด</button>
-      {list?.nextCursor && <button className={button} disabled={busy} onClick={() => {invalidate();setCursor(list.nextCursor);}}>คำสั่งหน้าถัดไป</button>}
-      {cursor && <button className={button} disabled={busy} onClick={() => {invalidate();setCursor(null);}}>คำสั่งหน้าแรก</button>}</div>
+    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { invalidate();setError(''); setReload(v => v + 1); }}>โหลดคำสั่งล่าสุด</button>
+      {list?.nextCursor && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => {invalidate();setCursor(list.nextCursor);}}>คำสั่งหน้าถัดไป</button>}
+      {cursor && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => {invalidate();setCursor(null);}}>คำสั่งหน้าแรก</button>}</div>
   </section>;
 }

@@ -47,16 +47,16 @@ export default function BillingSupportOutcomesPanel({issue,canManage,onRecorded}
       {Object.entries(kinds).map(([key,label])=><option key={key} value={key}>{label}</option>)}</select>
       <label className="block" htmlFor="support-outcome-note">รายละเอียดผลติดต่อ</label><textarea id="support-outcome-note" className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)}/>
       <p className="text-base text-gray-600">ระบุข้อเท็จจริงและงานที่ต้องติดตามต่อ หลีกเลี่ยงรหัสผ่าน ข้อมูลบัตร และข้อมูลลับ</p>
-      <button className={button} disabled={busy||!note.trim()} onClick={()=>void act('preview')}>ตรวจบันทึกก่อนยืนยัน</button></div>}
+      <button className={button} disabled={busy||!note.trim()} aria-busy={Boolean(busy)} onClick={()=>void act('preview')}>ตรวจบันทึกก่อนยืนยัน</button></div>}
     {record&&<article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="บันทึกผลติดต่อที่เลือก">
       <h3 role="status" className="font-bold">{statuses[record.state]}</h3>
       <p>{billingLabel('mode',record.mode)} · รอบปัญหา {record.episode} · {kinds[record.kind]}</p><p className="whitespace-pre-wrap break-words">{record.note}</p>
       <p>บันทึก {new Date(record.recordedAt??record.createdAt).toLocaleString('th-TH')}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงผู้บันทึก</summary><p className="break-all">ผู้บันทึก {record.actorUserId}</p></details>
       {record.state==='PREVIEW'&&!record.canSubmit&&<p>ข้อมูลหรือสิทธิ์เปลี่ยน หรือหมดเวลาตรวจสอบแล้ว โหลดเคสล่าสุดและนำข้อความนี้ไปตรวจใหม่</p>}
       <div className="flex flex-wrap gap-2">
-        {canManage&&record.canSubmit&&<button className={button} disabled={busy} onClick={()=>void act('submit')}>ยืนยันบันทึกผลติดต่อ</button>}
-        {canManage&&record.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>ยกเลิกฉบับตรวจสอบ</button>}
-        {canManage&&<button className={button} disabled={busy} onClick={()=>{setNote(record.note);setKind(record.kind);command.current=null;onRecorded();}}>นำข้อความมาตรวจใหม่</button>}
+        {canManage&&record.canSubmit&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('submit')}>ยืนยันบันทึกผลติดต่อ</button>}
+        {canManage&&record.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>ยกเลิกฉบับตรวจสอบ</button>}
+        {canManage&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>{setNote(record.note);setKind(record.kind);command.current=null;onRecorded();}}>นำข้อความมาตรวจใหม่</button>}
         <Link className="underline" href={`/system/billing/issues/${issue.id}?outcome=${record.id}`}>ลิงก์บันทึกนี้</Link>
         <Link className="underline" href={`/system/billing/issues/${issue.id}`}>กลับไปเคสเดิม</Link>
       </div>
@@ -64,7 +64,7 @@ export default function BillingSupportOutcomesPanel({issue,canManage,onRecorded}
     {selected&&!record&&<Link className="inline-block underline" href={`/system/billing/issues/${issue.id}`}>กลับไปประวัติของเคส</Link>}
     {!list?<p role="status">{error?'ยังโหลดประวัติไม่ได้ ใช้ปุ่มโหลดล่าสุดเพื่อลองใหม่':'กำลังโหลดประวัติผลติดต่อ…'}</p>:list.items.length===0?<p>ยังไม่มีบันทึกผลติดต่อ</p>:<div className="space-y-3" aria-label="ประวัติผลติดต่อ">{list.items.map(item=><p key={item.id}>
       <Link className="break-words underline" href={`/system/billing/issues/${issue.id}?outcome=${item.id}`}>{statuses[item.state]} · {kinds[item.kind]} · {new Date(item.recordedAt??item.createdAt).toLocaleString('th-TH')}</Link></p>)}</div>}
-    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={()=>{setError('');setReload(v=>v+1);onRecorded();}}>โหลดประวัติผลติดต่อล่าสุด</button>
+    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>{setError('');setReload(v=>v+1);onRecorded();}}>โหลดประวัติผลติดต่อล่าสุด</button>
       {list?.nextCursor&&<button className={button} disabled={busy} onClick={()=>setCursor(list.nextCursor)}>ผลติดต่อหน้าถัดไป</button>}
       {cursor&&<button className={button} disabled={busy} onClick={()=>setCursor(null)}>ผลติดต่อหน้าแรก</button>}</div>
   </section>;

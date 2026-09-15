@@ -43,10 +43,10 @@ export function BillingEmailRecipientPanel({ companyId, email, ready }: { compan
       <p className="break-words">จาก {operation.previousEmail ?? 'ยังไม่ระบุ'} เป็น <strong>{operation.newEmail}</strong></p>
       <p role="status">{operation.state === 'COMPLETED' ? 'เปลี่ยนผู้รับเอกสารเรียบร้อยแล้ว' : operation.state === 'PREVIEW' ? 'ตรวจอีเมลแล้วกดยืนยันด้านล่าง' : operation.state === 'BLOCKED' ? 'ข้อมูลเปลี่ยนหรือยังดำเนินการไม่ได้ กรุณายกเลิกคำขอแล้วตรวจใหม่' : operation.state === 'RECONCILING' ? 'กำลังตรวจผลกับผู้ให้บริการ หากยังไม่สำเร็จ ติดต่อทีมมั่งมีพร้อมเลขอ้างอิงด้านล่าง คุณยังยกเลิกต่ออายุได้' : operation.state === 'CANCELLED' ? 'ยกเลิกคำขอแล้ว' : operation.state === 'FAILED' ? 'ดำเนินการไม่สำเร็จ กรุณาตรวจข้อมูลแล้วเริ่มคำขอใหม่' : 'กำลังดำเนินการ'}</p>
       <p className="break-all text-sm">เลขอ้างอิง: {operation.id}</p>
-      {operation.canSubmit && <button className={`${button} bg-green-600 text-white`} disabled={busy || !ready || operation.newEmail !== email} onClick={() => void command('submit')}>ยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้</button>}
-      {operation.canCancel && <button className={button} disabled={busy} onClick={() => void command('cancel')}>ยกเลิกคำขอ</button>}
+      {operation.canSubmit && <button className={`${button} bg-green-600 text-white`} disabled={busy || !ready || operation.newEmail !== email} aria-busy={Boolean(busy)} onClick={() => void command('submit')}>ยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้</button>}
+      {operation.canCancel && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void command('cancel')}>ยกเลิกคำขอ</button>}
     </div>}
-    {current?.hasCustomer && current.email !== email && (!operation || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(operation.state)) && <button className={button} disabled={busy || !ready || current.busy} onClick={() => void command('preview')}>ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต</button>}
-    <button className={button} disabled={busy} onClick={() => void command('refresh')}>ตรวจสถานะผู้รับเอกสาร</button>
+    {current?.hasCustomer && current.email !== email && (!operation || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(operation.state)) && <button className={button} disabled={busy || !ready || current.busy} aria-busy={Boolean(busy)} onClick={() => void command('preview')}>ใช้เมลที่ยืนยันแล้วสำหรับเอกสารในอนาคต</button>}
+    <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void command('refresh')}>ตรวจสถานะผู้รับเอกสาร</button>
   </section>;
 }

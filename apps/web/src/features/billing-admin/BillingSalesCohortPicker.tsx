@@ -33,11 +33,11 @@ export default function BillingSalesCohortPicker({ ids, companies, onChange }: {
         <button className={button} aria-label={`นำ ${names[id] ?? id} ออกจากกลุ่ม`} onClick={() => onChange(ids.filter(value => value !== id))}>นำออก</button></li>)}</ul>
       {ids.length > 0 && <button className={button} onClick={() => onChange([])}>นำบริษัททั้งหมดออกจากกลุ่ม</button>}
       <label className="block">ค้นหาบริษัทสำหรับเปิดขาย<input className="mt-1 block min-h-11 w-full rounded-lg border p-2" maxLength={100} value={search} onChange={e => { generation.current++; setBusy(false); setSearch(e.target.value); setPage(null); setError(''); }} /></label>
-      <button className={button} disabled={busy} onClick={() => void find()}>ค้นหาบริษัทสำหรับกลุ่ม</button>
+      <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void find()}>ค้นหาบริษัทสำหรับกลุ่ม</button>
       {busy && <p role="status">กำลังค้นหาบริษัท…</p>}{error && <p role="alert">{error} กดค้นหาเพื่อลองใหม่</p>}
       {page && <><ul className="space-y-2">{page.companies.map(c => <li key={c.companyId} className="flex flex-wrap items-center gap-2 break-all"><span>{c.companyName}</span><details><summary className="min-h-11 cursor-pointer py-2">เลขบริษัท</summary><span>{c.companyId}</span></details>
         <button className={button} disabled={ids.includes(c.companyId) || ids.length >= 100} aria-label={`เพิ่ม ${c.companyName} เข้ากลุ่ม`} onClick={() => onChange([...ids, c.companyId].sort())}>{ids.includes(c.companyId) ? 'เลือกแล้ว' : 'เพิ่มเข้ากลุ่ม'}</button></li>)}</ul>
-        {!page.companies.length && <p>ไม่พบบริษัท ลองเปลี่ยนคำค้น</p>}{page.nextCursor && <button className={button} disabled={busy} onClick={() => void find(page.nextCursor!)}>บริษัทหน้าถัดไป</button>}</>}
+        {!page.companies.length && <p>ไม่พบบริษัท ลองเปลี่ยนคำค้น</p>}{page.nextCursor && <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void find(page.nextCursor!)}>บริษัทหน้าถัดไป</button>}</>}
     </>}
   </section>;
 }
