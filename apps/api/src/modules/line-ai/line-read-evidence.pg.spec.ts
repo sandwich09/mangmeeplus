@@ -116,7 +116,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
         assert.equal(await client.lineReadEvidence.count({ where: { companyId, userId, requestId } }), LINE_READ_EVIDENCE_MAX);
       });
-      for (const race of ['unchanged', 'branch', 'amount', 'handoff', 'fallback', 'replay', 'replay-branch', 'replay-role', 'replay-group', 'replay-channel', 'replay-unlink', 'replay-legacy'] as const) await t.test(`live producer-to-delivery with actual DB and expense API: ${race}`, async () => {
+      for (const race of ['unchanged', 'branch', 'amount', 'handoff', 'fallback', 'replay', 'replay-branch', 'replay-role', 'replay-group', 'replay-channel', 'replay-unlink', 'replay-disabled-with-alias', 'replay-legacy'] as const) await t.test(`live producer-to-delivery with actual DB and expense API: ${race}`, async () => {
         const quiet = { log() {}, warn() {}, error() {}, debug() {}, info() {} };
         const audit = new AuditService(new PrismaAuditRepository(prisma), quiet as any);
         const controller = new (InternalToolsController as any)({ aiGatewayInternalSecret: 'synthetic-internal' }, prisma, audit, resolver,
@@ -167,6 +167,10 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
           if (race === 'replay-branch') await changeSource();
           if (race === 'replay-role') await client.role.update({ where: { id: roleId }, data: { status: 'DISABLED' } });
           if (race === 'replay-unlink') await client.externalIdentity.deleteMany({ where: { providerUserId: lineUserId } });
+          if (race === 'replay-disabled-with-alias') {
+            await client.externalIdentity.updateMany({ where: { providerUserId: lineUserId, providerChannelId: 'synthetic-channel' }, data: { status: 'DISABLED' } });
+            await client.externalIdentity.create({ data: { userId, provider: 'LINE', providerUserId: lineUserId, providerChannelId: 'legacy-channel' } });
+          }
           if (race === 'replay-legacy') await client.lineTurnOutcome.update({ where: { webhookEventId }, data: { authorizationJson: Prisma.DbNull } });
           await client.lineWebhookEventLog.update({ where: { webhookEventId }, data: {
             createdAt: new Date(Date.now() - 180_000), processedAt: new Date(Date.now() - 180_000),

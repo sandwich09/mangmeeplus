@@ -712,6 +712,73 @@ describe('AP22 live actor delivery fence', () => {
 });
 
 describe('AP22 live source delivery fence', () => {
+  for (const phase of ['preview', 'confirm'] as const) for (const fault of ['unchanged', 'missing', 'handoff', 'reply-fallback'] as const)
+    it(`rechecks deterministic draft ${phase} without repeating work: ${fault}`, async () => {
+      const { prisma, updates } = makePrisma();
+      let current = fault !== 'missing', reads = 0, previews = 0, applies = 0;
+      const h = makeUseCase(prisma, {
+        permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.update'],
+        intakeRouteFn: () => ({ status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', language: 'th', confidence: 1 }),
+        ...(fault === 'handoff' ? { handoffLinks: { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { current = false; return messages; } } } : {}),
+        ...(fault === 'reply-fallback' ? { sendReplyFn: async (_token: string, messages: unknown) => {
+          if (/987,?654/.test(JSON.stringify(messages))) { current = false; return 'failed_token'; } return 'ok';
+        } } : {}),
+      });
+      const totals = { subtotalAmount: '987654', discountAmount: '0', chargesAmount: '0', taxableAmount: '987654', vatAmount: '0', grandTotalAmount: '987654' };
+      const preview = { previewId: 'preview-1', recordType: 'expense', expenseId: 'exp-1',
+        record: { vendorName: 'Private draft', expenseDate: '2026-09-15', statusLabel: 'ร่าง' }, tool: 'expense.draft.add_charge',
+        diff: [], warnings: [], totalsBefore: totals, totalsAfter: totals, expiresAt: new Date(Date.now() + 600000).toISOString() };
+      const check = (context: any) => { reads++; assert.ok(context.permissions.includes('expense.update')); return current; };
+      (h.useCase as any).draftUpdate = {
+        enabled: true, preview: async () => { previews++; return { status: 'preview', preview }; },
+        apply: async () => { applies++; return { status: 'applied', preview, expenseId: 'exp-1' }; },
+        pendingPreview: async (context: any) => check(context) ? preview : null,
+        appliedResult: async (context: any) => check(context) ? { status: 'applied', preview, expenseId: 'exp-1' } : { status: 'changed', expenseId: 'exp-1' },
+      };
+      const delivery = h.useCase.execute({ ...BASE_EVENT, webhookEventId: `draft-${phase}-${fault}`,
+        messageText: phase === 'confirm' ? 'ยืนยันการแก้ไข' : 'เพิ่มค่าบริการ 10%' });
+      if (fault === 'unchanged') await delivery;
+      else await assert.rejects(delivery, /LINE_DELIVERY_FAILED_PERMANENT/);
+      assert.equal(previews, phase === 'preview' ? 1 : 0); assert.equal(applies, phase === 'confirm' ? 1 : 0);
+      assert.ok(reads >= (fault === 'reply-fallback' ? 2 : 1));
+      if (fault === 'unchanged') assert.match(JSON.stringify(h.sentMessages), /987,?654/);
+      else {
+        assert.doesNotMatch(JSON.stringify([...h.sentMessages, ...h.pushes]), /987,?654/);
+        assert.ok(updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+      }
+    });
+
+  for (const fault of ['unchanged', 'missing', 'handoff', 'reply-fallback'] as const) it(`keeps draft preview source checks at dispatch: ${fault}`, async () => {
+    const { prisma, updates, outcomeStore } = makePrisma();
+    let current = fault !== 'missing', reads = 0;
+    const h = makeUseCase(prisma, {
+      permissions: ['line.ai.query', 'expense.update'],
+      config: { lineAiTerminalOutcomeReplayEnabled: fault !== 'handoff' },
+      intakeRouteFn: () => ({ status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 1 }),
+      aiGatewayFn: () => ({ requestId: 'model-id', replyText: 'ข้อมูลร่างลับ 987654 บาท', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_detail', agent: 'accounting', refused: false, toolsInvoked: ['expense.draft.set_header'], durationMs: 1 }),
+      ...(fault === 'handoff' ? { handoffLinks: { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { current = false; return messages; } } } : {}),
+      ...(fault === 'reply-fallback' ? { sendReplyFn: async (_token: string, messages: unknown) => {
+        if (/987654/.test(JSON.stringify(messages))) { current = false; return 'failed_token'; } return 'ok';
+      } } : {}),
+    });
+    const totals = { subtotalAmount: '987654', discountAmount: '0', chargesAmount: '0', taxableAmount: '987654', vatAmount: '0', grandTotalAmount: '987654' };
+    (h.useCase as any).draftUpdate = { pendingPreview: async (context: any) => {
+      reads++;assert.ok(context.permissions.includes('expense.update'));assert.equal(context.companyId, 'company-1');
+      return current ? { previewId: 'preview-1', recordType: 'expense', expenseId: 'exp-1', record: { vendorName: 'Private draft', expenseDate: '2026-09-15', statusLabel: 'ร่าง' },
+        tool: 'expense.draft.set_header', diff: [], warnings: [], totalsBefore: totals, totalsAfter: totals, expiresAt: new Date(Date.now() + 600000).toISOString() } : null;
+    } };
+    (h.useCase as any).readEvidence = { forTurn: async () => ['unrelated-read'], verify: async () => true };
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: `draft-source-${fault}` });
+    assert.ok(reads >= 2);
+    if (fault === 'unchanged') assert.match(JSON.stringify(h.sentMessages), /987654/);
+    else {
+      assert.doesNotMatch(JSON.stringify([...h.sentMessages, ...h.pushes]), /987654/);
+      assert.ok(updates.some((update: any) => update.data.errorCode === 'LINE_DELIVERY_SOURCE_CHANGED'));
+    }
+    for (const value of outcomeStore.values()) assert.equal(value.authorizationJson?.read, undefined, 'read proof cannot authorize a stored draft replay');
+  });
+
   for (const fault of ['missing', 'store-error', 'changed', 'read-error', 'reply-fallback', 'handoff', 'unchanged'] as const) {
     it(`rechecks source evidence at final send: ${fault}`, async () => {
       const { prisma, updates } = makePrisma();

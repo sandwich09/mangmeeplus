@@ -90,7 +90,11 @@ export class LineReadEvidenceService {
     if (!await this.verify(read.companyId, read.userId, read.requestId, read.ids)) return false;
     // Resolve again after potentially slow source reads; source access is not actor continuity.
     const where = { provider: 'LINE' as const, status: 'ACTIVE' as const, providerUserId: recipient.lineUserId };
-    const scoped = recipient.channelId ? await this.prisma.client.externalIdentity.findFirst({ where: { ...where, providerChannelId: recipient.channelId }, include: { user: true } }) : null;
+    // An explicit canonical unlink must beat an older active alias, just as on the live webhook path.
+    const scoped = recipient.channelId ? await this.prisma.client.externalIdentity.findFirst({ where: {
+      provider: 'LINE', providerUserId: recipient.lineUserId, providerChannelId: recipient.channelId,
+    }, include: { user: true } }) : null;
+    if (scoped && scoped.status !== 'ACTIVE') return false;
     const identity = scoped ?? await this.prisma.client.externalIdentity.findFirst({ where, include: { user: true } });
     if (!identity || identity.userId !== read.userId || identity.user.status !== 'ACTIVE' || identity.user.aiAssistantOptOutAt) return false;
     const access = await this.resolver.resolveAccess(read.userId, read.companyId);

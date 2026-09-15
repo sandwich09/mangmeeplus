@@ -1405,6 +1405,7 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryAccess = new WeakMap<object, { userId: string; companyId: string; fingerprint: string; allowDuringSupportPause?: boolean }>();
   private readonly deliveryDenialNotified = new WeakSet<object>();
   private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
+  private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
@@ -2365,6 +2366,7 @@ export class ProcessLineWebhookUseCase {
     let reply: string;
     let status = 'completed';
     if (outcome.status === 'applied') {
+      this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash, requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'APPLIED' });
       const applied = draftUpdateAppliedReply(this.config.webBaseUrl, ctx.companyId, outcome.expenseId, outcome.preview);
       // A double tap is the commonest thing a person does to a slow button; saying "nothing is
       // pending" would deny an edit they really made.
@@ -2415,6 +2417,7 @@ export class ProcessLineWebhookUseCase {
       ...(expenseId ? { expenseId } : {}),
     });
     if (outcome.status === 'preview') {
+      this.deliveryDraftPreviews.set(event, { context: ctx, chatKeyHash: chatKeyHashOf(event), requestId: ctx.requestId, previewId: outcome.preview.previewId, phase: 'PENDING' });
       await this.deliverRequiredMessages(event, [buildDraftUpdatePreviewCard(outcome.preview)]);
       await this.persistIntakeTurn({
         userId: ctx.userId, companyId: ctx.companyId, webhookEventId: event.webhookEventId,
@@ -2754,6 +2757,15 @@ export class ProcessLineWebhookUseCase {
           || await this.readEvidence.verify(original.companyId, original.userId, sources.requestId, sources.ids));
         if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
       }
+      const draft = this.deliveryDraftPreviews.get(event);
+      if (draft) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        const applied = draft.phase === 'APPLIED' ? await this.draftUpdate?.appliedResult(draft.context, draft.chatKeyHash) : null;
+        const current = draft.phase === 'APPLIED' ? (applied?.status === 'applied' ? applied.preview : null)
+          : await this.draftUpdate?.pendingPreview(draft.context, draft.chatKeyHash, draft.requestId);
+        sourcesCurrent = sourcesCurrent && Boolean(draft.previewId && current?.previewId === draft.previewId);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
       const identity = await this.resolveLineIdentity(event);
       if (sourcesCurrent && identity?.userId === original.userId && identity.user.status === 'ACTIVE' && !identity.user.aiAssistantOptOutAt
         && (!event.pushTargetId || event.pushTargetId === event.lineUserId)) {
@@ -2836,7 +2848,7 @@ export class ProcessLineWebhookUseCase {
       }
       const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
       const authorizationJson = { v: 1, producerId,
-        ...(access && sources?.ids?.length ? { read: {
+        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
           recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
@@ -4547,9 +4559,13 @@ export class ProcessLineWebhookUseCase {
     // here rather than by the gateway because only the API may print the buttons whose postbacks
     // it will have to re-derive (SEC-04), and because every figure on it comes from the server's
     // own rolled-back run, never from model text.
-    const draftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool))
-      ? await this.draftUpdate?.pendingPreview({ companyId, userId: identity.userId }, chatKeyHashOf(event), requestId)
+    const hasDraftPreview = turnResponse.toolsInvoked.some((tool) => (LINE_DRAFT_UPDATE_TOOLS as readonly string[]).includes(tool));
+    const draftPreview = hasDraftPreview
+      ? await this.draftUpdate?.pendingPreview(expenseDraftCtx, chatKeyHashOf(event), requestId)
       : null;
+    if (hasDraftPreview && (draftPreview || !turnResponse.refused)) this.deliveryDraftPreviews.set(event, {
+      context: expenseDraftCtx, chatKeyHash: chatKeyHashOf(event), requestId, previewId: draftPreview?.previewId ?? null, phase: 'PENDING',
+    });
     const delivery = await this.deliverMessages(
       event,
       draftPreview ? [completionMessage, buildDraftUpdatePreviewCard(draftPreview)] : [completionMessage],

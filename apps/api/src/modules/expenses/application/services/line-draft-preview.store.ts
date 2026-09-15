@@ -37,6 +37,8 @@ export type StoredDraftPreview = {
   expenseId: string;
   /** The row revision the preview was computed against; the confirm refuses anything else. */
   expenseUpdatedAt: string;
+  /** Only a committed edit can authorize the short-lived already-applied confirmation. */
+  appliedExpenseUpdatedAt?: string;
   patch: LineDraftPatch;
   preview: LineDraftUpdatePreview;
   /** The turn that created it, so a card is only attached to the turn that asked for it. */
