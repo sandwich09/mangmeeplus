@@ -1,0 +1,16 @@
+ok 1 - restart requires explicit original non-disputed evidence and recovers without changing paid history
+ok 2 - provider prices require exact requested identity, product and recurring contract
+ok 3 - provider Portal configuration requires explicit safe flags and exact native binding
+ok 4 - HIDDEN receipt-only offers stay absent from the catalog and direct requests fail before Stripe
+ok 5 - full-package catalog grants annual units upfront and rejects receipt-only/Enterprise purchase inputs
+ok 6 - Pro yearly repurchase: eight remaining months become twenty, 1200 units available now
+ok 7 - first/expired purchase starts now; short months and leap years preserve the explicit anniversary
+ok 8 - upgrade adds only prorated units, including the future periods already bought
+ok 9 - invalid/overlapping history and unsafe counts fail closed; approved defaults do not enable sales
+ok 10 - refund policy is closed for old settings and validates approved integer bounds
+ok 11 - approved offer prices and upfront quota share a snapshot and retain original defaults
+ok 12 - capacity policy accepts paired bounded limits without changing prices, receipt quantities or old defaults
+# tests 12
+# pass 12
+# fail 0
+# skipped 0

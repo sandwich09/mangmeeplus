@@ -85,6 +85,15 @@ export async function checkBillingRestart(input: {
   old.sub.status = 'active'; assert.equal((await quote()).body.code, 'BILLING_RESTART_REVIEW'); old.sub.status = 'canceled';
   old.charge.amount_refunded = 1; assert.equal((await quote()).body.code, 'BILLING_RESTART_REVIEW'); old.charge.amount_refunded = 0;
   old.charge.disputed = true; assert.equal((await quote()).body.code, 'BILLING_RESTART_REVIEW'); old.charge.disputed = false;
+  const beforeUnknown = await readAccount();
+  for (const disputed of [undefined, null, 0, '', 'false']) {
+    old.charge.disputed = disputed;
+    assert.equal((await quote()).body.code, 'BILLING_RESTART_REVIEW', `unknown original dispute state ${String(disputed)}`);
+  }
+  old.charge.disputed = false;
+  assert.deepEqual(await readAccount(), beforeUnknown);
+  assert.deepEqual(await client.billingReceiptGrant.findUnique({ where: { id: oldGrant.id } }), oldGrant);
+  cases.push('restart-unproven-original-dispute-state-refuses-new-sale-without-changing-paid-history');
   provider.invoices!.push({ ...old.invoice, id: `in_debt${suffix}`, status: 'open', amount_paid: 0, parent: null });
   assert.equal((await quote()).body.code, 'BILLING_RESTART_REVIEW'); provider.invoices!.pop();
   provider.invoices!.splice(provider.invoices!.indexOf(old.invoice), 1);

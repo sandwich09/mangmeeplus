@@ -42,7 +42,7 @@ export async function restartSource(prisma: PrismaService, stripe: StripeClient,
     const charge = await stripe.request('GET', `/charges/${invoice.providerChargeId}`);
     if (charge.id !== invoice.providerChargeId || charge.livemode !== account.livemode || stripeId(charge.customer) !== account.customerId ||
       charge.status !== 'succeeded' || charge.paid !== true || charge.captured !== true || charge.currency !== 'thb' || charge.amount !== invoice.paidSatang ||
-      charge.disputed || charge.amount_refunded !== 0) throw review();
+      charge.disputed !== false || charge.amount_refunded !== 0) throw review();
   }
   return source;
 }
