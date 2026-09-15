@@ -21,6 +21,7 @@ import { Type } from 'class-transformer';
 import type { Request } from 'express';
 import {
   ALL_FEATURE_ENTITLEMENT_KEYS,
+  PARTNER_ADJUSTMENT_REASON_MAX_LENGTH,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
   VAT_FACT_STATUSES,
@@ -108,17 +109,25 @@ const unlessNullish = ValidateIf((_object, value) => value !== undefined && valu
 // Exported for the DTO boundary spec: the null-vs-absent distinction below is the whole
 // contract of a partial update, and it is worth pinning against the real global pipe.
 export class SetAiModelBodyDto {
+  @IsString() @IsNotEmpty() @MaxLength(PARTNER_ADJUSTMENT_REASON_MAX_LENGTH) reason!: string;
   @IsString() @IsOptional() @IsNotEmpty() modelId?: string;
   @unlessNullish @IsInt() monthlyBudgetSatang?: number | null;
+  @unlessNullish @IsString() expectedModelId?: string | null;
+  @unlessNullish @IsInt() expectedMonthlyBudgetSatang?: number | null;
 }
 
 export class SetOcrConfigBodyDto {
+  @IsString() @IsNotEmpty() @MaxLength(PARTNER_ADJUSTMENT_REASON_MAX_LENGTH) reason!: string;
   @IsBoolean() enabled!: boolean;
   @IsOptional() @IsBoolean() receiptQuotaEnforced?: boolean | null;
   // Unlike the partial AI-model body, this is absolute desired state: undefined must fail,
   // while null deliberately means unlimited.
   @ValidateIf((_object, value) => value !== null) @IsInt() @Min(1) @Max(1_000_000) monthlyLimit!: number | null;
   @Type(() => Number) @IsInt() @Min(0) expectedVersion!: number;
+}
+
+export class PartnerAiAdjustmentHistoryQueryDto {
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(100) cursor?: string;
 }
 
 export class SetPartnerVatRegistrationBodyDto {
@@ -395,8 +404,11 @@ export class PartnerController {
   ) {
     return this.setAiModel.execute({
       companyId,
+      reason: dto.reason,
       modelId: dto.modelId,
       monthlyBudgetSatang: dto.monthlyBudgetSatang,
+      expectedModelId: dto.expectedModelId,
+      expectedMonthlyBudgetSatang: dto.expectedMonthlyBudgetSatang,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });
@@ -415,6 +427,7 @@ export class PartnerController {
   ) {
     return this.setOcrConfig.execute({
       companyId,
+      reason: dto.reason,
       enabled: dto.enabled,
       ...(dto.receiptQuotaEnforced !== undefined ? { receiptQuotaEnforced: dto.receiptQuotaEnforced } : {}),
       monthlyLimit: dto.monthlyLimit,
@@ -454,6 +467,13 @@ export class PartnerController {
   }
 
   // ---- P29 plan limits & term ----
+  @Get(':partnerCompanyId/ai-adjustments')
+  @RequirePermissions('system.partner_ai_model.manage')
+  @ApiOperation({ summary: 'Read bounded AI adjustment history for the original company' })
+  aiAdjustments(@Param('partnerCompanyId') companyId: string, @Query() query: PartnerAiAdjustmentHistoryQueryDto) {
+    return this.getAiUsage.history(companyId, query.cursor);
+  }
+
   // Read rides the dashboard permission like every other partner read; the two writes reuse
   // `system.partner_company.update`, the same key the profile PATCH above is gated on. No new
   // permission key: an operator who may edit a partner's profile may set its package.

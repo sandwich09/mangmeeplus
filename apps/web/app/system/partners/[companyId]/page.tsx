@@ -18,6 +18,7 @@ export default async function SystemPartnerDetailRoute({
   const [{ companyId }, query] = await Promise.all([params, searchParams]);
   return (
     <PartnerDetailPage
+      key={companyId}
       companyId={companyId}
       supportRequestId={first(query.support)}
       supportAskerRef={first(query.asker)}

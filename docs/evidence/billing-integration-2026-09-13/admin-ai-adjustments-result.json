@@ -1,0 +1,65 @@
+{
+  "recordedAt": "2026-09-15T04:55:47.766201+00:00",
+  "status": "LOCAL_SLICE_PASS",
+  "sources": {
+    "packages/contracts/src/partner-management.ts": "111888851e78f2803f1e96029c3803beba442279190a94b4a0afdd19b2d3a9a7",
+    "apps/api/src/modules/line-ai/application/company-ai-usage-meter.ts": "309cb5ee14c69e0627d4dbea8ef752efc6ff1aa73e9ec8c58ad8517bbac5a644",
+    "apps/api/src/modules/line-ai/application/company-ai-usage-meter.spec.ts": "60e20257ebdc375421f9a7ac4fcfec52d66f0056d72bf6963e8f5b9c51e8ad87",
+    "apps/api/src/modules/system-partner-management/application/partner-ai-adjustment-history.ts": "9a34a813cdac9ff48c4ef3330ca045186ebd4e431d37fbab8e211d3d87b8defc",
+    "apps/api/src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts": "491e6df90bcacfc6438957cf68bd7e0450a0bff085a666548a11c4e3d5d77fb9",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts": "36e51a97a53b1114a12cffb29ce401aa1b74a2d8d81d97a6857a50153b6b4d7a",
+    "apps/api/src/modules/system-partner-management/application/use-cases/get-platform-ai-budget.use-case.ts": "885da402e5db51d185aadddc487e3fbe18e2e3a475a63d35d89921ed0bfaaf22",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.ts": "71b79c8e91df749cedcfcd8a6732314532c51ee90faf81725135b50115b4cf58",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ai-model.use-case.spec.ts": "e7845996f411e4f820e5bc812e95a84c4f0c16957b09ad4afb6d9f0b6b4b5267",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-partner-ocr-config.use-case.ts": "eb79938fddaaa91cb204a6210a91ea926321e608242b98d17f44a8fd8fe88c54",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-platform-ai-budget.use-case.ts": "a1a3ea13d1ac22372744d3a3839596447491db8f1eaaaec571b72da4eb8c452d",
+    "apps/api/src/modules/system-partner-management/application/use-cases/set-platform-ai-budget.use-case.spec.ts": "b30c40c4438a18cb1e00fec1ef6e9ae3cd1e7babcf7b3c0997e3f10bab9dade1",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner.controller.ts": "f3f4384fe77c7ba2b1e1a0a3da4e0f55dde231b171499eaf331d52ab67c64c67",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner.controller.spec.ts": "6fe21abecfa22ddc9bc8c22f7b8aeecfdf37b776e3e36f3a9584596c88eaef0e",
+    "apps/api/src/scripts/admin-ai-adjustments-smoke.ts": "248ced36ebdd6940f252b5f816c373bdf1b28df3774273bcda65a801b577acf7",
+    "apps/api/src/scripts/receipt-quota-runtime-smoke.ts": "c6263d7b3beb590df87f3bb5163a699aeb75fcc4ba0a745503beaaa27badbeb2",
+    "apps/web/src/features/system-partners/PartnerAiAdjustmentHistory.tsx": "000a3d33c3b0009ef6dc05d2f32973cdcb08dc8d7982376af511204d74d27ff4",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "971e1964d384b87f4e1ce0dfde28dd62a7957bf5ec090842a9675d1168f58ad8",
+    "apps/web/src/features/system-partners/system-partners.api.ts": "6eedd1803601b14a0f332781d3f9b95dfe8df4a69f7471df7cef280bc3f66708",
+    "apps/web/src/common/api/api-error-message.ts": "a9a467b59874d0ec5a4c7596f94fbe5710ceac7f4a39027f27d4a6d15d1cef74",
+    "apps/web/app/system/partners/[companyId]/page.tsx": "4b9b1f7ef0263442ad12e791dccd0d63e9578130bfe4edde9667637575f70748"
+  },
+  "focused": {
+    "pass": 133,
+    "fail": 0,
+    "skip": 0,
+    "artifact": "admin-ai-adjustments-focused.tap"
+  },
+  "runtime": {
+    "layer": "real-Nest-HTTP-PostgreSQL-provider-simulation",
+    "passed": [
+      "runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation",
+      "runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion",
+      "runtime-receipt-quota-paid-grants-cannot-bypass",
+      "browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock",
+      "admin-ai-reason-source-current-value-and-idempotent-replay",
+      "admin-ai-history-25-row-pagination-safe-fields-and-foreign-cursor",
+      "admin-ai-current-shared-admission-follows-raised-and-lowered-budget",
+      "admin-ai-adjustment-preserves-paid-term-and-receipt-grants",
+      "browser-admin-ai-reason-confirm-cancel-save-history-stale-reload-mobile",
+      "browser-admin-ai-lost-response-retry-and-late-navigation"
+    ],
+    "browserE2E": true,
+    "providerCalls": false
+  },
+  "checks": [
+    "API tsc --noEmit PASS",
+    "web tsc --noEmit PASS",
+    "SWC compilation PASS",
+    "390px history capture visually inspected"
+  ],
+  "commands": [
+    "OCR_REQUIRE_POSTGRES=true tsx --test company-ai-usage-meter.spec.ts set-partner-ai-model.use-case.spec.ts set-platform-ai-budget.use-case.spec.ts partner-ai-adjustment-history.spec.ts partner.controller.spec.ts (dedicated local database)",
+    "BILLING_RECEIPT_QUOTA_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs"
+  ],
+  "limits": [
+    "Application API/Next/PostgreSQL are real; Stripe/Postmark/LINE provider operations are simulated or absent. Two explicit browser transport faults forward actual API requests before losing or delaying responses.",
+    "Paid package/term/extra-receipt adjustment and full C08/LINE/provider acceptance remain open.",
+    "No push, CI dispatch, merge or deploy."
+  ]
+}

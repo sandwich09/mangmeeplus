@@ -1,5 +1,6 @@
 import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
+  PartnerAiAdjustmentHistory,
   PaginatedPartnersDto,
   PartnerCompanyDetailDto,
   PartnerCompanyStatus,
@@ -172,7 +173,7 @@ export async function setPartnerFeatures(
 export async function setPartnerAiModel(
   companyId: string,
   dto: SetPartnerAiModelDto,
-): Promise<{ companyId: string; modelId: string | null; monthlyBudgetSatang: number | null; updatedAt: string }> {
+): Promise<{ companyId: string; modelId: string | null; monthlyBudgetSatang: number | null; updatedAt: string | null }> {
   return apiFetch(`/v1/system/partners/${companyId}/ai-model`, {
     method: 'PUT',
     body: JSON.stringify(dto),
@@ -182,6 +183,10 @@ export async function setPartnerAiModel(
 
 export async function getPartnerAiUsage(companyId: string): Promise<PartnerAiUsageDto> {
   return apiFetch<PartnerAiUsageDto>(`/v1/system/partners/${companyId}/ai-usage`);
+}
+
+export function getPartnerAiAdjustments(companyId:string, cursor?:string):Promise<PartnerAiAdjustmentHistory> {
+  return apiFetch(`/v1/system/partners/${encodeURIComponent(companyId)}/ai-adjustments${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {suppressErrorToast:true});
 }
 
 export async function setPartnerOcrConfig(

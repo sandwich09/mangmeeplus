@@ -3,6 +3,7 @@ import type { PartnerAiUsageDto, PartnerAiUsageMonthDto, PartnerOcrUsageMonthDto
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { Prisma } from '../../../../generated/prisma/client';
+import { partnerAiAdjustmentHistory } from '../partner-ai-adjustment-history';
 import {
   bangkokMonthKey,
   previousBangkokMonthKey,
@@ -38,6 +39,10 @@ export class GetPartnerAiUsageUseCase {
     private readonly prisma: PrismaService,
     private readonly config: AppConfigService,
   ) {}
+
+  history(companyId:string, cursor?:string) {
+    return this.prisma.client.$transaction(tx => partnerAiAdjustmentHistory(tx, companyId, cursor), {isolationLevel:'RepeatableRead'});
+  }
 
   async execute(companyId: string): Promise<PartnerAiUsageDto> {
     const monthKey = bangkokMonthKey();
@@ -79,7 +84,7 @@ export class GetPartnerAiUsageUseCase {
       });
       // The console must quote what a company actually inherits, which is the platform settings
       // row when one exists — the same value the five enforcement seams compare against.
-      const platform = await resolvePlatformAiBudget(txPrisma, this.config);
+      const platform = await resolvePlatformAiBudget(txPrisma, this.config, true);
       const ocrSources = await tx.companyOcrUsageEvent.groupBy({
         by: ['monthKey', 'sourceRoute'],
         where: { companyId, monthKey: { in: [monthKey, previousMonthKey] } },

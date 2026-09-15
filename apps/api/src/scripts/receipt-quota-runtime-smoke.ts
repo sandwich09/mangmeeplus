@@ -5,6 +5,7 @@ import type { startBillingBrowser } from './billing-browser-smoke';
 import { admitCompanyOcr } from '../modules/line-ai/application/company-ocr-governance';
 import { grantPaidPackageReceipts } from '../modules/billing/application/billing-receipt-grants';
 import { bangkokMonthKey } from '../modules/line-ai/application/company-ai-usage-meter';
+import {checkAdminAiAdjustments} from './admin-ai-adjustments-smoke';
 
 /** Actual Admin HTTP/Next/PG + shared web/LINE admission. No OCR or payment provider call. */
 export async function checkReceiptQuotaRuntime(input: {
@@ -19,7 +20,7 @@ export async function checkReceiptQuotaRuntime(input: {
   const save = async (value: boolean | null, expectedVersion?: number, extra: Record<string, unknown> = {}) => {
     const usage = await request(`${base}/ai-usage`); assert.equal(usage.status, 200, JSON.stringify(usage));
     const config = usage.body.ocr.config;
-    return request(`${base}/ocr-config`, 'PUT', { enabled: true, monthlyLimit: null, receiptQuotaEnforced: value,
+    return request(`${base}/ocr-config`, 'PUT', { reason:'ปรับโควตาทดสอบ', enabled: true, monthlyLimit: null, receiptQuotaEnforced: value,
       expectedVersion: expectedVersion ?? config.version, ...extra });
   };
   const admission = (sourceRoute: 'receipt-ocr-web' | 'receipt-ocr-line' | 'bank-statement-extract', startup = false) =>
@@ -28,7 +29,8 @@ export async function checkReceiptQuotaRuntime(input: {
     await db.company.create({ data: { id: companyId, name: 'Synthetic runtime quota company' } });
     await db.companyPlanTerm.create({ data: { companyId, tierKey: 'FREE_TRIAL_15', branchLimit: 1, employeeLimit: 2,
       monthlySlipLimit: 15, termStartAt: now, termEndsAt: end } });
-    assert.equal((await request(`${base}/ocr-config`, 'PUT', { enabled: true, monthlyLimit: null, receiptQuotaEnforced: true, expectedVersion: 0 })).status, 403);
+    assert.equal((await request(`${base}/ocr-config`, 'PUT', { reason:'ปรับโควตาทดสอบ', enabled: true, monthlyLimit: null, receiptQuotaEnforced: true, expectedVersion: 0 })).status, 403);
+    assert.equal((await request(`${base}/ai-adjustments`)).status,403);
     const keys = ['system.partner_dashboard.read', 'system.partner_ai_model.manage'];
     const permissions = await Promise.all(keys.map(key => db.permission.upsert({ where: { key }, update: {}, create: { key, description: key } })));
     await db.role.create({ data: { id: roleId, key: `QUOTA_ADMIN_${roleId}`, scopeKey: 'system', isSystem: true, name: 'Synthetic quota operator',
@@ -51,7 +53,7 @@ export async function checkReceiptQuotaRuntime(input: {
     assert.equal((await admission('receipt-ocr-line', true)).allowed, true);
     const observed = (await request(`${base}/ai-usage`)).body.ocr;
     assert.equal(observed.planQuota.enforced, false); assert.equal(observed.planQuota.source, 'COMPANY');
-    assert.equal((await request(`${base}/ocr-config`, 'PUT', { enabled: true, monthlyLimit: null, expectedVersion: observed.config.version })).status, 200);
+    assert.equal((await request(`${base}/ocr-config`, 'PUT', { reason:'คงค่าเดิมหลังอ่านข้อมูล', enabled: true, monthlyLimit: null, expectedVersion: observed.config.version })).status, 200);
     assert.equal((await request(`${base}/ai-usage`)).body.ocr.config.receiptQuotaEnforced, false, 'old client omission preserves override');
     assert.equal((await save(null)).status, 200);
     assert.equal((await admission('receipt-ocr-line', false)).allowed, true);
@@ -68,6 +70,7 @@ export async function checkReceiptQuotaRuntime(input: {
       await page.goto(`${browser.origin}/system/partners/${companyId}`, { waitUntil: 'domcontentloaded' });
       await page.getByTestId('receipt-quota-effective').getByText(/บังคับโควตา/).waitFor();
       for (const [mode, value] of [['observe', false], ['inherit', null], ['enforce', true]] as const) {
+        await page.getByRole('textbox',{name:'เหตุผลที่ปรับการอ่านเอกสาร',exact:true}).fill('ปรับโควตาจากหน้า Admin');
         await page.locator('#receipt-quota-mode').selectOption(mode);
         const response = page.waitForResponse(r => r.url().endsWith(`${base}/ocr-config`) && r.request().method() === 'PUT');
         await page.getByRole('button', { name: 'บันทึก OCR', exact: true }).click();
@@ -75,6 +78,7 @@ export async function checkReceiptQuotaRuntime(input: {
         await page.getByTestId('receipt-quota-effective').getByText(value === true ? /บังคับโควตา/ : /นับอย่างเดียว/).waitFor();
         assert.equal((await admission('receipt-ocr-line')).allowed, value !== true);
       }
+      await page.getByRole('textbox',{name:'เหตุผลที่ปรับการอ่านเอกสาร',exact:true}).fill('ตรวจการแก้พร้อมกัน');
       await page.locator('#receipt-quota-mode').selectOption('observe');
       assert.equal((await save(null)).status, 200, 'another admin changes the saved version');
       const stale = page.waitForResponse(r => r.url().endsWith(`${base}/ocr-config`) && r.request().method() === 'PUT');
@@ -110,7 +114,8 @@ export async function checkReceiptQuotaRuntime(input: {
       assert.equal(await browser.page.locator('#receipt-quota-mode').isDisabled(), true);
     }
     return ['runtime-receipt-quota-admin-cas-audit-legacy-input-and-validation', 'runtime-receipt-quota-web-line-inheritance-no-reset-and-statement-exclusion',
-      'runtime-receipt-quota-paid-grants-cannot-bypass', ...(browser ? ['browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock'] : [])];
+      'runtime-receipt-quota-paid-grants-cannot-bypass', ...(browser ? ['browser-admin-receipt-quota-three-modes-reload-return-mobile-and-paid-lock'] : []),
+      ...await checkAdminAiAdjustments({prisma,companyId,userId,request,browser})];
   } finally {
     if (adminId) await db.membershipRole.deleteMany({ where: { membershipId, roleId: adminId } });
     if (adminId && createdAdmin) await db.role.delete({ where: { id: adminId } });

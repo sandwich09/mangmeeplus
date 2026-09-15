@@ -6,6 +6,7 @@ import {
   MENU_ENTITLEMENT_BINDINGS,
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
+  partnerAdjustmentReason,
   type CompanyPlanTermDto,
   type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
@@ -24,6 +25,7 @@ import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
 import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
+import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
 import {
   getPartnerDetail,
   updatePartnerProfile,
@@ -62,7 +64,6 @@ import {
   OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
   parseOcrMonthlyLimitInput,
-  reloadAfterOcrConfigConflict,
   ocrRemaining,
   ocrUnsavedToggleMessage,
   ocrUsageTrackingNote,
@@ -79,7 +80,7 @@ import {
   type PlanTermChip,
   type PlanTermChipTone,
 } from './plan-term.logic';
-import { apiErrorMessage } from '@/common/api/api-error-message';
+import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import {
   applyPreset,
   buildMenuCards,
@@ -1267,10 +1268,12 @@ function AiUsageBudgetSection({
   companyId,
   fieldsLocked,
   showToast,
+  onChanged,
 }: {
   companyId: string;
   fieldsLocked: boolean;
   showToast: (message: string, variant: 'success' | 'error') => void;
+  onChanged: () => void;
 }) {
   const [usage, setUsage] = useState<PartnerAiUsageDto | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -1280,11 +1283,15 @@ function AiUsageBudgetSection({
   const [receiptQuotaMode, setReceiptQuotaMode] = useState('inherit');
   const [ocrLimitInput, setOcrLimitInput] = useState('');
   const [ocrLoading, setOcrLoading] = useState(false);
+  const [budgetReason,setBudgetReason]=useState(''),[ocrReason,setOcrReason]=useState('');
+  const generation=useRef(0);
   const { confirm, confirmDialog } = useConfirm();
 
   const loadUsage = async () => {
+    const token=++generation.current;
     try {
       const result = await getPartnerAiUsage(companyId);
+      if(token!==generation.current)return;
       setUsage(result);
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
       setOcrEnabled(result.ocr.config.enabled);
@@ -1292,44 +1299,38 @@ function AiUsageBudgetSection({
       setOcrLimitInput(result.ocr.config.monthlyLimit === null ? '' : String(result.ocr.config.monthlyLimit));
       setUsageError(null);
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
-      setUsageError(e.status === 403 ? 'You do not have permission to view AI usage.' : apiErrorMessage(err));
+      setUsageError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูการใช้งาน AI' : apiErrorMessage(err));
     }
   };
 
   useEffect(() => {
     void loadUsage();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBudgetSave = async () => {
-    const parsed = parseBudgetBahtInput(budgetInput);
-    if (!parsed.ok) {
-      showToast(parsed.message, 'error');
-      return;
-    }
+    if(!usage||fieldsLocked||budgetLoading||ocrLoading)return;
+    const reason=partnerAdjustmentReason(budgetReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
+    const parsed=parseBudgetBahtInput(budgetInput);
+    if(!parsed.ok){showToast(parsed.message,'error');return;}
+    const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
+    const accepted=await confirm({title:'ตรวจงบ AI ก่อนบันทึก',message:`งบต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มงบหรือขึ้นเดือนใหม่':''}\nงบใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
     setBudgetLoading(true);
     try {
-      const result = await setPartnerAiModel(companyId, { monthlyBudgetSatang: parsed.monthlyBudgetSatang });
-      setUsage((prev) => prev ? {
-        ...prev,
-        budget: {
-          ...prev.budget,
-          overrideSatang: result.monthlyBudgetSatang,
-          effectiveSatang: result.monthlyBudgetSatang ?? prev.budget.defaultSatang,
-        },
-      } : prev);
-      showToast(
-        result.monthlyBudgetSatang === null
-          ? 'Monthly AI budget cleared — this company now inherits the platform default.'
-          : `Monthly AI budget set to ${satangToBaht(result.monthlyBudgetSatang)}.`,
-        'success',
-      );
-    } catch (err) {
-      // Reviewed API codes/messages keep their actionable copy; unknown diagnostics stay hidden.
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setBudgetLoading(false);
-    }
+      const result=await setPartnerAiModel(companyId,{monthlyBudgetSatang:parsed.monthlyBudgetSatang,expectedMonthlyBudgetSatang:usage.budget.overrideSatang,reason});
+      if(token!==generation.current)return;
+      setUsage(prev=>prev?{...prev,budget:{...prev.budget,overrideSatang:result.monthlyBudgetSatang,effectiveSatang:result.monthlyBudgetSatang??prev.budget.defaultSatang}}:prev);
+      setBudgetReason('');onChanged();
+      showToast(result.monthlyBudgetSatang===null?'บันทึกแล้ว บริษัทนี้ใช้งบ AI ตามค่าเริ่มต้นของระบบ':`บันทึกงบ AI ต่อเดือน ${satangToBaht(result.monthlyBudgetSatang)} แล้ว`,'success');
+    }catch(err){
+      if(token!==generation.current)return;
+      showToast(apiErrorMessage(err),'error');
+      if(apiErrorCode(err)==='partner_ai_configuration_changed'){setBudgetLoading(false);await loadUsage();}
+    }finally{if(token===generation.current)setBudgetLoading(false);}
   };
 
   const spendSatang = usage?.current?.costSatang ?? 0;
@@ -1338,7 +1339,10 @@ function AiUsageBudgetSection({
   const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
 
   const handleOcrSave = async () => {
-    if (!usage) return;
+    if (!usage||fieldsLocked||ocrLoading||budgetLoading) return;
+    const reason=partnerAdjustmentReason(ocrReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับการอ่านเอกสาร','error');return;}
+    const token=generation.current;
     const parsed = parseOcrMonthlyLimitInput(ocrLimitInput);
     if (!parsed.ok) {
       showToast(parsed.message, 'error');
@@ -1351,7 +1355,7 @@ function AiUsageBudgetSection({
         confirmLabel: 'ปิด OCR',
         cancelLabel: 'ยังไม่ปิด',
       });
-      if (!accepted) return;
+      if (!accepted||token!==generation.current) return;
     }
     if (
       ocrEnabled
@@ -1365,34 +1369,40 @@ function AiUsageBudgetSection({
         confirmLabel: 'ยืนยันจำนวนนี้',
         cancelLabel: 'กลับไปแก้',
       });
-      if (!accepted) return;
+      if (!accepted||token!==generation.current) return;
     }
     setOcrLoading(true);
     try {
       const config = await setPartnerOcrConfig(companyId, {
+        reason,
         enabled: ocrEnabled,
         ...(usage.ocr.planQuota ? { receiptQuotaEnforced: receiptQuotaMode === 'inherit' ? null : receiptQuotaMode === 'enforce' } : {}),
         monthlyLimit: parsed.monthlyLimit,
         expectedVersion: usage.ocr.config.version,
       });
+      if(token!==generation.current)return;
       setUsage((previous) => previous ? { ...previous, ocr: { ...previous.ocr, config } } : previous);
       setOcrEnabled(config.enabled);
       setOcrLimitInput(config.monthlyLimit === null ? '' : String(config.monthlyLimit));
-      await loadUsage();
       showToast('บันทึกการตั้งค่า OCR แล้ว', 'success');
+      setOcrReason('');onChanged();setOcrLoading(false);
+      await loadUsage();
     } catch (err) {
-      if (await reloadAfterOcrConfigConflict(err, loadUsage)) {
+      if(token!==generation.current)return;
+      setOcrLoading(false);
+      if (apiErrorCode(err)==='ocr_config_version_conflict') {
         showToast(OCR_CONFIG_STALE_MESSAGE, 'error');
+        await loadUsage();
       } else {
         showToast(apiErrorMessage(err), 'error');
       }
     } finally {
-      setOcrLoading(false);
+      if(token===generation.current)setOcrLoading(false);
     }
   };
 
   return (
-    <SectionCard title="AI Usage & Budget">
+    <SectionCard title="การใช้งานและงบ AI">
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
           <p className="text-sm leading-6 text-red-800">{usageError}</p>
@@ -1416,11 +1426,11 @@ function AiUsageBudgetSection({
           <div>
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="text-sm text-gray-700">
-                Month to date{' '}
+                ใช้เดือนนี้{' '}
                 <span className="font-semibold tabular-nums text-gray-900">{satangToBaht(spendSatang)}</span>
-                {' of '}
+                {' จากงบ '}
                 <span className="tabular-nums">{satangToBaht(usage.budget.effectiveSatang)}</span>
-                {usage.budget.overrideSatang === null ? ' (platform default)' : ' (company override)'}
+                {usage.budget.overrideSatang === null ? ' (ค่าเริ่มต้นของระบบ)' : ' (Admin ปรับให้)' }
               </p>
               <span className={`text-xs font-medium tabular-nums ${budgetTextClass(percent)}`}>{percent}%</span>
             </div>
@@ -1429,27 +1439,27 @@ function AiUsageBudgetSection({
             </div>
             <p className="mt-1 text-xs text-gray-400">
               {usage.current
-                ? `${formatThaiMonth(usage.current.monthKey)} · ${usage.current.callCount} calls · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
-                : 'No AI calls recorded this month.'}
+                ? `${formatThaiMonth(usage.current.monthKey)} · ${usage.current.callCount} ครั้ง · ${usage.current.inputTokens.toLocaleString('th-TH')} in / ${usage.current.outputTokens.toLocaleString('th-TH')} out tokens`
+                : 'เดือนนี้ยังไม่มีการใช้งาน AI'}
             </p>
           </div>
 
           <p className="text-sm text-gray-600">
             {usage.previous
-              ? <>Previous month ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} calls</>
-              : 'No AI spend recorded last month.'}
+              ? <>เดือนก่อน ({formatThaiMonth(usage.previous.monthKey)}): <span className="tabular-nums">{satangToBaht(usage.previous.costSatang)}</span> · {usage.previous.callCount} ครั้ง</>
+              : 'เดือนก่อนยังไม่มีค่าใช้จ่าย AI'}
           </p>
 
           {usage.topTags.length === 0 ? (
-            <p className="text-sm text-gray-500">No AI usage recorded this month.</p>
+            <p className="text-sm text-gray-500">เดือนนี้ยังไม่มีการใช้งาน AI</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                    <th className="py-2 pr-4 font-medium">Tag</th>
-                    <th className="py-2 pr-4 font-medium">Cost</th>
-                    <th className="py-2 font-medium">Calls</th>
+                    <th className="py-2 pr-4 font-medium">ประเภทการใช้งาน</th>
+                    <th className="py-2 pr-4 font-medium">ค่าใช้จ่าย</th>
+                    <th className="py-2 font-medium">จำนวนครั้ง</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1465,12 +1475,15 @@ function AiUsageBudgetSection({
             </div>
           )}
 
-          <div className="flex items-end gap-3 border-t border-gray-100 pt-3">
+          <label className="block text-base">เหตุผลที่ปรับงบ AI
+            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||fieldsLocked} onChange={e=>setBudgetReason(e.target.value)} />
+          </label>
+          <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">Monthly Budget (฿)</label>
+              <label className="block text-xs text-gray-500 mb-1" htmlFor="ai-monthly-budget">งบ AI ต่อเดือน (บาท)</label>
               <input
                 id="ai-monthly-budget"
-                className={inputClass}
+                className={`${inputClass} min-h-11 text-base`}
                 type="number"
                 min={1}
                 step={0.01}
@@ -1478,22 +1491,21 @@ function AiUsageBudgetSection({
                 placeholder={satangToBahtInput(usage.budget.defaultSatang)}
                 value={budgetInput}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                disabled={budgetLoading || fieldsLocked}
+                disabled={budgetLoading || ocrLoading || fieldsLocked}
               />
             </div>
             <button
               type="button"
-              className={btnPrimary}
-              disabled={budgetLoading || fieldsLocked}
+              className={`${btnPrimary} min-h-11 text-base`}
+              disabled={budgetLoading || ocrLoading || fieldsLocked}
               onClick={() => void handleBudgetSave()}
             >
-              {budgetLoading ? 'Saving…' : 'Save'}
+              {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
             </button>
           </div>
           <p className="text-xs text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
-            Leave empty to inherit the platform default {satangToBaht(usage.budget.defaultSatang)}.
-            Platform ceiling {satangToBaht(usage.budget.ceilingSatang)}.
+            เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>
 
           <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ocr-governance-title">
@@ -1507,7 +1519,7 @@ function AiUsageBudgetSection({
               <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
                 <EntitlementSwitch
                   checked={ocrEnabled}
-                  disabled={ocrLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked}
                   label="เปิดให้ AI อ่านเอกสาร"
                   onClick={() => setOcrEnabled((value) => !value)}
                 />
@@ -1590,7 +1602,7 @@ function AiUsageBudgetSection({
               <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">บังคับโควตาใบเสร็จของแพ็กเกจทดลอง / กำหนดเอง</label>
               <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
                 onChange={(event) => setReceiptQuotaMode(event.target.value)}
-                disabled={ocrLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
+                disabled={ocrLoading || budgetLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
                 <option value="inherit">ตามค่าเริ่มต้นของระบบ</option>
                 <option value="enforce">บังคับ — ครบโควตาแล้วหยุดอ่านใบใหม่</option>
                 <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบโควตา</option>
@@ -1603,6 +1615,9 @@ function AiUsageBudgetSection({
               <p className="text-xs leading-5 text-gray-500">มีผลกับคำขอใหม่จากเว็บและ LINE หลังบันทึก ไม่รีเซ็ตจำนวนที่ใช้ แพ็กเกจที่ชำระเงินบังคับโควตาและวันหมดอายุเสมอ ส่วนรูป statement ใช้เพดาน OCR ด้านล่าง</p>
             </div>
 
+            <label className="block text-base">เหตุผลที่ปรับการอ่านเอกสาร
+              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={ocrLoading||budgetLoading||fieldsLocked} onChange={e=>setOcrReason(e.target.value)} />
+            </label>
             <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
               <div>
                 <label className="mb-1 block text-sm font-bold text-gray-700" htmlFor="ocr-monthly-limit">
@@ -1619,7 +1634,7 @@ function AiUsageBudgetSection({
                   placeholder="เว้นว่าง = ไม่จำกัด"
                   value={ocrLimitInput}
                   onChange={(event) => setOcrLimitInput(event.target.value)}
-                  disabled={ocrLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
                   เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน
@@ -1631,7 +1646,7 @@ function AiUsageBudgetSection({
               <button
                 type="button"
                 className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || fieldsLocked}
+                disabled={ocrLoading || budgetLoading || fieldsLocked}
                 onClick={() => void handleOcrSave()}
               >
                 {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}
@@ -2133,6 +2148,10 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   supportAskerRef?: string;
 }) {
   const toast = useToast();
+  const generation=useRef(0);
+  const [aiHistoryRefresh,setAiHistoryRefresh]=useState(0);
+  const [aiModelReason,setAiModelReason]=useState('');
+  const {confirm:confirmAiModel,confirmDialog:aiModelConfirmDialog}=useConfirm();
   const [detail, setDetail] = useState<PartnerCompanyDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2165,24 +2184,28 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   const [aiModelInput, setAiModelInput] = useState('');
 
   const load = async () => {
+    const token=++generation.current;
     setLoading(true);
     setError(null);
     try {
       const d = await getPartnerDetail(companyId);
+      if(token!==generation.current)return;
       setDetail(d);
       setAiModelInput(d.aiConfiguration?.modelId ?? '');
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
       if (e.status === 403) setForbidden(true);
       else if (e.status === 404) setNotFound(true);
       else setError(apiErrorMessage(err));
     } finally {
-      setLoading(false);
+      if(token===generation.current)setLoading(false);
     }
   };
 
   useEffect(() => {
     void load();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startEdit = () => {
@@ -2244,19 +2267,23 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   };
 
   const handleAiModelSave = async () => {
-    if (!aiModelInput) return;
+    if(!aiModelInput||!detail||aiModelLoading||fieldsLocked)return;
+    const reason=partnerAdjustmentReason(aiModelReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่เปลี่ยนรุ่น AI','error');return;}
+    const token=generation.current;
+    const accepted=await confirmAiModel({title:'ตรวจรุ่น AI ก่อนบันทึก',message:`${detail.aiConfiguration?.modelId??'ค่าเริ่มต้นของระบบ'} → ${aiModelInput}\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
     setAiModelLoading(true);
     try {
-      const result = await setPartnerAiModel(companyId, { modelId: aiModelInput });
-      if (detail) {
-        setDetail({ ...detail, aiConfiguration: { modelId: result.modelId, updatedAt: result.updatedAt } });
-      }
-      showToast(`AI model set to ${result.modelId}.`, 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setAiModelLoading(false);
-    }
+      const result=await setPartnerAiModel(companyId,{modelId:aiModelInput,expectedModelId:detail.aiConfiguration?.modelId??null,reason});
+      if(token!==generation.current)return;
+      if(result.updatedAt)setDetail(prev=>prev?{...prev,aiConfiguration:{modelId:result.modelId,updatedAt:result.updatedAt!}}:prev);
+      setAiModelReason('');setAiHistoryRefresh(n=>n+1);showToast('บันทึกรุ่น AI แล้ว','success');
+    }catch(err){
+      if(token!==generation.current)return;
+      showToast(apiErrorMessage(err),'error');
+      if(apiErrorCode(err)==='partner_ai_configuration_changed'){setAiModelLoading(false);await load();}
+    }finally{if(token===generation.current)setAiModelLoading(false);}
   };
 
   // -- render
@@ -2502,17 +2529,21 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         />
 
         {/* AI model */}
-        <SectionCard title="AI Model Configuration">
+        <SectionCard title="รุ่น AI ของบริษัท">
+          {aiModelConfirmDialog}
+          <label className="mb-3 block text-base">เหตุผลที่เปลี่ยนรุ่น AI
+            <textarea aria-label="เหตุผลที่เปลี่ยนรุ่น AI" className={`${inputClass} mt-1 min-h-20 text-base`} value={aiModelReason} maxLength={500} disabled={aiModelLoading||fieldsLocked} onChange={e=>setAiModelReason(e.target.value)} />
+          </label>
           <div className="flex items-end gap-3">
             <div className="flex-1">
-              <label className="block text-xs text-gray-500 mb-1">Approved AI Model</label>
+              <label className="block text-xs text-gray-500 mb-1">รุ่น AI ที่เปิดให้ใช้</label>
               <ThemedSelect
                 className={inputClass}
                 value={aiModelInput}
                 onChange={(e) => setAiModelInput(e.target.value)}
                 disabled={aiModelLoading || fieldsLocked}
               >
-                <option value="">Select model…</option>
+                <option value="">เลือกรุ่น AI…</option>
                 {APPROVED_AI_MODELS.map((m) => (
                   <option key={m} value={m}>{m}</option>
                 ))}
@@ -2524,7 +2555,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
               disabled={aiModelLoading || !aiModelInput || fieldsLocked}
               onClick={handleAiModelSave}
             >
-              {aiModelLoading ? 'Saving…' : 'Save'}
+              {aiModelLoading ? 'กำลังบันทึก…' : 'ตรวจรุ่นก่อนบันทึก'}
             </button>
           </div>
           {detail.aiConfiguration && (
@@ -2537,7 +2568,8 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         </SectionCard>
 
         {/* AI spend meter + monthly budget override */}
-        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} />
+        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
+        <PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId} />
 
         {/* LINE context health */}
         <SectionCard title="LINE Context">

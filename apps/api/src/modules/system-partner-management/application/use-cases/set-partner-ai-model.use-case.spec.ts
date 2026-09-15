@@ -20,8 +20,8 @@ function makeConfig() {
   } as any;
 }
 
-function makeCmd(fields: { modelId?: string; monthlyBudgetSatang?: number | null }) {
-  return { companyId: 'co-1', ...fields, requestingAdminUserId: 'admin-1', requestId: 'req-1' };
+function makeCmd(fields: { modelId?: string; monthlyBudgetSatang?: number | null; expectedModelId?:string|null; expectedMonthlyBudgetSatang?:number|null; reason?:string }) {
+  return { companyId: 'co-1', reason:'ปรับตามคำขอทดสอบ', expectedModelId:null, expectedMonthlyBudgetSatang:null, ...fields, requestingAdminUserId: 'admin-1', requestId: 'req-1' };
 }
 
 function makePrisma(opts: {
@@ -31,6 +31,7 @@ function makePrisma(opts: {
   existing?: { modelId: string | null; monthlyBudgetSatang: number | null } | null;
   /** Absent = no delegate at all (the pre-phase-6 fake), `null` = a delegate with no row. */
   platform?: { monthlyBudgetSatang: number; ceilingSatang: number } | null;
+  lockedPlatform?: { monthlyBudgetSatang: number; ceilingSatang: number };
 } = {}) {
   const companyFound = opts.companyFound ?? true;
   const status = opts.status ?? 'ACTIVE';
@@ -41,6 +42,7 @@ function makePrisma(opts: {
   const lockOrder: string[] = [];
 
   const txClient = {
+    platformAiBudgetConfig: { findUnique: async () => opts.lockedPlatform ?? opts.platform ?? null },
     $executeRaw: async (_sql: TemplateStringsArray, key: string) => { lockOrder.push(key); },
     $queryRaw: async (_sql: TemplateStringsArray, id: string) => { lockOrder.push(`company:${id}`); return []; },
     company: { findUnique: async () => (companyFound ? { id: 'co-1', status: opts.lockedStatus ?? status } : null) },
@@ -81,6 +83,17 @@ function makePrisma(opts: {
 
 describe('SetPartnerAiModelUseCase', () => {
   beforeEach(() => __resetCompanyAiBudgetCache());
+
+  it('requires a bounded reason, refuses stale previous values, and keeps exact replay unchanged', async () => {
+    const prisma=makePrisma({existing:{modelId:APPROVED,monthlyBudgetSatang:500}});
+    const uc=new SetPartnerAiModelUseCase(prisma,makeConfig());
+    for(const reason of ['', '  ', 'x'.repeat(501)])await assert.rejects(uc.execute(makeCmd({monthlyBudgetSatang:600,reason})),UnprocessableEntityException);
+    await assert.rejects(uc.execute(makeCmd({monthlyBudgetSatang:600,expectedMonthlyBudgetSatang:400})),ConflictException);
+    await assert.rejects(uc.execute({...makeCmd({monthlyBudgetSatang:600}),expectedMonthlyBudgetSatang:undefined}),UnprocessableEntityException);
+    const replay=await uc.execute(makeCmd({monthlyBudgetSatang:500,expectedMonthlyBudgetSatang:400}));
+    assert.equal(replay.monthlyBudgetSatang,500);
+    assert.equal(prisma.upsertArgs(),null);assert.equal(prisma.auditData(),null);
+  });
 
   it('rejects an empty body — nothing to update', async () => {
     const prisma = makePrisma();
@@ -136,7 +149,8 @@ describe('SetPartnerAiModelUseCase', () => {
         return true;
       },
     );
-    assert.equal(prisma.txCalled(), false);
+    assert.equal(prisma.upsertArgs(), null);
+    assert.equal(prisma.auditData(), null);
   });
 
   it('validates against the platform settings ceiling, not the env one, when a row exists', async () => {
@@ -150,7 +164,18 @@ describe('SetPartnerAiModelUseCase', () => {
         return true;
       },
     );
-    assert.equal(prisma.txCalled(), false);
+    assert.equal(prisma.upsertArgs(), null);
+    assert.equal(prisma.auditData(), null);
+  });
+
+  it('checks the locked platform ceiling and preserves a previously committed replay', async () => {
+    const opts={platform:{monthlyBudgetSatang:100,ceilingSatang:1000},lockedPlatform:{monthlyBudgetSatang:100,ceilingSatang:500}};
+    const fresh=makePrisma(opts);
+    await assert.rejects(new SetPartnerAiModelUseCase(fresh,makeConfig()).execute(makeCmd({monthlyBudgetSatang:600})),UnprocessableEntityException);
+    assert.equal(fresh.upsertArgs(),null);assert.equal(fresh.auditData(),null);
+    const replay=makePrisma({...opts,existing:{modelId:null,monthlyBudgetSatang:600}});
+    assert.equal((await new SetPartnerAiModelUseCase(replay,makeConfig()).execute(makeCmd({monthlyBudgetSatang:600}))).monthlyBudgetSatang,600);
+    assert.equal(replay.upsertArgs(),null);assert.equal(replay.auditData(),null);
   });
 
   it('accepts a budget above the env ceiling when the platform row raises it', async () => {
@@ -198,7 +223,7 @@ describe('SetPartnerAiModelUseCase', () => {
   it('clearing the override records the transition to inherited in a CRITICAL audit row', async () => {
     const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 900_000 } });
     const useCase = new SetPartnerAiModelUseCase(prisma, makeConfig());
-    const result = await useCase.execute(makeCmd({ monthlyBudgetSatang: null }));
+    const result = await useCase.execute(makeCmd({ monthlyBudgetSatang: null, expectedMonthlyBudgetSatang:900_000 }));
 
     assert.equal(result.monthlyBudgetSatang, null);
     const audit = prisma.auditData();
@@ -222,7 +247,7 @@ describe('SetPartnerAiModelUseCase', () => {
     const audit = prisma.auditData();
     assert.deepEqual(
       { ...audit.metadataJson },
-      { source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN', fromModelId: null, toModelId: APPROVED, fromMonthlyBudgetSatang: null, toMonthlyBudgetSatang: 700_000 },
+      { source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN', reason:'ปรับตามคำขอทดสอบ', fromModelId: null, toModelId: APPROVED, fromMonthlyBudgetSatang: null, toMonthlyBudgetSatang: 700_000 },
     );
     assert.equal(prisma.txCalled(), true);
   });
@@ -230,8 +255,8 @@ describe('SetPartnerAiModelUseCase', () => {
   it('reads the audit predecessor inside the shared configuration and Company locks', async () => {
     const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 321 } });
     prisma.client.companyAiConfiguration.findUnique = async () => { throw new Error('Unprotected configuration read'); };
-    await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 400 }));
-    assert.deepEqual(prisma.lockOrder, ['partner-ocr-config:co-1', 'company:co-1']);
+    await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({ monthlyBudgetSatang: 400,expectedMonthlyBudgetSatang:321 }));
+    assert.deepEqual(prisma.lockOrder, ['partner-ocr-config:co-1', 'company:co-1', 'platform-ai-budget']);
     assert.equal(prisma.auditData().metadataJson.fromMonthlyBudgetSatang, 321);
     assert.equal(prisma.auditData().metadataJson.toMonthlyBudgetSatang, 400);
   });
@@ -243,7 +268,7 @@ describe('SetPartnerAiModelUseCase', () => {
     assert.equal(prisma.auditData(), null);
   });
 
-  it('resets the meter budget cache after a budget write, but not for a model-only write', async () => {
+  it('admission always rereads its current budget after Admin writes', async () => {
     // The cache is module-level: prime it by hand, then check whether the use case cleared it.
     const primeCache = async (prisma: any) => {
       const decision = await assertCompanyAiBudget(prisma, makeConfig(), 'co-1');
@@ -260,9 +285,9 @@ describe('SetPartnerAiModelUseCase', () => {
       },
     } as any;
 
-    for (const [fields, expectReset] of [
-      [{ monthlyBudgetSatang: 100 }, true],
-      [{ modelId: APPROVED }, false],
+    for (const fields of [
+      { monthlyBudgetSatang: 100 },
+      { modelId: APPROVED },
     ] as const) {
       configReads = 0;
       __resetCompanyAiBudgetCache();
@@ -270,10 +295,10 @@ describe('SetPartnerAiModelUseCase', () => {
       assert.equal(configReads, 1);
 
       const prisma = makePrisma({ existing: { modelId: APPROVED, monthlyBudgetSatang: 900_000 } });
-      await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd(fields));
+      await new SetPartnerAiModelUseCase(prisma, makeConfig()).execute(makeCmd({...fields,expectedMonthlyBudgetSatang:900_000}));
 
       await primeCache(meterPrisma);
-      assert.equal(configReads, expectReset ? 2 : 1, `cache reset expected: ${expectReset}`);
+      assert.equal(configReads, 2, 'admission must read current settings');
     }
   });
 });
@@ -331,6 +356,7 @@ const ocrCommand = (overrides: Partial<{
   requestId: string;
 }> = {}) => ({
   companyId: 'co-1',
+  reason:'ปรับตามคำขอทดสอบ',
   enabled: true,
   monthlyLimit: 100 as number | null,
   expectedVersion: 0,
@@ -340,6 +366,11 @@ const ocrCommand = (overrides: Partial<{
 });
 
 describe('SetPartnerOcrConfigUseCase', () => {
+  it('requires a nonblank reason before either mutation or replay', async () => {
+    const state=makeOcrPrisma();
+    for(const reason of ['', ' ', 'x'.repeat(501)])await assert.rejects(new SetPartnerOcrConfigUseCase(state.prisma).execute({...ocrCommand(),reason}),UnprocessableEntityException);
+    assert.equal(state.upserts(),0);assert.equal(state.audits.length,0);
+  });
   it('preserves an omitted override and versions explicit enforce, observe and inheritance changes', async () => {
     const state = makeOcrPrisma({ existing: { ocrEnabled: true, ocrMonthlyLimit: 100, receiptQuotaEnforced: true, ocrConfigVersion: 3 } });
     const uc = new SetPartnerOcrConfigUseCase(state.prisma);
@@ -371,7 +402,7 @@ describe('SetPartnerOcrConfigUseCase', () => {
     assert.equal(state.audits[0].companyId, 'co-1');
     assert.equal(state.audits[0].actorUserId, 'admin-1');
     assert.deepEqual(state.audits[0].metadataJson, {
-      source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN',
+      source: 'ADMIN_ADJUSTMENT', entryPoint: 'SYSTEM_PARTNER_ADMIN', reason:'ปรับตามคำขอทดสอบ',
       fromEnabled: true, toEnabled: false, fromMonthlyLimit: null, toMonthlyLimit: 25,
       fromReceiptQuotaEnforced: null, toReceiptQuotaEnforced: null,
       fromVersion: 3, toVersion: 4,
@@ -449,11 +480,11 @@ describe('SetPartnerOcrConfigUseCase', () => {
       }
       const commands = [
         {
-          companyId, enabled: false, monthlyLimit: null, expectedVersion: 0,
+          companyId, enabled: false, monthlyLimit: null, expectedVersion: 0, reason:'ปรับตามคำขอทดสอบ',
           requestingAdminUserId: adminIds[0]!, requestId: `ocr-cas-a-${runId}`,
         },
         {
-          companyId, enabled: true, monthlyLimit: 25, expectedVersion: 0,
+          companyId, enabled: true, monthlyLimit: 25, expectedVersion: 0, reason:'ปรับตามคำขอทดสอบ',
           requestingAdminUserId: adminIds[1]!, requestId: `ocr-cas-b-${runId}`,
         },
       ];
@@ -480,9 +511,17 @@ describe('SetPartnerOcrConfigUseCase', () => {
 
       // Real concurrent AI edits must form one truthful before/after chain, even after OCR
       // created the shared row. Neither may claim the same obsolete predecessor.
-      await Promise.all(clients.map((client, index) => new SetPartnerAiModelUseCase({ client } as any, makeConfig()).execute({
-        companyId, monthlyBudgetSatang: [1234, 2345][index]!, requestingAdminUserId: adminIds[index]!, requestId: `ai-audit-${index}-${runId}`,
-      })));
+      const aiCommands=clients.map((_,index)=>({companyId,reason:'ปรับตามคำขอทดสอบ',expectedMonthlyBudgetSatang:null as number|null,
+        monthlyBudgetSatang:[1234,2345][index]!,requestingAdminUserId:adminIds[index]!,requestId:`ai-audit-${index}-${runId}`}));
+      const aiResults=await Promise.allSettled(clients.map((client,index)=>new SetPartnerAiModelUseCase({client} as any,makeConfig()).execute(aiCommands[index]!)));
+      assert.equal(aiResults.filter(r=>r.status==='fulfilled').length,1);
+      const loser=aiResults.findIndex(r=>r.status==='rejected');
+      assert.ok((aiResults[loser] as PromiseRejectedResult).reason instanceof ConflictException);
+      const winningBudget=(await clients[0]!.companyAiConfiguration.findUniqueOrThrow({where:{companyId}})).monthlyBudgetSatang;
+      await new SetPartnerAiModelUseCase({client:clients[loser]} as any,makeConfig()).execute({...aiCommands[loser]!,expectedMonthlyBudgetSatang:winningBudget});
+      // Lost-response replay is a no-op after a successful write; a changed current value is protected.
+      await new SetPartnerAiModelUseCase({client:clients[loser]} as any,makeConfig()).execute({...aiCommands[loser]!,expectedMonthlyBudgetSatang:winningBudget});
+      await assert.rejects(new SetPartnerAiModelUseCase({client:clients[0]} as any,makeConfig()).execute(aiCommands[1-loser]!),ConflictException);
       const audits = await clients[0]!.auditLog.findMany({ where: { companyId, action: 'system.partner_ai_model.update' } });
       assert.equal(audits.length, 2);
       const first = audits.find(a => (a.metadataJson as any).fromMonthlyBudgetSatang === null)!;

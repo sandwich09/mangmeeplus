@@ -27,6 +27,7 @@ import {
 } from './company-ocr-governance';
 import {
   __resetCompanyAiBudgetCache,
+  invalidateCompanyAiBudgetConfiguration,
   assertCompanyAiBudget,
   bangkokMonthKey,
   recordCompanyAiUsage,
@@ -703,20 +704,28 @@ describe('assertCompanyAiBudget resolution', () => {
     });
   });
 
-  it('caches the budget row for 60s and re-reads once the TTL is past', async () => {
-    const { prisma, reads } = budgetPrisma({ monthlyBudgetSatang: 90_000, spendSatang: 0 });
-    mock.timers.enable({ apis: ['Date'] });
-    try {
-      await assertCompanyAiBudget(prisma, budgetConfig, 'co-ttl');
-      await assertCompanyAiBudget(prisma, budgetConfig, 'co-ttl');
-      assert.equal(reads.budget, 1, 'the config half is cached — no DB round trip per AI call');
+  it('reads a changed company budget before every admission without a local invalidation', async () => {
+    const options={monthlyBudgetSatang:90_000,spendSatang:50_000};
+    const {prisma,reads}=budgetPrisma(options);
+    assert.deepEqual(await assertCompanyAiBudget(prisma,budgetConfig,'co-fresh'),{allowed:true});
+    options.monthlyBudgetSatang=40_000;
+    const reduced=await assertCompanyAiBudget(prisma,budgetConfig,'co-fresh');
+    assert.equal(reduced.allowed,false);if(!reduced.allowed)assert.equal(reduced.reason,'exceeded');
+    options.monthlyBudgetSatang=100_000;
+    assert.deepEqual(await assertCompanyAiBudget(prisma,budgetConfig,'co-fresh'),{allowed:true});
+    assert.equal(reads.budget,3);
+  });
 
-      mock.timers.tick(60_001);
-      await assertCompanyAiBudget(prisma, budgetConfig, 'co-ttl');
-      assert.equal(reads.budget, 2, 'an operator budget change must land within a minute');
-    } finally {
-      mock.timers.reset();
-    }
+  it('uses a changed inherited platform budget without clearing any process cache', async () => {
+    const {prisma}=budgetPrisma({monthlyBudgetSatang:null,spendSatang:50_000});
+    let budget=90_000;
+    prisma.client.platformAiBudgetConfig={findUnique:async()=>({monthlyBudgetSatang:budget,ceilingSatang:100_000})};
+    assert.deepEqual(await assertCompanyAiBudget(prisma,budgetConfig,'co-inherited-fresh'),{allowed:true});
+    budget=40_000;
+    const denied=await assertCompanyAiBudget(prisma,budgetConfig,'co-inherited-fresh');
+    assert.equal(denied.allowed,false);if(!denied.allowed){assert.equal(denied.reason,'exceeded');}
+    budget=100_000;
+    assert.deepEqual(await assertCompanyAiBudget(prisma,budgetConfig,'co-inherited-fresh'),{allowed:true});
   });
 
   it('reads spend live on every call, so a fresh increment is seen immediately', async () => {
@@ -728,7 +737,7 @@ describe('assertCompanyAiBudget resolution', () => {
 
     assert.equal(second.allowed, false, 'the spend meter is the one value that must never be stale');
     assert.equal(reads.spend, 2);
-    assert.equal(reads.budget, 1, 'only the config half is cached');
+    assert.equal(reads.budget, 2, 'current configuration and spend both govern admission');
   });
 
   it('treats a missing aggregate row as zero spend', async () => {
@@ -738,6 +747,20 @@ describe('assertCompanyAiBudget resolution', () => {
 });
 
 describe('runWithCompanyAiBudgetAdmission', () => {
+  it('a configuration invalidation keeps an already admitted local action locked', async () => {
+    const {prisma}=budgetPrisma({spendSatang:0});
+    let release!:()=>void,started!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve;}),ready=new Promise<void>(resolve=>{started=resolve;});
+    const first=runWithCompanyAiBudgetAdmission(prisma,budgetConfig,undefined,'co-local-config',async()=>{started();await held;return 'first';});
+    await ready;
+    try {
+      invalidateCompanyAiBudgetConfiguration();
+      const second=await runWithCompanyAiBudgetAdmission(prisma,budgetConfig,undefined,'co-local-config',async()=> 'unexpected');
+      assert.equal(second.allowed,false);if(!second.allowed)assert.equal(second.reason,'busy');
+    }finally{release();await first;}
+    assert.deepEqual(await runWithCompanyAiBudgetAdmission(prisma,budgetConfig,undefined,'co-local-config',async()=> 'next'),{allowed:true,value:'next'});
+  });
+
   it('refuses a concurrent company action until the admitted action finishes', async () => {
     const { prisma } = budgetPrisma({ spendSatang: 0 });
     const leases = new RedisRateLimitService({ redisUrl: '', isProduction: false } as any);

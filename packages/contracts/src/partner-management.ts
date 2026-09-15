@@ -173,12 +173,28 @@ export type SetPartnerFeaturesResultDto = {
  * company inherits the platform default again (metering spec §7.7).
  */
 export type SetPartnerAiModelDto = {
+  reason: string;
   modelId?: string;
   monthlyBudgetSatang?: number | null;
+  expectedModelId?: string | null;
+  expectedMonthlyBudgetSatang?: number | null;
+};
+
+export const PARTNER_ADJUSTMENT_REASON_MAX_LENGTH = 500;
+export function partnerAdjustmentReason(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 && value.trim().length <= PARTNER_ADJUSTMENT_REASON_MAX_LENGTH
+    ? value.trim() : null;
+}
+export type PartnerAiAdjustmentField = 'modelId' | 'monthlyBudgetSatang' | 'enabled' | 'monthlyLimit' | 'receiptQuotaEnforced';
+export type PartnerAiAdjustmentHistory = {
+  items: Array<{ id:string; recordedAt:string; actorId:string|null; actorName:string|null; source:'ADMIN_ADJUSTMENT'|'LEGACY_ADMIN'; reason:string|null;
+    changes:Array<{field:PartnerAiAdjustmentField;before:string|number|boolean|null;after:string|number|boolean|null}> }>;
+  nextCursor:string|null;
 };
 
 /** Platform-admin OCR control. Both fields are absolute desired state; replaying the same body is a no-op. */
 export type SetPartnerOcrConfigDto = {
+  reason: string;
   enabled: boolean;
   /** Trial/manual receipts only. null inherits startup; omitted preserves the saved override. */
   receiptQuotaEnforced?: boolean | null;

@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
-import type { PartnerOcrConfigDto } from '@watchdog-bms/contracts';
+import { partnerAdjustmentReason, type PartnerOcrConfigDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
@@ -7,6 +7,7 @@ import { lockPlanTermCompany } from '../lock-plan-term-company';
 const OCR_MONTHLY_LIMIT_MAX = 1_000_000;
 
 export type SetPartnerOcrConfigCommand = {
+  reason: string;
   companyId: string;
   enabled: boolean;
   receiptQuotaEnforced?: boolean | null;
@@ -22,6 +23,8 @@ export class SetPartnerOcrConfigUseCase {
   constructor(private readonly prisma: PrismaService) {}
 
   async execute(cmd: SetPartnerOcrConfigCommand): Promise<PartnerOcrConfigDto> {
+    const reason = partnerAdjustmentReason(cmd.reason);
+    if (!reason) throw new UnprocessableEntityException('partner_adjustment_reason_required');
     if (typeof cmd.enabled !== 'boolean') throw new UnprocessableEntityException('enabled must be a boolean.');
     if (cmd.receiptQuotaEnforced != null && typeof cmd.receiptQuotaEnforced !== 'boolean') {
       throw new UnprocessableEntityException('receiptQuotaEnforced must be a boolean or null.');
@@ -106,6 +109,7 @@ export class SetPartnerOcrConfigUseCase {
           metadataJson: {
             source: 'ADMIN_ADJUSTMENT',
             entryPoint: 'SYSTEM_PARTNER_ADMIN',
+            reason,
             fromEnabled: before.enabled,
             toEnabled: saved.ocrEnabled,
             fromMonthlyLimit: before.monthlyLimit,

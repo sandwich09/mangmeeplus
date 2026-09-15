@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { partnerAdjustmentReason, type SetPartnerAiModelDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
-import { __resetCompanyAiBudgetCache, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
+import { invalidateCompanyAiBudgetConfiguration, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
 import { partnerMetadataLockError } from '../../domain/logic/partner-lock.logic';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
 
@@ -10,10 +11,8 @@ import { lockPlanTermCompany } from '../lock-plan-term-company';
  * `monthlyBudgetSatang: null` clears the override back to the platform default. At least one of
  * the two must be present.
  */
-export type SetPartnerAiModelCommand = {
+export type SetPartnerAiModelCommand = SetPartnerAiModelDto & {
   companyId: string;
-  modelId?: string;
-  monthlyBudgetSatang?: number | null;
   requestingAdminUserId: string;
   requestId: string;
 };
@@ -24,7 +23,7 @@ export type SetPartnerAiModelResult = {
   modelId: string | null;
   /** null = inherits `AI_MONTHLY_BUDGET_SATANG`. */
   monthlyBudgetSatang: number | null;
-  updatedAt: string;
+  updatedAt: string | null;
 };
 
 @Injectable()
@@ -35,6 +34,8 @@ export class SetPartnerAiModelUseCase {
   ) {}
 
   async execute(cmd: SetPartnerAiModelCommand): Promise<SetPartnerAiModelResult> {
+    const reason = partnerAdjustmentReason(cmd.reason);
+    if (!reason) throw new UnprocessableEntityException('partner_adjustment_reason_required');
     const setsModel = cmd.modelId !== undefined;
     const setsBudget = cmd.monthlyBudgetSatang !== undefined;
     if (!setsModel && !setsBudget) {
@@ -64,15 +65,7 @@ export class SetPartnerAiModelUseCase {
           'monthlyBudgetSatang must be at least 1 satang. Switching AI off is a feature entitlement (ai_line_assistant), not a budget of zero.',
         );
       }
-      // Never clamp: the operator must see the ceiling they crossed (spec §7.7). The ceiling is
-      // the effective one (platform settings row, else env) and it gates WRITES only — an
-      // override made under a higher ceiling keeps enforcing as-is (spec §7.4, grandfathered).
-      const { ceilingSatang: ceiling } = await resolvePlatformAiBudget(this.prisma, this.config);
-      if (budget > ceiling) {
-        throw new UnprocessableEntityException(
-          `monthlyBudgetSatang ${budget} is above the platform ceiling of ${ceiling} satang.`,
-        );
-      }
+
     }
 
     const saved = await this.prisma.client.$transaction(async (tx) => {
@@ -87,8 +80,27 @@ export class SetPartnerAiModelUseCase {
       if (currentLockError) throw new UnprocessableEntityException(currentLockError);
       // A previous read may predate another Admin's save. Audit the actual committed predecessor.
       const existing = await tx.companyAiConfiguration.findUnique({
-        where: { companyId: cmd.companyId }, select: { modelId: true, monthlyBudgetSatang: true },
+        where: { companyId: cmd.companyId }, select: { modelId: true, monthlyBudgetSatang: true, updatedAt: true },
       });
+      if ((setsModel && cmd.expectedModelId === undefined) || (setsBudget && cmd.expectedMonthlyBudgetSatang === undefined)) {
+        throw new UnprocessableEntityException('partner_ai_previous_value_required');
+      }
+      if ((!setsModel || (existing?.modelId ?? null) === cmd.modelId) && (!setsBudget || (existing?.monthlyBudgetSatang ?? null) === budget)) {
+        return { companyId: cmd.companyId, modelId: existing?.modelId ?? null, monthlyBudgetSatang: existing?.monthlyBudgetSatang ?? null,
+          updatedAt: existing?.updatedAt ?? null };
+      }
+      if ((setsModel && (existing?.modelId ?? null) !== cmd.expectedModelId)
+        || (setsBudget && (existing?.monthlyBudgetSatang ?? null) !== cmd.expectedMonthlyBudgetSatang)) {
+        throw new ConflictException({ code: 'partner_ai_configuration_changed', message: 'partner_ai_configuration_changed' });
+      }
+      // The ceiling gates new writes; an exact replay above a later-lowered ceiling stays a no-op.
+      if (setsBudget && budget != null) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'platform-ai-budget'}))`;
+        const { ceilingSatang } = await resolvePlatformAiBudget({ client: tx } as PrismaService, this.config, true);
+        if (budget > ceilingSatang) throw new UnprocessableEntityException(
+          `monthlyBudgetSatang ${budget} is above the platform ceiling of ${ceilingSatang} satang.`,
+        );
+      }
       const result = await tx.companyAiConfiguration.upsert({
         where: { companyId: cmd.companyId },
         // A field the caller did not send has no prior value on a fresh row: it starts inherited.
@@ -121,6 +133,7 @@ export class SetPartnerAiModelUseCase {
           metadataJson: {
             source: 'ADMIN_ADJUSTMENT',
             entryPoint: 'SYSTEM_PARTNER_ADMIN',
+            reason,
             fromModelId: existing?.modelId ?? null,
             toModelId: result.modelId,
             fromMonthlyBudgetSatang: existing?.monthlyBudgetSatang ?? null,
@@ -132,14 +145,13 @@ export class SetPartnerAiModelUseCase {
       return result;
     });
 
-    // The meter caches the config half for 60s; drop it so the new cap binds on the next call.
-    if (setsBudget) __resetCompanyAiBudgetCache();
+    if (setsBudget) invalidateCompanyAiBudgetConfiguration();
 
     return {
       companyId: saved.companyId,
       modelId: saved.modelId,
       monthlyBudgetSatang: saved.monthlyBudgetSatang,
-      updatedAt: saved.updatedAt.toISOString(),
+      updatedAt: saved.updatedAt?.toISOString() ?? null,
     };
   }
 }

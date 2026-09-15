@@ -313,12 +313,9 @@ functions in the `company-ai-model-policy.ts` style (that file is already import
 cross-module by the receipt and statement clients):
 
 - `assertCompanyAiBudget(prisma, config, companyId)` — resolves the effective budget
-  (override else default; the config row cached in-process ≤60s per company), reads the live
-  aggregate row (single unique-index point read — the spend meter is the one value that must
-  not be stale), refuses when `spendSatang >= budget`. This is one point read per **user
-  action** riding next to the existing Redis round trip, ahead of a multi-second model call;
-  the override-spec's no-DB-per-call rule is about its config resolver, and the config half
-  here is cached accordingly.
+  (current company override else current platform default), reads the live aggregate row and
+  refuses when `spendSatang >= budget`. Configuration and spend are read before each new
+  cost-bearing action; cached observations cannot authorize spend after an Admin change.
 - `runWithCompanyAiBudgetAdmission(...)` — acquires the crash-safe Redis lease, performs the live
   check only after admission, runs the cost-bearing action and keeps ownership through
   `recordCompanyAiUsage`. It pins one month key across all three operations. Production never
@@ -483,3 +480,8 @@ accepts baht decimals under the same two-decimal rule.
 - **Two specs extending one route/row** (`ai-model` route, `CompanyAiConfiguration`) → §6.8
   makes the shared decision here; whichever ships second rebases its DTO/migration on the
   first.
+## Admin adjustment consistency amendment — 2026-09-15
+
+Cost-bearing admission must read the current company override and, when inherited, the current platform budget before deciding. The older60-second configuration-cache allowance applies only to non-admission observations, not permission to spend after an Admin change. Admin budget/ceiling reads also use the current stored settings. This requires a small DB read per new AI admission; reuse the existing company/month lease and live spend check. Already admitted work may finish and record its actual cost, as before. Configuration invalidation must not clear active admission leases; the full reset remains a test-only seam. Verify lowered/raised/inherited changes from another writer without a local cache reset, read failure, and an active action racing a configuration change.
+
+Platform-setting writes serialize with company override ceiling validation. Read the current audit predecessor and enforce the ceiling within the transaction before a new override write; an exact replay of an already committed value remains a no-op even if the ceiling was subsequently lowered. Platform setting changes do not revoke previously grandfathered overrides.

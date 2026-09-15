@@ -57,8 +57,8 @@ export type CompanyAiBudgetDecision =
 type EffectiveBudget = { budgetSatang: number; override: boolean };
 
 /**
- * The config half of the budget is cached per company (the override-spec's no-DB-per-call rule);
- * the spend half never is. Same expiresAt-in-a-Map idiom as `RedisRateLimitService.localDecision`,
+ * Configuration may be cached for non-admission observations; paid AI admission bypasses it.
+ * Spend is always live. Same expiresAt-in-a-Map idiom as `RedisRateLimitService.localDecision`,
  * including the size-cap sweep, so a burst of tenants cannot grow this without bound.
  */
 const BUDGET_CACHE_TTL_MS = 60_000;
@@ -75,9 +75,12 @@ const PLATFORM_CONFIG_ID = 'platform';
 
 /** Test seam: the TTL is wall-clock, so specs need a deterministic way back to a cold cache. */
 export function __resetCompanyAiBudgetCache(): void {
-  budgetCache.clear();
+  invalidateCompanyAiBudgetConfiguration();
   localBudgetAdmissions.clear();
 }
+
+/** Production setting changes must not release an in-flight admission. */
+export function invalidateCompanyAiBudgetConfiguration(): void { budgetCache.clear(); }
 
 /** Platform-wide defaults, DB row first and the env values as the fallback (spec §7.4). */
 export type PlatformAiBudgetSettings = {
@@ -88,17 +91,17 @@ export type PlatformAiBudgetSettings = {
 };
 
 /**
- * Read by every budget resolution and by the admin settings surface, so it shares the 60s cache
- * (and the write path's `__resetCompanyAiBudgetCache()`): a settings change binds inside a minute
- * everywhere, immediately in the process that made it.
+ * Non-admission observations may share a 60s cache. Admission and Admin reads explicitly request
+ * fresh settings so a change on another API instance is visible before starting new work.
  */
 export async function resolvePlatformAiBudget(
   prisma: PrismaService,
   config: AppConfigService,
+  fresh = false,
 ): Promise<PlatformAiBudgetSettings> {
   const now = Date.now();
   const cached = budgetCache.get(PLATFORM_CACHE_KEY);
-  if (cached?.platform && cached.expiresAt > now) return cached.platform;
+  if (!fresh && cached?.platform && cached.expiresAt > now) return cached.platform;
 
   // Tolerant delegate (the `resolveCompanyAiModelPolicy` precedent for unit fakes predating the
   // table); a *throwing* read still propagates into the caller's fail-closed handling.
@@ -131,10 +134,11 @@ async function resolveEffectiveBudget(
   prisma: PrismaService,
   config: AppConfigService,
   companyId: string,
+  fresh = false,
 ): Promise<EffectiveBudget> {
   const now = Date.now();
   const cached = budgetCache.get(companyId);
-  if (cached && cached.expiresAt > now) return { budgetSatang: cached.budgetSatang, override: cached.override };
+  if (!fresh && cached && cached.expiresAt > now) return { budgetSatang: cached.budgetSatang, override: cached.override };
 
   const repository = (prisma.client as any).companyAiConfiguration as
     | { findUnique(args: unknown): Promise<{ monthlyBudgetSatang: number | null } | null> }
@@ -146,7 +150,7 @@ async function resolveEffectiveBudget(
   const override = row?.monthlyBudgetSatang != null;
   const budgetSatang = override
     ? row!.monthlyBudgetSatang!
-    : (await resolvePlatformAiBudget(prisma, config)).monthlyBudgetSatang;
+    : (await resolvePlatformAiBudget(prisma, config, fresh)).monthlyBudgetSatang;
   // A non-finite platform default means the config schema did not carry the key — a stale
   // `packages/config` dist is the known way that happens. Refuse loudly (the caller turns this
   // into `AI_BUDGET_UNAVAILABLE` plus a warn) rather than pass every call unmetered.
@@ -181,7 +185,8 @@ export async function assertCompanyAiBudget(
   let budget: EffectiveBudget;
   let spendSatang: number;
   try {
-    budget = await resolveEffectiveBudget(prisma, config, companyId);
+    // A different API instance may have changed the cap; cached configuration cannot authorize spend.
+    budget = await resolveEffectiveBudget(prisma, config, companyId, true);
     // Live point read on the unique aggregate: spend is the one value that must not be stale.
     const row = await (prisma.client as any).companyAiMonthlyUsage.findUnique({
       where: { companyId_monthKey: { companyId, monthKey } },
