@@ -103,7 +103,7 @@ const SystemHeader: React.FC<{ billingOnly?: boolean; billingAllowed?: boolean; 
       <button
         type="button"
         onClick={handleSignOut}
-        disabled={signingOut}
+        disabled={signingOut} aria-busy={Boolean(signingOut)}
         className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
       >
         {signingOut ? 'กำลังออกจากระบบ...' : 'ออกจากระบบ'}

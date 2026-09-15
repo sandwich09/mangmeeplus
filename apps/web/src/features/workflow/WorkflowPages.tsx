@@ -180,7 +180,7 @@ function EnableTemplateModal({ companyId, template, onClose, onDone }: { company
         <p className="text-xs text-gray-400">การกระทำที่ไม่ปลอดภัย (เช่น อนุมัติ โอนเงิน) จะกลายเป็นงาน/คำขอตรวจสอบเท่านั้น ไม่ใช่การอนุมัติจริง</p>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="submit" className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+          <button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</button>
         </div>
       </form>
     </div>
@@ -237,7 +237,7 @@ function RulesTab({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3 text-gray-500">{r.lastRunAt ? `${formatDateTime(r.lastRunAt)} (${RUN_STATUS_LABELS[r.lastRunStatus] ?? r.lastRunStatus})` : '-'}</td>
                   <td className="px-4 py-3">
                     {r.status !== 'ARCHIVED' && (
-                      <button className={ghostClass} disabled={busy === r.id} onClick={() => toggle(r)}>
+                      <button className={ghostClass} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => toggle(r)}>
                         {r.status === 'ENABLED' ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}
                       </button>
                     )}
@@ -331,13 +331,13 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
           <textarea className={`${inputClass} font-mono`} rows={8} value={actionJson} onChange={(e) => setActionJson(e.target.value)} />
         </div>
         <div className="flex justify-end gap-2">
-          <button className={ghostClass} onClick={save} disabled={busy}>บันทึกแบบร่าง</button>
+          <button className={ghostClass} onClick={save} disabled={busy} aria-busy={Boolean(busy)}>บันทึกแบบร่าง</button>
         </div>
         <hr />
         <div>
           <label className="mb-1 block text-sm text-gray-600">ทดสอบ (ไม่มีผลกระทบจริง — ไม่ส่งแจ้งเตือน/สร้างงาน)</label>
           <textarea className={`${inputClass} font-mono`} rows={3} value={samplePayload} onChange={(e) => setSamplePayload(e.target.value)} />
-          <button className={`${ghostClass} mt-2`} disabled={busy} onClick={runTest}>{busy ? 'กำลังดำเนินการ...' : 'ทดสอบเงื่อนไข'}</button>
+          <button className={`${ghostClass} mt-2`} disabled={busy} aria-busy={Boolean(busy)} onClick={runTest}>{busy ? 'กำลังดำเนินการ...' : 'ทดสอบเงื่อนไข'}</button>
           {testResult && (
             <pre className="mt-2 max-h-48 overflow-auto rounded bg-gray-50 p-3 text-xs text-gray-700">{JSON.stringify(testResult, null, 2)}</pre>
           )}
@@ -456,7 +456,7 @@ function RunDetailModal({ companyId, runId, onClose, onChanged }: { companyId: s
             <div key={a.id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded border border-gray-200 px-3 py-2 text-sm">
               <span>{a.actionKey} <StatusBadge status={a.status} labels={ACTION_RUN_STATUS_LABELS} /></span>
               {['FAILED_RETRYABLE', 'FAILED_FINAL', 'DEAD_LETTERED'].includes(a.status) && (
-                <button className={ghostClass} disabled={busy === a.id} onClick={() => replay(a.id)}>ลองใหม่</button>
+                <button className={ghostClass} disabled={busy === a.id} aria-busy={Boolean(busy === a.id)} onClick={() => replay(a.id)}>ลองใหม่</button>
               )}
             </div>
           ))}
@@ -522,9 +522,9 @@ function TasksTab({ companyId }: { companyId: string }) {
               </div>
               {t.status === 'OPEN' && (
                 <div className="flex gap-2">
-                  <button className={ghostClass} disabled={busy === t.id} onClick={() => snooze(t.id)}>เลื่อน 1 วัน</button>
-                  <button className={btnClass} disabled={busy === t.id} onClick={() => complete(t.id)}>เสร็จสิ้น</button>
-                  <button className={dangerClass} disabled={busy === t.id} onClick={() => cancel(t.id)}>ยกเลิก</button>
+                  <button className={ghostClass} disabled={busy === t.id} aria-busy={Boolean(busy === t.id)} onClick={() => snooze(t.id)}>เลื่อน 1 วัน</button>
+                  <button className={btnClass} disabled={busy === t.id} aria-busy={Boolean(busy === t.id)} onClick={() => complete(t.id)}>เสร็จสิ้น</button>
+                  <button className={dangerClass} disabled={busy === t.id} aria-busy={Boolean(busy === t.id)} onClick={() => cancel(t.id)}>ยกเลิก</button>
                 </div>
               )}
             </div>
@@ -572,7 +572,7 @@ function DeadLettersTab({ companyId }: { companyId: string }) {
               <p className="mt-1 text-sm text-red-700">{workflowDiagnosticMessage(d)}</p>
               {d.resolutionStatus === 'OPEN' && (
                 <div className="mt-2 flex gap-2">
-                  <button className={btnClass} disabled={busy === d.id} onClick={() => replay(d.id)}>ลองใหม่</button>
+                  <button className={btnClass} disabled={busy === d.id} aria-busy={Boolean(busy === d.id)} onClick={() => replay(d.id)}>ลองใหม่</button>
                   <button className={ghostClass} onClick={() => setNoteFor(d)}>ละเว้น</button>
                 </div>
               )}
@@ -614,7 +614,7 @@ function IgnoreDeadLetterModal({ companyId, deadLetter, onClose, onDone }: { com
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="submit" className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+          <button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึก'}</button>
         </div>
       </form>
     </div>
@@ -672,7 +672,7 @@ function WebhooksTab({ companyId }: { companyId: string }) {
           <input className={inputClass} placeholder="https://..." value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} required />
           <input className={inputClass} placeholder="Signing secret" type="password" value={form.secretRef} onChange={(e) => setForm({ ...form, secretRef: e.target.value })} required />
           <input className={inputClass} placeholder="Event types (คั่นด้วย ,) เช่น reimbursement.request_submitted" value={form.allowedEventTypes} onChange={(e) => setForm({ ...form, allowedEventTypes: e.target.value })} required />
-          <button type="submit" className={btnClass} disabled={busy === 'create'}>{busy === 'create' ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+          <button type="submit" className={btnClass} disabled={busy === 'create'} aria-busy={Boolean(busy === 'create')}>{busy === 'create' ? 'กำลังบันทึก...' : 'บันทึก'}</button>
         </form>
       )}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
@@ -687,7 +687,7 @@ function WebhooksTab({ companyId }: { companyId: string }) {
                 <p className="text-xs text-gray-500">{w.url}</p>
                 <p className="text-xs text-gray-400">{w.allowedEventTypes.join(', ')}</p>
               </div>
-              <button className={ghostClass} disabled={busy === w.id} onClick={() => toggle(w)}>{w.status === 'ENABLED' ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
+              <button className={ghostClass} disabled={busy === w.id} aria-busy={Boolean(busy === w.id)} onClick={() => toggle(w)}>{w.status === 'ENABLED' ? 'ปิดใช้งาน' : 'เปิดใช้งาน'}</button>
             </div>
           ))}
           {data.length === 0 && <div className="py-8 text-center text-sm text-gray-400">ยังไม่มี Webhook</div>}

@@ -2,8 +2,7 @@ import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
 // resolveUploadUrl is no longer imported here: the direct fetch was replaced by the shared
 // uploadReceiptFile helper, which resolves the URL and turns a failed PUT into a readable message.
 import { uploadReceiptFile as uploadFileToStorage } from '../expenses/expenses.api';
-import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
-import { prepareReceiptFile } from '../expenses/expense-upload.logic';
+import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 import type { ReimbursementApproverRoleOption, ReimbursementPolicySummary, ReimbursementSourceOptions } from '@watchdog-bms/contracts';
 
 function qs(params?: Record<string, unknown>): string {
@@ -40,8 +39,7 @@ export function updateReimbursementDraft(companyId: string, id: string, body: Re
 export async function uploadReceiptFile(companyId: string, file: File, branchId: string | null | undefined): Promise<string> {
   return withGenericUploadError(async () => {
     if (!branchId?.trim()) throw Object.assign(new Error('TRANSACTION_BRANCH_REQUIRED'), { code: 'TRANSACTION_BRANCH_REQUIRED' });
-    const preparedFile = (await prepareReceiptFile(file)).file;
-    assertAllowedUploadFile(preparedFile);
+    const preparedFile = await prepareAttachmentUpload(file);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `/companies/${companyId}/attachments/upload-intent`,
       {
@@ -141,7 +139,7 @@ export function previewReimbursementClaimForm(companyId: string, id: string) {
  */
 export async function uploadClaimSignature(companyId: string, requestId: string, role: string, file: File): Promise<string> {
   return withGenericUploadError(async () => {
-    assertAllowedUploadFile(file, 'image');
+    file = await prepareAttachmentUpload(file, 'image');
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `${base(companyId)}/${requestId}/claim-form/signature-upload-intent`,
       { method: 'POST', body: JSON.stringify({ role, originalFileName: file.name, mimeType: file.type, byteSize: file.size }) },

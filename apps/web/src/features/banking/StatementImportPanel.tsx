@@ -1,7 +1,7 @@
 'use client';
 
 import { formatThaiDate, formatThaiDateTime } from '@/common/i18n/thai-date';
-import { uploadErrorMessage } from '@/common/files/upload-file.logic';
+import { prepareAttachmentUpload, uploadErrorMessage } from '@/common/files/upload-file.logic';
 
 import { useState, useEffect, useCallback } from 'react';
 import { ThemedFile } from '@/common/components/field/ThemedFile';
@@ -96,7 +96,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
     if (fileKind === 'unsupported') {
       setFileName(undefined);
       setRawText('');
-      setError('รองรับเฉพาะ CSV, TSV, TXT, PDF, PNG, JPG และ JPEG โดยนามสกุลต้องตรงกับชนิดไฟล์');
+      setError('รองรับเฉพาะ CSV, TSV, TXT, PDF, PNG, JPG/JPEG, HEIC/HEIF และ GIF โดยนามสกุลต้องตรงกับชนิดไฟล์');
       return;
     }
     const maxBytes = fileKind === 'extractable' ? MAX_STATEMENT_BINARY_BYTES : MAX_STATEMENT_TEXT_BYTES;
@@ -110,8 +110,9 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
     if (fileKind === 'extractable') {
       setRawText(''); setBusy(true);
       try {
-        const fileBase64 = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
-        const ex = await extractStatementFile(companyId, bankAccountId, { fileBase64, mimeType: file.type, fileName: file.name });
+        const prepared = await prepareAttachmentUpload(file);
+        const fileBase64 = bytesToBase64(new Uint8Array(await prepared.arrayBuffer()));
+        const ex = await extractStatementFile(companyId, bankAccountId, { fileBase64, mimeType: prepared.type, fileName: prepared.name });
         setExtraction(ex);
         const result = await previewStatementImport(companyId, bankAccountId, { rows: ex.rows });
         setPreview({ ...result, parsedRows: ex.rows });
@@ -202,7 +203,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
           onChange={(e) => { setRawText(e.target.value); setFileName(undefined); setPreview(null); setCommitResult(null); }}
         />
         <div className="flex gap-2 items-center">
-          <button className={btnClass} disabled={busy || !rawText.trim() || !bankAccountId} onClick={handlePreview}>ตรวจสอบตัวอย่าง</button>
+          <button className={btnClass} disabled={busy || !rawText.trim() || !bankAccountId} aria-busy={Boolean(busy)} onClick={handlePreview}>ตรวจสอบตัวอย่าง</button>
           {fileName && <span className="text-xs text-gray-500">ไฟล์: {fileName}</span>}
         </div>
       </div>
@@ -268,10 +269,10 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
               <input type="radio" checked={duplicatePolicy === 'flag'} onChange={() => setDuplicatePolicy('flag')} />
               นำเข้าแถวซ้ำพร้อมทำเครื่องหมาย
             </label>
-            <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy || preview.validRows === 0} onClick={handleCommit}>
+            <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy || preview.validRows === 0} aria-busy={Boolean(busy)} onClick={handleCommit}>
               ยืนยันนำเข้า {preview.validRows} แถว
             </button>
-            <button className={ghostClass} disabled={busy} onClick={resetInput}>เริ่มใหม่</button>
+            <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={resetInput}>เริ่มใหม่</button>
           </div>
         </div>
       )}
@@ -303,7 +304,7 @@ export function StatementImportPanel({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3 text-xs">{IMPORT_STATUS_LABELS[im.status] ?? im.status}</td>
                   <td className="px-4 py-3">
                     {im.status === 'COMMITTED' && (
-                      <button className={ghostClass + ' text-xs py-1 px-2 text-red-600'} disabled={busy} onClick={() => handleVoidImport(im.id)}>ยกเลิกการนำเข้า</button>
+                      <button className={ghostClass + ' text-xs py-1 px-2 text-red-600'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => handleVoidImport(im.id)}>ยกเลิกการนำเข้า</button>
                     )}
                   </td>
                 </tr>

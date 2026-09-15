@@ -255,7 +255,7 @@ function Leads({ companyId }: { companyId: string }) {
                       {' · '}{warning.status === 'ACTIVE' ? 'ใช้งาน' : 'ไม่ใช้งาน'}
                     </div>
                   </div>
-                  <button className={btnClass} disabled={busy === duplicatePrompt.leadId} onClick={() => void convert(duplicatePrompt.leadId, warning.customerId)}>
+                  <button className={btnClass} disabled={busy === duplicatePrompt.leadId} aria-busy={Boolean(busy === duplicatePrompt.leadId)} onClick={() => void convert(duplicatePrompt.leadId, warning.customerId)}>
                     {busy === duplicatePrompt.leadId ? 'กำลังเชื่อม...' : 'ใช้ลูกค้ารายนี้'}
                   </button>
                 </div>
@@ -275,7 +275,7 @@ function Leads({ companyId }: { companyId: string }) {
           <input className={inputClass} placeholder={t('customers.phone', locale)} value={form.rawPhone} onChange={e => setForm({ ...form, rawPhone: e.target.value })} />
           <input className={inputClass} placeholder={t('customers.email', locale)} value={form.rawEmail} onChange={e => setForm({ ...form, rawEmail: e.target.value })} />
           <input className={inputClass} placeholder={t('customers.notes', locale)} value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} />
-          <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create'} onClick={create}>{t('customers.save', locale)}</button></div>
+          <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create'} aria-busy={Boolean(busy === 'create')} onClick={create}>{t('customers.save', locale)}</button></div>
         </div>
       )}
       {loading ? <LoadingState label="กำลังโหลด..." />
@@ -293,8 +293,8 @@ function Leads({ companyId }: { companyId: string }) {
                     <td className="px-4 py-2 text-right">
                       {l.status !== 'CONVERTED' && l.status !== 'DISQUALIFIED' && (
                         <span className="flex justify-end gap-2">
-                          <button className={ghostClass} disabled={busy === l.id} onClick={() => convert(l.id)}>{t('customers.convert_to_customer', locale)}</button>
-                          <button className={ghostClass} disabled={busy === l.id} onClick={() => disqualify(l.id)}>{t('customers.disqualify', locale)}</button>
+                          <button className={ghostClass} disabled={busy === l.id} aria-busy={Boolean(busy === l.id)} onClick={() => convert(l.id)}>{t('customers.convert_to_customer', locale)}</button>
+                          <button className={ghostClass} disabled={busy === l.id} aria-busy={Boolean(busy === l.id)} onClick={() => disqualify(l.id)}>{t('customers.disqualify', locale)}</button>
                         </span>
                       )}
                     </td>
@@ -472,11 +472,11 @@ function OpportunityDetail({
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
               {canRequestQuotation && quotationAvailability.state === 'OPEN' && (
-                <button className={btnClass} disabled={busy} onClick={quote}>{t('customers.create_quotation_draft', locale)}</button>
+                <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={quote}>{t('customers.create_quotation_draft', locale)}</button>
               )}
-              <button className={ghostClass} disabled={busy} onClick={logActivity}>{t('customers.log_activity', locale)}</button>
-              <button className={ghostClass} disabled={busy} onClick={() => close('WON')}>{t('customers.close_won', locale)}</button>
-              <button className={ghostClass} disabled={busy} onClick={() => close('LOST')}>{t('customers.close_lost', locale)}</button>
+              <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={logActivity}>{t('customers.log_activity', locale)}</button>
+              <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => close('WON')}>{t('customers.close_won', locale)}</button>
+              <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => close('LOST')}>{t('customers.close_lost', locale)}</button>
             </div>
           </div>
         )}
@@ -551,7 +551,7 @@ function FollowUps({ companyId }: { companyId: string }) {
             {['LOW', 'NORMAL', 'HIGH', 'URGENT'].map(p => <option key={p} value={p}>{p}</option>)}
           </ThemedSelect>
           <input className={inputClass} placeholder={t('customers.customer_id_optional', locale)} value={form.customerId} onChange={e => setForm({ ...form, customerId: e.target.value })} />
-          <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create' || !form.title.trim() || !form.dueAt} onClick={create}>{t('customers.save', locale)}</button></div>
+          <div className="md:col-span-2"><button className={btnClass} disabled={busy === 'create' || !form.title.trim() || !form.dueAt} aria-busy={Boolean(busy === 'create')} onClick={create}>{t('customers.save', locale)}</button></div>
         </div>
       )}
       {loading ? <LoadingState label="กำลังโหลด..." />
@@ -565,7 +565,7 @@ function FollowUps({ companyId }: { companyId: string }) {
                   <div className="text-xs text-gray-500">{t('customers.due_label', locale)} {shortDate(f.dueAt)} · {f.priority} · {f.status}</div>
                 </div>
                 {f.status !== 'DONE' && f.status !== 'CANCELED' && (
-                  <button className={ghostClass} disabled={busy === f.id} onClick={() => complete(f.id)}>{t('customers.done', locale)}</button>
+                  <button className={ghostClass} disabled={busy === f.id} aria-busy={Boolean(busy === f.id)} onClick={() => complete(f.id)}>{t('customers.done', locale)}</button>
                 )}
               </div>
             ))}

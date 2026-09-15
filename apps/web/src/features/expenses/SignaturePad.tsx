@@ -207,7 +207,7 @@ export function SignaturePad({
         <button type="button" className={ghostClass} disabled={busy || exporting || empty} onClick={clear}>
           {t('expenses.substitute_wizard.signature_clear', locale)}
         </button>
-        <button type="button" className={btnClass} disabled={busy || exporting || empty} onClick={() => void confirm()}>
+        <button type="button" className={btnClass} disabled={busy || exporting || empty} aria-busy={Boolean(busy || exporting)} onClick={() => void confirm()}>
           {t('expenses.substitute_wizard.signature_use_drawing', locale)}
         </button>
       </div>

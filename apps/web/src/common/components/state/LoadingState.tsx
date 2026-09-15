@@ -10,8 +10,9 @@ const textSize = { sm: 'text-xs', md: 'text-sm', lg: 'text-base' };
 
 export function LoadingState({ label, size = 'md' }: LoadingStateProps) {
   return (
-    <div className="flex w-full flex-col items-center justify-center gap-3 py-12">
+    <div role="status" aria-busy="true" className="flex w-full flex-col items-center justify-center gap-3 py-12">
       <span
+        aria-hidden="true"
         className={`rounded-full border-gray-200 border-t-brand-600 animate-spin ${spinnerSize[size]}`}
       />
       {label && <p className={`text-gray-500 ${textSize[size]}`}>{label}</p>}

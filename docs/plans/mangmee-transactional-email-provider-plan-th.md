@@ -1,5 +1,18 @@
 # แผน implement Postmark และใช้เอกสารลูกค้าจาก Stripe
 
+สถานะล่าสุด 2026-09-15: **NATIVE SERVERS CREATED / MANUAL SMTP DELIVERY CONFIRMED; APPLICATION ROLLOUT PENDING**. สร้าง Postmark Live แยก UAT/Production และทดสอบส่งจริงไป Gmail ที่ผู้ใช้ระบุแล้ว. Source implementation อยู่ในงานแยก [PR #558](https://github.com/MangmeeDev/mangmeeplus/pull/558) และ working tree ที่เกี่ยวข้อง; การเปลี่ยนชุดนี้มีเฉพาะเอกสาร ไม่รวม source/runtime activation หรือ CI acceptance ของงานนั้น.
+
+## Native provider evidence — 2026-09-15
+
+| ระบบ | Server ID / mode / stream | ผู้ส่งที่ผู้ใช้ยืนยัน | ผลการส่งทดสอบ |
+|---|---|---|---|
+| UAT | `20950027` / Live / outbound Transactional | `developer@mangmeeplus.com` | Gmail SMTP 250 / Delivered |
+| Production | `20950034` / Live / outbound Transactional | `contact@mangmeeplus.com` | Gmail SMTP 250 / Delivered ของฉบับแก้ไข |
+
+Domain mangmeeplus.com ยืนยัน DKIM และ Return-Path แล้ว. ส่งรวม 3 ฉบับ: UAT 1, Production แรกเลือก From ผิดเป็น developer 1 และฉบับแก้ไขจาก contact 1; [หลักฐาน Message IDs และข้อจำกัด](../evidence/postmark-native-delivery-2026-09-15.md) บันทึกครบ. การส่งผ่าน native template editor ไม่พิสูจน์ app token binding, deployed From/allowlist guards, outbox, webhook, OTP/link flow หรือ Inbox placement. Existing My First Server `20896570` คงเดิมและไม่ผูกกับสอง environment นี้.
+
+ยังต้องผูก secret references แยกระบบ, ตั้งค่าและพิสูจน์ webhook, กำหนด UAT allowlist, ทดสอบ application journey และผ่าน deployment protocol ก่อนเปิด provider ในเว็บ. การอนุญาตส่งทดสอบรอบนี้ไม่ใช่การเพิ่มผู้รับเข้า allowlist ถาวร. ตาราง implementation ด้านล่างเก็บ baseline ของแผนเดิม; สถานะ source ใน PR แยกไม่ถือว่า merge หรือ deploy แล้วจากหลักฐาน native นี้.
+
 > **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
 
 
@@ -16,7 +29,7 @@ EM05 verification increment2026-09-14: implemented and passed6 actual HTTP/PG/Ne
 | M1 Adapter/config | เพิ่ม postmark enum/getters/factory branch และ PostmarkAuthMailerAdapter; timeout/JSON-result/error mapping/tracking off/attempt metadata; รักษา disabled/console/SES และ no-op/opt-in methods | focused tests, config/API typecheck, DI boot โดย deny external network; no package.json change เว้นเปลี่ยน dependency ที่จำเป็น | IMPLEMENTED / LOCAL CHECKS PASS; รวมอยู่ใน draft PR#558, CI ยังไม่ผ่านครบ |
 | M2 Delivery reliability | เพิ่ม provider-aware attempt/latest claim pointer และ migration; integrate API-side claim drain/lease/mint-at-send, error-aware scheduling/unknown reconciliation, public Postmark endpoint, sanitized callback outbox/suppression | real PG concurrency/crash/callback-before-response/replay/legacy regression + browser/API/DB; ไม่เก็บ Postmark ID ใน SES column | IN PROGRESS: durable dispatch/callback/reconcile tested; complete recovery/browser/retention coverage remains |
 | M3 Stripe customer documents | P26 reuse Stripe Invoice/PDF/Charge Receipt URL, company permission, unavailable/expired-link states และ Stripe email configuration/resend support | Stripe payment→invoice/receipt evidence และไม่สร้าง customer PDF/เลขใหม่/ส่งซ้ำด้วย Postmark. ไม่ต้องสร้าง custom tax-document subsystem | PARTIAL IMPLEMENTED: protected Invoice/PDF/Receipt links และ negative/return paths ผ่าน local simulated HTTP/browser; actual Stripe email settings/resend/provider acceptance ยังต้องพิสูจน์ |
-| M4 Provider proof/rollout | provision account/server/stream/domain/keys/webhook auth, Sandbox proof, controlled live inbox, billing Receipt details, quota/retention/alerts/rollback | L0/L1/L2/L3 แยกผล; runbook protocol ครบก่อนเปิดจริง; provider selected ไม่เท่ากับ account approved/live ready | PARTIAL 2026-09-12: account approved/live; domain DKIM + custom Return-Path Verified; existing server/transactional stream confirmed, allowance 100 emails/period ([evidence](../agent-memory/postmark-domain-dns-2026-09-12.md)); integration/delivery proof/rollout NOT RUN |
+| M4 Provider proof/rollout | provision account/server/stream/domain/keys/webhook auth, Sandbox proof, controlled live inbox, billing Receipt details, quota/retention/alerts/rollback | L0/L1/L2/L3 แยกผล; runbook protocol ครบก่อนเปิดจริง; provider selected ไม่เท่ากับ account approved/live ready | PARTIAL 2026-09-15: dedicated Live servers + intended From delivery to Gmail SMTP confirmed; 3 messages total including corrected sender error, allowance used 3/100 ([evidence](../evidence/postmark-native-delivery-2026-09-15.md)); application integration, Inbox placement, callbacks and rollout NOT VERIFIED |
 
 M1/M2 สำหรับ P11 flow เดิมเริ่มได้โดยไม่รอ easy-signup code-vs-link/auto-approval หรือ e-Tax. หากจะเปิด signup/passwordless ใหม่ต้องผ่าน [E0–E3](unified-easy-signup-plan-th.md) และ returning login/recovery ด้วย. Runtime scope ไม่สร้าง general notification framework, broadcast, fiscal PDF generator, vendor invoice importer หรือ Postmark+Sender สอง adapter เผื่อไว้.
 

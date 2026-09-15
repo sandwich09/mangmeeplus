@@ -374,7 +374,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
                         </option>)}
                       </ThemedSelect>
                       {l.sourceExpenseSnapshot && <ReimbursementSourceFacts source={l.sourceExpenseSnapshot} />}
-                      {l.linkedExpenseId && <button type="button" className="mt-2 text-xs font-semibold text-brand-700" disabled={refreshingSource !== null} onClick={() => void refreshSource(i, l.linkedExpenseId!)}>{refreshingSource === i ? 'กำลังโหลดข้อมูลล่าสุด...' : 'โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่'}</button>}
+                      {l.linkedExpenseId && <button type="button" className="mt-2 text-xs font-semibold text-brand-700" disabled={refreshingSource !== null} aria-busy={Boolean(refreshingSource === i)} onClick={() => void refreshSource(i, l.linkedExpenseId!)}>{refreshingSource === i ? 'กำลังโหลดข้อมูลล่าสุด...' : 'โหลดข้อมูลต้นทางล่าสุดและตรวจใหม่'}</button>}
                     </div>
                     <div>
                       <label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่ *</label>
@@ -441,7 +441,7 @@ export function ReimbursementCreatePage({ companyId, userId = '', canCreate, req
           <div className="mt-4 space-y-2">
             {strandedDraftId
               ? <Link href={`${hubHref}?focus=${encodeURIComponent(strandedDraftId)}`} className={cx(btnClass, 'w-full')}>เปิดร่างเพื่อแก้ไขไฟล์</Link>
-              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || refreshingSource !== null}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
+              : <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || refreshingSource !== null} aria-busy={Boolean(busy)}>{busy ? 'กำลังเตรียมไฟล์และบันทึก...' : editing ? 'บันทึกการแก้ไข' : 'บันทึกร่างคำขอเบิก'}</button>}
             <Link href={hubHref} className={cx(ghostClass, 'w-full')}>ยกเลิก</Link>
           </div>
           <p className="mt-3 text-xs leading-5 text-gray-500">ระบบจะบันทึกเป็นฉบับร่าง คุณตรวจสอบและกดส่งอนุมัติได้ภายหลัง</p>

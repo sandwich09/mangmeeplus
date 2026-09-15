@@ -746,12 +746,12 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         {/* Every step, not just review: the stepper is display-only, so a draft whose
             validation errors disable ถัดไป must still be rejectable without faking data. */}
         {guided && caps.canReject && (
-          <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>
+          <button className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.reject', locale)}</button>
         )}
         {/* Pure approver (expense.confirm/reject without review/update): READY_FOR_CONFIRMATION actions outside guided mode. */}
         {approverOnlyActions && (
           <>
-            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.reject', locale)}</button>}
           </>
         )}
         {canCancelFinancialExpense && (
@@ -763,7 +763,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       </div>
       <div className={cx('flex gap-2 sm:ml-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end', canEditLinkedSubstitute ? 'flex-row flex-wrap items-center' : 'flex-col')}>
         {canEditLinkedSubstitute && (
-          <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt(true)}>
+          <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt(true)}>
             {stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบแทนใบเสร็จ'}
           </button>
         )}
@@ -780,25 +780,25 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 }}>{t('expenses.v_fix_fields', locale)}</button>
               </div>
             )}
-            {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
+            {stepIndex > 0 && <button className={ghostClass} disabled={stepSaving} aria-busy={Boolean(stepSaving)} onClick={() => void goToStep(steps[stepIndex - 1].key)}>{t('expenses.step_back', locale)}</button>}
             {step === 'review' && (
               <>
-                {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading}>{t('expenses.check_duplicate', locale)}</button>}
+                {canCheckDuplicates && <button className={ghostClass} onClick={checkDuplicates} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.check_duplicate', locale)}</button>}
                 {detail.status !== 'READY_FOR_CONFIRMATION' && (
                   <>
-                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
+                    <button className={btnClass} onClick={() => void markReady()} disabled={actionLoading || classificationBlocked || !detailsStepDone} aria-busy={Boolean(actionLoading)} title={classificationBlocked ? classificationBlockMessage : sourceDraftIncomplete ? t('expenses.source_draft_blocks_progress', locale) : !detailsStepDone ? t('expenses.submit_requires_details', locale) : undefined}>{t('expenses.send_for_review', locale)}</button>
                     {sourceDraftIncomplete && <p role="status" className="max-w-lg text-sm font-medium text-warning-700">{t('expenses.source_draft_blocks_progress', locale)}</p>}
                   </>
                 )}
                 {detail.status === 'READY_FOR_CONFIRMATION' && (
                   <>
-                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+                    {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
                     {confirmBlockedNotice}
                   </>
                 )}
               </>
             )}
-            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
+            {stepIndex < steps.length - 1 && <button className={btnClass} disabled={aiReading || stepSaving || (step === 'data' && dataErrorCount !== 0) || (step === 'evidence' && evidenceStepBlocker !== null)} aria-busy={Boolean(stepSaving)} aria-describedby={step === 'data' && validationBlockMessage ? `expense-review-block-${detail.id}` : step === 'evidence' && evidenceStepBlocker ? documentReviewSaveRequired ? `expense-document-review-hint-${detail.id}` : `expense-review-evidence-block-${detail.id}` : undefined} title={step === 'data' ? validationBlockMessage : undefined} onClick={() => void goToStep(steps[stepIndex + 1].key)}>{stepSaving && step === 'data' ? t('expenses.saving', locale) : t('expenses.step_next', locale)}</button>}
             {/* Save-review guidance lives beside that form; do not repeat it in the footer. */}
             {aiReading ? (
               <p role="status" className="max-w-lg text-sm font-medium text-warning-700 sm:w-full sm:text-right">
@@ -813,14 +813,14 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         )}
         {approverOnlyActions && (
           <>
-            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
+            {canConfirm && <button className={successBtn} style={successBtnStyle} onClick={() => doAction(() => confirmExpense(companyId, expenseId, vatOverrideRef.current ?? undefined), 'ยืนยันเอกสารเรียบร้อยแล้ว')} disabled={actionLoading || !canConfirmExpense} aria-busy={Boolean(actionLoading)} title={confirmBlockedText ?? undefined}>{t('expenses.confirm_and_post', locale)}</button>}
             {confirmBlockedNotice}
           </>
         )}
         {canCancelFinancialExpense && (
           <>
             {canGenerateJournal && detail.pendingPostingSourceType && (
-              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId}>
+              <button className={btnClass} onClick={() => doAction(() => generateSourceJournal(companyId, detail.pendingPostingSourceType!, detail.pendingPostingSourceId!), 'สร้างสมุดรายวันเรียบร้อยแล้ว')} disabled={actionLoading || !detail.pendingPostingSourceId} aria-busy={Boolean(actionLoading)}>
                 {detail.postingStatus === 'posting_error'
                   ? 'แก้ไขแล้ว ลองลงบัญชีอีกครั้ง'
                   : detail.pendingPostingSourceType === 'expense.payment'
@@ -831,7 +831,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             {canViewJournal && <button className={btnClass} onClick={onGoJournal}>{detail.journalEntryNumber ? `ดู ${detail.journalEntryNumber} →` : t('expenses.view_journal', locale)}</button>}
           </>
         )}
-        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading}>{t('expenses.restart_review', locale)}</button>}
+        {canRestartReview && <button className={ghostClass} onClick={() => void markReady('เริ่มตรวจใหม่เรียบร้อยแล้ว')} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.restart_review', locale)}</button>}
       </div>
     </div>
   ) : null;
@@ -844,7 +844,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         <div className="space-y-3 border-t border-gray-100 pt-3">
           <p className="text-sm leading-6 text-gray-600">{t('expenses.check_bill_more_actions_help', locale)}</p>
           <div className="flex flex-col gap-2 sm:flex-row">
-            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading}>{t('expenses.reject', locale)}</button>}
+            {caps.canReject && <button className={dangerClass} onClick={openReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>{t('expenses.reject', locale)}</button>}
             {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
           </div>
         </div>
@@ -1038,7 +1038,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           />
           <button
             className={btnClass}
-            disabled={actionLoading || !ocrTotalReason.trim()}
+            disabled={actionLoading || !ocrTotalReason.trim()} aria-busy={Boolean(actionLoading)}
             onClick={() => void doAction(async () => {
               const forbidden = findForbiddenChars(ocrTotalReason);
               if (forbidden.length > 0) throw new Error(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' ')));
@@ -1116,7 +1116,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         </span>
       )}
       {canExtract && (
-        <button className={cx(ghostClass, 'ml-auto')} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading}>
+        <button className={cx(ghostClass, 'ml-auto')} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading} aria-busy={Boolean(actionLoading || extractionLoading)} data-loading-indicator>
           <span className="inline-flex items-center justify-center gap-2">
             {extractionLoading && <InlineSpinner />}
             {extractionLoading ? t('expenses.ai_reading', locale) : t('expenses.extract_again', locale)}
@@ -1207,7 +1207,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
             </fieldset>
             <p className="text-sm text-gray-500">เลือกวันที่จ่ายเงินจริง แม้จะนำมาบันทึกภายหลัง · ยอดค้างจ่าย {baht(detail.outstandingAmount)}</p>
             {paymentNotice && <p role="status" className="rounded-xl bg-warning-50 p-3 text-sm text-warning-800">{paymentNotice}</p>}
-            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)}>{actionLoading ? 'กำลังบันทึก…' : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : t('expenses.record_payment', locale)}</button>
+            <button type="submit" className={cx(btnClass, 'w-full sm:w-auto')} disabled={actionLoading || paymentFailure === 'conflict' || !paidAmount || !isCivilDate(paidAt)} aria-busy={Boolean(actionLoading)}>{actionLoading ? 'กำลังบันทึก…' : paymentFailure === 'conflict' ? 'กรุณาตรวจประวัติการจ่าย' : paymentFailure === 'uncertain' || paymentFailure === 'refresh_failed' ? 'ลองบันทึกรายการเดิมอีกครั้ง' : t('expenses.record_payment', locale)}</button>
           </form>
         )}
         {(detail.payments?.length ?? 0) > 0 && (
@@ -1256,7 +1256,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   const removeReceiptControl = (attachment: ExpenseDetail['attachments'][number] | undefined) =>
     attachment && isRemovableFilePurpose(attachment.purpose) && canMutateDraft
       && ['DRAFT', 'NEEDS_REVIEW'].includes(detail.status) && detail.paymentStatus === 'UNPAID' ? (
-        <button type="button" className={cx(ghostClass, 'text-error-700')} disabled={receiptRemoving || receiptUploading || extractionLoading || actionLoading || stepSaving}
+        <button type="button" className={cx(ghostClass, 'text-error-700')} disabled={receiptRemoving || receiptUploading || extractionLoading || actionLoading || stepSaving} aria-busy={Boolean(extractionLoading || actionLoading || stepSaving)}
           aria-label={`${locale === 'th' ? 'ลบไฟล์' : 'Remove file'} ${attachment.originalFileName}`} title={locale === 'th' ? 'ลบไฟล์' : 'Remove file'}
           onClick={() => void removeExpenseFile(attachment)}>
           {ICON.trash}
@@ -1286,7 +1286,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
       <MangmeePage eyebrow={backLink} title={pageTitle} meta={pageMeta}>
         {error && <ErrorBanner message={error} />}
         {readySourceDraftMessage && canReview && (
-          <button type="button" className={btnClass} disabled={actionLoading}
+          <button type="button" className={btnClass} disabled={actionLoading} aria-busy={Boolean(actionLoading)}
             onClick={() => { void doAction(() => updateExpenseReviewFields(companyId, expenseId, { expectedUpdatedAt: detail.updatedAt })).then((reopened) => { if (reopened) setStep('data'); }); }}>
             {t('expenses.source_draft_reopen', locale)}
           </button>
@@ -1333,7 +1333,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               <p className="text-gray-600">{canEditSubstituteReceipt(detail, detail.substituteReceiptEvidence) ? 'แก้ข้อมูลแล้วใช้ฟอร์มล่าสุด หากลงนามแล้วต้องลงนามอีกครั้ง' : 'หากต้องการแก้ข้อมูลในใบแทน ให้ตรวจขั้นตอนยกเลิกและรายการจ่ายที่เกี่ยวข้องก่อน'}</p>
               {evidenceDirty && <p className="text-warning-700">บันทึกการตรวจเอกสารก่อนกลับไปใบแทน</p>}
             </div>
-            {!canEditLinkedSubstitute && <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} onClick={() => void openSubstituteReceipt()}>
+            {!canEditLinkedSubstitute && <button type="button" className={ghostClass} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt()}>
               เปิดใบแทนใบเสร็จ
             </button>}
           </div>
@@ -1379,7 +1379,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         </>
                       )}
                       <button type="button" className={ghostClass} onClick={reloadViewerUrl} aria-label={t('expenses.viewer_reload', locale)} title={t('expenses.viewer_reload', locale)}>↻</button>
-                      {activeAttachment && <button type="button" className={ghostClass} onClick={() => void openPreview(activeAttachment)} disabled={previewLoading}>{previewLoading ? t('expenses.opening', locale) : t('expenses.viewer_fullscreen', locale)}</button>}
+                      {activeAttachment && <button type="button" className={ghostClass} onClick={() => void openPreview(activeAttachment)} disabled={previewLoading} aria-busy={Boolean(previewLoading)}>{previewLoading ? t('expenses.opening', locale) : t('expenses.viewer_fullscreen', locale)}</button>}
                     </div>
                   </div>
                   <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -1420,7 +1420,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                       type="button"
                       className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-5 text-left hover:bg-gray-100 disabled:opacity-60"
                       onClick={() => void openPreview(attachment)}
-                      disabled={previewLoading}
+                      disabled={previewLoading} aria-busy={Boolean(previewLoading)}
                     >
                       <span className="flex h-10 w-10 items-center justify-center rounded-[9px]" style={{ background: '#E0F2FE', color: '#0BA5EC' }}>{ICON.file}</span>
                       <div className="min-w-0 flex-1">
@@ -1463,7 +1463,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                           {noticesBlock}
                           {aiPrefillBanner}
                           {!aiMap && step === 'data' && canExtract && (
-                            <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading}>
+                            <button className={ghostClass} onClick={() => void extractAgain()} disabled={actionLoading || extractionLoading || receiptUploading} aria-busy={Boolean(actionLoading || extractionLoading)} data-loading-indicator>
                               <span className="inline-flex items-center justify-center gap-2">
                                 {extractionLoading && <InlineSpinner />}
                                 {extractionLoading ? t('expenses.ai_reading', locale) : t('expenses.extract_again', locale)}
@@ -1531,7 +1531,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         await voidExpense(companyId, expenseId, reason.trim());
                         setShowVoid(false); setReason('');
                       }, 'ยกเลิกเอกสารเรียบร้อยแล้ว');
-                    }} disabled={actionLoading || !reason.trim()}>{t('expenses.confirm', locale)}</button>
+                    }} disabled={actionLoading || !reason.trim()} aria-busy={Boolean(actionLoading)}>{t('expenses.confirm', locale)}</button>
                     <button className={ghostClass} onClick={() => { setShowVoid(false); setReason(''); }}>{t('expenses.cancel', locale)}</button>
                   </div>
                 </>
@@ -1540,7 +1540,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 <>
                   <div className="text-sm font-medium text-gray-700">{t('expenses.delete_confirm_note', locale)}</div>
                   <div className="flex gap-2">
-                    <button className={dangerClass} onClick={() => void removeExpense()} disabled={deleting}>{deleting ? t('expenses.deleting', locale) : t('expenses.delete_permanently', locale)}</button>
+                    <button className={dangerClass} onClick={() => void removeExpense()} disabled={deleting} aria-busy={Boolean(deleting)}>{deleting ? t('expenses.deleting', locale) : t('expenses.delete_permanently', locale)}</button>
                     <button className={ghostClass} onClick={() => setShowDelete(false)} disabled={deleting}>{t('expenses.cancel', locale)}</button>
                   </div>
                 </>
@@ -1560,7 +1560,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                         else await dismissDuplicate(companyId, expenseId, duplicateResolution.candidateId, cleanReason);
                         setDuplicateResolution(null); setReason('');
                       }, duplicateResolution.action === 'confirm' ? 'ยืนยันรายการซ้ำเรียบร้อยแล้ว' : 'ยืนยันว่าไม่ใช่รายการซ้ำเรียบร้อยแล้ว');
-                    }} disabled={actionLoading || reason.trim().length < 3}>{t('expenses.confirm', locale)}</button>
+                    }} disabled={actionLoading || reason.trim().length < 3} aria-busy={Boolean(actionLoading)}>{t('expenses.confirm', locale)}</button>
                     <button className={ghostClass} onClick={() => { setDuplicateResolution(null); setReason(''); }}>{t('expenses.cancel', locale)}</button>
                   </div>
                 </>
@@ -1580,7 +1580,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
         onClose={closeReject}
         footer={(
           <>
-            <button type="button" className={cx(ghostClass, 'flex-1 sm:flex-none')} onClick={closeReject} disabled={actionLoading}>
+            <button type="button" className={cx(ghostClass, 'flex-1 sm:flex-none')} onClick={closeReject} disabled={actionLoading} aria-busy={Boolean(actionLoading)}>
               {t('expenses.reject_stay', locale)}
             </button>
             <button type="button" className={cx(dangerClass, 'flex-1 sm:flex-none')} onClick={() => {
@@ -1591,7 +1591,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
                 await rejectExpense(companyId, expenseId, cleanReason);
                 setShowReject(false); setReason('');
               }, t('expenses.reject_success', locale));
-            }} disabled={actionLoading || !reason.trim()}>
+            }} disabled={actionLoading || !reason.trim()} aria-busy={Boolean(actionLoading)}>
               {t('expenses.confirm', locale)}
             </button>
           </>
@@ -1633,7 +1633,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
               {previewError && <p className="mr-auto text-xs font-semibold text-error-700">{previewError}</p>}
               <button
                 className={ghostClass}
-                disabled={previewSaving}
+                disabled={previewSaving} aria-busy={Boolean(previewSaving)}
                 onClick={async () => {
                   setPreviewSaving(true); setPreviewError(null);
                   try { await downloadDocumentAsPdf(preview.url, preview.name.replace(/\.[^.]+$/, ''), { vector: preview.mimeType === 'image/svg+xml' }); }

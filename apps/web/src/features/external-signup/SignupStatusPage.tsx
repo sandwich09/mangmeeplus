@@ -33,6 +33,7 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
   const [resendState, setResendState] = useState<'idle' | 'sending' | 'sent'>('idle');
   const [resendError, setResendError] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -54,13 +55,15 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
   // R12: the id lives in the URL and nowhere else. Handing that URL over is the whole recovery,
   // so the page has to be able to do it without asking anyone to read a cuid out loud.
   const copyLink = async () => {
+    if (copying) return;
+    setCopying(true);
     try {
       await navigator.clipboard.writeText(window.location.href);
       setLinkCopied(true);
     } catch {
       // A browser that refuses clipboard access still shows the URL in its own address bar.
       setLinkCopied(false);
-    }
+    } finally { setCopying(false); }
   };
 
   const handleResend = async () => {
@@ -144,6 +147,7 @@ export default function SignupStatusPage({ requestId }: { requestId: string }) {
                   variant="secondary"
                   className="w-full !rounded-xl"
                   onClick={() => void copyLink()}
+                  loading={copying}
                 >
                   {linkCopied ? 'คัดลอกลิงก์แล้ว' : 'คัดลอกลิงก์หน้านี้'}
                 </Button>

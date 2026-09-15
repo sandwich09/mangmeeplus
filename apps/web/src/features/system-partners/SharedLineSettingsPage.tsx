@@ -23,7 +23,7 @@ export default function SharedLineSettingsPage() {
     <Link href="/system/partners" className="underline">กลับไปรายชื่อบริษัท</Link>
     <h1 className="text-xl font-semibold">การเชื่อมต่อ LINE ของระบบ</h1>
     <p>เปลี่ยนกุญแจ Messaging ของ OA เดิม ใช้ร่วมกันสำหรับ webhook, AI, ใบเสร็จ และข้อความแจ้งเตือนของทุกบริษัท</p>
-    <button type="button" className="mangmee-btn" disabled={busy} onClick={()=>void load()}>โหลดสถานะ LINE ล่าสุด</button>
+    <button type="button" className="mangmee-btn" disabled={busy} aria-busy={busy} onClick={()=>void load()}>โหลดสถานะ LINE ล่าสุด</button>
     {busy&&<p role="status">กำลังตรวจสอบ…</p>}{error&&<p role="alert" className="break-words text-red-700">{error} หากผลบันทึกไม่ชัดเจน ให้โหลดสถานะล่าสุดหรือลองคำขอเดิมอีกครั้ง</p>}
     {notice&&<p role="status">{notice}</p>}
     {current&&<>
@@ -45,7 +45,7 @@ export default function SharedLineSettingsPage() {
         <label className="block">รหัสผ่านปัจจุบันของผู้ดูแล<input className="mangmee-input w-full" type="password" autoComplete="current-password" value={password} required disabled={busy} onChange={e=>setPassword(e.target.value)}/></label>
         <label className="flex items-start gap-2"><input type="checkbox" checked={ack} disabled={busy} onChange={e=>{setAck(e.target.checked);setReviewVersion(e.target.checked?current.version:null);setRotationId('');}}/>ยืนยันเปลี่ยนกุญแจรุ่น {current.version} ของ OA เดิมสำหรับทุกบริษัท และตรวจ webhook หลังบันทึก</label>
         {reviewVersion!==null&&reviewVersion!==current.version&&<p role="status">สถานะเปลี่ยนจากที่ตรวจไว้ หากคำขอก่อนหน้าบันทึกแล้ว การลองซ้ำด้วยข้อมูลเดิมจะอ่านผลเดิมเท่านั้น</p>}
-        <button className="mangmee-btn mangmee-btn-primary" type="submit" disabled={busy||!ack}>ตรวจ token และบันทึกกุญแจ LINE</button>
+        <button className="mangmee-btn mangmee-btn-primary" type="submit" disabled={busy||!ack} aria-busy={busy}>ตรวจ token และบันทึกกุญแจ LINE</button>
         <p>กุญแจไม่ถูกเก็บใน URL หรือ storage ของเบราว์เซอร์ และไม่แสดงคืนหลังบันทึก</p>
       </form>}
       <p>LINE Login / LIFF และการเปลี่ยน OA ยังต้องดำเนินการแยก เพื่อรักษาบัญชีที่ผูกไว้ การแก้กุญแจในหน้านี้ไม่เปลี่ยนส่วนนั้น</p>

@@ -18,6 +18,11 @@ overrides:
   postcss: ^8.5.18
   sharp: ^0.35.4
 
+patchedDependencies:
+  pdfjs-dist@6.2.108:
+    hash: 6o6dpvpszt4vymt2xk2n656umq
+    path: patches/pdfjs-dist@6.2.108.patch
+
 importers:
 
   .:
@@ -187,7 +192,7 @@ importers:
         version: 1.17.1
       pdfjs-dist:
         specifier: ^6.2.108
-        version: 6.2.108
+        version: 6.2.108(patch_hash=6o6dpvpszt4vymt2xk2n656umq)
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -8139,7 +8144,7 @@ snapshots:
       pako: 1.0.11
       tslib: 1.14.1
 
-  pdfjs-dist@6.2.108:
+  pdfjs-dist@6.2.108(patch_hash=6o6dpvpszt4vymt2xk2n656umq):
     optionalDependencies:
       '@napi-rs/canvas': 1.0.2
 

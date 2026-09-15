@@ -1,0 +1,512 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-13T14:48:47.546865+00:00",
+  "status": "SCRIPT_AND_BASELINE_VALIDATED_TARGET_UNENROLLED",
+  "scope": "Preparation only. No UAT/Production deployment, image publication, host or traffic change, IAM write, provider update, DB/catalog mutation, customer acceptance or release signature.",
+  "mainSource": "00cbaa8b98954c068103c012dd6d485d25b1563a",
+  "controllerSha256": "1d3f408450f03d28c4406125b7ecf183b853d387c5fe867a3f9967090821efb2",
+  "controllerManifest": {
+    "infra/kamal/release.py": "7f19697e6bd46f430a5a22c9937d81132e9a474ef053cf973504538558f9c524",
+    "infra/kamal/config.json": "5b1853730bb96bc33b4ee962add22d01b47a181dd3a7b233b7c2096966553d1b",
+    "infra/kamal/retire-builds.cjs": "b205491d0c696bf001def4a781501be165f994c775554bcb22900f5e6cbdde36",
+    "infra/kamal/deploy-uat": "774f0cce18e81805878010a9c05c42e8fe79a02d41ea3d144fa87e66eec617e8",
+    "infra/kamal/deploy-prod": "321315df5affbe5bc876ef439e08e15e27c1126577a314dbad575eb3f7a0a393",
+    "infra/dev-kamal/build-complete.py": "0440e657a3054c35e420f6dff56e3ecc2f016c478dfdd6ece9a98544225be098",
+    "infra/dev-kamal/capture-config.py": "a642d3958d3d1e86e393aeaabd183dde36a15b1cc5325e7aad6ed721b1217750",
+    "infra/dev-kamal/release_inventory.py": "d6731a2a0d67308d9a4c9126c72c0f1fd2cae320bdf1b32c5d44fd947823f3dd",
+    "infra/dev-kamal/verify-config.mjs": "f9ac170c2c16a79c0c40d283b85ffba9b8521b539b06372a589519d5000b03de",
+    "infra/dev-kamal/Dockerfile.tools": "aa3fd6ab0c2aff32c796ad037eee46911ff42749893b8ea35768e391e4ec6eb5"
+  },
+  "checks": [
+    {
+      "command": "python3 infra/kamal/release_test.py",
+      "passed": true,
+      "testCount": 23
+    },
+    {
+      "command": "python3 infra/kamal/stability_test.py",
+      "passed": true,
+      "testCount": 4
+    },
+    {
+      "command": "python3 infra/kamal/shutdown_test.py",
+      "passed": true,
+      "scenarioCount": 2
+    }
+  ],
+  "cliNegativeChecks": {
+    "passed": true,
+    "caseCount": 4,
+    "boundaries": [
+      "prepare+apply",
+      "prepare+rollback",
+      "unfilled target example",
+      "missing enrolled target"
+    ]
+  },
+  "build": {
+    "status": "passed",
+    "elapsedSeconds": 170.672,
+    "timerBoundary": "Existing build-complete.py only, including TypeScript and all artifacts. Not end-to-end preparation or deployment time; existing local caches retained.",
+    "phases": {
+      "install": {
+        "elapsedSeconds": 6.038,
+        "exitCode": 0
+      },
+      "contracts": {
+        "elapsedSeconds": 1.689,
+        "exitCode": 0
+      },
+      "prisma": {
+        "elapsedSeconds": 4.182,
+        "exitCode": 0
+      },
+      "typescript": {
+        "elapsedSeconds": 34.652,
+        "exitCode": 0
+      },
+      "di": {
+        "elapsedSeconds": 1.294,
+        "exitCode": 0
+      },
+      "agentcore": {
+        "elapsedSeconds": 3.831,
+        "exitCode": 0
+      },
+      "build-api-web": {
+        "elapsedSeconds": 160.207,
+        "exitCode": 0
+      },
+      "build-ai-gateway": {
+        "elapsedSeconds": 0.503,
+        "exitCode": 0
+      },
+      "build-workers": {
+        "elapsedSeconds": 0.306,
+        "exitCode": 0
+      },
+      "export-tools-base": {
+        "elapsedSeconds": 8.729,
+        "exitCode": 0
+      },
+      "build-tools": {
+        "elapsedSeconds": 0.654,
+        "exitCode": 0
+      }
+    },
+    "images": {
+      "api-web": {
+        "tag": "mangmee-complete-api-web:00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "imageId": "sha256:3366d38540a2e8f17070f3df8c7e3cb8b523c7bdb384fb2a0456a34c930e5250",
+        "architecture": "amd64"
+      },
+      "ai-gateway": {
+        "tag": "mangmee-complete-ai-gateway:00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "imageId": "sha256:de327a84931c3654b6409c62659493eed68e3989eecf764b24e04ac0efde1894",
+        "architecture": "amd64"
+      },
+      "workers": {
+        "tag": "mangmee-complete-workers:00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "imageId": "sha256:4a153abf1f3646a9944d968bcff0c97993b318d8071ecc2fc5c34284a363650a",
+        "architecture": "amd64"
+      },
+      "tools": {
+        "tag": "mangmee-complete-tools:00cbaa8b98954c068103c012dd6d485d25b1563a",
+        "imageId": "sha256:163c60c25fc10aac118b2ab0dcc58adbb323b585edc4797624da5993d9031783",
+        "architecture": "amd64"
+      }
+    },
+    "agentcoreArtifactSha256": "271b09aa885b4afe700fc36d9cf17607cbf426df07ae4f6dff2d7efa20b1f7f0"
+  },
+  "productionBaseline": {
+    "environment": "production",
+    "account": "311414082667",
+    "nonRootReader": true,
+    "readAt": "2026-09-13T14:40:53.731005+00:00",
+    "freshnessReadAt": "2026-09-13T14:46:45.950292+00:00",
+    "currentSecretCount": 12,
+    "configUnchanged": true,
+    "secretVersionsUnchanged": true,
+    "sourceEvidence": "ECS Express activeConfigurations; not running-container or customer acceptance proof",
+    "services": {
+      "api-web": {
+        "baselineSource": "fc2838c4cb691033f41595c0d43587f10377d33c",
+        "configurationSha256": "fb18074b88be1d2de7f10cd2fd3c85e99b1821b2826029d2d5965e74f26f1126",
+        "environmentKeyCount": 98,
+        "secretKeyCount": 12
+      },
+      "ai-gateway": {
+        "baselineSource": "fc2838c4cb691033f41595c0d43587f10377d33c",
+        "configurationSha256": "6ec67bb4596e8a18429429a95cd1892bf92d23bfbde5081cb1b4589a03663e2e",
+        "environmentKeyCount": 54,
+        "secretKeyCount": 2
+      },
+      "workers": {
+        "baselineSource": "fc2838c4cb691033f41595c0d43587f10377d33c",
+        "configurationSha256": "2ea4e58120d4c95fc34e8687b70b5b64ccfffb22133bbd7e64dab2d0256a85ee",
+        "environmentKeyCount": 16,
+        "secretKeyCount": 3
+      }
+    }
+  },
+  "imageValidation": {
+    "passed": true,
+    "releaseId": "f04184e0cd520b39c8d128265efb1604791553e17c507b0124d63130311b4335",
+    "scope": "Exact main images against resolved current Production ECS baseline plus Production overrides from main config.json; network-disabled containers; future Kamal routing is not enrolled.",
+    "trackedFileCount": 4885,
+    "migrationFileCount": 189,
+    "syncFileCount": 35,
+    "services": {
+      "api-web": {
+        "environmentSha256": "e75561ee3ebff3c6e25909dd65f3670974e4e7a0f4154f90d5895807d60bea54",
+        "configuredKeys": [
+          "AI_ACTOR_DELEGATION_SIGNING_KEY",
+          "AI_DATA_RETENTION_DAYS",
+          "AI_GATEWAY_ENABLED",
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "AI_GATEWAY_INTERNAL_URL",
+          "AI_LLM_MAX_PER_COMPANY",
+          "AI_MONTHLY_BUDGET_SATANG",
+          "AI_MONTHLY_BUDGET_SATANG_CEILING",
+          "AI_OCR_MAX_PER_COMPANY",
+          "AI_RATE_LIMIT_WINDOW_SECONDS",
+          "AI_THB_PER_USD",
+          "API_PORT",
+          "APP_ENV",
+          "AUDIT_ENABLED",
+          "AUTH_PROVIDER",
+          "CLAMAV_HOST",
+          "CLAMAV_PORT",
+          "CLAMAV_TIMEOUT_MS",
+          "CORS_ALLOWED_ORIGINS",
+          "CREDENTIAL_ENCRYPTION_KEY",
+          "CRM_AI_MIN_CONFIDENCE",
+          "CRM_AI_OUTBOUND_ALLOWED_DOMAINS",
+          "CRM_AUTO_REPLY_ENABLED",
+          "DATABASE_URL",
+          "DEPLOY_ENVIRONMENT",
+          "DEV_AUTH_ENABLED",
+          "EMAIL_LOGO_URL",
+          "EMAIL_PROVIDER",
+          "EXPENSE_DRAFT_NUMBERING_ENABLED",
+          "EXTERNAL_SIGNUP_ENABLED",
+          "GIT_SHA",
+          "GLOBAL_MAINTENANCE_MODE",
+          "HOST",
+          "INTERNAL_API_URL",
+          "LINE_ACCOUNT_LINK_QR_IMAGE_URL",
+          "LINE_ACCOUNT_LINK_URL",
+          "LINE_AI_ADVISOR_MODE",
+          "LINE_AI_BUFFER_DEBOUNCE_MS",
+          "LINE_AI_DEBOUNCE_EXPERIMENT_ENABLED",
+          "LINE_AI_DRAFT_EDIT_ENABLED",
+          "LINE_AI_EXACT_GREETING_ENABLED",
+          "LINE_AI_FLEX_TEXT_FALLBACK_ENABLED",
+          "LINE_AI_FUSED_PLAN_SHADOW_ENABLED",
+          "LINE_AI_LEDGER_ENABLED",
+          "LINE_AI_LOADING_ON_ACCEPT_ENABLED",
+          "LINE_AI_MULTIPART_TERMINAL_FLEX_ENABLED",
+          "LINE_AI_PREPARED_SIMPLE_READ_ENABLED",
+          "LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED",
+          "LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED",
+          "LINE_FREE_AI_BUDGET_SATANG",
+          "LINE_LIFF_ID",
+          "LINE_LOGIN_CHANNEL_ID",
+          "LINE_LOGIN_CHANNEL_SECRET",
+          "LINE_MESSAGING_CHANNEL_ACCESS_TOKEN",
+          "LINE_MESSAGING_CHANNEL_ID",
+          "LINE_MESSAGING_CHANNEL_SECRET",
+          "LINE_OA_ADD_URL",
+          "LINE_OA_QR_IMAGE_URL",
+          "LINE_SIGNUP_ADMIN_ALERT_BUDGET_EXHAUSTED_PER_DAY",
+          "LINE_SIGNUP_ADMIN_REMINDER_MINUTES",
+          "LINE_SIGNUP_APPROVAL_MODE",
+          "LINE_SIGNUP_AUTO_DAILY_CAP",
+          "LINE_SIGNUP_BUSINESS_DAYS",
+          "LINE_SIGNUP_BUSINESS_HOURS",
+          "LINE_SIGNUP_ENABLED",
+          "LINE_SIGNUP_WARMUP_SLIPS",
+          "LINE_WEB_HANDOFF_ENABLED",
+          "LINE_WEB_LOGIN_ENABLED",
+          "LOG_FORMAT",
+          "LOG_REDACTION_ENABLED",
+          "NEXT_PUBLIC_AI_GATEWAY_BASE_URL",
+          "NEXT_PUBLIC_API_BASE_URL",
+          "NEXT_PUBLIC_API_URL",
+          "NEXT_PUBLIC_APP_ENV",
+          "NEXT_PUBLIC_LIFF_ID",
+          "NEXT_PUBLIC_LINE_ACCOUNT_LINK_QR_IMAGE_URL",
+          "NEXT_PUBLIC_LINE_ACCOUNT_LINK_URL",
+          "NEXT_PUBLIC_LINE_OA_ADD_URL",
+          "NEXT_PUBLIC_LINE_OA_QR_IMAGE_URL",
+          "NODE_ENV",
+          "PASSWORD_RESET_RESPONSE_MIN_MS",
+          "PDPA_PSEUDONYMIZATION_KEY",
+          "PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS",
+          "PORT",
+          "PRODUCTION_SERVING_MODE",
+          "PUBLIC_BASE_URL",
+          "RATE_LIMIT_ENABLED",
+          "RATE_LIMIT_MAX_REQUESTS",
+          "RATE_LIMIT_WINDOW_SECONDS",
+          "RECEIPT_QUOTA_ENFORCED",
+          "REDIS_URL",
+          "REIMBURSEMENT_WRITE_QUIESCE",
+          "S3_BUCKET",
+          "S3_REGION",
+          "SERVICE_NAME",
+          "SERVICE_VERSION",
+          "SESSION_REFRESH_MAX_PER_SESSION",
+          "SESSION_REFRESH_REUSE_GRACE_SECONDS",
+          "SESSION_REFRESH_WINDOW_SECONDS",
+          "SES_CONFIGURATION_SET",
+          "SES_EVENTS_TOPIC_ARN",
+          "SES_FROM_ADDRESS",
+          "SES_REGION",
+          "SWAGGER_ENABLED",
+          "WATCHDOG_JWT_AUDIENCE",
+          "WATCHDOG_JWT_ISSUER",
+          "WATCHDOG_JWT_SECRET_ARN",
+          "WEB_BASE_URL",
+          "WEB_PORT",
+          "WORKER_INTERNAL_TOKEN",
+          "WORKFLOW_WEBHOOK_ALLOWED_HOSTS"
+        ],
+        "defaultedKeys": [
+          "AI_FINAL_MUTATION_ENABLED",
+          "AI_GLOBAL_INFERENCE_PROFILE_APPROVED",
+          "ALLOWED_UPLOAD_MIME_TYPES",
+          "APPROVED_AI_MODEL_IDS",
+          "APPROVED_AI_PROVIDERS",
+          "APPROVED_AI_REGIONS",
+          "AUDIT_SINK",
+          "COMPANY_CONTEXT_HEADER",
+          "CUSTOMER_REGISTER_MAX_PER_IP_CHANNEL",
+          "CUSTOMER_REGISTER_WINDOW_SECONDS",
+          "DATABASE_POOL_MAX",
+          "DATABASE_POOL_MIN",
+          "DATABASE_STATEMENT_TIMEOUT_MS",
+          "EMAIL_VERIFICATION_CONFIRM_MAX_PER_IP",
+          "EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS",
+          "EMAIL_VERIFICATION_REQUEST_MAX_PER_USER",
+          "EMAIL_VERIFICATION_REQUEST_WINDOW_SECONDS",
+          "HTTP_BODY_LIMIT",
+          "JWT_CLOCK_TOLERANCE_SECONDS",
+          "LINE_AI_ADVISOR_DIRECT_ANSWER_ENABLED",
+          "LINE_AI_BUFFER_MAX_WAIT_MS",
+          "LINE_AI_INTAKE_STATE_MODE",
+          "LINE_AI_LEDGER_CLAIM_MIN_IDLE_MS",
+          "LINE_AI_LEDGER_DELIVERY_CAP",
+          "LINE_AI_LEDGER_MAXLEN",
+          "LINE_AI_LEDGER_TTL_SECONDS",
+          "LINE_AI_LOADING_ANIMATION_ENABLED",
+          "LINE_AI_REIMBURSEMENT_SEMANTIC_MODE",
+          "LINE_AI_SUBSTITUTE_SEMANTIC_ROUTING_MODE",
+          "LINE_HANDOFF_EXCHANGE_MAX_PER_IP",
+          "LINE_HANDOFF_EXCHANGE_WINDOW_SECONDS",
+          "LINE_LOGIN_CALLBACK_MAX_PER_IP",
+          "LINE_LOGIN_CALLBACK_WINDOW_SECONDS",
+          "LINE_QR_CREATE_MAX_PER_IP",
+          "LINE_QR_CREATE_WINDOW_SECONDS",
+          "LINE_QR_POLL_MAX_PER_IP",
+          "LINE_QR_POLL_WINDOW_SECONDS",
+          "LOG_LEVEL",
+          "PASSWORD_LOGIN_MAX_PER_IDENTIFIER",
+          "PASSWORD_LOGIN_MAX_PER_IP",
+          "PASSWORD_LOGIN_WINDOW_SECONDS",
+          "PASSWORD_RESET_CONFIRM_MAX_PER_IP",
+          "PASSWORD_RESET_CONFIRM_WINDOW_SECONDS",
+          "PASSWORD_RESET_REQUEST_MAX_PER_IDENTIFIER",
+          "PASSWORD_RESET_REQUEST_MAX_PER_IP",
+          "PASSWORD_RESET_REQUEST_WINDOW_SECONDS",
+          "REQUEST_LOG_ENABLED",
+          "REQUIRE_COMPANY_CONTEXT",
+          "SIGNED_URL_TTL_SECONDS",
+          "SQL_LOG_ENABLED",
+          "UPLOAD_MAX_BYTES",
+          "UPLOAD_PENDING_MAX_BYTES_PER_COMPANY"
+        ],
+        "absentOptionalKeys": [
+          "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",
+          "DATABASE_SECRET_ARN",
+          "DEV_AUTH_SECRET",
+          "IMAGE_DIGEST",
+          "LINE_AI_DEBOUNCE_EXPERIMENT_SECRET",
+          "S3_ACCESS_KEY_ID",
+          "S3_ENDPOINT",
+          "S3_FORCE_PATH_STYLE",
+          "S3_PUBLIC_ENDPOINT",
+          "S3_SECRET_ACCESS_KEY",
+          "SEED_SYSTEM_ADMIN_PASSWORD",
+          "TRUST_PROXY"
+        ],
+        "configModuleSha256": "3c7ad55a70ba5769098ca9339fa422b72e9c658336ba3a4248bf53963bed750c",
+        "overrideKeys": [
+          "EXPENSE_DRAFT_NUMBERING_ENABLED"
+        ]
+      },
+      "ai-gateway": {
+        "environmentSha256": "829ecb94193b343f9d233a676f4a991a1a42e64626748b2f93d05670be0ddb88",
+        "configuredKeys": [
+          "AGENTCORE_EXPECTED_ARTIFACT_SHA256",
+          "AGENTCORE_EXPECTED_CONTRACT_VERSION",
+          "AGENTCORE_EXPECTED_SOURCE_COMMIT",
+          "AGENTCORE_INVOKE_TIMEOUT_MS",
+          "AGENTCORE_MAX_ATTACHMENTS",
+          "AGENTCORE_MAX_BODY_BYTES",
+          "AGENTCORE_MAX_CONCURRENT_INVOCATIONS",
+          "AGENTCORE_MAX_MESSAGE_CHARS",
+          "AGENTCORE_REGION",
+          "AGENTCORE_RUNTIME_ARN",
+          "AGENTCORE_RUNTIME_QUALIFIER",
+          "AI_AGENT_REGISTRY_ENABLED",
+          "AI_FINAL_MUTATION_ENABLED",
+          "AI_GATEWAY_ENABLED",
+          "AI_GATEWAY_INTERNAL_SECRET",
+          "AI_GLOBAL_INFERENCE_PROFILE_APPROVAL_REF",
+          "AI_GLOBAL_INFERENCE_PROFILE_APPROVED",
+          "AI_MAX_TOOL_CALLS",
+          "AI_PROMPT_LOGGING_ENABLED",
+          "AI_TOOL_AUDIT_ENABLED",
+          "AI_TOOL_POLICY_ENFORCED",
+          "AI_TOOL_TIMEOUT_MS",
+          "APPROVED_AI_MODEL_IDS",
+          "APPROVED_AI_PROVIDERS",
+          "APPROVED_AI_REGIONS",
+          "APP_ENV",
+          "AWS_REGION",
+          "BEDROCK_MODEL_ID",
+          "BEDROCK_REGION",
+          "CORS_ALLOWED_ORIGINS",
+          "DEPLOY_ENVIRONMENT",
+          "DOCUMENT_AI_MODEL_ID",
+          "ERP_CORE_INTERNAL_URL",
+          "GIT_SHA",
+          "HOST",
+          "LINE_AI_AGENT_ORCHESTRATION_ENABLED",
+          "LINE_AI_AGENT_RUNTIME",
+          "LINE_AI_COVERAGE_CRITIC_ENABLED",
+          "LINE_AI_DETERMINISTIC_RESPONSE_FAMILIES",
+          "LINE_AI_DRAFT_EDIT_ENABLED",
+          "LINE_AI_FUSED_PLAN_SHADOW_ENABLED",
+          "LINE_AI_PREPARED_SIMPLE_READ_ENABLED",
+          "LINE_AI_TOOLUSE_LOOP_ENABLED",
+          "LOG_FORMAT",
+          "LOG_REDACTION_ENABLED",
+          "MODEL_PROVIDER",
+          "NODE_ENV",
+          "PORT",
+          "PRODUCTION_SERVING_MODE",
+          "PUBLIC_BASE_URL",
+          "SERVICE_NAME",
+          "SERVICE_VERSION",
+          "SWAGGER_ENABLED",
+          "WATCHDOG_JWT_AUDIENCE",
+          "WATCHDOG_JWT_ISSUER",
+          "WATCHDOG_JWT_SECRET_ARN"
+        ],
+        "defaultedKeys": [
+          "AWS_SDK_LOAD_CONFIG",
+          "HTTP_BODY_LIMIT",
+          "JWT_CLOCK_TOLERANCE_SECONDS",
+          "LINE_AI_AGENTCORE_SESSION_AFFINITY_ENABLED",
+          "LINE_AI_PROVIDER_CLIENT_REUSE_ENABLED",
+          "LINE_AI_SMALL_ROUTER_SHADOW_ENABLED",
+          "LOG_LEVEL",
+          "OPENAI_MODEL",
+          "RATE_LIMIT_ENABLED"
+        ],
+        "absentOptionalKeys": [
+          "AWS_PROFILE",
+          "DEV_AUTH_SECRET",
+          "IMAGE_DIGEST",
+          "OPENAI_API_KEY",
+          "OPENAI_PROCESSING_REGION",
+          "TRUST_PROXY"
+        ],
+        "configModuleSha256": "3c7ad55a70ba5769098ca9339fa422b72e9c658336ba3a4248bf53963bed750c",
+        "overrideKeys": []
+      },
+      "workers": {
+        "environmentSha256": "d50e0b31bce25f5fdf844363a1b43e99b694553ce5a4741fde501da64d10f4b8",
+        "configuredKeys": [
+          "APP_ENV",
+          "AWS_REGION",
+          "DATABASE_URL",
+          "DEPLOY_ENVIRONMENT",
+          "GIT_SHA",
+          "HOST",
+          "INTERNAL_API_URL",
+          "LOG_FORMAT",
+          "NODE_ENV",
+          "PORT",
+          "PRODUCTION_SERVING_MODE",
+          "PUBLIC_BASE_URL",
+          "QUEUE_ENABLED",
+          "REDIS_URL",
+          "S3_BUCKET",
+          "S3_REGION",
+          "SERVICE_NAME",
+          "SERVICE_VERSION",
+          "WORKER_INTERNAL_TOKEN"
+        ],
+        "defaultedKeys": [
+          "DLQ_ENABLED",
+          "LINE_AI_LEDGER_RECLAIM_INTERVAL_MS",
+          "LOG_LEVEL",
+          "LOG_REDACTION_ENABLED",
+          "QUEUE_CONCURRENCY",
+          "QUEUE_RETRY_ATTEMPTS",
+          "QUEUE_RETRY_BACKOFF_MS",
+          "WORKER_SHUTDOWN_TIMEOUT_MS"
+        ],
+        "absentOptionalKeys": [
+          "IMAGE_DIGEST",
+          "S3_ACCESS_KEY_ID",
+          "S3_ENDPOINT",
+          "S3_FORCE_PATH_STYLE",
+          "S3_SECRET_ACCESS_KEY",
+          "TRUST_PROXY"
+        ],
+        "configModuleSha256": "3c7ad55a70ba5769098ca9339fa422b72e9c658336ba3a4248bf53963bed750c",
+        "overrideKeys": []
+      }
+    }
+  },
+  "nativeConfig": {
+    "status": "PASSED",
+    "scope": "Real Kamal v2.12.0 config parser with complete validated key sets; synthetic Production hosts and values; network disabled; no cloud calls or deployment",
+    "services": [
+      "api-web",
+      "ai-gateway",
+      "workers"
+    ],
+    "configKeys": {
+      "api-web": 111,
+      "ai-gateway": 56,
+      "workers": 19
+    }
+  },
+  "endToEndPrepareExecuted": false,
+  "productionDeploymentExecuted": false,
+  "productionDeploymentSeconds": null,
+  "remaining": [
+    "Production Kamal target enrollment is absent; example intentionally rejects use.",
+    "Production Kamal hosts across AZs, routes/TLS, IAM runtime/write permissions, registry, signing key and acceptance account require real enrollment/verification.",
+    "Production apply controller must be merged to main; deployment/cutover authorization and current V2 protocol still apply.",
+    "Full provider update, DB compatibility, rollout/readback and customer acceptance need actual target proof; local preparation cannot guarantee them."
+  ],
+  "privateEvidenceRoot": ".env.kamal/production/preparation-20260913",
+  "evidenceSha256": {
+    "release-tests-final.log": "667e80bcef13191efe168cf7cf23f0a0187f948fba5270f72655dc0d075d64e9",
+    "stability-tests.log": "bf05e40682d9113636167a2a3e4df78726526c0d00f27f81bc83f78418f15bf3",
+    "shutdown-tests.log": "d08fb2084e6047c9dcdd634d2a91496517ecbb1316545faa0fb25e0e4be8855e",
+    "cli-negative-checks.json": "26e381c4fe90d233269d944360814cfce767ecff6f48a6bd33ba227df02584b3",
+    "main-build/build-result.json": "52b2df9239efb46caba6be0ea2f4af6bca45a16847f0dd8c419312de58c1ced6",
+    "production-baseline-evidence.json": "ed6e5a5554bc6230c500593237cb2171fe80b7816f08c74f34bab47219794454",
+    "production-resolved-evidence.json": "ad0e07926fba264ab9c81d4ec2beea26bb333959323deab7b9750fa310310c9d",
+    "production-freshness-evidence.json": "a44ee4b96da2ee30b2e97e1ff78930134ac691c19d765a1f0919d9f29b76fac9",
+    "production-baseline-image-inventory.json": "aac6ee5efeae7fbd2ed654ebd8b736029f5eb24600429268d09316d5ecaf6239",
+    "native-validated-config-proof/result.json": "fa4c274fcfb940da9f338dc11d65228cfc205864359cbf1530539ec91e18de3b"
+  }
+}

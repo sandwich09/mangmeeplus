@@ -142,7 +142,7 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
                   type="button"
                   variant={state?.aiAssistantOptOutAt ? 'primary' : 'secondary'}
                   onClick={() => { void handleAiToggle(Boolean(state?.aiAssistantOptOutAt)); }}
-                  disabled={aiToggleLoading}
+                  disabled={aiToggleLoading} loading={Boolean(aiToggleLoading)}
                 >
                   {aiToggleLoading ? t('common.loading', locale) : state?.aiAssistantOptOutAt ? 'เปิดใช้งานผู้ช่วย AI' : 'ปิดใช้งานผู้ช่วย AI'}
                 </Button>

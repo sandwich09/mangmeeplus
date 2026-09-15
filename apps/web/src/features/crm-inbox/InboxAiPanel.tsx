@@ -121,11 +121,11 @@ function FeedbackButtons({
           key={rating}
           type="button"
           aria-label={rating === 'UP' ? 'ให้คะแนนดี' : 'ให้คะแนนไม่ดี'}
-          disabled={!requestId || busy}
+          disabled={!requestId || busy} aria-busy={Boolean(busy)} data-loading-indicator
           onClick={() => requestId && onSend(kind, rating, requestId)}
           className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg border border-gray-200 bg-white text-[13px] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {rating === 'UP' ? '👍' : '👎'}
+          {busy ? <span aria-hidden="true" className="action-loading-spinner h-3.5 w-3.5 rounded-full border-2 border-current border-t-transparent" /> : rating === 'UP' ? '👍' : '👎'}
         </button>
       ))}
     </div>
@@ -342,7 +342,7 @@ export function InboxAiPanel({
       <Section title="สรุปบทสนทนา" kind="SUMMARY" requestId={summaryRequestId} feedbackBusy={feedbackBusy === 'SUMMARY'} onFeedback={(rating, id) => void sendFeedback('SUMMARY', rating, id)}>
         {summary?.summaryText && <div className="whitespace-pre-wrap rounded-[10px] bg-gray-50 px-3 py-2.5 text-[13px] leading-relaxed text-gray-700">{summary.summaryText}</div>}
         {summaryMessage && <div className="mb-2 text-[12.5px] text-amber-700">{summaryMessage}</div>}
-        <button type="button" onClick={() => void runSummary()} disabled={summaryBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+        <button type="button" onClick={() => void runSummary()} disabled={summaryBusy} aria-busy={Boolean(summaryBusy)} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
           {summaryBusy ? 'กำลังสรุป...' : summary ? 'สร้างใหม่' : 'สรุปบทสนทนา'}
         </button>
       </Section>
@@ -351,7 +351,7 @@ export function InboxAiPanel({
         {draft?.draftText && <div className="whitespace-pre-wrap rounded-[10px] bg-gray-50 px-3 py-2.5 text-[13px] leading-relaxed text-gray-700">{draft.draftText}</div>}
         {draftMessage && <div className="mb-2 text-[12.5px] text-amber-700">{draftMessage}</div>}
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void runDraft()} disabled={draftBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+          <button type="button" onClick={() => void runDraft()} disabled={draftBusy} aria-busy={Boolean(draftBusy)} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
             {draftBusy ? 'กำลังร่าง...' : draft ? 'สร้างใหม่' : 'ร่างคำตอบ'}
           </button>
           {draft && canReply && (
@@ -385,7 +385,7 @@ export function InboxAiPanel({
           </div>
         )}
         {insightsMessage && <div className="mb-2 text-[12.5px] text-amber-700">{insightsMessage}</div>}
-        <button type="button" onClick={() => void runInsights()} disabled={insightsBusy} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
+        <button type="button" onClick={() => void runInsights()} disabled={insightsBusy} aria-busy={Boolean(insightsBusy)} className="rounded-[9px] bg-brand-500 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50">
           {insightsBusy ? 'กำลังวิเคราะห์...' : insights ? 'วิเคราะห์ใหม่' : 'ดู Insights'}
         </button>
       </Section>

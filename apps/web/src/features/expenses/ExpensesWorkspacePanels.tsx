@@ -57,26 +57,28 @@ const BACKFILL_BLOCKER_LABELS: Record<ExpenseBackfillBlocker, string> = {
   VENDOR_NAME_MISSING: 'ไม่ระบุผู้ขาย',
 };
 
-function Toggle({ on, disabled, onToggle }: { on: boolean; disabled?: boolean; onToggle: () => void }) {
+function Toggle({ on, disabled, loading = false, onToggle }: { on: boolean; disabled?: boolean; loading?: boolean; onToggle: () => void }) {
   return (
-    <button role="switch" aria-checked={on} disabled={disabled} onClick={onToggle}
+    <button role="switch" aria-checked={on} disabled={disabled || loading} aria-busy={loading} data-loading-indicator onClick={onToggle}
       // The pill stays 24px; the button itself carries the 44px touch height on a phone and
       // the negative margin cancels it out of the layout, so no row shifts. A ::after overlay
       // would have looked equivalent and been invisible to getBoundingClientRect — the thing
       // that measures whether this is really a 44px target.
       className="relative -my-2.5 flex h-11 w-11 flex-shrink-0 items-center justify-center disabled:cursor-not-allowed disabled:opacity-40 sm:my-0 sm:h-6">
       <span className={cx('relative block h-6 w-11 rounded-full transition', on ? 'bg-brand-500' : 'bg-gray-300')}>
-        <span className={cx('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')} />
+        <span className={cx('absolute top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white shadow transition-all', on ? 'left-[22px]' : 'left-0.5')}>
+          {loading && <span aria-hidden="true" className="action-loading-spinner h-3 w-3 rounded-full border-2 border-gray-500 border-t-transparent" />}
+        </span>
       </span>
     </button>
   );
 }
-export function IconBtn({ title, tone, disabled, onClick, children }: { title: string; tone?: 'primary' | 'danger'; disabled?: boolean; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
+export function IconBtn({ title, tone, disabled, loading = false, onClick, children }: { title: string; tone?: 'primary' | 'danger'; disabled?: boolean; loading?: boolean; onClick: MouseEventHandler<HTMLButtonElement>; children: ReactNode }) {
   return (
     // Every colour lives in exactly one branch. The neutral base used to carry `bg-white`
     // unconditionally, and `cx` is a plain join, so the primary tone's `bg-brand-500` lost the
     // cascade to it — the button rendered white with a white glyph, i.e. an empty box.
-    <button type="button" title={title} aria-label={title} disabled={disabled} onClick={onClick}
+    <button type="button" title={title} aria-label={title} disabled={disabled || loading} aria-busy={loading} onClick={onClick}
       className={cx('flex h-11 w-11 items-center justify-center rounded-lg border transition disabled:cursor-not-allowed disabled:opacity-40 sm:h-8 sm:w-8',
         tone === 'primary' ? 'border-brand-500 bg-brand-500 text-white hover:border-brand-600 hover:bg-brand-600'
           : tone === 'danger' ? 'border-gray-200 bg-white text-error-500 hover:border-[#FECDCA] hover:bg-gray-50'
@@ -207,7 +209,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                           <span className="flex min-w-64 items-center gap-2">
                             <input autoFocus className="mangmee-input h-9" value={editName} disabled={updating} onChange={(e) => setEditName(stripDisallowed(e.target.value))}
                               onKeyDown={(e) => { if (e.key === 'Enter') void saveName(c.id); if (e.key === 'Escape') setEditId(null); }} />
-                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+                            <button className={cx(btnClass, 'h-9 px-3 text-xs')} disabled={updating || !editName.trim() || editName.trim() === c.name} aria-busy={Boolean(updating)} onClick={() => void saveName(c.id)}>{updating ? 'กำลังบันทึก...' : 'บันทึก'}</button>
                             <button className={cx(ghostClass, 'h-9 px-3 text-xs')} disabled={updating} onClick={() => setEditId(null)}>ยกเลิก</button>
                           </span>
                         ) : c.name}
@@ -223,7 +225,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
                         ) : <span className="text-gray-400">{c.defaultInputTaxCode ?? '—'}</span>}
                       </td>}
                       <td className="whitespace-nowrap text-xs text-gray-500">{owned ? 'ของบริษัท' : 'ค่าเริ่มต้นระบบ'}</td>
-                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
+                      <td className="whitespace-nowrap"><Toggle on={active} disabled={!owned || updatingId === c.id} loading={updatingId === c.id} onToggle={() => runUpdate(c.id, { status: active ? 'ARCHIVED' : 'ACTIVE' }, active ? 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว' : 'เปิดใช้งานหมวดหมู่เรียบร้อยแล้ว')} /></td>
                       <td className="w-px whitespace-nowrap text-right">
                         {owned ? (
                           <span className="inline-flex items-center justify-end gap-1.5">
@@ -242,7 +244,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
       </MangmeeCard>
 
       <Modal open={showCreate} title="เพิ่มหมวดหมู่ใหม่" size="sm" onClose={() => { if (!saving) setShowCreate(false); }}
-        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวดหมู่'}</button></>}>
+        footer={<><button className={ghostClass} onClick={() => setShowCreate(false)} disabled={saving}>ยกเลิก</button><button className={btnClass} onClick={() => void create()} disabled={saving || !name.trim()} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'เพิ่มหมวดหมู่'}</button></>}>
           <div className="space-y-3">
           {createError && <ErrorBanner message={createError} />}
           <label className="text-sm font-semibold text-gray-700">ชื่อหมวดหมู่ *</label>
@@ -265,7 +267,7 @@ export function CategoryManagePanel({ companyId }: { companyId: string }) {
             <p className="mt-1.5 text-sm leading-relaxed text-gray-500">หมวดหมู่ที่เก็บถาวรจะไม่แสดงให้ AI หรือผู้ใช้เลือกอีก แต่รายการเดิมที่ใช้หมวดนี้ยังอยู่ครบ · เปิดใช้ใหม่ได้ทุกเมื่อจากปุ่มสวิตช์</p>
             <div className="mt-4 flex justify-end gap-2">
               <button className={ghostClass} disabled={updating} onClick={() => setConfirmId(null)}>ยกเลิก</button>
-              <button className={dangerClass} disabled={updating} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังเก็บถาวร...' : 'เก็บถาวร'}</button>
+              <button className={dangerClass} disabled={updating} aria-busy={Boolean(updating)} onClick={async () => { await runUpdate(confirmTarget.id, { status: 'ARCHIVED' }, 'เก็บหมวดหมู่ถาวรเรียบร้อยแล้ว'); setConfirmId(null); }}>{updating ? 'กำลังเก็บถาวร...' : 'เก็บถาวร'}</button>
             </div>
           </div>
         </div>
@@ -320,10 +322,13 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   const [preparingFile, setPreparingFile] = useState(false);
   const prepareRequestRef = useRef(0);
   const [preview, setPreview] = useState<{ original: string; derived: string } | null>(null);
+  useEffect(() => { const url = preview?.original; return () => { if (url) URL.revokeObjectURL(url); }; }, [preview?.original]);
   const [derivedBlob, setDerivedBlob] = useState<Blob | null>(null);
   const [method, setMethod] = useState<'upload' | 'draw'>('upload');
   const [saving, setSaving] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const previewPendingRef = useRef(false);
   // F11: a row the caller does not own is absent from the API and therefore never highlighted.
   const focusRef = useRef<HTMLElement>(null);
 
@@ -343,6 +348,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   }, [focusSignatureId, loading, assets]);
 
   const selectSignatureFile = async (file: File | null) => {
+    if (saving || previewPendingRef.current) return;
     const requestId = ++prepareRequestRef.current;
     setPreparedFile(null); setPreparingFile(false); setPreview(null); setDerivedBlob(null); setFileName(file?.name ?? ''); setActionError(null);
     if (!file) return;
@@ -367,11 +373,15 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   };
 
   const buildPreview = async () => {
+    if (saving || preparingFile || previewPendingRef.current) return;
     const file = preparedFile;
     if (!file) { setActionError('กรุณาเลือกรูปลายเซ็นหรือถ่ายรูปก่อน'); return; }
+    previewPendingRef.current = true;
+    setPreviewing(true);
     setActionError(null);
+    let url = '';
     try {
-      const url = URL.createObjectURL(file);
+      url = URL.createObjectURL(file);
       const image = new Image();
       await new Promise<void>((resolve, reject) => { image.onload = () => resolve(); image.onerror = () => reject(new Error('อ่านรูปไม่สำเร็จ')); image.src = url; });
       const canvas = canvasRef.current ?? document.createElement('canvas');
@@ -386,8 +396,13 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
       setDerivedBlob(blob);
       setPreview({ original: url, derived: derivedUrl });
+      url = '';
     } catch (cause) {
       setActionError(uploadErrorMessage(cause));
+    } finally {
+      if (url) URL.revokeObjectURL(url);
+      previewPendingRef.current = false;
+      setPreviewing(false);
     }
   };
 
@@ -400,6 +415,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
   // `source` is the drawn PNG when the pad produced one — already transparent and cropped, so it
   // needs no derived pass — and the chosen file otherwise.
   const submit = async (withDerived: boolean, source?: File) => {
+    if (saving || preparingFile || previewPendingRef.current) return;
     const file = source ?? preparedFile;
     if (!file) { setActionError('กรุณาเลือกรูปลายเซ็น'); return; }
     const forbidden = findForbiddenChars(label);
@@ -485,7 +501,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                     </div>
                     <button
                       className={cx(dangerClass, 'h-9 px-3 text-xs')}
-                      disabled={busyId === current.id}
+                      disabled={busyId === current.id} aria-busy={Boolean(busyId === current.id)}
                       onClick={() => doAction(() => archiveSignatureAsset(companyId, current.id), 'ลบลายเซ็นเรียบร้อยแล้ว', current.id)}
                     >
                       {busyId === current.id ? 'กำลังดำเนินการ...' : 'ลบลายเซ็น'}
@@ -519,7 +535,7 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                           </span>
                           <span className="flex items-center gap-2">
                             <MangmeeBadge tone={a.status === 'ACTIVE' ? 'brand' : 'slate'}>{expenseValueLabel(SIGNATURE_ASSET_STATUS_LABELS, a.status, 'สถานะลายเซ็นอื่น')}</MangmeeBadge>
-                            {a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}
+                            {a.status !== 'ARCHIVED' && <IconBtn title="ลบลายเซ็น" tone="danger" disabled={busyId === a.id} loading={Boolean(busyId === a.id)} onClick={() => doAction(() => archiveSignatureAsset(companyId, a.id), 'ลบลายเซ็นเรียบร้อยแล้ว', a.id)}>{ICON.trash}</IconBtn>}
                           </span>
                         </div>
                       ))}
@@ -530,12 +546,12 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
             )}
           </MangmeeCard>
 
-          <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!saving) setShowUpload(false); }}>
+          <Modal open={showUpload} title={current ? 'เปลี่ยนลายเซ็นของฉัน' : 'เพิ่มลายเซ็นของฉัน'} size="md" onClose={() => { if (!saving && !preparingFile && !previewing) setShowUpload(false); }}>
             {actionError && <div className="mb-3"><ErrorBanner message={actionError} /></div>}
             <div className="mt-0.5 mb-3 text-sm text-gray-500">ใช้ลงนามได้ทันทีหลังบันทึก · การประทับทำจากหน้ารีวิวค่าใช้จ่าย{current ? ' · ลายเซ็นใหม่จะถูกใช้แทนอันเดิม' : ''}</div>
             <div className="mb-3 flex gap-2">
               {([['upload', 'อัปโหลดรูป'], ['draw', 'เซ็นบนหน้าจอ']] as const).map(([key, text]) => (
-                <button key={key} className={cx(method === key ? btnClass : ghostClass, 'h-9 px-3 text-xs')} disabled={saving} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
+                <button key={key} className={cx(method === key ? btnClass : ghostClass, 'h-9 px-3 text-xs')} disabled={saving || preparingFile || previewing} onClick={() => { setMethod(key); setActionError(null); }}>{text}</button>
               ))}
             </div>
             {/* maxLength mirrors the API's own limit. Without it a pasted long label passed the
@@ -560,11 +576,11 @@ export function SignaturePanel({ companyId, focusSignatureId }: {
                       <span className="text-xs text-gray-400">PNG, JPG/JPEG/JPE, HEIC/HEIF หรือ GIF</span>
                     </>
                   )}
-                  <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
+                  <input ref={fileRef} type="file" accept={SIGNATURE_UPLOAD_ACCEPT} className="hidden" disabled={saving || preparingFile || previewing} onChange={(e) => void selectSignatureFile(e.target.files?.[0] ?? null)} />
                 </label>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className={ghostClass} onClick={buildPreview} disabled={saving || preparingFile || !preparedFile}>ลบพื้นหลัง (ดูตัวอย่าง)</button>
-                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving || preparingFile || !preparedFile}>{preparingFile ? 'กำลังเตรียมรูป...' : saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
+                  <button className={ghostClass} onClick={buildPreview} disabled={saving || preparingFile || previewing || !preparedFile} aria-busy={Boolean(previewing)}>{previewing ? 'กำลังลบพื้นหลัง...' : 'ลบพื้นหลัง (ดูตัวอย่าง)'}</button>
+                  <button className={btnClass} onClick={() => submit(!!derivedBlob)} disabled={saving || preparingFile || previewing || !preparedFile} aria-busy={Boolean(previewing || preparingFile || saving)}>{previewing ? 'กำลังลบพื้นหลัง...' : preparingFile ? 'กำลังเตรียมรูป...' : saving ? 'กำลังบันทึก...' : derivedBlob ? 'บันทึกลายเซ็น (พร้อมไฟล์โปร่งใส)' : 'บันทึกลายเซ็น'}</button>
                 </div>
                 {preview && (
                   <div className="mt-3 grid grid-cols-2 gap-3">
@@ -826,7 +842,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
               </ThemedSelect>
             </label>}
             {/* No attention checkbox here: that filter now lives in the chip row with the others. */}
-            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
+            {canPostLedger && <button className={cx(ghostClass, 'sm:ml-auto')} onClick={() => void previewHistoricalBackfill()} disabled={backfillBusy} aria-busy={Boolean(backfillBusy)}>{backfillBusy ? 'กำลังตรวจ...' : 'ตรวจรายการเก่าก่อน Auto-post'}</button>}
             {canExport && <button className={cx(btnClass, canPostLedger ? '' : 'sm:ml-auto')} onClick={() => setConfirmExport(true)} disabled={exporting || loading || !view?.total}>{exporting ? 'กำลังสร้าง...' : 'ส่งออกชุดเอกสารให้บัญชี'}</button>}
           </MangmeeCard>
 
@@ -839,7 +855,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             footer={
               <>
                 <button className={ghostClass} onClick={() => setConfirmExport(false)}>ยกเลิก</button>
-                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting}>{exporting ? 'กำลังสร้าง...' : 'ยืนยันส่งออก'}</button>
+                <button className={btnClass} onClick={() => void exportPackage()} disabled={exporting} aria-busy={Boolean(exporting)}>{exporting ? 'กำลังสร้าง...' : 'ยืนยันส่งออก'}</button>
               </>
             }
           >
@@ -968,7 +984,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                           </td>
                           <td className="w-px whitespace-nowrap text-xs">
                             {canPostLedger && r.pendingPostingSourceType ? (
-                              <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId}
+                              <button type="button" className={cx(ghostClass, '!min-h-8 !px-2 !py-1 !text-xs')} disabled={postingExpenseId === r.expenseId} aria-busy={Boolean(postingExpenseId === r.expenseId)}
                                 onClick={(event) => { event.stopPropagation(); if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
                                 {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
                               </button>
@@ -1024,7 +1040,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
                         {(canPostLedger && r.pendingPostingSourceType) || (canReadLedger && r.journalEntryId) ? (
                           <div className="border-t border-gray-100 px-4 py-2">
                             {canPostLedger && r.pendingPostingSourceType ? (
-                              <button type="button" className={cx(ghostClass, 'w-full')} disabled={postingExpenseId === r.expenseId}
+                              <button type="button" className={cx(ghostClass, 'w-full')} disabled={postingExpenseId === r.expenseId} aria-busy={Boolean(postingExpenseId === r.expenseId)}
                                 onClick={() => { if (r.pendingPostingSourceId) void postExpense(r.expenseId, r.pendingPostingSourceType!, r.pendingPostingSourceId); }}>
                                 {postingExpenseId === r.expenseId ? 'กำลังลง...' : r.postingStatus === 'posting_error' ? 'ลองอีกครั้ง' : 'ลงบัญชี'}
                               </button>
@@ -1080,7 +1096,7 @@ export function EvidencePanel({ companyId, canExport, canReadLedger, canPostLedg
             footer={backfillPreview ? (
               <>
                 <button className={ghostClass} onClick={() => setBackfillPreview(null)} disabled={backfillBusy}>ยกเลิก</button>
-                <button className={btnClass} onClick={() => void confirmHistoricalBackfill()} disabled={backfillBusy || backfillPreview.eligibleCount === 0}>
+                <button className={btnClass} onClick={() => void confirmHistoricalBackfill()} disabled={backfillBusy || backfillPreview.eligibleCount === 0} aria-busy={Boolean(backfillBusy)}>
                   {backfillBusy ? 'กำลังลงบัญชี...' : `ยืนยันลงบัญชี ${Math.min(backfillPreview.eligibleCount, 50)} รายการ`}
                 </button>
               </>

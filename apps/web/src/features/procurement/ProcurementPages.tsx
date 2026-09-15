@@ -140,10 +140,10 @@ function PurchaseRequestList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3">{Number(pr.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท</td>
                   <td className="px-4 py-3 text-gray-500">{formatThaiDate(pr.createdAt)}</td>
                   <td className="px-4 py-3 flex gap-1">
-                    {pr.status === 'DRAFT' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === pr.id} onClick={() => action(pr.id, () => submitPurchaseRequest(companyId, pr.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
+                    {pr.status === 'DRAFT' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === pr.id} aria-busy={Boolean(actionLoading === pr.id)} onClick={() => action(pr.id, () => submitPurchaseRequest(companyId, pr.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
                     {pr.status === 'PENDING_APPROVAL' && <>
-                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === pr.id} onClick={() => action(pr.id, () => approvePurchaseRequest(companyId, pr.id), 'อนุมัติใบขอซื้อเรียบร้อยแล้ว')}>อนุมัติ</button>
-                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === pr.id} onClick={() => void reject(pr.id)}>ปฏิเสธ</button>
+                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} disabled={actionLoading === pr.id} aria-busy={Boolean(actionLoading === pr.id)} onClick={() => action(pr.id, () => approvePurchaseRequest(companyId, pr.id), 'อนุมัติใบขอซื้อเรียบร้อยแล้ว')}>อนุมัติ</button>
+                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === pr.id} aria-busy={Boolean(actionLoading === pr.id)} onClick={() => void reject(pr.id)}>ปฏิเสธ</button>
                     </>}
                   </td>
                 </tr>
@@ -210,7 +210,7 @@ function PurchaseOrderList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3">{Number(po.grandTotalAmount).toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท</td>
                   <td className="px-4 py-3 text-gray-500">{formatThaiDate(po.orderDate ?? po.createdAt)}</td>
                   <td className="px-4 py-3 flex gap-1">
-                    {po.status === 'APPROVED' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === po.id} onClick={() => action(po.id, () => issuePurchaseOrder(companyId, po.id), 'ออกใบสั่งซื้อเรียบร้อยแล้ว')}>ออก PO</button>}
+                    {po.status === 'APPROVED' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === po.id} aria-busy={Boolean(actionLoading === po.id)} onClick={() => action(po.id, () => issuePurchaseOrder(companyId, po.id), 'ออกใบสั่งซื้อเรียบร้อยแล้ว')}>ออก PO</button>}
                   </td>
                 </tr>
               ))}
@@ -268,8 +268,8 @@ function GoodsReceiptList({ companyId }: { companyId: string }) {
                   <td className="px-4 py-3"><StatusBadge status={gr.status} map={GR_STATUS_LABELS} /></td>
                   <td className="px-4 py-3 text-gray-500">{formatThaiDate(gr.receivedAt)}</td>
                   <td className="px-4 py-3 flex gap-1">
-                    {gr.status === 'DRAFT' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === gr.id} onClick={() => action(gr.id, () => postGoodsReceipt(companyId, gr.id), 'บันทึกรับสินค้าเรียบร้อยแล้ว')}>บันทึกรับสินค้า</button>}
-                    {gr.status === 'POSTED' && <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === gr.id} onClick={() => void voidReceipt(gr.id)}>ยกเลิก</button>}
+                    {gr.status === 'DRAFT' && <button className={btnClass + ' text-xs py-1 px-2'} disabled={actionLoading === gr.id} aria-busy={Boolean(actionLoading === gr.id)} onClick={() => action(gr.id, () => postGoodsReceipt(companyId, gr.id), 'บันทึกรับสินค้าเรียบร้อยแล้ว')}>บันทึกรับสินค้า</button>}
+                    {gr.status === 'POSTED' && <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === gr.id} aria-busy={Boolean(actionLoading === gr.id)} onClick={() => void voidReceipt(gr.id)}>ยกเลิก</button>}
                   </td>
                 </tr>
               ))}

@@ -387,7 +387,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <button
                 type="button"
                 className={`${ACTION_BUTTON} mangmee-btn-primary`}
-                disabled={shopSaving}
+                disabled={shopSaving} aria-busy={Boolean(shopSaving)}
                 onClick={() => void saveShop()}
               >
                 {shopSaving ? 'กำลังบันทึก...' : 'บันทึกข้อมูลร้าน'}
@@ -419,14 +419,14 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
               <button
                 type="button"
                 className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto"
-                disabled={phoneSaving}
+                disabled={phoneSaving} aria-busy={Boolean(phoneSaving)}
                 onClick={() => void savePhoneValue(phone.trim())}
               >
                 {phoneSaving ? 'กำลังบันทึก...' : 'บันทึกเบอร์มือถือ'}
               </button>
               {/* Clearing is still "save a blank", but the hint no longer has to explain that. */}
               {account?.phoneNumber && (
-                <button type="button" className={LINK_BUTTON} disabled={phoneSaving} onClick={() => void savePhoneValue('')}>
+                <button type="button" className={LINK_BUTTON} disabled={phoneSaving} aria-busy={Boolean(phoneSaving)} onClick={() => void savePhoneValue('')}>
                   ลบเบอร์ออก
                 </button>
               )}
@@ -489,7 +489,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
                 <button
                   type="button"
                   className={`${ACTION_BUTTON} mangmee-btn-primary`}
-                  disabled={passwordSaving}
+                  disabled={passwordSaving} aria-busy={Boolean(passwordSaving)}
                   onClick={() => void savePassword()}
                 >
                   {passwordSaving ? 'กำลังบันทึก...' : 'ตั้งรหัสผ่านสำรอง'}

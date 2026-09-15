@@ -12,7 +12,7 @@ import type {
   DocumentLineSummary,
 } from './accounting-documents.model';
 import { authedApiFetch as apiFetch } from '@/common/api/authed-fetch';
-import { assertAllowedUploadFile, withGenericUploadError } from '@/common/files/upload-file.logic';
+import { prepareAttachmentUpload, withGenericUploadError } from '@/common/files/upload-file.logic';
 import { uploadReceiptFile } from '@/features/expenses/expenses.api';
 import type {
   AccountingAdjustmentReasonCode,
@@ -213,7 +213,7 @@ export async function uploadAccountingDocumentSupporting(
   file: File,
 ): Promise<void> {
   return withGenericUploadError(async () => {
-    assertAllowedUploadFile(file);
+    file = await prepareAttachmentUpload(file);
     const intent = await apiFetch<{ attachmentId: string; uploadUrl: string; uploadMethod: string; uploadHeaders: Record<string, string> }>(
       `/companies/${companyId}/attachments/upload-intent`,
       {

@@ -103,8 +103,8 @@ function Pp36ClaimAction({ companyId, billId, lineId, supplierId, canClaim, canP
     {(optionsLoading || payments.length > 0) && <ThemedSelect value={supplierPaymentId} disabled={optionsLoading} onChange={(event) => setSupplierPaymentId(event.target.value)}>{optionsLoading ? <option value="">กำลังโหลด...</option> : <><option value="">เลือกการจ่ายที่รับรู้ ภ.พ.36</option>{payments.map((payment) => <option key={payment.id} value={payment.id}>{payment.paymentNumber ?? payment.id.slice(0, 8)} · {formatThaiDate(payment.paymentDate)}</option>)}</>}</ThemedSelect>}
     <ThemedDate className={inputClass} value={claimDate} onChange={(event) => setClaimDate(event.target.value)} />
     <input className={`${inputClass} sm:col-span-2`} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="เหตุผลการปล่อยสิทธิภาษีซื้อ" />
-    <button className={btnClass} disabled={busy || optionsLoading || !evidenceId || (payments.length > 0 && !supplierPaymentId) || !reason.trim()} onClick={() => void release()}>{busy ? 'กำลังปล่อยสิทธิ...' : 'ปล่อยสิทธิภาษีซื้อ ภ.พ.36'}</button>
-    {adjustmentId && canPost && <button className={ghostClass} disabled={busy} onClick={() => { setBusy(true); setError(''); void generateSourceJournal(companyId, 'tax.pp36_input_claim', adjustmentId).then(() => toast.success('ลงบัญชีรายการปล่อยสิทธิเรียบร้อยแล้ว')).catch((cause) => setError(err(cause))).finally(() => setBusy(false)); }}>ลงบัญชีรายการปล่อยสิทธิ</button>}
+    <button className={btnClass} disabled={busy || optionsLoading || !evidenceId || (payments.length > 0 && !supplierPaymentId) || !reason.trim()} aria-busy={Boolean(busy)} onClick={() => void release()}>{busy ? 'กำลังปล่อยสิทธิ...' : 'ปล่อยสิทธิภาษีซื้อ ภ.พ.36'}</button>
+    {adjustmentId && canPost && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => { setBusy(true); setError(''); void generateSourceJournal(companyId, 'tax.pp36_input_claim', adjustmentId).then(() => toast.success('ลงบัญชีรายการปล่อยสิทธิเรียบร้อยแล้ว')).catch((cause) => setError(err(cause))).finally(() => setBusy(false)); }}>ลงบัญชีรายการปล่อยสิทธิ</button>}
     {!optionsLoading && !receipts.length && <a className="font-bold text-brand-700 underline sm:col-span-2" href={`/companies/${companyId}/tax/evidence?${new URLSearchParams({ context: 'IMPORT_SERVICE', sourceType: 'procurement.vendor_bill', sourceId: billId, sourceLineId: lineId })}`}>แนบและให้ผู้มีสิทธิ์ยืนยัน PP36_RECEIPT บรรทัดนี้ก่อน</a>}
     {error && <p role="alert" className="sm:col-span-2 text-error-700">{error}</p>}
   </div>;
@@ -231,16 +231,16 @@ function VendorBillTaxEvidencePanel({ companyId, bill, canEdit, canUpload, canRe
     {editable ? <div className="mt-3 grid gap-2 sm:grid-cols-2">
       <input className={inputClass} value={taxInvoiceNumber} onChange={(event) => setTaxInvoiceNumber(event.target.value)} placeholder="เลขที่ใบกำกับภาษี" disabled={busy} />
       <ThemedDate className={inputClass} value={taxInvoiceDate} onChange={(event) => setTaxInvoiceDate(event.target.value)} disabled={busy} />
-      {canUpload && <ThemedFile className="sm:col-span-2" file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setFile} disabled={busy} />}
+      {canUpload && <ThemedFile className="sm:col-span-2" file={file} accept={ATTACHMENT_UPLOAD_ACCEPT} onChange={setFile} disabled={busy} loading={Boolean(busy)} />}
     </div> : <dl className="mt-3 grid gap-2 sm:grid-cols-2">
       <div><dt className="text-xs text-gray-600">เลขที่ใบกำกับภาษี</dt><dd className="font-medium">{bill.taxInvoiceNumber ?? '—'}</dd></div>
       <div><dt className="text-xs text-gray-600">วันที่ใบกำกับภาษี</dt><dd className="font-medium">{bill.taxInvoiceDate ? formatThaiDate(bill.taxInvoiceDate) : '—'}</dd></div>
     </dl>}
     <div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-      {editable && (bill.attachmentId || canUpload) && <button className={btnClass} disabled={busy || !taxInvoiceNumber.trim() || !taxInvoiceDate || (!file && !bill.attachmentId)} onClick={() => void saveEvidence()}>{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>}
-      {bill.attachmentId && canReadAttachment && <button className={ghostClass} disabled={busy || previewLoading} onClick={() => void openAttachment()}>{previewLoading ? 'กำลังเปิด...' : 'เปิดไฟล์หลักฐาน'}</button>}
-      {reviewable && <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy} onClick={() => void review('VERIFIED')}>ยืนยันหลักฐาน</button>}
-      {canReview && ['DRAFT', 'NEEDS_REVIEW'].includes(bill.status) && <button className={dangerClass + ' order-last sm:order-none'} disabled={busy} onClick={() => void review('REJECTED')}>ปฏิเสธหลักฐาน</button>}
+      {editable && (bill.attachmentId || canUpload) && <button className={btnClass} disabled={busy || !taxInvoiceNumber.trim() || !taxInvoiceDate || (!file && !bill.attachmentId)} aria-busy={Boolean(busy)} onClick={() => void saveEvidence()}>{busy ? 'กำลังบันทึก...' : 'บันทึกหลักฐาน'}</button>}
+      {bill.attachmentId && canReadAttachment && <button className={ghostClass} disabled={busy || previewLoading} aria-busy={Boolean(previewLoading)} onClick={() => void openAttachment()}>{previewLoading ? 'กำลังเปิด...' : 'เปิดไฟล์หลักฐาน'}</button>}
+      {reviewable && <button className={btnClass + ' bg-green-600 hover:bg-green-700'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void review('VERIFIED')}>ยืนยันหลักฐาน</button>}
+      {canReview && ['DRAFT', 'NEEDS_REVIEW'].includes(bill.status) && <button className={dangerClass + ' order-last sm:order-none'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void review('REJECTED')}>ปฏิเสธหลักฐาน</button>}
     </div>
     {error && <p role="alert" className="mt-2 text-xs text-error-700">{error}</p>}
   </section>
@@ -353,7 +353,7 @@ function CreateVendorBillForm({ companyId, canCreate, onCreated }: { companyId: 
       </div>
       <div className="sm:col-span-2"><TransactionTaxLineSelector companyId={companyId} branchId={branch?.branchId || undefined} sourceType="procurement.vendor_bill" sourceId="new-vendor-bill" sourceLineId="line-1" transactionContext={context} direction={context === 'IMPORT_SERVICE' ? 'SELF_ASSESSED' : 'INPUT'} documentDate={billDate} netAmount={amount} grossAmount={amount} value={definitionId} onChange={(id, definition) => { setDefinitionId(id); setExternalTaxCode(definition?.externalCode); setVatRate(definition?.rate ?? ''); setVatMode(context === 'IMPORT_SERVICE' || !definition || definition.calculationMethod === 'NONE' ? 'NO_VAT' : definition.treatment === 'EXEMPT' ? 'EXEMPT' : definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED'); }} /></div>
       {['IMPORT_GOODS', 'IMPORT_SERVICE'].includes(context) && <p className="text-xs text-amber-700 sm:col-span-2">รายการนำเข้าจะอยู่สถานะ pending evidence จนแนบและยืนยันหลักฐานในหน้า Tax Evidence</p>}
-      <button disabled={!canCreate || busy || !supplierId || !description} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : 'บันทึกฉบับร่าง'}</button>
+      <button disabled={!canCreate || busy || !supplierId || !description} aria-busy={Boolean(busy)} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : 'บันทึกฉบับร่าง'}</button>
     </form>
   </details>;
 }
@@ -409,7 +409,7 @@ function ApprovalPolicyPanel({ companyId, canManage }: { companyId: string; canM
           <input className={inputClass + ' max-w-40'} type="number" min="0" step="0.01" value={threshold} onChange={(event) => setThreshold(event.target.value)} placeholder="ปิดใช้งาน" />
           บาทขึ้นไป ต้องมีผู้อนุมัติ 2 คน (เว้นว่าง = ปิดใช้งาน)
         </label>
-        <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} onClick={() => void save()}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
+        <button className={btnClass + ' text-xs py-1 px-3'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void save()}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
       </> : <dl className="grid gap-2 sm:grid-cols-2">
         <div><dt className="text-xs text-gray-500">อนุมัติรายการของตนเอง</dt><dd className="font-medium">{allowSelfApproval ? 'อนุญาต' : 'ไม่อนุญาต'}</dd></div>
         <div><dt className="text-xs text-gray-500">เกณฑ์ผู้อนุมัติ 2 คน</dt><dd className="font-medium">{threshold ? `ตั้งแต่ ${Number(threshold).toLocaleString('th-TH')} บาท` : 'ปิดใช้งาน'}</dd></div>
@@ -430,6 +430,9 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
   const [info, setInfo] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [deepLinkLoading, setDeepLinkLoading] = useState(false);
+  const [openingBillId, setOpeningBillId] = useState<string | null>(null);
+  const billOpenPendingRef = useRef(false);
+  const billOpenRequestRef = useRef(0);
   const branch = useBranchFilter();
   const branchId = branch?.branchId || undefined;
 
@@ -446,20 +449,31 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
+    setSelected(null);
+    setDeepLinkLoading(false); setOpeningBillId(null);
+    return () => { billOpenRequestRef.current += 1; billOpenPendingRef.current = false; };
+  }, [companyId]);
+  const openBill = useCallback(async (id: string) => {
+    if (billOpenPendingRef.current) return;
+    billOpenPendingRef.current = true;
+    const requestId = ++billOpenRequestRef.current;
+    setDeepLinkLoading(true); setOpeningBillId(id); setError(null);
+    try {
+      const bill = await getVendorBill(companyId, id);
+      if (requestId === billOpenRequestRef.current) setSelected(bill);
+    } catch (cause) {
+      if (requestId === billOpenRequestRef.current) setError(err(cause));
+    } finally {
+      if (requestId === billOpenRequestRef.current) {
+        billOpenPendingRef.current = false; setDeepLinkLoading(false); setOpeningBillId(null);
+      }
+    }
+  }, [companyId]);
+  useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('billId');
     if (!id) return;
-    const loadDeepLink = async () => {
-      setDeepLinkLoading(true);
-      try {
-        setSelected(await getVendorBill(companyId, id));
-      } catch (cause) {
-        setError(err(cause));
-      } finally {
-        setDeepLinkLoading(false);
-      }
-    };
-    void loadDeepLink();
-  }, [companyId]);
+    void openBill(id);
+  }, [openBill]);
 
   const action = async (id: string, fn: () => Promise<unknown>, successMessage?: string) => {
     setActionLoading(id); setError(null); setInfo(null);
@@ -498,14 +512,14 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
 
   return (
     <div className="space-y-4">
-      <CreateVendorBillForm companyId={companyId} canCreate={permissions.includes('procurement.vendor_bill.create') && permissions.includes('procurement.vendor_bill.direct_entry')} onCreated={(id) => { void load(); void getVendorBill(companyId, id).then(setSelected); }} />
+      <CreateVendorBillForm companyId={companyId} canCreate={permissions.includes('procurement.vendor_bill.create') && permissions.includes('procurement.vendor_bill.direct_entry')} onCreated={(id) => { void load(); void openBill(id); }} />
       {permissions.includes('procurement.approval_policy.read') && <ApprovalPolicyPanel companyId={companyId} canManage={permissions.includes('procurement.approval_policy.manage')} />}
       <div className="flex gap-2">
         <ThemedSelect className={inputClass + ' max-w-xs'} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="">ทุกสถานะ</option>
           {Object.entries(VB_STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </ThemedSelect>
-        <button className={ghostClass} onClick={load}>กรอง</button>
+        <button className={ghostClass} onClick={load} disabled={loading} aria-busy={loading}>กรอง</button>
       </div>
       {error && <ErrorBanner message={error} />}
       {info && <div className="rounded border border-blue-200 bg-blue-50 px-4 py-2 text-sm text-blue-800">{info}</div>}
@@ -522,8 +536,8 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
             </thead>
             <tbody className="divide-y divide-gray-100">
               {data.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-400">ไม่พบข้อมูล</td></tr> : data.map((b) => (
-                <tr key={b.id} className="cursor-pointer hover:bg-gray-50" onClick={() => void getVendorBill(companyId, b.id).then(setSelected).catch((cause) => setError(err(cause)))}>
-                  <td className="px-4 py-3 font-medium">{b.vendorBillNumber ?? b.supplierDocumentNumber ?? b.id.slice(0, 8)}</td>
+                <tr key={b.id} className="cursor-pointer hover:bg-gray-50" aria-busy={openingBillId === b.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,a,input,select,textarea') && actionLoading === null) void openBill(b.id); }}>
+                  <td className="px-4 py-3 font-medium"><button type="button" className="text-left disabled:opacity-50" disabled={deepLinkLoading || actionLoading !== null} aria-busy={openingBillId === b.id} onClick={() => void openBill(b.id)}>{b.vendorBillNumber ?? b.supplierDocumentNumber ?? b.id.slice(0, 8)}</button></td>
                   <td className="px-4 py-3"><StatusBadge status={b.status} map={VB_STATUS_LABELS} /></td>
                   <td className="px-4 py-3"><StatusBadge status={b.matchingStatus} map={MATCH_STATUS_LABELS} /></td>
                   <td className="px-4 py-3">{Number(b.netPayableAmount).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
@@ -531,20 +545,20 @@ function VendorBillList({ companyId, permissions }: { companyId: string; permiss
                   <td className="px-4 py-3 text-gray-500">{formatThaiDate(b.dueDate)}</td>
                   <td className="px-4 py-3 flex gap-1 flex-wrap">
                     {permissions.includes('procurement.vendor_bill.match') && b.purchaseOrderId && ['DRAFT', 'NEEDS_REVIEW'].includes(b.status) && (
-                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} onClick={() => action(b.id, () => matchVendorBill(companyId, b.id), 'จับคู่บิลเรียบร้อยแล้ว')}>จับคู่</button>
+                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} aria-busy={Boolean(actionLoading === b.id)} onClick={() => action(b.id, () => matchVendorBill(companyId, b.id), 'จับคู่บิลเรียบร้อยแล้ว')}>จับคู่</button>
                     )}
                     {permissions.includes('procurement.vendor_bill.create') && ['DRAFT', 'NEEDS_REVIEW'].includes(b.status) && (
-                      <button className={btnClass + ' text-xs py-1 px-2'} title={isVendorBillTaxEvidenceBlocked(b) ? 'ต้องบันทึกและยืนยันหลักฐานภาษีซื้อก่อน' : undefined} disabled={actionLoading === b.id || isVendorBillTaxEvidenceBlocked(b)} onClick={() => action(b.id, () => submitVendorBill(companyId, b.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>
+                      <button className={btnClass + ' text-xs py-1 px-2'} title={isVendorBillTaxEvidenceBlocked(b) ? 'ต้องบันทึกและยืนยันหลักฐานภาษีซื้อก่อน' : undefined} disabled={actionLoading === b.id || isVendorBillTaxEvidenceBlocked(b)} aria-busy={Boolean(actionLoading === b.id)} onClick={() => action(b.id, () => submitVendorBill(companyId, b.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>
                     )}
                     {permissions.includes('procurement.vendor_bill.approve') && b.status === 'PENDING_APPROVAL' && <>
-                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} title={isVendorBillTaxEvidenceBlocked(b) ? 'หลักฐานภาษีซื้อยังไม่ผ่านการยืนยัน' : undefined} disabled={actionLoading === b.id || isVendorBillTaxEvidenceBlocked(b)} onClick={() => action(b.id, () => approveWithFeedback(b.id))}>อนุมัติ</button>
-                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} onClick={() => void rejectBill(b.id)}>ปฏิเสธ</button>
+                      <button className={btnClass + ' text-xs py-1 px-2 bg-green-600 hover:bg-green-700'} title={isVendorBillTaxEvidenceBlocked(b) ? 'หลักฐานภาษีซื้อยังไม่ผ่านการยืนยัน' : undefined} disabled={actionLoading === b.id || isVendorBillTaxEvidenceBlocked(b)} aria-busy={Boolean(actionLoading === b.id)} onClick={() => action(b.id, () => approveWithFeedback(b.id))}>อนุมัติ</button>
+                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} aria-busy={Boolean(actionLoading === b.id)} onClick={() => void rejectBill(b.id)}>ปฏิเสธ</button>
                     </>}
                     {permissions.includes('procurement.vendor_bill.void') && b.status === 'APPROVED' && (
-                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} onClick={() => void voidBill(b.id)}>ยกเลิก</button>
+                      <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} aria-busy={Boolean(actionLoading === b.id)} onClick={() => void voidBill(b.id)}>ยกเลิก</button>
                     )}
                     {permissions.includes('journal.entry.create') && permissions.includes('journal.entry.post') && ['APPROVED', 'PARTIALLY_PAID', 'PAID'].includes(b.status) && ['pending', 'not_required'].includes(b.postingStatus) && (
-                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} onClick={() => action(b.id, () => generateSourceJournal(companyId, b.pp36Candidate ? 'procurement.vendor_bill.commercial' : 'procurement.vendor_bill', b.id), 'ลงบัญชีบิลเรียบร้อยแล้ว')}>ลงบัญชีบิล</button>
+                      <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === b.id} aria-busy={Boolean(actionLoading === b.id)} onClick={() => action(b.id, () => generateSourceJournal(companyId, b.pp36Candidate ? 'procurement.vendor_bill.commercial' : 'procurement.vendor_bill', b.id), 'ลงบัญชีบิลเรียบร้อยแล้ว')}>ลงบัญชีบิล</button>
                     )}
                   </td>
                 </tr>
@@ -711,7 +725,7 @@ function CreateSupplierPaymentForm({ companyId, canCreate, onCreated }: { compan
         <div className="mt-2 grid gap-2">{paymentEvidence.map((item) => <label key={item.id} className="flex gap-2"><input type="checkbox" checked={paymentEvidenceIds.includes(item.id)} onChange={(event) => { setPaymentEvidenceIds((ids) => event.target.checked ? [...ids, item.id] : ids.filter((id) => id !== item.id)); resetAttempt(); }} />{item.referenceNumber} · {item.evidenceDate}</label>)}</div>
         {!paymentEvidence.length && <a className="mt-2 inline-block font-bold text-brand-700 underline" href={`/companies/${companyId}/tax/evidence?${new URLSearchParams({ context: 'IMPORT_SERVICE', sourceType: 'procurement.vendor_bill', sourceId: bill.id })}`}>แนบและยืนยัน PAYMENT_EVIDENCE ก่อนจ่าย</a>}
       </div>}
-      <button disabled={!canCreate || busy || !canSubmit} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : `บันทึกจ่าย ${amount || '0'} ${bill?.currency ?? ''}`}</button>
+      <button disabled={!canCreate || busy || !canSubmit} aria-busy={Boolean(busy)} className={`${btnClass} sm:col-span-2`}>{busy ? 'กำลังบันทึก...' : `บันทึกจ่าย ${amount || '0'} ${bill?.currency ?? ''}`}</button>
     </form>
   </details>;
 }
@@ -748,7 +762,7 @@ function SupplierPaymentList({ companyId, permissions }: { companyId: string; pe
   return (
     <div className="space-y-4">
       <CreateSupplierPaymentForm companyId={companyId} canCreate={permissions.includes('procurement.supplier_payment.create') && permissions.includes('procurement.supplier_payment.release')} onCreated={() => void load()} />
-      <div className="flex justify-end"><button className={ghostClass} onClick={load}>รีเฟรช</button></div>
+      <div className="flex justify-end"><button className={ghostClass} onClick={load} disabled={loading} aria-busy={loading}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">
@@ -772,9 +786,9 @@ function SupplierPaymentList({ companyId, permissions }: { companyId: string; pe
                   <td className="px-4 py-3 text-gray-500">{p.method}</td>
                   <td className="px-4 py-3 text-gray-500">{formatThaiDate(p.paymentDate)}</td>
                   <td className="px-4 py-3 flex gap-1">
-                    {permissions.includes('journal.entry.create') && permissions.includes('journal.entry.post') && p.status === 'RECORDED' && ['pending', 'not_required'].includes(p.postingStatus) && <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} onClick={() => action(p.id, () => generateSourceJournal(companyId, 'procurement.supplier_payment', p.id), 'ลงบัญชีการจ่ายเรียบร้อยแล้ว')}>ลงบัญชี</button>}
-                    {permissions.includes('journal.entry.create') && permissions.includes('journal.entry.post') && p.status === 'RECORDED' && p.pp36RecognitionStatus === 'ACTIVE' && <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} onClick={() => action(p.id, () => generateSourceJournal(companyId, 'procurement.supplier_payment.pp36', p.id), 'ลงบัญชี ภ.พ.36 เรียบร้อยแล้ว')}>ลงบัญชี ภ.พ.36</button>}
-                    {permissions.includes('procurement.supplier_payment.void') && p.status === 'RECORDED' && <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} onClick={() => void voidPayment(p.id)}>ยกเลิก</button>}
+                    {permissions.includes('journal.entry.create') && permissions.includes('journal.entry.post') && p.status === 'RECORDED' && ['pending', 'not_required'].includes(p.postingStatus) && <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} aria-busy={Boolean(actionLoading === p.id)} onClick={() => action(p.id, () => generateSourceJournal(companyId, 'procurement.supplier_payment', p.id), 'ลงบัญชีการจ่ายเรียบร้อยแล้ว')}>ลงบัญชี</button>}
+                    {permissions.includes('journal.entry.create') && permissions.includes('journal.entry.post') && p.status === 'RECORDED' && p.pp36RecognitionStatus === 'ACTIVE' && <button className={ghostClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} aria-busy={Boolean(actionLoading === p.id)} onClick={() => action(p.id, () => generateSourceJournal(companyId, 'procurement.supplier_payment.pp36', p.id), 'ลงบัญชี ภ.พ.36 เรียบร้อยแล้ว')}>ลงบัญชี ภ.พ.36</button>}
+                    {permissions.includes('procurement.supplier_payment.void') && p.status === 'RECORDED' && <button className={dangerClass + ' text-xs py-1 px-2'} disabled={actionLoading === p.id} aria-busy={Boolean(actionLoading === p.id)} onClick={() => void voidPayment(p.id)}>ยกเลิก</button>}
                   </td>
                 </tr>
               ))}
@@ -889,7 +903,7 @@ function WhtHandoffPanel({ companyId, permissions }: { companyId: string; permis
       <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
         ระบบจะออกหนังสือรับรองหัก ณ ที่จ่ายให้ภายนอก แล้วแนบเข้ามาได้ — ข้อมูลการจ่ายและภาษีถูกบันทึกไว้แล้ว ไม่ต้องกรอกซ้ำ
       </div>
-      <div className="flex justify-end"><button type="button" className={`${ghostClass} min-h-11 min-w-11`} onClick={load}>รีเฟรช</button></div>
+      <div className="flex justify-end"><button type="button" className={`${ghostClass} min-h-11 min-w-11`} onClick={load} disabled={loading} aria-busy={loading}>รีเฟรช</button></div>
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <div className="overflow-x-auto rounded border border-gray-200">

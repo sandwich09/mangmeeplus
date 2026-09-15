@@ -116,7 +116,7 @@ export default function ChangePasswordPage({ homePath = null }: { homePath?: str
           {homePath && (
             <div className="flex gap-3">
               {canGoBack && (
-                <Button type="button" variant="secondary" className="flex-1" disabled={loading || signingOut} onClick={() => window.history.back()}>
+                <Button type="button" variant="secondary" className="flex-1" disabled={loading || signingOut} loading={Boolean(loading || signingOut)} onClick={() => window.history.back()}>
                   {t('auth.change.back', locale)}
                 </Button>
               )}

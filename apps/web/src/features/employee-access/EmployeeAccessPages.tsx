@@ -566,7 +566,7 @@ function CreateEmployeeForm({ companyId, roles, onCancel, onCreated }: { company
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={btnClass} disabled={saving}>
+        <button type="submit" className={btnClass} disabled={saving} aria-busy={Boolean(saving)}>
           <PlusIcon className="h-4 w-4" />
           {saving ? 'กำลังบันทึก...' : 'สร้างพนักงาน'}
         </button>
@@ -701,33 +701,33 @@ function EmployeeDetailPanel({ companyId, employee, roles, onChanged, onHandoff,
         </div>
       )}
       <div className={`${panelClass} flex flex-col gap-2 p-4 sm:flex-row sm:flex-wrap sm:items-center`}>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('save', saveEmployee, 'บันทึกข้อมูลพนักงานแล้ว')}>
+        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy === 'save')} onClick={() => run('save', saveEmployee, 'บันทึกข้อมูลพนักงานแล้ว')}>
           <CheckCircleIcon className="h-4 w-4" />
           {busy === 'save' ? 'กำลังบันทึก...' : 'บันทึกการเปลี่ยนแปลง'}
         </button>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('cred', async () => { onHandoff(await regenerateEmployeeCredential(companyId, employee.id)); })}>
+        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy === 'cred')} onClick={() => run('cred', async () => { onHandoff(await regenerateEmployeeCredential(companyId, employee.id)); })}>
           <LockIcon className="h-4 w-4" />
           {busy === 'cred' ? 'กำลังสร้าง...' : 'สร้างรหัสผ่านชั่วคราวใหม่'}
         </button>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('qr', async () => { onLinePackage(await issueEmployeeLineLinkToken(companyId, employee.id)); })}>
+        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy === 'qr')} onClick={() => run('qr', async () => { onLinePackage(await issueEmployeeLineLinkToken(companyId, employee.id)); })}>
           <CopyIcon className="h-4 w-4" />
           {busy === 'qr' ? 'กำลังสร้าง...' : 'สร้าง QR เชื่อม LINE'}
         </button>
-        <button className={ghostClass} disabled={busy !== null} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); }, 'ยกเลิกลิงก์ LINE ที่รอดำเนินการแล้ว')}>
+        <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('revoke', async () => { await revokeEmployeeLineLinkToken(companyId, employee.id); onChanged(); }, 'ยกเลิกลิงก์ LINE ที่รอดำเนินการแล้ว')}>
           ยกเลิกลิงก์ LINE ที่รอดำเนินการ
         </button>
         {employee.status !== 'ACTIVE' && employee.status !== 'DRAFT' && (
-          <button className={ghostClass} disabled={busy !== null} onClick={() => run('enable', async () => { await setEmployeeStatus(companyId, employee.id, 'ACTIVE'); onChanged(); }, 'เปิดใช้งานพนักงานอีกครั้งแล้ว')}>
+          <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('enable', async () => { await setEmployeeStatus(companyId, employee.id, 'ACTIVE'); onChanged(); }, 'เปิดใช้งานพนักงานอีกครั้งแล้ว')}>
             เปิดใช้งานอีกครั้ง
           </button>
         )}
         {employee.status === 'ACTIVE' && (
-          <button className={ghostClass} disabled={busy !== null} onClick={() => run('suspend', async () => { await setEmployeeStatus(companyId, employee.id, 'SUSPENDED'); onChanged(); }, 'ระงับพนักงานชั่วคราวแล้ว')}>
+          <button className={ghostClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('suspend', async () => { await setEmployeeStatus(companyId, employee.id, 'SUSPENDED'); onChanged(); }, 'ระงับพนักงานชั่วคราวแล้ว')}>
             ระงับชั่วคราว
           </button>
         )}
         {employee.status !== 'DISABLED' && (
-          <button className={dangerClass} disabled={busy !== null} onClick={() => run('disable', async () => { await setEmployeeStatus(companyId, employee.id, 'DISABLED'); onChanged(); }, 'ปิดการใช้งานพนักงานแล้ว')}>
+          <button className={dangerClass} disabled={busy !== null} aria-busy={Boolean(busy !== null)} onClick={() => run('disable', async () => { await setEmployeeStatus(companyId, employee.id, 'DISABLED'); onChanged(); }, 'ปิดการใช้งานพนักงานแล้ว')}>
             <TrashIcon className="h-4 w-4" />
             ปิดการใช้งาน
           </button>
@@ -863,7 +863,7 @@ function RolesView({ companyId }: { companyId: string }) {
                     <button className={ghostClass} disabled={!canEditRoles} onClick={() => setEditingRoleId(editingRoleId === role.id ? null : role.id)}>
                       {editingRoleId === role.id ? 'ย่อ' : 'แก้ไข'}
                     </button>
-                    <button className={dangerClass} disabled={!canEditRoles || disablingRoleId !== null} onClick={async () => { setDisablingRoleId(role.id); try { await disableRole(companyId, role.id); toast.success('ปิดใช้งานบทบาทแล้ว'); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } finally { setDisablingRoleId(null); } }}>
+                    <button className={dangerClass} disabled={!canEditRoles || disablingRoleId !== null} aria-busy={Boolean(disablingRoleId === role.id)} onClick={async () => { setDisablingRoleId(role.id); try { await disableRole(companyId, role.id); toast.success('ปิดใช้งานบทบาทแล้ว'); void reload(); } catch (e) { setError(localizedErrorMessage(e, locale, { fallback: 'error.save_failed' })); } finally { setDisablingRoleId(null); } }}>
                       <TrashIcon className="h-4 w-4" />
                       {disablingRoleId === role.id ? 'กำลังปิดใช้งาน...' : 'ปิดใช้งาน'}
                     </button>
@@ -1125,7 +1125,7 @@ export function RoleBuilder({ companyId, packModules, allPacks, templates, roleO
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 pt-4">
         <button type="button" className={ghostClass} onClick={onCancel}>ยกเลิก</button>
-        <button type="submit" className={btnClass} disabled={saving || !roleOptionsAvailable}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
+        <button type="submit" className={btnClass} disabled={saving || !roleOptionsAvailable} aria-busy={Boolean(saving)}>{saving ? 'กำลังบันทึก...' : 'บันทึก'}</button>
       </div>
       </div>
     </form>

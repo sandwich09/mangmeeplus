@@ -102,7 +102,7 @@ export default function PlatformAccessPage() {
               <button
                 type="button"
                 className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
-                disabled={saving || !status.canOpen || status.effectiveState === 'OPEN'}
+                disabled={saving || !status.canOpen || status.effectiveState === 'OPEN'} aria-busy={Boolean(saving)}
                 onClick={() => void change('OPEN')}
               >
                 เปิดระบบ
@@ -110,7 +110,7 @@ export default function PlatformAccessPage() {
               <button
                 type="button"
                 className="mangmee-btn border border-red-200 bg-white text-red-700 hover:bg-red-50 disabled:opacity-50"
-                disabled={saving || status.effectiveState === 'CLOSED'}
+                disabled={saving || status.effectiveState === 'CLOSED'} aria-busy={Boolean(saving)}
                 onClick={() => void change('CLOSED')}
               >
                 ปิดระบบ

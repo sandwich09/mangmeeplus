@@ -118,7 +118,7 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
             <input required name="priority" type="number" defaultValue="100" className={field} />
             <ThemedDate required name="effectiveFrom" className={field} />
             <ThemedDate name="effectiveTo" className={field} />
-            <button disabled={busy || !selected || !accounts.length} className={button}>บันทึกกฎบัญชี</button>
+            <button disabled={busy || !selected || !accounts.length} aria-busy={Boolean(busy)} className={button}>บันทึกกฎบัญชี</button>
           </form>
           {importGoodsDefinition && <p className="mt-3 text-xs text-gray-500">Import Goods ต้องมี paired debit/credit rules แยกสำหรับ Import VAT, ศุลกากร, สรรพสามิต และภาษีนำเข้าอื่น; component rules ไม่สร้าง Tax Code เพิ่ม</p>}
         </MangmeeCard>
@@ -132,7 +132,7 @@ export function TaxAccountSettingsPage({ companyId, permissions }: { companyId: 
             <ThemedSelect name="signRule" defaultValue="NORMAL"><option value="NORMAL">Normal</option><option value="INVERT">Invert</option></ThemedSelect>
             <ThemedDate required name="effectiveFrom" className={field} />
             <ThemedDate name="effectiveTo" className={field} />
-            <button disabled={busy || !selected} className={button}>บันทึกกฎรายงาน</button>
+            <button disabled={busy || !selected} aria-busy={Boolean(busy)} className={button}>บันทึกกฎรายงาน</button>
           </form>
         </MangmeeCard>
       </div>}

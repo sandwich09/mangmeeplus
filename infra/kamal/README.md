@@ -5,6 +5,7 @@ Two entry points share the same executor:
 ```sh
 infra/kamal/deploy-prod --profile <deployment-profile>             # read-only preflight
 infra/kamal/deploy-uat --profile <deployment-profile>              # read-only preflight
+infra/kamal/deploy-prod --profile <deployment-profile> --prepare   # build main + full config/image checks, no deployment
 infra/kamal/deploy-prod --profile <deployment-profile> --apply     # hotfix, no pending migrations
 infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, applies safe pending migrations
 ```
@@ -12,6 +13,56 @@ infra/kamal/deploy-uat --profile <deployment-profile> --apply      # normal, app
 `--mode hotfix|normal` is explicit and available on either wrapper. The wrapper seals the environment;
 passing `--environment` cannot turn the UAT command into Production. There is no implicit bootstrap,
 infrastructure creation, gate opening, DNS change or fallback to another environment.
+
+## Preparing the Production command
+
+Production uses the same build/config/rollout executor as UAT, with its own target, live ECS baseline,
+Secrets Manager versions, AgentCore endpoints, registry, signing key and acceptance account.
+[production-target.example.json](production-target.example.json) lists the enrollment fields. It is
+intentionally rejected as a target: all resource placeholders need verified Production values and
+`cutoverComplete` is false. Create the private `.env.kamal/production/target.json` only as part of
+actual enrollment; do not copy UAT's target or turn this flag on to bypass infrastructure preparation.
+API hosts must span two AZs and be separate from AI/workers. AI and workers may share a host.
+
+After enrollment, run from the checkout containing the command:
+
+```sh
+infra/kamal/deploy-prod --profile <non-root-production-profile> --prepare
+```
+
+This runs the existing target preflight, fetches and pins `origin/main`, builds TypeScript and all
+four images plus AgentCore, validates the complete Production environment/secrets against the built
+images and migration/sync artifact catalog, renders all three native Kamal configs, and rereads
+baseline configuration/secret versions for drift. A local controller can be prepared before merge;
+its file hashes are recorded. Application code and tracked `config.json` still come from pinned main.
+Default invocation without `--prepare` or `--apply` remains target preflight only.
+
+Preparation performs local builds and cloud reads. It never acquires a remote lock, pushes/pulls to
+target hosts, updates AgentCore, writes database/catalog state, deploys containers, changes customer
+access, retires builds, or signs deployment acceptance. Existing unresolved deployments and local
+concurrent operations still block it. Success is `PREPARED_NO_DEPLOYMENT` in the private run's
+`result.json`; errors are terminal, with no automatic retry. `--prepare` rejects both `--apply` and
+`--rollback` combinations. It is also supported by `deploy-uat`.
+
+This is configuration/build preparation for an enrolled target, not an ECS-to-Kamal cutover tool.
+It does not prove write permissions, migration compatibility with the live DB, target pull/start
+behavior, customer journeys, or future runtime readiness. A full accepted Production deployment has
+not been measured; UAT's timings are not a Production guarantee. Do not count preparation time as
+zero when reporting an end-to-end release. `--apply` fetches/revalidates and builds current main again;
+it does not promote cached preparation evidence as proof of the newly selected source.
+
+After the controller is merged and the separate Production migration is approved/enrolled, the
+existing apply commands remain:
+
+```sh
+infra/kamal/deploy-prod --profile <non-root-production-profile> --mode hotfix --apply
+infra/kamal/deploy-prod --profile <non-root-production-profile> --mode normal --apply
+```
+
+Use one of these modes, not two runs. Hotfix refuses pending migrations; normal mode runs the existing
+migration safety checks. Production apply still requires the exact main controller and authenticated
+Production acceptance; UAT smoke/browser flags remain rejected. Until the Production migration is
+approved, continue using the [V2 Production protocol](../../docs/runbooks/uat-production-v2-deployment.md).
 
 **Current deployment status:** PR551/552 are merged. Main `6b95e505` deployed successfully to real
 UAT twice with complete config/readiness and verified KMS signatures, without repair or retry:
@@ -37,6 +88,66 @@ claim authenticated or LINE journeys were exercised. This mode rejects Productio
 with browser acceptance. Production still follows the [V2 protocol](../../docs/runbooks/uat-production-v2-deployment.md).
 
 ## Once per environment
+
+### Isolated database and runtime rehearsal
+
+`rehearse-database.py` exercises the actual DB controller against an empty PostgreSQL bootstrapped
+from a supplied exact deployed-source migration catalog, followed by the candidate image's normal
+upgrade and hotfix checks. Optional runtime checks start the three actual images on an internal
+Docker network, regenerate every secret, compare complete container environments and run the shared
+deep-readiness probes in deploy order. They reject runtime error logs and remove only their own test
+containers/network. They never publish a host port or pass cloud credentials into containers.
+
+```sh
+python3 infra/kamal/rehearse-database.py \
+  --manifest <validated-private-inventory.json> \
+  --baseline-ref <exact-deployed-source-sha> \
+  --postgres-image postgres:18.3-alpine \
+  --runtime-baseline <private-capture-config-directory> \
+  --redis-image <existing-local-redis-image> \
+  --tls \
+  --output <new-private-output-directory>
+```
+
+Use the engine observed in Production, not an assumed local default. `--tls` uses a disposable CA,
+the same `verify-full` database URL options, and authenticated `rediss`; plaintext database TCP is
+rejected. The actual database client reads its session's TLS state. The CA replacement is test-only;
+this does not prove the AWS certificate chain, managed Redis version, cloud connectivity or HA.
+Omit the two runtime options
+for DB-only checks. The source-based schema is not a live migration ledger/data snapshot. Local
+containers do not prove ECR, IAM, AgentCore, native multi-host rollout, AWS TLS/HA, storage or customer
+acceptance. [Observed results and remaining gaps](../../docs/agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+### Isolated AWS core rehearsal
+
+`rehearse-cloud.py` runs the existing shared Release build/config/ECR/migration/native rollout and
+readback methods on the exact enrolled disposable Dev. It captures fresh Production config, replaces
+every secret and external data route, uses synthetic PostgreSQL18.3/TLS plus authenticated Redis TLS,
+and validates all candidate environment keys. The baseline catalog must match the observed live ledger.
+The private target, existing bootstrap tools image and official dependency digests are explicit inputs:
+
+```sh
+python3 infra/kamal/rehearse-cloud.py \
+  --target <enrolled-private-dev-target.json> --profile <dev-deploy-profile> \
+  --baseline-ref <verified-production-source-sha> \
+  --bootstrap-tools-image <existing-dev-tools-image> \
+  --postgres-image <official-postgres-digest> --redis-image <official-redis-digest>
+```
+
+It only accepts the existing Dev instance/service and powers it off in `finally`. It parks previous Dev
+workloads without deleting their data. The operator must verify AWS stopped state and remove only any
+approved temporary ingress. Retained fixtures may restart with the host: inspect them before reuse.
+Do not rerun after failure until original logs, lock and cloud state are reconciled. Linux Redis fixtures
+run as their private config owner with a private writable data mount; do not make secret files public.
+
+Setup and deploy clocks are separate; all phases, errors and shutdown time are retained. This bypasses
+the full release orchestration for an explicitly scoped core experiment: no provider update, launch
+retirement, customer OPEN/signing or Production target acceptance. A passed result must never be
+called a Production release or stable full-deploy time. First AWS core proof passed507.797s with cache
+(whole command569.800s), gate CLOSED, then Dev was stopped and temporary ingress removed.
+[Evidence and parity gaps](../../docs/agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+### Target enrollment
 
 Enroll `.env.kamal/production/target.json` or `.env.kamal/uat/target.json`, mode `0600`. Do not commit
 private files. The `.env.*` paths are ignored by Git. The target must contain:
