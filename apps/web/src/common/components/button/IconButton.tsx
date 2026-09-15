@@ -6,6 +6,7 @@ import type { ButtonVariant, ButtonSize } from './Button';
 export interface IconButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon: React.ReactNode;
   label: string;
+  loading?: boolean;
   variant?: Extract<ButtonVariant, 'ghost' | 'secondary'>;
   size?: Extract<ButtonSize, 'sm' | 'md'>;
 }
@@ -26,26 +27,29 @@ export function IconButton({
   variant = 'ghost',
   size = 'md',
   disabled,
+  loading = false,
   className,
   ...rest
 }: IconButtonProps) {
   return (
     <button
       {...rest}
-      disabled={disabled}
+      disabled={disabled || loading}
       aria-label={label}
-      aria-disabled={disabled}
+      aria-disabled={disabled || loading}
+      aria-busy={loading}
+      data-loading-indicator
       className={[
         'inline-flex items-center justify-center rounded-lg transition-colors',
         variantClass[variant],
         sizeClass[size],
-        disabled ? 'opacity-50 cursor-not-allowed' : '',
+        disabled || loading ? 'opacity-50 cursor-not-allowed' : '',
         className ?? '',
       ]
         .filter(Boolean)
         .join(' ')}
     >
-      {icon}
+      {loading ? <span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" /> : icon}
     </button>
   );
 }

@@ -14,7 +14,7 @@ import { useBranchFilter } from '@/features/web-core-workspace/WorkspaceScope';
 import { ErrorBanner, baht, err, inputClass, btnClass, ghostClass } from '@/features/expenses/ExpensesUi';
 import { todayCivilDate } from '@watchdog-bms/contracts';
 import type { AccountingPaymentMethod, RevenueCategorySummary } from '@watchdog-bms/contracts';
-import { ATTACHMENT_UPLOAD_ACCEPT, uploadFileValidationError } from '@/common/files/upload-file.logic';
+import { ATTACHMENT_UPLOAD_ACCEPT, uploadSourceFileValidationError } from '@/common/files/upload-file.logic';
 import {
   createDocument,
   getVatRegistrationStatus,
@@ -361,7 +361,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
             <ErrorBanner message={`บันทึกรายรับและออกใบเสร็จแล้ว แต่แนบไฟล์ไม่สำเร็จ: ${error ?? 'เกิดข้อผิดพลาด'}`} />
             <p className="text-base leading-relaxed text-gray-800">รายการไม่สูญหายและระบบจะไม่บันทึกซ้ำ ลองแนบไฟล์เดิมอีกครั้ง หรือเปิดเอกสารที่บันทึกแล้ว</p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" className={`${btnClass} h-12`} disabled={busy} onClick={() => void submit()}>
+              <button type="button" className={`${btnClass} h-12`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void submit()}>
                 {busy ? 'กำลังแนบไฟล์...' : 'ลองแนบไฟล์อีกครั้ง'}
               </button>
               <a className={`${ghostClass} flex h-12 items-center justify-center`} href={`/companies/${companyId}/sales-documents?documentId=${encodeURIComponent(savedReceived.invoice.id)}`}>
@@ -377,7 +377,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
               {failedStep === 'attachment' ? ' ลองแนบไฟล์อีกครั้ง หรือเปิดร่างเพื่อตรวจสอบ' : ' ลองออกบิลอีกครั้ง หรือเปิดร่างเพื่อตรวจและออกบิลจากหน้าเอกสารขาย'}
             </p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" className={`${btnClass} h-12`} disabled={busy} onClick={() => void submit()}>
+              <button type="button" className={`${btnClass} h-12`} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void submit()}>
                 {busy ? 'กำลังทำรายการ...' : failedStep === 'attachment' ? 'ลองแนบไฟล์อีกครั้ง' : 'ลองออกบิลอีกครั้ง'}
               </button>
               <a className={`${ghostClass} flex h-12 items-center justify-center`} href={`/companies/${companyId}/sales-documents?documentId=${encodeURIComponent(failedDraft.id)}`}>
@@ -584,14 +584,14 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
                         accept={ATTACHMENT_UPLOAD_ACCEPT}
                         onChange={(event) => {
                           const file = event.target.files?.[0] ?? null;
-                          const fileError = file ? uploadFileValidationError(file) : null;
+                          const fileError = file ? uploadSourceFileValidationError(file) : null;
                           setAttachmentError(fileError);
                           setAttachmentFile(fileError ? null : file);
                           setAttachmentLinked(false);
                         }}
                         aria-label="ไฟล์แนบเอกสารขาย"
                       />
-                      <span className="mt-1 block text-base text-gray-500">รองรับ PDF, JPG และ PNG</span>
+                      <span className="mt-1 block text-base text-gray-500">รองรับ PDF, JPG/JPEG, PNG, HEIC/HEIF และ GIF</span>
                       {attachmentError && <span className="mt-1 block text-base font-semibold text-red-700">{attachmentError}</span>}
                     </label>
                   )}
@@ -625,7 +625,7 @@ function IncomeForm({ companyId, mode, canIssueInvoice, canAttach, onBack }: {
                 </>
               )}
             </dl>
-            <button type="button" className={`${btnClass} mt-3 h-14 w-full text-base`} disabled={busy || !!blocker} onClick={() => void submit()}>
+            <button type="button" className={`${btnClass} mt-3 h-14 w-full text-base`} disabled={busy || !!blocker} aria-busy={Boolean(busy)} onClick={() => void submit()}>
               {busy ? 'กำลังบันทึก...' : cta}
             </button>
             {blocker && !busy && <p role="status" className="mt-2 text-center text-base font-medium text-gray-600">{blocker}</p>}

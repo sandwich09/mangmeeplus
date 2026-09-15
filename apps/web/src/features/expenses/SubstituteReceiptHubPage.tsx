@@ -18,7 +18,7 @@ import { Modal } from '@/common/components/modal/Modal';
 import { useConfirm } from '@/common/components/modal/use-confirm';
 import { useToast } from '@/common/components/toast';
 import { sanitizeReasonInput } from '@/common/forms/sanitize';
-import { LoadingState } from '@/common/components/state';
+import { CoverLoader, LoadingState } from '@/common/components/state';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
 import { t } from '@/common/i18n/workspace-i18n.logic';
 import type { DictionaryKey } from '@/common/i18n/workspace-dictionary';
@@ -58,7 +58,7 @@ const STATUS_BADGES: Record<SubstituteReceiptEvidenceStatus, string> = {
   SUPERSEDED: 'VOIDED',
 };
 
-type PreviewTarget = { item: SubstituteReceiptListItem; data: SubstituteReceiptPaperPreview };
+type PreviewTarget = { item: SubstituteReceiptListItem; data: SubstituteReceiptPaperPreview | null };
 
 const PRINT_ICON = <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7zM17 11h1" /></svg>;
 
@@ -119,12 +119,15 @@ function ReceiptActions({ item, canReview, canContinue, busy, onEdit, onOpen, on
   </>;
 }
 
-function ReceiptPrintPreview({ target, onClose }: { target: PreviewTarget; onClose: () => void }) {
+function ReceiptPrintPreview({ target, loading, error, onRetry, onClose }: {
+  target: PreviewTarget; loading: boolean; error: string | null; onRetry: () => void; onClose: () => void;
+}) {
   const [loaded, setLoaded] = useState<number[]>([]);
   const [failed, setFailed] = useState(false);
   const [pdfUrl, setPdfUrl] = useState('');
-  const pages = target.data.pageImageDataUrls ?? [];
+  const pages = target.data?.pageImageDataUrls ?? [];
   useEffect(() => {
+    if (!target.data) return;
     let url = '';
     try {
       const prefix = 'data:application/pdf;base64,';
@@ -134,9 +137,10 @@ function ReceiptPrintPreview({ target, onClose }: { target: PreviewTarget; onClo
       setPdfUrl(url);
     } catch { setFailed(true); }
     return () => { if (url) URL.revokeObjectURL(url); };
-  }, [target.data.pdfDataUrl]);
+  }, [target.data?.pdfDataUrl]);
   return <Modal open title={target.item.documentNumber} onClose={onClose} size="xl" printSurface
     bodyClassName="bg-gray-100 p-3 sm:p-5" footer={<>
+      {error && <button type="button" className={ghostClass} disabled={loading} aria-busy={loading} onClick={onRetry}>ลองเปิดใหม่</button>}
       {failed && <span className="text-sm text-error-700">โหลดเอกสารไม่ครบ กรุณาปิดแล้วเปิดใหม่</span>}
       {pdfUrl && <a className={ghostClass} href={pdfUrl} download={`${target.item.documentNumber}.pdf`}>ดาวน์โหลด PDF</a>}
       <button type="button" className={btnClass} disabled={failed || !pages.length || loaded.length !== pages.length} onClick={() => window.print()}>{PRINT_ICON} พิมพ์</button>
@@ -144,11 +148,16 @@ function ReceiptPrintPreview({ target, onClose }: { target: PreviewTarget; onClo
     <p className="modal-print-hide mb-4 text-sm font-semibold text-gray-700">{target.item.status === 'PREPARED'
       ? target.item.paperSubmission ? 'ฉบับลงนามรอตรวจรับ' : target.item.signatureMode === 'PAPER' ? 'แบบฟอร์มสำหรับกรอกและลงนามบนกระดาษ' : 'ฉบับรอลงนาม'
       : target.item.status === 'PAYER_CERTIFIED' ? 'ฉบับลงนามแล้ว รออนุมัติ' : target.item.status === 'ISSUED' ? 'ฉบับสมบูรณ์' : 'ฉบับประวัติที่ยกเลิกหรือถูกแทนที่'}</p>
-    {pages.map((page, index) => <div key={index} className="mb-4 last:mb-0 print:mb-0 print:break-after-page print:last:break-after-auto">
-      {/* Generated page images preserve every page on paper, including uploaded scans. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={page} alt={`เอกสารหน้า ${index + 1}`} className="mx-auto block h-auto w-full max-w-[794px] bg-white" onLoad={() => setLoaded((current) => current.includes(index) ? current : [...current, index])} onError={() => setFailed(true)} />
-    </div>)}
+    {error && <ErrorBanner message={error} />}
+    <CoverLoader active={loading || (!failed && !!target.data && loaded.length !== pages.length)} scope="section" label="กำลังเปิดเอกสาร...">
+      <div className="min-h-[50dvh] print:min-h-0">
+        {pages.map((page, index) => <div key={index} className="mb-4 last:mb-0 print:mb-0 print:break-after-page print:last:break-after-auto">
+          {/* Generated page images preserve every page on paper, including uploaded scans. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={page} alt={`เอกสารหน้า ${index + 1}`} className="mx-auto block h-auto w-full max-w-[794px] bg-white" onLoad={() => setLoaded((current) => current.includes(index) ? current : [...current, index])} onError={() => setFailed(true)} />
+        </div>)}
+      </div>
+    </CoverLoader>
   </Modal>;
 }
 
@@ -177,6 +186,7 @@ export function SubstituteReceiptHubPage({
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null);
   const previewRequestRef = useRef(0);
+  const previewPendingRef = useRef(false);
   const [cancelTarget, setCancelTarget] = useState<SubstituteReceiptListItem | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelling, setCancelling] = useState(false);
@@ -222,13 +232,16 @@ export function SubstituteReceiptHubPage({
   const wizardHref = (evidenceId: string) => `/companies/${companyId}/expenses/substitute-receipts/${encodeURIComponent(evidenceId)}`;
 
   async function openDocument(item: SubstituteReceiptListItem) {
+    if (previewPendingRef.current || cancelPendingRef.current) return;
+    previewPendingRef.current = true;
     const requestId = ++previewRequestRef.current;
     setPreviewLoadingId(item.evidenceId); setActionError(null);
+    setPreview({ item, data: null });
     try {
       const data = await previewIssuedSubstitutePaper(companyId, item.expenseId, item.evidenceId);
       if (requestId === previewRequestRef.current) setPreview({ item, data });
     } catch (error) { if (requestId === previewRequestRef.current) setActionError(err(error)); }
-    finally { if (requestId === previewRequestRef.current) setPreviewLoadingId(null); }
+    finally { previewPendingRef.current = false; if (requestId === previewRequestRef.current) setPreviewLoadingId(null); }
   }
 
   async function confirmCancellation() {
@@ -276,7 +289,7 @@ export function SubstituteReceiptHubPage({
       ) : result ? (
         <div className="space-y-5">
           {actionError && <ErrorBanner message={actionError} />}
-          {previewLoadingId && <p role="status" className="text-sm text-gray-600">กำลังเปิดเอกสาร...</p>}
+          {cancelling && <p role="status" className="flex items-center gap-2 text-sm text-gray-600"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังยกเลิกเอกสาร...</p>}
 
           {hasWaitingWork && (
             <section>
@@ -421,11 +434,13 @@ export function SubstituteReceiptHubPage({
         </div>
       ) : null}
       </MangmeePage>
-      {preview && <ReceiptPrintPreview key={`${preview.item.evidenceId}:${preview.data.previewChecksumSha256}`} target={preview} onClose={() => { closePreview(); setRefresh((value) => value + 1); }} />}
+      {preview && <ReceiptPrintPreview key={`${preview.item.evidenceId}:${preview.data?.previewChecksumSha256 ?? 'pending'}`} target={preview}
+        loading={previewLoadingId !== null} error={actionError} onRetry={() => void openDocument(preview.item)}
+        onClose={() => { closePreview(); setRefresh((value) => value + 1); }} />}
       <Modal open={cancelTarget !== null} title={`ยกเลิกเอกสาร ${cancelTarget?.documentNumber ?? ''}`} onClose={() => setCancelTarget(null)} size="sm"
         footer={<>
           <button type="button" className={ghostClass} onClick={() => setCancelTarget(null)}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={!cancelReason.trim() || cancelling} onClick={() => void confirmCancellation()}>ดำเนินการยกเลิก</button>
+          <button type="button" className={dangerClass} disabled={!cancelReason.trim() || cancelling} aria-busy={Boolean(cancelling)} onClick={() => void confirmCancellation()}>ดำเนินการยกเลิก</button>
         </>}>
         <p className="mb-4 text-sm text-gray-600">เอกสารจะถูกยกเลิกและเก็บไว้ในประวัติ การยกเลิกเอกสารไม่ลบรายการค่าใช้จ่ายและไม่ย้อนรายการจ่ายเงิน</p>
         <label className="block text-sm font-semibold text-gray-700">เหตุผลที่ยกเลิก <span className="text-error-700">*</span>

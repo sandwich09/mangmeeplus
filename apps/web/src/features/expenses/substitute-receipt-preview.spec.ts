@@ -62,6 +62,18 @@ function sourceSection(source: string, start: string, end: string): string {
 }
 
 describe('substitute-receipt state-aware document preview', () => {
+  it('opens the modal before waiting and covers its document area through image readiness', () => {
+    const openDocument = sourceSection(hubSource, 'async function openDocument', 'async function confirmCancellation');
+    const pending = openDocument.indexOf('setPreview({ item, data: null })');
+    const request = openDocument.indexOf('await previewIssuedSubstitutePaper');
+    assert.ok(pending >= 0 && pending < request, 'the visible modal must not wait for the API');
+    assert.match(hubSource, /<CoverLoader active=\{loading \|\| \(!failed && !!target\.data && loaded\.length !== pages\.length\)\} scope="section"/);
+    assert.match(hubSource, /min-h-\[50dvh\]/);
+    assert.match(hubSource, /error && <ErrorBanner message=\{error\}/);
+    assert.match(hubSource, /disabled=\{loading\} aria-busy=\{loading\} onClick=\{onRetry\}/);
+    assert.doesNotMatch(hubSource, /previewLoadingId && <p role="status"/);
+  });
+
   it('only publishes the newest authenticated preview and invalidates close/company changes', () => {
     assert.match(hubSource, /previewIssuedSubstitutePaper\(companyId, item\.expenseId, item\.evidenceId\)/);
     assert.match(hubSource, /const requestId = \+\+previewRequestRef\.current/);

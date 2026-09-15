@@ -223,7 +223,7 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
           {can('ledger.posting-rule.read') && <Link href={`/companies/${companyId}/settings/tax-accounts`} className={ghostClass}>บัญชีภาษี</Link>}
           {can('tax.report.read') && <Link href={`/companies/${companyId}/tax/reconciliation`} className={ghostClass}>Reconciliation</Link>}
           {can('tax.config.read') && <Link href={`/companies/${companyId}/tax/evidence`} className={ghostClass}>หลักฐานนำเข้า/ส่งออก</Link>}
-          {can('tax.event.sync') && <button onClick={handleSync} disabled={syncing} className={btnClass}>{syncing ? 'กำลังซิงค์...' : 'ซิงค์แหล่งข้อมูล'}</button>}
+          {can('tax.event.sync') && <button onClick={handleSync} disabled={syncing} aria-busy={Boolean(syncing)} className={btnClass}>{syncing ? 'กำลังซิงค์...' : 'ซิงค์แหล่งข้อมูล'}</button>}
         </div>
       )}
     >
@@ -314,17 +314,17 @@ export function TaxWorkspacePage({ companyId, permissions }: { companyId: string
                           placeholder="หมายเหตุ (ถ้ามี)"
                           className={`${inputClass} w-40`}
                         />
-                        {can('tax.filing.mark_filed') && <button onClick={handleMarkFiled} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'mark-filed' ? 'กำลังบันทึก...' : 'ยื่นแบบแล้ว'}</button>}
-                        {can('tax.filing.mark_paid') && <button onClick={handleMarkPaid} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'mark-paid' ? 'กำลังบันทึก...' : 'ชำระแล้ว'}</button>}
+                        {can('tax.filing.mark_filed') && <button onClick={handleMarkFiled} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'mark-filed')} className={ghostClass}>{busyAction === 'mark-filed' ? 'กำลังบันทึก...' : 'ยื่นแบบแล้ว'}</button>}
+                        {can('tax.filing.mark_paid') && <button onClick={handleMarkPaid} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'mark-paid')} className={ghostClass}>{busyAction === 'mark-paid' ? 'กำลังบันทึก...' : 'ชำระแล้ว'}</button>}
                       </div>
                     )}
                   </div>
                   <div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                     {selectedPeriod.taxType !== 'CIT' && can('tax.report.recompute') && (
-                      <button onClick={handleGenerateReport} disabled={busyAction !== null} className={ghostClass}>{busyAction === 'report' ? 'กำลังคำนวณ...' : 'คำนวณรายงาน'}</button>
+                      <button onClick={handleGenerateReport} disabled={busyAction !== null} aria-busy={Boolean(busyAction === 'report')} className={ghostClass}>{busyAction === 'report' ? 'กำลังคำนวณ...' : 'คำนวณรายงาน'}</button>
                     )}
                     {can('tax.report.export') && (['REVIEW_JSON', 'CSV', 'XLSX', 'PDF'] as TaxExportFormat[]).map(format => (
-                      <button key={format} onClick={() => handleExport(format)} disabled={busyAction !== null} className={ghostClass}>
+                      <button key={format} onClick={() => handleExport(format)} disabled={busyAction !== null} aria-busy={Boolean(busyAction === `export-${format}`)} className={ghostClass}>
                         {busyAction === `export-${format}` ? 'กำลังส่งออก...' : `Export ${format}`}
                       </button>
                     ))}
@@ -464,7 +464,7 @@ function WhtIncomeCategoryPanel({ companyId, canManage, canRead }: { companyId: 
                   {canManage && (
                     <button
                       className={row.status === 'ACTIVE' ? ghostClass : btnClass}
-                      disabled={busyCode === row.code}
+                      disabled={busyCode === row.code} aria-busy={Boolean(busyCode === row.code)}
                       onClick={() => void toggle(row)}
                     >
                       {row.status === 'ACTIVE' ? 'คืนเป็นร่าง' : 'เปิดใช้งาน'}

@@ -124,7 +124,7 @@ function RejectDialog({ requestNo, busy, error, onClose, onConfirm }: {
         <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed}
+          <button type="button" className={dangerClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>ปฏิเสธคำขอ</button>
         </div>
       </div>
@@ -157,7 +157,7 @@ function ReasonDialog({ title, description, confirmLabel, busy, error, danger = 
         <div className="text-right text-xs text-gray-400 tabular-nums">{reason.length}/500</div>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed}
+          <button type="button" className={danger ? dangerClass : btnClass} disabled={busy || !trimmed} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>{confirmLabel}</button>
         </div>
       </div>
@@ -193,7 +193,7 @@ function VoidPaymentDialog({ payment, busy, error, onClose, onConfirm }: {
         </label>
         <div className="flex justify-end gap-2">
           <button type="button" className={ghostClass} onClick={onClose}>กลับ</button>
-          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged}
+          <button type="button" className={dangerClass} disabled={busy || !trimmed || !acknowledged} aria-busy={Boolean(busy)}
             onClick={() => onConfirm(trimmed)}>ยืนยันยกเลิกการจ่าย</button>
         </div>
       </div>
@@ -221,7 +221,7 @@ function StaleApprovalDialog({ requestNo, diff, lines, currency, busy, error, on
       footer={(
         <>
           <button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button>
-          <button type="button" className={successBtn} style={successBtnStyle} disabled={busy} onClick={onConfirm}>
+          <button type="button" className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onConfirm}>
             อนุมัติด้วยข้อมูลล่าสุด
           </button>
         </>
@@ -342,6 +342,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   const [detail, setDetail] = useState<any | null>(null);
   const [drawerError, setDrawerError] = useState<string | null>(null);
   const [drawerBusy, setDrawerBusy] = useState(false);
+  const detailOpenPendingRef = useRef(false);
   const [payFor, setPayFor] = useState<any | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   // ใบเบิกค่าใช้จ่าย: rendered server-side as SVG, shown in the viewer, saved as PDF from there.
@@ -408,6 +409,8 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
   }, [companyId, detail?.id, closeDocumentPreview]);
 
   const openDetail = useCallback(async (id: string, requestedAction?: 'cancel') => {
+    if (detailOpenPendingRef.current) return;
+    detailOpenPendingRef.current = true;
     closeDocumentPreview();
     setDrawerBusy(true); setDrawerError(null);
     try {
@@ -415,7 +418,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       if (requestedAction === 'cancel') setCancelling(true);
     }
     catch (e) { setDrawerError(err(e)); }
-    finally { setDrawerBusy(false); }
+    finally { detailOpenPendingRef.current = false; setDrawerBusy(false); }
   }, [closeDocumentPreview, companyId]);
 
   useEffect(() => { if (focusId) void openDetail(focusId); }, [focusId, requestedTab, openDetail]);
@@ -614,6 +617,8 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       {tab === 'approvals' && <ApprovalQueue {...queueProps} />}
       {tab === 'finance' && <FinanceQueue {...queueProps} onRecordPayment={setPayFor} />}
       {tab === 'policy' && <PolicySettings companyId={companyId} />}
+      {drawerBusy && !detail && <LoadingState label="กำลังเปิดใบเบิก..." size="sm" />}
+      {!detail && drawerError && <ErrorBanner message={drawerError} />}
 
       {detail && <DetailDrawer
         companyId={companyId}
@@ -669,7 +674,7 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
             <button
               className={successBtn}
               style={successBtnStyle}
-              disabled={claimFormSaving}
+              disabled={claimFormSaving} aria-busy={Boolean(claimFormSaving)}
               onClick={() => void downloadClaimForm()}
             >
               {claimFormSaving ? 'กำลังสร้างไฟล์...' : 'ดาวน์โหลด PDF'}
@@ -968,9 +973,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                               className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')}
                               title={reimbursementSubmitReadiness(r).message}
                               onClick={e => { e.stopPropagation(); action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว'); }}
-                              disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked}
+                              disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
                             >ส่งอนุมัติ</button>}
-                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onRequestCancel(r.id); }} disabled={busy === r.id}>ยกเลิก</button>}
+                            {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} onClick={e => { e.stopPropagation(); onRequestCancel(r.id); }} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                           </div>
                         </td>
                       </tr>
@@ -1008,9 +1013,9 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
                         className={cx(btnClass, 'min-h-11 w-full')}
                         title={reimbursementSubmitReadiness(r).message}
                         onClick={() => action(r.id, () => submitReimbursement(companyId, r.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}
-                        disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked}
+                        disabled={busy === r.id || reimbursementSubmitReadiness(r).blocked} aria-busy={Boolean(busy === r.id)}
                       >ส่งอนุมัติ</button>}
-                      {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onRequestCancel(r.id)} disabled={busy === r.id}>ยกเลิก</button>}
+                      {reimbursementOwnActions(r, userId, permissions).canCancel && <button className={cx(ghostClass, 'min-h-11 w-full')} onClick={() => onRequestCancel(r.id)} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)}>ยกเลิก</button>}
                     </div>
                   )}
                 </MangmeeCard>
@@ -1075,16 +1080,16 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
   const footerButtons = detail.requestNo || showActions ? (
     <>
       {/* No requestNo, no document: drafts and claims cancelled out of DRAFT never got one. */}
-      {detail.requestNo && detail.status !== 'DRAFT' && <button className={ghostClass} disabled={busy} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
+      {detail.requestNo && detail.status !== 'DRAFT' && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onPrintClaimForm}>พิมพ์ใบเบิก</button>}
       {canEditDraft && <Link className={btnClass} href={`/companies/${companyId}/reimbursements/${detail.id}/edit`}>{detail.financeReviewStatus === 'NEEDS_INFO' ? 'แก้ไขตามคำขอ' : 'แก้ไขคำขอ'}</Link>}
-      {canSubmit && <button className={btnClass} title={submitReadiness.message} disabled={busy || submitReadiness.blocked} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
-      {canCancel && <button className={ghostClass} disabled={busy} onClick={onRequestCancel}>ยกเลิกคำขอ</button>}
-      {canReopen && <button className={btnClass} disabled={busy} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
-      {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} onClick={onApprove}>อนุมัติ</button>}
-      {canReject && <button className={dangerClass} disabled={busy} onClick={onRequestReject}>ปฏิเสธ</button>}
-      {canFinanceReview && <button className={successBtn} style={successBtnStyle} disabled={busy || duplicateResolutionBlocked} title={duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
-      {canRequestCorrection && <button className={ghostClass} disabled={busy} onClick={onRequestCorrection}>ส่งกลับให้แก้ไข</button>}
-      {canPay && <button className={btnClass} disabled={busy} onClick={onRecordPayment}>บันทึกจ่าย</button>}
+      {canSubmit && <button className={btnClass} title={submitReadiness.message} disabled={busy || submitReadiness.blocked} aria-busy={Boolean(busy)} onClick={onSubmit}>{busy ? 'กำลังดำเนินการ...' : 'ส่งอนุมัติ'}</button>}
+      {canCancel && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestCancel}>ยกเลิกคำขอ</button>}
+      {canReopen && <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onReopen}>{busy ? 'กำลังดำเนินการ...' : 'แก้ไขและยื่นใหม่'}</button>}
+      {canApprove && <button className={successBtn} style={successBtnStyle} disabled={busy} aria-busy={Boolean(busy)} onClick={onApprove}>อนุมัติ</button>}
+      {canReject && <button className={dangerClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestReject}>ปฏิเสธ</button>}
+      {canFinanceReview && <button className={successBtn} style={successBtnStyle} disabled={busy || duplicateResolutionBlocked} aria-busy={Boolean(busy)} title={duplicateResolutionBlocked ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={onFinanceApprove}>{financeActionLabel(detail)}</button>}
+      {canRequestCorrection && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRequestCorrection}>ส่งกลับให้แก้ไข</button>}
+      {canPay && <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={onRecordPayment}>บันทึกจ่าย</button>}
     </>
   ) : undefined;
   return (
@@ -1185,9 +1190,9 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                       ) : <div className="text-gray-600">{l.linkedExpenseId ? '🔗 ค่าใช้จ่ายที่บันทึกไว้' : '—'}</div>}
                       {canEditDraft && !l.sourceExpenseSnapshot && (
                         <div className="mt-1 space-y-1">
-                          <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
+                          <ThemedFile file={null} accept={RECEIPT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onLineReceipt(l.lineNo, file); }} />
                           <p className="leading-5 text-gray-400">PDF, JPG/JPEG, PNG, HEIC/HEIF หรือ GIF</p>
-                          {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
+                          {l.attachmentId && <button className="text-red-600 hover:underline" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onLineReceipt(l.lineNo, null)}>นำไฟล์ออก</button>}
                         </div>
                       )}
                     </td>
@@ -1230,7 +1235,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                       </div>
                       {/* Only the real actor of that step is offered the button; the server re-checks. */}
                       {signableRoles.includes(role) && (
-                        <button className="mt-2 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50" disabled={busy} onClick={() => onSign(role)}>
+                        <button className="mt-2 text-brand-700 underline decoration-1 underline-offset-4 hover:decoration-2 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onSign(role)}>
                           {signed ? 'ลงนามใหม่' : 'ลงนาม'}
                         </button>
                       )}
@@ -1259,7 +1264,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
               {canAttachSignedCopy && (
                 <div className="mt-3 block text-xs font-semibold text-gray-600">
                   แนบใบเบิกที่เซ็นแล้ว (PDF/JPG/PNG)
-                  <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} onChange={file => { if (file) onUploadSignedCopy(file); }} />
+                  <ThemedFile className="mt-1.5" file={null} accept={ATTACHMENT_UPLOAD_ACCEPT} disabled={busy} loading={Boolean(busy)} onChange={file => { if (file) onUploadSignedCopy(file); }} />
                 </div>
               )}
             </MangmeeCard>
@@ -1299,7 +1304,7 @@ function DetailDrawer({ companyId, detail, context, userId, permissions, busy, e
                     {p.paidByName && <div className="mt-1 text-gray-500">จ่ายโดย {p.paidByName}</div>}
                     {p.status === 'VOIDED' && p.voidReason && <div className="mt-1 text-error-700">เหตุผลที่ยกเลิก: {p.voidReason}</div>}
                     {canVoidRecordedPayment(p, permissions) && (
-                      <button type="button" className="mt-2 text-error-700 underline underline-offset-4 disabled:opacity-50" disabled={busy} onClick={() => onRequestVoidPayment(p)}>
+                      <button type="button" className="mt-2 text-error-700 underline underline-offset-4 disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => onRequestVoidPayment(p)}>
                         ยกเลิกการจ่าย
                       </button>
                     )}
@@ -1440,7 +1445,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
+                            <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); approveRow(r); }}>อนุมัติ</button>
                             <button className={cx(dangerClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); setRejectFor(r); }}>ปฏิเสธ</button>
                           </div>
                         </td>
@@ -1469,7 +1474,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=approvals&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-approvals-card">ดูรายละเอียด</Link>
-                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} onClick={() => approveRow(r)}>อนุมัติ</button>
+                    <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => approveRow(r)}>อนุมัติ</button>
                     <button className={cx(dangerClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => setRejectFor(r)}>ปฏิเสธ</button>
                   </div>
                 </MangmeeCard>
@@ -1643,8 +1648,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                               onClick={e => { e.stopPropagation(); onOpenDetail(r.id); }}>
                               <span className="[&>svg]:h-4 [&>svg]:w-4">{ICON.eye}</span>
                             </button>
-                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
-                            {(r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record')) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
+                            {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={e => { e.stopPropagation(); action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว'); }}>{financeActionLabel(r)}</button>}
+                            {(r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record')) && <button className={cx(btnClass, 'min-h-11 !px-3 !py-1.5 !text-xs sm:!min-h-9')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={e => { e.stopPropagation(); onRecordPayment(r); }}>บันทึกจ่าย</button>}
                           </div>
                         </td>
                       </tr>
@@ -1672,8 +1677,8 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
                   <div className="mt-3 text-right text-lg font-bold tabular-nums text-gray-900">{formatMoney(r.outstandingAmount)} / {formatMoney(r.amount, r.currency)}</div>
                   <div className="mt-4 space-y-2 border-t border-gray-100 pt-3">
                     <Link href={`?tab=finance&focus=${encodeURIComponent(r.id)}`} className={cx(ghostClass, 'min-h-11 w-full')} data-testid="reimbursements-finance-card">ดูรายละเอียด</Link>
-                    {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
-                    {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
+                    {r.status === 'FINANCE_REVIEW' && <button className={cx(successBtn, 'min-h-11 w-full')} style={successBtnStyle} disabled={busy === r.id || (r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve'))} aria-busy={Boolean(busy === r.id)} title={r.hasDuplicateBlocker && !permissions.includes('reimbursement.duplicate.resolve') ? 'รายการนี้อาจซ้ำ ต้องให้ผู้มีสิทธิ์แก้รายการซ้ำตรวจสอบ' : undefined} onClick={() => action(r.id, () => financeReviewReimbursement(companyId, r.id, { decision: 'APPROVED_FOR_PAYMENT', resolveDuplicate: r.hasDuplicateBlocker, duplicateResolutionReason: r.hasDuplicateBlocker ? 'ตรวจสอบแล้วไม่ซ้ำ' : undefined }), r.financeReviewStatus === 'APPROVED_FOR_PAYMENT' ? 'ดำเนินการคำขอจ่ายต่อเรียบร้อยแล้ว' : 'อนุมัติจ่ายเรียบร้อยแล้ว')}>{financeActionLabel(r)}</button>}
+                    {r.status === 'READY_FOR_PAYMENT' && permissions.includes('reimbursement.payment.record') && <button className={cx(btnClass, 'min-h-11 w-full')} disabled={busy === r.id} aria-busy={Boolean(busy === r.id)} onClick={() => onRecordPayment(r)}>บันทึกจ่าย</button>}
                   </div>
                 </MangmeeCard>
               ))}
@@ -1739,7 +1744,7 @@ function PaymentModal({ companyId, request, onClose, onDone }: { companyId: stri
         <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">วันที่จ่าย *</label><ThemedDate className={inputClass} required value={form.paidAt} onChange={e => setForm(f => ({ ...f, paidAt: e.target.value }))} /></div>
         <div><label className="mb-1.5 block text-xs font-semibold text-gray-600">เลขอ้างอิง {(form.paymentMethod === 'BANK_TRANSFER' || form.paymentMethod === 'CHEQUE') && '*'}</label><input className={inputClass} value={form.paymentReference} onChange={e => setForm(f => ({ ...f, paymentReference: e.target.value }))} /></div>
         {error && <ErrorBanner message={error} />}
-        <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
+        <div className="flex gap-2 justify-end"><button type="button" className={ghostClass} onClick={onClose}>ยกเลิก</button><button type="submit" className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกจ่าย'}</button></div>
       </form>
     </Modal>
   );
@@ -1960,7 +1965,7 @@ function PolicySettings({ companyId }: { companyId: string }) {
           <div className="mt-4 space-y-3">
             {error && <ErrorBanner message={error} />}
             {policyChanged && <button type="button" className={cx(ghostClass, 'w-full')} onClick={() => void load()}>โหลดค่าล่าสุด</button>}
-            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || !routeReady}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
+            <button type="submit" className={cx(btnClass, 'w-full')} disabled={busy || !routeReady} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกนโยบาย'}</button>
           </div>
         </MangmeeCard>
       </aside>

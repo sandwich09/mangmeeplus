@@ -23,9 +23,9 @@ const scopeClass: Record<CoverLoaderScope, string> = {
 
 function Spinner({ label }: { label?: string }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3">
-      <span className="h-8 w-8 rounded-full border-4 border-gray-200 border-t-brand-600 animate-spin" />
-      {label && <p className="text-sm text-gray-500">{label}</p>}
+    <div role="status" aria-busy="true" className="flex flex-col items-center justify-center gap-3">
+      <span aria-hidden="true" className="h-8 w-8 rounded-full border-4 border-gray-200 border-t-brand-600 animate-spin motion-reduce:animate-none" />
+      {label && <p className="text-base font-medium text-gray-700">{label}</p>}
     </div>
   );
 }
@@ -34,7 +34,7 @@ export function CoverLoader({ active, scope = 'section', label, children }: Cove
   if (!active) return <>{children}</>;
 
   const overlay = (
-    <div className={`${scopeClass[scope]} bg-white/80 flex items-center justify-center`}>
+    <div className={`${scopeClass[scope]} bg-white/80 flex items-center justify-center print:hidden`}>
       <Spinner label={label} />
     </div>
   );

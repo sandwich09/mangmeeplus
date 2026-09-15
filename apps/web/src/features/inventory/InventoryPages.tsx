@@ -122,7 +122,7 @@ export function ProductsPageClient({ companyId, basePath = `/companies/${company
           <option value="NON_STOCK">สินค้าไม่ตัดสต็อก</option>
           <option value="SERVICE">บริการ</option>
         </ThemedSelect>
-        <button type="submit" className={ghostButtonClass} disabled={state.loading}>ค้นหา / Search</button>
+        <button type="submit" className={ghostButtonClass} disabled={state.loading} aria-busy={Boolean(state.loading)}>ค้นหา / Search</button>
       </form>
 
       {state.error && <ErrorBanner message={state.error} />}
@@ -387,7 +387,7 @@ export function ProductDetailPageClient({
           <input name="customerVisible" type="checkbox" defaultChecked={product.customerVisible} />
           เปิดให้ลูกค้าเห็นและอนุญาตให้ CRM AI ใช้ตอบคำถาม
         </label>
-        <button type="submit" className={buttonClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'บันทึก / Save'}</button>
+        <button type="submit" className={buttonClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึก / Save'}</button>
       </form>}
       {!canManage && <dl className="grid gap-4 rounded-lg border border-gray-200 bg-white p-4 text-sm sm:grid-cols-2">
         <div><dt className="text-xs font-medium text-gray-500">หน่วย / Unit</dt><dd className="mt-1 font-medium text-gray-900">{product.unit}</dd></div>
@@ -404,7 +404,7 @@ export function ProductDetailPageClient({
         <div className="rounded-lg border border-gray-200 bg-white p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-semibold">บาร์โค้ดและ QR</h2>
-            {canManageLabels && <button type="button" className={ghostButtonClass} disabled={busy} onClick={qr}>{busy ? 'กำลังทำงาน...' : 'สร้าง QR'}</button>}
+            {canManageLabels && <button type="button" className={ghostButtonClass} disabled={busy} aria-busy={Boolean(busy)} onClick={qr}>{busy ? 'กำลังทำงาน...' : 'สร้าง QR'}</button>}
           </div>
           {canManageLabels && <form onSubmit={addBarcode} className="mb-3 grid gap-2 sm:grid-cols-[140px_1fr_auto]">
             <ThemedSelect name="type" className={inputClass} defaultValue="SUPPLIER">
@@ -415,7 +415,7 @@ export function ProductDetailPageClient({
               <option value="OTHER">Other</option>
             </ThemedSelect>
             <input name="value" className={inputClass} placeholder="Barcode" required />
-            <button className={ghostButtonClass} disabled={busy}>{busy ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</button>
+            <button className={ghostButtonClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังเพิ่ม...' : 'เพิ่ม'}</button>
           </form>}
           <ul className="space-y-2 text-sm">
             {product.barcodes.length === 0 && <li className="text-gray-400">ไม่มีข้อมูล</li>}
@@ -515,11 +515,11 @@ export function LocationsPageClient({ companyId, canManage = false, canManageLab
         <ThemedSelect name="type" className={inputClass} defaultValue="MAIN">
           {Object.entries(LOCATION_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label.th}</option>)}
         </ThemedSelect>
-        <button className={buttonClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'เพิ่ม'}</button>
+        <button className={buttonClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'เพิ่ม'}</button>
       </form>}
       <form onSubmit={(event) => { event.preventDefault(); void load(); }} className="flex gap-2">
         <input value={search} onChange={(event) => setSearch(event.target.value)} className={inputClass} placeholder="ค้นหารหัสหรือชื่อ" />
-        <button className={ghostButtonClass} disabled={loading}>ค้นหา</button>
+        <button className={ghostButtonClass} disabled={loading} aria-busy={Boolean(loading)}>ค้นหา</button>
       </form>
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         <div className="mangmee-table-scroll">
@@ -536,7 +536,7 @@ export function LocationsPageClient({ companyId, canManage = false, canManageLab
                 <td className="px-4 py-3 font-medium">{location.name}</td>
                 <td className="px-4 py-3">{LOCATION_TYPE_LABELS[location.type]?.th ?? location.type}</td>
                 <td className="px-4 py-3"><StatusPill status={location.status} /></td>
-                <td className="px-4 py-3 text-right">{canManageLabels && <button type="button" className="font-semibold text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} onClick={() => void qr(location.id)}>{busy ? 'กำลังสร้าง...' : 'QR'}</button>}</td>
+                <td className="px-4 py-3 text-right">{canManageLabels && <button type="button" className="font-semibold text-brand-600 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy} aria-busy={Boolean(busy)} onClick={() => void qr(location.id)}>{busy ? 'กำลังสร้าง...' : 'QR'}</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -695,7 +695,7 @@ export function MovementFormPageClient({ companyId, defaultAction = 'STOCK_IN', 
         {action === 'TRANSFER' && <input name="toLocationId" className={inputClass} placeholder="To Location ID" required />}
         <input name="quantity" className={inputClass} placeholder={action === 'COUNT' ? 'Counted quantity' : 'Quantity'} inputMode="decimal" required />
         {(needsReason || action === 'TRANSFER') && <textarea name="reason" className={inputClass} rows={3} placeholder="เหตุผล / Reason" required={needsReason} />}
-        <button className={buttonClass} disabled={loading}>{loading ? 'กำลังบันทึก...' : 'บันทึก / Save'}</button>
+        <button className={buttonClass} disabled={loading} aria-busy={Boolean(loading)}>{loading ? 'กำลังบันทึก...' : 'บันทึก / Save'}</button>
       </form>
     </main>
   );
@@ -731,7 +731,7 @@ export function ScanPageClient({ companyId }: { companyId: string }) {
       {error && <ErrorBanner message={error} />}
       <form onSubmit={submit} className="mb-4 flex gap-2">
         <input value={payload} onChange={(event) => setPayload(event.target.value)} className={`${inputClass} font-mono`} placeholder="WD1:P:... หรือ WD1:LOC:..." required />
-        <button className={buttonClass} disabled={loading}>{loading ? '...' : 'ค้นหา'}</button>
+        <button className={buttonClass} disabled={loading} aria-busy={Boolean(loading)}>{loading ? '...' : 'ค้นหา'}</button>
       </form>
       {result && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-800">

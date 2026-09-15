@@ -225,7 +225,7 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
           <ThemedDate id={`partner-vat-from-${companyId}`} className={inputClass} value={effectiveFrom} disabled={disabled || busy}
             onChange={(e) => setEffectiveFrom(e.target.value)} />
         </div>
-        <button type="button" className={btnPrimary} disabled={disabled || busy || !status} onClick={() => void save()}>
+        <button type="button" className={btnPrimary} disabled={disabled || busy || !status} aria-busy={Boolean(busy)} onClick={() => void save()}>
           {busy ? 'กำลังบันทึก…' : 'บันทึกสถานะ VAT'}
         </button>
       </div>
@@ -304,7 +304,7 @@ function LifecycleConfirmModal({
           <button
             type="button"
             className={action === 'ARCHIVED' ? btnDanger : btnPrimary}
-            disabled={loading}
+            disabled={loading} aria-busy={Boolean(loading)}
             onClick={() => onConfirm(reason)}
           >
             {loading ? 'Applying…' : `Confirm ${action}`}
@@ -505,7 +505,7 @@ function MembersSection({
                           <div className="flex gap-1.5">
                             <button
                               type="button"
-                              disabled={busy}
+                              disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handleSaveContact()}
                               className="rounded bg-gray-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
                             >
@@ -555,7 +555,7 @@ function MembersSection({
                         </span>
                         <button
                           type="button"
-                          disabled={!canReveal || busy}
+                          disabled={!canReveal || busy} aria-busy={Boolean(busy)}
                           onClick={() => void toggleReveal(m)}
                           className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
                           title={
@@ -588,7 +588,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                          disabled={busy || !m.credential}
+                          disabled={busy || !m.credential} aria-busy={Boolean(busy)}
                           onClick={() => void handleResetPassword(m)}
                         >
                           Reset password
@@ -596,7 +596,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
-                          disabled={busy}
+                          disabled={busy} aria-busy={Boolean(busy)}
                           onClick={() => void handleIssueLineQr(m)}
                         >
                           Issue LINE QR
@@ -604,7 +604,7 @@ function MembersSection({
                         <button
                           type="button"
                           className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
-                          disabled={busy || !m.lineLinked}
+                          disabled={busy || !m.lineLinked} aria-busy={Boolean(busy)}
                           onClick={() => void handleUnlinkLine(m)}
                         >
                           Unlink LINE
@@ -790,6 +790,7 @@ function PackageMenuSection({
               className="mangmee-btn mangmee-btn-primary min-h-11 min-w-11 disabled:opacity-50"
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => void saveChanges()}
+              aria-busy={saving}
             >
               {saving ? 'กำลังบันทึก...' : 'ยืนยันและบันทึก'}
             </button>
@@ -1212,6 +1213,7 @@ function PackageMenuSection({
               className="mangmee-btn mangmee-btn-primary min-h-11 min-w-11 disabled:opacity-50"
               disabled={controlsLocked || visibleChangeCount === 0}
               onClick={() => setReviewOpen(true)}
+              aria-busy={saving}
             >
               {saving ? 'กำลังบันทึก...' : 'ตรวจสอบและบันทึก'}
             </button>
@@ -1276,6 +1278,7 @@ function AiUsageBudgetSection({
 }) {
   const [usage, setUsage] = useState<PartnerAiUsageDto | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
   const [budgetInput, setBudgetInput] = useState('');
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [ocrEnabled, setOcrEnabled] = useState(true);
@@ -1288,6 +1291,7 @@ function AiUsageBudgetSection({
 
   const loadUsage = async () => {
     const token=++generation.current;
+    setUsageLoading(true);
     try {
       const result = await getPartnerAiUsage(companyId);
       if(token!==generation.current)return;
@@ -1301,7 +1305,7 @@ function AiUsageBudgetSection({
       if(token!==generation.current)return;
       const e = err as Error & { status?: number };
       setUsageError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูการใช้งาน AI' : apiErrorMessage(err));
-    }
+    } finally { if(token===generation.current)setUsageLoading(false); }
   };
 
   useEffect(() => {
@@ -1402,12 +1406,14 @@ function AiUsageBudgetSection({
 
   return (
     <SectionCard title="การใช้งานและงบ AI">
+      {usageLoading && <p role="status" aria-busy="true" className="mb-3 flex items-center gap-2 text-sm text-gray-500"><span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />กำลังโหลดข้อมูล AI...</p>}
       {usageError ? (
         <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
           <p className="text-sm leading-6 text-red-800">{usageError}</p>
           <button
             type="button"
             className="mangmee-btn mangmee-btn-secondary min-h-11 text-base"
+            disabled={usageLoading} aria-busy={usageLoading}
             onClick={() => { setUsageError(null); void loadUsage(); }}
           >
             ลองโหลดข้อมูลอีกครั้ง
@@ -1488,7 +1494,7 @@ function AiUsageBudgetSection({
                 placeholder={satangToBahtInput(usage.budget.defaultSatang)}
                 value={budgetInput}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                disabled={budgetLoading || ocrLoading || fieldsLocked}
+                disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               />
             </div>
             <button
@@ -1516,7 +1522,7 @@ function AiUsageBudgetSection({
               <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
                 <EntitlementSwitch
                   checked={ocrEnabled}
-                  disabled={ocrLoading || budgetLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                   label="เปิดให้ AI อ่านเอกสาร"
                   onClick={() => setOcrEnabled((value) => !value)}
                 />
@@ -1830,7 +1836,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>
-          <button type="button" className={btnSecondary} onClick={() => void load()}>
+          <button type="button" className={btnSecondary} disabled={term === undefined} aria-busy={term === undefined} onClick={() => void load()}>
             ลองโหลดแพ็กเกจอีกครั้ง
           </button>
         </div>
@@ -1866,7 +1872,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                   <p className="flex-1 text-sm text-amber-900">
                     ช่วงอุ่นเครื่อง อ่านรูปได้ {term.warmupSlipLimit ?? '—'} ครั้ง จนถึง {formatThaiDateTime(term.warmupUntil!)}
                   </p>
-                  <button type="button" className={btnSecondary} onClick={handleEndWarmup} disabled={endingWarmup}>
+                  <button type="button" className={btnSecondary} onClick={handleEndWarmup} disabled={endingWarmup} aria-busy={Boolean(endingWarmup)}>
                     {endingWarmup ? 'กำลังปลด...' : 'ตรวจแล้ว'}
                   </button>
                 </div>
@@ -1968,7 +1974,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 <p className="mt-2">ใช้อยู่ {counts.branches} สาขา · {counts.members} ผู้ใช้ รวมเจ้าของร้าน</p><p className="mt-1 text-gray-600">ข้อมูลและผู้ใช้เดิมยังอยู่ หากเกินจำนวนใหม่จะเพิ่มไม่ได้จนกว่าจะมีที่ว่าง สิทธิ์เมนูคงเดิม</p>
               </div>
               <div className="flex items-center gap-2">
-                <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
+                <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving} aria-busy={Boolean(saving)}>
                   {saving ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
                 <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving||uncertain}>
@@ -1991,7 +1997,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <button type="button" className={btnSecondary} onClick={() => setRenewOpen(false)} disabled={renewing}>
                 ยกเลิก
               </button>
-              <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing}>
+              <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing} aria-busy={Boolean(renewing)}>
                 {renewing ? 'กำลังต่ออายุ...' : uncertain ? 'ตรวจและลองคำขอเดิม' : 'ต่ออายุ'}
               </button>
             </>
@@ -2151,7 +2157,7 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
           ระบบจะแนบชื่อผู้ส่งให้อัตโนมัติ ใส่ลิงก์ได้เฉพาะเว็บของเราและ LIFF
           ({text.trim().length}/{PARTNER_LINE_MESSAGE_MAX_LENGTH})
         </p>
-        <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()}>
+        <button type="button" className={btnPrimary} onClick={handleSend} disabled={sending || !text.trim()} aria-busy={Boolean(sending)}>
           {sending ? 'กำลังส่ง...' : 'ส่งข้อความ'}
         </button>
       </div>
@@ -2340,7 +2346,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
         <div className="text-center">
           <h1 className="text-lg font-semibold text-gray-900">Error</h1>
           <p className="text-sm text-gray-500 mt-1">{error}</p>
-          <button type="button" className="mt-3 text-sm text-brand-700 hover:underline" onClick={() => void load()}>
+          <button type="button" className="mt-3 text-sm text-brand-700 hover:underline" disabled={loading} aria-busy={loading} onClick={() => void load()}>
             Retry
           </button>
         </div>
@@ -2483,7 +2489,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
                 <input className={inputClass} type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} disabled={editLoading} />
               </div>
               <div className="col-span-full mt-1 flex items-center gap-2">
-                <button type="submit" className={btnPrimary} disabled={editLoading}>
+                <button type="submit" className={btnPrimary} disabled={editLoading} aria-busy={Boolean(editLoading)}>
                   {editLoading ? 'Saving…' : 'Save changes'}
                 </button>
                 <button type="button" className={btnSecondary} onClick={() => setEditMode(false)} disabled={editLoading}>
@@ -2570,7 +2576,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
             <button
               type="button"
               className={btnPrimary}
-              disabled={aiModelLoading || !aiModelInput || fieldsLocked}
+              disabled={aiModelLoading || !aiModelInput || fieldsLocked} aria-busy={Boolean(aiModelLoading)}
               onClick={handleAiModelSave}
             >
               {aiModelLoading ? 'กำลังบันทึก…' : 'ตรวจรุ่นก่อนบันทึก'}

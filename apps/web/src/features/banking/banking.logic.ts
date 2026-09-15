@@ -1,4 +1,5 @@
 // Pure helpers for the banking statement import + matching UI. No React, no fetch.
+import { ATTACHMENT_UPLOAD_ACCEPT, classifyUploadSourceFile } from '@/common/files/upload-file.logic';
 
 export const BANKING_TABS = ['accounts', 'cash', 'import', 'matching', 'reconciliations', 'adjustments'] as const;
 export type BankingTab = (typeof BANKING_TABS)[number];
@@ -156,7 +157,7 @@ export function confirmedMatchedTotal(matches: { status: string; allocatedAmount
 // ---- Statement file policy and extraction helpers ----
 
 export const STATEMENT_UPLOAD_ACCEPT =
-  '.csv,.tsv,.txt,.pdf,.jpg,.jpeg,.png,text/csv,text/tab-separated-values,text/plain,application/pdf,image/jpeg,image/png';
+  `.csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain,${ATTACHMENT_UPLOAD_ACCEPT}`;
 export const MAX_STATEMENT_TEXT_BYTES = 4 * 1024 * 1024;
 export const MAX_STATEMENT_BINARY_BYTES = 25 * 1024 * 1024;
 
@@ -165,11 +166,7 @@ export type StatementFileKind = 'delimited' | 'extractable' | 'unsupported';
 export function classifyStatementFile(fileName: string, mimeType: string): StatementFileKind {
   const extension = /^.+\.([^.]+)$/.exec(fileName.trim())?.[1]?.toLowerCase();
   const mime = mimeType.toLowerCase();
-  if (
-    (extension === 'pdf' && mime === 'application/pdf')
-    || ((extension === 'jpg' || extension === 'jpeg') && mime === 'image/jpeg')
-    || (extension === 'png' && mime === 'image/png')
-  ) return 'extractable';
+  if (classifyUploadSourceFile({ name: fileName, type: mimeType }) !== 'unsupported') return 'extractable';
   if (
     (extension === 'csv' && ['', 'text/csv', 'application/csv', 'application/vnd.ms-excel', 'text/plain'].includes(mime))
     || (extension === 'tsv' && ['', 'text/tab-separated-values', 'text/plain'].includes(mime))

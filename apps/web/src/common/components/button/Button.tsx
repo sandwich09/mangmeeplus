@@ -45,6 +45,7 @@ export function Button({
       disabled={isDisabled}
       aria-disabled={isDisabled}
       aria-busy={loading}
+      data-loading-indicator
       className={[
         'inline-flex items-center justify-center rounded-lg font-medium transition-colors',
         variantClass[variant],
@@ -56,7 +57,7 @@ export function Button({
         .join(' ')}
     >
       {loading && (
-        <span className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+        <span aria-hidden="true" className="action-loading-spinner h-4 w-4 rounded-full border-2 border-current border-t-transparent" />
       )}
       {!loading && icon && iconPosition === 'left' && icon}
       {children}

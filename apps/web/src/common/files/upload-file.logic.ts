@@ -1,8 +1,9 @@
 import { translateApiError } from '../api/api-error-message';
 
 export const ATTACHMENT_UPLOAD_ACCEPT =
-  '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg';
-export const IMAGE_UPLOAD_ACCEPT = '.png,.jpg,.jpeg,image/png,image/jpeg';
+  '.pdf,.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,application/pdf,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
+export const IMAGE_UPLOAD_ACCEPT =
+  '.png,.jpg,.jpeg,.jpe,.heic,.heif,.gif,image/png,image/jpeg,image/jpg,image/heic,image/heif,image/heic-sequence,image/heif-sequence,image/gif';
 export const GENERIC_UPLOAD_ERROR_MESSAGE = 'ระบบขัดข้อง กรุณาลองใหม่อีกครั้ง';
 export const UPLOAD_FILE_TYPE_MISMATCH_ERROR_MESSAGE =
   'ไฟล์นี้มีชนิดไฟล์ไม่ตรงกับข้อมูลภายใน ระบบจึงแนบไม่ได้ กรุณาเลือกไฟล์ใหม่ หรือบันทึกเป็น PDF/JPG/PNG แล้วลองอีกครั้ง';
@@ -22,6 +23,37 @@ const MIME_TYPE_BY_EXTENSION: Readonly<Record<string, string>> = {
 
 type UploadFileDescriptor = Pick<File, 'name' | 'type'>;
 export type UploadFilePolicy = 'attachment' | 'image';
+export type UploadSourceFileKind = 'image' | 'pdf' | 'heic' | 'unsupported';
+
+/** Browser sources are normalized before the strict server upload contract below. */
+export function classifyUploadSourceFile(file: UploadFileDescriptor, policy: UploadFilePolicy = 'attachment'): UploadSourceFileKind {
+  const mime = file.type.toLowerCase();
+  const extension = file.name.toLowerCase().match(/\.([^.]+)$/)?.[1];
+  if (extension === 'pdf' && (!mime || mime === 'application/pdf')) return policy === 'image' ? 'unsupported' : 'pdf';
+  if (['heic', 'heif'].includes(extension ?? '') && (!mime || ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence'].includes(mime))) return 'heic';
+  if (
+    (['jpg', 'jpeg', 'jpe'].includes(extension ?? '') && (!mime || mime === 'image/jpeg' || mime === 'image/jpg'))
+    || (extension === 'png' && (!mime || mime === 'image/png'))
+    || (extension === 'gif' && (!mime || mime === 'image/gif'))
+  ) return 'image';
+  return 'unsupported';
+}
+
+export function uploadSourceFileValidationError(file: UploadFileDescriptor, policy: UploadFilePolicy = 'attachment'): string | null {
+  return classifyUploadSourceFile(file, policy) === 'unsupported'
+    ? policy === 'image' ? 'รองรับเฉพาะไฟล์ JPG/JPEG, PNG, HEIC/HEIF และ GIF' : UPLOAD_RECEIPT_SOURCE_UNSUPPORTED_ERROR_MESSAGE
+    : null;
+}
+
+export async function prepareAttachmentUpload(file: File, policy: UploadFilePolicy = 'attachment'): Promise<File> {
+  return withGenericUploadError(async () => {
+    // Reuse the established browser decoder; load it only when a user selects a file.
+    const { prepareReceiptFile, prepareSignatureFile } = await import('@/features/expenses/expense-upload.logic');
+    const prepared = await (policy === 'image' ? prepareSignatureFile(file) : prepareReceiptFile(file));
+    assertAllowedUploadFile(prepared.file, policy);
+    return prepared.file;
+  });
+}
 
 export function attachmentMimeTypeForFileName(fileName: string): string | undefined {
   const extension = /^.+\.([^.]+)$/.exec(fileName.trim())?.[1]?.toLowerCase();

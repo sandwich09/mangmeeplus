@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "kind": "production",
+  "account": "311414082667",
+  "region": "ap-southeast-1",
+  "cutoverComplete": false,
+  "repository": "REPLACE_WITH_EXISTING_PRODUCTION_ECR_REPOSITORY",
+  "servicePrefix": "mangmee-kamal-production",
+  "publicUrl": "https://REPLACE_WITH_PRODUCTION_ORIGIN.invalid",
+  "apiInternalUrl": "https://REPLACE_WITH_PRODUCTION_API_ROUTE.invalid/v1",
+  "aiInternalUrl": "https://REPLACE_WITH_PRODUCTION_AI_ROUTE.invalid/v1",
+  "sshKey": "/REPLACE_WITH_PRIVATE_PRODUCTION_SSH_KEY",
+  "acceptanceCredentials": "/REPLACE_WITH_PRIVATE_PRODUCTION_ACCEPTANCE_JSON",
+  "signingKeyArn": "REPLACE_WITH_PRODUCTION_ASYMMETRIC_KMS_KEY_ARN",
+  "agentcoreRuntimeArn": "REPLACE_WITH_PRODUCTION_AGENTCORE_RUNTIME_ARN",
+  "agentcoreQualifier": "REPLACE_WITH_ACTIVE_PINNED_ENDPOINT",
+  "agentcoreCandidateQualifier": "REPLACE_WITH_SPARE_PINNED_ENDPOINT",
+  "hosts": {
+    "api-web": [
+      {
+        "instanceId": "REPLACE_WITH_PRODUCTION_API_INSTANCE_A",
+        "address": "REPLACE_WITH_VERIFIED_IP_A",
+        "vpcId": "REPLACE_WITH_PRODUCTION_VPC",
+        "stack": "REPLACE_WITH_PRODUCTION_STACK",
+        "hostKey": "REPLACE_WITH_VERIFIED_SSH_ED25519_HOST_KEY_A"
+      },
+      {
+        "instanceId": "REPLACE_WITH_PRODUCTION_API_INSTANCE_IN_ANOTHER_AZ",
+        "address": "REPLACE_WITH_VERIFIED_IP_B",
+        "vpcId": "REPLACE_WITH_PRODUCTION_VPC",
+        "stack": "REPLACE_WITH_PRODUCTION_STACK",
+        "hostKey": "REPLACE_WITH_VERIFIED_SSH_ED25519_HOST_KEY_B"
+      }
+    ],
+    "ai-gateway": [
+      {
+        "instanceId": "REPLACE_WITH_PRODUCTION_AI_INSTANCE_SEPARATE_FROM_API",
+        "address": "REPLACE_WITH_VERIFIED_AI_IP",
+        "vpcId": "REPLACE_WITH_PRODUCTION_VPC",
+        "stack": "REPLACE_WITH_PRODUCTION_STACK",
+        "hostKey": "REPLACE_WITH_VERIFIED_SSH_ED25519_HOST_KEY_AI"
+      }
+    ],
+    "workers": [
+      {
+        "instanceId": "REPLACE_WITH_PRODUCTION_WORKER_INSTANCE_SEPARATE_FROM_API",
+        "address": "REPLACE_WITH_VERIFIED_WORKER_IP",
+        "vpcId": "REPLACE_WITH_PRODUCTION_VPC",
+        "stack": "REPLACE_WITH_PRODUCTION_STACK",
+        "hostKey": "REPLACE_WITH_VERIFIED_SSH_ED25519_HOST_KEY_WORKER"
+      }
+    ]
+  }
+}

@@ -971,7 +971,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               <div className="font-extrabold">Username นี้มีบัญชีในระบบอยู่แล้ว</div>
               <div className="mt-1 font-medium leading-6">หากเป็นคนเดียวกัน (เช่น เจ้าของอีกบริษัท) กด “ยืนยันเพิ่มเข้าบริษัท” เพื่อเพิ่มเข้าบริษัทนี้โดยใช้บัญชีเดิม — พนักงานจะเข้าระบบด้วยรหัสผ่านเดิม ไม่มีการตั้งรหัสใหม่ · <b>ต้องกรอกอีเมล (ขั้นตอนช่องทางติดต่อ) ที่ไม่ซ้ำกับอีเมลบัญชีเดิม</b> · หากเป็นคนละคน กรุณาแก้ไข Username ให้ไม่ซ้ำ</div>
               <div className="mt-2.5 flex flex-wrap gap-2">
-                <button type="button" onClick={() => void confirmLinkExistingUser()} disabled={saving} className="flex h-10 items-center justify-center rounded-lg bg-brand-500 px-4 text-sm font-extrabold text-white hover:bg-brand-600 disabled:opacity-60">ยืนยันเพิ่มเข้าบริษัท</button>
+                <button type="button" onClick={() => void confirmLinkExistingUser()} disabled={saving} aria-busy={Boolean(saving)} className="flex h-10 items-center justify-center rounded-lg bg-brand-500 px-4 text-sm font-extrabold text-white hover:bg-brand-600 disabled:opacity-60">ยืนยันเพิ่มเข้าบริษัท</button>
                 <button type="button" onClick={() => { setConfirmExistingUser(false); setStep(1); }} className="flex h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 text-sm font-extrabold text-gray-600 hover:bg-gray-50">แก้ไข Username</button>
               </div>
             </div>
@@ -988,7 +988,7 @@ export function AddEmployeePrototypePage({ companyId, editEmployeeId, viewerUser
               ‹ ย้อนกลับ
             </button>
             <div className="hidden text-[15px] font-semibold text-gray-400 sm:block">ขั้นที่ {step} จาก 4</div>
-            <button type="button" onClick={nextStep} disabled={saving} className="flex h-[46px] shrink-0 items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 text-base font-extrabold text-white shadow-sm hover:bg-brand-600 disabled:opacity-60 sm:px-[26px]">
+            <button type="button" onClick={nextStep} disabled={saving} aria-busy={Boolean(saving)} className="flex h-[46px] shrink-0 items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 text-base font-extrabold text-white shadow-sm hover:bg-brand-600 disabled:opacity-60 sm:px-[26px]">
               {nextLabel}
             </button>
           </div>

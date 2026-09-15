@@ -519,7 +519,7 @@ export function AccountingTaxSetupPage({
         )}
         <div className="mt-6 flex justify-between gap-3">
           {back('chart')}
-          {canChartManage && <button type="button" className={primary} disabled={!preview || busy || (conflictCount > 0 && !acknowledgeConflicts)} onClick={() => void applyChart()}>
+          {canChartManage && <button type="button" className={primary} disabled={!preview || busy || (conflictCount > 0 && !acknowledgeConflicts)} aria-busy={Boolean(busy)} onClick={() => void applyChart()}>
             {busy ? 'กำลังบันทึก...' : 'ยืนยันใช้ผังบัญชีและไปต่อ'}
           </button>}
         </div>
@@ -562,7 +562,7 @@ export function AccountingTaxSetupPage({
               {selectedProfile.status === 'ACTIVE' ? 'ตรวจการตั้งค่าที่ใช้งานอยู่' : 'ถัดไป: ตรวจการผูกบัญชีและรายงาน'}
             </Link>
           ) : canProfileManage ? (
-            <button type="button" className={primary} disabled={!selectedTemplateKey || !effectiveFrom || busy} onClick={() => void createProfile()}>
+            <button type="button" className={primary} disabled={!selectedTemplateKey || !effectiveFrom || busy} aria-busy={Boolean(busy)} onClick={() => void createProfile()}>
               {busy ? 'กำลังสร้าง...' : 'สร้าง Draft และไปต่อ'}
             </button>
           ) : null}
@@ -621,7 +621,7 @@ export function AccountingTaxSetupPage({
           {profileReadiness?.canActivate || selectedProfile?.status === 'ACTIVE' ? (
             <Link className={primary} href={accountingTaxSetupHref(companyId, 'review', workflowParams)}>ถัดไป: ตรวจและเปิดใช้งาน</Link>
           ) : (missingAccountBlockers.length === 0 || canMapAccounts) && (missingReportBlockers.length === 0 || canMapReports) ? (
-            <button type="button" className={primary} disabled={!selectedProfile || busy || requiresAdvancedMapping || otherBlockers.length > 0} onClick={() => void saveMappings()}>
+            <button type="button" className={primary} disabled={!selectedProfile || busy || requiresAdvancedMapping || otherBlockers.length > 0} aria-busy={Boolean(busy)} onClick={() => void saveMappings()}>
               {busy ? 'กำลังบันทึก...' : 'บันทึกที่ตรวจแล้วและไปต่อ'}
             </button>
           ) : null}
@@ -655,7 +655,7 @@ export function AccountingTaxSetupPage({
               {safeReturnTo ? 'กลับไปรายการค่าใช้จ่าย' : 'กลับภาพรวมการตั้งค่า'}
             </Link>
           ) : canProfileManage ? (
-            <button type="button" className={primary} disabled={!selectedProfile || !profileReadiness?.canActivate || busy} onClick={() => void activateProfile()}>
+            <button type="button" className={primary} disabled={!selectedProfile || !profileReadiness?.canActivate || busy} aria-busy={Boolean(busy)} onClick={() => void activateProfile()}>
               {busy ? 'กำลังเปิดใช้งาน...' : 'ยืนยันและเปิดใช้งานชุดรหัสภาษี (Tax Profile)'}
             </button>
           ) : null}

@@ -155,7 +155,7 @@ export function DiscountPolicyPage({ companyId }: { companyId: string }) {
             policy.saved || saving
               ? 'bg-gray-100 text-gray-400'
               : 'bg-brand-500 text-white shadow-[0_4px_12px_rgba(22,163,74,0.28)]',
-          )}
+          )} data-loading-indicator
         >
           {saving && <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />}
           {saving ? 'กำลังบันทึก...' : policy.saved ? '✓ บันทึกแล้ว' : 'บันทึกนโยบาย'}

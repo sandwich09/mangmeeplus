@@ -95,7 +95,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && !item.assignedAt && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onClaim}
           className={`${rowActionClass} border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100`}
         >
@@ -105,7 +105,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && item.assignedAt && !item.assignedToMe && (
         <button
           type="button"
-          disabled={busy || !item.assignedAt}
+          disabled={busy || !item.assignedAt} aria-busy={Boolean(busy)}
           onClick={onTakeover}
           className={`${rowActionClass} border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100`}
         >
@@ -115,7 +115,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && item.assignedToMe && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onReply}
           className={`${rowActionClass} border-green-300 bg-green-50 text-green-700 hover:bg-green-100`}
         >
@@ -125,7 +125,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && item.assignedToMe && canResumeAi(item.status) && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onResume}
           className={`${rowActionClass} border-gray-300 bg-white text-gray-700 hover:bg-gray-50`}
         >
@@ -135,7 +135,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && item.assignedToMe && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onResolve}
           className={`${rowActionClass} border-green-300 bg-white text-green-700 hover:bg-green-50`}
         >
@@ -145,7 +145,7 @@ export function SupportRowActions({ item, busy, onClaim, onRelease, onTakeover, 
       {live && item.assignedToMe && (
         <button
           type="button"
-          disabled={busy}
+          disabled={busy} aria-busy={Boolean(busy)}
           onClick={onRelease}
           className={`${rowActionClass} border-gray-300 bg-white text-gray-500 hover:bg-gray-50`}
         >

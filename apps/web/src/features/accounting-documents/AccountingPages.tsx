@@ -398,7 +398,7 @@ function CreateDocumentForm({ companyId, onCreated, allowedDocumentTypes }: { co
           else setVatMode(definition.calculationMethod === 'INCLUSIVE' ? 'VAT_INCLUDED' : 'VAT_EXCLUDED');
         }}
       />}
-      <button className={btnClass} disabled={loading || (docType === 'TAX_INVOICE' && !taxCodeDefinitionId)}>{loading ? 'กำลังบันทึก...' : 'บันทึกร่าง'}</button>
+      <button className={btnClass} disabled={loading || (docType === 'TAX_INVOICE' && !taxCodeDefinitionId)} aria-busy={Boolean(loading)}>{loading ? 'กำลังบันทึก...' : 'บันทึกร่าง'}</button>
     </form>
   );
 }
@@ -726,7 +726,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={ghostClass} onClick={() => setEditLines((current) => [...current, { lineNumber: current.length + 1, description: '', quantity: '1', unitPrice: '' }])}>เพิ่มบรรทัด</button>
-            <button type="button" className={btnClass} disabled={busy || !editLines.length} onClick={() => void saveDraftEdit()}>{busy ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</button>
+            <button type="button" className={btnClass} disabled={busy || !editLines.length} aria-busy={Boolean(busy)} onClick={() => void saveDraftEdit()}>{busy ? 'กำลังบันทึก...' : 'บันทึกการแก้ไข'}</button>
             <button type="button" className={ghostClass} disabled={busy} onClick={() => setEditingDraft(false)}>ยกเลิก</button>
           </div>
         </section>
@@ -763,16 +763,16 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
       </div>
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         {canEdit && !editingDraft && <button className={ghostClass} disabled={busy} onClick={beginDraftEdit}>{isRejectedQuotation ? 'แก้ไขใบเสนอราคาที่ถูกปฏิเสธ' : 'แก้ไขร่าง'}</button>}
-        {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
-        {canApprove && <button className={btnClass} disabled={busy || isOwnApprovalRequest} onClick={() => { if (!isOwnApprovalRequest) void run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว'); }}>อนุมัติ</button>}
-        {canApprove && <button className={dangerClass} disabled={busy} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
+        {canCreateSalesRoot && canSubmit && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => submitQuotationApproval(companyId, detail.id), 'ส่งขออนุมัติเรียบร้อยแล้ว')}>ส่งขออนุมัติ</button>}
+        {canApprove && <button className={btnClass} disabled={busy || isOwnApprovalRequest} aria-busy={Boolean(busy)} onClick={() => { if (!isOwnApprovalRequest) void run(() => approveQuotation(companyId, detail.id, 'อนุมัติในหน้าบัญชี'), 'อนุมัติใบเสนอราคาเรียบร้อยแล้ว'); }}>อนุมัติ</button>}
+        {canApprove && <button className={dangerClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void rejectDocument()}>ปฏิเสธ</button>}
         {canApprove && isOwnApprovalRequest && <p className="col-span-2 text-sm text-amber-700">ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ</p>}
-        {canIssue && <button className={btnClass} disabled={busy} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>ออกเอกสาร</button>}
-        {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
-        {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
+        {canIssue && <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => issueDocument(companyId, detail.id), 'ออกเอกสารเรียบร้อยแล้ว')}>ออกเอกสาร</button>}
+        {canCreateSalesRoot && canConvertToInvoice && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => convertDocument(companyId, detail.id, 'INVOICE'), 'แปลงเป็นใบแจ้งหนี้เรียบร้อยแล้ว')}>แปลงเป็นใบแจ้งหนี้</button>}
+        {canCreateSalesRoot && canConvertToBillingNote && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => run(() => convertDocument(companyId, detail.id, 'BILLING_NOTE'), 'แปลงเป็นใบวางบิลเรียบร้อยแล้ว')}>แปลงเป็นใบวางบิล</button>}
         {canTaxInvoice && <button className={ghostClass} onClick={() => { setLinkedTaxInvoiceOpen(true); setLinkedTaxSelections({}); setError(null); }}>สร้างใบกำกับภาษี</button>}
-        {canCreateReceipt && <button className={ghostClass} disabled={busy} onClick={() => void createLinkedReceipt()}>สร้างใบเสร็จจากยอดรับชำระ</button>}
-        {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} onClick={() => void voidAccountingDocument()}>ยกเลิกเอกสาร</button>}
+        {canCreateReceipt && <button className={ghostClass} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void createLinkedReceipt()}>สร้างใบเสร็จจากยอดรับชำระ</button>}
+        {canVoid && <button className={dangerClass + ' col-span-2 order-last sm:order-none'} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void voidAccountingDocument()}>ยกเลิกเอกสาร</button>}
       </div>
       <CorrectionNoteSection
         detail={detail}
@@ -824,7 +824,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
               </div>
             ))}
           </div>
-          <button type="button" className={btnClass} disabled={busy || detail.lines.some((line) => !linkedTaxSelections[line.lineNumber])} onClick={() => void createLinkedTaxInvoice()}>{busy ? 'กำลังสร้าง...' : 'สร้าง Draft ใบกำกับภาษี'}</button>
+          <button type="button" className={btnClass} disabled={busy || detail.lines.some((line) => !linkedTaxSelections[line.lineNumber])} aria-busy={Boolean(busy)} onClick={() => void createLinkedTaxInvoice()}>{busy ? 'กำลังสร้าง...' : 'สร้าง Draft ใบกำกับภาษี'}</button>
         </section>
       )}
       {canRecordPayment && (
@@ -853,7 +853,7 @@ function DocumentDetailPanel({ companyId, documentId, permissions, viewerUserId,
           <ThemedSelect className={inputClass} value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as AccountingPaymentMethod)}>
             {Object.entries(PAYMENT_METHOD_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
           </ThemedSelect>
-          <button className={btnClass} disabled={busy || paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0}>{busy ? 'กำลังบันทึก...' : 'บันทึกรับชำระ'}</button>
+          <button className={btnClass} disabled={busy || paymentSettles > Number(detail.outstandingAmount) + 1e-9 && Number(paymentWht) > 0} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'บันทึกรับชำระ'}</button>
           <p className="sm:col-span-2 text-xs text-gray-600">
             ตัดยอดค้าง {paymentSettles.toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} จาก {Number(detail.outstandingAmount).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             {/* Cash alone may become unapplied credit; withheld tax cannot because no cash moved. */}
@@ -920,7 +920,7 @@ function CounterpartyListPage({ companyId, canCreateSalesRoot }: { companyId: st
       }}>
         <input className={inputClass} aria-label="ชื่อลูกค้าหรือคู่ค้า" placeholder="ชื่อลูกค้าหรือคู่ค้า" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
         <input className={inputClass} aria-label="เลขประจำตัวผู้เสียภาษี" placeholder="เลขประจำตัวผู้เสียภาษี" value={taxId} onChange={(e) => setTaxId(e.target.value)} />
-        <button className={btnClass} disabled={busy}>{busy ? 'กำลังบันทึก...' : 'เพิ่มคู่ค้า'}</button>
+        <button className={btnClass} disabled={busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : 'เพิ่มคู่ค้า'}</button>
       </form>}
       <div className="max-h-64 overflow-auto rounded border border-gray-200">
         {loading ? <LoadingState label="กำลังโหลด..." /> : counterparties.length === 0 ? <p className="p-4 text-sm text-gray-500">ยังไม่มีลูกค้าหรือคู่ค้า</p> : counterparties.map((counterparty) => (

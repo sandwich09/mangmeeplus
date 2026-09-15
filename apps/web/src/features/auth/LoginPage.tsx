@@ -597,7 +597,7 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             <button
               type="button"
               onClick={handleDevLogin}
-              disabled={loading}
+              disabled={loading} aria-busy={Boolean(loading)}
               className="mt-6 w-full rounded-lg border border-dashed border-gray-300 px-4 py-2 text-xs font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
             >
               Dev sign-in (local seed OWNER)

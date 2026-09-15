@@ -264,7 +264,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
           ) : !status ? (
             <div className="doc-gate-status" role="alert">
               <p className="doc-gate-error" style={{ margin: 0 }}>{error ?? copy.loadError}</p>
-              <Button type="button" variant="secondary" onClick={() => void loadStatus()}>{copy.retry}</Button>
+              <Button type="button" variant="secondary" loading={loading} onClick={() => void loadStatus()}>{copy.retry}</Button>
             </div>
           ) : (
             <form ref={formRef} onSubmit={submit} noValidate className="doc-gate-form">
@@ -434,7 +434,7 @@ export default function LegalAcceptancePage({ companyId, returnTo }: Props) {
         </nav>
         <button
           type="button"
-          disabled={submitting || loggingOut}
+          disabled={submitting || loggingOut} aria-busy={Boolean(loggingOut)}
           onClick={() => void signOut()}
           className="doc-gate-signout"
         >

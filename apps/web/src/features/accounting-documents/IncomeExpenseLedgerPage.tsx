@@ -236,7 +236,7 @@ function ReceivePaymentModal({
 
         {error && <ErrorBanner message={error} onRetry={() => void save()} />}
         <div className="space-y-2">
-          <button type="submit" className="mangmee-btn mangmee-btn-primary min-h-14 w-full text-base" disabled={Boolean(blocker) || busy}>{busy ? 'กำลังบันทึก...' : `ยืนยันรับชำระ ฿${money(amount)}`}</button>
+          <button type="submit" className="mangmee-btn mangmee-btn-primary min-h-14 w-full text-base" disabled={Boolean(blocker) || busy} aria-busy={Boolean(busy)}>{busy ? 'กำลังบันทึก...' : `ยืนยันรับชำระ ฿${money(amount)}`}</button>
           {(blocker || busy) && <p className="text-base text-gray-600">{busy ? 'กำลังบันทึก กรุณารอสักครู่' : blocker}</p>}
           <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-12 w-full text-base" disabled={busy} onClick={onClose}>ยกเลิก</button>
         </div>
@@ -618,7 +618,7 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
                     </table>
                   </div>
                   <div className="mt-5 flex items-center justify-between gap-3">
-                    <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11" disabled={entries.page <= 1 || entriesLoading} onClick={() => setPage((value) => Math.max(1, value - 1))}>ก่อนหน้า</button>
+                    <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11" disabled={entries.page <= 1 || entriesLoading} aria-busy={Boolean(entriesLoading)} onClick={() => setPage((value) => Math.max(1, value - 1))}>ก่อนหน้า</button>
                     <span className="text-base text-gray-600">หน้า {entries.page.toLocaleString('th-TH')}</span>
                     <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11" disabled={entries.page * entries.pageSize >= entries.total || entriesLoading} onClick={() => setPage((value) => value + 1)}>ถัดไป</button>
                   </div>
@@ -626,7 +626,7 @@ export function IncomeExpenseLedgerPage({ companyId, permissions }: { companyId:
 
           {canDownload && (
             <div className="mt-6 border-t border-gray-100 pt-5">
-              <button type="button" className="mangmee-btn mangmee-btn-primary min-h-14 w-full text-base sm:w-auto" disabled={Boolean(exportDisabledReason)} onClick={() => void download()}>{exporting ? 'กำลังเตรียมไฟล์...' : 'ดาวน์โหลด Excel และ CSV'}</button>
+              <button type="button" className="mangmee-btn mangmee-btn-primary min-h-14 w-full text-base sm:w-auto" disabled={Boolean(exportDisabledReason)} aria-busy={exporting} onClick={() => void download()}>{exporting ? 'กำลังเตรียมไฟล์...' : 'ดาวน์โหลด Excel และ CSV'}</button>
               {exportDisabledReason && <p className="mt-2 text-base text-gray-600">{exportDisabledReason}</p>}
             </div>
           )}

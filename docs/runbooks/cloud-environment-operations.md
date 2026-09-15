@@ -10,6 +10,114 @@ Account `311414082667`, region `ap-southeast-1` ทั้งหมด — ไม
 
 ---
 
+## Isolated AWS rehearsal completed — 2026-09-14
+
+Later owner-requested UAT power resume: both retained Kamal hosts are running again (API
+`i-0eb581c5ac3b3d7ba` at `13.212.80.73`, AI/workers `i-011918b0d49534d1c` at `13.213.14.149`).
+Verified EC2 identity and preserved SSH keys before updating private enrollment; private ALB targets
+remain `10.92.0.10`/`10.92.0.42`. Dev remains stopped. The stopped-state read below is historical.
+Owner approved permanent TCP22 ingress `27.130.60.231/32` for both UAT groups only, preserving
+`27.130.53.193/32`: API `sg-021fe21a46c0fcb88` rule `sgr-0e4dfb75cc6543bff`, AI
+`sg-089ddbf86bd4251a1` rule `sgr-0d133747833e0c6e0`. Exact `DescribeSecurityGroups` readback confirms
+both /32 rules on both groups; no broader/IAM access change. Account-scoped non-root operator used.
+This manual ingress is owner-approved drift; do not remove it as temporary rehearsal access or
+overwrite it with the older CloudFormation allowlist without preserving the approved rule.
+
+Substitute artifact-preview500 was reproduced in the exact serving API image: PDF.js optional
+`@napi-rs/canvas` was stripped by `--no-optional`, causing `DOMMatrix is not defined`; bank PDF text
+extraction silently returned `unreadable` for the same omission. It is image packaging, not a missing
+running host. [Hotfix/audit and release ledger](../agent-memory/runtime-dependency-hotfix-20260914.md).
+
+The earlier hotfix and shared HEIC/HEIF upload-source consistency were deployed: operation
+`20260914T165647Z-f9ecf83a`, main source `038eb55409cf18db587c4e93b93d91492a20bf2e`, terminal
+`ACCEPTED_LINE_DEFERRED`,298.538s, all config/readiness checks and KMS signature verified, customer
+`OPEN`. Existing previously failing Drtb paper-form preview renders its PDF page after fresh reload;
+the original The sun coffee item was not re-tested with the Drtb account. API/DB, AI, Workers/Redis/
+internal API passed; new-container bounded logs show no missing-module/DOMMatrix/5xx/timeout pattern.
+AgentCore is now `kamal_uat_a` version5. Both UAT hosts retain the enrolled addresses above, Dev is
+stopped, and Production is unchanged. PR561/develop and PR562/main passed full exact-head CI before
+merge; owner explicitly authorized admin merge for main's missing reviewer approval only. See the
+linked release ledger for exact immutable image digests and signed artifact hash.
+
+Previous serving UAT loading hotfix: operation `20260914T182800Z-e3b8bc63`, main source
+`f06c9ac8572e5fbbf1ee3bb7b0a7fd8d558a17b9`, accepted 2026-09-14T18:34:03.090095Z,
+`ACCEPTED_LINE_DEFERRED`,364.651s, all eleven phases PASSED and KMS signature verified, customer
+`OPEN`. Exact API/DB, AI and Workers/Redis/internal API configs/readiness passed. AgentCore
+`kamal_uat_b` version6. Fresh Chrome Drtb reload shows route loading and preview loading with
+duplicate row actions disabled, then readable PDF page and enabled print. The earlier PDF/HEIC
+fixes remain included. Both UAT hosts retain enrolled addresses; Dev remains stopped and Production
+unchanged. PR565/develop CI34876912709 and PR566/main CI34878949174 passed full actual checks
+before owner-authorized admin merges. [Loading scope, exact digests and signed evidence](../agent-memory/action-loading-hotfix-20260915.md).
+Login/logout is NOT_REQUIRED_BY_OWNER, live LINE DEFERRED_BY_OWNER under retained UAT smoke
+authorization; CI LINE fixture acceptance is separate. Earlier serving-operation entries below
+are historical, not the currently deployed source.
+
+Latest serving UAT preview-cover/performance hotfix: operation `20260914T192255Z-e036fe7a`, main
+source `5b2fd63bf82a2917bb47dd0c9a75e2d50edf324c`, finished2026-09-14T19:30:05.252048Z,
+`ACCEPTED_LINE_DEFERRED`,429.541s; all11 phases PASSED, KMS signature verified, customer `OPEN`.
+Exact API/DB, AI and workers/Redis/internal API source/config/readiness passed; AgentCore now
+`kamal_uat_a` version7. Fresh Drtb View shows an immediate centered document-area cover, disabled
+print, then a readable page and enabled print; early-close prevents late response reopening.
+The PDF.js RGB-tail offset patch removes repeated prior-chunk work: paired isolated serving-image
+synthetic pipeline median5.688s→1.609s (~72% faster), with identical page size/encoding quality.
+No source/checksum/tenant permission change. PR569/develop CI34884275830 and PR570/main CI34884441376
+passed full actual checks before owner-authorized admin merges; main reviewer waiver only.
+Both UAT hosts retain enrolled addresses and permanent SSH rules, Dev is stopped and Production
+unchanged. [Exact digests, signed artifact and verification](../agent-memory/preview-cover-performance-hotfix-20260915.md).
+Login/logout and live LINE remain covered only by the retained UAT smoke exception above.
+Old zero-phase `RUNNING` shell `20260911T164143Z-49739d4d` has two historical snapshot copies,
+unchanged since Sep11 with no active lock or mutation phase; targeted process check finds no old
+controller. Do not count stale receipt labels/snapshot duplicates as live queued/running operations,
+or rewrite/delete historical evidence; verify active lock, process and mutation evidence instead.
+
+Latest verified state at **00:41:22.152660 UTC**: Dev `i-0883f1ff88440ca07` and both UAT Kamal hosts
+are **stopped**. Owner approved exact temporary SSH access for this rehearsal; rule
+`sgr-0a12dbd8f66e96575` was removed and absence verified. Preserve the original allowlist.
+The last Dev public IP47.129.159.150 is historical and must be re-enrolled after any restart.
+Production services and the existing bastion were not changed. Earlier pending-approval entries
+below are historical. No IAM policy was changed.
+
+Shared core operation `20260914T003123Z-1f9c690a` passed on main00cbaa8b, then powered off Dev
+immediately. Main-to-core-proof507.797s; command including fixture setup/shutdown569.800s. This is
+not Production acceptance: synthetic credentials/data, single Dev host, customer gate CLOSED, no
+AgentCore update or real Production topology/provider/customer proof. Original failed Redis fixture
+setup is retained: official entrypoint UID999 could not read owner1000 mode0600 config. Correct
+fixture uses non-root UID1000 plus private writable data; TLS PONG/SAVE and clean core run passed.
+Private fixtures/app containers remain on the stopped volume; restarting Dev may restart them.
+[Full timing, scope and evidence](../agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+## Production configuration readback — 2026-09-13
+
+Read-only preparation used the existing non-root reader to capture all three Production ECS Express
+`activeConfigurations`, beginning 14:40:53 UTC. All advertise source
+`fc2838c4cb691033f41595c0d43587f10377d33c`; this is configuration evidence, not running-container or
+customer acceptance proof. All 12 distinct secret references resolved at their current versions;
+metadata/versions remained unchanged on the final read. New main `00cbaa8b` builds and its three
+service config schemas passed against this baseline plus tracked Production overrides, in local
+network-disabled validation containers. No Production resource or traffic was changed.
+
+No Production Kamal target is enrolled locally. The prepared command/example is not infrastructure
+or cutover completion. [Scope, checks and evidence](../agent-memory/kamal-prod-preparation-2026-09-13.md).
+
+Fresh 15:17–15:20 UTC rehearsal inspection: both UAT Kamal hosts and Dev are **stopped**, with no
+assigned public IP; the old addresses below must not be reused. The bastion remains running.
+Production RDS is available on PostgreSQL **18.3**, `db.t4g.small`, Multi-AZ, private/encrypted,
+35-day backups and deletion protection. Complete ECS config/12 secret-version metadata matches the
+earlier baseline. Existing reader credentials deny even the Dev start dry-run, CF/IAM discovery and
+Redis discovery. Owner subsequently restored root Console and authorized its use for isolated testing,
+requiring immediate simulation-host shutdown. Root readback confirms Production Redis **7.1.0**, two
+`cache.t4g.micro` nodes, Multi-AZ/failover, TLS, at-rest encryption and auth. The Dev SSH allowlist has
+the previous workstation address; an exact temporary /32 approval is pending. No host or IAM state
+changed. [Simulation evidence and pending access](../agent-memory/kamal-prod-simulation-2026-09-13.md).
+
+Actual Production DB support read at **16:05:09 UTC**, using existing `watchdog_support_ro` IAM auth,
+verified TLS and a read-only transaction: PostgreSQL18.3, **182 applied migrations, 0 unfinished**.
+Ordered migration names/SQL checksums exactly match source `fc2838c4...`; main `00cbaa8b...` contains
+188. Its six pending migrations require normal mode before any hotfix-only promotion. No data or DDL
+was changed. Support session `root-l5tdyxu2594req3e72dhhl6lze` is verified **Terminated**. The local
+PostgreSQL18.3/TLS rehearsal passed the actual normal upgrade and subsequent hotfix, but does not
+establish AWS deployment timing, managed Redis parity, multi-AZ readiness or customer acceptance.
+
 ## UAT Kamal update — 2026-09-11 20:28 UTC
 
 Owner-authorized UAT Kamal proof is separate from the ECS V2 Production protocol. Production remains

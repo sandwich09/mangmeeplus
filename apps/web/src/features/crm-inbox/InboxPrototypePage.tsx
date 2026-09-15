@@ -823,7 +823,7 @@ export function InboxPrototypePage({
                         <button
                           type="button"
                           onClick={() => void assignToMe()}
-                          disabled={assigning}
+                          disabled={assigning} aria-busy={Boolean(assigning)}
                           className="hidden shrink-0 cursor-pointer rounded-[9px] border px-3 py-1.5 text-[13px] font-semibold disabled:cursor-not-allowed disabled:opacity-50 sm:block"
                           style={detail.assignedToUserId === userId ? { borderColor: '#D0D5DD', color: '#667085' } : { borderColor: '#ABEFC6', background: '#ECFDF3', color: '#039855' }}
                         >
@@ -961,7 +961,7 @@ export function InboxPrototypePage({
                                 type="button"
                                 aria-label={isNoteMode ? 'บันทึกโน้ต' : 'ส่งข้อความ'}
                                 onClick={() => void submitComposer()}
-                                disabled={sending || composeText.trim() === ''}
+                                disabled={sending || composeText.trim() === ''} aria-busy={Boolean(sending)}
                                 className="flex shrink-0 cursor-pointer items-center justify-center rounded-[10px] text-white disabled:opacity-50"
                                 style={{ width: 44, height: 40, background: isNoteMode ? '#F59E0B' : 'var(--color-brand-500)' }}
                               >
@@ -1204,7 +1204,7 @@ function MessageBubble({ companyId, message, canFlagProof }: { companyId: string
           (proofDone ? (
             <div className="mt-1 text-[11px] font-semibold text-green-600">✓ ทำเครื่องหมายเป็นหลักฐานการชำระแล้ว</div>
           ) : (
-            <button type="button" onClick={() => void markProof()} disabled={proofBusy} className="mt-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+            <button type="button" onClick={() => void markProof()} disabled={proofBusy} aria-busy={Boolean(proofBusy)} className="mt-1 rounded-md border border-gray-200 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50">
               ทำเครื่องหมายหลักฐานการชำระ
             </button>
           ))}
@@ -1414,7 +1414,7 @@ function CustomerPanel({
             <span key={t} className="bg-brand-50 text-brand-700" style={{ fontSize: 11.5, fontWeight: 600, padding: '3px 10px', borderRadius: 20 }}>
               {t}
               {canResolve && (
-                <button type="button" onClick={() => void submitTags(detail.tags.filter((x) => x !== t))} disabled={tagBusy} className="ml-1 text-gray-400 hover:text-red-500">
+                <button type="button" onClick={() => void submitTags(detail.tags.filter((x) => x !== t))} disabled={tagBusy} aria-busy={Boolean(tagBusy)} className="ml-1 text-gray-400 hover:text-red-500">
                   ×
                 </button>
               )}
@@ -1437,7 +1437,7 @@ function CustomerPanel({
               maxLength={40}
               className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-400"
             />
-            <button type="button" onClick={addTag} disabled={tagBusy || tagInput.trim() === ''} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
+            <button type="button" onClick={addTag} disabled={tagBusy || tagInput.trim() === ''} aria-busy={Boolean(tagBusy)} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
               เพิ่ม
             </button>
           </div>
@@ -1469,7 +1469,7 @@ function CustomerPanel({
                       maxLength={120}
                       className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-400"
                     />
-                    <button type="button" onClick={() => void submitDeal()} disabled={dealBusy || dealTitle.trim() === ''} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
+                    <button type="button" onClick={() => void submitDeal()} disabled={dealBusy || dealTitle.trim() === ''} aria-busy={Boolean(dealBusy)} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
                       สร้าง
                     </button>
                   </div>
@@ -1499,7 +1499,7 @@ function CustomerPanel({
                     />
                     <div className="flex gap-1.5">
                       <ThemedDate value={taskDue} onChange={(e) => setTaskDue(e.target.value)} className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[13px] outline-none focus:border-brand-400" />
-                      <button type="button" onClick={() => void submitTask()} disabled={taskBusy || taskTitle.trim() === '' || !taskDue} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
+                      <button type="button" onClick={() => void submitTask()} disabled={taskBusy || taskTitle.trim() === '' || !taskDue} aria-busy={Boolean(taskBusy)} className="shrink-0 rounded-lg bg-brand-500 px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-50">
                         สร้าง
                       </button>
                     </div>
@@ -1556,7 +1556,7 @@ function CustomerPanel({
               </div>
             )}
             {canQuote && (
-              <button type="button" onClick={() => void submitQuote()} disabled={quoteBusy} className="mt-2 w-full rounded-lg border border-brand-200 bg-brand-25 px-3 py-1.5 text-[12.5px] font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-50">
+              <button type="button" onClick={() => void submitQuote()} disabled={quoteBusy} aria-busy={Boolean(quoteBusy)} className="mt-2 w-full rounded-lg border border-brand-200 bg-brand-25 px-3 py-1.5 text-[12.5px] font-semibold text-brand-600 hover:bg-brand-50 disabled:opacity-50">
                 + สร้างใบเสนอราคา
               </button>
             )}
