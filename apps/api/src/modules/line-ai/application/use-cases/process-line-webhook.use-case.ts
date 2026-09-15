@@ -2801,9 +2801,9 @@ export class ProcessLineWebhookUseCase {
   }
 
   private rememberReceiptDeliverySource(event: LineTextEvent | LineReceiptUploadEvent, context: RequestContext,
-    expense: Pick<ExpenseRecord, 'id' | 'updatedAt'>, category?: { id: string; name: string }) {
+    expense: { id: string; updatedAt?: Date }, category?: { id: string; name: string }) {
     const proof = this.deliveryReceiptSources.get(event) ?? { context, chatKeyHash: chatKeyHashOf(event), records: new Map(), categories: new Map() };
-    const revision = expense.updatedAt instanceof Date ? expense.updatedAt.toISOString() : null;
+    const revision = expense.updatedAt instanceof Date && Number.isFinite(expense.updatedAt.getTime()) ? expense.updatedAt.toISOString() : null;
     proof.records.set(expense.id, proof.records.has(expense.id) && proof.records.get(expense.id) !== revision ? null : revision);
     if (category) proof.categories.set(category.id, proof.categories.has(category.id) && proof.categories.get(category.id) !== category.name ? null : category.name);
     this.deliveryReceiptSources.set(event, proof);
@@ -4405,6 +4405,7 @@ export class ProcessLineWebhookUseCase {
       const applied = this.correctExpense
         ? await this.correctExpense.execute(correctionCtx, {
           lineMessageIdHash: hashMessagePreview(event.lineMessageId ?? event.webhookEventId),
+          chatKeyHash: chatKeyHashOf(event),
           candidates: recentCapturedExpenses,
           ...(routePlan.correctionHints ? { hints: routePlan.correctionHints } : {}),
           evidence: correctionEvidence,
@@ -4414,6 +4415,8 @@ export class ProcessLineWebhookUseCase {
 
       let reply: string;
       if (applied.status === 'applied') {
+        this.rememberReceiptDeliverySource(event, correctionCtx, { id: applied.expenseId,
+          updatedAt: applied.source?.id === applied.expenseId ? applied.source.updatedAt : undefined });
         await this.ackConsumed(correctionPlan, 'correction_apply');
         reply = formatCorrectionAppliedReply(this.config.webBaseUrl, companyId, applied.expenseId, applied.fields, normalizedText, applied.noteOutcome);
       } else if (applied.status === 'clarify') {

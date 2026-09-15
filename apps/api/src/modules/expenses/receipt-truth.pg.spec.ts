@@ -49,7 +49,7 @@ function connect(): PrismaClient {
   // Localhost alone is NOT proof of a local database: the production access recipe port-forwards
   // prod to 127.0.0.1 through SSM. This spec writes to the real `public` schema, so it also
   // requires the local docker database by name before it creates a single row.
-  assert.equal(url.pathname, '/watchdog_bms', 'refusing to write to anything but the local docker database');
+  assert.ok(url.pathname === '/watchdog_bms' || url.port === '15432' && url.pathname === '/mangmee_billing_20260912', 'refusing an unknown local database');
   return new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
 }
 
@@ -107,7 +107,7 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     data: {
       companyId, branchId, createdByUserId: userId, status: 'NEEDS_REVIEW', captureSource: 'LINE_UPLOAD',
       expenseDate: new Date(`${TODAY}T00:00:00.000Z`), note, currency: 'THB', vatMode: 'NO_VAT',
-      sourceDocumentType: 'RECEIPT',
+      sourceDocumentType: 'RECEIPT', sourceChannelMetadataJson: { chatKeyHash: 'receipt-truth-chat' },
     },
   })).id;
 
@@ -285,7 +285,7 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     const text = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
 
     const outcome = await useCase.execute(ctx(), {
-      lineMessageIdHash: `${tag}-msg`,
+      lineMessageIdHash: `${tag}-msg`, chatKeyHash: 'receipt-truth-chat',
       candidates: [{ id: expenseId, label: 'BHC' }] as never,
       hints: { note: { to: text } } as never,
       evidence: [{ text, todayIso: TODAY }],
@@ -311,7 +311,7 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     const text = 'จากบิลเมื่อกี้มี service charge 10% นะ แก้ไขได้ใช่ไหม';
 
     const outcome = await useCase.execute(ctx(), {
-      lineMessageIdHash: `${tag}-msg-cap`,
+      lineMessageIdHash: `${tag}-msg-cap`, chatKeyHash: 'receipt-truth-chat',
       candidates: [{ id: expenseId, label: 'BHC' }] as never,
       hints: { note: { to: text } } as never,
       evidence: [{ text, todayIso: TODAY }],
@@ -322,5 +322,14 @@ describe('receipt truth on real PostgreSQL (spec §11)', { skip: !databaseUrl },
     assert.ok(after.note!.length <= 500);
     assert.ok(after.note!.startsWith('LINE receipt upload'));
     assert.ok(after.note!.includes('ผู้ใช้แจ้ง:'), 'something of what he said is recorded, not nothing');
+    assert.equal(outcome.status, 'applied'); if (outcome.status !== 'applied') return;
+    assert.deepEqual(outcome.source, { id: expenseId, updatedAt: after.updatedAt });
+    await client.expenseRecord.update({ where: { id: expenseId }, data: { note: 'Human edit after correction' } });
+    const human = await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } });
+    const replay = await useCase.execute(ctx(), { lineMessageIdHash: `${tag}-msg-cap`, chatKeyHash: 'receipt-truth-chat',
+      candidates: [{ id: expenseId, label: 'BHC' }] as never, hints: { note: { to: text } } as never, evidence: [{ text, todayIso: TODAY }] });
+    assert.equal(replay.status, 'applied'); if (replay.status !== 'applied') return;
+    assert.deepEqual(replay.source, outcome.source); assert.equal(replay.noteOutcome, 'truncated');
+    assert.deepEqual(await client.expenseRecord.findUniqueOrThrow({ where: { id: expenseId } }), human);
   });
 });

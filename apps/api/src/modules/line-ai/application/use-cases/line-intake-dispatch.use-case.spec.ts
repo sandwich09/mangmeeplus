@@ -480,7 +480,12 @@ function makeHarness(opts: {
     {
       execute: async (_ctx: any, cmd: any) => {
         correctionCalls.push(cmd);
-        return opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
+        const result = opts.correctionOutcome ?? { status: 'guidance', reason: 'no_correctable_field' };
+        if (result.status !== 'applied' || Object.hasOwn(result, 'source')) return result;
+        const saved = emptyMedia(result.expenseId, { companyId: _ctx.companyId, createdByUserId: _ctx.userId,
+          branchId: legacyBranchIds[0], sourceChannelMetadataJson: { chatKeyHash: cmd.chatKeyHash } });
+        capturedRows.set(saved.id, saved);
+        return { ...result, source: { id: saved.id, updatedAt: new Date(saved.updatedAt) } };
       },
     } as any,
     (opts.substituteResult || opts.substituteThrows || opts.substituteMediaContext
@@ -698,6 +703,45 @@ describe('LINE intake dispatch – capture correction (phase 1 guidance)', () =>
     assert.match(h.replies[0] ?? '', /แก้ไขรายการเดิมให้แล้ว/);
     assert.match(h.replies[0] ?? '', /วันที่เอกสาร/);
     assert.match(h.replies[0] ?? '', /expense-1/);
+  });
+
+  for (const fault of ['unchanged', 'revision', 'missing', 'access', 'fallback']) it(`correction confirmation validates its producing source: ${fault}`, async () => {
+    let changed = false, privateAttempts = 0; const accepted: unknown[] = [];
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'expense.update', 'line.ai.query'],
+      routePlan: { ...CORRECTION_PLAN, correctionHints: { expenseDate: { to: '2026-07-20' } } },
+      recentCaptures: [capturedRow('expense-1')], correctionOutcome: { status: 'applied', expenseId: 'expense-1',
+        fields: { expenseDate: { from: '2026-06-17T00:00:00.000Z', to: '2026-07-20' } } },
+    });
+    const uc = h.useCase as any, execute = uc.correctExpense.execute, read = uc.expenseRepo.findByIdWithRelations;
+    uc.correctExpense.execute = async (...args: unknown[]) => {
+      const result = await execute(...args); return fault === 'missing' ? { ...result, source: undefined } : result;
+    };
+    uc.expenseRepo.findByIdWithRelations = async (...args: unknown[]) => {
+      const row = await read(...args); return changed && row && ['revision', 'fallback'].includes(fault)
+        ? { ...row, updatedAt: new Date(row.updatedAt.getTime() + 1) } : row;
+    };
+    const access = uc.permissionResolver.resolveAccess;
+    uc.permissionResolver.resolveAccess = async (...args: unknown[]) => changed && fault === 'access'
+      ? { membershipId: 'revoked', roles: [], permissions: [], scopes: {} } : access(...args);
+    if (!['unchanged', 'fallback'].includes(fault)) uc.handoffLinks = {
+      wrapOutgoingLineContent: async (_who: unknown, messages: unknown) => { changed = true; return messages; },
+    };
+    uc.lineReply.sendReply = async (_token: string, messages: unknown[]) => {
+      if (/แก้ไขรายการเดิมให้แล้ว/.test(JSON.stringify(messages))) {
+        privateAttempts++; if (fault === 'fallback') { changed = true; return 'failed_token'; }
+      }
+      accepted.push(messages); return 'ok';
+    };
+    uc.lineReply.sendPush = async (_to: string, messages: unknown[]) => { accepted.push(messages); return 'ok'; };
+    const run = h.useCase.execute({ ...TEXT_EVENT, messageText: 'วันที่ต้องเป็น 20 กรกฎาคม 2569' });
+    if (fault === 'unchanged') await run; else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+    assert.equal(h.correctionCalls.length, 1); assert.equal(h.captured.length, 0); assert.equal(h.ocrRequests.length, 0);
+    if (fault === 'unchanged') assert.match(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว/);
+    else {
+      assert.doesNotMatch(JSON.stringify(accepted), /แก้ไขรายการเดิมให้แล้ว|expense-1/);
+      assert.match(JSON.stringify(accepted), fault === 'access' ? /สิทธิ์หรือร้านที่เลือกเปลี่ยน/ : /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+    }
   });
 
   it('falls back to guidance when a guard refuses, never to a create', async () => {

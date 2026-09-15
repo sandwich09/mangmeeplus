@@ -17,7 +17,7 @@
 
 - C08 การเพิ่มวันให้ลูกค้าที่จ่ายแล้ว: รอคำตอบเดิมว่าจะเลื่อนวันเรียกเก็บ Stripe ด้วยหรือไม่ จึงยังไม่มีการเดาวันตัดเงิน
 - อายุจัดเก็บประวัติเมลในระบบ: รอคำตอบเดิม; การเก็บของ Postmark เป็นคนละขอบเขต ห้ามล้างหลักฐานส่งซ้ำ/งานค้าง/audit ตามการล้างประวัติทั่วไป
-- AP21–AP24: ยังต้องปิด source ของผล substitute/correction, คำถาม/ลำดับตัวเลือกเดิมที่เก็บไว้ และสิทธิ์ระหว่างขั้นตอนบันทึกที่เหลือ ดู [media](line-media-source-result.json), [continuation](line-continuation-source-result.json) และ [กู้รูปเดิม](line-pending-repair-result.json) สำหรับส่วนที่ผ่านแล้ว
+- AP21–AP24: ยังต้องปิด source ของผล substitute/resume, คำถาม/ลำดับตัวเลือกเดิมที่เก็บไว้ และสิทธิ์ระหว่างขั้นตอนบันทึกที่เหลือ ดู [media](line-media-source-result.json), [continuation](line-continuation-source-result.json) และ [กู้รูปเดิม](line-pending-repair-result.json), [ผลแก้รายการ](line-correction-source-result.json) สำหรับส่วนที่ผ่านแล้ว
 - CT01–CT32 และ AP01–AP24 ต้องเทียบกับผลรวมของ source ปัจจุบันและ acceptance ที่ยังขาด; ชุดย่อยมีกรณีซ้ำกัน จึงห้ามบวกจำนวนเป็นเปอร์เซ็นต์หรือจำนวน business flows
 - หลักฐานในตารางมีทั้งผลเก่าและผลล่าสุด แต่ละไฟล์บอก source และข้อจำกัดของตนเอง การผ่าน simulation ไม่แทน native LINE/LIFF/provider และไม่แทน final CI
 
