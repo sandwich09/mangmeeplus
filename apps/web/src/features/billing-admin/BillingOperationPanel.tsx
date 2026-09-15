@@ -1,5 +1,6 @@
 'use client';
-import { useEffect, useState } from 'react';
+import {billingLeavesPage} from '../billing/billing-display';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { billingControl, billingLabel, billingDeliveryLabel } from '../billing/billing-display';
 import type { BillingRepairOperation } from '@watchdog-bms/contracts';
@@ -16,46 +17,52 @@ const api = <T,>(path: string, body?: unknown, key?: string) => authedApiFetch<T
 export default function BillingOperationPanel({ operationId, companyId, companyVersion, canReconcile = false,deliveryId,canRetry=false,canCheckDelivery=false,eventId,eventSourceHash,invoiceId,invoiceSourceHash,findingId,findingSourceHash }: {
   operationId?: string; companyId?: string; companyVersion?: number; canReconcile?: boolean;deliveryId?:string;canRetry?:boolean;canCheckDelivery?:boolean;eventId?:string;eventSourceHash?:string;invoiceId?:string;invoiceSourceHash?:string;findingId?:string;findingSourceHash?:string;
 }) {
+  const generation=useRef(0),invalidate=()=>{generation.current++;};
+  const leaving=(event:React.MouseEvent<HTMLAnchorElement>)=>{if(billingLeavesPage(event))invalidate();};
   const [operation, setOperation] = useState<BillingRepairOperation | null>(null), [reason, setReason] = useState('');
   const accept=(value:BillingRepairOperation)=>setOperation(current=>current?.id===value.id&&current.version>value.version?current:value);
   const [list, setList] = useState<{ items: BillingRepairOperation[]; nextCursor: string | null } | null>(null);
   const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [pollEnded, setPollEnded] = useState(false);
+  useEffect(()=>{invalidate();setOperation(null);setList(null);setCursor(null);setReason('');setBusy(false);setError('');setPollEnded(false);return invalidate;},[operationId,companyId,deliveryId,eventId,invoiceId,findingId]);
   useEffect(() => {
-    let active = true;
-    const load = operationId ? api<BillingRepairOperation>(`/${encodeURIComponent(operationId)}`).then(value => { if (active) accept(value); }) :
+    const token=generation.current;let active = true;
+    const load = operationId ? api<BillingRepairOperation>(`/${encodeURIComponent(operationId)}`).then(value => { if (active&&token===generation.current) accept(value); }) :
       api<{ items: BillingRepairOperation[]; nextCursor: string | null }>(`?${eventId?`referenceId=${encodeURIComponent(eventId)}`:`companyId=${encodeURIComponent(companyId!)}`}${deliveryId||invoiceId||findingId?`&referenceId=${encodeURIComponent(deliveryId??invoiceId??findingId!)}`:''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
-        .then(value => { if (active) setList(value); });
-    load.catch(() => { if (active) { setOperation(null); setList(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสอบสิทธิ์และลองใหม่'); } });
+        .then(value => { if (active&&token===generation.current) setList(value); });
+    load.catch(() => { if (active&&token===generation.current) { setOperation(null); setList(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสอบสิทธิ์และลองใหม่'); } });
     return () => { active = false; };
   }, [operationId, companyId, deliveryId, eventId, invoiceId, findingId, cursor, reload]);
-  const inlineOperationId = operationId ? undefined : operation?.id;
+  const matches=operationId?operation?.id===operationId:companyId?operation?.scope.kind==='COMPANY'&&operation.scope.companyId===companyId&&
+    (!(deliveryId||invoiceId||findingId)||operation.referenceId===(deliveryId??invoiceId??findingId)):!!eventId&&operation?.referenceId===eventId;
+  const inlineOperationId = operationId||!matches ? undefined : operation?.id;
   useEffect(() => {
     if (!inlineOperationId) return;
-    let active = true;
-    void api<BillingRepairOperation>(`/${inlineOperationId}`).then(value => { if (active) accept(value); })
-      .catch(() => { if (active) { setOperation(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสิทธิ์และเปิดรายการเดิมอีกครั้ง'); } });
+    const token=generation.current;let active = true;
+    void api<BillingRepairOperation>(`/${inlineOperationId}`).then(value => { if (active&&token===generation.current) accept(value); })
+      .catch(() => { if (active&&token===generation.current) { setOperation(null); setError('โหลดคำสั่งไม่ได้ กรุณาตรวจสิทธิ์และเปิดรายการเดิมอีกครั้ง'); } });
     return () => { active = false; };
   }, [inlineOperationId, reload]);
   useEffect(() => {
-    if (!operation || !['QUEUED', 'RUNNING'].includes(operation.state)) return;
-    let active = true, polls = 0;
+    if (!operation || !matches || !['QUEUED', 'RUNNING'].includes(operation.state)) return;
+    setPollEnded(false);
+    const token=generation.current;let active = true, polls = 0;
     const timer = window.setInterval(() => {
-      if (++polls > 24) { window.clearInterval(timer); if (active) setPollEnded(true); return; }
+      if (++polls > 24) { window.clearInterval(timer); if (active&&token===generation.current) setPollEnded(true); return; }
       if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-      void api<BillingRepairOperation>(`/${operation.id}`).then(value => { if (active) accept(value); }).catch(() => {});
+      void api<BillingRepairOperation>(`/${operation.id}`).then(value => { if (active&&token===generation.current) accept(value); }).catch(() => {});
     }, 5000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [operation?.id, operation?.state]);
+  }, [operation?.id, operation?.state,matches,reload]);
   async function act(action: 'preview' | 'submit' | 'retry' | 'cancel') {
-    if (busy) return; setBusy(true); setError('');
+    if (busy||(action!=='preview'&&!matches)) return;const token=generation.current; setBusy(true); setError('');
     try {
       const value = action === 'preview' && eventId ? await authedApiFetch<BillingRepairOperation>(`/system/billing/provider-events/${eventId}/preview`,{method:'POST',suppressErrorToast:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceHash:eventSourceHash,reason})}) : action === 'preview' ? await api<BillingRepairOperation>('/preview', { type: findingId?'IMPORT_INVOICE':invoiceId?'RETRY_APPLY':deliveryId?(canCheckDelivery?'RECONCILE_NOTIFICATION':'RETRY_NOTIFICATION'):'RECONCILE', companyId, expectedVersion: companyVersion, reason,...findingId?{referenceId:findingId,findingSourceHash}:invoiceId?{referenceId:invoiceId,invoiceSourceHash}:deliveryId?{referenceId:deliveryId}:{} }) :
         action === 'submit' ? await api<BillingRepairOperation>('', { previewId: operation!.id, previewHash: operation!.previewHash, expectedVersion: operation!.version }, `billing-op-${operation!.id}`) :
           await api<BillingRepairOperation>(`/${operation!.id}/${action}`, { expectedVersion: operation!.version });
-      accept(value); setPollEnded(false); setReload(v => v + 1);
-    } catch (error) { setError(apiErrorMessage(error)); }
-    finally { setBusy(false); }
+      if(token===generation.current){accept(value); setPollEnded(false); setReload(v => v + 1);}
+    } catch (error) { if(token===generation.current)setError(apiErrorMessage(error)); }
+    finally { if(token===generation.current)setBusy(false); }
   }
   return <section className="space-y-4 rounded-xl border bg-white p-5" aria-label="คำสั่งตรวจสอบการชำระเงิน">
     <h2 className="text-lg font-bold">ตรวจสอบและกู้คืนรายการเดิม</h2>
@@ -65,7 +72,7 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
     {deliveryId&&(canRetry||canCheckDelivery)&&<p>{canCheckDelivery?'ตรวจสอบผลอีเมลเดิมกับ Postmark คำสั่งนี้ไม่ส่งอีเมลใหม่':'นำรายการแจ้งเตือนเดิมกลับเข้าคิว โดยคงผู้รับ ข้อความ และประวัติเดิม ไม่มีการเรียกเก็บเงินหรือเพิ่มสิทธิ์'}</p>}
     {(companyId||eventId) && (canReconcile||canRetry||canCheckDelivery) && <div className="space-y-3"><label className="block">เหตุผลการตรวจสอบ<input className="mt-2 block w-full rounded-lg border p-3" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} /></label>
       <button className={button} disabled={busy || !reason.trim()} onClick={() => void act('preview')}>ตรวจสอบผลกระทบ</button></div>}
-    {operation && <article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="สถานะคำสั่ง">
+    {operation && matches && <article className="space-y-3 rounded-xl bg-gray-50 p-4" aria-label="สถานะคำสั่ง">
       <h3 className="font-bold" role="status">{label(operation)}</h3>
       <p>{billingLabel('mode',operation.scope.mode)} · {operation.scope.kind === 'COMPANY' ? 'คำสั่งของบริษัทที่เลือก' : 'คำสั่งระดับระบบ'}</p>
       <p>{operation.reason}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงคำสั่ง</summary><p className="break-all">เลขคำสั่ง {operation.id} · รุ่นข้อมูล {operation.version}</p><p className="break-all">{operation.scope.kind==='COMPANY'?operation.scope.companyId:'ระดับระบบ'}</p></details>
@@ -84,17 +91,17 @@ export default function BillingOperationPanel({ operationId, companyId, companyV
       {pollEnded && <p>ยังรอผล สามารถกลับมาเปิดคำสั่งเดิมหรือโหลดข้อมูลล่าสุดได้</p>}
       {operation.errorCode && <p>เปิดรายการต้นทางและเคสเพื่อตรวจเงื่อนไขก่อนดำเนินการต่อ</p>}
       <div className="flex flex-wrap gap-2">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>{action === 'submit' ? 'ยืนยันส่งคำสั่งตรวจสอบ' : action === 'retry' ? 'ตรวจสอบคำสั่งเดิมอีกครั้ง' : 'ยกเลิกคำสั่งตรวจสอบ'}</button>)}</div>
-      <div className="flex flex-wrap gap-3"><Link className="underline" href={`/system/billing/operations/${operation.id}`}>เปิดลิงก์คำสั่งนี้</Link>
-        {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/deliveries/${operation.referenceId}`}>เปิดรายการส่งเดิม</Link>}
-        {operation.type==='IMPORT_INVOICE'&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<><Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/invoice-findings/${operation.referenceId}`}>กลับผลตรวจใบแจ้งหนี้เดิม</Link>
-          {operation.observed?.invoiceId&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices/${operation.observed.invoiceId}`}>ตรวจการให้สิทธิ์จากใบแจ้งหนี้ที่บันทึก</Link>}</>}
-        {operation.type==='RETRY_APPLY'&&operation.scope.kind==='COMPANY'&&<Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices${operation.referenceId?`/${operation.referenceId}`:''}`}>กลับไปใบเสร็จเดิมหรือเลือกรายการ</Link>}
-        {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไปเหตุการณ์เดิม</Link>}
-        {operation.scope.kind === 'COMPANY' && <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>
+      <div className="flex flex-wrap gap-3"><Link onClick={leaving} className="underline" href={`/system/billing/operations/${operation.id}`}>เปิดลิงก์คำสั่งนี้</Link>
+        {['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(operation.type)&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/deliveries/${operation.referenceId}`}>เปิดรายการส่งเดิม</Link>}
+        {operation.type==='IMPORT_INVOICE'&&operation.scope.kind==='COMPANY'&&operation.referenceId&&<><Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/invoice-findings/${operation.referenceId}`}>กลับผลตรวจใบแจ้งหนี้เดิม</Link>
+          {operation.observed?.invoiceId&&<Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices/${operation.observed.invoiceId}`}>ตรวจการให้สิทธิ์จากใบแจ้งหนี้ที่บันทึก</Link>}</>}
+        {operation.type==='RETRY_APPLY'&&operation.scope.kind==='COMPANY'&&<Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}/apply-invoices${operation.referenceId?`/${operation.referenceId}`:''}`}>กลับไปใบเสร็จเดิมหรือเลือกรายการ</Link>}
+        {operation.type==='RETRY_PROVIDER_EVENT'&&operation.referenceId&&<Link onClick={leaving} className="underline" href={`/system/billing/provider-events/${operation.referenceId}`}>กลับไปเหตุการณ์เดิม</Link>}
+        {operation.scope.kind === 'COMPANY' && <Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(operation.scope.companyId)}`}>กลับไปบริษัท</Link>}</div>
     </article>}
-    {list && <div className="space-y-2">{list.items.map(item => <p key={item.id}><Link className="break-all underline" href={`/system/billing/operations/${item.id}`}>{label(item)} · {item.reason}</Link></p>)}</div>}
-    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => { setError(''); setReload(v => v + 1); }}>โหลดคำสั่งล่าสุด</button>
-      {list?.nextCursor && <button className={button} onClick={() => setCursor(list.nextCursor)}>คำสั่งหน้าถัดไป</button>}
-      {cursor && <button className={button} onClick={() => setCursor(null)}>คำสั่งหน้าแรก</button>}</div>
+    {list && <div className="space-y-2">{list.items.map(item => <p key={item.id}><Link onClick={leaving} className="break-all underline" href={`/system/billing/operations/${item.id}`}>{label(item)} · {item.reason}</Link></p>)}</div>}
+    <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => { invalidate();setError(''); setReload(v => v + 1); }}>โหลดคำสั่งล่าสุด</button>
+      {list?.nextCursor && <button className={button} disabled={busy} onClick={() => {invalidate();setCursor(list.nextCursor);}}>คำสั่งหน้าถัดไป</button>}
+      {cursor && <button className={button} disabled={busy} onClick={() => {invalidate();setCursor(null);}}>คำสั่งหน้าแรก</button>}</div>
   </section>;
 }

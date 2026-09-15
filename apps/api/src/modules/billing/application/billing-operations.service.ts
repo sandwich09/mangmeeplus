@@ -1,4 +1,5 @@
 import { invoiceFindingSource } from './billing-invoice-finding';
+import {billingRepairTypes as types,lockReconcileAuthority,reconcileCommandData} from './billing-reconcile-command';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { BillingAccount, BillingInvoice, BillingOperation, Prisma } from '../../../generated/prisma/client';
@@ -13,7 +14,6 @@ import { BillingNotificationsService } from './billing-notifications.service';
 import { billingError, hashBilling } from '../domain/billing-policy';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 
-const types=['RECONCILE','IMPORT_INVOICE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION','RETRY_PROVIDER_EVENT'];
 const isDelivery=(type:string)=>['RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(type);
 const permission = (type: string) => (type === 'RECONCILE' || type === 'RETRY_PROVIDER_EVENT') ? 'system.billing.reconcile.run' : ['RETRY_APPLY','IMPORT_INVOICE'].includes(type) ? 'system.billing.apply.retry' : isDelivery(type)?'system.billing.notification.retry':null;
 type Proposed = { findingSourceHash?:string;findingImpact?:BillingRepairOperation['findingImpact']; accountId: string; membershipId: string; actorCompanyId: string; deliverySourceHash?:string;mailAttemptId?:string;deliveryImpact?:BillingRepairOperation['deliveryImpact'];eventSourceHash?:string;eventImpact?:BillingRepairOperation['eventImpact'];invoiceSourceHash?:string;invoiceImpact?:BillingRepairOperation['invoiceImpact'] };
@@ -154,7 +154,7 @@ export class BillingOperationsService {
       proposed.deliveryImpact={channel:source.row.channel,recipientUserId:source.row.recipient.userId,recipientName:source.recipientName,beforeState:source.row.status,afterState:input.type==='RECONCILE_NOTIFICATION'?'OBSERVED':'QUEUED',attemptCount:source.row.attemptCount,
         retryUntil:first?new Date(Date.parse(first)+23*3600000).toISOString():null,possibleDuplicate:source.kind==='EMAIL'&&source.possibleDuplicate};
     }else if(!['RETRY_APPLY','IMPORT_INVOICE'].includes(input.type)&&input.referenceId!==undefined)throw new BadRequestException();
-    const row = await this.prisma.client.billingOperation.create({ data: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    const row = await this.prisma.client.billingOperation.create({ data: input.type==='RECONCILE'?reconcileCommandData(context,account,input.reason):{ companyId: account.companyId, stripeAccountId: account.stripeAccountId,
       livemode: account.livemode, type: input.type, state: 'PREVIEW', proposedJson: proposed, sourceVersion: account.version,
       referenceId:input.referenceId,reason: input.reason.trim(), initiatorUserId: context.userId, requestHash: hashBilling([input.type, account.id, account.version, input.reason.trim(), proposed,input.referenceId??null]),
       expiresAt: new Date(Date.now() + 600_000) } });
@@ -328,10 +328,16 @@ export class BillingOperationsService {
           });processed++;continue;
         }
         await this.reconciler.reconcileAccount(account.id);
-        const current = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
-        const attempt = current.activeAttemptId ? await this.prisma.client.billingAttempt.findUnique({ where: { id: current.activeAttemptId } }) : null;
-        const state = attempt?.status === 'UNKNOWN' ? 'UNKNOWN' : 'SUCCEEDED';
         await this.prisma.client.$transaction(async tx => {
+          await lockReconcileAuthority(tx,context,[row.companyId!]);
+          await this.admin.authorizeOperation(row,'system.billing.reconcile.run',tx).catch(error=>{authorized=false;throw error;});
+          await tx.$queryRaw`SELECT id FROM "BillingAccount" WHERE id=${account.id} FOR SHARE`;
+          const live=await tx.billingOperation.findFirst({where:{id:row.id,state:'RUNNING',leaseToken:lease,leaseUntil:{gt:new Date()},type:'RECONCILE',
+            companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,initiatorUserId:row.initiatorUserId,requestHash:row.requestHash}});
+          if(!live||(live.proposedJson as Proposed).accountId!==account.id||(live.proposedJson as Proposed).membershipId!==proposed.membershipId||(live.proposedJson as Proposed).actorCompanyId!==proposed.actorCompanyId)throw new Error('billing.operation_source_changed');
+          const current=await tx.billingAccount.findFirstOrThrow({where:{id:account.id,companyId:row.companyId!,stripeAccountId:row.stripeAccountId,livemode:row.livemode}});
+          const attempt=current.activeAttemptId?await tx.billingAttempt.findFirst({where:{id:current.activeAttemptId,billingAccountId:current.id}}):null;
+          const state=attempt?.status==='UNKNOWN'||(current.activeAttemptId&&!attempt)?'UNKNOWN':'SUCCEEDED';
           const changed = await tx.billingOperation.updateMany({ where: { id: row.id, state: 'RUNNING', leaseToken: lease, leaseUntil: { gt: new Date() } }, data: {
             state, observedAt: new Date(),
             leaseToken: null, leaseUntil: null, errorCode: state === 'UNKNOWN' ? 'CONTROL_OBSERVED_MISMATCH' : null, version: { increment: 1 },

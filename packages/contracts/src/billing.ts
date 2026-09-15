@@ -203,6 +203,11 @@ export type BillingSupportOutcome = { id:string;issueId:string;companyId:string|
   state:'PREVIEW'|'SUCCEEDED'|'CANCELLED';previewHash:string;canSubmit:boolean;canCancel:boolean };
 export type BillingOperatorOverview = { mode: BillingMode | 'DISABLED'; capabilities: string[]; platformScope: boolean; canManageScopes?: boolean;
   companies: BillingOperatorCompany[]; nextCursor: string | null };
+export type BillingBatchView={id:string;version:number;previewHash:string;state:string;mode:BillingMode;reason:string;createdAt:string;expiresAt:string;
+  progress:'PREVIEW'|'PENDING'|'REVIEW'|'CHECKED'|'PARTIAL'|'STOPPED';checked:number;pending:number;review:number;stopped:number;canSubmit:boolean;canCancel:boolean;canExport:boolean;
+  items:{companyId:string;companyName:string;operationId:string|null;state:string;observedAt:string|null;reviewCaseId:string|null;pendingAttempt:boolean|null;issueCount:number|null}[]};
+export type BillingBatchList={items:BillingBatchView[];nextCursor:string|null};
+export type BillingBatchExport={csv:string;sha256:string;rowCount:number;exportedAt:string;fileName:string};
 export type BillingOperatorCompanyDetail = BillingOperatorCompany & { usage: BillingReceiptUsage;
   issues: BillingOperatorIssue[]; financial: { invoices: BillingInvoiceItem[]; nextCursor: string | null } | null };
 export type BillingTimelineEntry = { reference: string; kind: string; type: string; state: string; recordedAt: string; occurredAt: string | null;

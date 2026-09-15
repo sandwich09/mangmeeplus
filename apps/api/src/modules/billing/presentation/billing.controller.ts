@@ -1,4 +1,5 @@
 import { BillingCheckoutExpiryService } from '../application/billing-checkout-expiry.service';
+import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
 import { BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
@@ -59,7 +60,21 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService) {}
+  @Get('batches') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  batchList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.batches.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('batches/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
+  async batchPreview(@Req() req:AuthedRequest,@Body() body:unknown){await this.operationLimit(req);return this.batches.preview(req.context,body);}
+  @Get('batches/:id') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
+  batchGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.batches.get(req.context,uuid(id));}
+  @Get('batches/:id/export') @RequirePermissions('system.billing.export') @Header('Cache-Control','no-store')
+  async batchExport(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);await this.operationLimit(req);return this.batches.export(req.context,uuid(id));}
+  @Post('batches/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
+  async batchCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+    if(action!=='submit'&&action!=='cancel')invalid();const fields=bodyFields(body,action==='submit'?['expectedVersion','previewHash']:['expectedVersion']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
+    return action==='submit'?this.batches.submit(req.context,uuid(id),fields.expectedVersion as number,textField(fields.previewHash,64),key??''):this.batches.cancel(req.context,uuid(id),fields.expectedVersion as number);
+  }
   @Get('companies/:id/checkouts') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   checkoutAttempts(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.checkoutExpiry.attempts(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Get('companies/:id/checkouts/:attemptId') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')

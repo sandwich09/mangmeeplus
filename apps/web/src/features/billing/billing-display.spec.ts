@@ -1,7 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { BillingTimelineEntry } from '@watchdog-bms/contracts';
-import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingTimelineLabel } from './billing-display';
+import { billingDeliveryLabel, billingIssueLabel, billingLabel, billingPermissionLabel, billingTimelineLabel,billingLeavesPage } from './billing-display';
+import type {MouseEvent} from 'react';
+
+test('only navigation in this tab abandons pending billing work; same links and modified clicks remain active',()=>{
+  const previous=Object.getOwnPropertyDescriptor(globalThis,'window');Object.defineProperty(globalThis,'window',{configurable:true,value:{location:new URL('https://app.example.test/system/billing?cursor=1')}});
+  const event={button:0,currentTarget:{href:'https://app.example.test/system/billing/batches',target:''}};
+  try{
+    assert.equal(billingLeavesPage(event as MouseEvent<HTMLAnchorElement>),true);
+    for(const modifier of ['metaKey','ctrlKey','shiftKey','altKey','defaultPrevented'])assert.equal(billingLeavesPage({...event,[modifier]:true} as MouseEvent<HTMLAnchorElement>),false);
+    assert.equal(billingLeavesPage({...event,button:1} as MouseEvent<HTMLAnchorElement>),false);
+    assert.equal(billingLeavesPage({...event,currentTarget:{...event.currentTarget,target:'_blank'}} as MouseEvent<HTMLAnchorElement>),false);
+    assert.equal(billingLeavesPage({...event,currentTarget:{href:'https://app.example.test/system/billing?cursor=1#details',target:''}} as MouseEvent<HTMLAnchorElement>),false);
+    assert.equal(billingLeavesPage({...event,currentTarget:{href:'https://app.example.test/system/billing?cursor=2',target:''}} as MouseEvent<HTMLAnchorElement>),false);
+  }finally{if(previous)Object.defineProperty(globalThis,'window',previous);else Reflect.deleteProperty(globalThis,'window');}
+});
 
 test('provider acceptance, destination delivery and web recording remain different facts', () => {
   assert.equal(billingDeliveryLabel('ACCEPTED','EMAIL'),'ผู้ให้บริการรับคำขอแล้ว');

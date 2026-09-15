@@ -1,4 +1,5 @@
 'use client';
+import {billingLeavesPage} from '../billing/billing-display';
 import Link from 'next/link';
 import {useRouter} from 'next/navigation';
 import {useEffect,useRef,useState} from 'react';
@@ -24,6 +25,7 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
   const [cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [start,setStart]=useState(()=>local(Date.now()-86400000)),[end,setEnd]=useState(()=>local(Date.now()-120000)),[reason,setReason]=useState('');
   const invalidate=()=>{generation.current++;};
+  const leaving=(event:React.MouseEvent<HTMLAnchorElement>)=>{if(billingLeavesPage(event))invalidate();};
   const refresh=(next:string|null=cursor)=>{invalidate();setLoading(true);setFindings(null);setList(null);setCursor(next);setReload(v=>v+1);};
   useEffect(()=>{intent.current=null;setCursor(null);setReason('');},[runId]);
   useEffect(()=>{
@@ -53,8 +55,8 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
   return <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">
     <h1 className="text-2xl font-bold">ตรวจยอดชำระและเงินโอน Stripe</h1>
     <p>เปรียบเทียบยอดชำระ ค่าธรรมเนียม และรายการโอนตามช่วงที่เลือก ผลตรวจนี้ไม่เปลี่ยนสิทธิ์แพ็กเกจลูกค้า</p>
-    <nav className="flex flex-wrap gap-3"><Link onClick={invalidate} className={button} href="/system/billing">บริษัท</Link><Link onClick={invalidate} className={button} href="/system/billing/issues">คิวตรวจสอบ</Link><Link onClick={invalidate} className={button} href="/system/billing/settings">ตั้งค่าการจ่ายเงิน</Link>
-      {runId&&<Link onClick={invalidate} className={button} href={base}>กลับรายการงานตรวจ</Link>}</nav>
+    <nav className="flex flex-wrap gap-3"><Link onClick={leaving} className={button} href="/system/billing">บริษัท</Link><Link onClick={leaving} className={button} href="/system/billing/issues">คิวตรวจสอบ</Link><Link onClick={leaving} className={button} href="/system/billing/settings">ตั้งค่าการจ่ายเงิน</Link>
+      {runId&&<Link onClick={leaving} className={button} href={base}>กลับรายการงานตรวจ</Link>}</nav>
     <button className={button} disabled={loading||busy} onClick={()=>refresh()}>โหลดผลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {!runId&&list?.canCreate&&<form onSubmit={e=>void create(e)} className="space-y-4 rounded-xl border p-4"><h2 className="text-lg font-bold">เริ่มตรวจยอด</h2>
@@ -74,7 +76,7 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
       {run.totals.unknownTaxCharges>0&&<p>ยังตรวจภาษีไม่ได้ {run.totals.unknownTaxCharges} รายการ — ไม่ได้ถือว่าภาษีเป็นศูนย์</p>}{run.totals.excluded>0&&<p>อีก {run.totals.excluded} รายการอยู่นอกยอดบาทข้างต้น ให้ตรวจแยก</p>}
       {run.errorCode&&<p role="alert">{label(errors,run.errorCode,'เปิดเคสเพื่อตรวจเงื่อนไขก่อนทำต่อ')}</p>}{run.retryAt&&<p>ตรวจต่อได้หลัง {time(run.retryAt)}</p>}
       <div className="flex flex-wrap gap-3">{run.canRun&&<button className={button} disabled={busy} onClick={()=>void act('run')}>ตรวจรายการถัดไป</button>}{run.canResume&&<button className={button} disabled={busy} onClick={()=>void act('resume')}>ทำงานเดิมต่อ</button>}{run.canCancel&&<button className={button} disabled={busy} onClick={()=>void act('cancel')}>หยุดงานตรวจนี้</button>}</div>
-      {findings?.caseIds.map(id=><Link key={id} className={button} href={`/system/billing/issues/${id}`} onClick={invalidate}>เปิดเคสที่ต้องตรวจ</Link>)}
+      {findings?.caseIds.map(id=><Link key={id} className={button} href={`/system/billing/issues/${id}`} onClick={leaving}>เปิดเคสที่ต้องตรวจ</Link>)}
       <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงงานตรวจ</summary><p className="break-all">{run.id}</p></details>
     </section>}
     {findings&&<section aria-label="รายการยอดที่ตรวจแล้ว" className="space-y-3"><h2 className="text-lg font-bold">รายการที่ตรวจแล้ว</h2>{!findings.items.length&&<p>ยังไม่มีรายการที่บันทึกผลไว้</p>}
@@ -85,10 +87,10 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
         {f.refundState&&<p>{label(refundStates,f.refundState,'ต้องตรวจสถานะคืนเงิน')}</p>}
         {f.payout&&<><p className="font-semibold">{label(payoutStates,f.payout.status,'ต้องตรวจสถานะโอน')}</p><p>วันที่คาดว่าจะถึง {time(f.payout.expectedArrivalAt)}</p><p>{label(checks,f.payout.reconciliation,'ต้องตรวจยอดโอน')}</p><p>ต้องตรวจบัญชีธนาคารเพื่อยืนยันเงินเข้า สถานะ Stripe อาจเปลี่ยนภายหลังได้</p>
           {f.payout.reconciliation!=='MATCHED'&&<a className={button} href={`https://dashboard.stripe.com/${run?.mode==='TEST'?'test/':''}reports`} target="_blank" rel="noreferrer">เปิดรายงาน Stripe เพื่อตรวจต่อ</a>}</>}
-        <div className="flex flex-wrap gap-3">{f.companyId&&<Link onClick={invalidate} className={button} href={`/system/billing/companies/${encodeURIComponent(f.companyId)}`}>เปิดบริษัท</Link>}{f.companyId&&f.invoiceId&&<Link onClick={invalidate} className={button} href={`/system/billing/companies/${encodeURIComponent(f.companyId)}/invoices/${f.invoiceId}`}>เปิดใบแจ้งหนี้ต้นทาง</Link>}</div>
+        <div className="flex flex-wrap gap-3">{f.companyId&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(f.companyId)}`}>เปิดบริษัท</Link>}{f.companyId&&f.invoiceId&&<Link onClick={leaving} className={button} href={`/system/billing/companies/${encodeURIComponent(f.companyId)}/invoices/${f.invoiceId}`}>เปิดใบแจ้งหนี้ต้นทาง</Link>}</div>
         <details><summary className="min-h-11 cursor-pointer py-2">เลขอ้างอิงรายการ</summary><p className="break-all">{f.id}</p></details>
       </div></details></article>)}</section>}
-    {!runId&&list&&<section aria-label="งานตรวจยอดที่ผ่านมา" className="space-y-3"><h2 className="text-lg font-bold">งานตรวจที่ผ่านมา</h2>{!list.items.length&&<p>ยังไม่มีงานตรวจยอด</p>}{list.items.map(r=><article key={r.id} className="space-y-2 rounded-xl border p-4"><p>{label(states,r.state,'ต้องตรวจสอบสถานะ')} · {r.reason}</p><p>{time(r.windowStart)} ถึงก่อน {time(r.windowEnd)}</p><Link onClick={invalidate} className={button} href={`${base}/${r.id}`}>เปิดผลตรวจ</Link></article>)}</section>}
+    {!runId&&list&&<section aria-label="งานตรวจยอดที่ผ่านมา" className="space-y-3"><h2 className="text-lg font-bold">งานตรวจที่ผ่านมา</h2>{!list.items.length&&<p>ยังไม่มีงานตรวจยอด</p>}{list.items.map(r=><article key={r.id} className="space-y-2 rounded-xl border p-4"><p>{label(states,r.state,'ต้องตรวจสอบสถานะ')} · {r.reason}</p><p>{time(r.windowStart)} ถึงก่อน {time(r.windowEnd)}</p><Link onClick={leaving} className={button} href={`${base}/${r.id}`}>เปิดผลตรวจ</Link></article>)}</section>}
     <div className="flex flex-wrap gap-3">{next&&<button className={button} disabled={busy||loading} onClick={()=>refresh(next)}>หน้าถัดไป</button>}{cursor&&<button className={button} disabled={busy||loading} onClick={()=>refresh(null)}>กลับหน้าแรก</button>}</div>
   </main>;
 }
