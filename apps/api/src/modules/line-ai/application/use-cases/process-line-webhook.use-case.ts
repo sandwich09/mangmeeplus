@@ -1406,6 +1406,8 @@ export class ProcessLineWebhookUseCase {
   private readonly deliveryDenialNotified = new WeakSet<object>();
   private readonly deliverySources = new WeakMap<object, { requestId: string; ids: string[] | null }>();
   private readonly deliveryDraftPreviews = new WeakMap<object, { context: RequestContext; chatKeyHash: string; requestId: string; previewId: string | null; phase: 'PENDING' | 'APPLIED' }>();
+  private readonly deliveryReceiptSources = new WeakMap<object, { context: RequestContext; chatKeyHash: string;
+    records: Map<string, string | null>; categories: Map<string, string | null> }>();
   private readonly deliveryDenialCode = new WeakMap<object, string>();
   private readonly replayedOutcomes = new WeakMap<object, unknown>();
   private readonly intermediateDeliveries = new WeakSet<object>();
@@ -2766,6 +2768,11 @@ export class ProcessLineWebhookUseCase {
         sourcesCurrent = sourcesCurrent && Boolean(draft.previewId && current?.previewId === draft.previewId);
         if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
       }
+      if (this.deliveryReceiptSources.has(event)) {
+        denialCode = 'LINE_DELIVERY_SOURCE_CHANGED';
+        sourcesCurrent = sourcesCurrent && await this.receiptDeliverySourcesCurrent(event);
+        if (sourcesCurrent) denialCode = 'LINE_DELIVERY_ACCESS_CHANGED';
+      }
       const identity = await this.resolveLineIdentity(event);
       if (sourcesCurrent && identity?.userId === original.userId && identity.user.status === 'ACTIVE' && !identity.user.aiAssistantOptOutAt
         && (!event.pushTargetId || event.pushTargetId === event.lineUserId)) {
@@ -2783,6 +2790,34 @@ export class ProcessLineWebhookUseCase {
     }
     if (!allowed) await this.denyBusinessDelivery(event, denialCode, original);
     return allowed;
+  }
+
+  private rememberReceiptDeliverySource(event: LineTextEvent | LineReceiptUploadEvent, context: RequestContext,
+    expense: ExpenseRecord, category?: { id: string; name: string }) {
+    const proof = this.deliveryReceiptSources.get(event) ?? { context, chatKeyHash: chatKeyHashOf(event), records: new Map(), categories: new Map() };
+    const revision = expense.updatedAt instanceof Date ? expense.updatedAt.toISOString() : null;
+    proof.records.set(expense.id, proof.records.has(expense.id) && proof.records.get(expense.id) !== revision ? null : revision);
+    if (category) proof.categories.set(category.id, proof.categories.has(category.id) && proof.categories.get(category.id) !== category.name ? null : category.name);
+    this.deliveryReceiptSources.set(event, proof);
+  }
+
+  /** Read only: never recapture an expense merely to validate a prepared receipt answer. */
+  private async receiptDeliverySourcesCurrent(event: object): Promise<boolean> {
+    const proof = this.deliveryReceiptSources.get(event);
+    if (!proof || !this.expenseRepo || proof.records.size > 5) return false;
+    const ctx = proof.context;
+    if (!RECEIPT_CAPTURE_PERMISSIONS.some(permission => ctx.permissions.includes(permission))) return false;
+    for (const [id, revision] of proof.records) {
+      const current = await this.expenseRepo.findByIdWithRelations(ctx.companyId, id, undefined, ctx.scopes ?? {});
+      if (!revision || !current || current.id !== id || current.companyId !== ctx.companyId || current.createdByUserId !== ctx.userId
+        || current.captureSource !== 'LINE_UPLOAD' || current.sourceChannelMetadataJson?.chatKeyHash !== proof.chatKeyHash
+        || !isBranchInScope(ctx.scopes ?? {}, current.branchId) || current.updatedAt?.toISOString() !== revision) return false;
+    }
+    if (proof.categories.size) {
+      const categories = await this.expenseRepo.listCategories(ctx.companyId);
+      for (const [id, name] of proof.categories) if (!name || !categories.some(category => category.id === id && category.name === name)) return false;
+    }
+    return true;
   }
 
   private async denyBusinessDelivery(
@@ -2848,7 +2883,7 @@ export class ProcessLineWebhookUseCase {
       }
       const producerId = randomUUID(), access = this.deliveryAccess.get(event), sources = this.deliverySources.get(event);
       const authorizationJson = { v: 1, producerId,
-        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) ? { read: {
+        ...(access && sources?.ids?.length && !this.deliveryDraftPreviews.has(event) && !this.deliveryReceiptSources.has(event) ? { read: {
           userId: access.userId, companyId: access.companyId, fingerprint: access.fingerprint,
           requestId: sources.requestId, ids: sources.ids, webhookEventId,
           recipientHash: lineDeliveryRecipientHash(event.lineUserId, event.pushTargetId ?? event.lineUserId, event.messagingChannelId ?? ''),
@@ -3458,6 +3493,7 @@ export class ProcessLineWebhookUseCase {
           if (!expense || expense.id !== row.id || expense.companyId !== companyId || expense.createdByUserId !== identity.userId
             || expense.captureSource !== 'LINE_UPLOAD'
             || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) continue;
+          this.rememberReceiptDeliverySource(event, expenseDraftCtx, expense);
           const number = typeof expense.vendorDocumentNumber === 'string'
             ? expense.vendorDocumentNumber.replace(/[\r\n]/gu, ' ').slice(0, 60) : '';
           const verification = expense.aiVerificationSummaryJson?.status === 'OCR_FAILED' ? 'FAILED'
@@ -3542,11 +3578,19 @@ export class ProcessLineWebhookUseCase {
           && (receiptContinuation as any).chatKeyHash === chatKeyHashOf(event)
           && typeof (receiptContinuation as any).deliveredOutcomeId === 'string';
         if (expense && expense.createdByUserId === identity.userId && hasDeliveredContinuation) {
-          const category = expense.expenseCategoryId
-            ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === expense.expenseCategoryId)
-            : undefined;
           const interruption = await interruptExpenseDraft();
-          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, expense, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
+          // Pausing a questionnaire can itself update this record. Answer from the committed
+          // current row after that write rather than rejecting our own metadata revision.
+          const current = await this.expenseRepo.findByIdWithRelations(companyId, candidate.id, undefined, resolvedAccess.scopes);
+          if (!current) {
+            await this.denyBusinessDelivery(event, 'LINE_DELIVERY_SOURCE_CHANGED', this.deliveryAccess.get(event));
+            return;
+          }
+          const category = current.expenseCategoryId
+            ? (await this.expenseRepo.listCategories(companyId)).find((item) => item.id === current.expenseCategoryId)
+            : undefined;
+          this.rememberReceiptDeliverySource(event, expenseDraftCtx, current, category);
+          const reply = `${formatGroundedReceiptFollowUp(this.config.webBaseUrl, companyId, current, category?.name, normalizedText)}${interruption ? `\n\n${interruption}` : ''}`;
           await this.deliverCompletedReply(event, reply, companyId, resolvedAccess);
           await this.persistIntakeTurn({
             userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5865,17 +5909,22 @@ export class ProcessLineWebhookUseCase {
   /** Recovery reads the saved record; it never opens a questionnaire or reapplies money. */
   private async savedReceiptReplies(event: LineReceiptUploadEvent, companyId: string, expenseId: string): Promise<string[]> {
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${companyId}/expenses/${expenseId}`);
-    const fallback = `📷 เก็บรูปและร่างแล้วค่ะ ยังไม่ยืนยันรายการ\nเปิดดูรายการ: ${link}`;
+    const fallback = 'ยังตรวจสอบใบเสร็จเดิมไม่ได้ กรุณาเปิดเว็บเพื่อตรวจรายการก่อนส่งซ้ำค่ะ';
     try {
       if (!event.handoff || !this.expenseRepo?.findByIdWithRelations) return [fallback];
       const access = await this.permissionResolver.resolveAccess(event.handoff.userId, companyId);
       const expense = await this.expenseRepo.findByIdWithRelations(companyId, expenseId, undefined, access.scopes ?? {});
-      if (!expense || expense.createdByUserId !== event.handoff.userId) return [fallback];
+      if (!expense || expense.createdByUserId !== event.handoff.userId || expense.captureSource !== 'LINE_UPLOAD'
+        || expense.sourceChannelMetadataJson?.chatKeyHash !== chatKeyHashOf(event)) return [fallback];
+      const category = expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find(item => item.id === expense.expenseCategoryId) : undefined;
+      this.rememberReceiptDeliverySource(event, { requestId: event.webhookEventId, authSubject: event.handoff.userId,
+        userId: event.handoff.userId, companyId, membershipId: access.membershipId, roles: access.roles,
+        permissions: access.permissions, scopes: access.scopes, authProvider: 'line' }, expense, category);
       if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) return [`เก็บรายการนี้ไว้แล้วค่ะ\nเปิดดูรายการ: ${link}`];
       return [formatPaypersReply(this.config.webBaseUrl, companyId, expenseId, {
         acceptedAmounts: { grandTotalAmount: expense.grandTotalAmount, vatAmount: expense.vatAmount, whtAmount: expense.whtAmount, netPayableAmount: expense.netPayableAmount, vatMode: expense.vatMode, discountAmount: expense.discountAmount },
         sourceDocumentType: expense.sourceDocumentType,
-        categoryName: expense.expenseCategoryId ? (await this.expenseRepo.listCategories(companyId)).find((category) => category.id === expense.expenseCategoryId)?.name : null,
+        categoryName: category?.name,
         fields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
         charges: expense.charges,
         hasDuplicate: Boolean(expense.duplicateOfExpenseId),
@@ -5926,6 +5975,8 @@ export class ProcessLineWebhookUseCase {
       ocrFields: expense.aiVerificationSummaryJson?.recognizedFields as ReceiptOcrFieldResult | undefined,
     });
     const link = absoluteWebLink(this.config.webBaseUrl, `/companies/${ctx.companyId}/expenses/${expense.id}`);
+    if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status) || !expense.primaryAttachmentId)
+      this.rememberReceiptDeliverySource(event, ctx, expense);
     if (!['DRAFT', 'NEEDS_REVIEW'].includes(expense.status)) await this.deliverCompletedReply(event, `เก็บรายการนี้ไว้แล้วค่ะ เปิดตรวจสอบสถานะปัจจุบันได้ที่
 ${link}`, ctx.companyId, access);
     else if (!expense.primaryAttachmentId) await this.deliverCompletedReply(event, `เก็บร่างไว้แล้ว แต่ยังไม่มีรูปแนบที่ยืนยันการอัปโหลดค่ะ เปิดตรวจสอบร่างเดิมได้ที่

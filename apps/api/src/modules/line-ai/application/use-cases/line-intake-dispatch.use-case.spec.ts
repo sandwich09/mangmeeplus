@@ -773,9 +773,11 @@ describe('LINE intake dispatch – text path', () => {
       }],
       expenseDetail: {
         id: 'expense-royal', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1',
+        captureSource: 'LINE_UPLOAD', updatedAt: new Date('2026-09-15T00:00:00Z'),
         sourceDocumentType: 'RECEIPT', grandTotalAmount: '2890.00', currency: 'THB',
         expenseCategoryId: null, accountHintKey: null, taxEvidenceStatus: 'NEEDS_REVIEW',
         sourceChannelMetadataJson: {
+          chatKeyHash: chatKeyHashOf(TEXT_EVENT),
           lineReceiptContinuation: {
             kind: 'CAPTURED_EXPENSE', expenseId: 'expense-royal', userId: 'user-1',
             chatKeyHash: '20cb92ee125850e6', deliveredOutcomeId: 'opaque-outcome',
@@ -1989,14 +1991,17 @@ describe('LINE intake dispatch – media path', () => {
 
   it('redelivery with the same LINE message id returns the existing expense without creating another draft', async () => {
     let lookupCount = 0;
+    const saved = { id: 'expense-1', companyId: 'company-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
+      createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1', captureSource: 'LINE_UPLOAD',
+      updatedAt: new Date('2026-09-15T00:00:00Z'), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) } };
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
       routePlan: { status: 'ROUTED', intent: 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.95 },
       findExpenseByLineMessageId: async (_companyId, lineMessageId) => {
         lookupCount += 1;
-        return lookupCount === 1 ? null : { id: 'expense-1', lineMessageId, sourceDocumentType: 'RECEIPT',
-          status: 'CONFIRMED', createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' };
+        return lookupCount === 1 ? null : { ...saved, lineMessageId };
       },
+      expenseDetail: saved,
     });
 
     await h.useCase.executeReceiptUpload(MEDIA_EVENT);
@@ -2930,11 +2935,14 @@ describe('LINE intake dispatch – substitute-receipt media (§11)', () => {
 
     // The same photo redelivered after the substitute work opened: it is already an expense.
     const redelivered = makePrisma();
+    const saved = { id: 'expense-1', companyId: 'company-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
+      createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1', captureSource: 'LINE_UPLOAD',
+      updatedAt: new Date('2026-09-15T00:00:00Z'), sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) } };
     const again = makeHarness({
       permissions: SUBSTITUTE_PERMISSIONS, prisma: redelivered.prisma, substituteMediaContext: AWAITING,
       routePlan: CAPTURE_PLAN, receiptOcrResult: validReceiptOcr(),
-      findExpenseByLineMessageId: async () => ({ id: 'expense-1', sourceDocumentType: 'RECEIPT', status: 'CONFIRMED',
-        createdByUserId: 'user-1', branchId: 'branch-1', primaryAttachmentId: 'att-1' }),
+      findExpenseByLineMessageId: async () => saved,
+      expenseDetail: saved,
     });
     await again.useCase.executeReceiptUpload({ ...MEDIA_EVENT, webhookEventId: 'evt-media-redelivered' });
     assert.equal(redelivered.pendingMediaRows.length, 0, 'no second copy of an already-captured photo');
@@ -4124,6 +4132,11 @@ describe('LINE usable receipt allowance settlement', () => {
         governReceiptAdmission: true, expenseDraftConversationEnabled: enabled,
         expenseDraftConversation: enabled ? { startFromReceipt: async () => ({ replyTexts: ['บันทึกร่างแล้ว'], expenseId: 'expense-1' }) } : undefined,
         receiptApplyError: scenario === 'apply_failure' ? new Error('synthetic apply failure') : undefined,
+        ...(['apply_failure', 'summary_failure'].includes(scenario) ? { expenseDetail: {
+          id: 'expense-1', companyId: 'company-1', branchId: 'branch-1', createdByUserId: 'user-1', captureSource: 'LINE_UPLOAD',
+          updatedAt: new Date('2026-09-15T00:00:00Z'), status: 'DRAFT', primaryAttachmentId: 'pending-att-1',
+          sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(MEDIA_EVENT) },
+        } } : {}),
         lineReplyResult: scenario === 'delivery_failure' ? 'failed_other' : 'ok',
         routePlan: { status: 'ROUTED', intent: scenario === 'generic_reference' ? 'BUSINESS_DOCUMENT_REFERENCE' : 'EXPENSE_DOCUMENT_CAPTURE', language: 'th', confidence: 0.99 },
         receiptOcrResult: scenario === 'empty' || scenario === 'substitute_failure' ? { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' }
@@ -4162,9 +4175,51 @@ describe('receipt progress grounded in persisted records', () => {
   const recent = (id: string) => ({ id, expenseDate: new Date(), grandTotalAmount: '100.00', sourceDocumentType: 'RECEIPT', createdAt: new Date() });
   const detail = (id: string) => ({
     id, companyId: 'company-1', createdByUserId: 'user-1', branchId: 'branch-1',
+    updatedAt: new Date('2026-09-15T00:00:00Z'),
     status: 'DRAFT', captureSource: 'LINE_UPLOAD', grandTotalAmount: '100.00', currency: 'THB', vendorDocumentNumber: id,
     sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT) },
   });
+
+  it('reads a fresh receipt after silently pausing the same draft conversation', async () => {
+    const row = { ...detail('paused'), expenseCategoryId: null, sourceDocumentType: 'RECEIPT',
+      sourceChannelMetadataJson: { chatKeyHash: chatKeyHashOf(TEXT_EVENT), lineReceiptContinuation: {
+        expenseId: 'paused', userId: 'user-1', chatKeyHash: chatKeyHashOf(TEXT_EVENT), deliveredOutcomeId: 'original',
+      } }, aiVerificationSummaryJson: { recognizedFields: { vendorName: 'Current vendor' } } };
+    let pauses = 0;
+    const h = makeHarness({ permissions: ['expense.receipt.line_upload'], recentCaptures: [recent('paused')],
+      expenseDetail: () => structuredClone(row), expenseDraftConversationEnabled: true, expenseDraftConversation: {
+        routeContexts: async () => [{ expenseId: 'paused', status: 'OPEN', label: 'ร่าง', questions: [] }],
+        interruptOpen: async () => { pauses++; row.updatedAt = new Date('2026-09-15T00:00:01Z'); return undefined; },
+      } });
+    await h.useCase.execute({ ...TEXT_EVENT, messageText: 'อ่านใบเสร็จนี้ให้หน่อยว่าเป็นประเภทไหน และจะนำมาเป็นค่าใช้จ่ายของบริษัทอย่างไร' });
+    assert.equal(pauses, 1); assert.match(h.replies.join(' '), /Current vendor/);
+    assert.doesNotMatch(h.replies.join(' '), /ข้อมูลต้นทางเปลี่ยน/);
+    assert.equal(h.captured.length + h.ocrRequests.length + h.turnRequests.length, 0);
+  });
+
+  for (const change of ['branch', 'revision', 'creator', 'chat', 'missing-revision', 'read-error'] as const)
+    it(`withholds a prepared receipt answer when its original source changes: ${change}`, async () => {
+      let changed = false, reads = 0;
+      const row: any = detail('private');
+      const h = makeHarness({ permissions: ['expense.receipt.line_upload'], scopes: { branchIds: ['branch-1'] },
+        recentCaptures: [recent('private')], expenseDetail: () => {
+          reads++; if (changed && change === 'read-error') throw new Error('source database unavailable'); return row;
+        } });
+      (h.useCase as any).handoffLinks = { wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => {
+        changed = true;
+        if (change === 'branch') row.branchId = 'branch-private';
+        if (change === 'revision') row.updatedAt = new Date('2026-09-15T00:00:01Z');
+        if (change === 'creator') row.createdByUserId = 'another-user';
+        if (change === 'chat') row.sourceChannelMetadataJson = { chatKeyHash: 'another-chat' };
+        if (change === 'missing-revision') row.updatedAt = undefined;
+        return messages;
+      } };
+      await assert.rejects(h.useCase.execute({ ...TEXT_EVENT, messageText: 'ใบเสร็จเสร็จหรือยัง' }), /LINE_DELIVERY_FAILED_PERMANENT/);
+      assert.ok(reads >= 2);
+      assert.doesNotMatch(h.replies.join('\n'), /\/expenses\/private|100\.00|source database/);
+      assert.match(h.replies.join('\n'), /ข้อมูลต้นทางเปลี่ยน/);
+      assert.equal(h.turnRequests.length + h.routeRequests.length + h.ocrRequests.length + h.captured.length, 0);
+    });
 
   it('answers the three-receipt incident without requiring a delivered continuation or invoking AI', async () => {
     const h = makeHarness({ permissions: ['expense.receipt.line_upload', 'line.ai.query'], scopes: { branchIds: ['branch-1'] },

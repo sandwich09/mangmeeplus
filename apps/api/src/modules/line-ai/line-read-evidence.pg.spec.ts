@@ -13,7 +13,7 @@ import { PrismaExpenseRepository } from '../expenses/infrastructure/prisma-expen
 import { ExpenseGetDetailTool } from './application/use-cases/erp-core-detail-tools.use-case';
 import { LineReadEvidenceService, LINE_READ_EVIDENCE_MAX, lineReadResultHash } from './application/line-read-evidence.service';
 import type { ErpReadToolPort, ErpToolContext } from './domain/ports/erp-read-tool.port';
-import { ProcessLineWebhookUseCase } from './application/use-cases/process-line-webhook.use-case';
+import { ProcessLineWebhookUseCase, chatKeyHashOf } from './application/use-cases/process-line-webhook.use-case';
 import { InternalToolsController } from './presentation/http/internal-tools.controller';
 import { AuditService } from '../audit/application/audit.service';
 import { PrismaAuditRepository } from '../audit/infrastructure/prisma-audit.repository';
@@ -40,7 +40,7 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
       const company = await client.company.create({ data: { name: `source-${tag}` } }); companyId = company.id;
       const branch = await client.branch.create({ data: { companyId, name: 'Selected', code: 'B1', type: 'HEAD_OFFICE', createdByUserId: userId } });
       const otherBranch = await client.branch.create({ data: { companyId, name: 'Not selected', code: 'B2', type: 'BRANCH', createdByUserId: userId } });
-      const permissions = await Promise.all(['ai.tool.invoke', 'line.ai.query', 'expense.read_own'].map(key => client.permission.upsert({ where: { key }, update: {}, create: { key, description: key } })));
+      const permissions = await Promise.all(['ai.tool.invoke', 'line.ai.query', 'expense.read_own', 'expense.receipt.line_upload'].map(key => client.permission.upsert({ where: { key }, update: {}, create: { key, description: key } })));
       const role = await client.role.create({ data: { companyId, scopeKey: companyId, key: 'SOURCE_READER', name: 'Synthetic source reader', permissions: { create: permissions.map(p => ({ permissionId: p.id })) } } }); roleId = role.id;
       const membership = await client.companyMembership.create({ data: { companyId, userId, branchScopeMode: 'SELECTED_BRANCHES',
         roles: { create: { roleId } }, branchScopes: { create: { branchId: branch.id } } } });
@@ -203,6 +203,69 @@ describe('LINE original-source recheck on isolated PostgreSQL', { skip: !databas
         }
         await client.expenseRecord.update({ where: { id: expense.id }, data: { branchId: branch.id, grandTotalAmount: '123.4500' } });
       });
+
+      for (const path of ['progress', 'follow-up', 'saved-media'] as const)
+        for (const fault of (path === 'progress' ? ['unchanged', 'branch', 'revision', 'fallback'] : ['unchanged', 'branch', 'revision', 'fallback', 'category']))
+          await t.test(`receipt ${path} rechecks its actual persisted source before delivery: ${fault}`, async () => {
+            const lineUserId = `U${randomUUID().replaceAll('-', '')}`, webhookEventId = randomUUID(), lineMessageId = randomUUID();
+            lineUsers.push(lineUserId); eventIds.push(webhookEventId);
+            const event = { webhookEventId, lineUserId, replyToken: 'synthetic-reply', messagingChannelId: 'synthetic-channel',
+              lineMessageId, messageType: 'image' as const, messageText: path === 'progress' ? 'ใบเสร็จเสร็จหรือยัง'
+                : 'อ่านใบเสร็จนี้ให้หน่อยว่าเป็นประเภทไหน และจะนำมาเป็นค่าใช้จ่ายของบริษัทอย่างไร' };
+            const diagnostics: unknown[] = [];
+            const chatKeyHash = chatKeyHashOf(event), quiet = { log() {}, warn() {}, error(value: unknown) { diagnostics.push(value); }, debug() {}, info() {} };
+            await client.externalIdentity.create({ data: { userId, provider: 'LINE', providerUserId: lineUserId, providerChannelId: 'synthetic-channel' } });
+            await client.lineCompanyContext.create({ data: { lineUserId, companyId } });
+            const category = await client.expenseCategory.create({ data: { companyId, name: `Synthetic receipt category ${lineMessageId}`, accountHintKey: 'SYNTHETIC' } });
+            const attachment = await client.attachmentObject.create({ data: { companyId, storageProvider: 'db', bucket: 'synthetic', objectKey: lineMessageId,
+              originalFileName: 'synthetic.jpg', mimeType: 'image/jpeg', byteSize: 1, uploadedByUserId: userId, status: 'ACTIVE' } });
+            const receipt = await client.expenseRecord.create({ data: { companyId, branchId: branch.id, createdByUserId: userId,
+              expenseDate: new Date(), captureSource: 'LINE_UPLOAD', lineMessageId, primaryAttachmentId: attachment.id,
+              vendorDocumentNumber: 'receipt-private-source', vendorNameSnapshot: 'receipt-private-source', grandTotalAmount: '987654',
+              sourceDocumentType: 'RECEIPT', expenseCategoryId: category.id } });
+            await client.expenseRecord.update({ where: { id: receipt.id }, data: {
+              sourceChannelMetadataJson: { chatKeyHash, lineReceiptContinuation: { expenseId: receipt.id, userId, chatKeyHash, deliveredOutcomeId: 'synthetic-original' } },
+              aiVerificationSummaryJson: { recognizedFields: { vendorName: 'receipt-private-source', grandTotalAmount: '987654' } },
+            } });
+            const before = await client.expenseRecord.count({ where: { companyId } }), accepted: unknown[] = [];
+            let privateAttempts = 0, modelCalls = 0;
+            const changed = async () => fault === 'category'
+              ? client.expenseCategory.update({ where: { id: category.id }, data: { name: `Changed category ${lineMessageId}` } })
+              : client.expenseRecord.update({ where: { id: receipt.id }, data: fault === 'revision' ? { grandTotalAmount: '7' } : { branchId: otherBranch.id } });
+            const useCase = new ProcessLineWebhookUseCase(lineMessagingCredentialsFixture({ webBaseUrl: 'https://synthetic.example.test' } as any), prisma,
+              { webBaseUrl: 'https://synthetic.example.test' } as any, resolver, new AuditService(new PrismaAuditRepository(prisma), quiet as any),
+              { requestLineIntakeRoute: async () => { modelCalls++; assert.fail('receipt reads must not invoke the router'); },
+                requestLineTurn: async () => { modelCalls++; assert.fail('receipt reads must not invoke the model'); },
+                requestReceiptOcr: async () => { modelCalls++; assert.fail('saved receipt must not rerun OCR'); } } as any,
+              { buildTextMessage: (text: string) => ({ type: 'text', text }), sendReply: async (_token: string, messages: unknown) => {
+                if (/receipt-private-source|987,?654/.test(JSON.stringify(messages))) {
+                  privateAttempts++; if (fault === 'fallback') { await changed(); return 'failed_token'; }
+                }
+                accepted.push(messages); return 'ok';
+              }, sendPush: async (_to: string, messages: unknown) => { accepted.push(messages); return 'ok'; } } as any,
+              {} as any, {} as any, { isRequired: async () => false } as any,
+              { startSweep: () => ({ record: async () => {}, flush: async () => {} }) } as any, { assertLaunchRouteOpen: async () => {} } as any);
+            (useCase as any).logger = quiet; (useCase as any).readEvidence = service;
+            (useCase as any).expenseRepo = new PrismaExpenseRepository(prisma);
+            (useCase as any).initReceiptUpload = { execute: async () => assert.fail('saved receipt must not create another upload') };
+            (useCase as any).completeReceiptUpload = { execute: async () => assert.fail('saved receipt must not repeat upload completion') };
+            if (!['unchanged', 'fallback'].includes(fault)) (useCase as any).handoffLinks = {
+              wrapOutgoingLineContent: async (_recipient: unknown, messages: unknown) => { await changed(); return messages; },
+            };
+            const run = path === 'saved-media' ? useCase.executeReceiptUpload(event) : useCase.execute(event);
+            if (fault === 'unchanged' || path === 'saved-media') await run;
+            else await assert.rejects(run, /LINE_DELIVERY_FAILED_PERMANENT/);
+            if (fault === 'unchanged') {
+              assert.deepEqual(diagnostics, []);
+              assert.match(JSON.stringify(accepted), /receipt-private-source|987,?654/); assert.equal(privateAttempts, 1);
+            } else {
+              assert.doesNotMatch(JSON.stringify(accepted), /receipt-private-source|987,?654/);
+              assert.match(JSON.stringify(accepted), /ข้อมูลต้นทางเปลี่ยน/);
+              assert.equal(privateAttempts, fault === 'fallback' ? 1 : 0);
+              assert.equal((await client.lineWebhookEventLog.findUniqueOrThrow({ where: { webhookEventId } })).errorCode, 'LINE_DELIVERY_SOURCE_CHANGED');
+            }
+            assert.equal(modelCalls, 0); assert.equal(await client.expenseRecord.count({ where: { companyId } }), before);
+          });
 
       for (const failure of ['unknown', 'source-changed', 'accepted-ack-lost'] as const) await t.test(`queued actual PostgreSQL and LINE adapter preserve one answer: ${failure}`, async () => {
         const lineUserId = `U${randomUUID().replaceAll('-', '')}`; lineUsers.push(lineUserId);

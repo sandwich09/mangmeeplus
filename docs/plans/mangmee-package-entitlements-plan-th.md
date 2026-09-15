@@ -137,6 +137,8 @@ AP-S2 source proof implemented/locally verified: bounded request/actor/company/t
 
 ## 6. Annual/full-package amendment acceptance Q01–Q10 (2026-09-13)
 
+Next confirmed AP21/AP23 receipt-read boundary: the deterministic receipt-progress, grounded single-receipt follow-up and saved-receipt recovery paths read scoped records initially but lack a source revision check after reply/link preparation. Bind their original own-chat record revisions and any displayed category names to the live turn, re-read through the same scoped expense repository before final send/fallback, and keep unrelated stored read proof from authorizing these receipt outputs. Do not rerun OCR/capture to check a reply. Missing evidence returns the existing safe web/new-question instruction. This bounded step does not close multi-candidate intake or new-capture source coverage.
+
 Full HTTP/browser/provider rows remain NOT RUN until linked evidence exists; focused grant tests are supporting evidence only.
 
 | ID | Required evidence |
@@ -166,3 +168,6 @@ Runtime enforcement checkpoint COMPLETE for this slice:139focused testsPASS/0ski
 
 
 Local draft/source completion2026-09-15: canonical unlink precedence, current pending/applied memory checks and final deterministic/gateway draft delivery checks implemented. [Source-bound evidence](../evidence/billing-integration-2026-09-13/line-draft-delivery-result.json):399 source tests and41 isolated PostgreSQL tests PASS/0skip, API typecheck PASS. PG exercises failed live delivery→canonical disable with legacy alias→orphan recovery and real draft transaction/double-tap/current branch/source changes; provider/model transports simulated. No full AP21–24 intake/capture/browser/native acceptance or combined billing completion claim.
+
+
+Receipt-source local completion2026-09-15: the specified progress/single follow-up/saved-media boundary is implemented. [Evidence](../evidence/billing-integration-2026-09-13/line-receipt-source-result.json):525 focused tests,55 PostgreSQL tests including14 new source scenarios,42-file module1338tests PASS/0skip; counts overlap. Includes real record/repository/resolver/webhook paths for current/revoked source/category/fallback and no new expense/model/OCR/upload work. Fixed silent interruption revision handling and upgraded incomplete fixtures to actual ownership/provenance data without weakening permission checks. No native/browser/full-AP21–24/combined billing acceptance claim.

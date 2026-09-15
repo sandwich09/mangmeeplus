@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+[Receipt-source delivery proof](line-receipt-source-result.json): current own-chat record revisions/category names guard progress, follow-up and saved-media recovery; silent questionnaire pause does not invalidate the answer.525 focused/55 PostgreSQL/1338 module tests PASS/0skip (overlapping counts), API typecheck PASS.14 new actual PostgreSQL scenarios; transport simulated. Separate PG harnesses and full native/browser acceptance remain explicit in the receipt.
+
 LINE draft/source2026-09-15: [12 source-bound files,399 unit and41 PostgreSQL tests PASS](line-draft-delivery-result.json). Canonical unlink cannot fall through to an active legacy alias; pending/applied draft facts require current access/source and delivery rechecks without duplicate edits. API typecheck PASS. This focused slice uses simulated LINE/model transports and does not close remaining intake/capture or full browser/native acceptance.
 
 Latest C07 settlement: [focused12 and final combined206 PASS](settlement-result.json),16 source hashes, two inspected mobile captures; source/package17, catalog4, typechecks and maintenance pins PASS. Real local HTTP/PG/browser and isolated marketing with simulated providers. Retained partial/error/retry/case/report paths and current Finance scope are covered; no entitlement changes, bank-receipt claim, native send, CI/push/merge/deploy. Full remaining scope stays open.
