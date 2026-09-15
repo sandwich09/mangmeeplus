@@ -53,6 +53,7 @@ export async function billingTimeline(tx: Prisma.TransactionClient, scope: { com
     href: (row.kind==='OPERATION'&&row.type==='SCAN_PROVIDER_INVOICES'?`/system/billing/companies/${encodeURIComponent(scope.companyId)}/invoice-scans/${encodeURIComponent(row.reference.slice(10))}`:outcomeLinks.get(row.reference)) ?? (row.kind==='ISSUE' ? `/system/billing/issues/${encodeURIComponent(row.reference.slice(6))}` :
       row.kind==='ATTEMPT'?`/system/billing/companies/${encodeURIComponent(scope.companyId)}/checkouts/${encodeURIComponent(row.reference.slice(8))}`:
       row.kind==='OPERATION'&&row.type==='EXPIRE_CHECKOUT'?`/system/billing/checkout-expiry/${encodeURIComponent(row.reference.slice(10))}`:
+      row.kind==='OPERATION'&&['GRANT_RECEIPTS','REVOKE_RECEIPTS'].includes(row.type)&&scope.financial?`/system/billing/receipt-adjustments/${encodeURIComponent(row.reference.slice(10))}`:
       row.kind==='OPERATION'&&row.type==='REFUND'&&scope.financial?`/system/billing/refunds/${encodeURIComponent(row.reference.slice(10))}`:
       row.kind==='OPERATION' && ['RECONCILE','IMPORT_INVOICE','RETRY_APPLY','RETRY_NOTIFICATION','RECONCILE_NOTIFICATION'].includes(row.type) ? `/system/billing/operations/${encodeURIComponent(row.reference.slice(10))}` : null) })),
     nextCursor: rows.length>25 ? rows[24]!.reference : null, auditIncluded:scope.audit, financialIncluded:scope.financial };

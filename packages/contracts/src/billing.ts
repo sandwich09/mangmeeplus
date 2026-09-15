@@ -155,7 +155,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -269,3 +269,12 @@ export type BillingScopeChange = { id: string; type: 'GRANT_SCOPE' | 'REVOKE_SCO
   previewHash: string; mode: BillingMode; companyId: string; companyName: string; userId: string; userName: string; capabilities: string[];
   current: BillingOperatorScopeView | null; expiresAt: string; scopeExpiresAt: string | null; reason: string; observedAt: string | null;
   allowedActions: ('submit' | 'approve' | 'cancel')[] };
+
+export type BillingReceiptReadWarning = 'OCR_DISABLED'|'OCR_LIMIT_REACHED'|'AI_BUDGET_REACHED';
+export type BillingReceiptAdjustmentInput = {type:'GRANT_RECEIPTS'|'REVOKE_RECEIPTS';units?:number;expiresAt?:string;grantId?:string;sourceHash:string;reason:string};
+export type BillingAdminReceiptGrant = {id:string;units:number;used:number;remaining:number;expiresAt:string;revokedAt:string|null;active:boolean};
+export type BillingReceiptAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;units:number;grantExpiresAt:string;
+  beforeRemaining:number;observedRemaining:number|null;requesterName:string|null;approverName:string|null;
+  grant:BillingAdminReceiptGrant|null;readWarnings:BillingReceiptReadWarning[];allowedActions:('submit'|'approve'|'cancel')[]};
+export type BillingReceiptAdjustments = {companyId:string;companyName:string;sourceHash:string;paidThrough:string|null;maxGrantExpiresAt:string|null;
+  remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};

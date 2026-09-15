@@ -71,6 +71,20 @@ test('paid package quota on real PostgreSQL (internal payment-apply seam, not St
       assert.ok(!replay.allowed && replay.reason === 'duplicate');
     });
 
+    await t.test('paid repeat never extends an Admin receipt grant expiry', async () => {
+      const gift=await client.billingReceiptGrant.create({data:{...initial,kind:'ADMIN_ADJUSTMENT',units:3,sourceKey:'synthetic-admin-gift',sourceHash:'synthetic-admin-proof'}});
+      try {
+        const extended=appendPackageInterval(end,'year');
+        await assert.rejects(client.$transaction(async tx=>{
+          await grantPaidPackageReceipts(tx,{...initial,kind:'REPEAT',sourceKey:'synthetic-rollback-repeat',serviceStart:end,serviceEnd:extended,expiresAt:extended});
+          assert.equal((await tx.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).expiresAt.toISOString(),end.toISOString());
+          throw new Error('ROLLBACK_GIFT_CHECK');
+        }),/ROLLBACK_GIFT_CHECK/);
+        const expired=await paidReceiptBalance(client,companyId,accountId,new Date(end.getTime()+1));
+        assert.equal(expired.remaining,0,'read-time expiry works with no sweep');
+      }finally{await client.billingReceiptGrant.delete({where:{id:gift.id}});}
+    });
+
     await t.test('full-package repeat grants 1200 now, extends valid balance and records future service separately', async () => {
       const extended = appendPackageInterval(end, 'year');
       const repeat = { ...initial, sourceKey: 'synthetic-full-package-repeat', kind: 'REPEAT' as const,

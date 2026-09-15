@@ -168,6 +168,17 @@ test('renewal grace with real PostgreSQL and simulated Stripe (not native channe
       assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: f.accountId } })).graceEndsAt, null);
       assert.equal(f.deletes(), 0);
     });
+    await t.test('grace and recovery preserve the fixed expiry of Admin-granted receipts', async () => {
+      const f=await fixture(),end=new Date(f.end*1000),start=new Date(end.getTime()-86400000);
+      const gift=await client.billingReceiptGrant.create({data:{companyId:f.companyId,billingAccountId:f.accountId,sourceKey:'synthetic-admin-grace',sourceHash:'synthetic-admin-proof',
+        kind:'ADMIN_ADJUSTMENT',units:3,availableAt:start,serviceStart:start,serviceEnd:end,expiresAt:end,policyRevisionId:'ADMIN_APPROVED'}});
+      await f.run();
+      assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).expiresAt.toISOString(),end.toISOString());
+      Object.assign(f.renewal,{status:'paid',amount_paid:49900,amount_remaining:0});f.subscription.status='active';await f.run();
+      assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).expiresAt.toISOString(),end.toISOString());
+      assert.equal((await client.billingReceiptGrant.findUniqueOrThrow({where:{id:gift.id}})).units,3);
+    });
+
     await t.test('admin hold, changed term, and unrelated invoice cannot unlock or extend a company', async () => {
       for (const variation of ['hold', 'term', 'invoice']) {
         const f = await fixture();

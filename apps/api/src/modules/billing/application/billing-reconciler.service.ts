@@ -443,7 +443,7 @@ export class BillingReconcilerService {
         const updated = await tx.companyPlanTerm.update({ where: { companyId: account.companyId }, data: { termEndsAt: graceEnd, termDisabledAt: null } });
         // Preserve the unspent old units, never mint a renewal grant for an unpaid invoice.
         await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id, companyId: account.companyId,
-          revokedAt: null, expiresAt: current.paidThrough! }, data: { expiresAt: graceEnd } });
+          kind: { not: 'ADMIN_ADJUSTMENT' }, revokedAt: null, expiresAt: current.paidThrough! }, data: { expiresAt: graceEnd } });
         if (company.status === 'DISABLED') await this.lifecycle.execute({ companyId: account.companyId, targetStatus: 'ACTIVE',
           requestingAdminUserId: null, requestId: unpaid.id, reason: 'stripe_renewal_grace' }, tx);
         await tx.billingAccount.update({ where: { id: account.id }, data: { termProjectionHash: termProjectionHash(updated) } });
@@ -543,7 +543,7 @@ export class BillingReconcilerService {
         const offer = snapshot.quote.offer;
         if (capacity) await applyCapacity(tx, company.id, offer, capacity, applyingChange ? planChange!.initiatorUserId : contract.initiatingUserId, invoice.id);
         if (current.graceEndsAt && current.paidThrough) await tx.billingReceiptGrant.updateMany({ where: { billingAccountId: account.id,
-          companyId: company.id, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
+          companyId: company.id, kind: { not: 'ADMIN_ADJUSTMENT' }, expiresAt: current.graceEndsAt, serviceEnd: { lte: current.paidThrough } }, data: { expiresAt: current.paidThrough } });
         const term = await tx.companyPlanTerm.upsert({ where: { companyId: company.id }, create: {
           companyId: company.id, tierKey: offer.offerKey, branchLimit: offer.branchLimit, employeeLimit: offer.employeeLimit, monthlySlipLimit: offer.monthlySlipLimit,
           termStartAt: evidence.periodStart, termEndsAt: evidence.periodEnd, lastRenewedAt: new Date(),

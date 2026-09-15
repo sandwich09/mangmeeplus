@@ -58,7 +58,7 @@ export class BillingConfigurationService {
     if(companyId===undefined)return this.platform(context,'system.billing.read',tx);
     const {access}=await this.admin.scopedCompany(context,companyId,tx);
     await this.admin.access(context,'system.billing.financial.read',tx);
-    if(!access.capabilities.some(key=>key==='system.billing.refund.manage'||key==='system.billing.approval.approve'))throw new ForbiddenException();
+    if(!access.capabilities.some(key=>key==='system.billing.refund.manage'||key==='system.billing.override.manage'||key==='system.billing.approval.approve'))throw new ForbiddenException();
     return access;
   }
   async companyProof(context:RequestContext,companyId:string) {

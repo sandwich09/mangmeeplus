@@ -78,7 +78,7 @@ const operationKinds: Record<string,string> = {
   RECONCILE_NOTIFICATION:'ตรวจผลส่งข้อความเดิม', RETRY_PROVIDER_EVENT:'ตรวจเหตุการณ์ Stripe เดิม', CHANGE_COLLECTION:'จัดการต่ออายุ',
   SCHEDULE_DOWNGRADE:'ตั้งเวลาลดแพ็กเกจ', CANCEL_DOWNGRADE:'ยกเลิกการลดแพ็กเกจ', CANCEL_COLLECTION:'หยุดต่ออายุ', RESUME_COLLECTION:'เปิดต่ออายุอีกครั้ง',
   SCAN_PROVIDER_INVOICES:'ตรวจประวัติใบแจ้งหนี้ Stripe', RECORD_SUPPORT_OUTCOME:'บันทึกผลติดต่อ', PUBLISH_POLICY:'เปลี่ยนนโยบายการชำระเงิน',
-  SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว',
+  SET_ACTION_GATE:'เปลี่ยนการเปิดบริการ', CHECK_PROVIDER_CONFIGURATION:'ตรวจการเชื่อมต่อ Stripe', REFUND:'คืนเงิน', GRANT_RECEIPTS:'เพิ่มใบเสร็จโดยผู้ดูแล', REVOKE_RECEIPTS:'ถอนใบเสร็จที่ผู้ดูแลเพิ่ม', GRANT_OVERRIDE:'ให้สิทธิ์ชั่วคราว', REVOKE_OVERRIDE:'ถอนสิทธิ์ชั่วคราว',
 };
 export function billingTimelineLabel(entry: BillingTimelineEntry): {title:string;state:string} {
   if (entry.kind === 'PLAN_TERM') return {title:'แพ็กเกจปัจจุบัน',state:billingPlanLabel(entry.state)};

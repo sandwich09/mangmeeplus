@@ -1,3 +1,5 @@
+import { BillingReceiptAdjustmentsService } from '../application/billing-receipt-adjustments.service';
+import type { BillingReceiptAdjustmentInput } from '@watchdog-bms/contracts';
 import { BillingCheckoutExpiryService } from '../application/billing-checkout-expiry.service';
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
@@ -60,7 +62,20 @@ export class BillingCatalogController {
 @Controller('system/billing')
 export class BillingAdminController {
   constructor(private readonly admin: BillingAdminService, private readonly limits: RedisRateLimitService, private readonly operations: BillingOperationsService,
-    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService) {}
+    private readonly configuration: BillingConfigurationService, private readonly readiness: BillingReadinessService, private readonly scopes: BillingScopesService,private readonly notifications:BillingNotificationsService, private readonly scans: BillingProviderScansService,private readonly refunds:BillingRefundsService,private readonly settlement:BillingSettlementService,private readonly checkoutExpiry:BillingCheckoutExpiryService,private readonly batches:BillingBatchesService,private readonly receiptAdjustments:BillingReceiptAdjustmentsService) {}
+  @Get('companies/:id/receipt-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  receiptAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
+    const fields=bodyFields(query,['cursor']);return this.receiptAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
+  @Post('companies/:id/receipt-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  async receiptAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:unknown){
+    await this.operationLimit(req);return this.receiptAdjustments.preview(req.context,textField(id,128),body as BillingReceiptAdjustmentInput);}
+  @Get('receipt-adjustments/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  receiptAdjustmentGet(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){bodyFields(query,[]);return this.receiptAdjustments.get(req.context,uuid(id));}
+  @Post('receipt-adjustments/:id/:action') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
+  async receiptAdjustmentCommand(@Req() req:AuthedRequest,@Param('id') id:string,@Param('action') action:string,@Body() body:unknown,@Headers('idempotency-key') key?:string){
+    if(action!=='submit'&&action!=='approve'&&action!=='cancel')invalid();const fields=bodyFields(body,['expectedVersion','previewHash']);
+    if(!Number.isSafeInteger(fields.expectedVersion)||(fields.expectedVersion as number)<0)invalid();await this.operationLimit(req);
+    return this.receiptAdjustments.command(req.context,uuid(id),action,fields.expectedVersion as number,textField(fields.previewHash,64),key);}
   @Get('batches') @RequirePermissions('system.billing.read') @Header('Cache-Control','no-store')
   batchList(@Req() req:AuthedRequest,@Query() query:unknown){const fields=bodyFields(query,['cursor']);return this.batches.list(req.context,fields.cursor===undefined?undefined:uuid(fields.cursor));}
   @Post('batches/preview') @HttpCode(200) @RequirePermissions('system.billing.reconcile.run') @Header('Cache-Control','no-store')
