@@ -2401,3 +2401,25 @@ describe('substitute reply source facts', () => {
     assert.equal(JSON.stringify(result.source), original); assert.equal(h.prepares.length, 1);
   });
 });
+
+describe('Original offered choices take precedence over reordered active workflows', () => {
+  for (const firstAlreadyOpen of [true, false]) {
+    it(`ordinal one keeps the first original expense when it is ${firstAlreadyOpen ? 'open' : 'fresh'}`, async () => {
+      const first = harness(), second = harness({ expense: expense({ id: 'expense-2', expenseNumber: 'EXP-002' }) });
+      const start = (h: ReturnType<typeof harness>, id: string) => h.useCase.execute(ctx(), {
+        messageText: 'ทำใบรับรองแทนใบเสร็จรับเงิน', chatKeyHash: 'chat-hash', recentCandidates: [{ id, label: id }],
+      });
+      if (firstAlreadyOpen) await start(first, 'expense-1');
+      await start(second, 'expense-2');
+      const records = () => [second.getExpense(), first.getExpense()];
+      first.repo.listLineSubstituteContinuationRows = async () => records().filter(row => row.sourceChannelMetadataJson.lineSubstituteReceiptContinuation);
+      first.repo.findByIdWithRelations = async (_companyId: string, id: string) => records().find(row => row.id === id) ?? null;
+      const result = await first.useCase.execute(ctx(), { messageText: '1', chatKeyHash: 'chat-hash',
+        recentCandidates: [{ id: 'expense-1', label: 'รายการแรก' }, { id: 'expense-2', label: 'รายการที่สอง' }],
+        boundCandidateExpenseIds: ['expense-1', 'expense-2'] });
+      assert.equal(result.expenseId, 'expense-1');
+      assert.ok(first.saves.every(row => row.expenseId === 'expense-1'));
+      assert.equal(second.saves.length, 1, 'the other workflow is unchanged');
+    });
+  }
+});

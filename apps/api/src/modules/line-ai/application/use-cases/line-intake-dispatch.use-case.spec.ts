@@ -1,10 +1,12 @@
+import { evaluateEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { admitCompanyOcr } from '../company-ocr-governance';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { ConflictException, UnprocessableEntityException } from '@nestjs/common';
 import { resolveTransactionBranchId } from '../../../data-model-core/application/services/transaction-branch';
-import { chatKeyHashOf, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
+import { chatKeyHashOf, lineClarificationContentHash, ProcessLineWebhookUseCase, putLineMediaUpload, classifyPendingMediaReply, splitPendingMediaReply, isExactStandaloneGreeting } from './process-line-webhook.use-case';
 import { isDeliveredCapabilityFollowUp, isNextStepQuestionText } from '../../domain/logic/line-ai-capability-follow-up.logic';
 import { receiptStatusQuestion, receiptProgressLabel } from '../../domain/logic/line-receipt-status.logic';
 import type { BusinessDocumentClassification, LineIntakeRoutePlan } from '@watchdog-bms/contracts';
@@ -164,6 +166,8 @@ function makeHarness(opts: {
   routePlan?: LineIntakeRoutePlan;
   correctionOutcome?: any;
   openWaiting?: any[];
+  /** Preserve deliberately missing/corrupt provenance for refusal tests. */
+  unprovenWaiting?: boolean;
   recentCaptures?: Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; sourceDocumentType: string | null; createdAt: Date }>;
   routeThrows?: boolean;
   uploadThrows?: boolean;
@@ -276,8 +280,9 @@ function makeHarness(opts: {
   const expenseRepo = {
     resolveCreateBranchId: async (companyId: string, scopes: { branchIds?: string[] }, selectedBranchId?: string | null) =>
       resolveTransactionBranchId(branchDb, companyId, scopes, selectedBranchId),
+    findActiveAttachmentObject: async (_companyId: string, id: string) => id === 'pending-att-1' ? { id, checksumSha256: 'hash' } : null,
     listCategories: async () => [{ id: 'cat-meals', name: 'ค่าอาหาร' }],
-    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return opts.recentCaptures ?? []; },
+    listRecentLineCaptures: async (input: any) => { candidateQueries.push(input); return (opts.recentCaptures ?? []).filter(row => !input.expenseIds || input.expenseIds.includes(row.id)); },
     listLineSubstituteContinuationRows: async () => opts.substituteContinuationRows ?? [],
     recordDeliveredLineReceiptContinuation: async (input: any) => { receiptContinuationCalls.push(input); },
     findByLineMessageId: async (companyId: string, lineMessageId: string) => {
@@ -331,7 +336,8 @@ function makeHarness(opts: {
 
   const substituteOutcome = (ctx: any, input: any, result: any) => {
     if (!result || Object.hasOwn(result, 'source') || result.status === 'FORBIDDEN') return result;
-    const ids: string[] = result.candidateExpenseIds?.length ? result.candidateExpenseIds
+    const ids: string[] = result.status === 'TARGET_REQUIRED' && !result.candidateExpenseIds?.length ? []
+      : result.candidateExpenseIds?.length ? result.candidateExpenseIds
       : [result.expenseId ?? input.recentCandidates?.[0]?.id ?? 'expense-substitute-1'];
     const records = ids.flatMap(id => {
       const saved = { ...emptyMedia(id), ...capturedRows.get(id),
@@ -479,7 +485,7 @@ function makeHarness(opts: {
     (opts.openWaiting || opts.captureLedger
       ? {
         enabled: true,
-        openWaitingUser: async () => opts.openWaiting ?? [],
+        openWaitingUser: async () => waitingFixture,
         ack: async (entry: any, _state: string, meta: any) => { ledgerAcks.push({ entryId: entry?.id, outcome: meta?.outcome }); },
         appendTurn: async () => null,
         appendSubRequests: async (input: any) => { opts.captureLedger?.push(input); },
@@ -546,6 +552,18 @@ function makeHarness(opts: {
     } as any : undefined,
   );
   (useCase as any).readEvidence = { forTurn: async () => [], verify: async () => true, verifyDelivery: async () => false };
+  // Historical unit scenarios seed an original question at harness construction. Actual two-turn
+  // tests carry the producer's exact sourceContext and must never mint a replacement on read.
+  const waitingFixture = (opts.openWaiting ?? []).map(item => ({ ...item, entry: { ...item.entry } }));
+  for (const item of waitingFixture) if (!opts.unprovenWaiting && !Object.hasOwn(item.entry, 'sourceContext')) {
+    item.entry.sourceContext = JSON.stringify({ v: 1, userId: 'user-1', companyId: 'company-1',
+      fingerprint: resolvedLineDeliveryAccessFingerprint('user-1', 'company-1', {
+        membershipId: 'mem-1', roles: ['STAFF'], permissions: opts.permissions, scopes: opts.scopes ?? {},
+      } as any, evaluateEntitledFeatureKeys(opts.entitlementRows ?? [])),
+      chatKeyHash: chatKeyHashOf(TEXT_EVENT), recipientHash: lineDeliveryRecipientHash(TEXT_EVENT.lineUserId, TEXT_EVENT.lineUserId, (TEXT_EVENT as any).messagingChannelId ?? ''), contentHash: lineClarificationContentHash(item),
+    });
+  }
+
   // The dispatcher's own logger, so a test can assert what an operator sees at level 40.
   const warnings: any[] = [];
   (useCase as any).logger = { warn: (payload: any) => warnings.push(payload), error: () => {}, log: () => {}, debug: () => {} };
@@ -1083,7 +1101,7 @@ describe('LINE intake dispatch – text path', () => {
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
 
-  it('keeps a committed group capture but delivers only a private-chat instruction', async () => {
+  it('refuses a group capture before mutation and delivers only a private-chat instruction', async () => {
     let contextLoads = 0;
     const h = makeHarness({
       permissions: ['expense.receipt.line_upload'],
@@ -1096,11 +1114,10 @@ describe('LINE intake dispatch – text path', () => {
       },
     });
 
-    await assert.rejects(h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' }), /LINE_DELIVERY_FAILED_PERMANENT/);
+    await h.useCase.execute({ ...TEXT_EVENT, pushTargetId: 'group-1' });
 
     assert.equal(contextLoads, 0);
-    assert.equal(h.captured[0].draftConversationEnabled, false);
-    assert.equal(h.captured.length, 1, 'delivery denial does not replay or undo completed capture');
+    assert.equal(h.captured.length, 0, 'private-chat restriction is checked before any capture');
     assert.match(h.replies[0] ?? '', /แชตส่วนตัว/);
     assert.doesNotMatch(h.replies[0] ?? '', /I01-QTY/u);
   });
@@ -1686,8 +1703,8 @@ describe('LINE intake dispatch – text path', () => {
       permissions: ['expense.receipt.line_upload', 'line.ai.query'],
       routePlan: { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', language: 'th', confidence: 0.95 },
       openWaiting: [{
-        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ไฟล์ที่ผู้ใช้ส่งมา', askedAt: new Date().toISOString(),
-        pendingMedia: { pendingMediaId: 'pending-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
+        id: 'media-clarify-1', question: 'รูปนี้เป็นอะไรคะ?', text: 'ยอดขายเดือนนี้เท่าไหร่', askedAt: new Date().toISOString(),
+        pendingMedia: { pendingMediaId: 'pm-1', attachmentId: 'pending-att-1', mimeType: 'image/jpeg' },
         entry: { id: 'media-clarify-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
       }],
       prisma,
@@ -1806,7 +1823,7 @@ describe('LINE intake dispatch – the substitute request survives the clarify t
   const carried = (item: any) => ({
     id: 'sub-carry-1', question: item.clarifyQuestion, text: item.text, askedAt: new Date().toISOString(),
     clarifyForIntent: item.clarifyForIntent,
-    entry: { id: 'sub-carry-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
+    entry: { sourceContext: item.sourceContext, id: 'sub-carry-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'turn-1', kind: 'sub_request', userId: 'user-1' },
   });
 
   it('parks the request as a clarification when the chat has nothing to make the document for', async () => {
@@ -4743,4 +4760,106 @@ describe('LINE substitute results and resume capsules retain their producing sou
       });
     }
   }
+});
+
+describe('Stored clarification provenance across fresh LINE events', () => {
+  for (const fault of ['none', 'missing', 'corrupt', 'oversized', 'wording', 'intent', 'ordered_ids', 'amount', 'after_route', 'access', 'channel'] as const) {
+    it(`keeps the original question binding and safely recovers after ${fault}`, async () => {
+      const stored: any[] = [];
+      const recent = ['expense-a', 'expense-b'].map((id, index) => ({ id, expenseDate: new Date('2026-09-15'),
+        grandTotalAmount: String(65 + index), sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date('2026-09-15') }));
+      const options: Parameters<typeof makeHarness>[0] = {
+        permissions: ['line.ai.query', 'expense.receipt.line_upload', 'expense.update'], captureLedger: stored, recentCaptures: recent,
+        routePlan: { status: 'ROUTED', intent: 'CLARIFY', confidence: 1, language: 'th',
+          clarifyForIntent: 'EXPENSE_CAPTURE_CORRECTION', clarifyQuestion: 'ต้องการแก้รายการที่ 1 หรือ 2 คะ?' },
+      };
+      const h = makeHarness(options), uc = h.useCase as any;
+      await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `source-ask-${fault}`, messageText: 'แก้วันที่ใบเสร็จ' });
+      const item = stored[0]?.items[0]; assert.ok(item?.sourceContext, 'actual producer stored original source');
+      const original = JSON.parse(item.sourceContext);
+      assert.deepEqual(JSON.parse(original.candidates).map((row: any) => row.id), ['expense-a', 'expense-b']);
+      const open = [{ ...item, id: 'old-question', question: item.clarifyQuestion, askedAt: new Date().toISOString(),
+        entry: { ...item, id: 'old-question', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', turnId: 'prior', kind: 'sub_request', userId: 'user-1' } }];
+      uc.ledger.openWaitingUser = async () => open.filter(item => !h.ledgerAcks.some(ack => ack.entryId === item.id));
+      if (fault === 'missing') delete open[0].entry.sourceContext;
+      if (fault === 'corrupt') open[0].entry.sourceContext = '{broken';
+      if (fault === 'oversized') open[0].entry.sourceContext = 'ก'.repeat(6000);
+      if (fault === 'wording') { open[0].question = 'จ่ายแล้วใช่ไหม'; open[0].clarifyQuestion = open[0].question; }
+      if (fault === 'intent') open[0].clarifyForIntent = 'EXPENSE_DOCUMENT_CAPTURE';
+      if (fault === 'ordered_ids') open[0].candidateExpenseIds = ['expense-b', 'expense-a'];
+      if (fault === 'amount') recent[0].grandTotalAmount = '999';
+      if (fault === 'access') options.permissions = ['line.ai.query'];
+      const route = uc.aiGateway.requestLineIntakeRoute;
+      if (fault === 'after_route') uc.aiGateway.requestLineIntakeRoute = async (input: any) => {
+        const result = await route(input); recent[0].grandTotalAmount = '999'; return result;
+      };
+      // A newer capture changes current recency order, not the original offered list.
+      if (fault === 'none') recent.unshift({ ...recent[0], id: 'expense-new' });
+      options.routePlan = { status: 'ROUTED', intent: 'EXPENSE_CAPTURE_CORRECTION', confidence: 1, language: 'th',
+        resolvedClarificationIds: ['old-question'], correctionHints: { expenseId: 'expense-a', expenseDate: '2026-09-14' } } as any;
+      const replyEvent = { ...TEXT_EVENT, webhookEventId: `source-answer-${fault}`, messageText: '1 วันที่ 14 กันยายน 2569',
+        ...(fault === 'channel' ? { messagingChannelId: 'different-channel' } : {}) };
+      await h.useCase.execute(replyEvent);
+      if (fault === 'none') {
+        assert.equal(h.correctionCalls.length, 1);
+        assert.deepEqual(h.correctionCalls[0].candidates.map((row: any) => row.id), ['expense-a', 'expense-b']);
+        assert.equal(h.routeRequests[1]?.openClarifications[0].sourceContext, undefined, 'opaque proof never reaches AI');
+      } else {
+        assert.equal(h.correctionCalls.length, 0); assert.equal(h.captured.length, 0);
+        assert.equal(h.routeRequests.length, fault === 'after_route' ? 2 : 1, 'stale wording is not routed');
+        assert.ok(h.ledgerAcks.some(ack => ack.entryId === 'old-question' && ack.outcome === 'clarification_source_changed'));
+        assert.match(h.replies.at(-1) ?? '', /ข้อมูลต้นทางเปลี่ยน|ตรวจสอบไม่ได้/);
+        // Durable retirement leaves a route for a fresh request; no loop on the unsafe question.
+        uc.aiGateway.requestLineIntakeRoute = route;
+        options.routePlan = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th' };
+        await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `source-fresh-${fault}`, messageText: 'ยอดขายวันนี้เท่าไหร่' });
+        assert.match(h.replies.at(-1) ?? '', /turn-answer/);
+      }
+    });
+  }
+
+  it('rechecks a reviewer without capture permission after routing before substitute effects', async () => {
+    const options: Parameters<typeof makeHarness>[0] = { permissions: ['line.ai.query', 'expense.review'],
+      substituteResult: { handled: true, status: 'OPEN', expenseId: 'exp-review', replyText: 'ต่อได้', acceptedFields: [], blockers: [] },
+      routePlan: { status: 'ROUTED', intent: 'SUBSTITUTE_RECEIPT_CONTINUATION', confidence: 1, language: 'th' } };
+    const h = makeHarness(options), uc = h.useCase as any;
+    uc.config.lineAiSubstituteSemanticRoutingMode = 'primary';
+    uc.substituteReceiptContinuation.substituteContext = async () => ({ workflowState: 'open', hasPendingQuestion: true, preparedState: 'in_progress', recentCandidateCount: 0 });
+    const route = uc.aiGateway.requestLineIntakeRoute;
+    uc.aiGateway.requestLineIntakeRoute = async (input: any) => { const result = await route(input); options.permissions = ['line.ai.query']; return result; };
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: 'review-revoked-during-route', messageText: 'จ่ายเองค่ะ' });
+    assert.equal(h.substituteCalls.length, 0); assert.equal(h.captured.length, 0);
+    assert.match(h.replies.at(-1) ?? '', /สิทธิ์|เปลี่ยน/);
+  });
+});
+
+describe('Stored question facts survive the composer and reply fallback boundary', () => {
+  for (const fault of ['none', 'composer', 'fallback'] as const) it(`checks original facts at ${fault}`, async () => {
+    const stored: any[] = [];
+    const recent = [{ id: 'expense-original', expenseDate: new Date('2026-09-15'), grandTotalAmount: '65', sourceDocumentType: 'EXPENSE_NOTE_TEXT', createdAt: new Date('2026-09-15') }];
+    const options: Parameters<typeof makeHarness>[0] = { permissions: ['line.ai.query', 'expense.receipt.line_upload'], recentCaptures: recent, captureLedger: stored,
+      routePlan: { status: 'ROUTED', intent: 'CLARIFY', confidence: 1, language: 'th', clarifyQuestion: 'ต้องการถามเกี่ยวกับบิลนี้ใช่ไหมคะ?' } };
+    const h = makeHarness(options), uc = h.useCase as any;
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `ask-composer-${fault}`, messageText: 'ช่วยอธิบายบิลหน่อย' });
+    const item = stored[0].items[0];
+    const open = { ...item, id: 'question-1', question: item.clarifyQuestion, askedAt: new Date().toISOString(),
+      entry: { ...item, id: 'question-1', key: 'lineai:ledger:company-1:line-user-secret', companyId: 'company-1', userId: 'user-1', turnId: 'prior', kind: 'sub_request' } };
+    uc.ledger.openWaitingUser = async () => [open];
+    options.routePlan = { status: 'ROUTED', intent: 'BUSINESS_READ_QUESTION', confidence: 1, language: 'th', resolvedClarificationIds: ['question-1'] };
+    const gateway = uc.aiGateway.requestLineTurn;
+    uc.aiGateway.requestLineTurn = async (input: any) => { const answer = await gateway(input); if (fault === 'composer') recent[0].grandTotalAmount = '999'; return answer; };
+    let pushes = 0;
+    uc.lineReply.sendPush = async () => { pushes++; return 'ok'; };
+    if (fault === 'fallback') {
+      const reply = uc.lineReply.sendReply;
+      uc.lineReply.sendReply = async (...args: any[]) => {
+        if (JSON.stringify(args).includes('turn-answer')) { recent[0].grandTotalAmount = '999'; return 'failed_token'; }
+        return reply(...args);
+      };
+    }
+    await h.useCase.execute({ ...TEXT_EVENT, webhookEventId: `answer-composer-${fault}`, messageText: 'ใช่ค่ะ' });
+    assert.equal(h.captured.length, 0); assert.equal(h.turnRequests.length, 1); assert.equal(pushes, 0);
+    if (fault === 'none') assert.match(h.replies.at(-1) ?? '', /turn-answer/);
+    else { assert.match(h.replies.at(-1) ?? '', /ข้อมูลต้นทางเปลี่ยน|ตรวจสอบไม่ได้/); assert.equal(h.ledgerAcks.length, 0, 'undelivered outcome does not consume the original question'); }
+  });
 });

@@ -56,7 +56,7 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
         const creator = suffix === '0-other-user' ? foreign : userId;
         const chat = suffix === '0-other-chat' ? 'another-chat' : CHAT;
         await client.expenseRecord.create({ data: { id: `${tag}-${suffix}`, companyId, createdByUserId: creator,
-          branchId: suffix === '0-other-branch' ? otherBranch.id : branch.id, expenseDate: at, updatedAt: at,
+          branchId: suffix === '0-other-branch' ? otherBranch.id : branch.id, expenseDate: at, createdAt: at, updatedAt: at,
           status: 'DRAFT', captureSource: 'LINE_UPLOAD', sourceChannelMetadataJson: { chatKeyHash: chat,
             lineExpenseDraftContinuation: { userId: creator, chatKeyHash: chat, status: 'OPEN' } } } });
       }
@@ -65,6 +65,17 @@ describe('LINE draft edit preview→confirm on real PostgreSQL', { skip: !databa
       assert.deepEqual((await repo.listLineExpenseDraftContinuationRows(input)).map(row => row.id), expected);
       assert.deepEqual((await repo.listLineExpenseDraftContinuationRows(input)).map(row => row.id), expected);
       assert.deepEqual(await repo.listLineExpenseDraftContinuationRows({ ...input, scopes: { branchIds: [] } }), []);
+      const captureInput = { companyId, createdByUserId: userId, chatKeyHash: CHAT, scopes: { branchIds: [branch.id] }, since: new Date(0), take: 5 };
+      const originalIds = [`${tag}-a`, `${tag}-b`];
+      assert.equal((await repo.listRecentLineCaptures(captureInput)).some(row => row.id === originalIds[0]), false,
+        'newer candidates have pushed the original first choice outside the top five');
+      assert.deepEqual((await repo.listRecentLineCaptures({ ...captureInput, expenseIds: originalIds })).map(row => row.id).sort(), originalIds);
+      assert.deepEqual(await repo.listRecentLineCaptures({ ...captureInput, expenseIds: [`${tag}-0-other-user`, `${tag}-0-other-chat`, `${tag}-0-other-branch`] }), []);
+      assert.deepEqual(await repo.listRecentLineCaptures({ ...captureInput, expenseIds: [] }), []);
+      assert.deepEqual(await repo.listRecentLineCaptures({ ...captureInput, expenseIds: Array(6).fill(originalIds[0]) }), []);
+      await client.expenseRecord.update({ where: { id: originalIds[0] }, data: { status: 'EXTRACTING' } });
+      assert.deepEqual((await repo.listRecentLineCaptures({ ...captureInput, expenseIds: originalIds })).map(row => row.id), [originalIds[1]]);
+      assert.deepEqual(await repo.listRecentLineCaptures({ ...captureInput, expenseIds: originalIds, scopes: { branchIds: [] } }), []);
     } finally {
       await client.expenseRecord.deleteMany({ where: { companyId } });
       await client.branch.deleteMany({ where: { companyId } });

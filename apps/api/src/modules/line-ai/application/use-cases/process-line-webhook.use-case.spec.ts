@@ -1,8 +1,9 @@
+import { lineDeliveryRecipientHash, resolvedLineDeliveryAccessFingerprint } from '../line-delivery-access';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { LINE_AI_CONTEXT_MAX_TURNS, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
-import { branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
+import { lineClarificationContentHash, branchScopeFallbackLabel, chatKeyHashOf, classifyPendingMediaReply, formatCheckBillDraftCreatedReply, formatCorrectionAppliedReply, formatGroundedReceiptFollowUp, formatOcrGovernanceClarifyReply, formatPaypersReply, isAffirmativeText, isGroundedReceiptFollowUp, mentionsUnchangeableMoney, ProcessLineWebhookUseCase, readResponseBodyLimited, toAiTurnIntent, toCanonicalTextMessages } from './process-line-webhook.use-case';
 import { featureTemporarilyUnavailable } from '../../../employee-access/application/entitlement.helper';
 import { ReceiptOcrApplyService } from '../../../expenses/application/services/receipt-ocr-apply.service';
 import { absoluteWebLink, webBaseUrlFromEnv, webLink } from '../../../../common/http/web-link';
@@ -3957,6 +3958,18 @@ describe('ProcessLineWebhookUseCase – value candidate wiring (item 10F)', () =
   });
 });
 
+
+function questionFixture(item: any, permissions: string[], extra = {}) {
+  if (Object.hasOwn(item.entry ?? {}, 'sourceContext')) return item;
+  return { ...item, entry: { ...item.entry, sourceContext: JSON.stringify({
+    v: 1, userId: 'user-1', companyId: 'company-1', chatKeyHash: chatKeyHashOf(BASE_EVENT),
+    recipientHash: lineDeliveryRecipientHash(BASE_EVENT.lineUserId, BASE_EVENT.lineUserId, (BASE_EVENT as any).messagingChannelId ?? ''),
+    fingerprint: resolvedLineDeliveryAccessFingerprint('user-1', 'company-1', {
+      membershipId: 'mem-1', roles: ['STAFF'], permissions, scopes: {},
+    } as any, null), contentHash: lineClarificationContentHash(item), ...extra,
+  }) } };
+}
+
 // ── Item 10F: turn ledger wiring (append → gateway → ack; coverage → sub_requests) ──
 
 import { LineAiLedgerService } from '../line-ai-ledger.service';
@@ -3969,6 +3982,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   config?: Record<string, unknown>;
   deliveryResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
 } = {}) {
+  const waitingFixture = (opts.openWaiting ?? []).map(item => questionFixture(item, opts.permissions ?? ['line.ai.query']));
   const events: string[] = [];
   const ledgerCalls = { turns: [] as any[], subs: [] as any[], acks: [] as Array<{ id: string; outcome: string }> };
   const realLedger = new LineAiLedgerService(
@@ -3978,7 +3992,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   );
   const ledger = {
     enabled: true,
-    openWaitingUser: async () => opts.openWaiting ?? [],
+    openWaitingUser: async () => waitingFixture,
     appendTurn: async (input: any) => { events.push('appendTurn'); ledgerCalls.turns.push(input); return '10-0'; },
     appendSubRequests: async (input: any) => { events.push('appendSubRequests'); ledgerCalls.subs.push(input); },
     coverageToSubRequests: realLedger.coverageToSubRequests.bind(realLedger),
@@ -4135,7 +4149,8 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.ok(events.indexOf('gateway') < events.indexOf('delivery'), 'delivery follows business computation');
     assert.ok(events.indexOf('delivery') < events.indexOf('ack:acked'), 'ledger closes only after LINE accepts the response');
     assert.equal(ledgerCalls.turns[0]?.text, 'สามคำถามรวด');
-    assert.deepEqual(ledgerCalls.subs[0]?.items, [
+    assert.ok(ledgerCalls.subs[0]?.items.every((item: any) => item.sourceContext));
+    assert.deepEqual(ledgerCalls.subs[0]?.items.map(({sourceContext, ...item}: any) => item), [
       { text: 'วันที่บิล', subject: 'expense', state: 'waiting_user', clarifyQuestion: 'ปีไหน?' },
       { text: 'ยอดค้างซัพพลายเออร์', state: 'pending' },
     ]);
@@ -4176,7 +4191,6 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
         {
           id: '7-0', question: 'ปีไหน?', text: 'บันทึกบิล 9/11/37', subject: 'expense',
           askedAt: '2026-07-07T09:59:00.000Z', entry: entryOf('7-0'),
-          pendingMedia: { pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg' },
         },
         { id: '8-0', question: 'สาขาไหน?', text: 'ยอดขายสาขา', askedAt: '2026-07-07T09:59:30.000Z', entry: entryOf('8-0') },
       ],
@@ -4187,9 +4201,7 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(aiGatewayRequests[0]?.openClarifications?.length, 2);
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.question, 'ปีไหน?');
     assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.subject, 'expense');
-    assert.deepEqual(aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia, {
-      pendingMediaId: 'pm-7', attachmentId: 'att-7', mimeType: 'image/jpeg',
-    });
+    assert.equal(aiGatewayRequests[0]?.openClarifications?.[0]?.sourceContext, undefined, 'internal proof never reaches the model');
     assert.deepEqual(intakeRequests[0]?.openClarifications?.[0]?.pendingMedia,
       aiGatewayRequests[0]?.openClarifications?.[0]?.pendingMedia,
       'the same opaque stored-media handle reaches intake and turn requests');
@@ -4763,11 +4775,13 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
           return result ? { ...result, ...(saved ? { source: substituteReplySource(saved) } : {}) }
             : { handled: true, status: 'BLOCKED', replyText: 'ระบุผู้จ่าย', acceptedFields: [], blockers: [], pendingQuestion: 'ระบุผู้จ่าย' }; },
         replySourcesCurrent: (ctx: any, source: any) => LineSubstituteReceiptContinuationUseCase.prototype.replySourcesCurrent.call(
-          { repo: { findByIdWithRelations: async () => saved } } as any, ctx, source),
+          { repo: { findByIdWithRelations: async (_company: string, id: string) => saved?.id === id ? saved : savedMediaFixture(id) } } as any, ctx, source),
       },
     };
   }
   function makeLedger(openWaiting: any[] = []) {
+    openWaiting = openWaiting.map(item => questionFixture(item, P.permissions,
+      item.candidateExpenseIds?.length ? { substitute: [{ records: item.candidateExpenseIds.flatMap((id: string) => substituteReplySource(savedMediaFixture(id)).records) }] } : {}));
     const appended: any[] = [];
     return { appended, ledger: { openWaitingUser: async () => openWaiting, appendSubRequests: async (i: any) => { appended.push(i); }, ack: async () => undefined, appendTurn: async () => undefined, coverageToSubRequests: () => [] } };
   }
@@ -4921,17 +4935,17 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
 
     // Ambiguous: TWO active start-confirm clarifications → cannot pick → ZERO-write, nothing consumed.
     const ambiguous = await run('evt-det-ambiguous', [clar('w-a', ['exp-1']), clar('w-b', ['exp-2'])]);
-    assert.equal(ambiguous.confirmedStart, false, 'two pending start-confirms are ambiguous → no auto-bind');
-    assert.deepEqual(ambiguous.consumed, [], 'ambiguous state consumes nothing');
+    assert.equal(ambiguous.confirmedStart, undefined, 'two pending start-confirms are ambiguous → no auto-bind');
+    assert.deepEqual(ambiguous.consumed, [['w-a', 'w-b']], 'ambiguous question handles retire without mutating either expense; the next fresh request can proceed');
 
     // Missing a single-candidate start-confirm: only a MULTI-candidate target-selection is open → ZERO-write.
     const missing = await run('evt-det-missing', [clar('w-t', ['exp-1', 'exp-2'])]);
-    assert.equal(missing.confirmedStart, false, 'a multi-candidate target-selection is not a start-confirm → no auto-bind');
+    assert.equal(missing.confirmedStart, undefined, 'a multi-candidate target-selection is not a start-confirm → no auto-bind');
     assert.deepEqual(missing.consumed, [], 'missing state consumes nothing');
 
     // A NON-affirmative message never triggers the recovery even with a unique start-confirm open.
     const notAffirmative = await run('evt-det-nonaffirm', [clar('w-a', ['exp-1'])], 'ค่ากาแฟ 65 บาท');
-    assert.equal(notAffirmative.confirmedStart, false, 'a non-affirmative message never deterministically confirms');
+    assert.equal(notAffirmative.confirmedStart, undefined, 'a non-affirmative message never deterministically confirms');
   });
 
   it('PRIMARY: resolved-clarification consumption is restricted to the substitute-owned intersection', async () => {
@@ -4993,7 +5007,7 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
     // The constructor takes (repo, prepare, audit, storage, review); these paths (target-select → confirm →
     // start-save) never reach prepare/issue, so the extra dependencies are inert stubs.
     const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any, { execute: async () => { throw new Error('target selection must not perform evidence review'); } } as any);
-    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
+    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id, sourceContext: item.sourceContext } });
 
     // Turn A — paraphrase, TWO candidates, no open workflow → target-selection pinned to both ids, no write.
     const ledA = makeLedger();
@@ -5067,7 +5081,7 @@ describe('ProcessLineWebhookUseCase – substitute semantic dispatcher', () => {
       },
     } as any;
     const realSub = new LineSubstituteReceiptContinuationUseCase(repo, {} as any, { log: async () => undefined } as any, { getObject: async () => ({ bytes: Buffer.from([]), mimeType: 'application/pdf' }) } as any, { execute: async () => { throw new Error('target selection must not perform evidence review'); } } as any);
-    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id } });
+    const clarFrom = (item: any, id: string, at: string) => ({ id, text: item.text, question: item.clarifyQuestion, clarifyForIntent: item.clarifyForIntent, candidateExpenseIds: item.candidateExpenseIds, askedAt: at, entry: { id, sourceContext: item.sourceContext } });
     const candidates = async () => [{ id: 'exp-1', label: 'ค่าวิน · 200' }, { id: 'exp-2', label: 'ค่ากาแฟ · 65' }];
 
     // Turn 1 — a broad-match substitute request with TWO candidates → target-selection, no write.

@@ -2910,12 +2910,15 @@ export class PrismaExpenseRepository {
     scopes: { branchIds?: string[] };
     take: number;
     includeAllStatuses?: boolean;
+    expenseIds?: string[];
   }): Promise<Array<{ id: string; expenseDate: Date | null; grandTotalAmount: string | null; vendorDocumentNumber: string | null; sourceDocumentType: string | null; createdAt: Date }>> {
+    if (input.expenseIds && (!input.expenseIds.length || input.expenseIds.length > 5)) return [];
     const rows = await this.prisma.client.expenseRecord.findMany({
       where: {
         companyId: input.companyId,
         createdByUserId: input.createdByUserId,
         captureSource: 'LINE_UPLOAD',
+        ...(input.expenseIds ? { id: { in: input.expenseIds } } : {}),
         ...(input.includeAllStatuses ? {} : { status: { in: ['DRAFT', 'NEEDS_REVIEW', 'READY_FOR_CONFIRMATION'] as any } }),
         createdAt: { gte: input.since },
         // Rows captured before chatKeyHash existed simply never match — accepted transitional gap.

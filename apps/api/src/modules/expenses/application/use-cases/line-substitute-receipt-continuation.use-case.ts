@@ -1489,6 +1489,8 @@ export class LineSubstituteReceiptContinuationUseCase {
     messageText: string;
     chatKeyHash: string;
     recentCandidates: Array<{ id: string; label: string }>;
+    /** Original ordered shortlist from a source-verified waiting question. */
+    boundCandidateExpenseIds?: string[];
     webBaseUrl?: string;
     /** The PRIMARY semantic dispatcher sets this so a FRESH start driven by the model's route ALONE (a
      *  paraphrase matching none of the deterministic entry phrases) asks ONE bounded confirmation before it
@@ -1519,12 +1521,19 @@ export class LineSubstituteReceiptContinuationUseCase {
       .filter((item): item is { row: typeof rows[number]; state: LineSubstituteReceiptContinuation } =>
         !!item.state && ACTIVE_STATUSES.has(item.state.status));
     const selection = ordinalSelection(input.messageText, Math.max(states.length, input.recentCandidates.length));
-    let selected = states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
+    const boundIds = input.boundCandidateExpenseIds;
+    if (boundIds && (boundIds.length === 0 || boundIds.length > 5 || new Set(boundIds).size !== boundIds.length
+      || JSON.stringify(boundIds) !== JSON.stringify(input.recentCandidates.map(item => item.id)))) {
+      return targetOutOfScope(ctx.companyId, input.webBaseUrl, 'รายการที่เคยให้เลือกเปลี่ยนแล้ว กรุณาเปิดตรวจรายการในเว็บค่ะ');
+    }
+    const chosenId = boundIds?.[selection ?? (boundIds.length === 1 ? 0 : -1)];
+    let selected = boundIds ? states.find(item => item.state.expenseId === chosenId)
+      : states.length === 1 ? states[0] : selection !== null ? states[selection] : undefined;
     // A brand-new OPEN workflow (none → OPEN) is a real state transition that may persist even without an
     // accepted field value; an EXISTING workflow writes ONLY on an actual accepted change (below).
     let startedNew = false;
 
-    if (!selected && states.length > 1) {
+    if (!selected && states.length > 1 && !boundIds) {
       // The question is pending so the dispatcher keeps the clarification open and routes “1” back here.
       // candidateExpenseIds pins the offered shortlist so the ordinal binds to the SAME id next turn.
       const question = 'ตอบหมายเลขงานที่ต้องการทำต่อค่ะ (เช่น “1”)';

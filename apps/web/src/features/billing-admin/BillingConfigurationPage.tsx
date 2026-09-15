@@ -138,8 +138,9 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
               }}/></label>
             <p>เว้นว่างเพื่อปิดการคืนเงิน ทุกคำขอต้องมีผู้อนุมัติอีกคน การคืนเงินไม่เปลี่ยนแพ็กเกจอัตโนมัติ</p>
           </section>
-          <label className="block">เวอร์ชันข้อความยินยอม<input className={field} value={policy.consentRevision} maxLength={80} onChange={e => setPolicy({ ...policy, consentRevision: e.target.value })} /></label>
           <details className="rounded-lg border p-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">เชื่อมราคาและ Portal ของ Stripe</summary><div className="mt-3 space-y-3">
+          <label className="block">เวอร์ชันข้อความยินยอม<input className={field} value={policy.consentRevision} maxLength={80} onChange={e => setPolicy({ ...policy, consentRevision: e.target.value })} /></label>
+            <p>ให้ผู้ดูแลระบบเปลี่ยนรหัสนี้เมื่อแก้เงื่อนไขที่ลูกค้าต้องยอมรับก่อนซื้อแพ็กเกจ</p>
             <label className="block">Portal Configuration ID<input className={field} value={policy.portalConfigurationId ?? ''} onChange={e => setPolicy({ ...policy, portalConfigurationId: e.target.value || null })} /></label>
             {BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => {
               const key = `${tier}:${interval}` as const;

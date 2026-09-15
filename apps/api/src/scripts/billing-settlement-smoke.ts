@@ -132,7 +132,10 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
         await page.getByRole('button',{name:'เริ่มตรวจยอด',exact:true}).click();const result=await created,value=await result.json();
         if(result.status()===429){
           assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(value.retryAfterSeconds)&&value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
-          await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();assert.equal(await page.getByLabel('เหตุผล',{exact:true}).inputValue(),body.reason);
+          await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();
+          try{assert.equal(await page.getByLabel('เหตุผล',{exact:true}).inputValue(),body.reason);}
+          catch(error){await page.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-settlement-create-failure.png',fullPage:true});
+            console.error('settlement-create-context',JSON.stringify({url:page.url(),text:await page.locator('main').innerText()}));throw error;}
           assert.deepEqual(await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue())),originalWindow);
           await new Promise(resolve=>setTimeout(resolve,(value.retryAfterSeconds+1)*1000));continue;
         }

@@ -8,13 +8,13 @@
  * always exactly the set of open (unacked) work; XAUTOCLAIM with a min-idle window is the
  * whole reclaim story.
  *
- * Availability contract (spec §13): the ledger FAILS OPEN — any Redis error degrades to a
- * log-warned no-op and the turn proceeds unchanged. Values/tools/permissions keep failing
- * closed elsewhere. Redis holds operational state only; the Postgres audit log remains the
+ * Appending/acknowledging still degrades to a logged no-op on Redis failure. Reading an open
+ * question fails closed: an unavailable question must not turn a bare answer into a new capture.
+ * Redis holds operational state only; the Postgres audit log remains the
  * source of truth (`ai.line.ledger.*` mirror on every transition).
  *
- * DEMOTED for money (uat-correctness-latency spec §8.3). Fail-open is the right trade for
- * conversational context and the wrong one for a financial clarification, because a Redis
+ * DEMOTED for money (uat-correctness-latency spec §8.3). An unavailable Redis
+ * question must block financial continuation because a Redis
  * outage makes "no open question" and "an open question I cannot read" look identical — and
  * the second must never let a follow-up amount be merged or written. An open clarification
  * here is therefore a BOUNDED REFERENCE only: `valueCandidates` and `clarifyQuestion` are
@@ -34,9 +34,10 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { hashMessagePreview } from '../domain/logic/line-ai-classifier.logic';
-import { findConsumedClarificationIds, type MarkerTransactionClient } from './line-ai-consumption-marker';
+import { ConsumptionMarkerUnavailableError, findConsumedClarificationIds, type MarkerTransactionClient } from './line-ai-consumption-marker';
 
 export const LEDGER_GROUP = 'lineai-turn';
+export const LINE_CLARIFICATION_SOURCE_MAX_BYTES = 16384;
 const KEY_PREFIX = 'lineai:ledger:';
 const APPEND_CONSUMER = 'appender';
 const PENDING_SCAN_COUNT = 50;
@@ -82,6 +83,8 @@ export type LedgerEntry = {
   intakeIntent?: LineIntakeRouteIntent;
   /** Correction-target shortlist the question named; wording snapshot only, never authorization. */
   candidateExpenseIds?: string[];
+  /** Opaque, bounded server proof. Never forwarded to the model; the webhook validates it. */
+  sourceContext?: string;
   /** The already-stored file this question was asked about (see LineAiOpenClarification). */
   pendingMedia?: LedgerPendingMedia;
   valueCandidates?: LineAiValueCandidates;
@@ -100,6 +103,7 @@ export type LedgerSubRequestInput = {
   clarifyQuestion?: string;
   clarifyForIntent?: LineIntakeRouteIntent;
   candidateExpenseIds?: string[];
+  sourceContext?: string;
   pendingMedia?: LedgerPendingMedia;
 };
 
@@ -149,6 +153,7 @@ export function fieldsToEntry(key: string, id: string, fields: string[]): Ledger
     ...(asIntakeRouteIntent(map['clarifyForIntent']) ? { clarifyForIntent: asIntakeRouteIntent(map['clarifyForIntent']) } : {}),
     ...(asIntakeRouteIntent(map['intakeIntent']) ? { intakeIntent: asIntakeRouteIntent(map['intakeIntent']) } : {}),
     ...(candidateExpenseIds.length > 0 ? { candidateExpenseIds } : {}),
+    ...(map['sourceContext'] && Buffer.byteLength(map['sourceContext'], 'utf8') <= LINE_CLARIFICATION_SOURCE_MAX_BYTES ? { sourceContext: map['sourceContext'] } : {}),
     ...(pendingMedia ? { pendingMedia } : {}),
     ...(valueCandidates ? { valueCandidates } : {}),
     createdAt: map['createdAt'] ?? '',
@@ -261,6 +266,7 @@ export class LineAiLedgerService implements OnModuleDestroy {
         ...(item.clarifyQuestion ? { clarifyQuestion: item.clarifyQuestion } : {}),
         ...(item.clarifyForIntent ? { clarifyForIntent: item.clarifyForIntent } : {}),
         ...(item.candidateExpenseIds?.length ? { candidateExpenseIds: item.candidateExpenseIds.join(',') } : {}),
+        ...(item.sourceContext && Buffer.byteLength(item.sourceContext, 'utf8') <= LINE_CLARIFICATION_SOURCE_MAX_BYTES ? { sourceContext: item.sourceContext } : {}),
         ...(item.pendingMedia ? {
           pendingMediaId: item.pendingMedia.pendingMediaId,
           pendingMediaAttachmentId: item.pendingMedia.attachmentId,
@@ -311,7 +317,10 @@ export class LineAiLedgerService implements OnModuleDestroy {
     limit = 3,
   ): Promise<Array<LineAiOpenClarification & { entry: LedgerEntry }>> {
     const redis = this.redis();
-    if (!redis) return [];
+    if (!redis) {
+      if (this.enabled) throw new ConsumptionMarkerUnavailableError(new Error('Clarification store unavailable'));
+      return [];
+    }
     const key = ledgerKey(companyId, chatKey);
     const windowMs = LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000;
     let open: Array<LineAiOpenClarification & { entry: LedgerEntry }>;
@@ -342,9 +351,9 @@ export class LineAiLedgerService implements OnModuleDestroy {
         });
       }
     } catch (err) {
-      // Redis stays fail-open (§13): a read failure degrades to "no open clarifications".
+      // Preserve the distinction between no question and an unreadable question in every mode.
       this.logger.warn({ msg: 'ai.line.ledger.read_failed', error: (err as Error).message });
-      return [];
+      throw new ConsumptionMarkerUnavailableError(err);
     }
     if (open.length === 0) return [];
     // Marker lookup does NOT fail open — it throws ConsumptionMarkerUnavailableError and the
