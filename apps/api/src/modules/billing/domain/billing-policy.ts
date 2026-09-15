@@ -19,15 +19,15 @@ export function effectiveBillingGates(value: unknown): Record<BillingAction, boo
 export function assertKeys(value: unknown, keys: readonly string[]): asserts value is Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key))) throw new BadRequestException('Invalid billing fields');
 }
-export function paidVariant(tier: unknown, interval: unknown): { tier: PaidTier; interval: BillingInterval; offer: BillingOffer } {
+export function paidVariant(tier: unknown, interval: unknown, policy?:BillingPolicy|null): { tier: PaidTier; interval: BillingInterval; offer: BillingOffer } {
   if (!BILLING_PAID_TIERS.includes(tier as PaidTier) || !['month', 'year'].includes(interval as string)) {
     throw billingError('BILLING_OFFER_UNAVAILABLE', 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน');
   }
-  return { tier: tier as PaidTier, interval: interval as BillingInterval, offer: billingOffer(tier as PaidTier, interval as BillingInterval) };
+  return { tier: tier as PaidTier, interval: interval as BillingInterval, offer: billingOffer(tier as PaidTier, interval as BillingInterval, policy) };
 }
 
 export function parseBillingPolicy(value: unknown): BillingPolicy {
-  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes', 'refundLimitSatang']);
+  assertKeys(value, ['schemaVersion', 'paidStart', 'taxTreatment', 'graceDays', 'cancellation', 'planChanges', 'debtRecovery', 'refundPolicy', 'priceIds', 'zeroPriceIds', 'taxRateId', 'portalConfigurationId', 'consentRevision', 'issuer', 'salesCompanyIds', 'supportSlaMinutes', 'refundLimitSatang', 'offerTerms']);
   const p = value as unknown as BillingPolicy;
   if (p.schemaVersion !== 1 || ![null, 'IMMEDIATE', 'AFTER_TRIAL'].includes(p.paidStart) ||
       ![null, 'INCLUSIVE_VAT_7', 'EXCLUSIVE_VAT_7', 'NOT_VAT_REGISTERED'].includes(p.taxTreatment) ||
@@ -38,6 +38,17 @@ export function parseBillingPolicy(value: unknown): BillingPolicy {
       !(p.taxRateId === null || /^txr_[a-zA-Z0-9]+$/.test(p.taxRateId)) ||
       !(p.portalConfigurationId === null || /^bpc_[a-zA-Z0-9]+$/.test(p.portalConfigurationId))) throw new BadRequestException('Invalid billing policy');
   if(p.refundLimitSatang!=null&&(!Number.isSafeInteger(p.refundLimitSatang)||p.refundLimitSatang<1||p.refundLimitSatang>2147483647))throw new BadRequestException('Invalid refund limit');
+  if(p.offerTerms!=null){
+    assertKeys(p.offerTerms,BILLING_PAID_TIERS);
+    for(const terms of Object.values(p.offerTerms)){
+      assertKeys(terms,['monthlyPriceSatang','annualPriceSatang','monthlyReceiptAllowance']);
+      if(!Number.isSafeInteger(terms.monthlyReceiptAllowance)||terms.monthlyReceiptAllowance<1||terms.monthlyReceiptAllowance>Math.floor(2147483647/12))
+        throw new BadRequestException({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'Invalid purchased receipt allowance'});
+      for(const amount of [terms.monthlyPriceSatang,terms.annualPriceSatang])
+        if(!Number.isSafeInteger(amount)||amount<1000||quoteTotals(amount,p.taxTreatment).totalSatang>99999999)
+          throw new BadRequestException({code:'CONTROL_OFFER_PRICE_INVALID',message:'Invalid paid offer price'});
+    }
+  }
   const variants = BILLING_PAID_TIERS.flatMap((tier) => [`${tier}:month`, `${tier}:year`]);
   assertKeys(p.priceIds, variants);
   if (Object.values(p.priceIds).some((id) => typeof id !== 'string' || !/^price_[a-zA-Z0-9]+$/.test(id))) throw new BadRequestException('Invalid price mapping');

@@ -1,3 +1,4 @@
+import {checkBillingOfferTerms} from './billing-offer-terms-smoke';
 import {checkBillingBatches} from './billing-batches-smoke';
 import { checkBillingCheckoutExpiry } from './billing-checkout-expiry-smoke';
 import { checkBillingSettlement } from './billing-settlement-smoke';
@@ -20,8 +21,9 @@ import { checkBillingConfigurationImpact } from './billing-configuration-impact-
 
 export async function checkBillingConfiguration(input: {
   request: (path: string, method?: string, body?: unknown, extra?: Record<string, string>) => Promise<{ status: number; body: any }>;
+  provider:Record<string,Record<string,any>[]>;companyIds:string[];reconcile:(id:string)=>Promise<void>;repeatFixture:ReturnType<typeof import('./billing-repeat-smoke').repeatProviderFixture>;
   prisma: PrismaService; companyId: string; userIds: string[]; membershipId: string; stripeAccountId: string;
-  browser?: Awaited<ReturnType<typeof startBillingBrowser>>; signToken: (sid: string, userId?: string) => string; recordLegal: (userId: string, membershipId: string) => Promise<void>;
+  browser?: Awaited<ReturnType<typeof startBillingBrowser>>; signToken: (sid: string, userId?: string) => string; recordLegal: (userId: string, membershipId: string, targetCompanyId?:string) => Promise<void>;
   transport: (hook?: (url: URL, init?: RequestInit) => Promise<Response | undefined>) => void;
   scanAccounts:()=>Promise<unknown>;drainProviderScans:()=>Promise<unknown>;drainOperations:()=>Promise<unknown>;drainNotifications:()=>Promise<unknown>;notificationFixture:ReturnType<typeof import('./billing-notification-smoke').billingNotificationFixture>;
 }) {
@@ -51,14 +53,14 @@ export async function checkBillingConfiguration(input: {
   let secondBrowser: BrowserContext | undefined;
   const snapshot = await client.billingInvoice.findMany({ where: { billingAccountId: (await client.billingAccount.findFirstOrThrow({ where: { companyId, stripeAccountId } })).id }, orderBy: { id: 'asc' } });
   try {
-    if (process.env.BILLING_BATCHES_ONLY === '1' || process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' || process.env.BILLING_SETTLEMENT_ONLY === '1' || process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
+    if (process.env.BILLING_OFFER_TERMS_ONLY === '1' || process.env.BILLING_BATCHES_ONLY === '1' || process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' || process.env.BILLING_SETTLEMENT_ONLY === '1' || process.env.BILLING_REFUNDS_ONLY === '1' || process.env.BILLING_REFUND_CONTROLS_ONLY === '1' || process.env.BILLING_READINESS_ONLY === '1' || process.env.BILLING_SALES_COHORT_ONLY === '1' || process.env.BILLING_SUPPORT_SLA_ONLY === '1' || process.env.BILLING_SCHEDULED_POLICY_ONLY === '1') {
       if (browser) {
         secondBrowser = await browser.page.context().browser()!.newContext({ viewport: { width: 390, height: 844 } });
         await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
           { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
         await secondBrowser.newPage();
       }
-      return await (process.env.BILLING_BATCHES_ONLY === '1' ? checkBillingBatches : process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' ? checkBillingCheckoutExpiry : process.env.BILLING_SETTLEMENT_ONLY === '1' ? checkBillingSettlement : process.env.BILLING_REFUNDS_ONLY === '1' ? checkBillingRefunds : process.env.BILLING_REFUND_CONTROLS_ONLY === '1' ? checkBillingRefundControls : process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
+      return await (process.env.BILLING_OFFER_TERMS_ONLY === '1' ? checkBillingOfferTerms : process.env.BILLING_BATCHES_ONLY === '1' ? checkBillingBatches : process.env.BILLING_CHECKOUT_EXPIRY_ONLY === '1' ? checkBillingCheckoutExpiry : process.env.BILLING_SETTLEMENT_ONLY === '1' ? checkBillingSettlement : process.env.BILLING_REFUNDS_ONLY === '1' ? checkBillingRefunds : process.env.BILLING_REFUND_CONTROLS_ONLY === '1' ? checkBillingRefundControls : process.env.BILLING_READINESS_ONLY === '1' ? checkBillingReadiness : process.env.BILLING_SCHEDULED_POLICY_ONLY === '1' ? checkBillingScheduledPolicy : process.env.BILLING_SUPPORT_SLA_ONLY === '1' ? checkBillingSupportSla : checkBillingSalesCohort)({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
     }
     const initial = await request(`${base}/settings`); assert.equal(initial.status, 200); assert.equal(initial.body.reauthenticatedUntil, null);
     const before = initial.body, revisionCount = await client.billingPolicyRevision.count({ where: { stripeAccountId } });
@@ -181,10 +183,11 @@ export async function checkBillingConfiguration(input: {
     const refundCases = await checkBillingRefunds({ ...input, request, approveRequest, password, adminRoleId: admin.id, secondBrowser });
     const checkoutCases=await checkBillingCheckoutExpiry({...input,request,approveRequest,password,adminRoleId:admin.id,secondBrowser});
     const batchCases=await checkBillingBatches({...input,request,approveRequest,password,adminRoleId:admin.id,secondBrowser});
+    const offerTermsCases=await checkBillingOfferTerms({...input,request,approveRequest,password,adminRoleId:admin.id,secondBrowser});
     const settlementCases=await checkBillingSettlement({...input,request,approveRequest,password,adminRoleId:admin.id,secondBrowser});
     return ['admin-configuration-password-proof-session-credential-expiry-and-platform-scope', 'admin-emergency-close-and-independent-approved-reopen-no-restart',
       'admin-vat-issuer-price-preview-publish-and-compensating-off-revision', 'admin-configuration-idempotency-revoked-requester-cancel-approval-race-and-historical-invoices',
-      ...(browser ? ['browser-admin-password-independent-approval-observed-config-and-mobile', 'browser-admin-vat-form-publish-return-off-without-process-restart'] : []), ...draftCases,...impactCases,...scopeCases,...refundControls,...refundCases,...checkoutCases,...batchCases,...settlementCases];
+      ...(browser ? ['browser-admin-password-independent-approval-observed-config-and-mobile', 'browser-admin-vat-form-publish-return-off-without-process-restart'] : []), ...draftCases,...impactCases,...scopeCases,...refundControls,...refundCases,...checkoutCases,...batchCases,...offerTermsCases,...settlementCases];
   } finally {
     await secondBrowser?.close();
     await client.membershipRole.deleteMany({ where: { membershipId: { in: [input.membershipId, second.id] }, roleId: { in: [admin.id, role.id] } } });

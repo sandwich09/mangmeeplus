@@ -115,8 +115,9 @@ export class BillingConfigurationService {
       ...(cohort ? { salesCohort: { before: before?.salesCompanyIds ?? null, after: policy.salesCompanyIds ?? null,
       companies: await this.salesCompanies([...new Set([...(before?.salesCompanyIds ?? []), ...(policy.salesCompanyIds ?? [])])], tx) } } : {}),
       prices: BILLING_PAID_TIERS.flatMap(tier => (['month', 'year'] as const).map(interval => ({ offerKey: `${tier}:${interval}` as const,
-        beforeTotalSatang: quoteTotals(billingOffer(tier, interval).priceSatang, before?.taxTreatment ?? null).totalSatang,
-        afterTotalSatang: quoteTotals(billingOffer(tier, interval).priceSatang, policy.taxTreatment).totalSatang }))) };
+        beforeTotalSatang: quoteTotals(billingOffer(tier, interval, before).priceSatang, before?.taxTreatment ?? null).totalSatang,
+        afterTotalSatang: quoteTotals(billingOffer(tier, interval, policy).priceSatang, policy.taxTreatment).totalSatang,
+        beforeReceiptAllowance:billingOffer(tier,interval,before).receiptAllowance,afterReceiptAllowance:billingOffer(tier,interval,policy).receiptAllowance }))) };
   }
   private async validateProvider(policy: BillingPolicy) {
     assertPolicyReady(policy);
@@ -127,7 +128,7 @@ export class BillingConfigurationService {
       const priceId = policy.priceIds[`${tier}:${interval}`], zeroId = policy.zeroPriceIds?.[`${tier}:${interval}`];
       if (zeroId && !priceId) throw new BadRequestException('Prepaid price needs its paid price');
       if (!priceId) continue;
-      const offer = billingOffer(tier, interval), price = await this.billing.stripe.request('GET', `/prices/${priceId}`);
+      const offer = billingOffer(tier, interval, policy), price = await this.billing.stripe.request('GET', `/prices/${priceId}`);
       assertStripePrice(price, offer, policy, this.billing.stripe.livemode, priceId);
       if (zeroId) {
         const zero = await this.billing.stripe.request('GET', `/prices/${zeroId}`);

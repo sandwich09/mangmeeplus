@@ -181,13 +181,20 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
       const page=browser.page;let readLimited=false;
       const openReview=async(target:typeof page,navigate:()=>Promise<unknown>)=>{
         for(let tries=0;tries<3;tries++){
-          const waiting=target.waitForResponse(r=>r.request().method()==='GET'&&new URL(r.url()).pathname.endsWith(`/invoices/${local.id}/refund-review`));
-          if(tries===0)await navigate();else await target.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();
-          const response=await waiting;if(response.status()===200)return;
-          const body=await response.json();assert.equal(response.status(),429,JSON.stringify(body));assert.equal(body.code,'BILLING_RATE_LIMIT');
-          assert.ok(Number.isInteger(body.retryAfterSeconds)&&body.retryAfterSeconds>=1&&body.retryAfterSeconds<=60);readLimited=true;
-          await target.getByRole('alert').filter({hasText:`กรุณารอ ${body.retryAfterSeconds} วินาที`}).waitFor();
-          await new Promise(r=>setTimeout(r,Math.min(60,body.retryAfterSeconds+1)*1000));
+          const responses:Promise<{status:number;body:any}>[]=[];
+          const collect=(r:any)=>{if(r.request().method()==='GET'&&new URL(r.url()).pathname.endsWith(`/invoices/${local.id}/refund-review`))responses.push(r.json().then((body:any)=>({status:r.status(),body})).catch(()=>({status:r.status(),body:null})));};
+          target.on('response',collect);
+          try{
+            if(tries===0)await navigate();else await target.getByRole('button',{name:'โหลดรายการล่าสุด',exact:true}).click();
+            const form=target.getByLabel('จำนวนเงินที่ต้องการคืน (บาท)',{exact:true}),limited=target.getByRole('alert').filter({hasText:'กรุณารอ'});
+            await form.or(limited).first().waitFor();const observed=await Promise.all(responses);
+            // A superseded development-mode read may receive429 while the current read succeeds.
+            if(await form.isVisible()){assert.ok(observed.some(r=>r.status===200&&r.body?.invoiceId===local.id&&r.body?.companyId===companyId&&r.body?.canCreate===true),'Visible original form needs actual successful review HTTP evidence');return;}
+            const seconds=Number((await limited.innerText()).match(/กรุณารอ (\d+) วินาที/)?.[1]);
+            assert.ok(Number.isInteger(seconds)&&seconds>=1&&seconds<=60);
+            assert.ok(observed.some(r=>r.status===429&&r.body?.code==='BILLING_RATE_LIMIT'&&r.body.retryAfterSeconds===seconds),'Visible wait must match an actual original review response');readLimited=true;
+            await new Promise(r=>setTimeout(r,Math.min(60,seconds+1)*1000));
+          }finally{target.off('response',collect);}
         }
         assert.fail('Original refund review must recover through the visible bounded wait/reload path');
       };

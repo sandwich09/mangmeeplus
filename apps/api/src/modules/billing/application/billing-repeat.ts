@@ -395,7 +395,7 @@ export class BillingRepeat {
       billingAccountId: account.id, customerId: account.customerId!, productId: source.productId, livemode: account.livemode,
       checkoutLines: await this.stripe.list(`/checkout/sessions/${session.id}/line_items`, {}), invoiceLines: await this.stripe.list(`/invoices/${invoice.id}/lines`, {}) });
     const impact = snapshot.upgrade ? { paidThrough: new Date(source.paidThrough), serviceStartsAt: new Date(snapshot.upgrade.prorationAt) } :
-      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval,
+      fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval, offer:snapshot.quote.offer,
         verifiedPaidAt: evidence.paidAt, paidThrough: new Date(source.paidThrough), remainingPaidReceipts: 0, anchorDay: source.anchorDay });
     return {evidence,impact};
   }
@@ -434,7 +434,7 @@ export class BillingRepeat {
       const balance = await paidReceiptBalance(tx, account.companyId, account.id, evidence.paidAt);
       if (snapshot.upgrade) {
         if (balance.remaining + snapshot.upgrade.receiptUnitsAdded > 2147483647) throw review();
-      } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval, verifiedPaidAt: evidence.paidAt,
+      } else fullPackagePurchaseImpact({ tier: snapshot.quote.offer.offerKey, interval: snapshot.quote.offer.interval, offer:snapshot.quote.offer, verifiedPaidAt: evidence.paidAt,
         paidThrough: new Date(snapshot.repeat!.paidThrough), remainingPaidReceipts: balance.remaining, anchorDay: snapshot.repeat!.anchorDay });
       await tx.companyPlanTerm.update({ where: { companyId: account.companyId }, data: { termEndsAt: end, termDisabledAt: null,
         ...(snapshot.upgrade ? { tierKey: snapshot.quote.offer.offerKey, branchLimit: snapshot.quote.offer.branchLimit,

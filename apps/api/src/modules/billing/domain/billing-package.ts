@@ -1,4 +1,4 @@
-import type { BillingInterval } from '@watchdog-bms/contracts';
+import type { BillingInterval, BillingOffer } from '@watchdog-bms/contracts';
 import { billingError, paidVariant } from './billing-policy';
 
 const invalid = () => billingError('BILLING_PACKAGE_STATE_INVALID', 'ข้อมูลแพ็กเกจเปลี่ยนแล้ว กรุณาตรวจสอบรายการใหม่');
@@ -28,9 +28,11 @@ export function appendPackageInterval(start: Date, interval: BillingInterval, an
 /** Server-owned paid history only: callers must not pass trial dates or browser-submitted balances. */
 export function fullPackagePurchaseImpact(input: {
   tier: unknown; interval: unknown; verifiedPaidAt: Date; paidThrough: Date | null;
-  remainingPaidReceipts: number; anchorDay?: number;
+  remainingPaidReceipts: number; anchorDay?: number; offer?:BillingOffer;
 }) {
-  const { offer, interval } = paidVariant(input.tier, input.interval);
+  const variant = paidVariant(input.tier, input.interval), interval=variant.interval, offer=input.offer??variant.offer;
+  if(offer.offerKey!==variant.tier||offer.interval!==interval||offer.receiptAllowance<1)throw invalid();
+  units(offer.receiptAllowance);
   const paidAt = time(input.verifiedPaidAt);
   const continuing = input.paidThrough !== null && time(input.paidThrough) > paidAt;
   const serviceStartsAt = continuing ? new Date(input.paidThrough!) : new Date(input.verifiedPaidAt);

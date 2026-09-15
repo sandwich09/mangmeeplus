@@ -6,7 +6,9 @@ import { resolve } from 'node:path';
 import type { Page } from '@playwright/test';
 import type { BillingCatalog } from '@watchdog-bms/contracts';
 
-export async function checkBillingMarketing(input: { page: Page; appOrigin: string; directory: string; evidenceDir: string }) {
+export async function checkBillingMarketing(input: { page: Page; appOrigin: string; directory: string; evidenceDir: string; expectedPro?:{monthlySatang:number;annualSatang:number;annualReceipts:number} }) {
+  const expected=input.expectedPro??{monthlySatang:99900,annualSatang:999000,annualReceipts:1200};
+  const price=(satang:number)=>`฿${(satang/100).toLocaleString('th-TH',{maximumFractionDigits:2})}`;
   const html = await readFile(resolve(input.directory, 'index.html'));
   const script = await readFile(resolve(input.directory, 'billing-catalog.js'));
   const server = createServer((req, res) => {
@@ -40,13 +42,13 @@ export async function checkBillingMarketing(input: { page: Page; appOrigin: stri
   try {
     await page.goto(origin, { waitUntil: 'domcontentloaded' });
     const pricing = page.locator('#pricing'), pro = pricing.locator('[data-offer-key="PRO_999"]'), enterprise = pricing.locator('[data-offer-key="ENTERPRISE_1999"]');
-    await pro.getByText('฿999', { exact: true }).waitFor();
+    await pro.getByText(price(expected.monthlySatang), { exact: true }).waitFor();
     assert.equal(await pro.getByRole('button').isDisabled(), true, 'TEST mode cannot sell through public marketing');
     assert.match(await pricing.locator('#free-trial-offer').innerText(), /7 เมนู.*15 ใบ/);
     assert.doesNotMatch(await pricing.innerText(), /ซื้อเฉพาะใบ|ซื้อใบเพิ่ม/);
     await pricing.getByRole('button', { name: 'รายปี', exact: true }).click();
-    await pro.getByText('฿9,990', { exact: true }).waitFor();
-    assert.match(await pro.innerText(), /1,200.*ทั้งก้อนทันที/);
+    await pro.getByText(price(expected.annualSatang), { exact: true }).waitFor();
+    assert.ok((await pro.innerText()).includes(expected.annualReceipts.toLocaleString('th-TH')));assert.match(await pro.innerText(), /ทั้งก้อนทันที/);
     assert.match(await enterprise.innerText(), /Coming soon/);
     assert.equal(await enterprise.getByRole('button').isDisabled(), true);
     cases.push('marketing-actual-bundle-public-bff-trial-seven-annual-upfront-test-sales-closed');
@@ -71,7 +73,7 @@ export async function checkBillingMarketing(input: { page: Page; appOrigin: stri
     cases.push('marketing-unavailable-stale-fail-closed-and-retry-recovers');
     await page.setViewportSize({ width: 390, height: 844 });
     await pricing.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: `${input.evidenceDir}/marketing-annual-mobile.png`, fullPage: false });
+    await page.screenshot({ path: `${input.evidenceDir}/${input.expectedPro?'marketing-offer-terms-mobile.png':'marketing-annual-mobile.png'}`, fullPage: false });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await enterprise.getByRole('button').isDisabled(), true);
     await page.setViewportSize({ width: 1280, height: 900 });

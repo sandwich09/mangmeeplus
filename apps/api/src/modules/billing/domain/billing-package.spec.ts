@@ -141,3 +141,24 @@ test('refund policy is closed for old settings and validates approved integer bo
     assert.doesNotThrow(()=>assertRefundControlPolicy(parseBillingPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang}),true));
   assert.throws(()=>assertRefundControlPolicy({...BILLING_DRAFT_POLICY,refundLimitSatang:24900,refundPolicy:null},true));
 });
+
+
+test('approved offer prices and upfront quota share a snapshot and retain original defaults',()=>{
+  const original=billingOffer('PRO_999','year');
+  const policy=parseBillingPolicy({...BILLING_DRAFT_POLICY,offerTerms:{PRO_999:{monthlyPriceSatang:109901,annualPriceSatang:1099001,monthlyReceiptAllowance:125}}});
+  const offer=billingOffer('PRO_999','year',policy);
+  assert.equal(offer.priceSatang,1099001);assert.equal(offer.receiptAllowance,1500);
+  assert.equal(offer.branchLimit,original.branchLimit);assert.equal(offer.employeeLimit,original.employeeLimit);
+  assert.deepEqual(billingOffer('BASIC_499','year',policy),billingOffer('BASIC_499','year'));
+  assert.equal(billingOffer('ENTERPRISE_1999','year',policy).availability,'COMING_SOON');
+  const input={tier:'PRO_999',interval:'year',verifiedPaidAt:new Date('2026-09-15Z'),paidThrough:new Date('2027-05-15Z'),remainingPaidReceipts:200};
+  assert.equal(fullPackagePurchaseImpact({...input,offer}).remainingReceipts,1700);
+  assert.equal(fullPackagePurchaseImpact({...input,offer:original}).remainingReceipts,1400);
+  assert.throws(()=>fullPackagePurchaseImpact({...input,offer:billingOffer('BASIC_499','year')}));
+  for(const offerTerms of [false,[],{ENTERPRISE_1999:{monthlyPriceSatang:199900,annualPriceSatang:1999000,monthlyReceiptAllowance:2000}},
+    {PRO_999:{}},{PRO_999:{...policy.offerTerms!.PRO_999,extra:1}},...[-1,0,0.5,178956971,'125',NaN].map(monthlyReceiptAllowance=>({PRO_999:{...policy.offerTerms!.PRO_999,monthlyReceiptAllowance}})),
+    ...[999,1000.5,100000000,'109901'].map(monthlyPriceSatang=>({PRO_999:{...policy.offerTerms!.PRO_999,monthlyPriceSatang}}))])
+    assert.throws(()=>parseBillingPolicy({...policy,offerTerms}));
+  assert.throws(()=>parseBillingPolicy({...policy,taxTreatment:'EXCLUSIVE_VAT_7',taxRateId:'txr_test',offerTerms:{PRO_999:{...policy.offerTerms!.PRO_999,annualPriceSatang:99999999}}}));
+  assert.deepEqual(billingOffer('PRO_999','year',{offerTerms:null}),original);
+});

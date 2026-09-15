@@ -7,6 +7,8 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  CONTROL_OFFER_RECEIPTS_INVALID: 'ตรวจจำนวนใบเสร็จของแพ็กเกจ กรอกจำนวนเต็มตั้งแต่ 1 ถึง 178,956,970 ใบต่อรอบเดือน รายปีคูณ 12 ให้อัตโนมัติ',
+  CONTROL_OFFER_PRICE_INVALID: 'ตรวจราคาของแพ็กเกจ ยอดรวมภาษีต้องอยู่ระหว่าง 10 ถึง 999,999.99 บาท และทศนิยมไม่เกิน 2 ตำแหน่ง',
   email_reset_invalid: 'ลิงก์นี้หมดอายุ ถูกใช้แล้ว หรือข้อมูลบัญชีเปลี่ยน กรุณาขอลิงก์กู้รหัสผ่านใหม่',
   CONTROL_CONFIGURATION_CHECK_ACTIVE: 'มีรายการตรวจที่กำลังทำอยู่ โหลดประวัติแล้วเปิดรายการเดิมเพื่อดูผล',
   CONTROL_CONFIGURATION_CHECK_REVIEW: 'ยังบันทึกผลตรวจไม่ได้ โหลดการตั้งค่าล่าสุด ยกเลิกรายการเดิม แล้วเริ่มตรวจใหม่',

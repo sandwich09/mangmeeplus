@@ -85,7 +85,7 @@ export class BillingService {
     const state = this.stripe.enabled ? await this.settings() : null;
     const offers = (['STARTER_249', 'BASIC_499', 'PRO_999', 'ENTERPRISE_1999'] as const)
       .flatMap((tier) => (['month', 'year'] as const).map((interval) => {
-        const offer = billingOffer(tier, interval);
+        const offer = billingOffer(tier, interval, state?.policy);
         if (tier !== 'ENTERPRISE_1999' && state?.policy && state.policy.salesCompanyIds?.length !== 0 && state.gates.new_sales &&
             state.policy.priceIds[`${tier}:${interval}`]) {
           try { assertPolicyReady(state.policy); offer.availability = 'AVAILABLE'; offer.reason = null; } catch { /* Draft remains unavailable. */ }
@@ -187,12 +187,13 @@ export class BillingService {
 
   async quote(context: RequestContext, body: { offerKey: string; interval: string; billingEmail: string; capacity?: unknown }): Promise<BillingQuote> {
     await this.assertOwner(context);
-    const { tier, interval, offer } = paidVariant(body.offerKey, body.interval);
+    const { tier, interval } = paidVariant(body.offerKey, body.interval);
     if (!this.stripe.enabled) throw billingError('BILLING_NOT_READY', 'ระบบชำระเงินยังไม่เปิดให้บริการ');
     const state = await this.settings();
     if (!state.policy || !state.revision || !state.gates.new_sales) throw billingError('BILLING_SALES_CLOSED', 'ยังไม่เปิดรับชำระเงินใหม่');
     assertCompanyCanBuy(state.policy, context.companyId);
     assertPolicyReady(state.policy);
+    const offer=billingOffer(tier,interval,state.policy);
     if (state.policy.paidStart !== 'IMMEDIATE') throw billingError('CONTROL_POLICY_NOT_SUPPORTED', 'การเริ่มสมาชิกต้องชำระทันทีตามนโยบายปัจจุบัน');
     const priceId = state.policy.priceIds[`${tier}:${interval}`];
     if (!priceId) throw billingError('BILLING_OFFER_UNAVAILABLE', 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน');
@@ -250,7 +251,7 @@ export class BillingService {
       trialEndsAt: term?.tierKey === 'FREE_TRIAL_15' && term.termEndsAt > new Date() ? term.termEndsAt.toISOString() : null,
       usage: await this.usage(company.id) };
     if (capacityPreview) quote.capacity = capacityPreview;
-    const impact = fullPackagePurchaseImpact({ tier, interval, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
+    const impact = fullPackagePurchaseImpact({ tier, interval, offer, verifiedPaidAt: new Date(Math.floor(Date.now() / 1000) * 1000),
       paidThrough: repeat ? new Date(repeat.paidThrough) : null, remainingPaidReceipts: repeat ? quote.usage.remaining ?? 0 : 0, anchorDay: repeat?.anchorDay });
     quote.purchase = { kind: repeat ? 'REPEAT' : restart ? 'RESTART' : 'INITIAL', previousPaidThrough: repeat?.paidThrough ?? restart?.paidThrough ?? null,
       projectedPaidThrough: impact.paidThrough.toISOString(), receiptUnitsAdded: impact.receiptUnitsAdded, projectedRemainingReceipts: impact.remainingReceipts };

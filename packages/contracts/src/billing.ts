@@ -43,18 +43,23 @@ export type BillingOffer = {
   receiptAllowance: number; receiptAllowanceCadence: 'PAID_PERIOD';
   availability: 'AVAILABLE' | 'UNAVAILABLE' | 'COMING_SOON'; reason: string | null;
 };
-export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval): BillingOffer {
+export type BillingOfferTerms = { monthlyPriceSatang:number; annualPriceSatang:number; monthlyReceiptAllowance:number };
+export function billingOffer(tier: Exclude<PlanTierKey, 'FREE_TRIAL_15'>, interval: BillingInterval, policy?: Pick<BillingPolicy,'offerTerms'> | null): BillingOffer {
   const preset = PLAN_TIER_PRESETS[tier];
+  const terms=tier==='ENTERPRISE_1999'?undefined:policy?.offerTerms?.[tier];
+  const monthlyReceipts=terms?.monthlyReceiptAllowance??preset.monthlySlipLimit;
   return { offerKey: tier, interval, intervalCount: 1, label: preset.labelTh,
-    priceSatang: MONTHLY[tier] * (interval === 'year' ? 10 : 1), currency: 'THB',
-    branchLimit: preset.branchLimit, employeeLimit: preset.employeeLimit, monthlySlipLimit: preset.monthlySlipLimit,
-    receiptAllowance: preset.monthlySlipLimit * (interval === 'year' ? 12 : 1), receiptAllowanceCadence: 'PAID_PERIOD',
+    priceSatang: terms ? (interval==='year'?terms.annualPriceSatang:terms.monthlyPriceSatang) : MONTHLY[tier] * (interval === 'year' ? 10 : 1), currency: 'THB',
+    branchLimit: preset.branchLimit, employeeLimit: preset.employeeLimit, monthlySlipLimit: monthlyReceipts,
+    receiptAllowance: monthlyReceipts * (interval === 'year' ? 12 : 1), receiptAllowanceCadence: 'PAID_PERIOD',
     availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'UNAVAILABLE',
     reason: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'BILLING_NOT_READY' };
 }
 
 export type BillingPolicy = {
   schemaVersion: 1;
+  /** New accepted purchases only; omitted tiers retain original defaults. */
+  offerTerms?: Partial<Record<PaidTier,BillingOfferTerms>> | null;
   paidStart: 'IMMEDIATE' | 'AFTER_TRIAL' | null;
   taxTreatment: BillingTaxTreatment | null;
   graceDays: number | null;
@@ -244,7 +249,7 @@ export type BillingConfigurationImpact = { subscriptions: number; inFlightAttemp
   refundLimit?: {before:number|null;after:number|null};
   supportSla?: {before:NonNullable<BillingPolicy['supportSlaMinutes']>|null;after:NonNullable<BillingPolicy['supportSlaMinutes']>|null};
   salesCohort?: { before: string[] | null; after: string[] | null; companies: BillingSalesCompany[] };
-  prices: { offerKey: BillingOfferKey; beforeTotalSatang: number; afterTotalSatang: number }[] };
+  prices: { offerKey: BillingOfferKey; beforeTotalSatang: number; afterTotalSatang: number; beforeReceiptAllowance?:number; afterReceiptAllowance?:number }[] };
 export const BILLING_CONFIGURATION_IMPACT_KINDS = ['SUBSCRIPTION', 'ATTEMPT', 'QUOTE', 'PLAN_CHANGE', 'COLLECTION'] as const;
 export type BillingConfigurationImpactKind = typeof BILLING_CONFIGURATION_IMPACT_KINDS[number];
 export type BillingConfigurationImpactItem = { reference: string; kind: BillingConfigurationImpactKind; recordId: string; companyId: string;

@@ -1,7 +1,8 @@
 'use client';
-import { billingControl, billingLabel, billingOfferLabel } from '../billing/billing-display';
+import { billingControl, billingLabel, billingOfferLabel, billingLeavesPage } from '../billing/billing-display';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import BillingOfferTermsEditor from './BillingOfferTermsEditor';
 import BillingSalesCohortPicker from './BillingSalesCohortPicker';
 import { BILLING_ACTIONS, BILLING_PAID_TIERS, type BillingAction, type BillingConfiguration, type BillingConfigurationOperation, type BillingPolicy } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
@@ -20,38 +21,44 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
   const [scheduled,setScheduled]=useState(false),[effectiveAt,setEffectiveAt]=useState<string|null>(null);
   const [operation, setOperation] = useState<BillingConfigurationOperation | null>(null), [history, setHistory] = useState<{ items: BillingConfigurationOperation[]; nextCursor: string | null } | null>(null);
   const [cursor, setCursor] = useState<string | null>(null), [reload, setReload] = useState(0), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const offerInputs=useRef<HTMLDivElement|null>(null);
+  const generation=useRef(0);
+  const invalidate=()=>{generation.current++;};
+  const leaving=(event:React.MouseEvent<HTMLAnchorElement>)=>{if(billingLeavesPage(event))invalidate();};
   const refundLimitInput=useRef<HTMLInputElement|null>(null);
   const draftIntent=useRef<{key:string;body:unknown}|null>(null);
   const draft=operation?.state==='DRAFT'?operation:null;
   const draftChanged=Boolean(draft&&JSON.stringify([policy,gates,reason,scheduled?effectiveAt:null])!==JSON.stringify([draft.proposed.policy,draft.proposed.gates,draft.reason,draft.proposed.effectiveAt??null]));
   const closeIntent = useRef<{ key: string; body: unknown } | null>(null);
+  useEffect(()=>{invalidate();draftIntent.current=null;closeIntent.current=null;setOperation(null);setCursor(null);setReason('');setScheduled(false);setEffectiveAt(null);},[operationId]);
   useEffect(() => {
-    let active = true; setLoading(true); setError('');
+    const token=++generation.current;let active = true; setLoading(true); setBusy(false);setError('');
     Promise.all([api<BillingConfiguration>('/settings'), operationId ? api<BillingConfigurationOperation>(`/configuration-changes/${encodeURIComponent(operationId)}`) : null,
       api<{ items: BillingConfigurationOperation[]; nextCursor: string | null }>(`/configuration-changes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`)])
-      .then(([s, op, h]) => { if (active) { setSettings(s); setPolicy(op?.state==='DRAFT'?op.proposed.policy:s.policy); setGates(op?.state==='DRAFT'?op.proposed.gates:s.gates); setHistory(h); if (operationId) {setOperation(op);setReason(op?.state==='DRAFT'?op.reason:'');setScheduled(Boolean(op?.proposed.effectiveAt));setEffectiveAt(op?.proposed.effectiveAt??null);} } })
-      .catch(() => { if (active) { setSettings(null); setOperation(null); setError('โหลดการตั้งค่าไม่ได้ ตรวจสอบสิทธิ์ระดับระบบแล้วลองใหม่'); } })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .then(([s, op, h]) => { if (active&&token===generation.current) { setSettings(s); setPolicy(op?.state==='DRAFT'?op.proposed.policy:s.policy); setGates(op?.state==='DRAFT'?op.proposed.gates:s.gates); setHistory(h); if (operationId) {setOperation(op);setReason(op?.state==='DRAFT'?op.reason:'');setScheduled(Boolean(op?.proposed.effectiveAt));setEffectiveAt(op?.proposed.effectiveAt??null);} } })
+      .catch(() => { if (active&&token===generation.current) { setSettings(null); setOperation(null); setError('โหลดการตั้งค่าไม่ได้ ตรวจสอบสิทธิ์ระดับระบบแล้วลองใหม่'); } })
+      .finally(() => { if (active&&token===generation.current) setLoading(false); });
+    return () => { active = false;invalidate(); };
   }, [operationId, cursor, reload]);
   const canPolicy = settings?.capabilities.includes('system.billing.policy.manage'), canGates = settings?.capabilities.includes('system.billing.gate.manage');
   async function act(action: 'reauthenticate' | 'preview' | 'submit' | 'approve' | 'cancel' | 'close' | 'save' | 'copy' | 'apply') {
     if (busy || !settings || !policy || !gates) return;
+    if(['save','preview'].includes(action)&&offerInputs.current&&Array.from(offerInputs.current.querySelectorAll('input')).some(input=>!input.reportValidity()))return;
     if(['save','preview'].includes(action)&&refundLimitInput.current&&!refundLimitInput.current.reportValidity())return;
-    setBusy(true); setError('');
+    const token=generation.current;setBusy(true); setError('');
     try {
       if (action === 'reauthenticate') {
         const proof = await api<{ reauthenticatedUntil: string }>('/reauthenticate', { password });
-        setSettings({ ...settings, reauthenticatedUntil: proof.reauthenticatedUntil }); return;
+        if(token===generation.current)setSettings({ ...settings, reauthenticatedUntil: proof.reauthenticatedUntil }); return;
       }
       let result: BillingConfigurationOperation;
       if(action==='save'||action==='copy'){
         draftIntent.current??={key:`billing-draft-${crypto.randomUUID()}`,body:action==='copy'?{type:operation!.type,expectedVersion:0,...operation!.proposed,
           policy:operation!.type==='SET_ACTION_GATE'?settings.policy:operation!.proposed.policy,reason:operation!.reason}:
           {type:draft?.type??(canPolicy?'PUBLISH_POLICY':'SET_ACTION_GATE'),expectedVersion:draft?.version??0,policy,gates,reason,effectiveAt:scheduled?(effectiveAt??''):null,...draft?{draftId:draft.id}:{}}};
-        result=await api('/configuration-drafts',draftIntent.current.body,draftIntent.current.key);draftIntent.current=null;
+        result=await api('/configuration-drafts',draftIntent.current.body,draftIntent.current.key);if(token!==generation.current)return;draftIntent.current=null;
         setPolicy(result.proposed.policy);setGates(result.proposed.gates);setReason(result.reason);setScheduled(Boolean(result.proposed.effectiveAt));setEffectiveAt(result.proposed.effectiveAt??null);
-        void api<NonNullable<typeof history>>('/configuration-changes').then(setHistory).catch(()=>{});
+        void api<NonNullable<typeof history>>('/configuration-changes').then(value=>{if(token===generation.current)setHistory(value);}).catch(()=>{});
       } else if (action === 'preview') {
         result = await api('/configuration-changes/preview', { type: draft?.type??(canPolicy ? 'PUBLISH_POLICY' : 'SET_ACTION_GATE'), expectedVersion: settings.version, policy, gates, reason,effectiveAt:scheduled?(effectiveAt??''):null,...draft?{draftId:draft.id,draftVersion:draft.version}:{} });
       } else if (action === 'close') {
@@ -59,30 +66,31 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         closeIntent.current ??= { key: `billing-close-${crypto.randomUUID()}`, body: { expectedVersion: settings.version,
           gates: Object.fromEntries(BILLING_ACTIONS.map(a => [a, settings.gates[a] && gates[a]])), reason } };
         result = await api('/settings/emergency-close', closeIntent.current.body, closeIntent.current.key);
-        closeIntent.current = null;
+        if(token!==generation.current)return;closeIntent.current = null;
       } else {
         result = await api(`/configuration-changes/${operation!.id}/${action}`, { expectedVersion: operation!.version,
           ...(action === 'cancel' ? {} : { previewHash: operation!.previewHash }) }, action === 'submit' ? `billing-config-${operation!.id}` : undefined);
       }
-      setOperation(result);
+      if(token!==generation.current)return;setOperation(result);
       if (['SUCCEEDED','CANCELLED','SCHEDULED','BLOCKED'].includes(result.state)) setReload(v => v + 1);
     } catch (cause) {
+      if(token!==generation.current)return;
       const code = (cause as { code?: string }).code;
       const status=(cause as {status?:number}).status;if((action==='save'||action==='copy')&&status&&status>=400&&status<500)draftIntent.current=null;
       setError(code === 'CONTROL_REFUND_CONFIG_REQUIRED' ? 'กรอกวงเงินคืนเงินก่อนเปิดรับคำขอ หรือปิดสวิตช์รับคำขอคืนเงินแล้วตรวจผลกระทบอีกครั้ง' : code === 'CONTROL_REAUTH_REQUIRED' ? 'ยืนยันรหัสผ่านก่อน แล้วกดดำเนินการรายการเดิมอีกครั้ง' :
         code === 'CONTROL_PREVIEW_STALE' ? 'ข้อมูลเปลี่ยนหรือคำขอหมดอายุ โหลดข้อมูลล่าสุดและตรวจผลกระทบใหม่' :
           code ? apiErrorMessage(cause) : 'ยังยืนยันผลไม่ได้ โหลดคำขอเดิมเพื่อตรวจสอบก่อนลองใหม่');
-    } finally { if (action === 'reauthenticate') setPassword(''); setBusy(false); }
+    } finally { if(token===generation.current){if (action === 'reauthenticate') setPassword(''); setBusy(false);} }
   }
   const issuer = policy?.issuer ?? { legalName: '', address: '', thaiTaxId: '', stripeTaxId: '' };
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
     <h1 className="text-2xl font-bold">ตั้งค่าการชำระเงิน</h1>
-    <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">กลับหน้าดูแลการชำระเงิน</Link>
-      <Link className={button} href="/system/billing/configuration-checks">ตรวจการเชื่อมต่อ Stripe</Link>
-      {operationId && <Link className={button} href="/system/billing/settings">สร้างคำขอตั้งค่าใหม่</Link>}
+    <nav className="flex flex-wrap gap-3"><Link onClick={leaving} className={button} href="/system/billing">กลับหน้าดูแลการชำระเงิน</Link>
+      <Link onClick={leaving} className={button} href="/system/billing/configuration-checks">ตรวจการเชื่อมต่อ Stripe</Link>
+      {operationId && <Link onClick={leaving} className={button} href="/system/billing/settings">สร้างคำขอตั้งค่าใหม่</Link>}
       <button className={button} disabled={busy || loading} onClick={() => setReload(v => v + 1)}>โหลดการตั้งค่าล่าสุด</button></nav>
     {loading && <p role="status">กำลังโหลด…</p>}{error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
-    {settings && policy && gates && <>
+    {!loading && settings && policy && gates && <>
       <p>{billingLabel('mode',settings.mode)} · เวอร์ชัน {settings.version} · {settings.policyRevisionId ? 'มีนโยบายที่เผยแพร่แล้ว' : 'ยังรอตั้งค่าและอนุมัตินโยบาย'}</p>
       <section className="space-y-3 rounded-xl border bg-white p-4" aria-label="ยืนยันตัวตนเพื่อเปลี่ยนการตั้งค่า">
         <h2 className="font-bold">ยืนยันรหัสผ่าน</h2>
@@ -91,7 +99,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act('reauthenticate'); }}>
           <label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" value={password} maxLength={1024} onChange={e => setPassword(e.target.value)} /></label>
           <button className={button} disabled={busy || !password}>ยืนยันรหัสผ่าน</button>
-          <Link className="ml-3 underline" href="/login">กลับไปเข้าสู่ระบบหรือกู้บัญชี</Link>
+          <Link onClick={leaving} className="ml-3 underline" href="/login">กลับไปเข้าสู่ระบบหรือกู้บัญชี</Link>
         </form>
       </section>
       {(!operationId||operation?.canEditDraft) && settings.mode !== 'DISABLED' && (canPolicy || canGates) && <section className="space-y-4 rounded-xl border bg-white p-4" aria-label="ร่างการตั้งค่า">
@@ -99,6 +107,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         <p>บันทึกและกลับมาแก้ได้โดยยังไม่เปลี่ยนค่าที่ใช้งานจริง ตรวจผลกระทบและขออนุมัติเมื่อพร้อม</p>
         <p>ราคาและนโยบายของสัญญาที่จ่ายแล้วคงเดิม การเปลี่ยนนี้ไม่ย้ายสมาชิกเดิมหรือแก้เอกสารย้อนหลัง</p>
         <fieldset disabled={busy || !canPolicy} className="space-y-3">
+          <div ref={offerInputs}><BillingOfferTermsEditor key={`${settings.version}:${draft?.id??''}:${draft?.version??''}`} policy={policy} onChange={setPolicy}/></div>
           <BillingSalesCohortPicker ids={policy.salesCompanyIds} companies={(draft ? draft.salesCompanies : settings.salesCompanies) ?? []} onChange={ids => setPolicy({ ...policy, salesCompanyIds: ids })} />
           <label className="block">ภาษีมูลค่าเพิ่ม<select aria-label="ภาษีมูลค่าเพิ่ม" className={field} value={policy.taxTreatment ?? ''} onChange={e => setPolicy({ ...policy,
             taxTreatment: e.target.value as BillingPolicy['taxTreatment'], taxRateId: e.target.value === 'NOT_VAT_REGISTERED' ? null : policy.taxRateId })}>
@@ -163,7 +172,7 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
         {['PREVIEW', 'AWAITING_APPROVAL'].includes(operation.state) && <p>ใช้คำขอได้ถึง {new Date(operation.expiresAt).toLocaleString('th-TH')}
           {new Date(operation.expiresAt).getTime() <= Date.now() && ' · หมดอายุแล้ว กลับหน้าตั้งค่าเพื่อตรวจผลกระทบและส่งคำขอใหม่'}</p>}
         {operation.impact&&<p>สมาชิกเดิม {operation.impact.subscriptions} · รายการชำระที่กำลังดำเนินการ {operation.impact.inFlightAttempts} · ใบเสนอราคาที่ยังไม่ใช้ {operation.impact.unusedQuotes} · คำสั่งลดแพ็กเกจ {operation.impact.pendingPlanChanges} · คำสั่งต่ออายุที่ยังดำเนินการ {operation.impact.collectionCommands}</p>}
-        {operation.impact&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.id}/affected`}>เปิดดูรายการที่เกี่ยวข้อง</Link>}
+        {operation.impact&&<Link onClick={leaving} className="block underline" href={`/system/billing/configuration-changes/${operation.id}/affected`}>เปิดดูรายการที่เกี่ยวข้อง</Link>}
         <p>ภาษี {billingLabel('tax',operation.proposed.policy.taxTreatment)} · ผ่อนผัน {operation.proposed.policy.graceDays} วัน</p>
         {operation.impact?.refundLimit&&<section aria-label="ผลต่อวงเงินคืนเงิน" className="space-y-2 rounded-xl border p-3">
           <p>วงเงินต่อคำขอ เดิม: {operation.impact.refundLimit.before==null?'ปิดการคืนเงิน':money(operation.impact.refundLimit.before)} · หลังอนุมัติ: {operation.impact.refundLimit.after==null?'ปิดการคืนเงิน':money(operation.impact.refundLimit.after)}</p>
@@ -174,30 +183,34 @@ export default function BillingConfigurationPage({ operationId }: { operationId?
           {(['before','after'] as const).map(key=><p key={key}>{key==='before'?'เดิม':'หลังอนุมัติ'}: {operation.impact!.supportSla![key]?`ปกติ ${operation.impact!.supportSla![key]!.NORMAL} · สูง ${operation.impact!.supportSla![key]!.HIGH} · วิกฤต ${operation.impact!.supportSla![key]!.CRITICAL} นาที`:'ปิดเกณฑ์อัตโนมัติ'}</p>)}
         </section>}
         {operation.proposed.policy.issuer && <p>{operation.proposed.policy.issuer.legalName} · {operation.proposed.policy.issuer.address} · เลขภาษี {operation.proposed.policy.issuer.thaiTaxId}</p>}
-        {operation.impact&&<div className="overflow-x-auto"><table className="w-full text-left text-base"><caption className="text-left font-semibold">ยอดชำระก่อนและหลัง</caption><thead><tr><th>แพ็กเกจ</th><th>เดิม</th><th>ใหม่</th></tr></thead><tbody>
-          {operation.impact.prices.map(p => <tr key={billingOfferLabel(p.offerKey)}><td className="py-2">{billingOfferLabel(p.offerKey)}</td><td>{money(p.beforeTotalSatang)}</td><td>{money(p.afterTotalSatang)}</td></tr>)}
-        </tbody></table></div>}
+        {operation.impact&&<section className="space-y-3" aria-label="ยอดชำระก่อนและหลัง"><h3 className="font-semibold">ยอดชำระและใบเสร็จก่อนและหลัง</h3>
+          <div className="grid gap-3 sm:grid-cols-2">{operation.impact.prices.map(p=><article key={p.offerKey} className="space-y-2 rounded-lg bg-gray-50 p-3">
+            <h4 className="font-semibold">{billingOfferLabel(p.offerKey)}</h4><div className="grid grid-cols-2 gap-3">
+              <div><p className="text-gray-600">เดิม</p><p>{money(p.beforeTotalSatang)}</p>{p.beforeReceiptAllowance!=null&&<p>{p.beforeReceiptAllowance.toLocaleString('th-TH')} ใบ</p>}</div>
+              <div><p className="text-gray-600">ใหม่</p><p>{money(p.afterTotalSatang)}</p>{p.afterReceiptAllowance!=null&&<p>{p.afterReceiptAllowance.toLocaleString('th-TH')} ใบ</p>}</div>
+            </div></article>)}</div>
+        </section>}
         <section className="space-y-2" aria-label="กลุ่มบริษัทในคำขอ">
           <p>กลุ่มที่เสนอ: {operation.proposed.policy.salesCompanyIds == null ? 'ทุกบริษัท รวมบริษัทที่จะสมัครภายหลัง' : `${operation.proposed.policy.salesCompanyIds.length} บริษัทที่เลือก`}</p>
           {operation.impact?.salesCohort && <p>กลุ่มเดิม: {operation.impact.salesCohort.before == null ? 'ทุกบริษัท' : `${operation.impact.salesCohort.before.length} บริษัท`}</p>}
           <ul>{(operation.impact?.salesCohort?.companies ?? operation.salesCompanies ?? []).map(c => <li key={c.id} className="break-all">
-            <Link className="underline" href={`/system/billing/companies/${encodeURIComponent(c.id)}`}>{c.name}</Link> · {billingLabel('company',c.status)} · {operation.proposed.policy.salesCompanyIds == null || operation.proposed.policy.salesCompanyIds.includes(c.id) ? 'อยู่ในกลุ่มใหม่' : 'ออกจากกลุ่มใหม่'}
+            <Link onClick={leaving} className="underline" href={`/system/billing/companies/${encodeURIComponent(c.id)}`}>{c.name}</Link> · {billingLabel('company',c.status)} · {operation.proposed.policy.salesCompanyIds == null || operation.proposed.policy.salesCompanyIds.includes(c.id) ? 'อยู่ในกลุ่มใหม่' : 'ออกจากกลุ่มใหม่'}
           </li>)}</ul>
         </section>
         <ul className="space-y-1">{BILLING_ACTIONS.map(a => <li key={a}>{gateNames[a]}: {operation.proposed.gates[a] ? 'เปิด' : 'ปิด'}</li>)}</ul>
         <p>สัญญาที่จ่ายแล้วใช้เงื่อนไขเดิม {operation.state==='SUCCEEDED'?'คำขอนี้ผ่านการอนุมัติและนำไปใช้แล้ว':'การบันทึกหรือดูร่างยังไม่เปลี่ยนค่าที่ใช้งานอยู่'}</p>
         <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action => <button key={action} className={button} disabled={busy} onClick={() => void act(action)}>
           {action === 'submit' ? 'ส่งคำขอให้ผู้อนุมัติ' : action === 'approve' ? (operation.proposed.effectiveAt?'อนุมัติและรอวันที่กำหนด':'อนุมัติและใช้ค่าชุดนี้') : action==='apply'?'ใช้ค่าที่อนุมัติไว้ตอนนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
-        {operation.sourceDraftVersion!==undefined&&operation.referenceId&&<Link className="block underline" href={`/system/billing/configuration-changes/${operation.referenceId}`}>กลับฉบับร่างต้นทาง รุ่น {operation.sourceDraftVersion}</Link>}
+        {operation.sourceDraftVersion!==undefined&&operation.referenceId&&<Link onClick={leaving} className="block underline" href={`/system/billing/configuration-changes/${operation.referenceId}`}>กลับฉบับร่างต้นทาง รุ่น {operation.sourceDraftVersion}</Link>}
         {operation.state!=='DRAFT'&&(operation.type==='PUBLISH_POLICY'?canPolicy:canGates)&&<div className="space-y-2">
           {operation.type==='SET_ACTION_GATE'&&<p>การสร้างร่างใหม่จะคัดลอกเฉพาะค่าสวิตช์ และใช้นโยบายล่าสุดที่โหลดไว้</p>}
           <button className={button} disabled={busy} onClick={()=>void act('copy')}>สร้างฉบับร่างจากคำขอนี้</button></div>}
         {operation.state==='DRAFT'&&<p>ฉบับร่างนี้ยังไม่มีผลกับระบบ การยกเลิกฉบับร่างไม่ยกเลิกคำขอที่สร้างไปแล้ว ให้เปิดคำขอในประวัติเพื่อตรวจแยก</p>}
-        <Link className="inline-block break-all underline" href={`/system/billing/configuration-changes/${operation.id}`}>เปิดลิงก์คำขอนี้</Link>
+        <Link onClick={leaving} className="inline-block break-all underline" href={`/system/billing/configuration-changes/${operation.id}`}>เปิดลิงก์คำขอนี้</Link>
         {operation.state === 'AWAITING_APPROVAL' && <p>ผู้ดูแลอีกคนที่มีสิทธิ์อนุมัติเปิดลิงก์นี้ ตรวจผลกระทบ และยืนยันรหัสผ่านก่อนอนุมัติได้</p>}
       </section>}
       <section className="space-y-3" aria-label="ประวัติการตั้งค่า"><h2 className="font-bold">ประวัติและคำขอที่รอ</h2>
-        {history?.items.map(o => <p key={o.id}><Link className="underline" href={`/system/billing/configuration-changes/${o.id}`}>{stateNames[o.state] ?? billingLabel('operation',o.state)} · {o.reason}</Link></p>)}
+        {history?.items.map(o => <p key={o.id}><Link onClick={leaving} className="underline" href={`/system/billing/configuration-changes/${o.id}`}>{stateNames[o.state] ?? billingLabel('operation',o.state)} · {o.reason}</Link></p>)}
         {history?.nextCursor && <button className={button} onClick={() => setCursor(history.nextCursor)}>ประวัติหน้าถัดไป</button>}
         {cursor && <button className={button} onClick={() => setCursor(null)}>ประวัติหน้าแรก</button>}
       </section>

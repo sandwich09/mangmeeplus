@@ -21,7 +21,7 @@ export async function inspectBillingConfiguration(billing:BillingService, policy
   if(account.state!=='MATCH')return items;
   // At most six parallel pairs; each existing provider request has a15second timeout.
   const prices=await Promise.all(BILLING_PAID_TIERS.flatMap(tier=>(['month','year'] as const).map(async interval=>{
-    const offerKey=`${tier}:${interval}` as const,priceId=policy.priceIds[offerKey],zeroId=policy.zeroPriceIds?.[offerKey],offer=billingOffer(tier,interval);
+    const offerKey=`${tier}:${interval}` as const,priceId=policy.priceIds[offerKey],zeroId=policy.zeroPriceIds?.[offerKey],offer=billingOffer(tier,interval,policy);
     let product:string|null=null;
     const paid:Item=priceId?await check('PRICE',async()=>{const price=await billing.stripe.request('GET',`/prices/${priceId}`);
       assertStripePrice(price,offer,policy,billing.stripe.livemode,priceId);product=stripeId(price.product);},offerKey):

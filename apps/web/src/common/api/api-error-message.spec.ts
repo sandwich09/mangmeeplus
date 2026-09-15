@@ -420,3 +420,9 @@ test('preserves only known quota messages and translates positive plan limits', 
   assert.match(apiErrorMessage(apiError('branchLimit must be a whole number of at least 1.', { status: 422 })), /จำนวนสาขา.*1/);
   assert.doesNotMatch(apiErrorMessage(apiError('ข้อมูลภายใน database secret', { status: 422 })), /database|secret/);
 });
+
+
+test('offer configuration bounds give specific Thai fields and preserve private diagnostics',()=>{
+  assert.match(apiErrorMessage({code:'CONTROL_OFFER_PRICE_INVALID',message:'private provider debug'}),/ยอดรวมภาษี.*10.*999,999.99/);
+  assert.match(apiErrorMessage({code:'CONTROL_OFFER_RECEIPTS_INVALID',message:'private quota debug'}),/จำนวนเต็ม.*รายปีคูณ 12/);
+});

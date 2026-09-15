@@ -73,7 +73,7 @@ export class BillingCollection {
       if (action === 'SCHEDULE_DOWNGRADE') {
         if (!state.policy || !state.revision || !state.gates.new_sales || !targetInput) throw review();
         assertPolicyReady(state.policy);
-        const { tier, interval, offer } = paidVariant(targetInput.offerKey, targetInput.interval);
+        const { tier, interval, offer } = paidVariant(targetInput.offerKey, targetInput.interval, state.policy);
         if (!isUpgrade(offer, accepted.current.quote.offer) || state.policy.planChanges !== 'UPGRADE_PRORATED_DOWNGRADE_PERIOD_END') throw review();
         const priceId = state.policy.priceIds[`${tier}:${interval}`];
         if (!priceId) throw review();
