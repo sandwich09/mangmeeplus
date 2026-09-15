@@ -329,8 +329,8 @@ export type LineSignupSubmitDto = {
   companyName: string;
   /** Required Thai mobile, 10 digits starting 0. */
   phoneNumber: string;
-  /** Required unverified shop contact email; syntax-only, at most 254 characters. */
-  contactEmail: string;
+  /** Optional shop contact; no mailbox verification or recovery authority. */
+  contactEmail?: string | null;
   referralCode?: string;
   legal: LineSignupLegalEvidenceDto;
 };
@@ -386,7 +386,7 @@ export type LineSignupSubmitAcceptedDto = LineSignupStatusDto;
 export type LineSignupContactEmailCorrectionDto = {
   idToken: string;
   version: number;
-  contactEmail: string;
+  contactEmail?: string | null;
 };
 
 export type LineSignupRetryDto = {

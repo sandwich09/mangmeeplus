@@ -57,7 +57,7 @@ export class GetAccountSecurityStateUseCase {
       this.prisma.client.emailVerificationToken.findFirst({
         where: {
           userId,
-          status: 'PENDING',
+          status: 'PENDING', proofKind: 'OTP',
           expiresAt: { gt: now },
         },
         orderBy: { createdAt: 'desc' },
@@ -72,7 +72,7 @@ export class GetAccountSecurityStateUseCase {
 
     return {
       email: user?.email ?? null,
-      emailVerified: user?.emailVerifiedAt != null,
+      emailVerified: Boolean(user?.email?.trim() && user.emailVerifiedAt),
       emailVerifiedAt: user?.emailVerifiedAt?.toISOString() ?? null,
       pendingEmail: pendingToken?.newEmail ?? null,
       pendingEmailExpiresAt: pendingToken?.expiresAt.toISOString() ?? null,

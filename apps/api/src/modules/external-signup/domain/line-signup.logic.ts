@@ -12,6 +12,16 @@ export const LINE_SIGNUP_COMPANY_NAME_MAX = 120;
 export const LINE_SIGNUP_REFERRAL_CODE_MAX = 128;
 export const LINE_SIGNUP_CONTACT_EMAIL_MAX = 254;
 export const LINE_SIGNUP_INTENTS: readonly LineSignupIntent[] = ['FIRST_SHOP', 'ADD_SHOP'];
+export const LINE_OPTIONAL_EMAIL_POLICY = 'LINE_CONTACT_OPTIONAL_V1';
+
+export function optionalLineContactEmail(value: unknown): string | null {
+  if (value == null || (typeof value === 'string' && !value.trim())) return null;
+  return requireLineContactEmail(value);
+}
+
+export function lineIntakeContactComplete(request: { contactEmail: string | null; phoneNumber: string | null; intakePolicyVersion?: string | null }): boolean {
+  return Boolean(request.phoneNumber && (request.contactEmail || request.intakePolicyVersion === LINE_OPTIONAL_EMAIL_POLICY));
+}
 
 /** Contact data only: syntax does not prove mailbox ownership or enable account recovery. */
 export function requireLineContactEmail(value: unknown): string {

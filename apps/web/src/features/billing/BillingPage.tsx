@@ -1,5 +1,8 @@
 'use client';
 import Link from 'next/link';
+import { BillingEmailRecipientPanel } from './BillingEmailRecipientPanel';
+import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
+import type { AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PLAN_TIER_PRESETS, type PlanTierKey, type BillingCatalog, type BillingQuote, type BillingStatus, type BillingAttemptView } from '@watchdog-bms/contracts';
 import { apiErrorCode } from '@/common/api/api-error-message';
@@ -28,6 +31,8 @@ function errorText(error: unknown): string {
   if (code === 'BILLING_PLAN_CHANGE_REQUIRED') return 'การซื้อซ้ำใช้แพ็กเกจและรอบชำระเดิม หากต้องการเปลี่ยนแพ็กเกจ กรุณาติดต่อทีมงาน';
   if (code === 'BILLING_REPEAT_NOT_READY') return 'การซื้อแพ็กเกจซ้ำยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน';
   if (code === 'BILLING_RESTART_REVIEW') return 'ต้องตรวจสมาชิกหรือยอดค้างเดิมก่อนเริ่มแพ็กเกจใหม่ กรุณาติดต่อทีมงานพร้อมเลขบริษัท';
+  if (code === 'BILLING_RECIPIENT_UPDATE_REQUIRED') return 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่';
+  if (['BILLING_EMAIL_CHANGED', 'BILLING_EMAIL_VERIFICATION_REQUIRED'].includes(code ?? '')) return 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อย แล้วตรวจสรุปการชำระเงินใหม่';
   if (code === 'BILLING_CAP_SELECTION_REQUIRED') return 'จำนวนสาขาหรือผู้ใช้เกินแพ็กเกจที่เลือก กรุณาจัดการสิทธิ์หรือติดต่อทีมงานก่อนยืนยัน';
   if (code === 'BILLING_DOCUMENT_PENDING') return 'Stripe กำลังเตรียมเอกสาร กรุณาลองเปิดอีกครั้ง';
   if (code === 'BILLING_PORTAL_UNAVAILABLE') return 'ยังเปิดหน้าแก้บัตรไม่ได้ กรุณาโหลดสถานะล่าสุดแล้วลองอีกครั้ง';
@@ -49,6 +54,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const [data, setData] = useState<{ status: BillingStatus; catalog: BillingCatalog; history: BillingHistory } | null>(null);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [reload, setReload] = useState(0);
   const collectionChanged = useCallback(() => setReload(value => value + 1), []);
+  const [emailReady, setEmailReady] = useState(false);
+  const emailChanged = useCallback((state: AccountEmailOtpState) => { setEmail(state.email ?? ''); setEmailReady(state.emailRequirement === 'READY'); setQuote(null); setAccepted(false); }, []);
   const [email, setEmail] = useState(''), [interval, setInterval] = useState<'month' | 'year'>('month');
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
   const [capacity, setCapacity] = useState<{ options: BillingCapacityOptions; billingEmail: string; repair?: { attemptId: string; attemptVersion: number }; key: string } | null>(null);
@@ -143,6 +150,8 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
+      <AccountEmailOtpPanel billing billingInterval={interval} onState={emailChanged} />
+      <BillingEmailRecipientPanel companyId={companyId} email={email} ready={emailReady} />
       {status.mode === 'TEST' && <p className="rounded-xl bg-amber-50 p-3 font-semibold">โหมดทดสอบ — ไม่มีการรับเงินจริง</p>}
       {returnError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4">{returnError}</p>}
       {returning && returnAttempt && <p role="status">รายการที่กลับมา: {returnAttempt.paymentState === 'FAILED' ? 'ไม่ได้ชำระสำเร็จหรือรายการหมดอายุ' : returnComplete ? 'ตรวจสอบการชำระและเปิดสิทธิ์สำเร็จ' : returnAttempt.paymentState === 'PAID' ? 'ชำระแล้ว กำลังตรวจสอบการเปิดสิทธิ์' : 'กำลังตรวจสอบการชำระเงิน'} · <span className="break-all">{returnAttempt.attemptId}</span></p>}
@@ -184,12 +193,11 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       {status.allowedActions.includes('new_sales') && <section className="space-y-4" aria-label="เลือกแพ็กเกจ">
         <h2 className="text-lg font-bold">เลือกแพ็กเกจ</h2>
         {catalogUnavailable && <p role="status">ยังตรวจสอบราคาปัจจุบันไม่ได้ กรุณาลองใหม่ คุณยังดูประวัติและจัดการรายการเดิมได้</p>}
-        <label className="block">อีเมลรับเอกสาร<input aria-label="อีเมลรับเอกสาร" className="mt-2 block w-full rounded-xl border p-3" type="email" value={email} maxLength={320} onChange={event => { setEmail(event.target.value); setQuote(null); setCapacity(null); }} /></label>
         <div className="flex gap-2">{(['month', 'year'] as const).map(value => <button key={value} className={button} aria-pressed={interval === value} onClick={() => { setInterval(value); setQuote(null); setCapacity(null); }}>{value === 'month' ? 'รายเดือน' : 'รายปี'}</button>)}</div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{data.catalog.offers.filter(offer => offer.interval === interval).map(offer => <article key={offer.offerKey} className="space-y-3 rounded-2xl border bg-white p-4">
           <h3 className="font-bold">{offer.label}</h3><p className="text-xl font-bold">{money(offer.priceSatang)} / {interval === 'month' ? 'เดือน' : 'ปี'}</p>
           <p>{offer.branchLimit} สาขา · {offer.employeeLimit} ผู้ใช้</p><p>{offer.availability === 'COMING_SOON' ? 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน' : `${offer.receiptAllowance.toLocaleString('th-TH')} ใบ ได้ทันทีเมื่อชำระสำเร็จ`}</p>
-          <button className={`${button} w-full`} disabled={busy || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} onClick={() => action(async () => {
+          <button className={`${button} w-full`} disabled={busy || !emailReady || catalogUnavailable || Date.parse(data.catalog.validUntil) <= Date.now() || offer.availability !== 'AVAILABLE' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)} onClick={() => action(async () => {
             await requestQuote(offer.offerKey, interval, email);
           })}>{offer.availability === 'COMING_SOON' ? 'Coming soon' : offer.availability === 'AVAILABLE' ? 'ตรวจสอบราคา' : 'ยังไม่เปิดขาย'}</button>
         </article>)}</div>
@@ -208,7 +216,7 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
           <p>คงผู้ใช้: {quote.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {quote.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p>
           {quote.capacity.defaults.map((item,index) => <p key={index}>สาขาเริ่มต้นของ {item.member}: {item.branch ?? 'เลือกเมื่อเข้าใช้งาน'}</p>)}<p>ข้อมูลและประวัติยังอยู่ครบ ระบบตรวจสิทธิ์อีกครั้งก่อนเปิดใช้งาน</p></div>}
         <label className="flex items-start gap-3"><input type="checkbox" className="mt-1 size-5" checked={accepted} onChange={event => setAccepted(event.target.checked)} />ฉันตรวจสอบข้อมูลและยืนยันเงื่อนไขการชำระเงินและต่ออายุอัตโนมัติ</label>
-        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} onClick={() => action(async navigate => {
+        <div className="flex gap-2"><button className={`${button} bg-green-800 text-white`} disabled={busy || !emailReady || catalogUnavailable || !accepted || Date.parse(quote.expiresAt) <= Date.now()} onClick={() => action(async navigate => {
           const params = new URLSearchParams(window.location.search);
           const result = await api.checkout({ quoteId: quote.quoteId, consentRevision: quote.consentRevision, accepted: true, channel: params.get('channel') === 'line' ? 'line' : 'web' }, key.current);
           if (result.checkoutUrl) navigate(result.checkoutUrl, 'checkout'); else { setQuote(null); setReload(value => value + 1); }

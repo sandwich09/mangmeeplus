@@ -1,7 +1,9 @@
-import { Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsArray, Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
+export class BillingEmptyDto {}
+
 export class BillingVersionDto {
   @IsInt() @Min(0) expectedVersion!: number;
 }
@@ -102,4 +104,33 @@ export class BillingPortalDto {
 export class BillingDocumentDto {
   @IsString() @MaxLength(40) kind!: string;
   @IsOptional() @IsString() @MaxLength(124) creditNoteId?: string;
+}
+
+// These existing billing writers already use domain parsers. Keep the HTTP whitelist
+// concrete as well, so a new field cannot silently bypass the common boundary.
+export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {
+  @IsString() @MaxLength(40) type!: 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
+  @IsOptional() @IsString() @MaxLength(40) tierKey?: 'STARTER_249' | 'BASIC_499' | 'PRO_999';
+  @IsOptional() @IsInt() branchLimit?: number;
+  @IsOptional() @IsInt() employeeLimit?: number;
+  @IsOptional() @IsString() @MaxLength(40) expiresAt?: string;
+  @IsOptional() @IsString() @MaxLength(128) overrideId?: string;
+}
+export class BillingReceiptAdjustmentDto extends BillingEventPreviewDto {
+  @IsString() @MaxLength(40) type!: 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
+  @IsOptional() @IsInt() units?: number;
+  @IsOptional() @IsString() @MaxLength(40) expiresAt?: string;
+  @IsOptional() @IsString() @MaxLength(128) grantId?: string;
+}
+export class BillingRefundDto extends BillingEventPreviewDto {
+  @IsInt() @Min(1) amountSatang!: number;
+  @IsString() @MaxLength(500) memo!: string;
+  @IsBoolean() notifyCustomer!: boolean;
+}
+export class BillingBatchDto {
+  @IsArray() companies!: unknown[];
+  @IsString() @MinLength(1) @MaxLength(500) reason!: string;
+}
+export class BillingTimelineExportDto {
+  @IsOptional() @IsString() @MaxLength(180) cursor?: string;
 }

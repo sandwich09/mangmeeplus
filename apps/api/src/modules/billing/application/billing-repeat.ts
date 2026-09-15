@@ -1,3 +1,4 @@
+import { assertAccountEmailProof, lockAccountEmail } from '../../auth/application/account-email-state';
 import { randomUUID } from 'node:crypto';
 import type { BillingOffer, BillingPolicy } from '@watchdog-bms/contracts';
 import type { PrismaService } from '../../../common/database/prisma.service';
@@ -184,7 +185,16 @@ export class BillingRepeat {
     const command = async (step: string, path: string, params: Record<string, unknown>) => {
       const hash = hashBilling([path, params]), old = journal.commands[step];
       if (old && (old.hash !== hash || Date.now() - Date.parse(old.at) > 23 * 3600000)) throw review();
-      journal.commands[step] ??= { at: new Date().toISOString(), hash }; await save();
+      if (!old && ['hold', 'billingEmail', 'checkout'].includes(step) && !journal.commands.checkout) {
+        await this.prisma.client.$transaction(async tx => {
+          await this.fence(tx, account, attempt, lease);
+          await this.billing.assertOwner({ companyId: account.companyId, userId: attempt.initiatingUserId } as RequestContext, tx);
+          await lockAccountEmail(tx, attempt.initiatingUserId);
+          await assertAccountEmailProof(tx, attempt.initiatingUserId, snapshot.emailProof);
+          journal.commands[step] = { at: new Date().toISOString(), hash };
+          await tx.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: json(journal), version: { increment: 1 } } });
+        });
+      } else { journal.commands[step] ??= { at: new Date().toISOString(), hash }; await save(); }
       return this.stripe.request('POST', path, params, `mm:${attempt.id}:${step}`);
     };
     const authorizeSale = async () => this.prisma.client.$transaction(async tx => {
@@ -245,11 +255,7 @@ export class BillingRepeat {
         await authorizeSale();
         let customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
         if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw review();
-        if (customer.email !== snapshot.quote.billingEmail) {
-          await command('billingEmail', `/customers/${account.customerId}`, { email: snapshot.quote.billingEmail });
-          customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
-          if (customer.email !== snapshot.quote.billingEmail) throw review();
-        }
+        if (customer.email !== snapshot.quote.billingEmail) throw review();
         const returnUrl = new URL(`/companies/${account.companyId}/billing/return?attempt=${attempt.id}`, origin).toString();
         const metadata = { billingAttemptId: attempt.id, billingAccountId: account.id };
         sessions = [await command('checkout', '/checkout/sessions', { mode: 'payment', customer: account.customerId,

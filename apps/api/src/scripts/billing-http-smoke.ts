@@ -47,13 +47,14 @@ async function main() {
   assert.ok(databaseUrl, 'BILLING_TEST_DATABASE_URL is required');
   const db = new URL(databaseUrl);
   assert.ok(['localhost', '127.0.0.1'].includes(db.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(db.pathname));
+  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/email_otp_test'].includes(db.pathname));
   const run = randomUUID().replaceAll('-', ''), accountId = `acct_${run}`;
   const companyIds = [`billing-http-${run}`, `billing-http-other-${run}`], userIds = [`owner-${run}`, `staff-${run}`];
   const secret = randomUUID(), webhookSecret = `whsec_${run}`, workerToken = randomUUID();
   Object.assign(process.env, { APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'test', SERVICE_NAME: 'billing-http-smoke',
     S3_BUCKET: 'synthetic-billing-smoke', DATABASE_URL: databaseUrl, EMAIL_PROVIDER: 'postmark', BILLING_MODE: 'test', RECEIPT_QUOTA_ENFORCED: 'false',
     ...(process.env.BILLING_SIGNUP_JOURNEY_ONLY==='1'?{EXTERNAL_SIGNUP_ENABLED:'true',AI_GATEWAY_INTERNAL_URL:'https://synthetic-ai.example.test'}:{}),
+    EMAIL_OTP_HMAC_KEY: randomBytes(32).toString('hex'), EMAIL_OTP_HMAC_KEY_VERSION: 'test-v1',
     POSTMARK_SERVER_TOKEN: 'POSTMARK_API_TEST', POSTMARK_SERVER_ID: '9191301', POSTMARK_MESSAGE_STREAM: 'outbound', POSTMARK_FROM_ADDRESS: 'system@example.test',
     POSTMARK_WEBHOOK_USERNAME: 'synthetic-billing', POSTMARK_WEBHOOK_PASSWORD: randomUUID(),
     LINE_MESSAGING_CHANNEL_SECRET: 's'.repeat(32), LINE_MESSAGING_CHANNEL_ID: `channel-${run}`, LINE_MESSAGING_CHANNEL_ACCESS_TOKEN: `synthetic-${run}`,
@@ -213,7 +214,7 @@ async function main() {
     if(process.env.BILLING_EMAIL_RESET_ONLY==='1'||process.env.BILLING_EMAIL_VERIFICATION_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await (process.env.BILLING_EMAIL_RESET_ONLY==='1'?checkEmailPasswordReset:checkEmailVerification)({app,prisma,userId:userIds[0]!,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
-      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE'],realProviderDelivery:false}));return;
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark','LINE','Stripe'],realProviderDelivery:false}));return;
     }
     if(process.env.BILLING_PROVIDER_SCANS_ONLY==='1'||process.env.BILLING_SCAN_SCHEDULE_ONLY==='1'||process.env.BILLING_INVOICE_SCANS_ONLY==='1'||process.env.BILLING_INVOICE_IMPORT_ONLY==='1'){
       if(process.env.BILLING_BROWSER_E2E==='1'){
@@ -279,7 +280,7 @@ async function main() {
       cases.push('browser-owner-company-picker-retains-plan-interval-and-line-origin');
       await page.getByRole('heading', { name: 'เลือกแพ็กเกจ', exact: true }).waitFor();
       assert.doesNotMatch(await page.locator('main').last().innerText(), /ซื้อใบเพิ่ม|ซื้อเฉพาะใบ/);
-      await page.getByLabel('อีเมลรับเอกสาร').fill('owner@example.test');
+      await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
       await page.getByRole('button', { name: 'รายปี', exact: true }).click();
       await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();

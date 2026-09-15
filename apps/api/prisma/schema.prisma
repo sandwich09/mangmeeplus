@@ -558,6 +558,7 @@ model User {
   username                String?                  @unique
   email                   String?                  @unique
   emailVerifiedAt         DateTime?
+  emailRevision           Int                      @default(0)
   phoneNumber             String?
   status                  UserStatus               @default(ACTIVE)
   isSystemProtected       Boolean                  @default(false)
@@ -612,6 +613,10 @@ model UserCredential {
 
 model AuthSession {
   id              String            @id @default(cuid())
+  emailReauthenticatedAt DateTime?
+  emailReauthBindingHash String?
+  emailReauthNonceHash String?
+  emailReauthExpiresAt DateTime?
   billingReauthenticatedAt DateTime?
   billingCredentialVersion DateTime?
   userId          String
@@ -782,9 +787,20 @@ model EmailVerificationToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime                @default(now())
+  proofKind String                  @default("LINK")
+  failedAttempts Int                @default(0)
+  emailRevision Int?
+  securityBindingHash String?
+  sessionId String?
+  keyVersion String?
+  sendAttemptId String?
+  requestKey String?
+  requestFingerprint String?
   user      User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, expiresAt])
+  @@unique([userId, requestKey])
+  @@index([newEmail, createdAt])
 }
 
 model PasswordResetToken {
@@ -3192,6 +3208,7 @@ model CompanySignupRequest {
   // P10-L: nullable because a `line-oa` application never asks for an address. Flow B still
   // requires one at its own validator; the DB no longer pretends every source has a mailbox.
   contactEmail           String?
+  intakePolicyVersion    String?
   consentVersion         String
   referralCode           String?
   requestedOfferKey      String?
@@ -8986,6 +9003,7 @@ model BillingAccount {
   customerId          String?
   baseSubscriptionId  String?
   activeAttemptId     String?
+  activeEmailOperationId      String? @unique
   activeCollectionOperationId String? @unique
   pendingPlanChangeId  String? @unique
   contractAttemptId   String?

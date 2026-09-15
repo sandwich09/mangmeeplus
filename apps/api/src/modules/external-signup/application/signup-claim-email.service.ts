@@ -1,3 +1,5 @@
+import { AccountEmailNoticeService } from '../../auth/application/account-email-notice.service';
+import { EMAIL_SECURITY_NOTICE_EVENT } from '../../auth/application/account-email-otp.service';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { SIGNUP_REJECTION_REASON_MAX_LENGTH } from '@watchdog-bms/contracts';
 import { LOGGER_TOKEN, type AppLogger } from '../../../common/logger/logger.service';
@@ -31,6 +33,7 @@ const CLAIM_EMAIL_WORKER_ID = 'signup-claim-email-worker';
  * excluded from the generic workflow drain, or that drain claims it and "publishes" it into a void.
  */
 const SIGNUP_OUTBOX_EVENT_TYPES = [
+  EMAIL_SECURITY_NOTICE_EVENT,
   POSTMARK_EVENT_TYPE,
   ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
   SIGNUP_REJECTION_NOTICE_EVENT_TYPE,
@@ -80,6 +83,7 @@ export class SignupClaimEmailService {
     @Inject(LOGGER_TOKEN) private readonly logger: AppLogger,
     @Optional() private readonly emailDelivery?: EmailDeliveryService,
     @Optional() private readonly postmarkEvents?: PostmarkEventsService,
+    @Optional() private readonly accountEmailNotice?: AccountEmailNoticeService,
   ) {}
 
   /**
@@ -156,7 +160,10 @@ export class SignupClaimEmailService {
         // A support alert belongs to a PERSON, not to an application — it may have no signup row at
         // all (an unlinked stranger asking for help), so it is dispatched before the id check.
         // §15.6's ops alert belongs to a DAY, for the same reason and with the same exemption.
-        if (event.eventType === POSTMARK_EVENT_TYPE) {
+        if (event.eventType === EMAIL_SECURITY_NOTICE_EVENT) {
+          if (!this.accountEmailNotice) throw new Error('email_security_notice_handler_unavailable');
+          await this.accountEmailNotice.deliver(event.payloadJson);
+        } else if (event.eventType === POSTMARK_EVENT_TYPE) {
           if (!this.postmarkEvents) throw new Error('postmark.handler_unavailable');
           await this.postmarkEvents.apply(event.payloadJson as unknown as PostmarkEvent);
         } else if (event.eventType === LINE_SUPPORT_NOTICE_EVENT_TYPE) {

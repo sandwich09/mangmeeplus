@@ -158,6 +158,10 @@ export class BillingReconcilerService {
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       }
       if (!account.customerId) return;
+      if (account.activeEmailOperationId) {
+        await this.billing.emailRecipient.advance(account, leaseToken);
+        account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      }
       if (account.activeCollectionOperationId) {
         await this.billing.collection.advance(account, leaseToken);
         if (financialChargeId) await observeBillingCharges(this.prisma, this.stripe, account, leaseToken, financialChargeId);

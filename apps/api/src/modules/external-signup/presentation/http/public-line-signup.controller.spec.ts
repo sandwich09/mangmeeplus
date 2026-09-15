@@ -107,7 +107,7 @@ describe('PublicLineSignupController — the flag is the rollback', () => {
  * body with no phone at all before a single LINE verification round trip is spent — and the
  * use-case is the inner half. Both are asserted, because either one alone lets a blank through.
  */
-describe('LineSignupSubmitBodyDto — required syntax-only contact email', () => {
+describe('LineSignupSubmitBodyDto — optional syntax-only contact email', () => {
   const errors = (contactEmail: unknown) => validateSync(plainToInstance(LineSignupSubmitBodyDto, { ...BODY, contactEmail }))
     .filter((error) => error.property === 'contactEmail');
   it('normalizes before validating and admits nonexistent mailbox domains', () => {
@@ -115,8 +115,11 @@ describe('LineSignupSubmitBodyDto — required syntax-only contact email', () =>
     assert.equal(dto.contactEmail, 'shop@example.test');
     assert.deepEqual(errors(dto.contactEmail), []);
   });
-  it('rejects missing, non-string, malformed and overlong input', () => {
-    for (const value of [undefined, null, '', ' ', 123, {}, ['a@b.com'], 'bad', 'a@b', 'a@@b.com', `${'a'.repeat(245)}@example.com`]) {
+  it('accepts omitted, null and blank email while keeping phone required', () => {
+    for (const value of [undefined, null, '', ' ']) assert.deepEqual(errors(value), []);
+  });
+  it('rejects non-string, malformed and overlong input', () => {
+    for (const value of [123, {}, ['a@b.com'], 'bad', 'a@b', 'a@@b.com', `${'a'.repeat(245)}@example.com`]) {
       assert.ok(errors(value).length > 0, JSON.stringify(value));
     }
   });

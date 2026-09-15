@@ -7,6 +7,25 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่',
+  BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจผู้รับเอกสารและสรุปรายการใหม่',
+  BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อยก่อนชำระเงิน',
+  BILLING_EMAIL_UPDATE_PENDING: 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อนเริ่มรายการใหม่',
+  EMAIL_OTP_REQUIRED: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP',
+  EMAIL_REAUTH_REQUIRED: 'กรุณากรอกรหัสผ่านปัจจุบัน หรือยืนยันตัวตนผ่าน LINE อีกครั้ง',
+  EMAIL_DELIVERY_UNAVAILABLE: 'ยังส่งรหัสไม่ได้ กรุณาลองใหม่ภายหลัง หรือติดต่อทีมงาน 098-256-5628',
+  EMAIL_OTP_INVALID: 'รหัสไม่ถูกต้อง กรุณาตรวจรหัส 6 หลักจากอีเมลล่าสุด',
+  EMAIL_OTP_EXPIRED: 'รหัสหมดอายุแล้ว กรุณาขอรหัสใหม่',
+  EMAIL_OTP_ATTEMPTS_EXCEEDED: 'กรอกรหัสผิดครบจำนวนแล้ว กรุณาขอรหัสใหม่',
+  EMAIL_OTP_RATE_LIMITED: 'ขอรหัสหรือกรอกรหัสผิดบ่อยเกินไป กรุณารอก่อนลองใหม่',
+  EMAIL_CONFLICT: 'อีเมลนี้ใช้กับบัญชีอื่นแล้ว กรุณาใช้อีเมลอื่น หรือติดต่อทีมงาน',
+  EMAIL_STATE_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจข้อมูลล่าสุดก่อนขอรหัสใหม่',
+  EMAIL_OTP_TARGET_INVALID: 'กรุณาระบุอีเมลให้ถูกต้อง',
+  EMAIL_ACCOUNT_UNAVAILABLE: 'บัญชีนี้ไม่สามารถยืนยันอีเมลได้ กรุณาติดต่อทีมงาน',
+  EMAIL_OTP_NOT_FOUND: 'ไม่พบคำขอยืนยันอีเมลนี้ กรุณาโหลดข้อมูลล่าสุด',
+  ACCOUNT_REAUTH_REQUIRED: 'กรุณากดปุ่มยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่านสำรอง แล้วกลับมาตั้งรหัสผ่านภายใน 5 นาที',
+  LAST_LOGIN_REQUIRED: 'กรุณาตั้งชื่อผู้ใช้และรหัสผ่านที่ใช้งานได้ก่อนยกเลิกการผูก LINE',
+
   partner_plan_term_changed: 'มีการเปลี่ยนแพ็กเกจหรือวันใช้งานแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',
   partner_plan_term_command_required: 'โหลดข้อมูลแพ็กเกจล่าสุด แล้วตรวจสอบคำขอก่อนบันทึกอีกครั้ง',
   partner_plan_term_command_conflict: 'คำขอนี้ไม่ตรงกับรายการเดิม โหลดข้อมูลและประวัติล่าสุดก่อนเริ่มรายการใหม่',

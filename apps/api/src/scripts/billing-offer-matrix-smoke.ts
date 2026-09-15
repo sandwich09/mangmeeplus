@@ -65,7 +65,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
       if(browser) {
         const page=browser.page;await page.setViewportSize({width:390,height:844});
         await page.goto(`${browser.origin}/companies/${companyId}/billing?offer=${tier}&interval=${interval}&channel=${channel}`,{waitUntil:'domcontentloaded'});
-        await page.getByLabel('อีเมลรับเอกสาร',{exact:true}).fill('owner@example.test');
+        await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
         assert.equal(await page.getByRole('button',{name:interval==='year'?'รายปี':'รายเดือน',exact:true}).getAttribute('aria-pressed'),'true');
         await page.getByRole('article').filter({has:page.getByRole('heading',{name:terms[tier].label,exact:true})}).getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();
         await page.getByRole('heading',{name:`ยืนยันซื้อ ${terms[tier].label} ${interval==='year'?'รายปี':'รายเดือน'}`,exact:true}).waitFor();

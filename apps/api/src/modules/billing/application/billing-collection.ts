@@ -1,3 +1,5 @@
+import { assertAccountEmailProof, lockAccountEmail, verifiedAccountEmailProof } from '../../auth/application/account-email-state';
+import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
 import { assertNoPendingRefund } from './billing-refund-source';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { BillingCollectionAction, BillingCollectionOperation } from '@watchdog-bms/contracts';
@@ -15,10 +17,11 @@ import { capacityOptions, capacityValid, capacityImpact, capacityReview, parseCa
 import { isUpgrade } from './billing-upgrade';
 import { termProjectionHash } from '../domain/paid-invoice';
 
-type Proposed = { accountId: string; action: BillingCollectionAction; subscriptionId: string; paidThrough: string; sourceHash: string;
+type Proposed = { emailProof?: EmailProof; accountId: string; action: BillingCollectionAction; subscriptionId: string; paidThrough: string; sourceHash: string;
   snapshot: BillingSnapshot; method: 'POST' | 'DELETE'; path: string; params: Record<string, unknown>; sourceTermHash: string | null; change?: PlanChangeSource; originalScheduleId?: string | null };
 type Journal = { startedAt?: string; observed?: boolean; createStartedAt?: string; scheduleId?: string; updateStartedAt?: string; updateHash?: string; createdScheduleHash?: string };
 const TYPES = ['CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE'];
+const needsEmail = (action: BillingCollectionAction) => action === 'RESUME_RENEWAL' || action === 'CANCEL_DOWNGRADE';
 const changing = (action: BillingCollectionAction) => action === 'SCHEDULE_DOWNGRADE' || action === 'CANCEL_DOWNGRADE';
 const review = () => billingError('BILLING_COLLECTION_REVIEW', 'ข้อมูลการต่ออายุเปลี่ยน กรุณาตรวจสถานะเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
 const sourceHash = (sub: StripeObject, schedule: StripeObject | null) => hashBilling([sub.id, sub.status, sub.cancel_at_period_end === true,
@@ -57,11 +60,12 @@ export class BillingCollection {
   async preview(context: RequestContext, action: BillingCollectionAction, targetInput?: { offerKey: string; interval: string; capacity: unknown }) {
     if (!['CANCEL_RENEWAL', 'RESUME_RENEWAL', 'SCHEDULE_DOWNGRADE', 'CANCEL_DOWNGRADE'].includes(action)) throw new BadRequestException('Invalid renewal action');
     await this.billing.assertOwner(context);
+    const emailProof = needsEmail(action) ? await verifiedAccountEmailProof(this.prisma.client, context.userId) : undefined;
     await this.assertCompany(context.companyId);
     const account = await this.billing.account(context.companyId), state = await this.billing.settings();
     if (action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, context.companyId);
     if (!(changing(action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription)) throw billingError('BILLING_COLLECTION_CLOSED', 'ติดต่อทีมงานพร้อมเลขอ้างอิงเพื่อจัดการการต่ออายุ');
-    if (!account?.customerId || !account.baseSubscriptionId || !account.paidThrough || account.activeAttemptId || account.activeCollectionOperationId) throw review();
+    if (!account?.customerId || !account.baseSubscriptionId || !account.paidThrough || account.activeAttemptId || (needsEmail(action) && account.activeEmailOperationId) || account.activeCollectionOperationId) throw review();
     const accepted = await collectionContract(this.prisma.client, account);
     let snapshot = accepted.future, change: PlanChangeSource | undefined;
     const { sub, schedule } = await this.provider(account), target = account.paidThrough.getTime() / 1000;
@@ -115,7 +119,7 @@ export class BillingCollection {
         sub.items.data[0].current_period_end !== target || (sub.cancel_at && sub.cancel_at !== target)) throw review();
       params = { cancel_at_period_end: action === 'CANCEL_RENEWAL', proration_behavior: 'none' };
     }
-    const proposed: Proposed = { accountId: account.id, action, subscriptionId: sub.id, paidThrough: account.paidThrough.toISOString(), sourceHash: sourceHash(sub, schedule),
+    const proposed: Proposed = { ...(emailProof ? { emailProof } : {}), accountId: account.id, action, subscriptionId: sub.id, paidThrough: account.paidThrough.toISOString(), sourceHash: sourceHash(sub, schedule),
       snapshot: JSON.parse(JSON.stringify(snapshot)), method, path, params, sourceTermHash: account.termProjectionHash,
       ...(change ? { change, originalScheduleId: schedule?.id ?? null } : {}) };
     const row = await this.prisma.client.billingOperation.create({ data: { stripeAccountId: account.stripeAccountId, livemode: account.livemode, companyId: account.companyId,
@@ -134,9 +138,10 @@ export class BillingCollection {
       if (replay) { if (replay.id !== id || replay.requestHash !== previewHash || replay.initiatorUserId !== context.userId) throw review(); return replay; }
       const state = await this.billing.settings(tx);
       const proposed = current.proposedJson as unknown as Proposed;
+      if (needsEmail(proposed.action)) { await lockAccountEmail(tx, context.userId); await assertAccountEmailProof(tx, context.userId, proposed.emailProof); }
       if(account&&proposed.action!=='CANCEL_RENEWAL')await assertNoPendingRefund(tx,account);
       if (proposed.action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, context.companyId);
-      if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription) || !account || account.version !== current.sourceVersion || account.activeAttemptId || account.activeCollectionOperationId ||
+      if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription) || !account || account.version !== current.sourceVersion || account.activeAttemptId || (needsEmail(proposed.action) && account.activeEmailOperationId) || account.activeCollectionOperationId ||
         (account.leaseUntil && account.leaseUntil > new Date()) || current.version !== expectedVersion || current.requestHash !== previewHash || current.expiresAt <= new Date() ||
         current.initiatorUserId !== context.userId || current.state !== 'PREVIEW') throw review();
       if (proposed.change && (account.pendingPlanChangeId !== proposed.change.previousId || (proposed.change.selection &&
@@ -224,6 +229,10 @@ export class BillingCollection {
           if (current.baseSubscriptionId !== proposed.subscriptionId || current.paidThrough?.toISOString() !== proposed.paidThrough || current.termProjectionHash !== proposed.sourceTermHash) throw review();
           await this.billing.assertOwner({ companyId: account.companyId, userId: row.initiatorUserId } as RequestContext, tx);
           await this.assertCompany(account.companyId, tx);
+          if (!journal.startedAt && needsEmail(proposed.action)) {
+            await lockAccountEmail(tx, row.initiatorUserId);
+            await assertAccountEmailProof(tx, row.initiatorUserId, proposed.emailProof);
+          }
           const state = await this.billing.settings(tx);
           if (proposed.action === 'SCHEDULE_DOWNGRADE') assertCompanyCanBuy(state.policy, account.companyId);
           if (!(changing(proposed.action) ? state.gates.plan_changes : state.gates.portal_cancel_subscription)) throw review();

@@ -1,3 +1,6 @@
+import { BillingEmailRecipient } from './billing-email-recipient';
+import { assertAccountEmailProof, lockAccountEmail, verifiedAccountEmailProof } from '../../auth/application/account-email-state';
+import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { assertNoPendingRefund, pendingRefund } from './billing-refund-source';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
@@ -30,7 +33,7 @@ import { paidReceiptBalance } from './billing-receipt-grants';
 import { billingState } from '../domain/billing-state';
 import { detectBillingIssue } from './billing-issues';
 
-export type BillingSnapshot = { quote: BillingQuote; priceId: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
+export type BillingSnapshot = { emailProof?: EmailProof; quote: BillingQuote; priceId: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
 const CLOSED_GATES = Object.fromEntries(BILLING_ACTIONS.map((key) => [key, false]));
 
 @Injectable()
@@ -38,6 +41,7 @@ export class BillingService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, readonly stripe: StripeClient,
     @Optional() private readonly lifecycle?: PartnerLifecycleTransitionUseCase) {}
 
+  get emailRecipient() { return new BillingEmailRecipient(this.prisma, this.stripe, this); }
   get repeater() { return new BillingRepeat(this.prisma, this.stripe, this, this.lifecycle); }
   get collection() { return new BillingCollection(this.prisma, this.stripe, this); }
 
@@ -56,6 +60,10 @@ export class BillingService {
   }
 
   async assertOwner(context: RequestContext, tx: Prisma.TransactionClient = this.prisma.client): Promise<void> {
+    if (tx !== this.prisma.client) await tx.$queryRaw`
+      SELECT m.id FROM "CompanyMembership" m JOIN "MembershipRole" mr ON mr."membershipId" = m.id
+      JOIN "Role" r ON r.id = mr."roleId" WHERE m."companyId" = ${context.companyId} AND m."userId" = ${context.userId}
+      ORDER BY r.id FOR SHARE OF m, mr, r`;
     const member = await tx.companyMembership.findUnique({
       where: { companyId_userId: { companyId: context.companyId, userId: context.userId } },
       include: { user: { select: { status: true } }, roles: { include: { role: true } } },
@@ -202,7 +210,8 @@ export class BillingService {
     if (state.policy.paidStart !== 'IMMEDIATE') throw billingError('CONTROL_POLICY_NOT_SUPPORTED', 'การเริ่มสมาชิกต้องชำระทันทีตามนโยบายปัจจุบัน');
     const priceId = state.policy.priceIds[`${tier}:${interval}`];
     if (!priceId) throw billingError('BILLING_OFFER_UNAVAILABLE', 'แพ็กเกจนี้ยังไม่เปิดรับชำระเงิน');
-    if (typeof body.billingEmail !== 'string' || body.billingEmail.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.billingEmail)) throw billingError('BILLING_EMAIL_INVALID', 'กรุณาระบุอีเมลสำหรับเอกสารการชำระเงิน');
+    const emailProof = await verifiedAccountEmailProof(this.prisma.client, context.userId);
+    // Retain the old input shape for cached clients; the reviewed quote always derives its recipient from the account.
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
     if (!company) throw new NotFoundException();
     const term = company.planTerm;
@@ -211,8 +220,14 @@ export class BillingService {
       throw billingError('BILLING_LEGACY_REVIEW_REQUIRED', 'แพ็กเกจเดิมต้องให้ทีมงานตรวจสอบก่อนซื้อ');
     }
     const existing = await this.account(company.id);
+    if (existing?.customerId) {
+      const customer = await this.stripe.request('GET', `/customers/${existing.customerId}`);
+      if (customer.id !== existing.customerId || customer.metadata?.billingAccountId !== existing.id || customer.email !== emailProof.email)
+        throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ก่อนเริ่มชำระเงินใหม่');
+    }
     offer=purchasedCapacityOffer(offer,term,existing);
     if(existing)await assertNoPendingRefund(this.prisma.client,existing);
+    if (existing?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
     if (existing?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
     if (existing?.activeAttemptId) throw billingError('BILLING_EXISTING_SUBSCRIPTION', 'มีรายการเดิมอยู่แล้ว กรุณาตรวจสถานะหรือจัดการสมาชิก');
     await this.stripe.assertAccount();
@@ -253,7 +268,7 @@ export class BillingService {
     const quote: BillingQuote = { quoteId, companyId: company.id, companyName: company.name, policyRevision: state.revision.id,
       expiresAt: new Date(Date.now() + 600_000).toISOString(), offer: { ...offer, availability: 'AVAILABLE', reason: null },
       ...quoteTotals(upgrade?.amountSatang ?? offer.priceSatang, state.policy.taxTreatment), taxTreatment: state.policy.taxTreatment!, consentRevision: state.policy.consentRevision,
-      paidStart: state.policy.paidStart!, billingEmail: body.billingEmail.trim().toLowerCase(),
+      paidStart: state.policy.paidStart!, billingEmail: emailProof.email,
       trialEndsAt: term?.tierKey === 'FREE_TRIAL_15' && term.termEndsAt > new Date() ? term.termEndsAt.toISOString() : null,
       usage: await this.usage(company.id) };
     if (capacityPreview) quote.capacity = capacityPreview;
@@ -276,7 +291,7 @@ export class BillingService {
       quote.pendingPlanChange = { operationId: pending.row.id, oldEffectiveAt: pending.proposed.paidThrough, newEffectiveAt: quote.purchase!.projectedPaidThrough,
         offer: pending.proposed.snapshot.quote.offer, totalSatang: pending.proposed.snapshot.quote.totalSatang, capacity: capacityImpact(options, pending.proposed.change.selection) };
     }
-    const snapshot: BillingSnapshot = { ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(repeat ? { repeat } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
+    const snapshot: BillingSnapshot = { emailProof, ...(pending ? { pendingChange: { id: pending.row.id, version: pending.row.version, proposed: pending.proposed } } : {}), quote, priceId, policy: state.policy, settingsVersion: state.settings.version, termVersion: term?.updatedAt.toISOString() ?? null, termHash: termProjectionHash(term), ...(repeat ? { repeat } : {}), ...(restart ? { restart } : {}), ...(upgrade ? { upgrade } : {}), ...(capacity ? { capacity } : {}) };
     await this.prisma.client.billingQuote.create({ data: { id: quoteId, companyId: company.id, initiatingUserId: context.userId,
       policyRevisionId: state.revision.id, snapshotJson: snapshot as unknown as Prisma.InputJsonValue, expiresAt: new Date(quote.expiresAt) } });
     return quote;
@@ -301,7 +316,10 @@ export class BillingService {
           quote.policyRevisionId !== state.revision?.id) throw billingError('BILLING_QUOTE_STALE', 'รายการหมดอายุหรือราคาเปลี่ยน กรุณาตรวจสอบอีกครั้ง');
       if (await tx.billingAttempt.findUnique({ where: { quoteId: quote.id } })) throw billingError('BILLING_QUOTE_STALE', 'กรุณาตรวจสอบราคาและยืนยันรายการใหม่');
       const snapshot = quote.snapshotJson as unknown as BillingSnapshot;
+      await lockAccountEmail(tx, context.userId);
+      await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
       if(account)await assertNoPendingRefund(tx,account);
+      if (account?.activeEmailOperationId) throw billingError('BILLING_EMAIL_UPDATE_PENDING', 'กรุณาตรวจรายการเปลี่ยนผู้รับเอกสารให้เสร็จก่อน');
       if (account?.activeCollectionOperationId) throw billingError('BILLING_COLLECTION_PENDING', 'กรุณาตรวจคำสั่งต่ออายุเดิมให้เสร็จก่อนซื้อเพิ่ม');
       if (snapshot.settingsVersion !== state.settings.version) throw billingError('BILLING_QUOTE_STALE', 'การตั้งค่าการขายเปลี่ยน กรุณาตรวจสอบรายการใหม่');
       paidVariant(snapshot.quote.offer.offerKey, snapshot.quote.offer.interval);
@@ -343,6 +361,12 @@ export class BillingService {
       if (snapshot.restart) await restartSource(this.prisma, this.stripe, account, snapshot.restart);
       let customerId = account.customerId;
       if (!customerId) {
+        await this.prisma.client.$transaction(async tx => {
+          await lockPlanTermCompany(tx, context.companyId);
+          await this.assertOwner(context, tx);
+          await lockAccountEmail(tx, context.userId);
+          await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
+        });
         customerRequestUnconfirmed = true;
         const customer = await this.stripe.request('POST', '/customers', { name: snapshot.quote.companyName, email: snapshot.quote.billingEmail,
           metadata: { billingAccountId: account.id } }, `mm:${account.id}:customer`);
@@ -363,6 +387,8 @@ export class BillingService {
         const company = await tx.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
         if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ');
         if ((company.planTerm?.updatedAt.toISOString() ?? null) !== snapshot.termVersion || company.name !== snapshot.quote.companyName) throw billingError('BILLING_QUOTE_STALE', 'ข้อมูลบริษัทหรือสิทธิ์เปลี่ยน กรุณาตรวจสอบใหม่');
+        await lockAccountEmail(tx, context.userId);
+        await assertAccountEmailProof(tx, context.userId, snapshot.emailProof);
         const changed = await tx.billingAttempt.updateMany({ where: { id: attempt.id, status: 'CREATING', version: 0 }, data: { status: 'REQUESTING', version: { increment: 1 } } });
         if (changed.count !== 1) throw billingError('BILLING_PURCHASE_PENDING', 'กำลังตรวจสอบรายการเดิม');
       });
@@ -370,8 +396,9 @@ export class BillingService {
       if (!origin) throw new StripeRequestError('REJECTED', 'missing_web_origin');
       const returnUrl = new URL(`/companies/${context.companyId}/billing/return?attempt=${attempt.id}`, origin).toString();
       if (account.customerId) {
-        const customer = await this.stripe.request('POST', `/customers/${customerId}`, { email: snapshot.quote.billingEmail }, `mm:${attempt.id}:billing-email`);
-        if (customer.id !== customerId || customer.email !== snapshot.quote.billingEmail || customer.metadata?.billingAccountId !== account.id) throw new StripeRequestError('UNKNOWN', 'customer_email_unconfirmed');
+        const customer = await this.stripe.request('GET', `/customers/${customerId}`);
+        if (customer.id !== customerId || customer.email !== snapshot.quote.billingEmail || customer.metadata?.billingAccountId !== account.id)
+          throw billingError('BILLING_RECIPIENT_UPDATE_REQUIRED', 'ผู้รับเอกสารเปลี่ยนแล้ว กรุณาตรวจข้อมูลบริษัทก่อนเริ่มชำระเงินใหม่');
       }
       await this.assertTaxSettings(snapshot.policy);
       financialRequestStarted = true;
@@ -466,11 +493,14 @@ export class BillingService {
 
   async portal(context: RequestContext): Promise<{ url: string }> {
     await this.assertOwner(context);
+    const emailProof = await verifiedAccountEmailProof(this.prisma.client, context.userId);
     const account = await this.account(context.companyId), state = await this.settings();
-    if (!account?.customerId || !state.policy?.portalConfigurationId || !state.gates.portal_payment_method) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาติดต่อทีมงานเพื่อจัดการการชำระเงิน');
+    if (!account?.customerId || account.activeEmailOperationId || !state.policy?.portalConfigurationId || !state.gates.portal_payment_method) throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาติดต่อทีมงานเพื่อจัดการการชำระเงิน');
     const assertCurrent = async (tx: Prisma.TransactionClient) => {
       await lockPlanTermCompany(tx, context.companyId);
       await this.assertOwner(context, tx);
+      await lockAccountEmail(tx, context.userId);
+      await assertAccountEmailProof(tx, context.userId, emailProof);
       const company = await tx.company.findUniqueOrThrow({ where: { id: context.companyId }, include: { planTerm: true } });
       if (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))
         throw billingError('BILLING_COMPANY_HELD', 'บริษัทอยู่ระหว่างตรวจสอบ กรุณาติดต่อทีมงาน');
@@ -499,7 +529,7 @@ export class BillingService {
         stripeId(session.configuration) !== state.policy.portalConfigurationId || session.return_url !== returnUrl)
       throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาลองใหม่หรือติดต่อทีมงาน');
     await this.prisma.client.$transaction(async tx => {
-      await assertCurrent(tx);
+      await this.assertOwner(context, tx);
       await tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.portal.opened',
         targetType: 'BillingAccount', targetId: account.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'LOW',
         metadataJson: { action: 'portal_payment_method' } } });

@@ -14,6 +14,7 @@ function withIdentityTx(prisma: any, locks: unknown[][], txOptions: any[], revok
     txOptions.push(options);
     return fn(prisma.client);
   };
+  prisma.client.$queryRaw = async () => [];
   prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     locks.push(values);
     return 0;
@@ -201,7 +202,7 @@ describe('LinkLineIdentityUseCase', () => {
     });
     await useCase.execute(input);
 
-    assert.deepEqual(identityLocks, [['line-identity-user:user-1'], [lineIdentityLockKey('msg-chan-1', 'line-user-1')]]);
+    assert.deepEqual(identityLocks, [['line-identity-user:user-1'], [lineIdentityLockKey('msg-chan-1', 'line-user-1')], ['account-email:other-user'], ['account-email:user-1']]);
     assert.deepEqual(identityLocks[1], ['line-identity:msg-chan-1:line-user-1'], 'the literal both sites share');
   });
 

@@ -1,4 +1,8 @@
+import { AccountEmailNoticeService } from './application/account-email-notice.service';
 import { EmailPasswordResetController } from './presentation/email-password-reset.controller';
+import { AccountEmailOtpController } from './presentation/account-email-otp.controller';
+import { AccountEmailOtpService } from './application/account-email-otp.service';
+import { AccountEmailReauthService } from './application/account-email-reauth.service';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { SESClient } from '@aws-sdk/client-ses';
@@ -93,8 +97,10 @@ export function selectAuthMailer(
 // ponytail: JwtModule registered with no default secret; each verifier supplies its own per-call
 @Module({
   imports: [JwtModule.register({}), AccessControlModule, AuditModule],
-  controllers: [SystemEmailDeliveryController, EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
+  controllers: [AccountEmailOtpController, SystemEmailDeliveryController, EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
+    AccountEmailOtpService,
+    AccountEmailReauthService,
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
     LineLoginVerifierAdapter,
@@ -139,6 +145,7 @@ export function selectAuthMailer(
     SesAuthMailerAdapter,
     PostmarkAuthMailerAdapter,
     EmailDeliveryService,
+    AccountEmailNoticeService,
     PostmarkEventsService,
     PostmarkClient,
     SystemEmailDeliveryService,
@@ -166,6 +173,6 @@ export function selectAuthMailer(
   // adapter (disabled / local-console / ses) rather than constructing a second SES client.
   // `LineIdTokenService` is exported so the LINE-first signup surfaces verify an ID token through
   // the same audience/channel policy the employee-link and web-login lanes already use (SEC-01).
-  exports: [AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN, EmailDeliveryService, PostmarkEventsService],
+  exports: [AccountEmailNoticeService, AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN, EmailDeliveryService, PostmarkEventsService],
 })
 export class AuthModule {}

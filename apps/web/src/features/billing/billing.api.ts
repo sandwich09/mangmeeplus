@@ -1,5 +1,5 @@
 'use client';
-import type { BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation } from '@watchdog-bms/contracts';
+import type { BillingEmailRecipient, BillingEmailRecipientOperation, BillingCatalog, BillingQuote, BillingStatus, BillingCheckoutBody, BillingCheckoutResult, BillingInvoiceItem, BillingAttemptView, BillingCollectionAction, BillingCollectionOperation } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import type { BillingCapacityOptions, BillingCapacitySelection } from '@watchdog-bms/contracts';
 
@@ -10,6 +10,12 @@ export function billingApi(companyId: string) {
   const post = <T>(path: string, body: unknown, key?: string) => authedApiFetch<T>(base + path, { method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Company-Id': companyId, ...(key ? { 'Idempotency-Key': key } : {}) }, body: JSON.stringify(body), suppressErrorToast: true });
   return {
+    recipient: () => get<BillingEmailRecipient>(`${base}/recipient`),
+    recipientPreview: () => post<BillingEmailRecipientOperation>('/recipient/preview', {}),
+    recipientOperation: (id: string) => get<BillingEmailRecipientOperation>(`${base}/recipient/${encodeURIComponent(id)}`),
+    recipientSubmit: (operation: BillingEmailRecipientOperation) => post<BillingEmailRecipientOperation>(`/recipient/${operation.id}/submit`,
+      { expectedVersion: operation.version, previewHash: operation.previewHash, accepted: true }, `billing-recipient-${operation.id}`),
+    recipientCancel: (operation: BillingEmailRecipientOperation) => post<BillingEmailRecipientOperation>(`/recipient/${operation.id}/cancel`, { expectedVersion: operation.version }),
     status: () => get<BillingStatus>(base), catalog: () => get<BillingCatalog>('/billing/catalog'),
     attempt: (attemptId: string) => get<BillingAttemptView>(`${base}/attempts/${encodeURIComponent(attemptId)}`),
     history: (cursor?: string) => get<BillingHistory>(`${base}/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`),

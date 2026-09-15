@@ -19,6 +19,7 @@ const identityLocks: unknown[][] = [];
 const handoffRevokes: any[] = [];
 function withIdentityTx(prisma: any): any {
   prisma.client.$transaction = async (fn: any) => fn(prisma.client);
+  prisma.client.$queryRaw ??= async () => [];
   prisma.client.$executeRaw = async (_strings: TemplateStringsArray, ...values: unknown[]) => {
     identityLocks.push(values);
     return 0;
@@ -332,10 +333,13 @@ type HandoffRow = { id: string; lineUserId: string; userId: string; status: stri
  *  callback. `lineWebHandoffToken.updateMany` really applies its WHERE to `handoffRows` — a spec
  *  that only recorded the call could not tell a correct filter from one that revokes the wrong
  *  rows, which is the whole risk in a query keyed on two columns and a status. */
-function makeUnlinkPrisma(handoffRows: HandoffRow[] = []) {
+function makeUnlinkPrisma(handoffRows: HandoffRow[] = [], credential: any = { status: 'ACTIVE', expiresAt: null }) {
   const updated: unknown[] = [];
   const contextDeletes: unknown[] = [];
   const ops = {
+    $executeRaw: async () => 1, $queryRaw: async () => [{ now: new Date() }],
+    user: { findUnique: async () => ({ id: 'user-1', status: 'ACTIVE', username: 'owner', email: null, emailVerifiedAt: null, emailRevision: 0, credential, externalIdentities: [] }), update: async () => ({}) },
+    emailVerificationToken: { findFirst: async () => null, updateMany: async () => ({ count: 0 }) },
     passwordResetToken: { updateMany: async () => ({ count: 0 }) },
     externalIdentity: {
       findFirst: async () => ({ id: 'ei-1', userId: 'user-1', providerUserId: 'Uline-1', updatedAt: new Date(0) }),
@@ -358,6 +362,14 @@ function makeUnlinkPrisma(handoffRows: HandoffRow[] = []) {
 }
 
 describe('UnlinkLineIdentityUseCase', () => {
+  it('keeps LINE when the remaining password is missing, disabled, or expired', async () => {
+    for (const credential of [null, { status: 'DISABLED' }, { status: 'ACTIVE', expiresAt: new Date(0) }]) {
+      const { prisma, updated } = makeUnlinkPrisma([], credential);
+      await assert.rejects(() => new UnlinkLineIdentityUseCase(prisma).execute({ userId: 'user-1', requestId: 'req-1' }),
+        (error: any) => error.getResponse().code === 'LAST_LOGIN_REQUIRED');
+      assert.equal(updated.length, 0);
+    }
+  });
   it('throws NotFoundException when no linked identity', async () => {
     const prisma = {
       client: {

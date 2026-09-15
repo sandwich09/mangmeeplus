@@ -348,6 +348,7 @@ describe('SignupClaimEmailService.drain', () => {
     // Any type claimed here must also appear in DrainWorkflowOutboxUseCase's exclusion list, or
     // the generic drain publishes it into a void and the real consumer never sees it.
     assert.deepEqual(h.claims[0].eventTypes, [
+      'auth.email.security_notice',
       'email.postmark.event.received',
       ACCOUNT_CLAIM_EMAIL_EVENT_TYPE,
       SIGNUP_REJECTION_NOTICE_EVENT_TYPE,

@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "uat": {
+    "provider": "postmark",
+    "environment": {
+      "POSTMARK_FROM_ADDRESS": "developer@mangmeeplus.com",
+      "POSTMARK_FROM_NAME": "Mangmee Plus (UAT)",
+      "POSTMARK_MESSAGE_STREAM": "outbound",
+      "POSTMARK_SERVER_ID": "20950027",
+      "EMAIL_OTP_HMAC_KEY_VERSION": "email-otp-v1-20260915"
+    },
+    "secrets": {
+      "POSTMARK_SERVER_TOKEN": "watchdog-bms/uat/postmark/POSTMARK_SERVER_TOKEN",
+      "POSTMARK_WEBHOOK_USERNAME": "watchdog-bms/uat/postmark/POSTMARK_WEBHOOK_USERNAME",
+      "POSTMARK_WEBHOOK_PASSWORD": "watchdog-bms/uat/postmark/POSTMARK_WEBHOOK_PASSWORD",
+      "EMAIL_OTP_HMAC_KEY": "watchdog-bms/uat/postmark/EMAIL_OTP_HMAC_KEY",
+      "POSTMARK_UAT_ALLOWED_RECIPIENTS": "watchdog-bms/uat/postmark/POSTMARK_UAT_ALLOWED_RECIPIENTS"
+    }
+  },
+  "production": {
+    "provider": "postmark",
+    "environment": {
+      "POSTMARK_FROM_ADDRESS": "contact@mangmeeplus.com",
+      "POSTMARK_FROM_NAME": "Mangmee Plus",
+      "POSTMARK_MESSAGE_STREAM": "outbound",
+      "POSTMARK_SERVER_ID": "20950034",
+      "EMAIL_OTP_HMAC_KEY_VERSION": "email-otp-v1-20260915"
+    },
+    "secrets": {
+      "POSTMARK_SERVER_TOKEN": "watchdog-bms/production/postmark/POSTMARK_SERVER_TOKEN",
+      "POSTMARK_WEBHOOK_USERNAME": "watchdog-bms/production/postmark/POSTMARK_WEBHOOK_USERNAME",
+      "POSTMARK_WEBHOOK_PASSWORD": "watchdog-bms/production/postmark/POSTMARK_WEBHOOK_PASSWORD",
+      "EMAIL_OTP_HMAC_KEY": "watchdog-bms/production/postmark/EMAIL_OTP_HMAC_KEY"
+    }
+  }
+}

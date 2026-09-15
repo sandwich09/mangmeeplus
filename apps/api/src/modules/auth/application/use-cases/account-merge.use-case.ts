@@ -1,3 +1,4 @@
+import { lockAccountEmail } from '../account-email-state';
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { AccountMergeAccountSummaryDto, AccountMergePreviewDto } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -157,6 +158,13 @@ export class AccountMergeUseCase {
 
     const now = new Date();
     const moved = await this.prisma.client.$transaction(async (tx) => {
+      // Billing locks membership before account; keep this order when moving memberships.
+      await tx.$queryRaw`SELECT id FROM "CompanyMembership" WHERE "userId" IN (${userId}, ${row.existingUserId}) ORDER BY id FOR UPDATE`;
+      for (const id of [userId, row.existingUserId].sort()) await lockAccountEmail(tx, id);
+      await tx.emailVerificationToken.updateMany({ where: { userId: { in: [userId, row.existingUserId] }, status: 'PENDING' }, data: { status: 'REVOKED' } });
+      await tx.user.updateMany({ where: { id: { in: [userId, row.existingUserId] } }, data: { emailRevision: { increment: 1 } } });
+      await tx.authSession.updateMany({ where: { userId: { in: [userId, row.existingUserId] } },
+        data: { emailReauthenticatedAt: null, emailReauthBindingHash: null, emailReauthNonceHash: null } });
       const memberships = await tx.companyMembership.findMany({
         where: { userId, status: 'ACTIVE' },
         select: MEMBERSHIP_SELECT,

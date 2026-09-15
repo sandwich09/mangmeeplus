@@ -22,6 +22,8 @@ function fixture(expired = false) {
     billingOperation: {
       create: async ({ data }: any) => (operation = { ...data, id: 'operation', state: 'PREVIEW', version: 1, resultJson: null, errorCode: null, observedAt: null }),
       findFirstOrThrow: async () => operation,
+      findFirst: async () => operation, findUniqueOrThrow: async () => operation, findUnique: async () => null,
+      updateMany: async ({ data }: any) => { Object.assign(operation, { ...data, version: operation.version + 1 }); return { count: 1 }; },
       update: async ({ data }: any) => { const next = { ...data, version: operation.version + 1 }; Object.assign(operation, next); return operation; },
     },
     billingAccount: {
@@ -86,4 +88,19 @@ test('a stale worker lease cannot mutate the provider or release another command
   const f = fixture(); await f.queue();
   await assert.rejects(f.service.advance(f.account, 'wrong-lease'));
   assert.equal(f.writes(), 0); assert.equal(f.account.activeCollectionOperationId, 'operation'); assert.equal(f.operation().state, 'QUEUED');
+});
+
+
+test('an unresolved email-recipient update does not block preview, confirmation or dispatch of renewal cancellation', async () => {
+  const f = fixture(); f.account.activeEmailOperationId = 'unknown-email-operation';
+  // No worker is currently running; its unresolved email reservation remains in place.
+  f.account.leaseUntil = null;
+  const context = { companyId: 'company', userId: 'owner' } as RequestContext;
+  const preview = await f.service.preview(context, 'CANCEL_RENEWAL');
+  await f.service.submit(context, preview.id, preview.version, preview.previewHash, 'cancel-renewal-while-email-pending');
+  assert.equal(f.account.activeCollectionOperationId, preview.id);
+  f.account.leaseUntil = new Date(Date.now() + 60_000);
+  await f.service.advance(f.account, 'lease');
+  assert.equal(f.operation().state, 'SUCCEEDED'); assert.equal(f.writes(), 1);
+  assert.equal(f.account.activeEmailOperationId, 'unknown-email-operation');
 });

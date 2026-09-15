@@ -41,10 +41,19 @@ describe('line-login-bff.logic', () => {
     assert.deepEqual(decodeLineLoginTxn(encodeLineLoginTxn({ state: 's1', nonce: 'n1', verifier: 'v1' })), {
       state: 's1', nonce: 'n1', verifier: 'v1',
     });
+    const reauth = { ...txn, purpose: 'email-reauth' as const, returnTo: '/companies/x/billing?interval=year' };
+    assert.deepEqual(decodeLineLoginTxn(encodeLineLoginTxn(reauth)), reauth);
     assert.equal(decodeLineLoginTxn(undefined), null);
     assert.equal(decodeLineLoginTxn('not-base64url-json'), null);
     assert.equal(decodeLineLoginTxn(Buffer.from('{"state":"s1"}', 'utf8').toString('base64url')), null);
     assert.equal(decodeLineLoginTxn(Buffer.from('[]', 'utf8').toString('base64url')), null);
+  });
+
+  it('forces a fresh LINE login for account email reauthentication with its own nonce', () => {
+    const url = new URL(buildLineAuthorizeUrl({ channelId: '2000000001', redirectUri: 'https://app.example.com/api/auth/line-login/callback', state: 's', nonce: 'server-nonce', codeChallenge: 'pkce', emailReauth: true }));
+    assert.equal(url.searchParams.get('nonce'), 'server-nonce');
+    assert.equal(url.searchParams.get('prompt'), 'login');
+    assert.equal(url.searchParams.get('max_age'), '0');
   });
 
   it('builds the LINE authorize URL with every PKCE parameter', () => {
