@@ -59,6 +59,27 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
       await page.getByRole('button',{name:'ตรวจงบก่อนบันทึก',exact:true}).click();
       await page.getByText('กรุณาระบุเหตุผลที่ปรับงบ AI',{exact:true}).waitFor();
       await page.getByRole('textbox',{name:'เหตุผลที่ปรับงบ AI',exact:true}).fill('เพิ่มงบจากหน้าร้านและตรวจประวัติ');
+      // Invalid nonempty input must survive in the field, never sanitize to an intentional clear.
+      let invalidWrites=0;const watchInvalid=(r:any)=>{if(r.url().endsWith(aiPath)&&r.method()==='PUT')invalidWrites++;};
+      page.on('request',watchInvalid);
+      const beforeInvalid=await auditCount();
+      try {
+        for(const [raw,message] of [
+          ['1e','กรอกจำนวนเงินเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง เช่น 2000.50'],
+          ['9'.repeat(400),'จำนวนเงินมากเกินไป กรุณาตรวจตัวเลขแล้วกรอกใหม่'],
+          ['90071992547409.93','จำนวนเงินมากเกินไป กรุณาตรวจตัวเลขแล้วกรอกใหม่'],
+          ['0','กรอกงบตั้งแต่ 1 บาท หากต้องการหยุดใช้ AI ให้ปิดสิทธิ์ผู้ช่วย AI ของบริษัท'],
+        ]) {
+          await page.locator('#ai-monthly-budget').fill(raw!);
+          await page.getByRole('button',{name:'ตรวจงบก่อนบันทึก',exact:true}).click();
+          await page.getByText(message!,{exact:true}).last().waitFor();
+          assert.equal(await page.locator('#ai-monthly-budget').inputValue(),raw);
+          assert.equal(await page.getByRole('dialog').count(),0);
+          assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+        }
+        assert.equal(invalidWrites,0);assert.equal(await auditCount(),beforeInvalid);
+        assert.equal((await db.companyAiConfiguration.findUniqueOrThrow({where:{companyId}})).monthlyBudgetSatang,first*2);
+      }finally{page.off('request',watchInvalid);}
       await page.locator('#ai-monthly-budget').fill(String(first*3/100));
       await page.getByRole('button',{name:'ตรวจงบก่อนบันทึก',exact:true}).click();
       const dialog=page.getByRole('dialog');await dialog.getByText('ตรวจงบ AI ก่อนบันทึก',{exact:true}).waitFor();
@@ -119,10 +140,34 @@ export async function checkAdminAiAdjustments(input:{prisma:PrismaService;compan
       await history.evaluate(el=>el.scrollIntoView({block:'start'}));
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:`${browser.evidenceDir}/admin-ai-adjustments-mobile.png`});
+      const platformPath='/v1/system/ai-budget',platformBefore=await request(platformPath);assert.equal(platformBefore.status,200);
+      let blockedReads=0;const platformRoute=`**${platformPath}`;
+      const unavailable=(route:any)=>{blockedReads++;return route.abort('connectionreset');};
+      await page.route(platformRoute,unavailable);
+      await page.goto(`${browser.origin}/system/ai-budget`,{waitUntil:'domcontentloaded'});
+      await page.getByRole('alert').getByRole('button',{name:'ลองโหลดใหม่',exact:true}).waitFor();
+      assert.ok(blockedReads>=1);await page.unroute(platformRoute,unavailable);
+      await page.getByRole('alert').getByRole('button',{name:'ลองโหลดใหม่',exact:true}).click();
+      await page.getByRole('heading',{name:'งบ AI กลาง',exact:true}).waitFor();
+      await page.locator('#platform-ai-monthly-budget').waitFor();
+      let platformWrites=0;const watchPlatform=(r:any)=>{if(r.url().endsWith(platformPath)&&r.method()==='PUT')platformWrites++;};
+      page.on('request',watchPlatform);
+      try {
+        for(const id of ['platform-ai-monthly-budget','platform-ai-ceiling']) {
+          const field=page.locator(`#${id}`),originalValue=await field.inputValue();
+          await field.fill('1e');await page.getByRole('button',{name:'บันทึกการตั้งค่า',exact:true}).click();
+          await page.getByText('กรอกจำนวนเงินเป็นบาท ทศนิยมไม่เกิน 2 ตำแหน่ง เช่น 2000.50',{exact:true}).last().waitFor();
+          assert.equal(await field.inputValue(),'1e');await field.fill(originalValue);
+        }
+        assert.equal(platformWrites,0);
+      }finally{page.off('request',watchPlatform);}
+      assert.deepEqual((await request(platformPath)).body,platformBefore.body);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+      await page.screenshot({path:`${browser.evidenceDir}/admin-platform-ai-budget-mobile.png`});
     }
     assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}}),beforeTerm);
     assert.deepEqual(await db.billingReceiptGrant.findMany({where:{companyId},orderBy:{id:'asc'}}),beforeGrants);
     return ['admin-ai-reason-source-current-value-and-idempotent-replay','admin-ai-history-25-row-pagination-safe-fields-and-foreign-cursor',
-      'admin-ai-current-shared-admission-follows-raised-and-lowered-budget','admin-ai-adjustment-preserves-paid-term-and-receipt-grants',...(browser?['browser-admin-ai-reason-confirm-cancel-save-history-stale-reload-mobile','browser-admin-ai-lost-response-retry-and-late-navigation']:[])];
+      'admin-ai-current-shared-admission-follows-raised-and-lowered-budget','admin-ai-adjustment-preserves-paid-term-and-receipt-grants',...(browser?['browser-admin-ai-invalid-nonempty-budget-never-clears-override','browser-platform-ai-thai-form-load-recovery-invalid-input-no-write','browser-admin-ai-reason-confirm-cancel-save-history-stale-reload-mobile','browser-admin-ai-lost-response-retry-and-late-navigation']:[])];
   }finally{await db.auditLog.deleteMany({where:{id:foreignId}});}
 }

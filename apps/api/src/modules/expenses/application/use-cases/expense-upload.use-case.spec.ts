@@ -35,8 +35,9 @@ function receiptRetirement(options: { primaries?: string[]; sharedLinks?: Record
   const unlinked: string[] = [];
   const softDeleted: string[] = [];
   const tx = {
+    $executeRaw: async () => 0,
     attachmentLink: {
-      findMany: async ({ where }: any) => (options.primaries ?? [])
+      findMany: async ({ where }: any) => (where.OR ? [] : options.primaries ?? [])
         .filter((id) => id !== where.attachmentId.not)
         .map((attachmentId) => ({ attachmentId })),
       count: async ({ where }: any) => options.sharedLinks?.[where.attachmentId] ?? 0,
@@ -48,7 +49,8 @@ function receiptRetirement(options: { primaries?: string[]; sharedLinks?: Record
       findSubstituteEvidenceRetentionHold: async ({ id }: any) => ((options.holds ?? []).includes(id) ? { evidenceId: 'ev-1' } : null),
       markDeleted: async ({ id }: any) => { softDeleted.push(id); return { id, status: 'DELETED' }; },
     } as any,
-    prisma: { client: { $transaction: async (run: any) => run(tx) } } as any,
+    prisma: { client: { user: { findFirst: async () => ({id: 'user-1'}) }, $transaction: async (run: any) => run(tx) } } as any,
+    tx,
     unlinked,
     softDeleted,
   };
@@ -159,7 +161,7 @@ describe('receipt upload use cases', () => {
     const retirement = receiptRetirement();
     const uc = new CompleteReceiptUploadUseCase(
       {
-        findById: async () => ({ id: 'expense-1', status: 'DRAFT', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
+        findById: async () => ({ updatedAt: new Date('2026-09-15T10:00:00Z'), id: 'expense-1', status: 'DRAFT', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
         runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
           const matched = await detectWithinTx({ marker: 'tx' });
           return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
@@ -173,7 +175,8 @@ describe('receipt upload use cases', () => {
         findExpenseIdsByAttachmentChecksum: async () => [],
         createDuplicateCandidate: async () => undefined,
         linkAttachment: async () => undefined,
-        updateExpense: async (input: any) => {
+        updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => {
+          await withinTx?.(retirement.tx);
           updates.push(input);
           return { id: input.id };
         },
@@ -183,6 +186,7 @@ describe('receipt upload use cases', () => {
       { append: async () => undefined } as any,
       retirement.attachments,
       retirement.prisma,
+      {resolveAccess: async () => ctx} as any,
     );
 
     await uc.execute(ctx, { expenseId: 'expense-1', attachmentId: 'att-1', byteSize: 123 });
@@ -196,13 +200,13 @@ describe('receipt upload use cases', () => {
       const candidates: any[] = [];
       const updates: any[] = [];
       const repo = {
-        findById: async () => ({ id: `expense-${captureSource}`, status: 'DRAFT', createdByUserId: 'user-1', captureSource, duplicateStatus: candidates.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' }),
+        findById: async () => ({ updatedAt: new Date('2026-09-15T10:00:00Z'), id: `expense-${captureSource}`, status: 'DRAFT', createdByUserId: 'user-1', captureSource, duplicateStatus: candidates.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' }),
         runDuplicateCheck: async (_input: any, detectWithinTx: (tx: any) => Promise<string[]>) => {
           const matched = await detectWithinTx({ marker: 'tx' });
           return { openCandidates: matched.length, duplicateStatus: matched.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH' };
         },
         findByIdWithRelations: async () => ({
-          id: `expense-${captureSource}`,
+          id: `expense-${captureSource}`, duplicateStatus: candidates.length > 0 ? 'POSSIBLE_DUPLICATE' : 'NO_MATCH',
           primaryAttachmentId: 'att-1',
           attachments: [{ id: 'att-1', purpose: 'expense.receipt.primary', checksumSha256: 'a'.repeat(64), perceptualHash: null }],
           vendorDocumentNumber: null,
@@ -215,7 +219,8 @@ describe('receipt upload use cases', () => {
         findExpenseIdsByAttachmentChecksum: async () => ['expense-existing'],
         createDuplicateCandidate: async (...args: any[]) => { candidates.push(args); },
         linkAttachment: async () => undefined,
-        updateExpense: async (input: any) => {
+        updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => {
+          await withinTx?.(retirement.tx);
           updates.push(input);
           return { ...input };
         },
@@ -228,6 +233,7 @@ describe('receipt upload use cases', () => {
         { append: async () => undefined } as any,
         retirement.attachments,
         retirement.prisma,
+        {resolveAccess: async () => ctx} as any,
       );
 
       const result = await uc.execute(
@@ -255,7 +261,7 @@ describe('receipt upload use cases', () => {
       const retirement = receiptRetirement(options);
       const uc = new CompleteReceiptUploadUseCase(
         {
-          findById: async () => ({ id: 'expense-1', status: options.status ?? 'NEEDS_REVIEW', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
+          findById: async () => ({ updatedAt: new Date('2026-09-15T10:00:00Z'), id: 'expense-1', status: options.status ?? 'NEEDS_REVIEW', createdByUserId: 'user-1', duplicateStatus: 'NO_MATCH' }),
           runDuplicateCheck: async () => ({ openCandidates: 0, duplicateStatus: 'NO_MATCH' }),
           findByIdWithRelations: async () => ({
             id: 'expense-1', primaryAttachmentId: 'att-new', attachments: [],
@@ -266,13 +272,14 @@ describe('receipt upload use cases', () => {
           findExpenseIdsByAttachmentChecksum: async () => [],
           createDuplicateCandidate: async () => undefined,
           linkAttachment: async () => undefined,
-          updateExpense: async (input: any) => ({ id: input.id }),
+          updateExpense: async (input: any, withinTx?: (tx: any) => Promise<void>) => { await withinTx?.(retirement.tx); return { id: input.id }; },
         } as any,
         { execute: async () => ({ id: 'att-new' }) } as any,
         { log: async (entry: any) => { audits.push(entry); } } as any,
         { append: async () => undefined } as any,
         retirement.attachments,
         retirement.prisma,
+        {resolveAccess: async () => ctx} as any,
       );
       return { uc, retirement, audits };
     };

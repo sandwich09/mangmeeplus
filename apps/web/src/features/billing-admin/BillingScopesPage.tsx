@@ -52,7 +52,7 @@ export default function BillingScopesPage({operationId}:{operationId?:string}) {
         <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={permanent} onChange={e=>setPermanent(e.target.checked)}/>ยืนยันให้ขอบเขตนี้โดยไม่กำหนดวันหมดอายุ</label>
         <button className={button} disabled={busy||!userId||!companyId||!reason.trim()||(!permanent&&!expiry)} onClick={()=>void preview('GRANT_SCOPE')}>ตรวจผลกระทบการให้ขอบเขต</button>
       </section>}
-      <label className="block">เหตุผลการเปลี่ยนขอบเขต<textarea className="mt-2 block w-full rounded-lg border p-3" maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+      <div><label className="block" htmlFor="billing-scope-reason">เหตุผลการเปลี่ยนขอบเขต</label><textarea id="billing-scope-reason" className="mt-2 block w-full rounded-lg border p-3" maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></div>
       {change&&<section className="space-y-3 rounded-xl border-2 border-green-700 bg-white p-5" aria-label="คำขอขอบเขต">
         <h2 role="status" className="font-bold">{states[change.state]??billingLabel('operation',change.state)}</h2><p>{billingLabel('mode',change.mode)} · {change.userName} · {change.companyName}</p>
         <p>{change.type==='GRANT_SCOPE'?'ให้/ปรับขอบเขต':'ถอนขอบเขตทันทีเมื่อยืนยัน'} · เดิม {change.current?billingLabel('scope',change.current.state):'ยังไม่มีขอบเขต'} · {change.type==='GRANT_SCOPE'?date(change.scopeExpiresAt):'ไม่มีสิทธิ์ผ่านขอบเขตนี้หลังถอน'}</p>

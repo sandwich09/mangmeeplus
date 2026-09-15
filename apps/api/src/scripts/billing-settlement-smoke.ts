@@ -126,11 +126,32 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
       await page.getByLabel('สิ้นสุดช่วงเวลา',{exact:true}).fill(new Date((stamp+120)*1000-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16));
       await page.getByLabel('เหตุผล',{exact:true}).fill(body.reason);
       const originalWindow=await Promise.all(['เริ่มช่วงเวลา','สิ้นสุดช่วงเวลา'].map(name=>page.getByLabel(name,{exact:true}).inputValue()));
-      let browserRun='';
+      // Opt-in focused regression: consume the REAL operator limiter with invalid empty requests.
+      // They fail validation after admission and cannot create an operation or touch Stripe.
+      if(process.env.BILLING_SETTLEMENT_FORCE_RATE_LIMIT==='1') {
+        const count=await db.billingOperation.count({where:{stripeAccountId}});let primed=false;
+        for(let round=0;round<2&&!primed;round++)for(let i=0;i<=30;i++) {
+          const probe=await page.request.post(`${browser.origin}/api/v1/system/billing/settlements`,{data:{},headers:{'x-csrf-token':'synthetic-billing-csrf'}});
+          const value=await probe.json();
+          if(probe.status()===429) {
+            assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
+            if(value.retryAfterSeconds>=5)primed=true;
+            else await new Promise(resolve=>setTimeout(resolve,(value.retryAfterSeconds+1)*1000));
+            break;
+          }
+          assert.equal(probe.status(),400,JSON.stringify(value));
+        }
+        assert.ok(primed,'real limiter is closed long enough to exercise the browser rejection');
+        assert.equal(await db.billingOperation.count({where:{stripeAccountId}}),count,'invalid probes create no work');
+      }
+      let browserRun='',browserRateRefused=false,originalRequestKey:string|undefined;
       for(let attempt=0;attempt<3;attempt++){
         const created=page.waitForResponse(r=>r.url().endsWith('/settlements')&&r.request().method()==='POST');
         await page.getByRole('button',{name:'เริ่มตรวจยอด',exact:true}).click();const result=await created,value=await result.json();
+        const sentKey=result.request().headers()['idempotency-key'];assert.ok(sentKey);
+        if(originalRequestKey)assert.equal(sentKey,originalRequestKey,'retry keeps the original browser command');else originalRequestKey=sentKey;
         if(result.status()===429){
+          browserRateRefused=true;
           assert.equal(value.code,'BILLING_RATE_LIMIT');assert.ok(Number.isInteger(value.retryAfterSeconds)&&value.retryAfterSeconds>=1&&value.retryAfterSeconds<=60);
           await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();
           try{assert.equal(await page.getByLabel('เหตุผล',{exact:true}).inputValue(),body.reason);}
@@ -141,7 +162,10 @@ export async function checkBillingSettlement(input:Parameters<typeof checkBillin
         }
         assert.equal(result.status(),200,JSON.stringify(value));browserRun=value.id;break;
       }
+      if(process.env.BILLING_SETTLEMENT_FORCE_RATE_LIMIT==='1'){assert.equal(browserRateRefused,true);cases.push('browser-settlement-real-429-preserves-exact-reason-label-window-and-original-request-retry');}
       assert.ok(browserRun,'Original settlement creation must recover within bounded retries');ids.push(browserRun);
+      const sameCommand=await db.billingOperation.findMany({where:{stripeAccountId,livemode:false,idempotencyKey:originalRequestKey}});
+      assert.equal(sameCommand.length,1);assert.equal(sameCommand[0].id,browserRun);
       await page.waitForURL(`${browser.origin}/system/billing/settlements/${browserRun}`);
       const browserNext=async()=>{
         for(let attempt=0;attempt<3;attempt++){

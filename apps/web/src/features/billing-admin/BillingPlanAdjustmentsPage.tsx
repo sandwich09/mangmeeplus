@@ -70,7 +70,7 @@ export default function BillingPlanAdjustmentsPage({companyId,operationId}:{comp
           <label className="block">จำนวนสาขาสูงสุด<input className={field} inputMode="numeric" value={branches} disabled={busy} onChange={e=>setBranches(e.target.value)} maxLength={10}/></label>
           <label className="block">จำนวนผู้ใช้สูงสุด รวมเจ้าของ<input className={field} inputMode="numeric" value={members} disabled={busy} onChange={e=>setMembers(e.target.value)} maxLength={10}/></label>
           <label className="block">ใช้ได้ถึง (เวลาประเทศไทย)<input className={field} type="datetime-local" value={expires} onChange={e=>setExpires(e.target.value)} disabled={busy}/></label><p>ไม่ระบุวัน: ใช้ได้ถึง {data.maxExpiresAt?date(data.maxExpiresAt):'วันหมดอายุแพ็กเกจปัจจุบัน'}</p>
-          <label className="block">เหตุผลที่ปรับสิทธิ์<textarea className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></label>
+          <div><label className="block" htmlFor="plan-adjustment-reason">เหตุผลที่ปรับสิทธิ์</label><textarea id="plan-adjustment-reason" className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></div>
           <p>หากลดต่ำกว่าจำนวนที่ใช้อยู่ ข้อมูลและผู้ใช้เดิมยังอยู่ครบ ระบบจะจำกัดการเพิ่มใหม่ตามเพดาน การซื้อแพ็กเกจเพิ่มจะไม่ยืดอายุสิทธิ์ชั่วคราวนี้</p>
           <button className={button} disabled={busy}>ตรวจสิทธิ์ก่อนส่งคำขอ</button>{data.current?.temporary&&<button type="button" className={button} disabled={busy} onClick={()=>void preview(true)}>ขอคืนสิทธิ์ตามแพ็กเกจที่ซื้อ</button>}
         </form>}

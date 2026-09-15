@@ -132,9 +132,9 @@ Report แยก layer: UNIT/DB, PROVIDER-SANDBOX, BROWSER-E2E, UAT และ re
 
 ผลค้น official [Thai account support](https://support.stripe.com/questions/supported-payment-methods-currencies-and-businesses-for-stripe-accounts-in-thailand?locale=th-TH) ระบุ Visa/Mastercard; full-page fetch ของ support ให้ error ในรอบนี้ จึงต้องยืนยันรายการ brand/currency/capability กับ account จริงก่อน LIVE. อย่านำรายชื่อทุกบัตรจาก global test-card catalog มาโฆษณาว่าบัญชีไทยรับได้ทั้งหมด. T02 ต้องครอบคลุมบัตร/สกุลเงินที่ account เปิดจริง; fee table ประเทศไทยอยู่ B10/§2.
 
-## 5. Acceptance matrix — T01–T42 ทั้งหมดยัง NOT RUN
+## 5. Acceptance targets — T01–T42
 
-สถานะร่วม: **NOT RUN / ต้องมี implementation ก่อน**. ทุก case ที่ใช้กับรุ่นที่จะเปิดเป็น P0 release gate; cases ที่ขึ้นกับ B01–B10 ต้องมี policy answer หรือปิด feature นั้นอย่างพิสูจน์ได้และบันทึก DEFERRED พร้อมเหตุผลแทน PASS. ห้าม defer เส้นทางรับเงิน/เปิดสิทธิ์/ยกเลิก/recovery ที่รุ่นนั้นใช้งานจริง. Failure injection เป็น integration test คนละชั้นกับ browser/sandbox E2E.
+ตารางนี้เป็นเป้าหมาย acceptance ที่กำหนดเมื่อ 2026-09-11 ไม่ใช่ผลทดสอบปัจจุบัน. หลายส่วนมีโค้ดและ local/provider evidence แล้วตาม [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); การรับรองครบทุกเงื่อนไขของแต่ละแถวยังต้องเทียบ source และขอบเขตของผลล่าสุด. ทุก case ที่ใช้กับรุ่นที่จะเปิดเป็น P0 release gate; cases ที่ขึ้นกับ B01–B10 ต้องมี policy answer หรือปิด feature นั้นอย่างพิสูจน์ได้และบันทึก DEFERRED พร้อมเหตุผลแทน PASS. ห้าม defer เส้นทางรับเงิน/เปิดสิทธิ์/ยกเลิก/recovery ที่รุ่นนั้นใช้งานจริง. Failure injection เป็น integration test คนละชั้นกับ browser/sandbox E2E.
 
 | ID | สถานการณ์ | ผลที่ต้องตรวจ |
 |---|---|---|

@@ -1,57 +1,40 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: IN PROGRESS — implementation and focused checks have advanced; full plan acceptance and both develop/main merges are not complete.
+Status: LOCAL CHECKPOINT VERIFIED; overall task IN PROGRESS, not100% and not merged.
 Owner: Codex / repository owner.
-Scope: approved Stripe packages, Postmark, Admin C01–C08, web and LINE access, local simulated E2E, bug/gap/UX review, final green-CI merges. NO DEPLOY.
+Scope: Stripe packages, Postmark, Admin C01–C08, web/LINE access, simulated E2E, practical Thai UX, final green-CI develop/main merges in both repos. NO DEPLOY.
 
-## Current checkpoint — 2026-09-15
+## Current checkpoint
 
-- Core checkpoint da569130; marketing checkpoint109d649. Marketing runtime remains969e4c0.
-- Checkout source fix verified: null/missing/unknown Session status preserves UNKNOWN attempt/case until the original Session recovers. Focused restart74 and settlement83 HTTP/PG/Next/Chromium/marketing groups PASS (counts overlap; providers simulated). Full combined failed earlier at settlement browser create429; bounded real retry now verifies retained reason/window. No rate-limit change. Source/log details: checkout-observation-result.json.
-- LINE media source increment locally verified: atomic OCR/duplicate producing revision, web/LINE summary CAS, current saved photo/PDF facts, duplicate/actor/fallback checks and no repeated completed check-bill OCR. Focused735/module1320/PG75 PASS/0skip; API typecheck/SWC PASS. Exact sources and remaining limits: line-media-source-result.json.
-- Continuation input/result source increment locally verified:607 focused/1343 module/93 PG PASS/0skip, API typecheck/SWC PASS. Missing/changed source retains completed work. The full combined and first focused refund runs were manually aborted while suspected stalled; no product root cause was established. A subsequent bounded focused refund run passed87 groups/15 browser groups; see refund-bounded-browser-result.json and /tmp/mangmee-refund-bounded-browser.log. Full combined is still owed. See line-continuation-source-result.json for limits.
-- Earlier financial source freeze: /tmp/mangmee-current-billing-source-freeze.json (core tracked runtime and marketing files; includes concurrent tracked environment/mail changes, which are not owned by this task). It is working-tree evidence, not clean-commit or CI proof.
+Current checkpoint 2026-09-15: local combined308 groups PASS, including74 browser groups and all12 STARTER/BASIC/PRO × month/year × web/LINE-origin purchases. The later Admin AI budget parser/Thai forms pass a separate12-group real browser/HTTP/PG follow-up and75 unit/error guards. Receipt source/current access:24 unit,341 receipt/webhook,10 new PG and7 existing PG PASS. Signature/current LINE source:598 focused PASS. Counts overlap; source/build and simulation boundaries are explicit in the evidence. API/web typechecks and SWC pass. Full task acceptance, the two pending Owner decisions, final clean-source CI and both develop/main merges remain open. No CI/push/merge/deploy.
 
-- Pending receipt repair:585 focused/4 PG PASS/0skip; original source/attachment validation, atomic repair, no reset of completed human review, current saved reply facts. See line-pending-repair-result.json; this does not close historical question lineage.
+Parent checkpoints before this increment: core bba55f6c; marketing c262cb6 (marketing runtime969e4c0). Use git log for the new scoped local commits. No running browser/API smoke remains; no queued patch needs applying.
 
-- Correction source:606 focused/1349 LINE module/8 PG PASS/0skip; exact committed revision and note outcome survive original-marker replay, current source/access checked before private confirmation/fallback. See line-correction-source-result.json.
+## Verified changes
 
-- Substitute reply/resume sources:844 focused/1370 LINE module/5 PG PASS/0skip, API typecheck/SWC PASS. Original source/evidence/relevant policy checks, target labels and pre-producer questionnaire pause are verified. See line-substitute-source-result.json. Full combined at this checkpoint failed at the settlement browser create-429 retained-reason assertion (label disappeared); root cause not yet established. Log: /tmp/mangmee-substitute-combined-failure.log. /tmp/mangmee-substitute-combined-source-freeze.json freezes both working trees. API source edits for clarification lineage began during that run but were not compiled into it; no web/runtime rebuild overlapped.
-
-## Latest verified work
-
-| Increment | Local evidence | Limits |
+| Change | Evidence | Boundary |
 |---|---|---|
-| Paired branch/member capacity policy | capacity-policy-result.json; offer13 and plan-change29 browser/HTTP groups,17 unit/37 PG | Original paid/repeat/downgrade terms preserved; no temporary-gift carryover |
-| Original LINE paid request closure | paid-request-result.json;11 HTTP/browser groups,104 unit/13 PG | Exact original paid request only; no claim that an Admin gift is a sale |
-| Restart charge evidence | restart-source-result.json;69 HTTP/browser groups including17 browser,12 unit/4 catalog | Explicit disputed=false; same original evidence recovers; simulated providers |
-| LINE draft/receipt sources | line-draft-delivery-result.json and line-receipt-source-result.json | Current identity/access/revision/category at final send/fallback; no replayed mutation |
-| LINE candidate inputs/replies | line-candidate-source-result.json;553 focused/69 PG/8 reader | Exact scoped facts/order, stable same-time order, before intake dispatch and final advisory delivery |
-| LINE media source | line-media-source-result.json;735 focused/1320 module/75 PG | Atomic producing revision/current saved facts; pending repair/continuation/native boundaries remain separate |
-| LINE text-capture source | line-text-source-result.json;594 focused/74 PG | Scoped duplicate recovery and current header;5 PG source cases use a simulated committed-capture producer |
+|11 Admin textarea labels, actual429 reason/window/same-key recovery;12 initial offers | billing-label-offer-matrix-result.json | HTTP67/browser79/focused80 overlap; simulated providers |
+|Original expense revision + atomic attachment/retirement/duplicates + current post-storage access | receipt-upload-source-result.json |24 unit/341 receipt+webhook/10 new PG/7 existing PG,0skip; real permission resolver and DB, simulated storage |
+|Signature activation/current owner and original LINE event; supporting/payment-media pre-write check | signature-upload-access-result.json |598 focused,0skip; current compiled AppModule/53 HTTP groups and combined proof |
+|Current combined billing/Admin/marketing runtime | combined-upload-access-result.json |308 groups/74 browser/12 matrix; /tmp/mangmee-upload-signature-combined-source-freeze.json; predates later budget UX only |
+|Admin budget overflow/invalid-input safety, Thai platform page/reload, upload-error copy | admin-budget-input-result.json |12 actual browser/HTTP/PG groups,75 unit/error guards, no provider calls; screenshots inspected |
+|Earlier original LINE questions/ordered choices and read/media/draft/text/correction/substitute sources | line-clarification-source-result.json and respective source receipts | Already locally verified; do not relist these as wholly missing |
 
-All source-suite counts overlap. API typechecks PASS; no overall completion percentage is derived from test counts. Evidence files live in [billing integration evidence](../evidence/billing-integration-2026-09-13/README.md). The earlier full combined276 predates these increments; the earlier combined run failed at settlement browser rate-limit handling. Focused recovery suites passed, and the latest completed combined attempt failed at settlement retained-form handling; a new combined pass is still owed.
+All evidence is in docs/evidence/billing-integration-2026-09-13/. Test groups overlap; never add them into an overall percentage or business-flow count. Current working-tree imports include concurrent environment/config edits; final clean-source evidence is still owed.
 
-## Implemented scope
+## Defects fixed and test corrections
 
-Initial/repeat/upgrade/downgrade/restart/cancel/resume packages; strict paid invoice evidence and atomic grants; annual upfront receipt quota; runtime prices/receipt terms/branch-member capacities/VAT/sales cohorts; paid capacity repair; owner web/LINE review and recovery; Admin company/scope/history/cases/outcomes and original-invoice apply/import; original Checkout expiry; provider events/manual/daily/scheduled/bounded discovery; settlement observation and bounded reconciliation batches; reviewed refunds with same-command/aged-UNKNOWN recovery; manual/trial plans and additive receipts; paid temporary package/capacity/receipt/AI adjustments with provenance and audit; current AI support explanation; Postmark signup/claim/status/verification and owner-approved email password reset; mail monitoring, canonical LINE credentials and Admin QR/unlink recovery. Detailed checkpoint limits are in the linked evidence and historical notes.
-
-## Latest clarification increment
-
-Stored clarification source checkpoint2026-09-15 (AP21/AP23): bounded original actor/company/private-chat/channel and exact question/request/intent/ordered-ID/file provenance is now persisted and rechecked before routing/effects, plus composer/fallback delivery. Missing/legacy/changed or ambiguous question handles retire durably without deleting original business work, so a fresh request can continue. Legacy/primary substitute choices and correction guidance retain the original scoped ordered list even outside the newest five candidates. Reviewer-only access is rechecked before effects; the private-chat rule refuses group capture before mutation. Focused880, LINE module1387 and PostgreSQL5 PASS/0skip; counts overlap. API/web typecheck and SWC PASS. See core line-clarification-source-result.json for exact sources and fixtures. Later native media/storage write races and full current acceptance remain separate. The full combined run failed at settlement create-429 retained-form assertion; focused follow-up passed79 groups, but the intermittent cause is still unresolved (settlement-combined-followup-result.json). Admin consent-version setting is moved into existing advanced Stripe settings with a short Thai explanation. No CI/push/merge/deploy.
-
-## Active review findings
-
-- Full combined settlement browser create-429 retained-form failure remains intermittent. Focused follow-up passed; screenshot/main-text diagnostics added. Do not claim a product root cause or full pass yet.
-- Paid HTTP/browser fixtures chiefly exercise annual packages. Audit the explicit STARTER/BASIC/PRO × month/year × web/LINE matrix before claiming all paid combinations; contract/unit catalog coverage alone is insufficient.
+- React textarea defaultValue became nested-label text, changing the accessible name. The form/reason were retained; explicit sibling labels fix the cause without weakening limits or exact locators.
+- Shared receipt completion could overwrite concurrent CONFIRMED state and partially replace a receipt. Original revision CAS and one transaction now preserve human work; fresh access/source checks stop business writes after storage when authority changed. Completed private bytes may remain without an expense/signature link.
+- Shared budget parser accepted overflowing nonempty text as Infinity; JSON converted it to null (clear override). Safe-integer parsing and decimal text inputs now refuse invalid values before confirmation/HTTP while preserving intentional blank inheritance. Company/platform forms and new source errors use Thai guidance.
+- Combined fixture corrections: manual/invoice alert locators exclude the empty Next announcer; restart revision allocation follows max historical version+1 after restored settings. The focused platform failure test now holds reads unavailable until the real error appears, then restores transport before reload. Production billing behavior was not changed for these fixture defects.
 
 ## Remaining work
 
-1. LINE source boundaries: later storage/native media-write permission races. Historical stored clarification/original-choice lineage is now locally verified in line-clarification-source-result.json; do not list it as missing again. Substitute result/resume source verification is now locally complete within its recorded boundary. Active questionnaire input and returned continuation source increments are now locally verified; historical clarification lineage is covered by the later increment above. Candidate and text-capture increments above must not be listed as missing again. Use existing ERP domain/scoped readers and committed revisions; no mutation/model/OCR replay for validation.
-2. Current AP01–AP24 browser/API/PG cross-layer acceptance and remaining native device/LINE/LIFF/provider matrix. Historical sandbox proofs exist; they do not prove the final current tree. Fix actual failures without inventing a broader product policy.
-3. Use docs/evidence/billing-integration-2026-09-13/control-implementation-map.md for the current C01–C08 code/UI/evidence mapping. Review remaining financial acceptance. Checkout-state regression and settlement browser retry are locally verified; a new full combined result remains pending. Existing old-debt/refund policy is manual review; no new debt forgiveness or arbitrary paid-state override is approved.
-4. Paid Admin free-day/next-collection behavior and local mail-history retention need the earlier Owner answers below before dependent implementation.
-5. Final clean-source verification, one readiness-driven CI cycle, review and authorized develop/main merges in BOTH repositories. No intermediate push/CI and no deployment.
+1. Review current evidence against full CT01–CT32/AP01–AP24 acceptance and record any still-unproven combinations precisely. Native LINE/LIFF/provider/device acceptance is separate;308 simulated groups do not certify every row.
+2. Complete paid Admin free-day collection behavior and local mail-history retention only after the earlier Owner decisions below. Do not guess financial timing or retention defaults, and do not repeat the questions.
+3. Final clean-source verification/review, one readiness-driven CI cycle and authorized develop/main merges in BOTH repos. Preserve other ongoing work. No deployment or intermediate CI/push.
 
 ## Pending Owner decisions — do not repeat the questions
 

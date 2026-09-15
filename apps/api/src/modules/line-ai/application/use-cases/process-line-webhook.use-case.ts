@@ -5650,7 +5650,7 @@ export class ProcessLineWebhookUseCase {
         await this.updateEventLog(event.webhookEventId, 'clarification_required', undefined, companyId);
         return;
       }
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5671,7 +5671,7 @@ export class ProcessLineWebhookUseCase {
     if (routePlan.status !== 'ROUTED'
       && canSubmitSignature && event.messageType === 'image' && isSignatureCaptionText(caption)
       && this.initSignatureUpload && this.createSignatureAsset) {
-      const ticketReply = await this.createLineSignatureAsset({ ctx, event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
+      const ticketReply = await this.createLineSignatureAsset({ ctx, event, sourceEvent: event, companyId, media, steerToPendingDecision: await pendingIssueDecisionSteer() });
       await this.deliverCompletedReply(event, ticketReply, companyId, access);
       await this.persistIntakeTurn({
         userId: identity.userId, companyId, webhookEventId: event.webhookEventId,
@@ -5972,7 +5972,7 @@ export class ProcessLineWebhookUseCase {
       attachmentId: intent.attachmentId,
       checksumSha256: media.checksumSha256,
       byteSize: media.byteSize,
-    }));
+    }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(event)) throw new LineDeliveryError('failed_permanent'); } }));
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = { expenseId: intent.expenseId, companyId, uploaded: true };
     const ocrFields = decision.manualReview ? null : ocr.fields;
     if (!completedExpense.updatedAt) throw new ConflictException('Receipt upload revision unavailable');
@@ -6223,7 +6223,7 @@ export class ProcessLineWebhookUseCase {
       expense = await this.completeReceiptUpload!.execute(ctx, {
         expenseId: expense.id, attachmentId: intent.attachmentId,
         ...(media ? { checksumSha256: media.checksumSha256, byteSize: media.byteSize } : {}),
-      });
+      }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(event)) throw new LineDeliveryError('failed_permanent'); } });
     }
     (event as typeof event & { [SAVED_LINE_RECEIPT]?: SavedLineReceipt })[SAVED_LINE_RECEIPT] = {
       expenseId: expense.id, companyId: ctx.companyId, uploaded: Boolean(expense.primaryAttachmentId),
@@ -6379,6 +6379,7 @@ ${link}`, ctx.companyId, access);
   private async createLineSignatureAsset(input: {
     ctx: RequestContext;
     event: Pick<LineReceiptUploadEvent, 'lineMessageId'>;
+    sourceEvent: LineReceiptUploadEvent | LineTextEvent;
     companyId: string;
     /** Omitted only when `attachmentId` names bytes that are already stored. */
     media?: { fileName: string; mimeType: string; byteSize: number; checksumSha256?: string; bytes: Buffer };
@@ -6403,7 +6404,7 @@ ${link}`, ctx.companyId, access);
       submittedFromChannel: 'LINE',
       lineMessageId: input.event.lineMessageId,
       ...(input.attachmentId ? { attachmentAlreadyActive: true } : {}),
-    });
+    }, { beforeCommit: async () => { if (!await this.mayDeliverBusinessReply(input.sourceEvent)) throw new LineDeliveryError('failed_permanent'); } });
     return formatSignatureTicketReply(this.config.webBaseUrl, input.companyId, asset.id, input.steerToPendingDecision);
   }
 
@@ -6489,6 +6490,7 @@ ${link}`, ctx.companyId, access);
     purpose: 'expense.payment.evidence' | 'expense.receipt.supporting';
   }): Promise<LineMediaTurnOutcome> {
     const { event, companyId } = input;
+    if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'done' };
     const { replyText } = await this.substituteReceiptContinuation!.attachMedia(input.ctx, {
       expenseId: input.context.expenseId,
       attachmentId: input.pending.attachmentId,
@@ -6627,12 +6629,14 @@ ${link}`, ctx.companyId, access);
       // and the very next answer could file the same id as this expense's receipt or substitute
       // evidence, producing an artifact that is both. A failure after this point costs the sender one
       // re-send; the alternative costs a reviewer a document that cannot be trusted.
+      if (!await this.mayDeliverBusinessReply(event)) return { outcome: 'handled' };
       await this.resolvePendingRow(pending.id, 'RESOLVED_SIGNATURE');
       const replyText = await this.createLineSignatureAsset({
         ctx,
         // The IMAGE's message id, not this answer's: that is what a redelivery of the photo would
         // collide with, and what the router-routed ticket would have de-duplicated on.
         event: { lineMessageId: pending.lineMessageId },
+        sourceEvent: event,
         companyId: ctx.companyId,
         attachmentId: pending.attachmentId,
         // F8: steer to “ตอบ 1” only when a workflow is actually parked at the issue decision — read

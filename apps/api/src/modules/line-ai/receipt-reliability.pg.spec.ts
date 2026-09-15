@@ -41,7 +41,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
   before(async () => {
     const url = new URL(databaseUrl!);
     assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname), 'requires an explicit local test database');
-    assert.equal(url.pathname, '/watchdog_bms', 'requires the local test database name');
+    assert.ok(url.pathname === '/watchdog_bms' || url.port === '15432' && url.pathname === '/mangmee_billing_20260912', 'requires an explicit local test database');
     client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     unreachable = await pgSpecUnreachableReason(() => client.$queryRaw`SELECT 1`, 'RECEIPT_RELIABILITY_REQUIRE_POSTGRES');
     if (unreachable) return;
@@ -124,7 +124,7 @@ describe('receipt reliability on PostgreSQL', { skip: !databaseUrl }, () => {
     assert.equal(storageReservations, countBefore);
     const complete = new CompleteReceiptUploadUseCase(new PrismaExpenseRepository({ client } as any),
       { execute: async () => { throw new Error('ACTIVE image must not be reprocessed'); } } as any,
-      noAudit, { append: async () => undefined } as any, new PrismaAttachmentRepository({ client } as any), { client } as any);
+      noAudit, { append: async () => undefined } as any, new PrismaAttachmentRepository({ client } as any), { client } as any, {resolveAccess: async () => ctx()} as any);
     const record = await complete.execute(ctx(), { expenseId: resumed.expenseId, attachmentId: resumed.attachmentId, checksumSha256: 'synthetic-checksum' });
     assert.equal(record.primaryAttachmentId, original.attachmentId);
     assert.equal(await client.attachmentLink.count({ where: { companyId, targetId: record.id, attachmentId: original.attachmentId } }), 1);

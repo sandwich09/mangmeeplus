@@ -131,7 +131,7 @@ export async function checkBillingInvoiceScans(input:ProviderScansSmokeInput&{ro
         if(route.request().method()!=='POST'||lostResponse){await route.continue();return;}
         const response=await route.fetch();assert.equal(response.status(),201);createdId=(await response.json()).id;lostResponse=true;await route.abort('failed');
       });
-      await page.getByRole('button',{name:'เริ่มตรวจใบแจ้งหนี้',exact:true}).click();await page.getByRole('alert').waitFor();
+      await page.getByRole('button',{name:'เริ่มตรวจใบแจ้งหนี้',exact:true}).click();await page.locator('main').getByRole('alert').waitFor();
       await page.getByRole('button',{name:'เริ่มตรวจใบแจ้งหนี้',exact:true}).click();await page.waitForURL(`**/invoice-scans/${createdId}`);
       let unavailable=true;reply=url=>!url.searchParams.has('starting_after')?new Response(JSON.stringify({object:'list',data:[invoice('A'),invoice('WEB')],has_more:true})):
         unavailable?new Response('{}',{status:503}):new Response(JSON.stringify({object:'list',data:[],has_more:false}));

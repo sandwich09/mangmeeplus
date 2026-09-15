@@ -79,7 +79,7 @@ export default function BillingBatchPage({batchId}:{batchId?:string}){
       {canCreate&&<form className="space-y-3 rounded-xl border p-4" onSubmit={e=>void preview(e)}>
         <h3 className="font-bold">เลือกไว้ {selected.length} บริษัท</h3>{selected.length>0&&<details><summary className="min-h-11 cursor-pointer py-2">ดูบริษัทที่เลือกและนำออก</summary>
           {selected.map(c=><div key={c.companyId} className="flex flex-wrap items-center justify-between gap-2 py-2"><span>{c.companyName}</span><button type="button" className={button} disabled={busy} onClick={()=>setSelected(rows=>rows.filter(row=>row.companyId!==c.companyId))}>นำ {c.companyName} ออก</button></div>)}</details>}
-        <label className="block">เหตุผลการตรวจ<textarea className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+        <div><label className="block" htmlFor="billing-batch-reason">เหตุผลการตรวจ</label><textarea id="billing-batch-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></div>
         <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||loading||!selected.length||!reason.trim()}>ตรวจบริษัทที่เลือกก่อนยืนยัน</button>
           <button type="button" className={button} disabled={busy} onClick={()=>{setSelected([]);refresh();}}>เริ่มเลือกใหม่</button></div>
       </form>}

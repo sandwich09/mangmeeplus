@@ -62,7 +62,7 @@ export default function BillingConfigurationChecksPage({checkId}:{checkId?:strin
       <p>{history.mode==='DISABLED'?'ยังไม่เปิดการเชื่อมต่อ':history.mode==='TEST'?'โหมดทดสอบ · ไม่มีการตัดเงินจริง':'โหมดเงินจริง'}</p>
       {history.activeCheck&&<Link className={button} href={`${base}/${history.activeCheck.id}`}>เปิดรายการที่กำลังตรวจ</Link>}
       {history.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-3 rounded-xl border p-4">
-        <label className="block">เหตุผลการตรวจ<textarea className="mt-1 block min-h-11 w-full rounded-lg border p-2" required maxLength={500} disabled={busy||!!intent.current} value={reason} onChange={event=>setReason(event.target.value)}/></label>
+        <div><label className="block" htmlFor="configuration-check-reason">เหตุผลการตรวจ</label><textarea id="configuration-check-reason" className="mt-1 block min-h-11 w-full rounded-lg border p-2" required maxLength={500} disabled={busy||!!intent.current} value={reason} onChange={event=>setReason(event.target.value)}/></div>
         <button className={button} disabled={busy||!reason.trim()}>{intent.current?'ลองคำขอเดิมอีกครั้ง':'เริ่มตรวจการเชื่อมต่อ'}</button>
       </form>}
       <section aria-label="ประวัติการตรวจ" className="space-y-3"><h2 className="text-lg font-bold">ประวัติการตรวจ</h2>

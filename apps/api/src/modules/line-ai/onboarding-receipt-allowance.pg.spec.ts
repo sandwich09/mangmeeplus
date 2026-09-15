@@ -48,7 +48,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
   it('reads a first receipt with printed zero before optional settings, under the effective 15 trial', async (t) => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only a local disposable database is allowed');
-    assert.equal(url.pathname, '/watchdog_bms', 'never target a forwarded customer database');
+    assert.ok(url.pathname === '/watchdog_bms' || url.port === '15432' && url.pathname === '/mangmee_billing_20260912', 'requires an explicit local test database');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const prisma = { client } as PrismaService;
     const tag = `first-receipt-${randomUUID()}`, lineUserId = `U${tag}`;
@@ -185,7 +185,7 @@ describe('first LINE shop receipt on PostgreSQL', { skip: !databaseUrl }, () => 
       objects.set(pending.objectKey, { bytes, mimeType: 'image/png' });
       const complete = new CompleteReceiptUploadUseCase(repo,
         new CompleteAttachmentUploadUseCase(attachments, storage, audit, new AttachmentMalwareScanner(config), logger, new ObjectVersionCleanupService(outboxRepo, logger)),
-        audit, new OutboxAppendService(outboxRepo, logger), attachments, prisma);
+        audit, new OutboxAppendService(outboxRepo, logger), attachments, prisma, {resolveAccess: async () => ctx} as any);
       await complete.execute(ctx, { expenseId: intent.expenseId, attachmentId: intent.attachmentId });
       let providerCalls = 0;
       globalThis.fetch = async (input, options) => {

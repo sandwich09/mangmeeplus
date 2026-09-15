@@ -70,7 +70,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
           <label className="block">เพิ่มใบเสร็จจำนวน<input className={field} inputMode="numeric" value={units} onChange={e=>setUnits(e.target.value)} disabled={busy} maxLength={10}/></label>
           <label className="block">ใช้ได้ถึง (เวลาประเทศไทย)<input className={field} type="datetime-local" value={expires} onChange={e=>setExpires(e.target.value)} disabled={busy}/></label>
           <p>ไม่ระบุวัน: ใช้ได้ถึง {data.maxGrantExpiresAt?date(data.maxGrantExpiresAt):'วันหมดอายุแพ็กเกจปัจจุบัน'}</p>
-          <label className="block">เหตุผลที่ปรับใบเสร็จ<textarea className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></label>
+          <div><label className="block" htmlFor="receipt-adjustment-reason">เหตุผลที่ปรับใบเสร็จ</label><textarea id="receipt-adjustment-reason" className={`${field} min-h-24`} maxLength={500} value={reason} onChange={e=>setReason(e.target.value)} disabled={busy}/></div>
           <p>ใบที่เพิ่มใช้ได้ไม่เกินวันหมดอายุแพ็กเกจปัจจุบัน การซื้อแพ็กเกจเพิ่มจะไม่ต่ออายุใบที่ผู้ดูแลเพิ่มให้</p>
           <button className={button} disabled={busy}>ตรวจจำนวนก่อนส่งคำขอ</button>
         </form>}

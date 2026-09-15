@@ -17,8 +17,12 @@
 
 - C08 การเพิ่มวันให้ลูกค้าที่จ่ายแล้ว: รอคำตอบเดิมว่าจะเลื่อนวันเรียกเก็บ Stripe ด้วยหรือไม่ จึงยังไม่มีการเดาวันตัดเงิน
 - อายุจัดเก็บประวัติเมลในระบบ: รอคำตอบเดิม; การเก็บของ Postmark เป็นคนละขอบเขต ห้ามล้างหลักฐานส่งซ้ำ/งานค้าง/audit ตามการล้างประวัติทั่วไป
-- AP21–AP24: ยังต้องปิดสิทธิ์ระหว่างขั้นตอนบันทึกรูป/ไฟล์ที่เหลือ; คำถาม/ลำดับเดิมผ่านชุดเฉพาะแล้ว ดู [คำถามเดิม](line-clarification-source-result.json) ดู [media](line-media-source-result.json), [continuation](line-continuation-source-result.json) และ [กู้รูปเดิม](line-pending-repair-result.json), [ผลแก้รายการ](line-correction-source-result.json) และ [ผลใบรับรอง/ทำต่อ](line-substitute-source-result.json) สำหรับส่วนที่ผ่านแล้ว
+- AP21–AP24: ใบเสร็จตรวจ revision/สิทธิ์หลังเก็บไฟล์และบันทึกแบบ transaction ผ่าน [receipt proof](receipt-upload-source-result.json) แล้ว; ลายเซ็น/หลักฐานเสริมตรวจผู้ใช้และ LINE event ก่อนบันทึกผ่าน [signature proof](signature-upload-access-result.json) แบบจำลองแล้ว. คำถาม/ลำดับเดิมและ source ของงานก่อนหน้านี้มีผลใน evidence; ยังต้องเทียบ acceptance รวมกับ native LINE/LIFF แยกต่างหาก
 - CT01–CT32 และ AP01–AP24 ต้องเทียบกับผลรวมของ source ปัจจุบันและ acceptance ที่ยังขาด; ชุดย่อยมีกรณีซ้ำกัน จึงห้ามบวกจำนวนเป็นเปอร์เซ็นต์หรือจำนวน business flows
 - หลักฐานในตารางมีทั้งผลเก่าและผลล่าสุด แต่ละไฟล์บอก source และข้อจำกัดของตนเอง การผ่าน simulation ไม่แทน native LINE/LIFF/provider และไม่แทน final CI
 
+[แพ็กเกจครบ12แบบและฟอร์ม Admin หลัง429](billing-label-offer-matrix-result.json) ผ่านแบบจำลองในเครื่องแล้ว; ผลนี้ไม่ใช่ native LINE/LIFF และไม่แทนทุก CT/AP.
+
 CI ยังรวบไปรันเมื่อพร้อมเพื่อลดค่าใช้จ่าย งานนี้ยังไม่ push/merge/deploy
+
+Current follow-up: [combined308](combined-upload-access-result.json) includes the12-offer matrix and forced429 recovery. [Admin budget safety/Thai UI](admin-budget-input-result.json) then passes12 focused browser/HTTP/PG groups and75 unit/error guards. Invalid nonempty amounts cannot clear a company override; platform read failure has a reload path. No full CT/AP/native or clean-CI closure is inferred.

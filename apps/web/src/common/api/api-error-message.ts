@@ -538,6 +538,11 @@ const UPLOAD_CONTENT_REJECTED =
 
 /** Full English messages the user can actually hit in the expense/substitute journeys. */
 const MESSAGE_LABELS: Record<string, string> = {
+  'Receipt access changed. Reload and check your permissions.': 'สิทธิ์ใช้งานเปลี่ยนแล้ว โหลดข้อมูลล่าสุด หากยังอัปโหลดไม่ได้ ให้ติดต่อผู้ดูแลบริษัท',
+  'Signature access changed.': 'สิทธิ์ใช้งานเปลี่ยนแล้ว โหลดข้อมูลล่าสุดก่อนบันทึกลายเซ็นอีกครั้ง',
+  'Signature belongs to another owner.': 'บันทึกลายเซ็นนี้ไม่ได้ กรุณาใช้รูปที่คุณอัปโหลดเอง',
+  'Expense revision unavailable. Reload before uploading.': 'ยังตรวจข้อมูลล่าสุดไม่ได้ โหลดรายการใหม่ก่อนอัปโหลดอีกครั้ง',
+  'Expense changed. Reload and review before uploading again.': 'รายการถูกแก้ไขแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนอัปโหลดอีกครั้ง',
   'WHT amount cannot exceed the accepted pre-VAT amount.': 'ยอดภาษีหัก ณ ที่จ่ายเกินฐานที่ใช้คำนวณ กรุณาตรวจยอดและฐานภาษี',
   'WHT amount cannot exceed the document total or leave a negative payable.': 'ยอดภาษีหัก ณ ที่จ่ายเกินยอดเอกสาร กรุณาตรวจยอดและฐานภาษี',
   'Sales cannot approve their own quotation issue request': 'ผู้ส่งขออนุมัติไม่สามารถอนุมัติใบเสนอราคาของตนเองได้ กรุณาให้ผู้มีสิทธิ์คนอื่นอนุมัติ',

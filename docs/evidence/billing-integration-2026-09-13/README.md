@@ -1,5 +1,7 @@
 # Local Stripe billing integration evidence — 2026-09-13
 
+Latest local checkpoint: [combined308 groups](combined-upload-access-result.json) PASS, including74 browser groups and12 initial package variants. [Subsequent Admin budget/Thai UX](admin-budget-input-result.json):12 real browser/HTTP/PG groups and75 unit/error guards PASS. [Receipt source/current access](receipt-upload-source-result.json):24 unit/341 receipt-webhook/10 new PG/7 existing PG; [signature/LINE source](signature-upload-access-result.json):598 focused PASS/0skip. Counts overlap; exact source/build limits are in each receipt. Full acceptance, Owner decisions, final clean-source CI and both merges remain open. Dated entries below are historical, not current missing-work claims.
+
 [Substitute reply source proof](line-substitute-source-result.json):844 focused/1370 LINE module/5 PostgreSQL PASS/0skip, API typecheck/SWC PASS. Original source checks cover direct and resumed replies plus fallback; current record/evidence and current access are required. Counts overlap; historical clarification and full/native acceptance remain open.
 
 [Checkout observation proof](checkout-observation-result.json): original UNKNOWN source recovery and settlement retry. Focused restart74/settlement83 groups PASS; previous combined run FAILED at a fixture429 expectation. Counts overlap; pre-media compiled build and simulated providers.

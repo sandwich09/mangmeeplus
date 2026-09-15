@@ -45,7 +45,7 @@ export async function checkManualReceiptAdjustments(input:Parameters<typeof chec
       let finishApproval!:()=>void;const approvalHandled=new Promise<void>(resolve=>{finishApproval=resolve;});
       await other.route(`**/receipt-adjustments/${browserGiftId}/approve`,async route=>{const response=await route.fetch();if(response.status()!==200){approvalFailure={status:response.status(),body:await response.json()};await route.fulfill({response});finishApproval();return;}committed=true;await route.abort();finishApproval();},{times:1});
       await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).click();await Promise.race([approvalHandled,new Promise((_,reject)=>setTimeout(()=>reject(Error('approval route did not complete')),30000))]);
-      assert.equal(committed,true,JSON.stringify(approvalFailure));await other.getByRole('alert').waitFor();
+      assert.equal(committed,true,JSON.stringify(approvalFailure));await other.getByRole('alert').filter({hasText:'เชื่อมต่อระบบไม่ได้'}).waitFor();
       await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).click();await other.getByRole('heading',{name:'ปรับใบเสร็จแล้ว',exact:true}).waitFor();
       assert.equal(await db.billingReceiptGrant.count({where:{companyId,sourceKey:browserGiftId}}),1);assert.equal((await customer()).usage.remaining,4);
       await other.setViewportSize({width:390,height:844});await other.screenshot({path:'/tmp/mangmee-billing-browser-evidence/admin-manual-receipts-mobile.png',fullPage:true});

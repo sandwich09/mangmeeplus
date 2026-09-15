@@ -74,8 +74,8 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
       {review.canCreate?<form className="space-y-4 rounded-xl border p-4" onSubmit={e=>{e.preventDefault();void act('preview');}}>
         <label className="block">จำนวนเงินที่ต้องการคืน (บาท)<input ref={amountInput} className={field} inputMode="decimal" required value={amount} disabled={busy} onChange={e=>{
           setAmount(e.target.value);const n=amountValue(e.target.value);e.target.setCustomValidity(Number.isSafeInteger(n)&&n>0&&n<=Math.min(review.refundLimitSatang!,review.paidSatang-review.refundedSatang)?'':'กรอกยอดที่คืนได้ ไม่เกินวงเงิน และทศนิยมไม่เกิน 2 ตำแหน่ง');}}/></label>
-        <label className="block">เหตุผลภายใน (ลูกค้าไม่เห็น)<textarea className={field} required maxLength={500} value={reason} disabled={busy} onChange={e=>setReason(e.target.value)}/></label>
-        <label className="block">ข้อความบนเอกสารให้ลูกค้า (ไม่บังคับ)<textarea className={field} maxLength={500} value={memo} disabled={busy} onChange={e=>setMemo(e.target.value)}/></label>
+        <div><label className="block" htmlFor="refund-private-reason">เหตุผลภายใน (ลูกค้าไม่เห็น)</label><textarea id="refund-private-reason" className={field} required maxLength={500} value={reason} disabled={busy} onChange={e=>setReason(e.target.value)}/></div>
+        <div><label className="block" htmlFor="refund-customer-memo">ข้อความบนเอกสารให้ลูกค้า (ไม่บังคับ)</label><textarea id="refund-customer-memo" className={field} maxLength={500} value={memo} disabled={busy} onChange={e=>setMemo(e.target.value)}/></div>
         <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={notifyCustomer} disabled={busy} onChange={e=>setNotifyCustomer(e.target.checked)}/>ให้ Stripe ส่งอีเมลเอกสารปรับยอดให้ลูกค้า</label>
         <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะมีผู้อนุมัติอีกคน</p><button className={button} disabled={busy}>ตรวจยอดและผลกระทบ</button>
       </form>:<p role="status" className="rounded-xl border p-4">{errors[review.blockedReason??'']??'ยังเริ่มคำขอไม่ได้ กรุณาติดต่อทีมงาน'}</p>}

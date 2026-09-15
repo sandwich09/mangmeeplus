@@ -560,8 +560,8 @@ export class PrismaExpenseRepository {
     return input.draftIdempotencyKey || withinTx || input.assignExpenseNumber ? this.prisma.client.$transaction(create) : create(this.prisma.client);
   }
 
-  async findById(companyId: string, id: string): Promise<ExpenseRecord | null> {
-    const r = await this.prisma.client.expenseRecord.findFirst({ where: { id, companyId } });
+  async findById(companyId: string, id: string, db: ExpenseDb = this.prisma.client): Promise<ExpenseRecord | null> {
+    const r = await db.expenseRecord.findFirst({ where: { id, companyId } });
     return r ? mapExpense(r) : null;
   }
 

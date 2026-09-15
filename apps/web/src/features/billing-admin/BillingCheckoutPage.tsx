@@ -56,7 +56,7 @@ export default function BillingCheckoutPage({companyId,attemptId,operationId}:{c
     </section>}
     {review&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">{review.companyName}</h2><p>{review.mode==='TEST'?'โหมดทดสอบ · ไม่มีการรับเงินจริง':'โหมดใช้งานจริง'}</p>
       {review.providerState&&<p className="font-bold">{providerStates[review.providerState]}</p>}{review.paymentState&&<p>{paymentStates[review.paymentState]}</p>}{review.expiresAt&&<p>หน้าชำระหมดอายุ {time(review.expiresAt)}</p>}
-      {review.canExpire?<form className="space-y-3" onSubmit={e=>{e.preventDefault();void act('preview');}}><label className="block">เหตุผลที่ต้องยุติหน้าชำระ<textarea className="mt-1 block min-h-11 w-full rounded-lg border p-2" value={reason} onChange={e=>setReason(e.target.value)} maxLength={500} required disabled={busy}/></label>
+      {review.canExpire?<form className="space-y-3" onSubmit={e=>{e.preventDefault();void act('preview');}}><div><label className="block" htmlFor="checkout-expiry-reason">เหตุผลที่ต้องยุติหน้าชำระ</label><textarea id="checkout-expiry-reason" className="mt-1 block min-h-11 w-full rounded-lg border p-2" value={reason} onChange={e=>setReason(e.target.value)} maxLength={500} required disabled={busy}/></div>
         <button className={button} disabled={busy||loading}>ตรวจผลกระทบก่อนยืนยัน</button></form>:<p>{errors[review.blockedReason??'']??'ตรวจสถานะล่าสุดที่หน้าบริษัท'}</p>}
     </section>}
     {operation&&<section className="space-y-3 rounded-xl border p-4" aria-label="คำขอยุติหน้าชำระ"><h2 className="font-bold" aria-live="polite">{state(operation.state)}</h2><p>{operation.companyName} · {operation.scope.mode==='TEST'?'โหมดทดสอบ · ไม่มีการรับเงินจริง':'โหมดใช้งานจริง'}</p>

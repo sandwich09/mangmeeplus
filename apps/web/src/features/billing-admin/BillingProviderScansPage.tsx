@@ -64,7 +64,7 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
       <h2 className="text-lg font-bold">เริ่มงานตรวจ</h2><p>{companyId?'เลือกช่วงวันที่สร้างใบแจ้งหนี้ตั้งแต่ปี1970 และสิ้นสุดก่อนปัจจุบันอย่างน้อย1นาที งานขนาดใหญ่แบ่งช่วงเวลาได้ เวลาตามเครื่องนี้':'เลือกย้อนหลังได้ไม่เกิน29วัน และสิ้นสุดก่อนปัจจุบันอย่างน้อย1นาที เวลาตามเครื่องนี้'}</p>
       <label className="block">เริ่มช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></label>
       <label className="block">สิ้นสุดช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={end} onChange={e=>setEnd(e.target.value)}/></label>
-      <label className="block">เหตุผล<textarea className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+      <div><label className="block" htmlFor="provider-scan-reason">เหตุผล</label><textarea id="provider-scan-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} value={reason} onChange={e=>setReason(e.target.value)}/></div>
       <button className={button} disabled={busy}>{companyId?'เริ่มตรวจใบแจ้งหนี้':'เริ่มค้นหาเหตุการณ์'}</button>
     </form>}
     {companyId&&!scanId&&list&&!list.canCreate&&<p>เริ่มงานใหม่ไม่ได้ในขณะนี้ ตรวจสิทธิ์ผู้ดูแลและบัญชี Stripe ของบริษัท หรือเปิดงานเดิมเพื่อดูผล</p>}

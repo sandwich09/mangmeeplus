@@ -1314,7 +1314,7 @@ function AiUsageBudgetSection({
     const reason=partnerAdjustmentReason(budgetReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
     const parsed=parseBudgetBahtInput(budgetInput);
-    if(!parsed.ok){showToast(parsed.message,'error');return;}
+    if(!parsed.ok){showToast(parsed.message, 'error');return;}
     const token=generation.current,desired=parsed.monthlyBudgetSatang??usage.budget.defaultSatang;
     const accepted=await confirm({title:'ตรวจงบ AI ก่อนบันทึก',message:`งบต่อเดือน ${satangToBaht(usage.budget.effectiveSatang)} → ${satangToBaht(desired)} ใช้แล้ว ${satangToBaht(usage.current?.costSatang??0)}${desired<=(usage.current?.costSatang??0)?' หลังบันทึกจะใช้ AI เพิ่มไม่ได้จนกว่าจะเพิ่มงบหรือขึ้นเดือนใหม่':''}\nงบใหม่ใช้กับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง\nเหตุผล: ${reason}`,confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
     if(!accepted||token!==generation.current)return;
@@ -1483,9 +1483,7 @@ function AiUsageBudgetSection({
               <input
                 id="ai-monthly-budget"
                 className={`${inputClass} min-h-11 text-base`}
-                type="number"
-                min={1}
-                step={0.01}
+                type="text"
                 inputMode="decimal"
                 placeholder={satangToBahtInput(usage.budget.defaultSatang)}
                 value={budgetInput}
@@ -1502,7 +1500,7 @@ function AiUsageBudgetSection({
               {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
             </button>
           </div>
-          <p className="text-xs text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
+          <p className="break-words text-sm text-gray-600">งบ AI: {usage.budget.overrideSatang === null ? 'ค่าเริ่มต้นแพลตฟอร์ม' : satangToBaht(usage.budget.overrideSatang)} → {budgetInput.trim() ? `฿${budgetInput}` : 'ค่าเริ่มต้นแพลตฟอร์ม'}</p>
           <p className="text-xs text-gray-400">
             เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>

@@ -169,7 +169,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
         {issue.slaDueAt&&<p className="text-base">เว้นว่างเพื่อใช้เกณฑ์ส่วนกลางของรอบนี้ การเปลี่ยนระดับความสำคัญคำนวณจากเวลาเริ่มรอบเดิม</p>}
         <p className="text-base text-gray-600">ใช้ติดตามงานภายใน ไม่ใช่การเปลี่ยนระยะผ่อนผันหรือกำหนดเวลาที่แจ้งลูกค้า</p>
         <label className="block">สถานะ<select aria-label="สถานะ" className="ml-3 min-h-11 rounded-lg border p-2" value={state} onChange={e => setState(e.target.value)}>{Object.entries(states).filter(([key]) => key !== 'RESOLVED').map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label>
-        <label className="block">บันทึกการดำเนินการ<textarea className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e => setNote(e.target.value)} /></label>
+        <div><label className="block" htmlFor="billing-company-note">บันทึกการดำเนินการ</label><textarea id="billing-company-note" className="mt-2 block w-full rounded-lg border p-3" value={note} maxLength={1000} onChange={e => setNote(e.target.value)} /></div>
         <div className="flex flex-wrap gap-2"><button className={button} disabled={saving || !note.trim()} onClick={() => void update('take')}>รับเคสนี้</button>
           <button className={button} disabled={saving || !note.trim()} onClick={() => void update('save')}>บันทึกสถานะ</button><button className={button} disabled={saving||!note.trim()} onClick={()=>void update('return')}>คืนเคสเข้าคิว</button></div>
         <p className="text-base text-gray-600">สถานะเคสแยกจากผลชำระเงินและการเปิดสิทธิ์ การปิดเคสต้องมีผลตรวจยืนยัน</p>

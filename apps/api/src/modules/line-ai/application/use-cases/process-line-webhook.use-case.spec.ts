@@ -3074,6 +3074,39 @@ describe('ProcessLineWebhookUseCase', () => {
 
   // F8: the “ตอบ 1” steer used to fire only on the numbered pending-media route. A captioned photo
   // took the deterministic route and stranded a sender who was mid-issue-decision with no steer.
+  it('rechecks the original LINE identity after signature storage on both routed and caption paths', async () => {
+    for (const routed of [false, true]) {
+      const { prisma } = makePrisma();
+      let checked = 0, activated = 0;
+      const { useCase, replies } = makeUseCase(prisma, {
+        permissions: ['expense.receipt.line_upload', 'expense.receipt.upload', 'attachment.create', 'expense.signature.manage'],
+        intakeRouteFn: () => routed
+          ? { status: 'ROUTED', intent: 'SIGNATURE_UPLOAD_TICKET', language: 'th', confidence: 0.99 }
+          : { status: 'UNAVAILABLE' },
+        initReceiptUpload: { execute: async () => { throw new Error('signature must not create an expense'); } },
+        completeReceiptUpload: { execute: async () => undefined },
+        initSignatureUpload: { execute: async () => ({ attachmentId: 'att-sig', uploadUrl: 'https://upload', uploadMethod: 'PUT', uploadHeaders: {} }) },
+        createSignatureAsset: { execute: async (_ctx: any, _cmd: any, source: any) => {
+          (useCase as any).resolveLineIdentity = async () => null;
+          assert.equal(typeof source?.beforeCommit, 'function');
+          checked += 1; await source.beforeCommit(); activated += 1;
+          return { id: 'sig-denied', status: 'ACTIVE' };
+        } },
+      });
+      (useCase as any).downloadLineMedia = async () => ({
+        fileName: 'signature.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength,
+        contentBase64: JPEG_BYTES.toString('base64'), bytes: JPEG_BYTES,
+      });
+      (useCase as any).uploadLineMedia = async () => undefined;
+      await useCase.executeReceiptUpload({
+        webhookEventId: `sig-storage-${routed}`, lineUserId: 'line-user-secret', replyToken: 'sig-reply',
+        lineMessageId: `sig-message-${routed}`, messageType: 'image', messagingChannelId: 'msg-channel-1',
+      }, 'ลายเซ็นของผมครับ');
+      assert.equal(checked, 1); assert.equal(activated, 0);
+      assert.doesNotMatch(replies.join('\n'), /sig-denied|ใช้ลงนามเอกสารได้ทันที/);
+    }
+  });
+
   it('steers the caption-route signature back to “ตอบ 1” only when the issue decision is pending (F8)', async () => {
     const runCaption = async (pendingIssueDecision: boolean) => {
       const { prisma } = makePrisma();
@@ -4755,6 +4788,56 @@ describe('W1 — a failed delivery can never leave signed-away bytes reusable', 
       'the same attachment id can never be answered again as expense evidence',
     );
   });
+
+  it('binds a pending signature to its answer event before consumption and again at activation', async () => {
+    for (const revokeAt of ['consume', 'activate'] as const) {
+      const { prisma } = makePrisma();
+      let checked = 0, consumed = 0, activated = 0;
+      (prisma.client as any).lineIntakePendingMedia = { updateMany: async () => { consumed += 1; return { count: 1 }; } };
+      const { useCase } = makeUseCase(prisma, {
+        permissions: ['expense.receipt.upload', 'expense.signature.manage', 'attachment.create'],
+        initSignatureUpload: { execute: async () => ({ attachmentId: 'unused' }) },
+        createSignatureAsset: { execute: async (_ctx: any, cmd: any, source: any) => {
+          assert.equal(cmd.lineMessageId, 'original-photo');
+          await source.beforeCommit(); activated += 1; return { id: 'denied' };
+        } },
+        substituteReceiptContinuation: {
+          loadOpenMediaContext: async () => ({ expenseId: 'exp-1', awaitingScans: [], signatureRequested: true }),
+          hasPendingIssueDecision: async () => false,
+        },
+      });
+      (useCase as any).mayDeliverBusinessReply = async (source: any) => {
+        assert.equal(source, answerEvent, 'text answer source must not be replaced by the stored image id');
+        checked += 1; return revokeAt === 'activate' && checked === 1;
+      };
+      const pending = { id: 'pending-source', attachmentId: 'stored-image', lineMessageId: 'original-photo', mimeType: 'image/jpeg',
+        askedQuestionJson: { kind: 'SUBSTITUTE_MEDIA_CLASS', chatKeyHash: chatKeyHashOf(answerEvent), choices: ['SIGNATURE'] } };
+      const call = (useCase as any).resolveSubstituteMediaAnswer(answerEvent,
+        { userId: 'u1', companyId: 'company-1', permissions: ['expense.receipt.upload', 'expense.signature.manage'] },
+        { membershipId: 'mem-1', roles: ['STAFF'], permissions: [], scopes: {} }, pending, '1');
+      if (revokeAt === 'activate') await assert.rejects(call);
+      else assert.equal((await call).outcome, 'handled');
+      assert.equal(activated, 0); assert.equal(consumed, revokeAt === 'consume' ? 0 : 1);
+      assert.equal(checked, revokeAt === 'consume' ? 1 : 2);
+    }
+  });
+
+  it('keeps parked supporting and payment media when its original LINE source is no longer allowed', async () => {
+    for (const purpose of ['expense.payment.evidence', 'expense.receipt.supporting']) {
+      const { prisma } = makePrisma();
+      let attached = 0, checked = 0;
+      const { useCase } = makeUseCase(prisma, { substituteReceiptContinuation: {
+        attachMedia: async () => { attached += 1; return { replyText: 'must not attach' }; },
+      } });
+      (useCase as any).mayDeliverBusinessReply = async (source: any) => {
+        assert.equal(source, answerEvent); checked += 1; return false;
+      };
+      (useCase as any).resolvePendingRow = async () => { throw new Error('parked bytes must stay available'); };
+      const result = await (useCase as any).attachSubstituteMedia({ event: answerEvent, companyId: 'company-1',
+        context: { expenseId: 'original-expense' }, pending: { id: 'pending', attachmentId: 'stored' }, purpose });
+      assert.equal(result.outcome, 'done'); assert.equal(checked, 1); assert.equal(attached, 0);
+    }
+  });
 });
 
 // ── Substitute semantic-routing dispatcher (executable write-behavior, not helper-only) ───────────
@@ -5799,7 +5882,7 @@ describe('receipt reliability: saved facts, notification and provider-input cont
           sourceChannelMetadataJson: { chatKeyHash: cmd.lineCapture.chatKeyHash }, grandTotalAmount: '0' };
         return { expenseId: expense.id, attachmentId: 'original-attachment' };
       } },
-      completeReceiptUpload: { execute: async () => { completed += 1; expense.primaryAttachmentId = 'original-attachment'; if (options.completeFailsAfterCommit) throw new Error('post-commit duplicate check unavailable'); return { ...expense }; } },
+      completeReceiptUpload: { execute: async (_ctx: any, _cmd: any, source?: {beforeCommit: () => Promise<void>}) => { await source?.beforeCommit(); completed += 1; expense.primaryAttachmentId = 'original-attachment'; if (options.completeFailsAfterCommit) throw new Error('post-commit duplicate check unavailable'); return { ...expense }; } },
       receiptOcrApply: { apply: async (_ctx: unknown, _id: string, _fields: unknown, applyOptions: any) => {
         applied += 1;
         if (options.applyFails) throw Object.assign(new Error('Invalid Prisma input raw-receipt-secret unitPrice NaN'), { code: 'P2009' });
@@ -5836,6 +5919,29 @@ describe('receipt reliability: saved facts, notification and provider-input cont
     return { ...base, ...run, event, eventStore, sends, logs, expense: () => expense,
       allowSend: () => { sendFails = false; }, counts: () => ({ downloads, uploads, initialized, completed, applied, routed, ocrReads, draftStarts }) };
   }
+
+  for (const resumed of [false, true]) it(`rechecks original LINE identity after ${resumed ? 'resumed' : 'direct'} storage before committing the receipt`, async () => {
+    const h = receiptHarness(), useCase = h.useCase as any;
+    const complete = useCase.completeReceiptUpload.execute;
+    if (resumed) {
+      useCase.completeReceiptUpload.execute = async () => { throw new Error('synthetic interrupted storage'); };
+      await h.useCase.executeReceiptUpload(h.event('interrupted-upload'));
+      Object.assign(h.expense().sourceChannelMetadataJson, { receiptCapturePending: true,
+        receiptUpload: { originalFileName: 'receipt.jpg', mimeType: 'image/jpeg', byteSize: JPEG_BYTES.byteLength } });
+    }
+    let checked = 0;
+    useCase.completeReceiptUpload.execute = async (ctx: any, cmd: any, source: any) => {
+      useCase.resolveLineIdentity = async () => null; // Unlinked while the object store was responding.
+      const check = source?.beforeCommit;
+      return complete(ctx, cmd, check ? { beforeCommit: async () => { checked += 1; await check(); } } : undefined);
+    };
+    const sentBefore = h.sends.length;
+    await h.useCase.executeReceiptUpload(h.event(resumed ? 'resume-after-unlink' : 'direct-after-unlink'));
+    assert.equal(checked, 1);
+    assert.equal(h.counts().completed, 0); assert.equal(h.counts().applied, 0);
+    assert.equal(h.expense().primaryAttachmentId, null);
+    assert.doesNotMatch(JSON.stringify(h.sends.slice(sentBefore)), /เก็บรูปและร่างแล้ว|120\.00/);
+  });
 
   for (const changeBefore of ['capture-summary', 'ocr-apply', 'final-summary'] as const) {
     it(`preserves a human edit before ${changeBefore} and recovers the saved media without OCR replay`, async () => {

@@ -506,6 +506,7 @@ describe('expense category management', () => {
 });
 
 describe('signature asset lifecycle', () => {
+  const currentSignatureAccess = {resolveAccess: async () => ctx(['expense.signature.self_manage'])} as any;
   const completeUpload = { execute: async () => undefined } as any;
 
   /** Bytes big enough to bust the certify budget: uniform colour compresses to nothing, so the
@@ -604,15 +605,40 @@ describe('signature asset lifecycle', () => {
     };
   }
 
+  it('does not activate a personal signature after storage when membership or capability has changed', async () => {
+    for (const fault of ['permission', 'member', 'membership-version']) {
+      const h = makeSigRepo(); let stored = false;
+      const resolver = { resolveAccess: async () => ({ ...ctx(stored && fault === 'permission' ? [] : ['expense.review']),
+        membershipId: stored && fault === 'membership-version' ? 'new-membership' : 'mem-1' }) } as any;
+      const identity = h.repo.findActiveMemberIdentity;
+      h.repo.findActiveMemberIdentity = async (...args: any[]) => stored && fault === 'member' ? null : identity(...args);
+      const create = new CreateSignatureAssetUseCase(h.repo, {execute: async () => {stored = true;}} as any, audit, h.storage, resolver);
+      await assert.rejects(() => create.execute(ctx(['expense.review']), {attachmentId:'att-1'}), /permission|access changed/);
+      assert.equal(stored, true); assert.equal(h.created.length, 0); assert.equal(h.links.length, 0);
+    }
+  });
+
+  it('checks the internal LINE source after storage and refuses another submitter on replay', async () => {
+    const h = makeSigRepo(); let stored = false, checked = 0;
+    const create = new CreateSignatureAssetUseCase(h.repo, {execute: async () => {stored = true;}} as any, audit, h.storage, currentSignatureAccess);
+    await assert.rejects(() => create.execute(ctx(['expense.review'], 'line'), {attachmentId:'att-1'}, {beforeCommit: async () => {
+      checked++; assert.equal(stored, true); throw new Error('original LINE identity changed');
+    }}), /original LINE identity changed/);
+    assert.equal(checked, 1); assert.equal(h.created.length, 0); assert.equal(h.links.length, 0);
+    h.repo.findSignatureAssetByLineMessageId = async () => ({id:'foreign-sig',submittedByUserId:'another-user',status:'ACTIVE'});
+    await assert.rejects(() => create.execute(ctx(['expense.review'], 'line'), {attachmentId:'att-1',lineMessageId:'original'}), /another owner/);
+    assert.equal(h.created.length, 0);
+  });
+
   it('creates ACTIVE assets and is idempotent by LINE message id', async () => {
     const { repo, storage } = makeSigRepo();
-    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage);
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, currentSignatureAccess);
     const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
     assert.equal(asset.status, 'ACTIVE');
 
-    repo.findSignatureAssetByLineMessageId = async () => ({ id: 'sig-existing', status: 'ACTIVE' });
+    repo.findSignatureAssetByLineMessageId = async () => ({ id: 'sig-existing', status: 'ACTIVE', submittedByUserId: 'user-1' });
     const again = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-2', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
@@ -624,13 +650,13 @@ describe('signature asset lifecycle', () => {
   it('accepts personal self-service, either signing act, or the legacy manage grant, and refuses anyone else', async () => {
     for (const permission of ['expense.signature.self_manage', 'expense.review', 'expense.confirm', 'expense.signature.manage']) {
       const { repo, storage } = makeSigRepo();
-      const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage)
+      const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, currentSignatureAccess)
         .execute(ctx([permission]), { attachmentId: 'att-1' });
       assert.equal(asset.status, 'ACTIVE', permission);
     }
     const denied = makeSigRepo();
     await assert.rejects(
-      () => new CreateSignatureAssetUseCase(denied.repo, completeUpload, audit, denied.storage)
+      () => new CreateSignatureAssetUseCase(denied.repo, completeUpload, audit, denied.storage, currentSignatureAccess)
         .execute(ctx(['expense.read', 'expense.signature.approve']), { attachmentId: 'att-1' }),
       /expense.signature.manage/,
     );
@@ -642,8 +668,8 @@ describe('signature asset lifecycle', () => {
     const { repo, storage } = makeSigRepo();
     repo.createSignatureAsset = async () => { throw Object.assign(new Error('unique'), { code: 'P2002' }); };
     let lookups = 0;
-    repo.findSignatureAssetByLineMessageId = async () => (lookups++ === 0 ? null : { id: 'sig-winner', status: 'ACTIVE' });
-    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage);
+    repo.findSignatureAssetByLineMessageId = async () => (lookups++ === 0 ? null : { id: 'sig-winner', status: 'ACTIVE', submittedByUserId: 'user-1' });
+    const useCase = new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, currentSignatureAccess);
     const asset = await useCase.execute(ctx(['expense.signature.manage'], 'line'), {
       attachmentId: 'att-1', submittedFromChannel: 'LINE', lineMessageId: 'msg-1',
     });
@@ -661,7 +687,7 @@ describe('signature asset lifecycle', () => {
       const harness = makeSigRepo();
       const audits: any[] = [];
       const asset = await new CreateSignatureAssetUseCase(
-        harness.repo, completeUpload, { log: async (entry: any) => { audits.push(entry); } } as any, harness.storage,
+        harness.repo, completeUpload, { log: async (entry: any) => { audits.push(entry); } } as any, harness.storage, currentSignatureAccess,
       ).execute(ctx(permissions, 'line'), { attachmentId: 'att-1', submittedFromChannel: 'LINE' });
 
       assert.equal(asset.status, 'ACTIVE', permissions.join('+'));
@@ -677,7 +703,7 @@ describe('signature asset lifecycle', () => {
     }
 
     const labelled = makeSigRepo();
-    await new CreateSignatureAssetUseCase(labelled.repo, completeUpload, audit, labelled.storage)
+    await new CreateSignatureAssetUseCase(labelled.repo, completeUpload, audit, labelled.storage, currentSignatureAccess)
       .execute(ctx(['expense.confirm'], 'line'), { attachmentId: 'att-1', label: 'ลายเซ็นพนักงาน', submittedFromChannel: 'LINE' });
     assert.equal(labelled.created[0].label, 'ลายเซ็นพนักงาน');
   });
@@ -689,7 +715,7 @@ describe('signature asset lifecycle', () => {
     const oversized = await noisyJpeg();
     assert.ok(oversized.byteLength > SIGNATURE_MAX_BYTES, 'fixture must exceed the certify budget');
     const { repo, storage, updates, generated } = makeSigRepo('ACTIVE', { sourceBytes: oversized });
-    const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage)
+    const asset = await new CreateSignatureAssetUseCase(repo, completeUpload, audit, storage, currentSignatureAccess)
       .execute(ctx(['expense.signature.manage'], 'line'), { attachmentId: 'att-raw', submittedFromChannel: 'LINE' });
 
     assert.equal(generated.length, 1);
@@ -741,7 +767,7 @@ describe('signature asset lifecycle', () => {
     const photo = await inkOnPaper();
     for (const [channel, expected] of [['WEB', 0], ['LINE', 1]] as Array<['WEB' | 'LINE', number]>) {
       const harness = makeSigRepo('ACTIVE', { sourceBytes: photo });
-      await new CreateSignatureAssetUseCase(harness.repo, completeUpload, audit, harness.storage)
+      await new CreateSignatureAssetUseCase(harness.repo, completeUpload, audit, harness.storage, currentSignatureAccess)
         .execute(ctx(['expense.signature.manage']), { attachmentId: 'att-raw', submittedFromChannel: channel });
       assert.equal(harness.generated.length, expected, `${channel} derive count`);
     }

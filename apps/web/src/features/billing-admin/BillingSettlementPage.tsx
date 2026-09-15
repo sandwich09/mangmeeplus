@@ -63,7 +63,7 @@ export default function BillingSettlementPage({runId}:{runId?:string}){
       <p>เลือกช่วงไม่เกิน 31 วัน และสิ้นสุดก่อนปัจจุบันอย่างน้อย 1 นาที เวลาตามเครื่องนี้</p>
       <label className="block">เริ่มช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={start} disabled={busy} onChange={e=>setStart(e.target.value)}/></label>
       <label className="block">สิ้นสุดช่วงเวลา<input className="mt-1 block min-h-11 w-full min-w-0 rounded-lg border p-2" type="datetime-local" required value={end} disabled={busy} onChange={e=>setEnd(e.target.value)}/></label>
-      <label className="block">เหตุผล<textarea className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></label>
+      <div><label className="block" htmlFor="settlement-reason">เหตุผล</label><textarea id="settlement-reason" className="mt-1 block w-full rounded-lg border p-2" required maxLength={500} disabled={busy} value={reason} onChange={e=>setReason(e.target.value)}/></div>
       <button className={button} disabled={busy||!reason.trim()}>เริ่มตรวจยอด</button></form>}
     {!runId&&list&&!list.canCreate&&<p>ดูงานเดิมได้ แต่ยังเริ่มงานใหม่ไม่ได้ ให้ผู้ดูแลตรวจสิทธิ์และการเชื่อมต่อ Stripe</p>}
     {run&&<section aria-label="ผลตรวจยอด Stripe" className="space-y-3 rounded-xl border p-4"><h2 className="text-lg font-bold" role="status">{label(states,run.state,'ต้องตรวจสอบสถานะ')}</h2>

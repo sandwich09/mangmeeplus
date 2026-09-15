@@ -1154,6 +1154,7 @@ describe('R13 — the assistant asks before producing the document', () => {
       { execute: async () => undefined } as any,
       { log: async (entry: any) => { h.audits.push(entry); } } as any,
       { getObject: async () => ({ bytes: Buffer.alloc(0) }) } as any,
+      {resolveAccess: async () => ctx(SIGNER)} as any,
     ).execute(ctx(SIGNER), {
       attachmentId: 'att-signature', submittedFromChannel: 'LINE', lineMessageId: 'line-msg-signature',
     });

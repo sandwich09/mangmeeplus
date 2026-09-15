@@ -512,6 +512,9 @@ jobs:
           LINE_DRAFT_EDIT_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/line-draft-update.pg.spec.ts
+          RECEIPT_UPLOAD_SOURCE_TEST_DATABASE_URL="$DATABASE_URL" \
+            pnpm --filter @watchdog-bms/api exec tsx --test \
+            src/modules/expenses/receipt-upload-source.pg.spec.ts
           RECEIPT_SOURCE_DRAFT_TEST_DATABASE_URL="$DATABASE_URL" \
             pnpm --filter @watchdog-bms/api exec tsx --test \
             src/modules/expenses/expense-source-draft.pg.spec.ts
