@@ -68,11 +68,18 @@ export class BillingRepeat {
     if (!first) throw review();
     if (!Number.isSafeInteger(subscription.items.data[0].current_period_start) || !Number.isSafeInteger(subscription.billing_cycle_anchor) ||
       subscription.billing_cycle_anchor > subscription.items.data[0].current_period_start) throw review();
+    // Gift days move the future renewal anchor; the current zero-price phase may still report the old anchor.
+    const gifts = await this.prisma.client.billingOperation.findMany({ where: { companyId: account.companyId,
+      stripeAccountId: account.stripeAccountId, livemode: account.livemode, type: 'GRANT_FREE_DAYS', state: 'SUCCEEDED' }, select: { proposedJson: true } });
+    const giftBoundary = gifts.map(row => row.proposedJson as unknown as { accountId: string; dayExtension: { subscriptionId: string; after: string } })
+      .filter(row => row.accountId === account.id && row.dayExtension?.subscriptionId === account.baseSubscriptionId)
+      .map(row => Date.parse(row.dayExtension.after)).filter(at => Number.isSafeInteger(at) && at <= account.paidThrough!.getTime()).sort((a,b) => b-a)[0];
+    const anchorDay = new Date(giftBoundary ?? subscription.billing_cycle_anchor*1000).getUTCDate();
     const source = { subscriptionId: account.baseSubscriptionId, paidThrough: account.paidThrough.toISOString(), productId, zeroPriceId,
       currentPriceId: stripeId(subscription.items.data[0].price)!, currentPeriodStart: subscription.items.data[0].current_period_start,
       sourcePriceId: future.priceId, sourceTaxRateId: future.policy.taxRateId, sourceTotal: future.quote.totalSatang,
       currentTaxRateId: stripeId(subscription.items.data[0].price) === accepted.priceId ? accepted.policy.taxRateId : null,
-      anchorDay: new Date(subscription.billing_cycle_anchor*1000).getUTCDate(), billingCycleAnchor: subscription.billing_cycle_anchor, scheduleId };
+      anchorDay, billingCycleAnchor: subscription.billing_cycle_anchor, scheduleId };
     await this.assertOriginalCollection(subscription, account, source, offer.interval);
     return source;
   }

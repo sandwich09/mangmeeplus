@@ -1,6 +1,6 @@
-import { BadRequestException, Controller, Get, Header, Query, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Put, Query, Req } from '@nestjs/common';
 import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
-import { EMAIL_DELIVERY_PURPOSES, type EmailDeliveryPurpose } from '@watchdog-bms/contracts';
+import { EMAIL_DELIVERY_PURPOSES, type EmailHistoryPolicyInput, type EmailDeliveryPurpose } from '@watchdog-bms/contracts';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import type { RequestContext } from '../domain/models/request-context.model';
 import { SystemEmailDeliveryService } from '../application/system-email-delivery.service';
@@ -28,4 +28,19 @@ export class SystemEmailDeliveryController {
     if (Object.keys(query).length) throw new BadRequestException();
     return this.delivery.connection(req.context);
   }
+  @Get('retention')
+  @Header('Cache-Control', 'no-store')
+  retention(@Req() req: { context: RequestContext }, @Query() query: Record<string, unknown>) {
+    if (Object.keys(query).length) throw new BadRequestException();
+    return this.delivery.retention(req.context);
+  }
+
+  @Put('retention')
+  @RequirePermissions('system.email_delivery.read', 'system.email_delivery.manage')
+  @Header('Cache-Control', 'no-store')
+  setRetention(@Req() req: { context: RequestContext }, @Body() input: EmailHistoryPolicyInput, @Query() query: Record<string, unknown>) {
+    if (Object.keys(query).length) throw new BadRequestException();
+    return this.delivery.setRetention(req.context, input);
+  }
+
 }

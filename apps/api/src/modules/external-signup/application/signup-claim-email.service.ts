@@ -198,6 +198,7 @@ export class SignupClaimEmailService {
       }
     }
     if (this.emailDelivery?.isPostmark) await this.emailDelivery.reconcileUnknown();
+    if (this.emailDelivery?.maintainHistory) await this.emailDelivery.maintainHistory();
     return { claimed: events.length, sent, failed, reclaimed, dead };
   }
 

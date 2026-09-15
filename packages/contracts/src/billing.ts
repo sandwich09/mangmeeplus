@@ -113,7 +113,9 @@ export type BillingCapacityOptions = { companyId: string; offerKey: string; inte
   memberships: { id: string; name: string; owner: boolean; required: boolean; allBranches: boolean; branchIds: string[]; defaultBranchId: string | null }[] };
 export type BillingCapacityImpact = { retainedBranches: string[]; suspendedBranches: string[]; retainedMembers: string[]; suspendedMembers: string[];
   defaults: { member: string; branch: string | null }[] };
+export type BillingCollectionPause = {behavior:'keep_as_draft'|'void'|'mark_uncollectible'|'unknown';resumesAt:string|null};
 export type BillingStatus = {
+  collectionPause?: BillingCollectionPause|null;
   companyId: string; companyName: string; mode: BillingMode | 'DISABLED'; policyRevision: string | null;
   paymentState: 'NONE' | 'PENDING' | 'UNKNOWN' | 'PAID' | 'FAILED' | 'ACTION_REQUIRED';
   applyState: 'NONE' | 'PENDING' | 'APPLIED' | 'HELD' | 'FAILED';
@@ -131,7 +133,7 @@ export type BillingStatus = {
   planCapacityRepair?: { operationId: string; version: number; offerKey: string; interval: BillingInterval } | null;
   capacityRepair?: { attemptId: string; attemptVersion: number; offerKey: string; interval: BillingInterval } | null;
 };
-export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE';
+export type BillingCollectionAction = 'CANCEL_RENEWAL' | 'RESUME_RENEWAL' | 'SCHEDULE_DOWNGRADE' | 'CANCEL_DOWNGRADE' | 'EXTEND_TERM' | 'ADMIN_PAUSE_COLLECTION' | 'ADMIN_RESUME_COLLECTION';
 export type BillingCollectionOperation = { id: string; companyId: string; action: BillingCollectionAction; state: string; version: number;
   previewHash: string; effectiveAt: string; nextRenewalTotalSatang: number; expiresAt: string; observedAt: string | null;
   errorCode: string | null; allowedActions: ('submit' | 'withdraw')[];
@@ -160,7 +162,7 @@ export type BillingCatalog = { schemaVersion: 1; mode: BillingMode | 'DISABLED';
   catalogRevision: string; generatedAt: string; validUntil: string; taxTreatment: BillingTaxTreatment | null; offers: BillingOffer[];
   trial: { tierKey: 'FREE_TRIAL_15'; days: 30; monthlySlipLimit: 15; branchLimit: 1; employeeLimit: 2; menus: 7 } };
 
-export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
+export type BillingOperationType = 'CHECK_PROVIDER_CONFIGURATION' | 'RECONCILE' | 'IMPORT_INVOICE' | 'RETRY_APPLY' | 'RETRY_NOTIFICATION' | 'RECONCILE_NOTIFICATION' | 'RETRY_PROVIDER_EVENT' | 'SET_ACTION_GATE' | 'PUBLISH_POLICY' | 'EXPIRE_CHECKOUT' | 'CHANGE_COLLECTION' | 'REFUND' | 'GRANT_FREE_DAYS' | 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE' | 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
 export type BillingOperationState = 'DRAFT' | 'PREVIEW' | 'AWAITING_APPROVAL' | 'SCHEDULED' | 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'UNKNOWN' | 'BLOCKED' | 'FAILED' | 'CANCELLED';
 export type BillingScope = { kind: 'COMPANY'; companyId: string; mode: BillingMode } | { kind: 'PLATFORM'; mode: BillingMode };
 export type BillingConfigurationCheckItem = { kind:'POLICY'|'ACCOUNT'|'PRICE'|'PREPAID_PRICE'|'PORTAL'|'TAX'; offerKey?:BillingOfferKey;
@@ -288,11 +290,13 @@ export type BillingReceiptAdjustments = {companyId:string;companyName:string;sou
   remaining:number|null;canCreate:boolean;blockedReason:string|null;readWarnings:BillingReceiptReadWarning[];items:BillingReceiptAdjustmentOperation[];nextCursor:string|null};
 
 export type BillingPlanAdjustmentUnchanged = {remainingReceipts:number;termEndsAt:string;nextChargeAt:string|null;ocrEnabled:boolean;ocrMonthlyLimit:number|null;aiBudgetSatang:number;aiUsedSatang:number};
-export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE';tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
+export type BillingPlanAdjustmentInput = {type:'GRANT_OVERRIDE'|'REVOKE_OVERRIDE'|'GRANT_FREE_DAYS'|'CHANGE_COLLECTION';collectionAction?:'PAUSE'|'RESUME';resumesAt?:string;days?:number;tierKey?:'STARTER_249'|'BASIC_499'|'PRO_999';
   branchLimit?:number;employeeLimit?:number;expiresAt?:string;overrideId?:string;sourceHash:string;reason:string};
 export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName:string;previewHash:string;before:CompanyPlanCapacity;after:CompanyPlanCapacity;
+  collectionChange?:{action:'PAUSE'|'RESUME';before:BillingCollectionPause|null;after:BillingCollectionPause|null;openInvoices:number;draftInvoices:number;outstandingSatang:number;paidThrough:string|null;graceEndsAt:string|null;cancelAtPeriodEnd:boolean};
+  dayExtension?:{days:number;before:string;after:string;nextChargeBefore:string|null;nextChargeAfter:string|null};
   overrideExpiresAt:string|null;activeBranches:number;activeMembers:number;requesterName:string|null;approverName:string|null;
   current:CompanyPlanCapacity|null;unchanged:BillingPlanAdjustmentUnchanged|null;allowedActions:('submit'|'approve'|'cancel')[]};
 export type BillingPlanAdjustments = {companyId:string;companyName:string;sourceHash:string;baseline:CompanyPlanCapacity|null;current:CompanyPlanCapacity|null;
-  activeBranches:number;activeMembers:number;maxExpiresAt:string|null;canCreate:boolean;blockedReason:string|null;
+  activeBranches:number;activeMembers:number;maxExpiresAt:string|null;canCreate:boolean;blockedReason:string|null;canManageCollection?:boolean;collectionPause?:BillingCollectionPause|null;
   unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};

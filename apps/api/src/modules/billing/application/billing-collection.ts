@@ -18,10 +18,10 @@ import { termProjectionHash } from '../domain/paid-invoice';
 type Proposed = { accountId: string; action: BillingCollectionAction; subscriptionId: string; paidThrough: string; sourceHash: string;
   snapshot: BillingSnapshot; method: 'POST' | 'DELETE'; path: string; params: Record<string, unknown>; sourceTermHash: string | null; change?: PlanChangeSource; originalScheduleId?: string | null };
 type Journal = { startedAt?: string; observed?: boolean; createStartedAt?: string; scheduleId?: string; updateStartedAt?: string; updateHash?: string; createdScheduleHash?: string };
-const TYPES = ['CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE'];
+const TYPES = ['GRANT_FREE_DAYS', 'CHANGE_COLLECTION', 'CUSTOMER_CANCEL_RENEWAL', 'CUSTOMER_RESUME_RENEWAL', 'CUSTOMER_SCHEDULE_DOWNGRADE', 'CUSTOMER_CANCEL_DOWNGRADE'];
 const changing = (action: BillingCollectionAction) => action === 'SCHEDULE_DOWNGRADE' || action === 'CANCEL_DOWNGRADE';
 const review = () => billingError('BILLING_COLLECTION_REVIEW', 'ข้อมูลการต่ออายุเปลี่ยน กรุณาตรวจสถานะเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิง');
-const sourceHash = (sub: StripeObject, schedule: StripeObject | null) => hashBilling([sub.id, sub.status, sub.cancel_at_period_end === true,
+export const collectionSourceHash = (sub: StripeObject, schedule: StripeObject | null) => hashBilling([sub.id, sub.status, sub.cancel_at_period_end === true,
   sub.billing_mode ?? null, sub.billing_cycle_anchor ?? null, sub.cancel_at ?? null, sub.pause_collection ?? null, sub.pending_update ?? null,
   sub.collection_method, sub.automatic_tax, sub.discounts, sub.default_tax_rates, sub.transfer_data, sub.application_fee_percent,
   sub.items?.data?.map((i: StripeObject) => [stripeId(i.price), i.quantity, i.current_period_start, i.current_period_end, taxes(i.tax_rates), i.discounts]),
@@ -37,6 +37,17 @@ export class BillingCollection {
     if (!company || (company.status !== 'ACTIVE' && !(company.status === 'DISABLED' && company.planTerm?.termDisabledAt))) throw review();
   }
   view(row: BillingOperation, userId: string): BillingCollectionOperation {
+    if (row.type === 'CHANGE_COLLECTION') {
+      const source=(row.proposedJson as unknown as {collectionChange:import('./billing-admin-collection').AdminCollectionSource}).collectionChange;
+      return {id:row.id,companyId:row.companyId!,action:source.action==='PAUSE'?'ADMIN_PAUSE_COLLECTION':'ADMIN_RESUME_COLLECTION',state:row.state,version:row.version,previewHash:row.requestHash,
+        effectiveAt:source.after?.resumesAt??row.createdAt.toISOString(),nextRenewalTotalSatang:0,expiresAt:row.expiresAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,errorCode:row.errorCode,allowedActions:[]};
+    }
+    if (row.type === 'GRANT_FREE_DAYS') {
+      const source = (row.proposedJson as unknown as { dayExtension: import('./billing-free-days').FreeDaySource }).dayExtension;
+      return { id: row.id, companyId: row.companyId!, action: 'EXTEND_TERM', state: row.state, version: row.version, previewHash: row.requestHash,
+        effectiveAt: source.after, nextRenewalTotalSatang: source.future.quote.totalSatang, expiresAt: row.expiresAt.toISOString(),
+        observedAt: row.observedAt?.toISOString() ?? null, errorCode: row.errorCode, allowedActions: [] };
+    }
     const p = row.proposedJson as unknown as Proposed, journal = row.resultJson as Journal | null;
     return { id: row.id, companyId: row.companyId!, action: p.action, state: row.state, version: row.version, previewHash: row.requestHash,
       effectiveAt: p.paidThrough, nextRenewalTotalSatang: p.snapshot.quote.totalSatang, expiresAt: row.expiresAt.toISOString(),
@@ -115,7 +126,7 @@ export class BillingCollection {
         sub.items.data[0].current_period_end !== target || (sub.cancel_at && sub.cancel_at !== target)) throw review();
       params = { cancel_at_period_end: action === 'CANCEL_RENEWAL', proration_behavior: 'none' };
     }
-    const proposed: Proposed = { accountId: account.id, action, subscriptionId: sub.id, paidThrough: account.paidThrough.toISOString(), sourceHash: sourceHash(sub, schedule),
+    const proposed: Proposed = { accountId: account.id, action, subscriptionId: sub.id, paidThrough: account.paidThrough.toISOString(), sourceHash: collectionSourceHash(sub, schedule),
       snapshot: JSON.parse(JSON.stringify(snapshot)), method, path, params, sourceTermHash: account.termProjectionHash,
       ...(change ? { change, originalScheduleId: schedule?.id ?? null } : {}) };
     const row = await this.prisma.client.billingOperation.create({ data: { stripeAccountId: account.stripeAccountId, livemode: account.livemode, companyId: account.companyId,
@@ -130,6 +141,7 @@ export class BillingCollection {
       await lockPlanTermCompany(tx, context.companyId); await this.billing.assertOwner(context, tx);
       await this.assertCompany(context.companyId, tx);
       const account = await this.billing.account(context.companyId, tx), current = await tx.billingOperation.findUniqueOrThrow({ where: { id } });
+      if (['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(current.type)) throw new BadRequestException();
       const replay = await tx.billingOperation.findUnique({ where: { stripeAccountId_livemode_idempotencyKey: { stripeAccountId: current.stripeAccountId, livemode: current.livemode, idempotencyKey: key } } });
       if (replay) { if (replay.id !== id || replay.requestHash !== previewHash || replay.initiatorUserId !== context.userId) throw review(); return replay; }
       const state = await this.billing.settings(tx);
@@ -153,6 +165,7 @@ export class BillingCollection {
     const row = await this.prisma.client.$transaction(async tx => {
       await lockPlanTermCompany(tx, context.companyId); await this.billing.assertOwner(context, tx);
       const current = await tx.billingOperation.findUniqueOrThrow({ where: { id } }), account = await this.billing.account(context.companyId, tx);
+      if (['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(current.type)) throw new BadRequestException();
       if (current.version !== expectedVersion || !['PREVIEW', 'QUEUED', 'BLOCKED'].includes(current.state) || (current.resultJson as Journal | null)?.startedAt ||
         (account?.leaseUntil && account.leaseUntil > new Date())) throw review();
       const changed = await tx.billingOperation.updateMany({ where: { id, state: current.state, version: expectedVersion }, data: { state: 'CANCELLED', version: { increment: 1 } } });
@@ -206,7 +219,7 @@ export class BillingCollection {
         const created = await this.stripe.request('POST', '/subscription_schedules', { from_subscription: proposed.subscriptionId }, `mm:collection:${row.id}:create`);
         if (created.object !== 'subscription_schedule' || created.livemode !== account.livemode || stripeId(created.customer) !== account.customerId ||
           stripeId(created.subscription) !== proposed.subscriptionId) throw review();
-        journal.scheduleId = created.id; journal.createdScheduleHash = sourceHash({ id: proposed.subscriptionId }, created);
+        journal.scheduleId = created.id; journal.createdScheduleHash = collectionSourceHash({ id: proposed.subscriptionId }, created);
         await this.prisma.client.$transaction(async tx => { await this.fence(tx, account, row, lease);
           await tx.billingOperation.update({ where: { id: row.id }, data: { resultJson: journal as Prisma.InputJsonValue } }); });
       };
@@ -214,9 +227,9 @@ export class BillingCollection {
       let { sub, schedule } = await this.provider(account);
       if (!this.observed(proposed, sub, schedule, row.id)) {
         if (journal.startedAt && (!Number.isFinite(Date.parse(journal.startedAt)) || Date.now() - Date.parse(journal.startedAt) >= 23 * 3600000)) throw review();
-        if (sourceHash(sub, journal.scheduleId && !proposed.originalScheduleId ? null : schedule) !== proposed.sourceHash ||
+        if (collectionSourceHash(sub, journal.scheduleId && !proposed.originalScheduleId ? null : schedule) !== proposed.sourceHash ||
           (journal.scheduleId && schedule?.id !== journal.scheduleId) || (journal.createdScheduleHash &&
-          sourceHash({ id: proposed.subscriptionId }, schedule) !== journal.createdScheduleHash)) throw review();
+          collectionSourceHash({ id: proposed.subscriptionId }, schedule) !== journal.createdScheduleHash)) throw review();
         if (proposed.action !== 'CANCEL_RENEWAL') await this.billing.assertTaxSettings(proposed.snapshot.policy);
         const startedAt = journal.startedAt ?? new Date().toISOString();
         await this.prisma.client.$transaction(async tx => {

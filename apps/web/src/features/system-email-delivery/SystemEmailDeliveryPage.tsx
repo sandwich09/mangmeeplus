@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import EmailHistoryPolicyPanel from './EmailHistoryPolicyPanel';
 import { EMAIL_DELIVERY_PURPOSES, type EmailDeliveryPurpose, type SystemEmailConnectionDto, type SystemEmailDeliveryDto } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { statusOf } from '@/common/i18n/error-message.logic';
@@ -78,6 +79,7 @@ export default function SystemEmailDeliveryPage() {
         <p>โควตาส่งและระยะเวลาเก็บเนื้อหาอีเมล ต้องตรวจจากบัญชี Postmark โดยตรง</p>
       </section>
     </>}
+    <EmailHistoryPolicyPanel key={reload}/>
     <section className={card} aria-label="ประวัติการส่งอีเมล"><h2 className="text-xl font-bold">ประวัติการส่ง</h2>
       <div className="flex flex-wrap gap-4"><div className="space-y-2"><label htmlFor="email-purpose">ประเภทอีเมล</label><select id="email-purpose" className="block max-w-full rounded-xl border p-3" value={purpose} disabled={loading} onChange={event => { setPurpose(event.target.value as EmailDeliveryPurpose | ''); setCursor(null); }}>
         <option value="">ทั้งหมด</option>{EMAIL_DELIVERY_PURPOSES.map(value => <option key={value} value={value}>{purposes[value]}</option>)}</select></div>

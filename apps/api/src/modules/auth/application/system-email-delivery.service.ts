@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { EMAIL_DELIVERY_PURPOSES, EMAIL_DELIVERY_STATES, type EmailDeliveryPurpose, type SystemEmailConnectionDto, type SystemEmailDeliveryDto } from '@watchdog-bms/contracts';
+import { EMAIL_DELIVERY_PURPOSES, EMAIL_DELIVERY_STATES, type EmailHistoryPolicyDto, type EmailHistoryPolicyInput, type EmailDeliveryPurpose, type SystemEmailConnectionDto, type SystemEmailDeliveryDto } from '@watchdog-bms/contracts';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
@@ -8,6 +8,7 @@ import { Prisma } from '../../../generated/prisma/client';
 import type { RequestContext } from '../domain/models/request-context.model';
 import { PostmarkClient } from '../infrastructure/postmark.client';
 import { POSTMARK_EVENT_TYPE } from './email-delivery.service';
+import { emailHistoryCandidates, emailHistoryScope } from './email-history-retention';
 
 const permission = 'system.email_delivery.read';
 const pendingStates = ['READY', 'SENDING', 'UNKNOWN', 'RETRY'];
@@ -16,6 +17,7 @@ const reviewWhere: Prisma.EmailSendAttemptWhereInput = { OR: [
   { status: { notIn: [...EMAIL_DELIVERY_STATES] } }, { status: 'RETRY', generation: { gte: 5 } },
 ] };
 export type EmailHistoryQuery = { cursor?: string; purpose?: EmailDeliveryPurpose; review?: '1' };
+const retentionScopeKey = (id: string) => createHash('sha256').update(id).digest('hex');
 const iso = (value: Date | null) => value?.toISOString() ?? null;
 
 @Injectable()
@@ -23,8 +25,8 @@ export class SystemEmailDeliveryService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService,
     private readonly postmark: PostmarkClient, private readonly limits: RedisRateLimitService) {}
 
-  private async authority(context: RequestContext): Promise<Set<string>> {
-    const member = await this.prisma.client.companyMembership.findFirst({ where: {
+  private async authority(context: RequestContext, db: Prisma.TransactionClient = this.prisma.client): Promise<Set<string>> {
+    const member = await db.companyMembership.findFirst({ where: {
       id: context.membershipId, userId: context.userId, companyId: context.companyId, status: 'ACTIVE',
     }, include: { user: { select: { status: true } }, company: { select: { status: true } },
       roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } } });
@@ -52,7 +54,7 @@ export class SystemEmailDeliveryService {
     if (!scope) { if (query.cursor) throw new BadRequestException(); await this.authority(context); return result; }
     const scopeHash = createHash('sha256').update(JSON.stringify(scope)).digest('hex');
     const binding = { scope: scopeHash, purpose: query.purpose ?? null, review: query.review ?? null };
-    const where: Prisma.EmailSendAttemptWhereInput = { ...scope, ...(query.purpose ? { purpose: query.purpose } : {}), ...(query.review ? reviewWhere : {}) };
+    const where: Prisma.EmailSendAttemptWhereInput = { ...scope, AND: [{ OR: [{ historyArchivedAt: null }, reviewWhere, { status: { in: pendingStates } }] }], ...(query.purpose ? { purpose: query.purpose } : {}), ...(query.review ? reviewWhere : {}) };
     let after: { id: string; createdAt: Date } | null = null;
     if (query.cursor !== undefined) {
       let cursor: { id: string; scope: string; purpose: string | null; review: string | null };
@@ -134,4 +136,55 @@ export class SystemEmailDeliveryService {
     const matched = facts?.server === 'MATCHED' && facts.stream === 'MATCHED' && facts.mode !== 'UNKNOWN' && facts.transactional === true && facts.archived === false;
     return { observedAt: new Date().toISOString(), status: !facts ? 'UNAVAILABLE' : matched ? 'MATCHED' : 'NEEDS_REVIEW', facts };
   }
+  async retention(context: RequestContext): Promise<EmailHistoryPolicyDto> {
+    const db = this.prisma.client;
+    await this.authority(context);
+    const scope = emailHistoryScope(this.config.postmarkServerId, this.config.postmarkMessageStream);
+    const policy = scope ? await db.emailHistoryPolicy.findUnique({ where: { id: scope.id } }) : null;
+    const days = policy?.retentionDays ?? 180;
+    const counts = scope ? await db.$queryRaw<Array<{ count: number }>>(Prisma.sql`SELECT count(*)::int AS count
+      FROM "EmailSendAttempt" a WHERE ${emailHistoryCandidates(scope, days, new Date())}`) : [];
+    const logs = scope ? await db.auditLog.findMany({ where: { action: 'email.history.policy.updated', targetType: 'EmailHistoryPolicy', targetId: scope.id },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 25, include: { actor: { select: { displayName: true } } } }) : [];
+    const current = await this.authority(context);
+    if (scope?.id !== emailHistoryScope(this.config.postmarkServerId, this.config.postmarkMessageStream)?.id) throw new HttpException('โหลดการตั้งค่าใหม่', 409);
+    return { configured: !!scope, canManage: !!scope && current.has('system.email_delivery.manage'), scopeKey: scope ? retentionScopeKey(scope.id) : null,
+      version: policy?.version ?? 0, retentionDays: days, enabled: policy?.enabled ?? false, eligibleCount: counts[0]?.count ?? 0,
+      lastCleanupAt: iso(policy?.lastCleanupAt ?? null), lastArchivedCount: policy?.lastArchivedCount ?? 0,
+      history: logs.map(log => { const value = log.metadataJson as unknown as { input: EmailHistoryPolicyInput; before: { enabled: boolean; retentionDays: number } };
+        return { id: log.id, createdAt: log.createdAt.toISOString(), actorName: log.actor?.displayName ?? null, reason: value.input.reason,
+          before: value.before, after: { enabled: value.input.enabled, retentionDays: value.input.retentionDays } }; }) };
+  }
+
+  async setRetention(context: RequestContext, input: EmailHistoryPolicyInput) {
+    if (!input || Object.keys(input).sort().join() !== 'commandId,enabled,reason,retentionDays,scopeKey,version' ||
+      !Number.isSafeInteger(input.version) || input.version < 0 || !Number.isSafeInteger(input.retentionDays) || input.retentionDays < 1 || input.retentionDays > 3650 ||
+      typeof input.enabled !== 'boolean' || typeof input.reason !== 'string' || !input.reason.trim() || input.reason.length > 500 ||
+      typeof input.scopeKey !== 'string' || typeof input.commandId !== 'string' || !/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(input.commandId)) throw new BadRequestException();
+    const normalized = { scopeKey: input.scopeKey, commandId: input.commandId, version: input.version,
+      enabled: input.enabled, retentionDays: input.retentionDays, reason: input.reason.trim() };
+    await this.prisma.client.$transaction(async tx => {
+      const scope = emailHistoryScope(this.config.postmarkServerId, this.config.postmarkMessageStream);
+      if (!scope || retentionScopeKey(scope.id) !== input.scopeKey) throw new HttpException('บัญชีส่งเมลเปลี่ยนแล้ว โหลดข้อมูลล่าสุด', 409);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${scope.id}, 0))`;
+      const permissions = await this.authority(context, tx);
+      if (!permissions.has('system.email_delivery.manage')) throw new ForbiddenException();
+      const old = await tx.emailHistoryPolicy.findUnique({ where: { id: scope.id } });
+      const replay = await tx.auditLog.findFirst({ where: { action: 'email.history.policy.updated', targetType: 'EmailHistoryPolicy', targetId: scope.id, requestId: input.commandId } });
+      if (replay) {
+        const previous = (replay.metadataJson as unknown as { input: EmailHistoryPolicyInput }).input;
+        if (replay.actorUserId !== context.userId || Object.keys(normalized).some(key => previous[key as keyof EmailHistoryPolicyInput] !== normalized[key as keyof EmailHistoryPolicyInput])) throw new HttpException('คำสั่งต่างจากรายการเดิม', 409);
+        return;
+      }
+      if ((old?.version ?? 0) !== input.version) throw new HttpException('มีผู้แก้ไขแล้ว โหลดข้อมูลล่าสุดและตรวจใหม่', 409);
+      if (scope.id !== emailHistoryScope(this.config.postmarkServerId, this.config.postmarkMessageStream)?.id) throw new HttpException('บัญชีส่งเมลเปลี่ยนแล้ว', 409);
+      await tx.emailHistoryPolicy.upsert({ where: { id: scope.id }, create: { ...scope, retentionDays: input.retentionDays, enabled: input.enabled, version: 1 },
+        update: { retentionDays: input.retentionDays, enabled: input.enabled, version: { increment: 1 } } });
+      await tx.auditLog.create({ data: { actorUserId: context.userId, action: 'email.history.policy.updated', targetType: 'EmailHistoryPolicy', targetId: scope.id,
+        requestId: input.commandId, result: 'SUCCESS', riskLevel: 'HIGH', metadataJson: { input: normalized,
+          before: { enabled: old?.enabled ?? false, retentionDays: old?.retentionDays ?? 180 } } } });
+    });
+    return this.retention(context);
+  }
+
 }

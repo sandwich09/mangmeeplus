@@ -59,8 +59,8 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
     if (sub) {
       if (form.has('pause_collection[behavior]')) {
         assert.equal(form.get('pause_collection[behavior]'), 'keep_as_draft');
-        sub.pause_collection = { behavior: 'keep_as_draft', resumes_at: null };
-        sub.metadata.mangmeeCollectionAttempt = form.get('metadata[mangmeeCollectionAttempt]'); step = 'hold';
+        sub.pause_collection = { behavior: 'keep_as_draft', resumes_at: form.has('pause_collection[resumes_at]')?Number(form.get('pause_collection[resumes_at]')):null };
+        if(form.has('metadata[mangmeeCollectionAttempt]'))sub.metadata.mangmeeCollectionAttempt = form.get('metadata[mangmeeCollectionAttempt]'); step = 'hold';
         if (raceOnHold) { raceOnHold = false; heldInvoice(); }
       } else if (form.has('cancel_at_period_end')) {
         assert.equal(form.get('proration_behavior'), 'none');
@@ -69,6 +69,7 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
         sub.metadata.mangmeeCollectionOperation = form.get('metadata[mangmeeCollectionOperation]'); step = 'collection';
       } else if (form.get('pause_collection') === '') { sub.pause_collection = null; step = 'resume'; }
       else throw new Error('Unexpected repeat subscription update');
+      if(form.has('metadata[mangmeeCollectionControl]'))sub.metadata.mangmeeCollectionControl=form.get('metadata[mangmeeCollectionControl]');
       result = sub;
     }
     if (path === '/checkout/sessions' && form.get('mode') === 'payment') {
@@ -116,8 +117,9 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
       const scheduledSub = provider.subscriptions!.find(s => s.id === schedule.subscription)!;
       scheduledSub.items.data[0].price = schedule.phases[0].items[0].price;
       scheduledSub.items.data[0].tax_rates = schedule.phases[0].items[0].tax_rates;
-      if (form.has('metadata[mangmeeCollectionOperation]')) {
+      if (form.has('metadata[mangmeeCollectionOperation]') || form.has('metadata[mangmeeFreeDaysOperation]')) {
         scheduledSub.cancel_at = schedule.end_behavior === 'cancel' ? schedule.phases.at(-1).end_date : null;
+        scheduledSub.cancel_at_period_end = false;
       }
       result = schedule; step = form.has('metadata[mangmeeCollectionOperation]') ? 'collection' : 'scheduleUpdate';
     }

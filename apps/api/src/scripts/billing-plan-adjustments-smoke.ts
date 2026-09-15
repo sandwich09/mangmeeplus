@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {checkBillingFreeDays} from './billing-free-days-smoke';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
 import {receiptQuotaSnapshot} from '../modules/line-ai/application/company-ocr-governance';
@@ -132,7 +133,8 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     const finalTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(termProjectionHash(finalTerm),termProjectionHash(baseline));
     assert.deepEqual(await db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),originalAccount);assert.deepEqual(await db.billingReceiptGrant.findUniqueOrThrow({where:{id:purchase.id}}),purchase);
     assert.equal(await db.billingInvoice.count({where:{billingAccountId:account.id}}),0);assert.equal(providerWrites,0);
-    cases.push('admin-paid-plan-preserves-paid-hash-dates-collection-receipts-and-fiscal-evidence');return cases;
+    cases.push('admin-paid-plan-preserves-paid-hash-dates-collection-receipts-and-fiscal-evidence');
+    cases.push(...await checkBillingFreeDays(input,companyId,account.id));return cases;
   }finally{
     input.transport();if(partnerRoleId){await db.membershipRole.deleteMany({where:{roleId:partnerRoleId}});await db.rolePermission.deleteMany({where:{roleId:partnerRoleId}});await db.role.deleteMany({where:{id:partnerRoleId}});}
     await db.packageChangeRequest.deleteMany({where:{companyId}});await db.companyPlanTerm.deleteMany({where:{companyId}});await db.billingReceiptGrant.deleteMany({where:{companyId}});await db.billingOperation.deleteMany({where:{companyId}});await db.auditLog.deleteMany({where:{companyId}});

@@ -57,9 +57,9 @@ export class BillingAdminService {
     const ids=[...new Set([row.assigneeUserId,row.backupUserId].filter((id):id is string=>Boolean(id)))];
     const users=ids.length?await tx.user.findMany({where:{id:{in:ids}},select:{id:true,displayName:true}}):[];
     const available=await issueOperators(tx,row,{ids});
-    const operation=row.kind==='CONTROL_OPERATION_REVIEW'?await tx.billingOperation.findFirst({where:{id:row.referenceId,companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode},select:{type:true}}):null;
+    const operation=['CONTROL_OPERATION_REVIEW','CUSTOMER_COLLECTION_REVIEW'].includes(row.kind)?await tx.billingOperation.findFirst({where:{id:row.referenceId,companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode},select:{type:true}}):null;
     const name=companyName===undefined&&row.companyId?(await tx.company.findUnique({where:{id:row.companyId},select:{name:true}}))?.name??null:companyName??null;
-    return {id:row.id,companyId:row.companyId,companyName:name,...row.kind==='CONTROL_OPERATION_REVIEW'?{operationType:operation?.type??null}:{},kind:row.kind,reference:row.referenceId,state:row.state,assigneeUserId:row.assigneeUserId,note:row.note,version:row.version,
+    return {id:row.id,companyId:row.companyId,companyName:name,...['CONTROL_OPERATION_REVIEW','CUSTOMER_COLLECTION_REVIEW'].includes(row.kind)?{operationType:operation?.type??null}:{},kind:row.kind,reference:row.referenceId,state:row.state,assigneeUserId:row.assigneeUserId,note:row.note,version:row.version,
       createdAt:row.createdAt.toISOString(),updatedAt:row.updatedAt.toISOString(),episode:row.episode,lastSeenAt:row.lastSeenAt.toISOString(),
       assigneeName:users.find(u=>u.id===row.assigneeUserId)?.displayName??row.assigneeUserId,assigneeAvailable:available.items.some(u=>u.id===row.assigneeUserId),
       backupUserId:row.backupUserId,backupName:users.find(u=>u.id===row.backupUserId)?.displayName??row.backupUserId,backupAvailable:available.items.some(u=>u.id===row.backupUserId),
