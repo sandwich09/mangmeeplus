@@ -1,6 +1,7 @@
 import type { SharedLineMessagingSettings } from '@watchdog-bms/contracts';
 import type {
   PartnerAiAdjustmentHistory,
+  PartnerPlanAdjustmentHistory,
   PaginatedPartnersDto,
   PartnerCompanyDetailDto,
   PartnerCompanyStatus,
@@ -351,4 +352,8 @@ export async function setPartnerVatRegistration(
     body: JSON.stringify({ ...dto, commandId: crypto.randomUUID() }),
     suppressErrorToast: true,
   });
+}
+
+export function getPartnerPlanAdjustments(companyId: string, cursor?: string): Promise<PartnerPlanAdjustmentHistory> {
+  return apiFetch(`/v1/system/partners/${companyId}/plan-term/history${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''}`, {suppressErrorToast:true});
 }

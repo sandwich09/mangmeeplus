@@ -9,6 +9,8 @@ import {
   applyPlanTermPreset,
 } from './company-plan-term.use-cases';
 import { DAY_MS, isPlanTierKey } from '../../domain/logic/plan-term.logic';
+import {planAdjustmentDetails} from '../partner-plan-adjustment-history';
+import { planTermSourceVersion } from '../plan-term-adjustment';
 import { RECORDED_SIGNUP_OFFER_KEYS } from '../../../external-signup/domain/company-signup.logic';
 
 const COMPANY = 'co-1';
@@ -38,7 +40,7 @@ function termRow(overrides: Record<string, unknown> = {}) {
 function makePrisma(opts: {
   term?: Record<string, unknown> | null;
   companyStatus?: string | null;
-  replayAudit?: boolean;
+  actorActive?: boolean;
 } = {}) {
   const audits: any[] = [];
   let upsertArgs: any = null;
@@ -47,6 +49,8 @@ function makePrisma(opts: {
 
   const client = {
     $queryRaw: async () => [],
+    branch: {count:async()=>1},
+    companyMembership: {count:async()=>2,findFirst:async()=>opts.actorActive===false?null:({id:'admin-membership'})},
     company: {
       findUnique: async () => (opts.companyStatus === null ? null : { id: COMPANY, status: opts.companyStatus ?? 'ACTIVE' }),
     },
@@ -69,7 +73,7 @@ function makePrisma(opts: {
     },
     auditLog: {
       create: async (args: any) => { audits.push(args.data); return args.data; },
-      findFirst: async () => (opts.replayAudit ? { id: 'audit-1', metadataJson: { days: 30 } } : null),
+      findFirst: async (args:any) => audits.find(a=>a.metadataJson.commandId===args.where.metadataJson.equals)??null,
     },
     $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(client),
   };
@@ -85,7 +89,9 @@ const makeLifecycle = () => {
 describe('GetCompanyPlanTermUseCase', () => {
   it('returns { term: null } for a grandfathered company instead of 404', async () => {
     const result = await new GetCompanyPlanTermUseCase(makePrisma({ term: null })).execute(COMPANY);
-    assert.deepEqual(result, { term: null });
+    assert.equal(result.term,null);
+    assert.equal(result.sourceVersion,planTermSourceVersion(COMPANY,null));
+    assert.equal(result.activeMembers,2);
   });
 
   it('computes derivedState and daysLeft on read', async () => {
@@ -99,7 +105,7 @@ describe('GetCompanyPlanTermUseCase', () => {
 describe('SetCompanyPlanTermUseCase', () => {
   const baseBody = { tierKey: 'BASIC_499' as const, branchLimit: 2, employeeLimit: 5, monthlySlipLimit: 50 };
   const cmd = (extra: Record<string, unknown> = {}) => ({
-    companyId: COMPANY, ...baseBody, requestingAdminUserId: 'admin-1', requestId: 'req-1', ...extra,
+    companyId: COMPANY, ...baseBody, requestingAdminUserId: 'admin-1', requestId: 'req-1', commandId:'manual-command-req-1',reason:'ตรวจร้านและปรับสิทธิ์',expectedVersion:planTermSourceVersion(COMPANY,null), ...extra,
   }) as any;
 
   it('404s on an unknown company', async () => {
@@ -121,7 +127,7 @@ describe('SetCompanyPlanTermUseCase', () => {
 
   it('creating computes termEndsAt as start plus exactly N x 24h, hour preserved', async () => {
     const prisma = makePrisma({ term: null });
-    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({ termStartAt: '2026-08-30T07:00:00.000Z', termDays: 30 }));
+    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({...({ termStartAt: '2026-08-30T07:00:00.000Z', termDays: 30 }),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const created = prisma.upsertArgs().create;
     assert.equal(created.termStartAt.toISOString(), '2026-08-30T07:00:00.000Z');
     assert.equal(created.termEndsAt.toISOString(), '2026-09-29T07:00:00.000Z');
@@ -131,7 +137,7 @@ describe('SetCompanyPlanTermUseCase', () => {
   it('creating defaults to 30 days from now when no dates are given', async () => {
     const prisma = makePrisma({ term: null });
     const before = Date.now();
-    await new SetCompanyPlanTermUseCase(prisma).execute(cmd());
+    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const created = prisma.upsertArgs().create;
     const span = created.termEndsAt.getTime() - created.termStartAt.getTime();
     assert.equal(span, 30 * DAY_MS);
@@ -140,7 +146,7 @@ describe('SetCompanyPlanTermUseCase', () => {
 
   it('updating limits NEVER moves the dates', async () => {
     const prisma = makePrisma({ term: termRow() });
-    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({ termStartAt: '2030-01-01T00:00:00.000Z', termDays: 999 }));
+    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({...({ termStartAt: '2030-01-01T00:00:00.000Z', termDays: 999 }),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const update = prisma.upsertArgs().update;
     assert.equal('termStartAt' in update, false);
     assert.equal('termEndsAt' in update, false);
@@ -149,7 +155,7 @@ describe('SetCompanyPlanTermUseCase', () => {
 
   it('audits CRITICAL with before/after values', async () => {
     const prisma = makePrisma({ term: termRow() });
-    await new SetCompanyPlanTermUseCase(prisma).execute(cmd());
+    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const audit = prisma.audits()[0];
     assert.equal(audit.action, 'system.company_plan_term.set');
     assert.equal(audit.riskLevel, 'CRITICAL');
@@ -162,7 +168,7 @@ describe('SetCompanyPlanTermUseCase', () => {
 
   it('records `from: null` when the row is created', async () => {
     const prisma = makePrisma({ term: null });
-    await new SetCompanyPlanTermUseCase(prisma).execute(cmd());
+    await new SetCompanyPlanTermUseCase(prisma).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.equal(prisma.audits()[0].metadataJson.created, true);
     assert.equal(prisma.audits()[0].metadataJson.from, null);
   });
@@ -202,7 +208,7 @@ describe('applyPlanTermPreset', () => {
 
 describe('RenewCompanyPlanTermUseCase', () => {
   const cmd = (extra: Record<string, unknown> = {}) => ({
-    companyId: COMPANY, requestingAdminUserId: 'admin-1', requestId: 'req-9', ...extra,
+    companyId: COMPANY, requestingAdminUserId: 'admin-1', requestId: 'req-9', commandId:'manual-command-req-9',reason:'ตรวจร้านและปรับสิทธิ์',expectedVersion:planTermSourceVersion(COMPANY,null), ...extra,
   }) as any;
 
   it('404s when there is no term to renew', async () => {
@@ -213,7 +219,7 @@ describe('RenewCompanyPlanTermUseCase', () => {
   it('BEFORE expiry: extends from the existing end date, not from now', async () => {
     const endsAt = new Date(Date.now() + 10 * DAY_MS);
     const prisma = makePrisma({ term: termRow({ termEndsAt: endsAt }) });
-    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({ days: 30 }));
+    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({...({ days: 30 }),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.equal(prisma.updateArgs().data.termEndsAt.getTime(), endsAt.getTime() + 30 * DAY_MS);
   });
 
@@ -221,7 +227,7 @@ describe('RenewCompanyPlanTermUseCase', () => {
     const endsAt = new Date(Date.now() - 10 * DAY_MS);
     const prisma = makePrisma({ term: termRow({ termEndsAt: endsAt }), companyStatus: 'ACTIVE' });
     const before = Date.now();
-    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({ days: 30 }));
+    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({...({ days: 30 }),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const next = prisma.updateArgs().data.termEndsAt.getTime();
     assert.ok(next >= before + 30 * DAY_MS, 'new end must be 30 days from now');
     assert.ok(next < before + 31 * DAY_MS);
@@ -233,7 +239,7 @@ describe('RenewCompanyPlanTermUseCase', () => {
       companyStatus: 'DISABLED',
     });
     const lifecycle = makeLifecycle();
-    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd());
+    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.equal(prisma.updateArgs().data.termDisabledAt, null);
     assert.equal(lifecycle.calls.length, 1);
     assert.equal(lifecycle.calls[0].targetStatus, 'ACTIVE');
@@ -246,7 +252,7 @@ describe('RenewCompanyPlanTermUseCase', () => {
       companyStatus: 'DISABLED',
     });
     const lifecycle = makeLifecycle();
-    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd());
+    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.ok(prisma.updateArgs().data.termEndsAt instanceof Date);
     assert.equal('termDisabledAt' in prisma.updateArgs().data, false);
     assert.equal(lifecycle.calls.length, 0, 'renew must never re-enable an admin-disabled company');
@@ -258,13 +264,13 @@ describe('RenewCompanyPlanTermUseCase', () => {
       companyStatus: 'SUSPENDED',
     });
     const lifecycle = makeLifecycle();
-    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd());
+    await new RenewCompanyPlanTermUseCase(prisma, lifecycle).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     assert.equal(lifecycle.calls.length, 0);
   });
 
   it('resets the whole ladder so the next term can warn again', async () => {
     const prisma = makePrisma({ term: termRow() });
-    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd());
+    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({...({}),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const data = prisma.updateArgs().data;
     assert.equal(data.warn7SentAt, null);
     assert.equal(data.warn3SentAt, null);
@@ -276,7 +282,7 @@ describe('RenewCompanyPlanTermUseCase', () => {
 
   it('audits CRITICAL with the date move and the renew count', async () => {
     const prisma = makePrisma({ term: termRow() });
-    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({ days: 14 }));
+    await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd({...({ days: 14 }),expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}));
     const audit = prisma.audits()[0];
     assert.equal(audit.action, 'system.company_plan_term.renew');
     assert.equal(audit.riskLevel, 'CRITICAL');
@@ -285,12 +291,15 @@ describe('RenewCompanyPlanTermUseCase', () => {
     assert.equal(audit.metadataJson.toRenewCount, 1);
   });
 
-  it('is idempotent on requestId: a replayed renew writes nothing', async () => {
-    const prisma = makePrisma({ term: termRow(), replayAudit: true });
-    const result = await new RenewCompanyPlanTermUseCase(prisma, makeLifecycle()).execute(cmd());
-    assert.equal(prisma.updateArgs(), null, 'no second month bought');
-    assert.equal(prisma.audits().length, 0);
-    assert.ok(result.term);
+  it('replays one actor/body/source-bound command across fresh HTTP request IDs', async () => {
+    const prisma=makePrisma({term:termRow()}),uc=new RenewCompanyPlanTermUseCase(prisma,makeLifecycle());
+    const original=cmd({expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())});
+    const first=await uc.execute(original),replayed=await uc.execute({...original,requestId:'another-http-request'});
+    assert.equal(replayed.replayed,true);assert.equal(replayed.term?.termEndsAt,first.term?.termEndsAt);assert.equal(prisma.audits().length,1);
+    for(const change of [{days:31},{reason:'อีกเหตุผล'},{requestingAdminUserId:'other-admin'},{expectedVersion:planTermSourceVersion(COMPANY,prisma.stored())}])
+      await assert.rejects(uc.execute({...original,...change}),(e:any)=>e.getResponse().code==='partner_plan_term_command_conflict');
+    await assert.rejects(uc.execute({...original,commandId:'another-command-001'}),(e:any)=>e.getResponse().code==='partner_plan_term_changed');
+    assert.equal(prisma.audits().length,1);
   });
 
   it('rejects a non-positive day count', async () => {
@@ -317,4 +326,17 @@ describe('GetPlanTermNoticeUseCase', () => {
     assert.equal(notice?.derivedState, 'EXPIRED');
     assert.equal(notice?.daysLeft, 0);
   });
+});
+
+it('withdrawn current operator cannot replay or create a renewal', async()=>{
+  const options={term:termRow(),actorActive:true},prisma=makePrisma(options),uc=new RenewCompanyPlanTermUseCase(prisma,makeLifecycle());
+  const cmd={companyId:COMPANY,requestingAdminUserId:'admin-1',requestId:'http-1',commandId:'manual-current-actor',expectedVersion:planTermSourceVersion(COMPANY,prisma.stored()),reason:'ทดสอบสิทธิ์ปัจจุบัน'};
+  await uc.execute(cmd);options.actorActive=false;
+  await assert.rejects(uc.execute(cmd),(e:any)=>e.getStatus()===403);assert.equal(prisma.audits().length,1);
+});
+it('manual history allowlists scalar changes and supports legacy renewal dates without exposing raw metadata',()=>{
+  const value=planAdjustmentDetails({source:'ADMIN_ADJUSTMENT',entryPoint:'LINE_PACKAGE_REQUEST',reason:'ตามคำขอร้าน',packageChangeRequestId:'line-request-1',password:'private',
+    from:{tierKey:'FREE_TRIAL_15',branchLimit:1},to:{tierKey:'STARTER_249',branchLimit:2,nativeToken:'private'}});
+  assert.equal(value.source,'LINE_PACKAGE_REQUEST');assert.equal(value.requestId,'line-request-1');assert.equal(value.changes.length,2);assert.doesNotMatch(JSON.stringify(value),/private|password|nativeToken/);
+  assert.deepEqual(planAdjustmentDetails({fromTermEndsAt:'2026-01-01',toTermEndsAt:'2026-02-01',reason:'x'.repeat(501)}).changes,[{field:'termEndsAt',before:'2026-01-01',after:'2026-02-01'}]);
 });

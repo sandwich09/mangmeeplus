@@ -30,6 +30,7 @@ import { PlanTermInternalController, PlanTermNoticeController } from './presenta
 import {
   EndPlanTermWarmupUseCase,
   GetCompanyPlanTermUseCase,
+  GetPartnerPlanAdjustmentHistoryUseCase,
   GetPlanTermNoticeUseCase,
   RenewCompanyPlanTermUseCase,
   SetCompanyPlanTermUseCase,
@@ -75,6 +76,7 @@ import { SystemPackageChangeController } from './presentation/http/system-packag
     PartnerMemberPasswordRevealUseCase,
     PartnerMemberLineLinkTokenUseCase,
     GetCompanyPlanTermUseCase,
+  GetPartnerPlanAdjustmentHistoryUseCase,
     SetCompanyPlanTermUseCase,
     RenewCompanyPlanTermUseCase,
     GetPlanTermNoticeUseCase,

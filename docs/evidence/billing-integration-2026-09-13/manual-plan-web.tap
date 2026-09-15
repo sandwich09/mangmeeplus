@@ -1,0 +1,601 @@
+TAP version 13
+# Subtest: billing rate limit displays only the bounded wait and preserves a route to retry
+ok 1 - billing rate limit displays only the bounded wait and preserves a route to retry
+  ---
+  duration_ms: 0.656792
+  type: 'test'
+  ...
+# Subtest: explains document VAT acceptance without suggesting a bypass of Tax Code rules
+ok 2 - explains document VAT acceptance without suggesting a bypass of Tax Code rules
+  ---
+  duration_ms: 0.192667
+  type: 'test'
+  ...
+# Subtest: explains stale draft removal without a misleading generic concurrency error
+ok 3 - explains stale draft removal without a misleading generic concurrency error
+  ---
+  duration_ms: 0.041291
+  type: 'test'
+  ...
+# Subtest: explains source-draft validation, completion, and item races in plain Thai
+ok 4 - explains source-draft validation, completion, and item races in plain Thai
+  ---
+  duration_ms: 0.121875
+  type: 'test'
+  ...
+# Subtest: distinguishes a wrong current password from an expired session
+ok 5 - distinguishes a wrong current password from an expired session
+  ---
+  duration_ms: 0.196333
+  type: 'test'
+  ...
+# Subtest: explains missing and invalid transaction source branches in plain Thai
+ok 6 - explains missing and invalid transaction source branches in plain Thai
+  ---
+  duration_ms: 0.029334
+  type: 'test'
+  ...
+# Subtest: explains only supplier source-number duplicates without relabeling unrelated conflicts
+ok 7 - explains only supplier source-number duplicates without relabeling unrelated conflicts
+  ---
+  duration_ms: 0.266917
+  type: 'test'
+  ...
+# Subtest: translates a known API sentence to Thai
+ok 8 - translates a known API sentence to Thai
+  ---
+  duration_ms: 0.030542
+  type: 'test'
+  ...
+# Subtest: explains duplicate category, branch validation, and quotation self-approval in context
+ok 9 - explains duplicate category, branch validation, and quotation self-approval in context
+  ---
+  duration_ms: 0.141542
+  type: 'test'
+  ...
+# Subtest: prefers the error code over the message
+ok 10 - prefers the error code over the message
+  ---
+  duration_ms: 0.201792
+  type: 'test'
+  ...
+# Subtest: matches a conflict code that carries its detail inline
+ok 11 - matches a conflict code that carries its detail inline
+  ---
+  duration_ms: 0.03675
+  type: 'test'
+  ...
+# Subtest: translates chart-template and posting-readiness failures
+ok 12 - translates chart-template and posting-readiness failures
+  ---
+  duration_ms: 0.043083
+  type: 'test'
+  ...
+# Subtest: translates partial-payment validation and settlement-route failures
+ok 13 - translates partial-payment validation and settlement-route failures
+  ---
+  duration_ms: 0.035084
+  type: 'test'
+  ...
+# Subtest: fails closed to the status copy for every unknown API message
+ok 14 - fails closed to the status copy for every unknown API message
+  ---
+  duration_ms: 0.046417
+  type: 'test'
+  ...
+# Subtest: hides the exact unknown-property validation diagnostic and retains no technical token
+ok 15 - hides the exact unknown-property validation diagnostic and retains no technical token
+  ---
+  duration_ms: 0.091416
+  type: 'test'
+  ...
+# Subtest: uses the validation fallback for a second unknown validation array from details
+ok 16 - uses the validation fallback for a second unknown validation array from details
+  ---
+  duration_ms: 0.057167
+  type: 'test'
+  ...
+# Subtest: supports statusCode and hides unknown 5xx diagnostics
+ok 17 - supports statusCode and hides unknown 5xx diagnostics
+  ---
+  duration_ms: 0.048083
+  type: 'test'
+  ...
+# Subtest: maps boundary-tagged network errors without guessing from TypeError
+ok 18 - maps boundary-tagged network errors without guessing from TypeError
+  ---
+  duration_ms: 0.07875
+  type: 'test'
+  ...
+# Subtest: maps malformed successful responses to safe server copy
+ok 19 - maps malformed successful responses to safe server copy
+  ---
+  duration_ms: 0.024875
+  type: 'test'
+  ...
+# Subtest: keeps reviewed local non-API validation copy unchanged
+ok 20 - keeps reviewed local non-API validation copy unchanged
+  ---
+  duration_ms: 0.174167
+  type: 'test'
+  ...
+# Subtest: unknown stable codes never reach the user as snake_case
+ok 21 - unknown stable codes never reach the user as snake_case
+  ---
+  duration_ms: 0.044541
+  type: 'test'
+  ...
+# Subtest: translates LINE signup recovery failures without exposing backend codes
+ok 22 - translates LINE signup recovery failures without exposing backend codes
+  ---
+  duration_ms: 0.164
+  type: 'test'
+  ...
+# Subtest: translates the document-number 409 family
+ok 23 - translates the document-number 409 family
+  ---
+  duration_ms: 0.018666
+  type: 'test'
+  ...
+# Subtest: renders parameterized sentences with the parameter kept visible
+ok 24 - renders parameterized sentences with the parameter kept visible
+  ---
+  duration_ms: 0.079125
+  type: 'test'
+  ...
+# Subtest: translates the substitute-receipt eligibility refusals
+ok 25 - translates the substitute-receipt eligibility refusals
+  ---
+  duration_ms: 0.081958
+  type: 'test'
+  ...
+# Subtest: maps substitute-receipt render limits to stable actionable Thai copy
+ok 26 - maps substitute-receipt render limits to stable actionable Thai copy
+  ---
+  duration_ms: 0.032458
+  type: 'test'
+  ...
+# Subtest: unknown input passes through
+ok 27 - unknown input passes through
+  ---
+  duration_ms: 0.032584
+  type: 'test'
+  ...
+# Subtest: maps feature entitlement absence to its own Thai sentence
+ok 28 - maps feature entitlement absence to its own Thai sentence
+  ---
+  duration_ms: 0.024042
+  type: 'test'
+  ...
+# Subtest: purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+ok 29 - purchased-but-temporarily-unavailable is a DISTINCT sentence, never "ไม่ได้ซื้อ"
+  ---
+  duration_ms: 0.034208
+  type: 'test'
+  ...
+# Subtest: maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+ok 30 - maps the bounded reimbursement upgrade refusal without telling users to re-enter data
+  ---
+  duration_ms: 0.033167
+  type: 'test'
+  ...
+# Subtest: maps a reimbursement edit/submit race to a reload-and-review instruction
+ok 31 - maps a reimbursement edit/submit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.022292
+  type: 'test'
+  ...
+# Subtest: maps an expense draft edit race to a reload-and-review instruction
+ok 32 - maps an expense draft edit race to a reload-and-review instruction
+  ---
+  duration_ms: 0.022
+  type: 'test'
+  ...
+# Subtest: maps an accounting document edit/issue race to a reload-and-review instruction
+ok 33 - maps an accounting document edit/issue race to a reload-and-review instruction
+  ---
+  duration_ms: 0.023875
+  type: 'test'
+  ...
+# Subtest: maps a conflicting quotation conversion to the persisted-target instruction
+ok 34 - maps a conflicting quotation conversion to the persisted-target instruction
+  ---
+  duration_ms: 0.024917
+  type: 'test'
+  ...
+# Subtest: explains the receipt-first order before voiding a received payment
+ok 35 - explains the receipt-first order before voiding a received payment
+  ---
+  duration_ms: 0.054083
+  type: 'test'
+  ...
+# Subtest: explains a changed CRM quotation retry without exposing an internal command code
+ok 36 - explains a changed CRM quotation retry without exposing an internal command code
+  ---
+  duration_ms: 0.021459
+  type: 'test'
+  ...
+# Subtest: maps the entitlement command conflicts and cascade preview
+ok 37 - maps the entitlement command conflicts and cascade preview
+  ---
+  duration_ms: 0.030084
+  type: 'test'
+  ...
+# Subtest: maps bounded report export failures to friendly Thai
+ok 38 - maps bounded report export failures to friendly Thai
+  ---
+  duration_ms: 0.030625
+  type: 'test'
+  ...
+# Subtest: maps AI needs-data and no-source safety refusals to actionable Thai
+ok 39 - maps AI needs-data and no-source safety refusals to actionable Thai
+  ---
+  duration_ms: 0.024042
+  type: 'test'
+  ...
+# Subtest: guides incomplete or stale evidence review back to the review action
+ok 40 - guides incomplete or stale evidence review back to the review action
+  ---
+  duration_ms: 0.051375
+  type: 'test'
+  ...
+# Subtest: preserves only known quota messages and translates positive plan limits
+ok 41 - preserves only known quota messages and translates positive plan limits
+  ---
+  duration_ms: 0.098125
+  type: 'test'
+  ...
+# Subtest: offer configuration bounds give specific Thai fields and preserve private diagnostics
+ok 42 - offer configuration bounds give specific Thai fields and preserve private diagnostics
+  ---
+  duration_ms: 0.044625
+  type: 'test'
+  ...
+# Subtest: buildMenuCards
+    # Subtest: keeps binding order and applies parent, child, default, and legacy inheritance
+    ok 1 - keeps binding order and applies parent, child, default, and legacy inheritance
+      ---
+      duration_ms: 0.870958
+      type: 'test'
+      ...
+    # Subtest: renders foundation cards as always on and attaches only owned submenu rows
+    ok 2 - renders foundation cards as always on and attaches only owned submenu rows
+      ---
+      duration_ms: 0.200542
+      type: 'test'
+      ...
+    # Subtest: uses the actual workspace route and mirrors the API fail-open for a zero-row company
+    ok 3 - uses the actual workspace route and mirrors the API fail-open for a zero-row company
+      ---
+      duration_ms: 1.933083
+      type: 'test'
+      ...
+    # Subtest: mirrors the API platform-baseline rule: absent row on, legacy explicit false still wins
+    ok 4 - mirrors the API platform-baseline rule: absent row on, legacy explicit false still wins
+      ---
+      duration_ms: 0.095875
+      type: 'test'
+      ...
+    1..4
+ok 43 - buildMenuCards
+  ---
+  duration_ms: 3.434334
+  type: 'suite'
+  ...
+# Subtest: toggleMenuCard
+    # Subtest: enables the parent and every owned entitlement
+    ok 1 - enables the parent and every owned entitlement
+      ---
+      duration_ms: 0.13275
+      type: 'test'
+      ...
+    # Subtest: disables a singleton parent but leaves a multi-key card parent and siblings alone
+    ok 2 - disables a singleton parent but leaves a multi-key card parent and siblings alone
+      ---
+      duration_ms: 0.1365
+      type: 'test'
+      ...
+    # Subtest: does nothing for a foundation card
+    ok 3 - does nothing for a foundation card
+      ---
+      duration_ms: 0.094542
+      type: 'test'
+      ...
+    # Subtest: preserves sparse inheritance so pending preview matches the post-save API state
+    ok 4 - preserves sparse inheritance so pending preview matches the post-save API state
+      ---
+      duration_ms: 0.325458
+      type: 'test'
+      ...
+    1..4
+ok 44 - toggleMenuCard
+  ---
+  duration_ms: 0.799375
+  type: 'suite'
+  ...
+# Subtest: toggleMenuGroup
+    # Subtest: composes card write rules and ignores foundation bindings
+    ok 1 - composes card write rules and ignores foundation bindings
+      ---
+      duration_ms: 0.235709
+      type: 'test'
+      ...
+    1..1
+ok 45 - toggleMenuGroup
+  ---
+  duration_ms: 0.324292
+  type: 'suite'
+  ...
+# Subtest: toggleSubmenu
+    # Subtest: changes only the requested latent child value
+    ok 1 - changes only the requested latent child value
+      ---
+      duration_ms: 0.133417
+      type: 'test'
+      ...
+    # Subtest: enables the parent when restoring a foundation submenu
+    ok 2 - enables the parent when restoring a foundation submenu
+      ---
+      duration_ms: 0.074375
+      type: 'test'
+      ...
+    1..2
+ok 46 - toggleSubmenu
+  ---
+  duration_ms: 0.236167
+  type: 'suite'
+  ...
+# Subtest: applyPreset
+    # Subtest: applies the exact starter contract set and always turns auto-post off
+    ok 1 - applies the exact starter contract set and always turns auto-post off
+      ---
+      duration_ms: 0.084208
+      type: 'test'
+      ...
+    # Subtest: applies the exact standard contract set and always turns auto-post off
+    ok 2 - applies the exact standard contract set and always turns auto-post off
+      ---
+      duration_ms: 0.038666
+      type: 'test'
+      ...
+    # Subtest: applies the exact full contract set and always turns auto-post off
+    ok 3 - applies the exact full contract set and always turns auto-post off
+      ---
+      duration_ms: 0.0445
+      type: 'test'
+      ...
+    1..3
+ok 47 - applyPreset
+  ---
+  duration_ms: 0.230333
+  type: 'suite'
+  ...
+# Subtest: diffEntitlements
+    # Subtest: reports every effective child restored by a parent with Thai labels
+    ok 1 - reports every effective child restored by a parent with Thai labels
+      ---
+      duration_ms: 0.097083
+      type: 'test'
+      ...
+    # Subtest: reports separate on and off lists
+    ok 2 - reports separate on and off lists
+      ---
+      duration_ms: 0.067041
+      type: 'test'
+      ...
+    # Subtest: materializes the fail-open snapshot on every first write from zero rows
+    ok 3 - materializes the fail-open snapshot on every first write from zero rows
+      ---
+      duration_ms: 0.164959
+      type: 'test'
+      ...
+    1..3
+ok 48 - diffEntitlements
+  ---
+  duration_ms: 0.355958
+  type: 'suite'
+  ...
+# Subtest: previewNavGroups
+    # Subtest: preserves sidebar group and card order with enabled state
+    ok 1 - preserves sidebar group and card order with enabled state
+      ---
+      duration_ms: 0.10475
+      type: 'test'
+      ...
+    1..1
+ok 49 - previewNavGroups
+  ---
+  duration_ms: 0.120167
+  type: 'suite'
+  ...
+# Subtest: filterMenuCards
+    # Subtest: matches Thai labels, route, and normalized internal keys
+    ok 1 - matches Thai labels, route, and normalized internal keys
+      ---
+      duration_ms: 0.447208
+      type: 'test'
+      ...
+    # Subtest: auto-expands a child-only match and returns all cards for a blank query
+    ok 2 - auto-expands a child-only match and returns all cards for a blank query
+      ---
+      duration_ms: 0.231958
+      type: 'test'
+      ...
+    1..2
+ok 50 - filterMenuCards
+  ---
+  duration_ms: 0.703125
+  type: 'suite'
+  ...
+# Subtest: dependencyBlockMessage
+    # Subtest: accepts a set that satisfies the contracts matrix
+    ok 1 - accepts a set that satisfies the contracts matrix
+      ---
+      duration_ms: 0.114625
+      type: 'test'
+      ...
+    # Subtest: blocks a child enabled without its prerequisite
+    ok 2 - blocks a child enabled without its prerequisite
+      ---
+      duration_ms: 0.091542
+      type: 'test'
+      ...
+    # Subtest: routes a parent disable under an active child to explicit cascade preview
+    ok 3 - routes a parent disable under an active child to explicit cascade preview
+      ---
+      duration_ms: 0.090958
+      type: 'test'
+      ...
+    1..3
+ok 51 - dependencyBlockMessage
+  ---
+  duration_ms: 0.323166
+  type: 'suite'
+  ...
+# Subtest: disableBlockForChange — directional readiness
+    # Subtest: blocks ON→OFF but leaves OFF→ON available
+    ok 1 - blocks ON→OFF but leaves OFF→ON available
+      ---
+      duration_ms: 0.182
+      type: 'test'
+      ...
+    # Subtest: lets an initially-OFF feature return to OFF after a temporary unsaved ON
+    ok 2 - lets an initially-OFF feature return to OFF after a temporary unsaved ON
+      ---
+      duration_ms: 0.079541
+      type: 'test'
+      ...
+    # Subtest: blocks a preset downgrade and checks every cascade-dependent key
+    ok 3 - blocks a preset downgrade and checks every cascade-dependent key
+      ---
+      duration_ms: 0.200875
+      type: 'test'
+      ...
+    # Subtest: fails closed when an older detail response has no readiness field
+    ok 4 - fails closed when an older detail response has no readiness field
+      ---
+      duration_ms: 0.08125
+      type: 'test'
+      ...
+    # Subtest: keeps zero-row legacy features on without suggesting reload will normalize them
+    ok 5 - keeps zero-row legacy features on without suggesting reload will normalize them
+      ---
+      duration_ms: 0.117042
+      type: 'test'
+      ...
+    1..5
+ok 52 - disableBlockForChange — directional readiness
+  ---
+  duration_ms: 0.701
+  type: 'suite'
+  ...
+# Subtest: feature package editing guidance
+    # Subtest: says neither direction is available while the existing controls are locked
+    ok 1 - says neither direction is available while the existing controls are locked
+      ---
+      duration_ms: 0.052
+      type: 'test'
+      ...
+    # Subtest: explains review and save when editable without promising every feature can change
+    ok 2 - explains review and save when editable without promising every feature can change
+      ---
+      duration_ms: 0.022
+      type: 'test'
+      ...
+    1..2
+ok 53 - feature package editing guidance
+  ---
+  duration_ms: 0.09475
+  type: 'suite'
+  ...
+# Subtest: entitlement command refusal copy (F1.5.1)
+    # Subtest: uses exactly the sentence the API error map renders for the pending code
+    ok 1 - uses exactly the sentence the API error map renders for the pending code
+      ---
+      duration_ms: 0.074084
+      type: 'test'
+      ...
+    # Subtest: adds "ยังไม่ได้ปิด" when the refused save was trying to turn something off
+    ok 2 - adds "ยังไม่ได้ปิด" when the refused save was trying to turn something off
+      ---
+      duration_ms: 0.035667
+      type: 'test'
+      ...
+    # Subtest: leaves a pure-enable failure alone — nothing was being turned off
+    ok 3 - leaves a pure-enable failure alone — nothing was being turned off
+      ---
+      duration_ms: 0.026084
+      type: 'test'
+      ...
+    # Subtest: never renders an empty toast
+    ok 4 - never renders an empty toast
+      ---
+      duration_ms: 0.021667
+      type: 'test'
+      ...
+    1..4
+ok 54 - entitlement command refusal copy (F1.5.1)
+  ---
+  duration_ms: 0.187166
+  type: 'suite'
+  ...
+# Subtest: ambiguous entitlement command failure
+    # Subtest: keeps the idempotency key for network, timeout, throttling and 5xx outcomes
+    ok 1 - keeps the idempotency key for network, timeout, throttling and 5xx outcomes
+      ---
+      duration_ms: 0.035833
+      type: 'test'
+      ...
+    # Subtest: treats explicit client refusals and conflicts as final
+    ok 2 - treats explicit client refusals and conflicts as final
+      ---
+      duration_ms: 0.021541
+      type: 'test'
+      ...
+    1..2
+ok 55 - ambiguous entitlement command failure
+  ---
+  duration_ms: 0.077583
+  type: 'suite'
+  ...
+# Subtest: isNormalizationPending — mixed-version default
+    # Subtest: treats an old API response with no field as pending, not as normalized
+    ok 1 - treats an old API response with no field as pending, not as normalized
+      ---
+      duration_ms: 0.034042
+      type: 'test'
+      ...
+    # Subtest: unlocks the switches only on an explicit false
+    ok 2 - unlocks the switches only on an explicit false
+      ---
+      duration_ms: 0.018375
+      type: 'test'
+      ...
+    1..2
+ok 56 - isNormalizationPending — mixed-version default
+  ---
+  duration_ms: 0.078792
+  type: 'suite'
+  ...
+# Subtest: refused save resets pending state
+    # Subtest: a reset back to the server rows leaves no pending change
+    ok 1 - a reset back to the server rows leaves no pending change
+      ---
+      duration_ms: 0.193709
+      type: 'test'
+      ...
+    1..1
+ok 57 - refused save resets pending state
+  ---
+  duration_ms: 0.2085
+  type: 'suite'
+  ...
+1..57
+# tests 81
+# suites 15
+# pass 81
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 243.937541

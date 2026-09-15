@@ -1,0 +1,105 @@
+{
+  "status": "LOCAL_MANUAL_PLAN_SLICE_PASS",
+  "recordedAt": "2026-09-15T07:33:16.292214+00:00",
+  "baseCommit": "6faa03da0e5e6989c4e229ad82d0c22b15971f16",
+  "sourceSha256": {
+    "packages/contracts/src/plan-term.ts": "29289e3d8656f27bdd6568579e3cbaabefcc8f71f165ac71afe0b92e04fa8800",
+    "apps/api/src/modules/system-partner-management/application/plan-term-adjustment.ts": "02c5c62c72ca4b2a474374033fc997ab1e7fc19f7560d99cf8cccbc1503903e1",
+    "apps/api/src/modules/system-partner-management/application/partner-plan-adjustment-history.ts": "8636961799e6a0faefd78f2518f91191232ecd27a92a2a7da63509a1ca80be75",
+    "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.ts": "5be56e90e7fdaa2361cd5f85a56241f9be5233646bf0c3d28be1707257f57c59",
+    "apps/api/src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.spec.ts": "5de12441dde957ba059a8ebe099ca9631dac3da5239c406b419287c3ef6010a2",
+    "apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.ts": "9c803b9f07900ddeb60d88d3562dc01de63b70ca379fe17c57df0b26fec9fc0c",
+    "apps/api/src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.spec.ts": "1568e25997bae415f0da03bfb522b23cb9d048700cc675d696ab3601d1ff9313",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner.controller.ts": "cfdbd91e91a1392db72cc93e9a27d20192945b3322e7176f6dc3fef452b05e08",
+    "apps/api/src/modules/system-partner-management/presentation/http/partner.controller.spec.ts": "d480bafedfa9689d42d827b7e684edaf050d5ecc53d316a3eb8d9e34c87dd8ac",
+    "apps/api/src/modules/system-partner-management/system-partner-management.module.ts": "08e9c5bc86ac69b8eb4dd3cf979af04394f1f0b9f60f2968a39f54f753501f22",
+    "apps/api/src/scripts/partner-plan-adjustments-smoke.ts": "59a0b9fb85bc3f6e30d4ec9da91cab19094aa57ddc40c74aa58309655fafe099",
+    "apps/api/src/scripts/billing-plan-adjustments-smoke.ts": "1c097da1acc0978688b07fac929a3da11dfc6dab395e233d998bd02a3801c654",
+    "apps/api/src/scripts/billing-configuration-smoke.ts": "960a2b40ec9be553e7b02fc562d13b919310ef0a275eca30a74a0353d2156c87",
+    "apps/api/src/scripts/billing-http-smoke.ts": "d022023791e42aca9457dc0c1c72a67f858341f4f0cfb11afc92797554f94673",
+    "apps/web/src/common/api/api-error-message.ts": "fd03d85f6ec443a88a95bc3c5604a335298912be2e355152de6bd1ae93d9f8e5",
+    "apps/web/src/features/system-partners/system-partners.api.ts": "e0ce2b406e4377dd55cdfe70b90a9bd9887b7e040f0acc36a04663a440f9862e",
+    "apps/web/src/features/system-partners/PartnerDetailPage.tsx": "4da3f60d1bf045bfd43dc37595a64f1f81fc2b5fc8f88ece110e83bf15cea7f9",
+    "apps/web/src/features/system-partners/PartnerPlanAdjustmentHistory.tsx": "f442dff8bdb926215993c03d9f338daa1b813d62b51637f6026c562c513265dc"
+  },
+  "focused": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "manual-plan-required-reason-command-and-explicit-absent-source-create-replay",
+      "manual-renew-concurrent-original-command-one-extension-fresh-http-correlation-and-actor-body-source-conflicts",
+      "manual-plan-current-source-cas-retains-resources-and-real-audit-failure-rolls-back-days",
+      "manual-line-request-term-and-both-audits-commit-together-or-rollback-open-concurrent-replay-once",
+      "manual-plan-original-line-request-provenance-shared-quota-and-concurrent-paid-conversion-refused",
+      "manual-plan-safe-history-25-row-pages-and-foreign-company-cursor-refusal",
+      "browser-manual-plan-immutable-response-loss-retry-once-reason-renew-history-reload-stale-recovery-and-mobile"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "paidRegression": {
+    "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+    "passed": [
+      "admin-paid-plan-legacy-partner-and-line-queue-use-reviewed-path-without-changing-purchased-term",
+      "admin-paid-plan-current-proof-independent-approval-replay-and-shared-web-line-projection",
+      "admin-paid-plan-replacement-reduction-revocation-preserves-existing-capacity-and-never-revives-old-gift",
+      "admin-paid-plan-expiry-seam-exposes-latest-paid-baseline-without-extending-gift",
+      "admin-paid-plan-stale-count-held-expired-review-cancel-and-company-cursor-boundaries",
+      "admin-paid-plan-final-requester-authority-and-atomic-audit-failure-rollback",
+      "admin-paid-plan-shared-company-lock-final-branch-slot-race",
+      "browser-admin-plan-impact-independent-approval-response-loss-history-reload-and-web-line-current-rights",
+      "admin-paid-plan-preserves-paid-hash-dates-collection-receipts-and-fiscal-evidence"
+    ],
+    "browserE2E": true,
+    "simulatedProviders": [
+      "Stripe",
+      "Postmark",
+      "LINE"
+    ],
+    "realProviderPayment": false
+  },
+  "checks": {
+    "unit": {
+      "pass": 63,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-plan-unit.tap"
+    },
+    "web": {
+      "pass": 81,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-plan-web.tap"
+    },
+    "catalog": {
+      "pass": 4,
+      "fail": 0,
+      "skip": 0,
+      "artifact": "manual-plan-catalog.tap"
+    }
+  },
+  "captures": [
+    "admin-manual-plan-history-mobile.png"
+  ],
+  "commands": [
+    "BILLING_CONFIG_ONLY=1 BILLING_MANUAL_PLAN_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "BILLING_CONFIG_ONLY=1 BILLING_PLAN_ADJUSTMENTS_ONLY=1 BILLING_BROWSER_E2E=1 node /tmp/mangmee-run-billing-smoke.mjs",
+    "API/web tsc --noEmit; contracts build; SWC build",
+    "corepack pnpm --dir apps/api exec tsx --tsconfig tsconfig.json --test src/modules/system-partner-management/application/use-cases/company-plan-term.use-cases.spec.ts src/modules/system-partner-management/application/use-cases/package-change-decision.use-case.spec.ts src/modules/system-partner-management/presentation/http/partner.controller.spec.ts",
+    "corepack pnpm --dir apps/web exec tsx --test src/features/system-partners/system-partners.logic.spec.ts src/common/api/api-error-message.spec.ts",
+    "node --test scripts/line-ai-whole-chain-acceptance-catalog.spec.mjs"
+  ],
+  "boundaries": [
+    "Actual HTTP/PostgreSQL/Next/Chromium; providers simulated. No real payment, mail, LINE delivery, CI, merge or deployment.",
+    "Manual commands use the same existing term/AuditLog and Company lock. New command IDs are separate from HTTP correlation, actor/action/reason/body/source-bound, and require current global authority. Exact replay returns current facts without a second mutation.",
+    "Renewal keeps existing max(now, end), warning reset and expiry-only reactivation. Set keeps existing dates. Paid free-day/collection coordination is still pending Owner policy and is not completed or accepted here.",
+    "Original manual LINE request, term and both audits now commit together. A real decision-audit failure rolls back to OPEN and prior term; concurrent replay grants once. Provider notification failure does not roll back a committed decision; no real delivery acceptance.",
+    "History uses company-bound25+1 keyset pagination and safe before/after fields. Browser set and renew both lose actual committed HTTP replies then retry the retained command once, show reasons/history, reload, recover from stale source and fit390px.",
+    "Paid direct setters still refuse; current paid capacity nine-group regression passed after the shared manual changes. Earlier full combined276 predates this slice and must not be represented as a new full combined run.",
+    "Manual/trial additive receipt grants, paid access-day coordination, paid LINE original-request closure, Admin AI support wording, remaining C08/mail/LINE acceptance and final green-CI develop/main merges in both repositories remain open. Counts overlap."
+  ]
+}

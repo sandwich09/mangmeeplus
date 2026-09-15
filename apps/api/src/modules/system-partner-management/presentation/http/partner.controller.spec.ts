@@ -48,7 +48,7 @@ function makeCtrl(overrides: Partial<ReturnType<typeof makeUCs>> = {}) {
     uc.setMemberContact,
     // VAT registration: delegated to the company's own service, not re-implemented here.
     { put: async () => ({ version: 1, resultKind: 'APPLIED', replayed: false }) } as any,
-    uc.getPlanTerm, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
+    uc.getPlanTerm, {execute:async()=>({items:[],nextCursor:null})} as any, uc.setPlanTerm, uc.renewPlanTerm, uc.endWarmup,
     uc.timeline, uc.lineMessage,
   );
 }

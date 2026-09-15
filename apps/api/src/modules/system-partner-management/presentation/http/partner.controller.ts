@@ -49,6 +49,7 @@ import { SetPartnerMemberContactUseCase } from '../../application/use-cases/set-
 import {
   EndPlanTermWarmupUseCase,
   GetCompanyPlanTermUseCase,
+  GetPartnerPlanAdjustmentHistoryUseCase,
   RenewCompanyPlanTermUseCase,
   SetCompanyPlanTermUseCase,
 } from '../../application/use-cases/company-plan-term.use-cases';
@@ -140,7 +141,13 @@ export class SetPartnerVatRegistrationBodyDto {
 // P29. `termStartAt`/`termDays` are honoured only when the row is created; the use-case is the
 // authority on that, this DTO only fences the shapes. Upper bounds keep a typo from writing a
 // 10-year term or a five-digit branch cap.
-export class SetPlanTermBodyDto {
+class PlanTermAdjustmentBodyDto {
+  @IsString() @IsNotEmpty() @MaxLength(120) commandId!: string;
+  @IsString() @IsNotEmpty() @MaxLength(64) expectedVersion!: string;
+  @IsString() @IsNotEmpty() @MaxLength(PARTNER_ADJUSTMENT_REASON_MAX_LENGTH) reason!: string;
+}
+
+export class SetPlanTermBodyDto extends PlanTermAdjustmentBodyDto {
   @IsIn(PLAN_TIER_KEYS) tierKey!: PlanTierKey;
   @IsInt() @Min(1) @Max(10_000) branchLimit!: number;
   @IsInt() @Min(1) @Max(10_000) employeeLimit!: number;
@@ -150,7 +157,7 @@ export class SetPlanTermBodyDto {
   @IsInt() @IsOptional() @Min(1) @Max(365) warningDays?: number;
 }
 
-export class RenewPlanTermBodyDto {
+export class RenewPlanTermBodyDto extends PlanTermAdjustmentBodyDto {
   @IsInt() @IsOptional() @Min(1) @Max(3_650) days?: number;
 }
 
@@ -184,6 +191,7 @@ export class PartnerController {
     private readonly setMemberContact: SetPartnerMemberContactUseCase,
     private readonly vatRegistration: CompanyVatRegistrationUseCase,
     private readonly getPlanTerm: GetCompanyPlanTermUseCase,
+    private readonly planAdjustmentHistory: GetPartnerPlanAdjustmentHistoryUseCase,
     private readonly setPlanTerm: SetCompanyPlanTermUseCase,
     private readonly renewPlanTerm: RenewCompanyPlanTermUseCase,
     private readonly endWarmup: EndPlanTermWarmupUseCase,
@@ -486,6 +494,12 @@ export class PartnerController {
     return this.getPlanTerm.execute(companyId);
   }
 
+  @Get(':partnerCompanyId/plan-term/history')
+  @RequirePermissions('system.partner_dashboard.read')
+  planTermHistory(@Param('partnerCompanyId') companyId: string, @Query('cursor') cursor?: string) {
+    return this.planAdjustmentHistory.execute(companyId, cursor);
+  }
+
   @Put(':partnerCompanyId/plan-term')
   @RequirePermissions('system.partner_company.update')
   @ApiOperation({ summary: 'Create or update plan limits and term (dates are set on create only)' })
@@ -518,7 +532,7 @@ export class PartnerController {
   ) {
     return this.renewPlanTerm.execute({
       companyId,
-      days: dto.days,
+      ...dto,
       requestingAdminUserId: req.context.userId,
       requestId: req.context.requestId,
     });

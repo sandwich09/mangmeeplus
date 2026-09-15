@@ -7,6 +7,9 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  partner_plan_term_changed: 'มีการเปลี่ยนแพ็กเกจหรือวันใช้งานแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',
+  partner_plan_term_command_required: 'โหลดข้อมูลแพ็กเกจล่าสุด แล้วตรวจสอบคำขอก่อนบันทึกอีกครั้ง',
+  partner_plan_term_command_conflict: 'คำขอนี้ไม่ตรงกับรายการเดิม โหลดข้อมูลและประวัติล่าสุดก่อนเริ่มรายการใหม่',
   paid_plan_review_required: 'แพ็กเกจนี้มีรายการชำระเงิน เปิดหน้าปรับแพ็กเกจชั่วคราวจากการชำระเงินของบริษัทเพื่อตรวจและอนุมัติ',
   partner_adjustment_reason_required: 'กรุณาระบุเหตุผลที่ปรับ ตั้งแต่ 1 ถึง 500 ตัวอักษร',
   partner_ai_previous_value_required: 'โหลดข้อมูล AI ล่าสุดก่อนตรวจสอบและบันทึกอีกครั้ง',

@@ -33,9 +33,18 @@ export type CompanyPlanTermDto = {
 };
 
 /** null = company has no term row (legacy/grandfathered — unlimited until admin sets one). */
-export type CompanyPlanTermViewDto = { term: CompanyPlanTermDto | null };
+export type CompanyPlanTermViewDto = { term: CompanyPlanTermDto | null; sourceVersion?: string; replayed?: boolean;
+  activeBranches?: number; activeMembers?: number };
 
-export type SetCompanyPlanTermBody = {
+export type PlanTermAdjustmentBody = { commandId: string; expectedVersion: string; reason: string };
+export type PartnerPlanAdjustmentField = 'tierKey' | 'branchLimit' | 'employeeLimit' | 'monthlySlipLimit' | 'warningDays' | 'termStartAt' | 'termEndsAt';
+export type PartnerPlanAdjustmentHistory = { items: Array<{ id: string; recordedAt: string; actorId: string | null;
+  actorName: string | null; kind: 'SET' | 'RENEW'; source: 'SYSTEM_PARTNER_ADMIN' | 'LINE_PACKAGE_REQUEST' | 'LEGACY_ADMIN';
+  reason: string | null; requestId: string | null;
+  changes: Array<{ field: PartnerPlanAdjustmentField; before: string | number | null; after: string | number | null }> }>;
+  nextCursor: string | null };
+
+export type SetCompanyPlanTermBody = PlanTermAdjustmentBody & {
   tierKey: PlanTierKey;
   branchLimit: number;
   employeeLimit: number;
@@ -46,7 +55,7 @@ export type SetCompanyPlanTermBody = {
   warningDays?: number;
 };
 
-export type RenewCompanyPlanTermBody = {
+export type RenewCompanyPlanTermBody = PlanTermAdjustmentBody & {
   /** Default 30. Extends from max(now, current termEndsAt). */
   days?: number;
 };

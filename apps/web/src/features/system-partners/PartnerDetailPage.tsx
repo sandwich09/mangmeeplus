@@ -8,6 +8,9 @@ import {
   PLAN_TIER_PRESETS,
   partnerAdjustmentReason,
   type CompanyPlanTermDto,
+  type CompanyPlanTermViewDto,
+  type SetCompanyPlanTermBody,
+  type RenewCompanyPlanTermBody,
   type FeaturePackagePresetKey,
   type MenuEntitlementBinding,
   type PartnerFeatureEntitlementDto,
@@ -26,6 +29,7 @@ import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
 import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
 import PartnerAiAdjustmentHistory from './PartnerAiAdjustmentHistory';
+import PartnerPlanAdjustmentHistory from './PartnerPlanAdjustmentHistory';
 import {
   getPartnerDetail,
   updatePartnerProfile,
@@ -1687,6 +1691,16 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 }) {
   // undefined = still loading; null = grandfathered company with no term row.
   const [term, setTerm] = useState<CompanyPlanTermDto | null | undefined>(undefined);
+  const [sourceVersion,setSourceVersion]=useState<string|null>(null);
+  const [reason,setReason]=useState('');
+  const [renewReason,setRenewReason]=useState('');
+  const [historyRevision,setHistoryRevision]=useState(0);
+  const [counts,setCounts]=useState({branches:0,members:0});
+  const [uncertain,setUncertain]=useState(false);
+  const pending=useRef<{kind:'set';body:SetCompanyPlanTermBody}|{kind:'renew';body:RenewCompanyPlanTermBody}|null>(null);
+  const generation=useRef(0);
+  const applyResult=(result:CompanyPlanTermViewDto)=>{setTerm(result.term);setSourceVersion(result.sourceVersion??null);
+    if(result.activeBranches!==undefined&&result.activeMembers!==undefined)setCounts({branches:result.activeBranches,members:result.activeMembers});};
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1703,19 +1717,25 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const [termDays, setTermDays] = useState('30');
 
   const load = async () => {
+    const token=++generation.current;
     setError(null);
     setTerm(undefined);
+    setSourceVersion(null);
     try {
-      setTerm((await getPartnerPlanTerm(companyId)).term);
+      const result=await getPartnerPlanTerm(companyId);if(token!==generation.current)return;
+      applyResult(result);
       setError(null);
     } catch (err) {
+      if(token!==generation.current)return;
       const e = err as Error & { status?: number };
       setError(e.status === 403 ? 'คุณไม่มีสิทธิ์ดูแพ็กเกจของบริษัทนี้' : apiErrorMessage(err));
     }
   };
 
   useEffect(() => {
+    pending.current=null;setUncertain(false);setEditing(false);setRenewOpen(false);
     void load();
+    return ()=>{generation.current++;};
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyTierPreset = (key: PlanTierKey) => {
@@ -1739,10 +1759,12 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       setWarningDays('7');
       setTermDays('30');
     }
+    setReason('');
     setEditing(true);
   };
 
   const handleSave = async () => {
+    if(pending.current){await sendPending();return;}
     const branch = parseLimitInput(branchLimit);
     const employee = parseLimitInput(employeeLimit);
     const slips = parseLimitInput(monthlySlipLimit);
@@ -1756,44 +1778,37 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
       showToast('จำนวนวันที่ใช้งานต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
       return;
     }
-    setSaving(true);
-    try {
-      const result = await setPartnerPlanTerm(companyId, {
-        tierKey,
-        branchLimit: branch,
-        employeeLimit: employee,
-        monthlySlipLimit: slips,
-        warningDays: warn,
-        // An existing row keeps its start date; termDays only applies to the first one (§4A).
-        ...(term ? {} : { termDays: days ?? undefined }),
-      });
-      setTerm(result.term);
-      setEditing(false);
-      showToast('บันทึกแพ็กเกจและอายุการใช้งานแล้ว', 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setSaving(false);
-    }
+    if(!sourceVersion||!partnerAdjustmentReason(reason)){showToast('กรุณาระบุเหตุผล และโหลดข้อมูลล่าสุดก่อนบันทึก','error');return;}
+    pending.current??={kind:'set',body:{commandId:crypto.randomUUID(),expectedVersion:sourceVersion,reason,
+      tierKey,branchLimit:branch,employeeLimit:employee,monthlySlipLimit:slips,warningDays:warn,
+      ...(term?{}:{termDays:days??undefined})}};
+    await sendPending();
   };
 
   const handleRenew = async () => {
-    const days = parseDaysInput(renewDays);
-    if (days === null) {
-      showToast('จำนวนวันที่ต่ออายุต้องเป็นจำนวนเต็มมากกว่า 0', 'error');
-      return;
-    }
-    setRenewing(true);
-    try {
-      const result = await renewPartnerPlanTerm(companyId, { days });
-      setTerm(result.term);
-      setRenewOpen(false);
-      showToast('ต่ออายุการใช้งานแล้ว', 'success');
-    } catch (err) {
-      showToast(apiErrorMessage(err), 'error');
-    } finally {
-      setRenewing(false);
-    }
+    if(pending.current){await sendPending();return;}
+    const days=parseDaysInput(renewDays);
+    if(days===null||!sourceVersion||!partnerAdjustmentReason(renewReason)){showToast('กรุณาระบุจำนวนวันและเหตุผลก่อนต่ออายุ','error');return;}
+    pending.current={kind:'renew',body:{commandId:crypto.randomUUID(),expectedVersion:sourceVersion,reason:renewReason,days}};
+    await sendPending();
+  };
+
+  const sendPending=async()=>{
+    const command=pending.current;if(!command||saving||renewing)return;
+    const token=generation.current;setSaving(command.kind==='set');setRenewing(command.kind==='renew');
+    try{
+      const result=command.kind==='set'?await setPartnerPlanTerm(companyId,command.body):await renewPartnerPlanTerm(companyId,command.body);
+      if(token!==generation.current)return;
+      applyResult(result);pending.current=null;setUncertain(false);setEditing(false);setRenewOpen(false);setHistoryRevision(n=>n+1);
+      showToast(result.replayed?'คำขอเดิมบันทึกแล้ว แสดงแพ็กเกจล่าสุดของร้าน':'บันทึกการปรับแพ็กเกจและวันใช้งานแล้ว','success');
+    }catch(err){
+      if(token!==generation.current)return;
+      const status=(err as {status?:number}).status;
+      if(isAmbiguousCommandFailure(status)){setUncertain(true);showToast('ยังยืนยันผลไม่ได้ กดลองคำขอเดิมได้ ระบบจะไม่เพิ่มวันซ้ำ','error');}
+      else{pending.current=null;setUncertain(false);showToast(apiErrorMessage(err),'error');
+        if(status===403){setTerm(undefined);setSourceVersion(null);setError('คุณไม่มีสิทธิ์แก้ไขแพ็กเกจของบริษัทนี้');setEditing(false);setRenewOpen(false);}
+        else if(status===409){setSaving(false);setRenewing(false);setEditing(false);setRenewOpen(false);await load();setHistoryRevision(n=>n+1);}}
+    }finally{if(token===generation.current){setSaving(false);setRenewing(false);}}
   };
 
   // P10-L §9 "ตรวจแล้ว". The warm-up bounds the damage of a shop nobody has looked at; once an
@@ -1801,7 +1816,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const handleEndWarmup = async () => {
     setEndingWarmup(true);
     try {
-      setTerm((await endPartnerPlanTermWarmup(companyId)).term);
+      await endPartnerPlanTermWarmup(companyId);
+      await load();
       showToast('ปลดโควตาอุ่นเครื่องแล้ว ร้านใช้เพดานของแพ็กเกจได้เต็มจำนวน', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -1816,7 +1832,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
   const warmupActive = Boolean(term?.warmupUntil && new Date(term.warmupUntil).getTime() > Date.now());
 
   return (
-    <SectionCard title="แพ็กเกจและอายุการใช้งาน">
+    <><SectionCard title="แพ็กเกจและอายุการใช้งาน">
+      {uncertain&&<div role="alert" className="rounded border border-amber-300 p-3 text-base"><p>ยังยืนยันผลคำขอเดิมไม่ได้ ตรวจคำขอเดิมก่อนเริ่มรายการใหม่</p><button type="button" className={`${btnPrimary} mt-2 min-h-11`} disabled={saving||renewing} onClick={()=>void sendPending()}>ตรวจและลองคำขอเดิม</button></div>}
       {error ? (
         <div className="space-y-3" role="alert">
           <p className="text-sm text-red-600">{error}</p>
@@ -1833,7 +1850,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <p className="text-sm text-gray-600">
                 ลูกค้าเดิม — ยังไม่กำหนดแพ็กเกจ/อายุการใช้งาน (ใช้ได้ไม่จำกัด)
               </p>
-              <button type="button" className={btnPrimary} onClick={startEditing} disabled={fieldsLocked}>
+              <button type="button" className={btnPrimary} onClick={startEditing} disabled={fieldsLocked||uncertain||!sourceVersion}>
                 ตั้งแพ็กเกจและอายุการใช้งาน
               </button>
             </div>
@@ -1874,7 +1891,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
 
               {!editing && (
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  {term.paidPlan ? <Link className={btnSecondary} href={`/system/billing/companies/${encodeURIComponent(companyId)}/plan-adjustments`}>ปรับแพ็กเกจชั่วคราวและดูประวัติ</Link> : <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked}>
+                  {term.paidPlan ? <Link className={btnSecondary} href={`/system/billing/companies/${encodeURIComponent(companyId)}/plan-adjustments`}>ปรับแพ็กเกจชั่วคราวและดูประวัติ</Link> : <button type="button" className={btnSecondary} onClick={startEditing} disabled={fieldsLocked||uncertain||!sourceVersion}>
                     แก้ไขแพ็กเกจ
                   </button>}
                   {/* Deliberately not gated by fieldsLocked: renewing a company the expiry sweep
@@ -1883,7 +1900,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                   <button
                     type="button"
                     className={btnPrimary}
-                    onClick={() => { setRenewDays('30'); setRenewOpen(true); }}
+                    disabled={uncertain||!sourceVersion}
+                    onClick={() => { setRenewDays('30'); setRenewReason(''); setRenewOpen(true); }}
                   >
                     ต่ออายุ
                   </button>
@@ -1899,7 +1917,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 <ThemedSelect
                   className={inputClass}
                   value={tierKey}
-                  disabled={saving}
+                  disabled={saving||uncertain}
                   onChange={(e) => applyTierPreset(e.target.value as PlanTierKey)}
                 >
                   {(Object.keys(PLAN_TIER_PRESETS) as PlanTierKey[]).map((key) => (
@@ -1913,36 +1931,37 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
                   <label htmlFor="plan-branchLimit" className="mb-1 block text-xs text-gray-500">จำนวนสาขา</label>
-                  <input id="plan-branchLimit" className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving}
+                  <input id="plan-branchLimit" className={inputClass} inputMode="numeric" value={branchLimit} disabled={saving||uncertain}
                     onChange={(e) => setBranchLimit(e.target.value)} />
                 </div>
                 <div>
                   <label htmlFor="plan-employeeLimit" className="mb-1 block text-xs text-gray-500">จำนวนพนักงาน</label>
-                  <input id="plan-employeeLimit" className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving}
+                  <input id="plan-employeeLimit" className={inputClass} inputMode="numeric" value={employeeLimit} disabled={saving||uncertain}
                     onChange={(e) => setEmployeeLimit(e.target.value)} />
                 </div>
                 <div>
                   <label htmlFor="plan-monthlySlipLimit" className="mb-1 block text-xs text-gray-500">สลิปต่อเดือน</label>
-                  <input id="plan-monthlySlipLimit" className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving}
+                  <input id="plan-monthlySlipLimit" className={inputClass} inputMode="numeric" value={monthlySlipLimit} disabled={saving||uncertain}
                     onChange={(e) => setMonthlySlipLimit(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="plan-warningDays" className="mb-1 block text-xs text-gray-500">แจ้งเตือนล่วงหน้า (วัน)</label>
-                  <input id="plan-warningDays" className={inputClass} inputMode="numeric" value={warningDays} disabled={saving}
+                  <input id="plan-warningDays" className={inputClass} inputMode="numeric" value={warningDays} disabled={saving||uncertain}
                     onChange={(e) => setWarningDays(e.target.value)} />
                 </div>
                 {!term && (
                   <div>
                     <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ใช้งาน</label>
-                    <input className={inputClass} inputMode="numeric" value={termDays} disabled={saving}
+                    <input className={inputClass} inputMode="numeric" value={termDays} disabled={saving||uncertain}
                       onChange={(e) => setTermDays(e.target.value)} />
                     <p className="mt-1 text-xs text-gray-500">นับจากเวลาที่บันทึก แก้ไขวันหมดอายุภายหลังได้ด้วยการต่ออายุ</p>
                   </div>
                 )}
               </div>
-              <div className="rounded border border-blue-200 bg-white p-3 text-sm" aria-live="polite">
+              <label className="block text-base">เหตุผลที่ปรับแพ็กเกจ<textarea aria-label="เหตุผลที่ปรับแพ็กเกจ" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={reason} disabled={saving||uncertain} onChange={e=>setReason(e.target.value)} /></label>
+              <div className="rounded border border-blue-200 bg-white p-3 text-base" aria-live="polite">
                 <p className="font-medium">การเปลี่ยนแปลง: ค่าเดิม → ค่าใหม่</p>
                 {[
                   ['แพ็กเกจโควตา', term ? PLAN_TIER_PRESETS[term.tierKey].labelTh : 'ยังไม่กำหนด', PLAN_TIER_PRESETS[tierKey].labelTh],
@@ -1953,13 +1972,13 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 ].filter(([, before, after]) => String(before) !== String(after)).map(([label, before, after]) => (
                   <p key={label}>{label}: {before} → {after || 'ยังไม่ได้กรอก'}</p>
                 ))}
-                <p className="mt-1 text-xs text-gray-500">สิทธิ์เมนูของบริษัทคงเดิม</p>
+                <p className="mt-2">ใช้อยู่ {counts.branches} สาขา · {counts.members} ผู้ใช้ รวมเจ้าของร้าน</p><p className="mt-1 text-gray-600">ข้อมูลและผู้ใช้เดิมยังอยู่ หากเกินจำนวนใหม่จะเพิ่มไม่ได้จนกว่าจะมีที่ว่าง สิทธิ์เมนูคงเดิม</p>
               </div>
               <div className="flex items-center gap-2">
                 <button type="button" className={btnPrimary} onClick={handleSave} disabled={saving}>
                   {saving ? 'กำลังบันทึก...' : 'บันทึก'}
                 </button>
-                <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving}>
+                <button type="button" className={btnSecondary} onClick={() => setEditing(false)} disabled={saving||uncertain}>
                   ยกเลิก
                 </button>
               </div>
@@ -1973,22 +1992,23 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
           open={renewOpen}
           title="ต่ออายุการใช้งาน"
           size="sm"
-          onClose={() => setRenewOpen(false)}
+          onClose={() => {if(!renewing)setRenewOpen(false);}}
           footer={(
             <>
               <button type="button" className={btnSecondary} onClick={() => setRenewOpen(false)} disabled={renewing}>
                 ยกเลิก
               </button>
               <button type="button" className={btnPrimary} onClick={handleRenew} disabled={renewing}>
-                {renewing ? 'กำลังต่ออายุ...' : 'ต่ออายุ'}
+                {renewing ? 'กำลังต่ออายุ...' : uncertain ? 'ตรวจและลองคำขอเดิม' : 'ต่ออายุ'}
               </button>
             </>
           )}
         >
           <div className="space-y-3">
+            {uncertain&&<p role="alert" className="rounded border border-amber-300 p-3 text-base">ยังยืนยันผลไม่ได้ กดลองคำขอเดิมได้ ระบบจะไม่เพิ่มวันซ้ำ</p>}
             <div>
-              <label className="mb-1 block text-xs text-gray-500">จำนวนวันที่ต่อ</label>
-              <input className={inputClass} inputMode="numeric" value={renewDays} disabled={renewing}
+              <label className="mb-1 block text-base text-gray-600">จำนวนวันที่ต่อ</label>
+              <input className={inputClass} inputMode="numeric" value={renewDays} disabled={renewing||uncertain}
                 onChange={(e) => setRenewDays(e.target.value)} />
             </div>
             <p className="text-sm text-gray-600">
@@ -1996,6 +2016,8 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
                 ? 'กรุณากรอกจำนวนวันเป็นจำนวนเต็มมากกว่า 0'
                 : `ครบกำหนด: ${formatDate(term.termEndsAt)} → ${formatDate(renewedEndsAt(term.termEndsAt, previewDays).toISOString())}`}
             </p>
+            <label className="block text-base">เหตุผลที่ต่ออายุ<textarea aria-label="เหตุผลที่ต่ออายุ" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={renewReason} disabled={renewing||uncertain} onChange={e=>setRenewReason(e.target.value)} /></label>
+            <p className="text-base text-gray-600">ต่ออายุการใช้งานโดยผู้ดูแล ไม่ใช่การซื้อแพ็กเกจ ไม่มีการเรียกเก็บเงินหรือเพิ่มใบเสร็จจากรายการนี้</p>
             {adminDisabled && (
               <div className="rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
                 บริษัทนี้ถูกปิดโดยแอดมิน การต่ออายุจะไม่เปิดใช้งานอัตโนมัติ
@@ -2005,6 +2027,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
         </Modal>
       )}
     </SectionCard>
+    <PartnerPlanAdjustmentHistory key={`${companyId}-${historyRevision}`} companyId={companyId} /></>
   );
 }
 

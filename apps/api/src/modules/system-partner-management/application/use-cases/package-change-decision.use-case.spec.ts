@@ -1,3 +1,4 @@
+import {planTermSourceVersion} from '../plan-term-adjustment';
 import { lineMessagingCredentialsFixture } from '../../../../common/config/line-messaging-credentials.fixture';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -51,7 +52,8 @@ function harness(options: {
 
   const prisma = {
     client: {
-      companyPlanTerm: {findUnique: async () => ({billingReceiptAccountId:options.paid?'paid-account':null})},
+      companyPlanTerm: {findUnique: async () => options.paid?{billingReceiptAccountId:'paid-account'}:null},
+      branch:{count:async()=>1},
       packageChangeRequest: {
         findUnique: async () => (current ? { ...current } : null),
         findMany: async () => options.rows ?? [],
@@ -67,6 +69,7 @@ function harness(options: {
       user: { findMany: async () => [{ id: 'owner-1', displayName: 'คุณนิด' }] },
       auditLog: { create: async (args: any) => { audits.push(args.data); return {}; } },
       companyMembership: {
+        count:async()=>1,findFirst:async()=>({id:'admin-membership'}),
         findMany: async () => (options.ownerLineUserIds ?? ['Uowner-1']).map(() => ({ userId: 'owner-1' })),
       },
       externalIdentity: {
@@ -74,6 +77,9 @@ function harness(options: {
       },
     },
   } as any;
+
+  prisma.client.$queryRaw=async()=>[];
+  prisma.client.$transaction=async(fn:any)=>{const before=current?{...current}:null,n=audits.length;try{return await fn(prisma.client);}catch(error){current=before;audits.splice(n);throw error;}};
 
   const setPlanTerm = {
     execute: async (cmd: any) => {
@@ -132,6 +138,7 @@ describe('POST /system/package-change-requests/:id/decision — APPROVE', () => 
     assert.equal(result.status, 'APPROVED');
     assert.equal(h.planTermCalls.length, 1, 'exactly one tier change');
     assert.deepEqual(h.planTermCalls[0], {
+      commandId:'line-package-pcr-1',expectedVersion:planTermSourceVersion('co-1',null),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:'pcr-1',
       companyId: 'co-1',
       tierKey: 'PRO_999',
       branchLimit: PLAN_TIER_PRESETS.PRO_999.branchLimit,

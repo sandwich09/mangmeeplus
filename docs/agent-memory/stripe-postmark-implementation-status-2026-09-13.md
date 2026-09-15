@@ -1,6 +1,6 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: IN PROGRESS. Temporary paid package/capacity now has focused9 and combined276 local HTTP/PostgreSQL/Next/Chromium groups PASS with simulated providers. See plan-adjustments-result.json for31 source hashes and exact boundaries. Admin manual/trial audit/replay, paid free-day collection coordination, original LINE request closure, remaining C08/mail/LINE acceptance and final green-CI develop/main merges in BOTH repositories remain owed. NO DEPLOY or intermediate CI/push. Counts overlap; no fresh completion percentage inferred.
+Status: IN PROGRESS. Manual Admin source/reason/history and lost-response replay now have7 real local browser/API/PostgreSQL groups and paid-capacity regression9 PASS; manual-plan-result.json binds18 sources. Earlier paid-capacity combined276 is a previous checkpoint. Paid access-day/collection coordination, additive manual receipts, original paid LINE request closure, remaining C08/AI/mail/LINE acceptance and final green-CI develop/main merges in BOTH repositories remain owed. NO DEPLOY or intermediate CI/push. Counts overlap; no fresh completion percentage inferred.
 Owner: Codex / repository owner.
 Scope: Stripe packages/Postmark/Admin C01–C08/web/LINE, simulated E2E, bug/gap/UX fixes, authorized green-CI merges.
 

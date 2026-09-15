@@ -6,6 +6,7 @@ import type {
   SetCompanyPlanTermBody,
 } from '@watchdog-bms/contracts';
 import { PLAN_TIER_PRESETS } from '@watchdog-bms/contracts';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import {
   DEFAULT_TERM_DAYS,
@@ -18,6 +19,9 @@ import {
 } from '../../domain/logic/plan-term.logic';
 import { PartnerLifecycleTransitionUseCase } from './partner-lifecycle-transition.use-case';
 import { lockPlanTermCompany } from '../lock-plan-term-company';
+import { checkPlanTermAdjustment, planTermSourceVersion } from '../plan-term-adjustment';
+import { PLATFORM_SEAT_EXEMPT_ROLE } from '../plan-term-limit';
+import { partnerPlanAdjustmentHistory } from '../partner-plan-adjustment-history';
 
 export const paidPlanReviewRequired = () => new ConflictException({code:'paid_plan_review_required', message:'แพ็กเกจนี้มีรายการชำระเงิน กรุณาใช้หน้าปรับแพ็กเกจชั่วคราวเพื่อตรวจและอนุมัติ'});
 export const PLAN_TERM_SET_ACTION = 'system.company_plan_term.set';
@@ -28,6 +32,7 @@ export const PLAN_TERM_WARMUP_END_ACTION = 'system.company_plan_term.warmup_ende
 export const COMPANY_TERM_EXPIRED_CODE = 'company_term_expired';
 
 const TERM_SELECT = {
+  updatedAt: true,
   capacityOverride: true,
   billingReceiptAccountId: true,
   companyId: true,
@@ -46,6 +51,12 @@ const TERM_SELECT = {
   warmupUntil: true,
   warmupSlipLimit: true,
 } as const;
+
+@Injectable()
+export class GetPartnerPlanAdjustmentHistoryUseCase {
+  constructor(private readonly prisma: PrismaService) {}
+  execute(companyId: string, cursor?: string) { return partnerPlanAdjustmentHistory(this.prisma.client, companyId, cursor); }
+}
 
 function positiveInt(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
@@ -71,11 +82,17 @@ export class GetCompanyPlanTermUseCase {
       select: TERM_SELECT,
     });
     // No row is a legitimate answer, not a 404: it is how a grandfathered company reads.
-    return { term: row ? toPlanTermDto(row as PlanTermRow, new Date()) : null };
+    const [activeBranches, activeMembers] = await Promise.all([
+      this.prisma.client.branch.count({where:{companyId,status:'ACTIVE'}}),
+      this.prisma.client.companyMembership.count({where:{companyId,status:'ACTIVE',roles:{none:{role:PLATFORM_SEAT_EXEMPT_ROLE}}}}),
+    ]);
+    return { term: row ? toPlanTermDto(row as PlanTermRow, new Date()) : null,
+      sourceVersion: planTermSourceVersion(companyId, row), activeBranches, activeMembers };
   }
 }
 
 export type SetCompanyPlanTermCommand = SetCompanyPlanTermBody & {
+  packageChangeRequestId?: string;
   companyId: string;
   requestingAdminUserId: string;
   requestId: string;
@@ -90,8 +107,8 @@ export class SetCompanyPlanTermUseCase {
    * warningDays afterwards must never silently move a customer's deadline (spec §4A). Moving it
    * deliberately is what renew is for.
    */
-  async execute(cmd: SetCompanyPlanTermCommand): Promise<CompanyPlanTermViewDto> {
-    return this.prisma.client.$transaction(async (tx) => {
+  async execute(cmd: SetCompanyPlanTermCommand, transaction?: Prisma.TransactionClient): Promise<CompanyPlanTermViewDto> {
+    const apply = async (tx: Prisma.TransactionClient): Promise<CompanyPlanTermViewDto> => {
       await lockPlanTermCompany(tx, cmd.companyId);
       const company = await tx.company.findUnique({
         where: { id: cmd.companyId },
@@ -113,6 +130,10 @@ export class SetCompanyPlanTermUseCase {
         select: TERM_SELECT,
       });
 
+      const adjustment = await checkPlanTermAdjustment(tx, cmd, PLAN_TERM_SET_ACTION,
+        [cmd.tierKey, branchLimit, employeeLimit, monthlySlipLimit, warningDays, cmd.termStartAt ?? null, cmd.termDays ?? null], existing);
+      if (adjustment.replayed) return { term: existing ? toPlanTermDto(existing as PlanTermRow, now) : null,
+        sourceVersion: planTermSourceVersion(cmd.companyId, existing), replayed: true };
       if (existing?.billingReceiptAccountId) throw paidPlanReviewRequired();
 
       const termStartAt = parseDate(cmd.termStartAt, 'termStartAt', now);
@@ -156,6 +177,7 @@ export class SetCompanyPlanTermUseCase {
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
           metadataJson: {
+            ...adjustment.audit,
             created: existing === null,
             from: existing ? auditValues(existing as PlanTermRow) : null,
             to: auditValues(saved as PlanTermRow),
@@ -163,8 +185,9 @@ export class SetCompanyPlanTermUseCase {
         },
       });
 
-      return { term: toPlanTermDto(saved as PlanTermRow, now) };
-    });
+      return { term: toPlanTermDto(saved as PlanTermRow, now), sourceVersion: planTermSourceVersion(cmd.companyId, saved) };
+    };
+    return transaction ? apply(transaction) : this.prisma.client.$transaction(apply);
   }
 }
 
@@ -228,22 +251,9 @@ export class RenewCompanyPlanTermUseCase {
       });
       if (!existing) throw new NotFoundException(`Company "${cmd.companyId}" has no plan term to renew.`);
 
-      // Idempotency on requestId, read from the audit trail the renew itself writes — a lost
-      // response retried with the same requestId must not buy a second month.
-      const replay = await tx.auditLog.findFirst({
-        where: {
-          requestId: cmd.requestId,
-          action: PLAN_TERM_RENEW_ACTION,
-          targetId: cmd.companyId,
-          result: 'SUCCESS',
-        },
-        select: { id: true, metadataJson: true },
-      });
-      if (replay) {
-        const metadata = replay.metadataJson as { days?: number } | null;
-        if (metadata?.days !== days) throw new ConflictException('Renewal requestId was already used with different days.');
-        return { term: toPlanTermDto(existing as PlanTermRow, now) };
-      }
+      const adjustment = await checkPlanTermAdjustment(tx, cmd, PLAN_TERM_RENEW_ACTION, [days], existing);
+      if (adjustment.replayed) return { term: toPlanTermDto(existing as PlanTermRow, now),
+        sourceVersion: planTermSourceVersion(cmd.companyId, existing), replayed: true };
 
       const company = await tx.company.findUnique({
         where: { id: cmd.companyId },
@@ -286,6 +296,9 @@ export class RenewCompanyPlanTermUseCase {
           result: 'SUCCESS',
           riskLevel: 'CRITICAL',
           metadataJson: {
+            ...adjustment.audit,
+            from: auditValues(existing as PlanTermRow),
+            to: auditValues(saved as PlanTermRow),
             days,
             fromTermEndsAt: existing.termEndsAt.toISOString(),
             toTermEndsAt: saved.termEndsAt.toISOString(),
@@ -308,7 +321,7 @@ export class RenewCompanyPlanTermUseCase {
         }, tx);
       }
 
-      return { term: toPlanTermDto(saved as PlanTermRow, now) };
+      return { term: toPlanTermDto(saved as PlanTermRow, now), sourceVersion: planTermSourceVersion(cmd.companyId, saved) };
     });
   }
 }

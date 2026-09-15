@@ -14,6 +14,8 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { LOGGER_TOKEN, type AppLogger } from '../../../../common/logger/logger.service';
 import { pushSystemLineMessage } from '../../../auth/infrastructure/system-line-push';
 import { checkShopMessage, shopMessageAllowedHosts } from '../../domain/logic/partner-line-message.logic';
+import { lockPlanTermCompany } from '../lock-plan-term-company';
+import { assertPlanTermAdjustmentActor, planTermSourceVersion } from '../plan-term-adjustment';
 import { SetCompanyPlanTermUseCase, paidPlanReviewRequired } from './company-plan-term.use-cases';
 
 export const PACKAGE_CHANGE_DECIDED_ACTION = 'signup.line.package_change_decided';
@@ -34,11 +36,9 @@ export function packageChangeRejectedMessageTh(note?: string): string {
 /**
  * P10-L §8, the admin half of the package-change queue.
  *
- * APPROVE is deliberately not its own tier writer: it CLAIMS the row and then calls the very
- * use-case `PUT /system/partners/:id/plan-term` calls, so a customer's limits still move in exactly
- * one place (H-01) with the same CRITICAL before/after audit row. The claim is a CAS on `OPEN`, so
- * two operators tapping the same row produce one tier change, not two — and a failure inside the
- * tier write puts the row back where the next operator can find it.
+ * APPROVE shares the plan-term writer and one Company-locked transaction with its request and
+ * audit. A failed write or process stop cannot leave an approved request without the actual term.
+ * Customer notification follows commit and never runs again for an already-decided request.
  */
 @Injectable()
 export class PackageChangeDecisionUseCase {
@@ -113,60 +113,33 @@ export class PackageChangeDecisionUseCase {
       if (term?.billingReceiptAccountId) throw paidPlanReviewRequired();
     }
 
-    // Claim first. The loser of a race sees a decided row above on its next read and changes nothing.
-    const claimed = await this.prisma.client.packageChangeRequest.updateMany({
-      where: { id, status: 'OPEN' },
-      data: { status: target, decidedByUserId: adminUserId, decidedAt: new Date() },
-    });
-    if (claimed.count !== 1) {
-      const current = await this.prisma.client.packageChangeRequest.findUnique({ where: { id } });
-      return { id, status: (current?.status ?? 'OPEN') as PackageChangeRequestStatus };
-    }
-
-    if (body.action === 'APPROVE') {
-      const preset = PLAN_TIER_PRESETS[row.requestedTierKey as PlanTierKey];
-      try {
-        await this.setPlanTerm.execute({
-          companyId: row.companyId,
-          tierKey: row.requestedTierKey as PlanTierKey,
-          branchLimit: preset.branchLimit,
-          employeeLimit: preset.employeeLimit,
-          monthlySlipLimit: preset.monthlySlipLimit,
-          requestingAdminUserId: adminUserId,
-          requestId,
-        });
-      } catch (error) {
-        // The tier did not move, so the row must not claim it did — put it back in the queue.
-        await this.prisma.client.packageChangeRequest.updateMany({
-          where: { id, status: 'APPROVED' },
-          data: { status: 'OPEN', decidedByUserId: null, decidedAt: null },
-        });
-        throw error;
+    const decision = await this.prisma.client.$transaction(async tx => {
+      await lockPlanTermCompany(tx, row.companyId);
+      await assertPlanTermAdjustmentActor(tx,adminUserId);
+      const current = await tx.packageChangeRequest.findUnique({where:{id}});
+      if(!current)throw new NotFoundException('package_change_request_not_found');
+      if(current.status!=='OPEN')return {status:current.status as PackageChangeRequestStatus,changed:false};
+      const term=await tx.companyPlanTerm.findUnique({where:{companyId:row.companyId}});
+      if(body.action==='APPROVE'&&term?.billingReceiptAccountId)throw paidPlanReviewRequired();
+      const claimed=await tx.packageChangeRequest.updateMany({where:{id,status:'OPEN'},data:{status:target,decidedByUserId:adminUserId,decidedAt:new Date()}});
+      if(claimed.count!==1){const latest=await tx.packageChangeRequest.findUnique({where:{id}});return {status:(latest?.status??'OPEN') as PackageChangeRequestStatus,changed:false};}
+      if(body.action==='APPROVE'){
+        const preset=PLAN_TIER_PRESETS[current.requestedTierKey as PlanTierKey];
+        if(!preset)throw new UnprocessableEntityException('Unknown plan tier');
+        await this.setPlanTerm.execute({companyId:row.companyId,commandId:`line-package-${id}`,
+          expectedVersion:planTermSourceVersion(row.companyId,term),reason:'อนุมัติคำขอเปลี่ยนแพ็กเกจจาก LINE',packageChangeRequestId:id,
+          tierKey:current.requestedTierKey as PlanTierKey,branchLimit:preset.branchLimit,employeeLimit:preset.employeeLimit,
+          monthlySlipLimit:preset.monthlySlipLimit,requestingAdminUserId:adminUserId,requestId},tx);
       }
-    }
-
-    await this.prisma.client.auditLog.create({
-      data: {
-        companyId: row.companyId,
-        actorUserId: adminUserId,
-        action: PACKAGE_CHANGE_DECIDED_ACTION,
-        targetType: 'package_change_request',
-        targetId: id,
-        requestId,
-        result: 'SUCCESS',
-        riskLevel: 'HIGH',
-        metadataJson: {
-          // The paragraph IS the evidence, exactly as it is for the message box: an operator
-          // speaking to a customer as the platform leaves behind what they actually said.
-          action: body.action,
-          requestedTierKey: row.requestedTierKey,
-          ...(note ? { note } : {}),
-        },
-      },
+      await tx.auditLog.create({data:{companyId:row.companyId,actorUserId:adminUserId,action:PACKAGE_CHANGE_DECIDED_ACTION,
+        targetType:'package_change_request',targetId:id,requestId,result:'SUCCESS',riskLevel:'HIGH',
+        metadataJson:{action:body.action,requestedTierKey:current.requestedTierKey,...note?{note}:{}}}});
+      return {status:target,changed:true};
     });
+    if(!decision.changed)return {id,status:decision.status};
 
     await this.notifyShop(row.companyId, body, row.requestedTierKey, note);
-    return { id, status: target };
+    return { id, status: decision.status };
   }
 
   /**
