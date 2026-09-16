@@ -4,7 +4,9 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { openSync, closeSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { chromium } from '@playwright/test';
+import { chromium, type Page } from '@playwright/test';
+import assert from 'node:assert/strict';
+import type { BillingConfigurationOperation } from '@watchdog-bms/contracts';
 
 export async function startBillingBrowser(input: { apiOrigin: string; token: string; companyId: string }) {
   const root = process.cwd(), evidenceDir = resolve(process.env.BILLING_BROWSER_EVIDENCE_DIR ?? `/tmp/mangmee-billing-browser-evidence-${process.pid}`);
@@ -50,4 +52,27 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
     await page.goto(`${origin}/companies/${input.companyId}/billing?channel=line`, { waitUntil: 'domcontentloaded' });
     return { page, origin, evidenceDir, close: async () => { try{await browser?.close();}finally{await stop();} } };
   } catch (error) { try{await browser?.close();}finally{await stop();} throw error; }
+}
+
+export async function selectBillingOption(page: Page, label: string, option: string) {
+  await page.getByRole('combobox', { name: label, exact: true }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
+
+export async function clickBillingConfiguration(page: Page, label: string) {
+  const pending = page.waitForResponse(response => response.request().method() === 'POST'
+    && /\/system\/billing\/configuration-(drafts|changes)(\/|$)/.test(new URL(response.url()).pathname));
+  await page.getByRole('button', { name: label, exact: true }).click();
+  const response = await pending;
+  assert.ok(response.ok(), `configuration action returned ${response.status()}`);
+  return await response.json() as BillingConfigurationOperation;
+}
+
+export async function confirmBillingPassword(page: Page, password: string) {
+  const input = page.getByLabel('รหัสผ่านปัจจุบัน', { exact: true });
+  if (await input.isVisible()) {
+    await input.fill(password);
+    await page.getByRole('button', { name: 'ยืนยันรหัสผ่าน', exact: true }).click();
+    await page.getByRole('status').filter({ hasText: 'ยืนยันตัวตนแล้ว' }).waitFor();
+  }
 }

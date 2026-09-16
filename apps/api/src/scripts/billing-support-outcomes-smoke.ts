@@ -59,6 +59,7 @@ export async function checkBillingSupportOutcomes(input:{prisma:PrismaService;us
     assert.equal((await get(revoked.id)).body.canSubmit,false);assert.equal((await submit(revoked)).status,403);
     await db.rolePermission.create({data:{roleId,permissionId:manage.id}});
     const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`,{waitUntil:'domcontentloaded'});
+    await page.getByText('ประวัติการติดต่อและบันทึกเพิ่มเติม',{exact:true}).click();
     const panel=page.getByRole('region',{name:'ผลการติดต่อของเคส',exact:true});await panel.getByRole('button',{name:'ตรวจบันทึกก่อนยืนยัน',exact:true}).waitFor();
     await page.goto(`${browser.origin}/system/billing/issues/${issue.id}?outcome=${expired.id}`,{waitUntil:'domcontentloaded'});
     await panel.getByRole('button',{name:'นำข้อความมาตรวจใหม่',exact:true}).click();
@@ -69,8 +70,8 @@ export async function checkBillingSupportOutcomes(input:{prisma:PrismaService;us
     await expect(panel.getByRole('article',{name:'บันทึกผลติดต่อที่เลือก'}).getByRole('status')).toHaveText('ยกเลิกฉบับตรวจสอบแล้ว');
     assert.equal((await get(expired.id)).body.state,'PREVIEW');assert.equal((await get(copied)).body.state,'CANCELLED');
     await page.goto(`${browser.origin}/system/billing/issues/${issue.id}?outcome=${otherRecord.id}`,{waitUntil:'domcontentloaded'});
-    await panel.getByRole('alert').waitFor();await panel.getByRole('link',{name:'กลับไปประวัติของเคส',exact:true}).click();
-    await page.waitForURL(`**/system/billing/issues/${issue.id}`);await panel.getByRole('button',{name:'ตรวจบันทึกก่อนยืนยัน',exact:true}).waitFor();
+    await panel.getByRole('alert').waitFor();await panel.getByRole('button',{name:'กลับไปประวัติของเคส',exact:true}).click();
+    await page.waitForURL(`**/system/billing/issues/${issue.id}`);await page.getByText('ประวัติการติดต่อและบันทึกเพิ่มเติม',{exact:true}).click();await panel.getByRole('button',{name:'ตรวจบันทึกก่อนยืนยัน',exact:true}).waitFor();
     cases.push('browser-support-expired-preview-copy-retains-notes-fresh-review-cancel-and-unreadable-reference-return');
     await panel.getByLabel('รายละเอียดผลติดต่อ',{exact:true}).fill('รอผลตรวจจากผู้ให้บริการ ไม่ให้ลูกค้าจ่ายซ้ำ');
     await panel.getByRole('button',{name:'ตรวจบันทึกก่อนยืนยัน',exact:true}).click();await page.waitForURL('**?outcome=*');
@@ -80,7 +81,6 @@ export async function checkBillingSupportOutcomes(input:{prisma:PrismaService;us
     });
     await panel.getByRole('button',{name:'ยืนยันบันทึกผลติดต่อ',exact:true}).click();await panel.getByRole('alert').waitFor();
     assert.equal((await get(selected)).body.state,'SUCCEEDED');
-    await panel.getByRole('button',{name:'ยืนยันบันทึกผลติดต่อ',exact:true}).click();
     await expect(panel.getByRole('article',{name:'บันทึกผลติดต่อที่เลือก'}).getByRole('status')).toHaveText('บันทึกผลติดต่อแล้ว');
     await page.reload({waitUntil:'domcontentloaded'});await expect(panel.getByRole('article',{name:'บันทึกผลติดต่อที่เลือก'}).getByRole('status')).toHaveText('บันทึกผลติดต่อแล้ว');
     assert.equal(await db.auditLog.count({where:{targetId:issue.id,action:'billing.support_outcome.recorded'}}),2);
@@ -88,8 +88,8 @@ export async function checkBillingSupportOutcomes(input:{prisma:PrismaService;us
     assert.equal(timeline.body.items.find((row:{reference:string;href:string|null})=>row.reference===`OPERATION:${selected}`)?.href,`/system/billing/issues/${issue.id}?outcome=${selected}`);
     await page.screenshot({path:`${browser.evidenceDir}/admin-support-outcome-mobile.png`,fullPage:true});
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
-    await panel.getByRole('link',{name:'กลับไปเคสเดิม',exact:true}).click();await page.waitForURL(`**/system/billing/issues/${issue.id}`);
-    await page.getByRole('link',{name:'กลับไปบริษัทนี้',exact:true}).click();await page.waitForURL(`**/system/billing/companies/${companyId}`);
+    await panel.getByRole('button',{name:'ปิดบันทึกที่เลือก',exact:true}).click();await page.waitForURL(`**/system/billing/issues/${issue.id}`);
+    await page.getByRole('link',{name:'ดูข้อมูลและสิทธิ์ของบริษัท',exact:true}).click();await page.waitForURL(`**/system/billing/companies/${companyId}`);
     cases.push('browser-support-preview-confirm-committed-response-loss-original-retry-reload-mobile-case-company-return');
     assert.deepEqual(await db.companyPlanTerm.findUnique({where:{companyId}}),term);
     const accounts=await db.billingAccount.findMany({where:{companyId},select:{id:true}});

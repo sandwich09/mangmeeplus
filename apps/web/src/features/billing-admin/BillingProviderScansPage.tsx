@@ -4,7 +4,7 @@ import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import Link from 'next/link';
 import {BillingInvoiceFindings} from './BillingInvoiceFindings';
 import { BillingScanSchedulePanel } from './BillingScanSchedulePanel';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import type { BillingProviderScanView } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
@@ -15,7 +15,7 @@ const localTime=(ms:number)=>{const date=new Date(ms);return new Date(ms-date.ge
 const state=(value:string)=>({QUEUED:'รอตรวจต่อ',RUNNING:'กำลังตรวจ',SUCCEEDED:'ตรวจครบช่วงที่เลือก',UNKNOWN:'ต้องตรวจสอบก่อนทำต่อ',BLOCKED:'ติดเงื่อนไข',CANCELLED:'ยกเลิกแล้ว'}[value]??'ต้องตรวจสอบสถานะ');
 export default function BillingProviderScansPage({scanId,companyId}:{scanId?:string;companyId?:string}) {
   const base=companyId?`/system/billing/companies/${encodeURIComponent(companyId)}/invoice-scans`:eventBase;
-  const router=useRouter(),intent=useRef<{body:string;key:string}|null>(null);
+  const params=useSearchParams(),router=useRouter(),intent=useRef<{body:string;key:string}|null>(null);
   const [scan,setScan]=useState<BillingProviderScanView|null>(null),[list,setList]=useState<{items:BillingProviderScanView[];nextCursor:string|null;canCreate:boolean}|null>(null);
   const [cursor,setCursor]=useState<string|null>(null),[reload,setReload]=useState(0),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const [start,setStart]=useState(()=>localTime(Date.now()-(companyId?365:1)*86400000)),[end,setEnd]=useState(()=>localTime(Date.now()-120000)),[reason,setReason]=useState('');
@@ -60,7 +60,7 @@ export default function BillingProviderScansPage({scanId,companyId}:{scanId?:str
       {scanId&&<Link className={billingLink} href={base}>กลับรายการงานตรวจ</Link>}</nav>
     <button className={button} disabled={loading||busy} onClick={()=>setReload(v=>v+1)}>โหลดงานล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
-    {!scanId&&!companyId&&<details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">ตั้งรอบตรวจอัตโนมัติ</summary><BillingScanSchedulePanel/></details>}
+    {!scanId&&!companyId&&<details open={Boolean(params.get('schedule'))} className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">ตั้งรอบตรวจอัตโนมัติ</summary><BillingScanSchedulePanel/></details>}
     {!scanId&&list?.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-4 rounded-xl border border-gray-200 p-4 bg-white">
       <h2 className="text-lg font-bold">เริ่มงานตรวจ</h2><p>{companyId?'เลือกช่วงวันที่สร้างใบแจ้งหนี้ตั้งแต่ปี1970 และสิ้นสุดก่อนปัจจุบันอย่างน้อย1นาที งานขนาดใหญ่แบ่งช่วงเวลาได้ เวลาตามเครื่องนี้':'เลือกย้อนหลังได้ไม่เกิน29วัน และสิ้นสุดก่อนปัจจุบันอย่างน้อย1นาที เวลาตามเครื่องนี้'}</p>
       <label className="block">เริ่มช่วงเวลา<input className="mangmee-input !text-base mt-1 block min-h-11 w-full min-w-0 rounded-lg border border-gray-200 p-2" type="datetime-local" required value={start} onChange={e=>setStart(e.target.value)}/></label>

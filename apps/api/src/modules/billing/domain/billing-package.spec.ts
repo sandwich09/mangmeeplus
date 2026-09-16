@@ -32,7 +32,7 @@ test('HIDDEN receipt-only offers stay absent from the catalog and direct request
   const policy = { ...BILLING_DRAFT_POLICY, portalConfigurationId: 'bpc_test',
     priceIds: Object.fromEntries(variants.map((variant, index) => [variant, `price_test${index}`])) };
   const prisma = { client: {
-    billingSettings: { upsert: async () => ({ policyRevisionId: 'test-hidden-policy', gatesJson: { new_sales: salesEnabled } }) },
+    billingSettings: { findUnique: async () => ({ policyRevisionId: 'test-hidden-policy', gatesJson: { new_sales: salesEnabled } }) },
     billingPolicyRevision: { findUnique: async () => ({ id: 'test-hidden-policy', state: 'ACTIVE', stripeAccountId: 'acct_test', livemode: false, policyJson: policy }) },
     companyMembership: { findUnique: async () => ({ status: 'ACTIVE', user: { status: 'ACTIVE' }, roles: [{ role: { key: 'OWNER', status: 'ACTIVE' } }] }) },
     billingQuote: { create: async () => { quoteWrites += 1; throw new Error('unexpected quote write'); } },

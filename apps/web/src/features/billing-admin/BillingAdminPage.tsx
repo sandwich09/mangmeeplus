@@ -211,7 +211,7 @@ export default function BillingAdminPage({ companyId, issueId, issuesOnly = fals
       </div>}
       <p className="text-sm text-gray-500">อัปเดต {time(issue.updatedAt)} · {billingLabel('priority',issue.priority)} · รอบปัญหา {issue.episode}</p>
       </div></details>
-      <details className="border-t border-gray-100 pt-2"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">ประวัติการติดต่อและบันทึกเพิ่มเติม</summary>
+      <details open={Boolean(params.get('outcome'))} className="border-t border-gray-100 pt-2"><summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">ประวัติการติดต่อและบันทึกเพิ่มเติม</summary>
         <BillingSupportOutcomesPanel key={issue.id} issue={issue} canManage={Boolean(overview?.capabilities.includes('system.billing.issue.manage'))} onRecorded={refreshIssue}/></details>
       <details className="border-t border-gray-100 pt-2 text-sm text-gray-500"><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบภายใน</summary><p className="mb-2">เลขปัญหาใช้ค้นประวัติในมั่งมี ส่วนรายการต้นทางใช้ตามกลับไปยังรายการที่เกิดปัญหา ระบบเชื่อมให้แล้ว ไม่ต้องกรอกเอง</p><p className="break-all">เลขปัญหา {issue.id} · {issue.kind} · อ้างอิง {issue.reference}</p><p>{states[issue.state] ?? 'ต้องตรวจสอบสถานะ'} · เวอร์ชัน {issue.version}</p><p>ตรวจพบล่าสุด {time(issue.lastSeenAt)}</p>
         {issue.slaDueAt&&<p>กำหนดจากเกณฑ์ส่วนกลาง {time(issue.slaDueAt)} · เริ่มรอบ {time(issue.slaStartedAt??null)}{issue.followUpAt?' · ใช้เวลาที่ผู้ดูแลกำหนดทับอยู่':''}</p>}</details>

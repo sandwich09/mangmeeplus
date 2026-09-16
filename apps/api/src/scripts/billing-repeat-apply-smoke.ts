@@ -27,14 +27,16 @@ export async function checkRepeatApply(input:{prisma:PrismaService;operations:Bi
     if(browser){
       const page=browser.page;await page.setViewportSize({width:390,height:844});
       await page.goto(`${browser.origin}${invoicePath.replace('/v1','')}`,{waitUntil:'domcontentloaded'});
+      await page.getByText('บันทึกเหตุผล (ระบบใส่ให้แล้ว)',{exact:true}).click();
       await page.getByRole('textbox',{name:'เหตุผลการตรวจสอบ',exact:true}).fill('ตามผลแพ็กเกจที่ซื้อซ้ำจากใบเสร็จเดิม');
-      await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
-      await page.getByRole('status').filter({hasText:'ตรวจสอบก่อนส่งคำสั่ง'}).waitFor();
-      const href=await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).getAttribute('href');assert.ok(href);
+      await page.getByRole('button',{name:'ตรวจสอบรายการนี้',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'ตรวจข้อมูลก่อนยืนยัน'}).waitFor();
+      await page.getByText('ประวัติและข้อมูลอ้างอิง',{exact:true}).click();
+      const href=await page.getByRole('link',{name:'เปิดรายละเอียดการดำเนินการนี้',exact:true}).getAttribute('href');assert.ok(href);
       op=(await read(href.split('/').at(-1)!)).body;ids.push(op.id);
-      await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();
+      await page.getByRole('button',{name:'ยืนยันแก้ไขรายการนี้',exact:true}).click();
       await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
-      await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/operations/${op.id}`);
+      await page.getByRole('link',{name:'เปิดรายละเอียดการดำเนินการนี้',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/operations/${op.id}`);
     }else{
       const preview=await request(`${base}/operations/preview`,'POST',{type:'RETRY_APPLY',companyId,referenceId:original.id,
         invoiceSourceHash:invoice.sourceHash,expectedVersion:invoice.accountVersion,reason:'ตามผลแพ็กเกจเดิมที่ซื้อซ้ำ'});
@@ -43,10 +45,10 @@ export async function checkRepeatApply(input:{prisma:PrismaService;operations:Bi
     }
     const retry=async()=>{
       op=(await read(op.id)).body;
-      if(browser){const page=browser.page;await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
+      if(browser){const page=browser.page;await page.getByRole('button',{name:'อัปเดตสถานะ',exact:true}).click();
         await page.getByRole('status').filter({hasText:'ยังยืนยันผลไม่ได้'}).waitFor();
-        await page.getByRole('button',{name:'ตรวจสอบคำสั่งเดิมอีกครั้ง',exact:true}).click();
-        await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
+        await page.getByRole('button',{name:'ลองดำเนินการอีกครั้ง',exact:true}).click();
+        await page.getByRole('status').filter({hasText:'รอระบบดำเนินการ'}).waitFor();
       }else assert.equal((await request(`${base}/operations/${op.id}/retry`,'POST',{expectedVersion:op.version})).body.state,'QUEUED');
     };
     // A changed hosted source cannot redirect recovery to a different already-paid invoice.
@@ -69,13 +71,13 @@ export async function checkRepeatApply(input:{prisma:PrismaService;operations:Bi
     assert.equal((await request(invoicePath)).body.canRetry,false);
     cases.push('repeat-apply-original-schedule-resume-response-loss-same-operation-one-purchase-grant');
     if(browser){
-      const page=browser.page;await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
-      await page.getByRole('status').filter({hasText:'ตรวจสอบสถานะล่าสุดแล้ว'}).waitFor();
+      const page=browser.page;await page.getByRole('button',{name:'อัปเดตสถานะ',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'ดำเนินการเสร็จแล้ว'}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
       await page.screenshot({path:`${browser.evidenceDir}/admin-repeat-apply-mobile.png`,fullPage:true});
-      await page.getByRole('link',{name:'กลับไปใบเสร็จเดิมหรือเลือกรายการ',exact:true}).click();
-      await page.getByRole('heading',{name:'ใบเสร็จนี้ให้สิทธิ์แล้ว',exact:true}).waitFor();
-      await page.getByRole('link',{name:'กลับไปบริษัท',exact:true}).click();await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท'}).waitFor();
+      await page.getByRole('link',{name:'เปิดรายการชำระเดิม',exact:true}).click();
+      await page.getByRole('heading',{name:'รายการนี้เปิดแพ็กเกจแล้ว',exact:true}).waitFor();
+      await page.getByRole('link',{name:'ดูแพ็กเกจปัจจุบันของบริษัท',exact:true}).click();await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท'}).waitFor();
       cases.push('browser-repeat-apply-preview-unknown-reload-retry-original-invoice-company-return');
     }
     return cases;

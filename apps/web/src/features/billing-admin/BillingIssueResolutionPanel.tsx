@@ -28,10 +28,12 @@ export default function BillingIssueResolutionPanel({ issue, overview, onRefresh
     return () => { active = false; };
   }, [company, paid, issue.relatedInvoiceId, resolved, reload]);
   const guide = nextStep(issue, overview, company);
+  const resolvedSource = paid && company && issue.relatedInvoiceId ? `${company}/apply-invoices/${encodeURIComponent(issue.relatedInvoiceId)}` : guide.href;
   return <section aria-label="วิธีแก้ปัญหา" className="space-y-5 border-t border-gray-100 pt-5">
     {resolved ? <div role="status" className="rounded-xl border border-brand-200 bg-brand-50 p-5 text-brand-900">
       <h3 className="text-lg font-semibold">แก้ไขรายการนี้แล้ว</h3>
       <p className="mt-2">ระบบมีผลตรวจยืนยันและปิดรายการนี้แล้ว{issue.resolvedAt ? ` เมื่อ ${new Date(issue.resolvedAt).toLocaleString('th-TH')}` : ''}</p>
+      {resolvedSource && resolvedSource !== company && <Link onClick={leaving} className="mt-3 mr-5 inline-flex min-h-11 items-center underline" href={resolvedSource}>ดูรายการต้นทาง</Link>}
       {company && <Link onClick={leaving} className="mt-3 inline-flex min-h-11 items-center underline" href={company}>ดูสิทธิ์ปัจจุบันของบริษัท</Link>}
     </div> : <>
       <div className="space-y-3"><h3 className="text-lg font-semibold text-gray-900">1. ปัญหาที่พบ</h3><p className="mt-2 text-gray-600">{paid ? 'ลูกค้าชำระเงินแล้ว แต่ยังมีปัญหาในการเปิดใช้แพ็กเกจ ต้องตรวจรายการชำระเดิม' : guide.description}</p></div>

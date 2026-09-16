@@ -1,3 +1,4 @@
+import { selectBillingOption, clickBillingConfiguration, confirmBillingPassword } from './billing-browser-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mock } from 'node:test';
@@ -34,29 +35,36 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
     if (browser) {
       const page = browser.page; await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${browser.origin}/system/billing/settings`, { waitUntil: 'domcontentloaded' });
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'ภาษี ระยะผ่อนผัน และวงเงินคืนเงิน');
       await page.getByLabel('กำหนดวันเริ่มใช้ล่วงหน้า', { exact: true }).check();
-      const local = await page.evaluate(iso => { const d = new Date(iso); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }, at);
-      await page.getByLabel('วันและเวลาที่ให้มีผล', { exact: true }).fill(local);
+      const local = new Date(Date.parse(at) + 7 * 3600000).toISOString().slice(0, 16);
+      await page.getByRole('combobox', { name: 'เริ่มใช้การตั้งค่าเมื่อ วันที่', exact: true }).click();
+      const calendarMonth = await page.evaluate(() => { const d = new Date(); return d.getFullYear() * 12 + d.getMonth(); });
+      if (Number(local.slice(0, 4)) * 12 + Number(local.slice(5, 7)) - 1 > calendarMonth) await page.getByRole('button', { name: 'เดือนถัดไป', exact: true }).click();
+      await page.getByRole('button', { name: String(Number(local.slice(8, 10))), exact: true }).click();
+      await page.getByLabel('เริ่มใช้การตั้งค่าเมื่อ เวลา', { exact: true }).fill(local.slice(11));
       await page.getByLabel('เหตุผลการเปลี่ยนค่า', { exact: true }).fill('กำหนดวันเริ่มใช้และกลับมาแก้ร่าง');
-      await page.getByRole('button', { name: 'บันทึกฉบับร่าง', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ฉบับร่างที่บันทึกไว้' }).waitFor();
-      const href = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(href);
-      await page.goto(`${browser.origin}${href}`, { waitUntil: 'domcontentloaded' }); await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).waitFor();
-      assert.equal(await page.getByLabel('วันและเวลาที่ให้มีผล', { exact: true }).inputValue(), local);
+      const saved = await clickBillingConfiguration(page, 'บันทึกฉบับร่าง');
+      await page.getByRole('status').filter({ hasText: 'บันทึกฉบับร่างแล้ว' }).waitFor();
+      const href = `/system/billing/configuration-changes/${saved.id}`;
+      await page.goto(`${browser.origin}${href}`, { waitUntil: 'domcontentloaded' });
+      await selectBillingOption(page, 'หัวข้อการตั้งค่า', 'ภาษี ระยะผ่อนผัน และวงเงินคืนเงิน');
+      await page.getByRole('button', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor();
+      assert.equal(await page.getByLabel('เริ่มใช้การตั้งค่าเมื่อ เวลา', { exact: true }).inputValue(), local.slice(11));
       const draft = await get(href.split('/').at(-1)!); assert.equal(draft.proposed.effectiveAt, at); ids.push(draft.id);
       const mismatched = await preview(new Date(Date.parse(at) + 60000).toISOString(), { policy: draft.proposed.policy, reason: draft.reason, draftId: draft.id, draftVersion: draft.version });
       assert.equal(mismatched.body.code, 'CONTROL_PREVIEW_STALE');
-      await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor(); await proof();
+      const reviewed = await clickBillingConfiguration(page, '2. ตรวจผลก่อนยืนยัน');
+      await page.getByRole('heading', { name: '2. ตรวจผลก่อนยืนยัน', exact: true }).waitFor(); await confirmBillingPassword(page, input.password);
       await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
-      const review = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(review);
+      await page.getByRole('heading', { name: '3. ยืนยันใช้การตั้งค่า', exact: true }).waitFor();
+      const review = `/system/billing/configuration-changes/${reviewed.id}`;
       const submitted = await get(review.split('/').at(-1)!); assert.ok(submitted.allowedActions.includes('approve'));
       await proof(); const second = browser.page;
       await second.goto(`${browser.origin}${review}`, { waitUntil: 'domcontentloaded' });
       await second.getByRole('button', { name: 'อนุมัติและรอวันที่กำหนด', exact: true }).click();
-      await second.getByRole('status').filter({ hasText: 'อนุมัติแล้ว รอถึงกำหนด' }).waitFor();
-      await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('status').filter({ hasText: 'อนุมัติแล้ว รอถึงกำหนด' }).waitFor();
+      await second.getByRole('heading', { name: 'อนุมัติแล้ว รอถึงกำหนด', exact: true }).waitFor();
+      await second.reload({ waitUntil: 'domcontentloaded' }); await second.getByRole('heading', { name: 'อนุมัติแล้ว รอถึงกำหนด', exact: true }).waitFor();
       assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await second.screenshot({ path: `${browser.evidenceDir}/admin-scheduled-policy-mobile.png`, fullPage: true });
       pending = await get(submitted.id); ids.push(pending.id);
@@ -72,8 +80,8 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/system/billing/configuration-changes/${pending.id}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('button', { name: 'ใช้ค่าที่อนุมัติไว้ตอนนี้', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
-      await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
+      await page.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
+      await page.reload({ waitUntil: 'domcontentloaded' }); await page.getByRole('heading', { name: 'การตั้งค่านี้มีผลแล้ว', exact: true }).waitFor();
     } else assert.equal((await action(pending, 'apply')).body.state, 'SUCCEEDED');
     const published = await get(pending.id), revision = await db.billingPolicyRevision.findUniqueOrThrow({ where: { id: published.activeRevisionId } });
     const row = await db.billingOperation.findUniqueOrThrow({ where: { id: pending.id } });
@@ -103,10 +111,10 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
     if (browser) {
       const page = browser.page; await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`, { waitUntil: 'domcontentloaded' });
       const link = page.locator(`a[href="/system/billing/configuration-changes/${stale.id}"]`); await link.waitFor(); await link.click();
-      await page.getByRole('status').filter({ hasText: 'ต้องตรวจคำขอตามกำหนดใหม่' }).waitFor();
-      await page.getByRole('button', { name: 'สร้างฉบับร่างจากคำขอนี้', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'ฉบับร่างที่บันทึกไว้' }).waitFor();
-      const copiedHref = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(copiedHref);
+      await page.getByRole('heading', { name: 'ต้องตรวจคำขอตามกำหนดใหม่', exact: true }).waitFor();
+      const copied = await clickBillingConfiguration(page, 'สร้างฉบับร่างจากคำขอนี้');
+      await page.getByRole('status').filter({ hasText: 'บันทึกฉบับร่างแล้ว' }).waitFor();
+      const copiedHref = `/system/billing/configuration-changes/${copied.id}`;
       const copy = await get(copiedHref.split('/').at(-1)!); ids.push(copy.id); assert.notEqual(copy.id, stale.id); assert.equal(copy.proposed.effectiveAt, stale.proposed.effectiveAt);
       assert.equal((await preview(copy.proposed.effectiveAt, { draftId: copy.id, draftVersion: copy.version, reason: copy.reason, policy: copy.proposed.policy, gates: copy.proposed.gates })).body.code, 'CONTROL_SCHEDULE_TIME');
     }

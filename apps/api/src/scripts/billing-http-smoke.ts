@@ -481,6 +481,7 @@ async function main() {
         await page.goto(`${browser.origin}/companies/${companyIds[0]}/billing/return${query}`, { waitUntil: 'domcontentloaded' });
         await page.getByRole('alert').filter({ hasText: /ลิงก์ไม่มีเลขรายการ|ไม่พบรายการนี้/ }).waitFor();
         assert.equal(await page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true }).count(), 0);
+        await page.getByRole('button', { name: 'สลับเมนู', exact: true }).click();
         await page.locator('aside').waitFor();
       }
       const failedQuoteId = randomUUID(), failedAttemptId = randomUUID();
