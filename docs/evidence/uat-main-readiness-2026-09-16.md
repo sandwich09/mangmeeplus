@@ -1,6 +1,6 @@
 # UAT main release — 2026-09-16
 
-Status: **DEPLOYED, signed result verified, customer OPEN. Native Postmark delivery/callback accepted. Stripe Sandbox catalog prepared; application sales are NOT activated.**
+Status: **HISTORICAL initial release and Postmark acceptance.** The later single-admin hotfix is deployed and its Sandbox policy is now published; see [current release and native status](billing-single-admin-uat-release-2026-09-16.md). The initial blockers and earlier serving source below are retained as historical evidence, not current state.
 
 The owner authorized all main application changes on UAT, migrations, complete payment/email preparation and measured timing. UAT uses Stripe Sandbox. Real email testing uses the dedicated Postmark Live UAT server and an exact recipient allowlist. This task did not deploy Production or change its provider credentials.
 

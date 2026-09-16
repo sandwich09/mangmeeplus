@@ -1,6 +1,6 @@
 # Agent Memory: UAT main release — 2026-09-16
 
-Status: Deployment and native mail acceptance complete; Sandbox purchase activation blocked on real Admin session and the current two-person rule; owner reports only one operator. Release evidence is recorded in this documentation-only report. No active deploy/source CI.
+Status: historical initial deployment/native mail ledger. Later owner-approved single-admin support is merged and deployed to UAT; see docs/agent-memory/billing-single-admin-2026-09-16.md and docs/evidence/billing-single-admin-uat-release-2026-09-16.md for current source and native activation state. Earlier blockers below describe their original observation time.
 Owner: Codex under explicit owner authorization; UAT only.
 Scope: Latest main application, migrations, Stripe Sandbox/Postmark UAT configuration, actual timing and native acceptance. Production excluded.
 

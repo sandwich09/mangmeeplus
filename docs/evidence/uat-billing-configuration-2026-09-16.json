@@ -1,5 +1,5 @@
 {
-  "status": "NATIVE_DRAFT_SAVED_NOT_PUBLISHED",
+  "status": "PUBLISHED_TEST_POLICY_CONFIGURATION_CHECK_PASS_NATIVE_PURCHASE_PENDING",
   "environment": "uat",
   "mode": "TEST",
   "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
@@ -44,7 +44,7 @@
     "refunds": false
   },
   "reason": "เตรียมทดสอบซื้อแพ็กเกจ Stripe Sandbox บน UAT ตาม spec; ราคาและโควตาเดิม, VAT ปิด, ยังไม่เปิดคืนเงิน",
-  "applicationInstructions": "After deploying the single-admin amendment, use the current Admin settings version and native preview; confirm impact; verify the current password; submit, then explicitly approve with the genuine SYSTEM_ADMIN account and required capabilities. A different authorized reviewer remains supported. Do not apply this file directly to the database. No credentials are included.",
+  "applicationInstructions": "Already published through the genuine Admin UI after current-password proof, impact review, submit and explicit approval. Preserve this as evidence; do not reapply the file or write the database directly.",
   "nativeDraft": {
     "id": "8b376fa9-4553-475a-af71-732cb53db90b",
     "version": 0,
@@ -52,5 +52,54 @@
     "servingSourceCommit": "ee2f55421dde0edc0fb7226aadea66c3cc52b2d0",
     "settingsVersion": 0,
     "salesActivated": false
+  },
+  "nativePreview": {
+    "id": "69214c53-9bab-48ed-99fe-c2767421a777",
+    "version": 0,
+    "state": "PREVIEW",
+    "sourceDraftId": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "expiresAtObservedBangkok": "2026-09-16 17:57:42",
+    "nativePriceValidation": "PASS: six monthly/yearly paid offers and their zero-price mappings",
+    "existingMembersImpacted": 0,
+    "inFlightPayments": 0,
+    "unusedQuotes": 0,
+    "publication": "PUBLISHED_FROM_THIS_PREVIEW",
+    "customerPurchase": "PENDING_OWNER_LOGIN",
+    "note": "Historical preview snapshot; final request version and active settings are recorded in nativePublication."
+  },
+  "currentServingSourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+  "nativePublication": {
+    "requestId": "69214c53-9bab-48ed-99fe-c2767421a777",
+    "requestVersion": 2,
+    "settingsVersion": 1,
+    "stateObserved": "การตั้งค่านี้มีผลแล้ว",
+    "approvalMode": "SINGLE_ADMIN",
+    "approvalModeObserved": "ยืนยันโดยผู้ดูแลระบบคนเดียว",
+    "genuineAdminSession": true,
+    "currentPasswordProof": "Owner entered and confirmed current password in Chrome; native UI proof valid through 17:54:42 Bangkok. Submit and approval completed before expiry.",
+    "mode": "TEST",
+    "salesActivated": true,
+    "method": "Native Admin UI: saved preview -> submit -> explicit approval -> published settings readback",
+    "sourceDraftId": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "noCredentialPublished": true
+  },
+  "nativeConfigurationCheck": {
+    "id": "0fd91395-5017-475a-ae05-c37315db87b4",
+    "settingsVersion": 1,
+    "checkedAt": "2026-09-16T10:55:10Z",
+    "result": "PASS",
+    "resultObserved": "ตรงตามที่ตั้งไว้",
+    "mode": "TEST",
+    "method": "Created through native Admin UI; worker completed the original check",
+    "passed": [
+      "sales policy",
+      "Stripe account",
+      "six paid recurring prices",
+      "six prepaid zero recurring prices",
+      "customer portal",
+      "tax treatment"
+    ],
+    "financialMutation": false,
+    "paymentAcceptanceClaimed": false
   }
 }

@@ -2,8 +2,208 @@
   "date": "2026-09-16",
   "scope": "single-administrator billing confirmation",
   "sourceBase": "ffa4fc913a5ee48696c570f1d8515671a0732134",
-  "sourceCI": null,
-  "uatDeployment": null,
+  "sourceCI": {
+    "runId": 35080266183,
+    "url": "https://github.com/MangmeeDev/mangmeeplus/actions/runs/35080266183",
+    "head": "70168b9187e7ef747e27219781310411b854a3d4",
+    "tree": "2b7e5693862dd7306021c2979a08bf0dc989e537",
+    "conclusion": "success",
+    "startedAt": "2026-09-16T09:35:19Z",
+    "completedAt": "2026-09-16T10:36:31Z",
+    "elapsedSeconds": 3672,
+    "fullBillingHttpGroups": 257,
+    "browserSuites": "All configured CI browser suites passed",
+    "fullSourceRunsDispatched": 1
+  },
+  "uatDeployment": {
+    "operationId": "20260916T103914Z-350853d8",
+    "status": "ACCEPTED_LINE_DEFERRED",
+    "sourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+    "startedAt": "2026-09-16T10:39:14.753131+00:00",
+    "signedPayloadCompletedAt": "2026-09-16T10:46:36.115525+00:00",
+    "elapsedSeconds": 443.532,
+    "acceptedSha256": "c2f522fbe4c0064f895d4b8db544af5dce338eb50db1b4eb11fa10efcd8eb195",
+    "signatureVerified": true,
+    "signatureAlgorithm": "ECDSA_SHA_256",
+    "customerGateReadback": "OPEN",
+    "migrationAndAuthorityVerified": true,
+    "newMigrations": 0,
+    "catalogMigrations": 219,
+    "phases": [
+      {
+        "name": "target-preflight",
+        "startedSeconds": 0.002,
+        "status": "PASSED",
+        "elapsedSeconds": 11.386,
+        "endedSeconds": 11.388
+      },
+      {
+        "name": "main-typescript-build",
+        "startedSeconds": 12.011,
+        "status": "PASSED",
+        "elapsedSeconds": 177.886,
+        "endedSeconds": 189.897
+      },
+      {
+        "name": "fresh-config-and-image-validation",
+        "startedSeconds": 189.898,
+        "status": "PASSED",
+        "elapsedSeconds": 15.863,
+        "endedSeconds": 205.761
+      },
+      {
+        "name": "publish-and-pull",
+        "startedSeconds": 205.762,
+        "status": "PASSED",
+        "elapsedSeconds": 43.291,
+        "endedSeconds": 249.054
+      },
+      {
+        "name": "config-freshness-before-mutation",
+        "startedSeconds": 249.057,
+        "status": "PASSED",
+        "elapsedSeconds": 4.694,
+        "endedSeconds": 253.752
+      },
+      {
+        "name": "provider-preparation",
+        "startedSeconds": 253.752,
+        "status": "PASSED",
+        "elapsedSeconds": 15.155,
+        "endedSeconds": 268.908
+      },
+      {
+        "name": "database-and-feature-authority",
+        "startedSeconds": 268.909,
+        "status": "PASSED",
+        "elapsedSeconds": 57.374,
+        "endedSeconds": 326.283
+      },
+      {
+        "name": "native-rollout-and-readback",
+        "startedSeconds": 326.285,
+        "status": "PASSED",
+        "elapsedSeconds": 97.21,
+        "endedSeconds": 423.496
+      },
+      {
+        "name": "customer-acceptance",
+        "startedSeconds": 423.5,
+        "status": "PASSED",
+        "elapsedSeconds": 8.313,
+        "endedSeconds": 431.816
+      },
+      {
+        "name": "retire-observed-builds",
+        "startedSeconds": 431.818,
+        "status": "PASSED",
+        "elapsedSeconds": 9.539,
+        "endedSeconds": 441.358
+      },
+      {
+        "name": "receipt-signature",
+        "startedSeconds": 441.36,
+        "status": "PASSED",
+        "elapsedSeconds": 1.324,
+        "endedSeconds": 442.684
+      }
+    ],
+    "runtimeReadback": {
+      "api-web": [
+        {
+          "running": true,
+          "imageId": "sha256:1e51cb0578e9d9a9f8c380f5e4a9bfbf5b9ba30ea82bf8ee3bf6b6b44f40f8b5",
+          "sourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+          "environmentSha256": "69da7b5a5c471d94b57c5089da0d41ea40a606c6b4d4ccdf08d1f8147e9dcef6",
+          "configValidationPassed": true,
+          "instanceId": "i-0eb581c5ac3b3d7ba",
+          "containerId": "75582d54b44f8bfc943d56adeced72ab0ae523ab610c3c46be42a61be77e5614",
+          "containerName": "mangmee-kamal-uat-web-7ccff81178e547817d5d21571aa88ee2dde94628-20260916T103914Z-350853d8-api-web"
+        }
+      ],
+      "ai-gateway": [
+        {
+          "running": true,
+          "imageId": "sha256:ed349d1658a14480a7292fefc7e212ef6b00e5ac0b533e066a6926020b17bd49",
+          "sourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+          "environmentSha256": "bd527f62727e1c36b5bdf70fb28877cdcd898a5016515a84148f8bfb1cde483f",
+          "configValidationPassed": true,
+          "instanceId": "i-011918b0d49534d1c",
+          "containerId": "30e2e91dacf00d81f86d37816930a4e2ef718a429f0ad010ece4e7526f41f363",
+          "containerName": "mangmee-kamal-uat-ai-gateway-web-7ccff81178e547817d5d21571aa88ee2dde94628-20260916T103914Z-350853d8-ai-gateway"
+        }
+      ],
+      "workers": [
+        {
+          "running": true,
+          "imageId": "sha256:60a415d7ae26d70daf16b854bbbd52e6f0efb0905604abd335f9f885fafd4075",
+          "sourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+          "environmentSha256": "b9d06861594258b9559c5a961ba473898f2c2c304f0c4b7998b8a6846d078838",
+          "configValidationPassed": true,
+          "instanceId": "i-011918b0d49534d1c",
+          "containerId": "561a69cd41450e7cf7492fbc0ab072e3aa33ec3d8b56bedd92f3a9ed73d27c51",
+          "containerName": "mangmee-kamal-uat-workers-web-7ccff81178e547817d5d21571aa88ee2dde94628-20260916T103914Z-350853d8-workers"
+        }
+      ]
+    },
+    "readiness": {
+      "ai-gateway": {
+        "i-011918b0d49534d1c": {
+          "passed": true,
+          "status": "ok"
+        }
+      },
+      "api-web": {
+        "i-0eb581c5ac3b3d7ba": {
+          "passed": true,
+          "status": "ok",
+          "db": "ok"
+        }
+      },
+      "workers": {
+        "i-011918b0d49534d1c": {
+          "passed": true,
+          "status": "ok",
+          "redis": "ok",
+          "internalApi": "ok"
+        }
+      }
+    },
+    "agentcore": {
+      "status": "UPDATED_PINNED",
+      "runtimeArn": "arn:aws:bedrock-agentcore:ap-southeast-1:311414082667:runtime/watchdog_orchestrator_uat_kamal-48umEu5ZDq",
+      "qualifier": "kamal_uat_b",
+      "version": "10",
+      "sourceCommit": "7ccff81178e547817d5d21571aa88ee2dde94628",
+      "artifactSha256": "6566413ae0e465f79f309aa7ad1cb2e29dfe1e059be9e9d7f40c86cbded4cfe9",
+      "previousQualifier": "kamal_uat_a"
+    },
+    "customerAcceptance": {
+      "passed": true,
+      "kind": "owner_authorized_uat_config_readiness_smoke",
+      "checks": [
+        {
+          "path": "/api/v1/auth/platform-access",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/login",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "allServiceConfigAndReadinessPassed": true,
+      "loginLogout": "NOT_REQUIRED_BY_OWNER",
+      "line": "DEFERRED_BY_OWNER"
+    },
+    "workflowIds": {
+      "uat": null,
+      "ready": null,
+      "production": null
+    },
+    "workflowIdReason": "Owner-authorized local Kamal UAT hotfix; no release workflow dispatch or Production deployment."
+  },
   "productionDeployment": "NOT_AUTHORIZED",
   "localChecks": [
     {
@@ -100,12 +300,15 @@
     "id": "8b376fa9-4553-475a-af71-732cb53db90b",
     "version": 0,
     "status": "SAVED_NOT_PUBLISHED",
-    "genuineAdminSession": true
+    "genuineAdminSession": true,
+    "servedSingleAdminCopyVerified": true
   },
   "limitations": [
+    "Current Admin has no membership in the original customer test company; native purchase needs its owner login",
     "No native Sandbox purchase yet",
     "No Production deployment or payment",
-    "Broad browser attempt retained as failed; focused final results separate"
+    "Live LINE remains deferred by the retained owner acceptance exception",
+    "Prior broad local browser/HTTP incomplete attempts retained; final required CI passed"
   ],
   "reproduction": {
     "prerequisites": "Isolated local PostgreSQL with all219 migrations and isolated Redis; compile contracts/API first. Use BILLING_TEST_DATABASE_URL and REDIS_URL for these disposable services only.",
@@ -121,5 +324,85 @@
     "assertionFailureReported": false,
     "logSha256": "b2918d2f5d759d388a56a68952029711f4a04a32d85c731e5cb9c6a0b176af63",
     "note": "Additional broad replay exceeded the local wrapper limit while exercising real rate limits. It is incomplete, not a passing suite. Final focused browser proofs and preceding R4 browser paths remain separate. Required CI must complete before merge."
+  },
+  "sourceDelivery": {
+    "pr": 595,
+    "develop": "7ccff81178e547817d5d21571aa88ee2dde94628",
+    "main": "7ccff81178e547817d5d21571aa88ee2dde94628",
+    "treeMatchesValidatedHead": true,
+    "mainMethod": "Owner-authorized admin fast-forward to the validated develop merge; GitHub reported the PR-only rule bypass. No force push or protection change."
+  },
+  "readOnlyPreflight": {
+    "operationId": "20260916T093631Z-a5691f5a",
+    "status": "PREFLIGHT_PASSED_NO_DEPLOYMENT",
+    "elapsedSeconds": 9.815
+  },
+  "preflightInvocationCorrection": "First read-only invocation omitted the previously authorized --uat-smoke-acceptance and stopped in constructor before an operation directory or AWS action. Restored the documented flag; no controller edit or acceptance relaxation.",
+  "localCleanup": {
+    "ownedDisposableContainersRemoved": [
+      "mangmee-single-admin-pg-20260916",
+      "mangmee-single-admin-redis-20260916"
+    ],
+    "otherContainersUntouched": true
+  },
+  "historicalQueueRecord": {
+    "id": 31611733340,
+    "createdAt": "2026-08-12T15:20:13Z",
+    "updatedAt": "2026-08-12T15:20:13Z",
+    "headSha": "33ed788ccc644502e572fe2d679aac9b2b98cc6e",
+    "checkSuiteId": 85752682208,
+    "jobs": 0,
+    "checkRuns": 0,
+    "pendingDeployments": 0,
+    "classification": "exact documented non-executable provider metadata shell; no cancellation, rerun or deletion"
+  },
+  "nativePreview": {
+    "id": "69214c53-9bab-48ed-99fe-c2767421a777",
+    "version": 0,
+    "state": "PREVIEW",
+    "sourceDraftId": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "expiresAtObservedBangkok": "2026-09-16 17:57:42",
+    "nativePriceValidation": "PASS: six monthly/yearly paid offers and their zero-price mappings",
+    "existingMembersImpacted": 0,
+    "inFlightPayments": 0,
+    "unusedQuotes": 0,
+    "publication": "PUBLISHED_FROM_THIS_PREVIEW",
+    "customerPurchase": "PENDING_OWNER_LOGIN",
+    "note": "Historical preview snapshot; final request version and active settings are recorded in nativePublication."
+  },
+  "stripeTestingReference": "https://docs.stripe.com/testing",
+  "nativePublication": {
+    "requestId": "69214c53-9bab-48ed-99fe-c2767421a777",
+    "requestVersion": 2,
+    "settingsVersion": 1,
+    "stateObserved": "การตั้งค่านี้มีผลแล้ว",
+    "approvalMode": "SINGLE_ADMIN",
+    "approvalModeObserved": "ยืนยันโดยผู้ดูแลระบบคนเดียว",
+    "genuineAdminSession": true,
+    "currentPasswordProof": "Owner entered and confirmed current password in Chrome; native UI proof valid through 17:54:42 Bangkok. Submit and approval completed before expiry.",
+    "mode": "TEST",
+    "salesActivated": true,
+    "method": "Native Admin UI: saved preview -> submit -> explicit approval -> published settings readback",
+    "sourceDraftId": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "noCredentialPublished": true
+  },
+  "nativeConfigurationCheck": {
+    "id": "0fd91395-5017-475a-ae05-c37315db87b4",
+    "settingsVersion": 1,
+    "checkedAt": "2026-09-16T10:55:10Z",
+    "result": "PASS",
+    "resultObserved": "ตรงตามที่ตั้งไว้",
+    "mode": "TEST",
+    "method": "Created through native Admin UI; worker completed the original check",
+    "passed": [
+      "sales policy",
+      "Stripe account",
+      "six paid recurring prices",
+      "six prepaid zero recurring prices",
+      "customer portal",
+      "tax treatment"
+    ],
+    "financialMutation": false,
+    "paymentAcceptanceClaimed": false
   }
 }
