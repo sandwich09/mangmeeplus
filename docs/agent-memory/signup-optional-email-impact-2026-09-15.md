@@ -1,6 +1,6 @@
 # Agent Memory: Optional signup email, OTP and billing verification
 
-Status: Source implemented in isolated worktree; final local verification and dependency integration in progress. User authorized commit/push and admin merge into develop/main only after CI passes. Native release acceptance remains pending. The dated checkpoints below are history; the last checkpoint is current.
+Status: Source implemented in isolated worktree; dependency integrated. PR #575 awaits green exact-head CI after the integration corrections recorded below. User authorized commit/push and admin merge into develop/main only after CI passes. Native release acceptance remains pending. The dated checkpoints below are history; the last checkpoint is current.
 Owner: Codex / thawatchai
 Scope: Optional LINE contact email, account email OTP link/change, current verified email before new financial authorization, UX/SA/dev impacts, legacy migration and acceptance.
 
@@ -14,7 +14,7 @@ Decisions:
 
 Open questions:
 - D01 may change if owner wants a separately verified accounting email recipient. Core signup/OTP design is independent; update recipient entity/permissions/consent/matrix before billing implementation if changed.
-- Implementation and CI-gated admin merge to develop/main are authorized. Deployment/native application OTP inbox acceptance and actual older-user usability remain pending. The billing/Postmark dependency is still an open PR; do not silently merge unrelated unfinished work.
+- Implementation and CI-gated admin merge to develop/main are authorized. Billing/Postmark dependency PR #558 and its main promotion #577 have merged and the complete base is integrated. Deployment/native application OTP inbox acceptance and actual older-user usability remain pending.
 
 Artifacts:
 - [Baseline impact assessment](../research/signup-optional-email-impact-2026-09-15-th.md)
@@ -118,3 +118,10 @@ Next: record exact commit/PR/CI state, then follow the user's CI-before-admin-me
 - Corrected portal/browser and long-password verification are running; do not merge7ef09d8e even if its incomplete run goes green. Commit/push the correction and require the new exact-head CI.
 
 Final correction verification: readiness/portal19 groups PASS (`/tmp/email-otp-portal-fixed.log`), long-password OTP10 groups PASS (`/tmp/email-otp-long-password.log`), API/web TypeScript PASS (`/tmp/email-otp-api-portal-fixed.log`, `/tmp/email-otp-web-long-password.log`). These are actual Nest/PG/Next/Chromium with simulated provider boundaries. The source correction is ready for new CI.
+
+## Integrated gift-day fixture correction — 2026-09-16
+
+- CI35044244378 on3e2f4157 failed the primary HTTP runner at gifted-day repeat quote after full unit/typecheck and earlier PG suites passed. The new verified-email comparison reads the existing Stripe customer; the inherited gift-day simulator omitted that response. Do not merge this failed head.
+- Added the missing synthetic customer/owner email and a regression assertion: stale client billingEmail is ignored, server-derived verified email is returned, and the existing shifted-anniversary assertion remains. No production logic changed.
+- Plan/collection/gift-day Nest/PG/Next/Chromium27 groups and API TypeScript pass (`/tmp/email-otp-gift-final.log`, `/tmp/email-otp-gift-types.log`). Full primary HTTP runner passed256 groups on stable integrated source (`/tmp/email-otp-full-http-finalbase.log`, exit0), covering the previous failure and the remaining billing regression. Commit/push and another exact-head CI follow. No native send/payment/deploy.
+- Current remote develop includes docs-only PRs #578/#580 after the already integrated Billing base; preserve those documents when refreshing the merge base. Root checkout remains untouched.
