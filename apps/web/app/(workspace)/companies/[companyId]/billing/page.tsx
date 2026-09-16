@@ -3,5 +3,6 @@ export default async function CompanyBillingRoute({ params, searchParams }: { pa
   const { companyId } = await params;
   const { collection } = await searchParams;
   const collectionId = typeof collection === 'string' && /^[a-f0-9-]{36}$/i.test(collection) ? collection : undefined;
-  return <BillingPage key={companyId} companyId={companyId} collectionId={collectionId} />;
+  const previewHref = process.env.NODE_ENV === 'development' && process.env.APP_ENV === 'local' ? `/companies/${encodeURIComponent(companyId)}/billing/preview` : undefined;
+  return <BillingPage key={companyId} companyId={companyId} collectionId={collectionId} previewHref={previewHref} />;
 }

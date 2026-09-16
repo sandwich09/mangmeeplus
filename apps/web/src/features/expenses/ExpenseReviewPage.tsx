@@ -1,7 +1,7 @@
 'use client';
 
 import { expenseReimbursementProgressLabel } from '@watchdog-bms/contracts';
-import { expenseEvidenceAssessment } from '@watchdog-bms/contracts';
+import { expenseEvidenceAssessment, expenseDateIsReadable } from '@watchdog-bms/contracts';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -719,7 +719,7 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           catch { setError('คัดลอกไม่สำเร็จ กรุณาเลือกเลขรายจ่ายแล้วคัดลอกอีกครั้ง'); }
         }}>คัดลอกเลขรายจ่าย</button>}
         <span className="max-w-full truncate text-lg font-extrabold text-gray-900">{firstFilled(detail.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
-        <span className="text-xs font-normal text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย')} · {visibleSourceDraft && !visibleSourceDraft.header.expenseDate
+        <span className="text-xs font-normal text-gray-500">{expenseValueLabel(SOURCE_DOCUMENT_TYPE_LABELS, detail.sourceDocumentType, 'เอกสารค่าใช้จ่าย')} · {(visibleSourceDraft ? !visibleSourceDraft.header.expenseDate : !expenseDateIsReadable(detail.aiVerificationSummaryJson))
           ? t('expenses.source_draft_date_unknown', locale)
           : dateShort(visibleSourceDraft?.header.expenseDate ?? detail.expenseDate)}</span>
       </span>
@@ -741,8 +741,10 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
   // tooltips and doAction flows are unchanged — only the placement moved to the modal footer.
   // Guided mode shows each step's action plus back/next; terminal actions live on the final review step.
   const modalFooter = hasFooterActions ? (
-    <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+    <div className="flex w-full flex-wrap items-center gap-2">
+      {((guided && caps.canReject) || (approverOnlyActions && caps.canReject) || (canCancelFinancialExpense && caps.canVoid) || canDelete) && <details className="relative shrink-0" onClick={event => { if ((event.target as HTMLElement).closest('button')) event.currentTarget.open = false; }} onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}>
+        <summary className={cx(ghostClass, 'min-h-11 cursor-pointer list-none')}>เพิ่มเติม</summary>
+        <div className="absolute bottom-full left-0 z-20 mb-2 flex min-w-48 flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
         {/* Every step, not just review: the stepper is display-only, so a draft whose
             validation errors disable ถัดไป must still be rejectable without faking data. */}
         {guided && caps.canReject && (
@@ -760,8 +762,8 @@ export function ExpenseReviewPage({ companyId, expenseId, userId, permissions }:
           </>
         )}
         {canDelete && <button className={dangerClass} onClick={() => { setShowDelete(true); setShowReject(false); setShowVoid(false); setDuplicateResolution(null); }} disabled={actionLoading || deleting}>{t('expenses.delete', locale)}</button>}
-      </div>
-      <div className={cx('flex gap-2 sm:ml-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end', canEditLinkedSubstitute ? 'flex-row flex-wrap items-center' : 'flex-col')}>
+      </div></details>}
+      <div className={cx('ml-auto flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2') }>
         {canEditLinkedSubstitute && (
           <button type="button" className={cx(ghostClass, '!min-h-[44px] !text-base')} disabled={aiReading || stepSaving || evidenceDirty} aria-busy={Boolean(stepSaving)} onClick={() => void openSubstituteReceipt(true)}>
             {stepSaving ? 'กำลังบันทึก…' : 'แก้ไขใบแทนใบเสร็จ'}

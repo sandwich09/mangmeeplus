@@ -71,7 +71,7 @@ import {
 } from './expense-upload.logic';
 import {
   err, baht, baht0, dateShort, inputClass, btnClass, ghostClass, dangerClass, successBtn, successBtnStyle,
-  ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner,
+  ICON, KPI, StatCard, StatusBadge, TAX_TONE, ErrorBanner, InfoBanner, StateBanner, HowItWorks,
 } from './ExpensesUi';
 import { generateSourceJournal } from '../ledger/ledger.api';
 import { validateExpenseReview, type ExpenseFieldIssue } from './expense-review-validation';
@@ -241,7 +241,6 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState('');
   const [dragActive, setDragActive] = useState(false);
-  const [expenseDate, setExpenseDate] = useState(todayCivilDate());
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -314,7 +313,7 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
     if (forbidden.length > 0) { setError(t('common.forbidden_chars', locale).replace('{chars}', forbidden.join(' '))); return; }
     setLoading(true); setError(null);
     try {
-      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, expenseDate, ...(branchId ? { branchId } : {}), note: note.trim() });
+      const intent = await initReceiptUpload(companyId, { originalFileName: file.name, mimeType: file.type, byteSize: file.size, ...(branchId ? { branchId } : {}), note: note.trim() });
       await uploadReceiptFile(intent.uploadUrl, intent.uploadMethod, file, intent.uploadHeaders);
       await completeReceiptUpload(companyId, intent.expenseId, intent.attachmentId, { byteSize: file.size });
       setExtracting(true);
@@ -373,26 +372,11 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
 
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl border border-brand-100 bg-brand-25 p-4 text-center">
-        <div className="text-left text-base font-bold text-gray-900">{t('expenses.upload_what_title', locale)}</div>
-        <div className="mt-1 text-left text-sm leading-relaxed text-gray-600">{t('expenses.upload_what_desc', locale)}</div>
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-2.5 gap-y-3">
-          {flow.map((s, i) => (
-            <span key={s} className="flex items-center gap-2.5">
-              <span className="inline-flex items-center gap-2 rounded-xl border border-brand-100 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700">
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500 text-xs font-extrabold text-white">{i + 1}</span>{s}
-              </span>
-              {/* Drawn, not the → glyph: the shaft length is exact and font-independent. */}
-              {i < flow.length - 1 && (
-                <svg aria-hidden="true" viewBox="0 0 36 12" className="hidden h-3 w-9 flex-shrink-0 text-brand-300 sm:block"
-                  fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M1 6h33M30 2l4 4-4 4" />
-                </svg>
-              )}
-            </span>
-          ))}
-        </div>
-      </div>
+      <HowItWorks
+        title={t('expenses.upload_what_title', locale)}
+        description={t('expenses.upload_what_desc', locale)}
+        steps={flow}
+      />
 
       <MangmeeCard className="p-6">
         {quotaBlocked && (
@@ -447,17 +431,9 @@ function UploadPanel({ companyId, branchId, onSuccess, onNoDocument }: { company
           <input ref={fileRef} type="file" accept={RECEIPT_UPLOAD_ACCEPT} className="hidden" onChange={handleFileChange} />
         </label>
         {fileNotice && <div className="mt-3"><InfoBanner message={fileNotice} /></div>}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div>
-            <div className="mb-1.5 text-xs font-semibold text-gray-600">{t('expenses.upload_receipt_date', locale)}</div>
-            <ThemedDate className={inputClass} value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
-            {/* WEB-05: the field defaults to today, so the example has to say which date is meant. */}
-            <p className="mt-1 text-xs text-gray-500">{t('expenses.upload_receipt_date_hint', locale)}</p>
-          </div>
-          <div>
-            <div className="mb-1.5 text-xs font-semibold text-gray-600">{t('expenses.upload_note', locale)}</div>
-            <input className={inputClass} placeholder={t('expenses.upload_note_placeholder', locale)} value={note} onChange={(e) => setNote(stripDisallowed(e.target.value))} />
-          </div>
+        <div className="mt-4">
+          <label className="mb-1.5 block text-xs font-semibold text-gray-600" htmlFor="receipt-upload-note">{t('expenses.upload_note', locale)}</label>
+          <input id="receipt-upload-note" className={inputClass} placeholder={t('expenses.upload_note_placeholder', locale)} value={note} onChange={(e) => setNote(stripDisallowed(e.target.value))} />
         </div>
         <div className="mt-5 flex items-center gap-3 rounded-xl bg-gray-50 px-4 py-3.5">
           <span className="flex h-10 w-10 items-center justify-center rounded-[10px]" style={{ background: '#F4EBFF', color: '#7A5AF8' }}>{ICON.sparkle}</span>
@@ -1828,6 +1804,8 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   const [month, setMonth] = useMenuFilterState('expenses.list.month', () => civilPeriodKey(todayCivilDate()));
   const [day, setDay] = useMenuFilterState('expenses.list.day', () => todayCivilDate());
   const [page, setPage] = useState(1);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -1973,8 +1951,9 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
   };
 
   const exportExcel = async () => {
+    if (exporting) return;
     const version = loadVersion.current;
-    setExporting(true); setError(null); setExportNotice(null);
+    setExporting(true); setExportError(null); setExportNotice(null);
     try {
       const result = await createAccountantPackage(companyId, { dateField: sourceView === 'confirmed' ? 'expenseDate' : 'uploadedAt', fromDate, toDate, columnSet, ...(branchId ? { branchId } : {}) });
       if (version !== loadVersion.current) return;
@@ -1991,7 +1970,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
       setExported(true); setTimeout(() => setExported(false), 3000);
     } catch (e) {
       if (isBranchScope403(e, branchId)) { branchFilter?.reportBranchForbidden(); return; }
-      setError(err(e));
+      setExportError(err(e));
     }
     finally { setExporting(false); }
   };
@@ -2033,22 +2012,32 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
           </div>
           <p className="mt-1 text-xs text-gray-400">{t('expenses.intake_filter_desc', locale)}</p>
         </div>}
-        {/* export controls */}
-        {!sourceView || sourceView === 'confirmed' ? <details className="text-sm lg:ml-auto">
-          <summary className="min-h-11 cursor-pointer py-3 font-semibold text-gray-600">ส่งออกเอกสารยืนยันแล้ว</summary>
-        <div className="flex flex-col gap-1 lg:shrink-0 lg:items-end">
-          <div className="flex flex-wrap items-center gap-2">
-            {exportNotice && <span className="text-sm font-semibold text-warning-700">{exportNotice}</span>}
-            {exported && <span className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</span>}
-            <ThemedSelect className={cx(inputClass, 'min-w-0 w-auto')} value={columnSet} onChange={(e) => setColumnSet(e.target.value as 'summary' | 'full')} aria-label={t('expenses.export_columns', locale)}>
+        {/* Export uses the shared dialog so opening options never resizes this toolbar. */}
+        {(!sourceView || sourceView === 'confirmed') && (
+          <button type="button" className={cx(ghostClass, 'self-start lg:ml-auto')} aria-haspopup="dialog" onClick={() => setExportOpen(true)}>
+            ส่งออกเอกสารยืนยันแล้ว
+          </button>
+        )}
+      </div>
+      <Modal open={exportOpen} onClose={() => setExportOpen(false)} title="ส่งออกเอกสารยืนยันแล้ว" size="sm"
+        footer={<button type="button" className={cx(btnClass, exporting && 'cursor-wait opacity-60')} onClick={exportExcel} aria-disabled={exporting} aria-busy={exporting}>
+          {exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}
+        </button>}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">{t('expenses.export_desc', locale)}</p>
+          <p className="text-sm font-semibold text-gray-800">{dateShort(fromDate)} – {dateShort(toDate)}</p>
+          <label className="block space-y-2 text-sm font-semibold text-gray-700">
+            <span>{t('expenses.export_columns', locale)}</span>
+            <ThemedSelect className={cx(inputClass, 'w-full')} value={columnSet} onChange={(e) => setColumnSet(e.target.value as 'summary' | 'full')} aria-label={t('expenses.export_columns', locale)}>
               <option value="summary">{t('expenses.export_columns_summary', locale)}</option>
               <option value="full">{t('expenses.export_columns_full', locale)}</option>
             </ThemedSelect>
-            <button className={btnClass} onClick={exportExcel} disabled={exporting} aria-busy={Boolean(exporting)}>{exporting ? t('expenses.generating', locale) : t('expenses.export_excel', locale)}</button>
-          </div>
-          <p className="text-xs text-gray-400">{t('expenses.export_desc', locale)}</p>
-        </div></details> : null}
-      </div>
+          </label>
+          {exportError && <ErrorBanner message={exportError} />}
+          {exportNotice && <p role="status" className="text-sm font-semibold text-warning-700">{exportNotice}</p>}
+          {exported && <p role="status" className="text-sm font-semibold text-brand-600">✓ {t('expenses.downloaded', locale)}</p>}
+        </div>
+      </Modal>
 
       {/* KPI cards */}
       <div className="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{cards.map((c) => <StatCard key={c.label} {...c} />)}</div>
@@ -2104,7 +2093,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                           </div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-500"><span className="font-semibold">{t('expenses.document_date', locale)}:</span> {dateShort(e.expenseDate)}</div>
+                          <div className="text-xs text-gray-500"><span className="font-semibold">{t('expenses.document_date', locale)}:</span> {e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</div>
                           <div className="mt-0.5 text-xs text-gray-500"><span className="font-semibold">{t('expenses.intake_date', locale)}:</span> {dateShort(e.uploadedAt)}</div>
                           <div className="mt-1 flex flex-wrap gap-1">
                             <LateDocumentBadge expense={e} locale={locale} />
@@ -2141,7 +2130,7 @@ function ExpenseListPage({ companyId, caps, userId, onSelect }: { companyId: str
                     <span className="mt-2 block truncate text-sm font-semibold text-gray-900">{firstFilled(e.vendorNameSnapshot) ?? t('expenses.vendor_pending', locale)}</span>
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-gray-500">
-                    <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{dateShort(e.expenseDate)}</div>
+                    <div><span className="block font-semibold">{t('expenses.document_date', locale)}</span>{e.dateStatus === 'unverified' ? 'ยังไม่ระบุ' : dateShort(e.expenseDate)}</div>
                     <div className="text-right"><span className="block font-semibold">{t('expenses.intake_date', locale)}</span>{dateShort(e.uploadedAt)}</div>
                   </div>
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-2">

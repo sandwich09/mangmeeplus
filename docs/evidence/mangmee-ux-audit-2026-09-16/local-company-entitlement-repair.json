@@ -1,0 +1,1055 @@
+{
+  "date": "2026-09-17",
+  "scope": "local UX seed company only",
+  "companyId": "seed-local-company",
+  "runId": "local-ux-20260917-entitlement-repair",
+  "reviewedHash": "7dac52259cd8b375ee52791101f86cbda068cf368370d29d7c30673403ea89fd",
+  "before": {
+    "id": "seed-local-company",
+    "entitlementNormalization": null,
+    "entitlementSet": null,
+    "featureEntitlements": []
+  },
+  "plan": {
+    "companyId": "seed-local-company",
+    "status": "DRY_RUN",
+    "cohortKind": "LEGACY",
+    "cohortEvidence": "FIRST_NORMALIZATION_RULE",
+    "hash": "7dac52259cd8b375ee52791101f86cbda068cf368370d29d7c30673403ea89fd",
+    "written": 60,
+    "unchanged": 0,
+    "removed": 0,
+    "orphanRows": [],
+    "setVersion": null,
+    "provenance": 59,
+    "writes": [
+      {
+        "featureKey": "ai_line_assistant",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.accounts",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.adjustments",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.cash",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.import",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.matching",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.reconciliations",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings.branches",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings.security",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.bookings",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.customers",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.followups",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.inbox",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.leads",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.overview",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.pipeline",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications.preferences",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications.rules",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "double_entry_ledger",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.employees",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.overview",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.roles",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expense_auto_post",
+        "fromEnabled": false,
+        "toEnabled": false,
+        "reason": "AUTO_POST_IMPLICIT_OFF"
+      },
+      {
+        "featureKey": "expenses",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.categories",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.evidence",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.list",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.manual",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.signatures",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.upload",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.locations",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.movements",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.stock_report",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "line_oa",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.ap_aging",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.goods_receipts",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.purchase_orders",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.purchase_requests",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.supplier_payments",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.suppliers",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.vendor_bills",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "product_catalog",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "reimbursement",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "reports",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "sales_documents",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "thai_tax",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.dead_letters",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.rules",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.runs",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.tasks",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.templates",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.webhooks",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      }
+    ],
+    "dependencyFindings": []
+  },
+  "result": {
+    "companyId": "seed-local-company",
+    "status": "COMPLETED",
+    "cohortKind": "LEGACY",
+    "cohortEvidence": "FIRST_NORMALIZATION_RULE",
+    "hash": "7dac52259cd8b375ee52791101f86cbda068cf368370d29d7c30673403ea89fd",
+    "written": 60,
+    "unchanged": 0,
+    "removed": 0,
+    "orphanRows": [],
+    "setVersion": 1,
+    "provenance": 59,
+    "writes": [
+      {
+        "featureKey": "ai_line_assistant",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.accounts",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.adjustments",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.cash",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.import",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.matching",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "bank_reconciliation.reconciliations",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings.branches",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "company_settings.security",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.bookings",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.customers",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.followups",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.inbox",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.leads",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.overview",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "crm.pipeline",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications.preferences",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "dashboard_notifications.rules",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "double_entry_ledger",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.employees",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.overview",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "employee_access.roles",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expense_auto_post",
+        "fromEnabled": false,
+        "toEnabled": false,
+        "reason": "AUTO_POST_IMPLICIT_OFF"
+      },
+      {
+        "featureKey": "expenses",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.categories",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.evidence",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.list",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.manual",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.signatures",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "expenses.upload",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.locations",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.movements",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "inventory.stock_report",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "line_oa",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.ap_aging",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.goods_receipts",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.purchase_orders",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.purchase_requests",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.supplier_payments",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.suppliers",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "procurement.vendor_bills",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "product_catalog",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "reimbursement",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "reports",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "sales_documents",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "thai_tax",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.dead_letters",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.rules",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.runs",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.tasks",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.templates",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      },
+      {
+        "featureKey": "workflow_automation.webhooks",
+        "fromEnabled": true,
+        "toEnabled": true,
+        "reason": "MATERIALIZED_IMPLICIT"
+      }
+    ],
+    "dependencyFindings": []
+  },
+  "verification": {
+    "total": 1,
+    "incomplete": 0,
+    "drifted": [],
+    "provenanceGaps": []
+  },
+  "after": {
+    "entitlementNormalization": {
+      "id": "cmu4dufch003ehdk15yde81my",
+      "companyId": "seed-local-company",
+      "status": "COMPLETED",
+      "snapshotHash": "7dac52259cd8b375ee52791101f86cbda068cf368370d29d7c30673403ea89fd",
+      "runId": "local-ux-20260917-entitlement-repair",
+      "normalizerVersion": 1,
+      "cohortKind": "LEGACY",
+      "error": null,
+      "startedAt": "2026-09-16T17:36:39.473Z",
+      "completedAt": "2026-09-16T17:36:39.472Z",
+      "createdAt": "2026-09-16T17:36:39.473Z",
+      "updatedAt": "2026-09-16T17:36:39.473Z"
+    },
+    "entitlementSet": {
+      "id": "cmu4dufa50000hdk1knyhszjc",
+      "companyId": "seed-local-company",
+      "setVersion": 1,
+      "lastTransitionAt": "2026-09-16T17:36:39.397Z",
+      "createdAt": "2026-09-16T17:36:39.389Z",
+      "updatedAt": "2026-09-16T17:36:39.398Z"
+    },
+    "featureEntitlements": [
+      {
+        "featureKey": "ai_line_assistant",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.accounts",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.adjustments",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.cash",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.import",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.matching",
+        "enabled": true
+      },
+      {
+        "featureKey": "bank_reconciliation.reconciliations",
+        "enabled": true
+      },
+      {
+        "featureKey": "company_settings",
+        "enabled": true
+      },
+      {
+        "featureKey": "company_settings.branches",
+        "enabled": true
+      },
+      {
+        "featureKey": "company_settings.security",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.bookings",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.customers",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.followups",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.inbox",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.leads",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.overview",
+        "enabled": true
+      },
+      {
+        "featureKey": "crm.pipeline",
+        "enabled": true
+      },
+      {
+        "featureKey": "dashboard_notifications",
+        "enabled": true
+      },
+      {
+        "featureKey": "dashboard_notifications.preferences",
+        "enabled": true
+      },
+      {
+        "featureKey": "dashboard_notifications.rules",
+        "enabled": true
+      },
+      {
+        "featureKey": "double_entry_ledger",
+        "enabled": true
+      },
+      {
+        "featureKey": "employee_access",
+        "enabled": true
+      },
+      {
+        "featureKey": "employee_access.employees",
+        "enabled": true
+      },
+      {
+        "featureKey": "employee_access.overview",
+        "enabled": true
+      },
+      {
+        "featureKey": "employee_access.roles",
+        "enabled": true
+      },
+      {
+        "featureKey": "expense_auto_post",
+        "enabled": false
+      },
+      {
+        "featureKey": "expenses",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.categories",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.evidence",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.list",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.manual",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.signatures",
+        "enabled": true
+      },
+      {
+        "featureKey": "expenses.upload",
+        "enabled": true
+      },
+      {
+        "featureKey": "inventory",
+        "enabled": true
+      },
+      {
+        "featureKey": "inventory.locations",
+        "enabled": true
+      },
+      {
+        "featureKey": "inventory.movements",
+        "enabled": true
+      },
+      {
+        "featureKey": "inventory.stock_report",
+        "enabled": true
+      },
+      {
+        "featureKey": "line_oa",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.ap_aging",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.goods_receipts",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.purchase_orders",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.purchase_requests",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.supplier_payments",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.suppliers",
+        "enabled": true
+      },
+      {
+        "featureKey": "procurement.vendor_bills",
+        "enabled": true
+      },
+      {
+        "featureKey": "product_catalog",
+        "enabled": true
+      },
+      {
+        "featureKey": "reimbursement",
+        "enabled": true
+      },
+      {
+        "featureKey": "reports",
+        "enabled": true
+      },
+      {
+        "featureKey": "sales_documents",
+        "enabled": true
+      },
+      {
+        "featureKey": "thai_tax",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.dead_letters",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.rules",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.runs",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.tasks",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.templates",
+        "enabled": true
+      },
+      {
+        "featureKey": "workflow_automation.webhooks",
+        "enabled": true
+      }
+    ]
+  },
+  "replay": {
+    "companyId": "seed-local-company",
+    "status": "ALREADY_COMPLETED",
+    "cohortKind": "LEGACY",
+    "cohortEvidence": "EXISTING_MARKER",
+    "hash": "7dac52259cd8b375ee52791101f86cbda068cf368370d29d7c30673403ea89fd",
+    "written": 0,
+    "unchanged": 60,
+    "removed": 0,
+    "orphanRows": [],
+    "setVersion": null,
+    "provenance": 0,
+    "writes": [],
+    "dependencyFindings": []
+  },
+  "accessChanged": false,
+  "ci": false,
+  "deploy": false
+}

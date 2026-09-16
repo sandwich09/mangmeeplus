@@ -98,7 +98,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     const quotaCapacity=(await request(`${own}/capacity?offerKey=PRO_999&interval=year`)).body;assert.equal(quotaCapacity.branchLimit,7);assert.equal(quotaCapacity.employeeLimit,25);
     const quote=await newQuote();assert.equal(quote.offer.branchLimit,7);assert.equal(quote.offer.employeeLimit,25);assert.equal(quote.totalSatang,1099001);assert.equal(quote.purchase.receiptUnitsAdded,1500);assert.equal(quote.purchase.projectedRemainingReceipts,1500);
     if(browser){const page=browser.page;for(const channel of ['web','line']){await page.goto(`${browser.origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=${channel}`,{waitUntil:'domcontentloaded'});
-        await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();await page.getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();await page.getByRole('heading',{name:/ยืนยันซื้อ/}).waitFor();
+        await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();await page.getByRole('button',{name:'เลือกแพ็กเกจนี้',exact:true}).click();await page.getByRole('heading',{name:/ยืนยันซื้อ/}).waitFor();
         assert.match(await page.locator('main').last().innerText(),/1,500/);assert.match(await page.locator('main').last().innerText(),/10,990\.01/);}
       cases.push('browser-web-and-line-entry-show-current-approved-price-and-1500-upfront-receipts');}
     const unused=await newQuote(),body={quoteId:quote.quoteId,consentRevision:quote.consentRevision,accepted:true,channel:'line'},key=randomUUID();
@@ -137,7 +137,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
       try{for(let i=0;i<3;i++){const waiting=new Promise<any>(r=>arrive=r);await page.getByRole('button',{name:'ตรวจผลกระทบการตั้งค่า',exact:true}).click();const r=await waiting;
           if(r.status===200){late=r.body;break;}assert.equal(r.status,429);assert.ok(r.body.retryAfterSeconds<=60);await page.getByRole('alert').filter({hasText:'รอ'}).waitFor();await new Promise(resolve=>setTimeout(resolve,(r.body.retryAfterSeconds+1)*1000));}
         assert.ok(late);await page.getByRole('link',{name:'กลับหน้าดูแลการชำระเงิน',exact:true}).click();await page.waitForURL(new RegExp('/system/billing$'));release();
-        await page.getByRole('heading',{name:'ดูแลแพ็กเกจและการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing'));
+        await page.getByRole('heading',{name:'แพ็กเกจและการชำระเงิน',exact:true}).waitFor();assert.ok(page.url().endsWith('/system/billing'));
       }finally{release();await page.unroute(route);}
       await page.goto(`${browser.origin}/system/billing/settings`,{waitUntil:'domcontentloaded'});await page.getByRole('link').filter({hasText:'ตรวจร่างต่อหลังกลับเข้าหน้าเดิม'}).click();await page.waitForURL(new RegExp(late.id));
       await press(page,'ยกเลิกคำขอนี้','/cancel');await page.getByRole('status').filter({hasText:'ยกเลิกคำขอนี้แล้ว'}).waitFor();

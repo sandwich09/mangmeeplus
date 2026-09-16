@@ -71,15 +71,15 @@ export async function checkBillingCompanyRead(input: Parameters<typeof checkBill
     if(browser) {
       const page=browser.page;await page.setViewportSize({width:390,height:844});
       await page.goto(`${browser.origin}/system/billing`,{waitUntil:'domcontentloaded'});
-      await page.getByLabel('ค้นหาบริษัทในขอบเขต',{exact:true}).fill(trialId);await page.getByRole('button',{name:'ค้นหาบริษัท',exact:true}).click();
-      const link=page.locator(`a[href="/system/billing/companies/${trialId}"]`);await link.click();await page.waitForURL(`${browser.origin}/system/billing/companies/${trialId}`);
+      await page.getByLabel('ค้นหาบริษัท',{exact:true}).fill(trialId);await page.getByRole('button',{name:'ค้นหา',exact:true}).click();
+      const link=page.locator(`a[href="/system/billing/companies/${trialId}"]:visible`);await link.click();await page.waitForURL(`${browser.origin}/system/billing/companies/${trialId}`);
       const summary=page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท',exact:true});await summary.getByText(/แหล่งสิทธิ์ ทดลองใช้ฟรี/).waitFor();
       assert.equal(await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).count(),0,'no provider account means no reconcile action');
       await page.getByRole('region',{name:'ประวัติแพ็กเกจและการชำระเงิน',exact:true}).getByText(/แพ็กเกจปัจจุบัน/).waitFor();
       await page.screenshot({path:`${browser.evidenceDir}/admin-trial-mobile.png`,fullPage:true});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.getByRole('link',{name:'บริษัท',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing`);
-      await page.getByLabel('ค้นหาบริษัทในขอบเขต',{exact:true}).fill(paidId);await page.getByRole('button',{name:'ค้นหาบริษัท',exact:true}).click();
-      await page.locator(`a[href="/system/billing/companies/${paidId}"]`).click();await page.waitForURL(`${browser.origin}/system/billing/companies/${paidId}`);
+      await page.getByLabel('ค้นหาบริษัท',{exact:true}).fill(paidId);await page.getByRole('button',{name:'ค้นหา',exact:true}).click();
+      await page.locator(`a[href="/system/billing/companies/${paidId}"]:visible`).click();await page.waitForURL(`${browser.origin}/system/billing/companies/${paidId}`);
       const timeline=page.getByRole('region',{name:'ประวัติแพ็กเกจและการชำระเงิน',exact:true});await timeline.getByRole('button',{name:'ประวัติหน้าถัดไป',exact:true}).click();
       await timeline.locator('article').filter({hasText:finance[25]!.reference}).locator('summary').click();await timeline.getByText(`อ้างอิง ${finance[25]!.reference}`,{exact:true}).waitFor();await timeline.getByRole('button',{name:'ประวัติหน้าแรก',exact:true}).click();
       await timeline.locator('article').filter({hasText:finance[0]!.reference}).locator('summary').click();await timeline.getByText(`อ้างอิง ${finance[0]!.reference}`,{exact:true}).waitFor();

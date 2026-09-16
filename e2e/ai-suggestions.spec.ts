@@ -8,7 +8,8 @@ type SuggestionPage = { items?: Suggestion[]; data?: Suggestion[] };
 test.describe('AISUG — AI suggestions', () => {
   test('AISUG-01 @smoke AI suggestions inbox renders with provider disabled or empty state', async ({ authedPage, companyId }) => {
     await gotoCompany(authedPage, companyId, '/ai-suggestions');
-    await expect(authedPage.getByRole('heading', { name: /AI แนะนำ|AI Suggestions/i })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: /คำแนะนำจาก AI|AI Suggestions/i })).toBeVisible();
+    await expect(authedPage.getByRole('link', { name: 'AI แนะนำ', exact: true })).toHaveCount(0);
     await expect(authedPage.getByText(/โหมดผู้ให้บริการ AI|ไม่มีคำแนะนำ|suggestion/i).first()).toBeVisible();
   });
 

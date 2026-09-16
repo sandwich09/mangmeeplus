@@ -95,7 +95,6 @@ import type {
   SubstituteReceiptListFilter,
   SupersedeSubstituteReceiptInput,
 } from '@watchdog-bms/contracts';
-import { todayCivilDate } from '@watchdog-bms/contracts';
 
 @Controller('companies/:companyId/expenses')
 export class ExpenseController {
@@ -229,7 +228,7 @@ export class ExpenseController {
     @ReqCtx() ctx: RequestContext,
     @Body() body: ReceiptUploadIntentDto,
   ) {
-    return this.initUpload.execute(ctx, { ...body, expenseDate: body.expenseDate ?? todayCivilDate() });
+    return this.initUpload.execute(ctx, body);
   }
 
   @Delete(':expenseId')

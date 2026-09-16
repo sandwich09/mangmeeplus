@@ -322,6 +322,9 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
           <StatusBadge status={rule.status} labels={RULE_STATUS_LABELS} />
         </div>
         {error && <ErrorBanner message={error} />}
+        <details className="rounded-xl border border-gray-200 p-3">
+          <summary className="min-h-11 cursor-pointer py-2 font-semibold">ตั้งค่าขั้นสูงสำหรับผู้ดูแลด้านเทคนิค</summary>
+          <p className="my-3 text-base text-gray-600">ส่วนนี้ใช้แก้เงื่อนไขและคำสั่งอัตโนมัติด้วย JSON บันทึกเป็นร่างและทดสอบก่อนเปิดใช้งาน</p>
         <div>
           <label className="mb-1 block text-sm text-gray-600">Condition JSON (แก้ไขได้เมื่อยังไม่เปิดใช้งาน หรือเปิดใช้งานใหม่หลังแก้ไข)</label>
           <textarea className={`${inputClass} font-mono`} rows={6} value={conditionJson} onChange={(e) => setConditionJson(e.target.value)} />
@@ -342,6 +345,7 @@ function RuleDetailModal({ companyId, ruleId, onClose, onChanged }: { companyId:
             <pre className="mt-2 max-h-48 overflow-auto rounded bg-gray-50 p-3 text-xs text-gray-700">{JSON.stringify(testResult, null, 2)}</pre>
           )}
         </div>
+        </details>
         <div className="flex justify-end">
           <button className={ghostClass} onClick={onClose}>ปิด</button>
         </div>

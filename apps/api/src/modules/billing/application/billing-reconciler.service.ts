@@ -1,7 +1,7 @@
 import { observedCollectionPause } from './billing-admin-collection';
 import { BillingPlanAdjustmentsService } from './billing-plan-adjustments.service';
 import { invoiceFindingSource } from './billing-invoice-finding';
-import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
+import { resolveAppliedInvoiceIssues, detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
 import { BadRequestException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -529,7 +529,7 @@ export class BillingReconcilerService {
         billingAccountId_sourceAttemptId: { billingAccountId: account.id, sourceAttemptId: contract.id },
       }, create: { billingAccountId: account.id, sourceAttemptId: contract.id, effectiveAt: evidence.periodStart,
         snapshotJson: snapshot as unknown as Prisma.InputJsonValue }, update: {} });
-      if (invoice.appliedAt) return;
+      if (invoice.appliedAt) { await resolveAppliedInvoiceIssues(tx,account,invoice.id); return; }
       const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId }, include: { planTerm: true } });
       const planChange = snapshot.planChangeId ? await tx.billingOperation.findUnique({ where: { id: snapshot.planChangeId } }) : null;
       const applyingChange = evidence.kind === 'RENEWAL' && !!planChange && planChange.state !== 'APPLIED';
@@ -577,8 +577,7 @@ export class BillingReconcilerService {
       }
       await tx.billingInvoice.update({ where: { id: invoice.id }, data: { applyStatus: 'APPLIED', appliedAt: new Date(), errorCode: null, version: { increment: 1 } } });
       await fulfillPaidPackageRequest(tx,company.id,account.id,invoice.id);
-      await tx.billingIssue.updateMany({ where: { companyId: company.id, stripeAccountId: account.stripeAccountId, livemode: account.livemode,
-        kind: 'PAID_HELD', referenceId: invoice.id, state: { not: 'RESOLVED' } }, data: { state: 'RESOLVED', resolvedAt: new Date(), version: { increment: 1 } } });
+      await resolveAppliedInvoiceIssues(tx,account,invoice.id);
       await tx.auditLog.create({ data: { companyId: company.id, action: 'billing.invoice.applied', targetType: 'BillingInvoice', targetId: invoice.id,
         requestId: invoice.id, result: 'SUCCESS', riskLevel: 'CRITICAL', metadataJson: { periodStart: evidence.periodStart.toISOString(), periodEnd: evidence.periodEnd.toISOString(), tierKey: snapshot.quote.offer.offerKey } } });
       await tx.outboxEvent.upsert({ where: { eventKey: `billing:applied:${invoice.id}` }, update: {}, create: {

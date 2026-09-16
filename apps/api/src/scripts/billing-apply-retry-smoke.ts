@@ -93,13 +93,14 @@ export async function checkBillingApplyRetry(input:{
         {name:'watchdog_csrf',value:'synthetic-apply-csrf',url:browser.origin,sameSite:'Lax'}]);
       const page=await context.newPage();
       await page.goto(`${browser.origin}/system/billing/companies/${companyId}`,{waitUntil:'domcontentloaded'});
-      await page.getByRole('link',{name:'ตรวจสิทธิ์จากใบเสร็จเดิม',exact:true}).click();
+      await page.getByRole('link',{name:'ปรับแพ็กเกจและตรวจสอบ',exact:true}).click();
+      await page.getByRole('link',{name:'เปิดตรวจการเปิดแพ็กเกจ',exact:true}).click();
       await page.getByRole('region',{name:'ใบเสร็จที่รอใช้สิทธิ์'}).locator('article').last().waitFor();
       await expect(page.getByRole('region',{name:'ใบเสร็จที่รอใช้สิทธิ์'}).locator('article')).toHaveCount(25);
-      await page.getByRole('button',{name:'ใบเสร็จหน้าถัดไป',exact:true}).click();
-      await page.getByRole('button',{name:'ใบเสร็จหน้าแรก',exact:true}).waitFor();
+      await page.getByRole('button',{name:'รายการหน้าถัดไป',exact:true}).click();
+      await page.getByRole('button',{name:'กลับหน้าแรก',exact:true}).waitFor();
       await expect(page.getByRole('region',{name:'ใบเสร็จที่รอใช้สิทธิ์'}).locator('article')).toHaveCount(3);
-      await page.getByRole('button',{name:'ใบเสร็จหน้าแรก',exact:true}).click();
+      await page.getByRole('button',{name:'กลับหน้าแรก',exact:true}).click();
     }
     await db.billingInvoice.deleteMany({where:{id:{in:invoices.filter(id=>id!==applied.id)}}});
     const stale=(await preview()).body;
@@ -131,12 +132,14 @@ export async function checkBillingApplyRetry(input:{
     let op:any;
     if(context){
       const page=context.pages()[0]!;await page.goto(`${browser!.origin}${list.replace('/v1','')}/${original.id}`,{waitUntil:'domcontentloaded'});
+      await page.getByText('บันทึกเหตุผล (ระบบใส่ให้แล้ว)',{exact:true}).click();
       await page.getByRole('textbox',{name:'เหตุผลการตรวจสอบ',exact:true}).fill('ตรวจสิทธิ์จากใบเสร็จเดิมผ่านเว็บ');
-      await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();
-      await page.getByRole('status').filter({hasText:'ตรวจสอบก่อนส่งคำสั่ง'}).waitFor();
-      const href=await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).getAttribute('href');assert.ok(href);
+      await page.getByRole('button',{name:'ตรวจสอบรายการนี้',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'ตรวจข้อมูลก่อนยืนยัน'}).waitFor();
+      await page.getByText('ประวัติและข้อมูลอ้างอิง',{exact:true}).click();
+      const href=await page.getByRole('link',{name:'เปิดรายละเอียดการดำเนินการนี้',exact:true}).getAttribute('href');assert.ok(href);
       op=(await readOp(href.split('/').at(-1)!)).body;
-      await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();
+      await page.getByRole('button',{name:'ยืนยันแก้ไขรายการนี้',exact:true}).click();
       await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();
     }else {op=(await preview()).body;assert.equal((await submit(op)).body.state,'QUEUED');}
     assert.equal((await submit(op)).body.id,op.id,'exact idempotency replay');
@@ -161,14 +164,14 @@ export async function checkBillingApplyRetry(input:{
     }finally{input.charge.disputed=previousDispute;}
     cases.push('apply-invoice-missing-financial-evidence-remains-unknown-no-default-non-disputed-grant');
     if(context){
-      const page=context.pages()[0]!;await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
+      const page=context.pages()[0]!;await page.getByRole('button',{name:'อัปเดตข้อมูล',exact:true}).click();
       await page.getByRole('status').filter({hasText:'ยังยืนยันผลไม่ได้'}).waitFor();
-      await page.getByRole('link',{name:'เปิดลิงก์คำสั่งนี้',exact:true}).click();await page.waitForURL(`${browser!.origin}/system/billing/operations/${op.id}`);
+      await page.getByRole('link',{name:'เปิดรายละเอียดการดำเนินการนี้',exact:true}).click();await page.waitForURL(`${browser!.origin}/system/billing/operations/${op.id}`);
       await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('status').filter({hasText:'ยังยืนยันผลไม่ได้'}).waitFor();
     }
     await input.repairCapacity();
-    if(context){const page=context.pages()[0]!;await page.getByRole('button',{name:'ตรวจสอบคำสั่งเดิมอีกครั้ง',exact:true}).click();
-      await page.getByRole('status').filter({hasText:'รอระบบตรวจสอบ'}).waitFor();}
+    if(context){const page=context.pages()[0]!;await page.getByRole('button',{name:'ลองดำเนินการอีกครั้ง',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'รอระบบดำเนินการ'}).waitFor();}
     else assert.equal((await change(op,'retry')).body.state,'QUEUED');
     let lost=false;fault=async path=>{if(!lost&&path===`/invoices/${original.providerInvoiceId}`){lost=true;
       await db.billingOperation.update({where:{id:op.id},data:{leaseToken:randomUUID(),leaseUntil:new Date(Date.now()+60000),version:{increment:1}}});}};
@@ -189,15 +192,15 @@ export async function checkBillingApplyRetry(input:{
     cases.push('apply-invoice-capacity-repair-original-grant-once-stale-operation-lease-no-false-completion');
     cases.push('apply-invoice-replacement-worker-observes-original-paid-source-without-provider-io');
     if(context){
-      const page=context.pages()[0]!;await page.getByRole('button',{name:'โหลดคำสั่งล่าสุด',exact:true}).click();
-      await page.getByRole('status').filter({hasText:'ตรวจสอบสถานะล่าสุดแล้ว'}).waitFor();
+      const page=context.pages()[0]!;await page.getByRole('button',{name:'อัปเดตสถานะ',exact:true}).click();
+      await page.getByRole('status').filter({hasText:'ดำเนินการเสร็จแล้ว'}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
       await page.screenshot({path:`${browser!.evidenceDir}/admin-apply-retry-mobile.png`,fullPage:true});
-      await page.getByRole('link',{name:'กลับไปใบเสร็จเดิมหรือเลือกรายการ',exact:true}).click();
-      await page.getByRole('heading',{name:'ใบเสร็จนี้ให้สิทธิ์แล้ว',exact:true}).waitFor();
-      await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'ใบเสร็จนี้ให้สิทธิ์แล้ว',exact:true}).waitFor();
-      assert.equal(await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).count(),0);
-      await page.getByRole('link',{name:'กลับไปบริษัท',exact:true}).click();
+      await page.getByRole('link',{name:'เปิดรายการชำระเดิม',exact:true}).click();
+      await page.getByRole('heading',{name:'รายการนี้เปิดแพ็กเกจแล้ว',exact:true}).waitFor();
+      await page.reload({waitUntil:'domcontentloaded'});await page.getByRole('heading',{name:'รายการนี้เปิดแพ็กเกจแล้ว',exact:true}).waitFor();
+      assert.equal(await page.getByRole('button',{name:'ตรวจสอบรายการนี้',exact:true}).count(),0);
+      await page.getByRole('link',{name:'ดูแพ็กเกจปัจจุบันของบริษัท',exact:true}).click();
       await page.getByRole('region',{name:'ข้อมูลการชำระเงินบริษัท'}).waitFor();
       cases.push('browser-apply-invoice-list-detail-preview-submit-unknown-reload-retry-success-original-company-return');
     }

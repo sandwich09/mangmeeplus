@@ -23,7 +23,7 @@ export const btnClass = 'mangmee-btn mangmee-btn-primary disabled:cursor-not-all
 export const ghostClass = 'mangmee-btn mangmee-btn-secondary disabled:cursor-not-allowed disabled:opacity-50';
 export const dangerClass = 'mangmee-btn mangmee-btn-danger disabled:cursor-not-allowed disabled:opacity-50';
 export const successBtn = 'mangmee-btn text-white disabled:cursor-not-allowed disabled:opacity-50';
-export const successBtnStyle = { background: 'linear-gradient(150deg,var(--color-success-500),var(--color-success-700))', borderColor: 'var(--color-success-600)' } as const;
+export const successBtnStyle = { background: 'linear-gradient(150deg,var(--color-brand-700),var(--color-brand-800))', borderColor: 'var(--color-brand-700)' } as const;
 
 // ── icons (inline SVG, 1.8 stroke — matches the mock's this.ic() set) ─────────
 function mk(paths: string) {
@@ -122,27 +122,19 @@ export function StateBanner({ error }: { error: string | null }) {
 }
 
 // ── "how this works" numbered-step strip (mock brand-25 explainer) ───────────
-export function HowItWorks({ title, steps }: { title?: string; steps: string[] }) {
+export function HowItWorks({ title, description, steps }: { title?: string; description?: string; steps: string[] }) {
   return (
     <div className="rounded-2xl border border-brand-100 bg-brand-25 p-4">
-      {title && <div className="mb-3 text-sm font-bold text-gray-900">{title}</div>}
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-3">
-        {steps.map((s, i) => (
-          <span key={s} className="flex items-center gap-2.5">
-            <span className="inline-flex items-center gap-2 rounded-xl border border-brand-100 bg-white px-3.5 py-2 text-sm font-semibold text-gray-700">
-              <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-brand-500 text-xs font-extrabold text-white">{i + 1}</span>
-              {s}
-            </span>
-            {/* Drawn, not the → glyph: the shaft length is exact and font-independent. */}
-            {i < steps.length - 1 && (
-              <svg aria-hidden="true" viewBox="0 0 36 12" className="h-3 w-9 flex-shrink-0 text-brand-300"
-                fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 6h33M30 2l4 4-4 4" />
-              </svg>
-            )}
-          </span>
+      {title && <h2 className="mb-3 text-sm font-bold text-gray-900">{title}</h2>}
+      {description && <p className="mb-3 text-sm leading-relaxed text-gray-600">{description}</p>}
+      <ol className="grid gap-3 lg:grid-cols-3">
+        {steps.map((step, index) => (
+          <li key={step} className="flex min-w-0 items-start gap-3 rounded-xl border border-brand-100 bg-white p-4 text-sm font-semibold leading-6 text-gray-700">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-500 text-xs font-extrabold text-white">{index + 1}</span>
+            <span className="min-w-0">{step}</span>
+          </li>
         ))}
-      </div>
+      </ol>
     </div>
   );
 }

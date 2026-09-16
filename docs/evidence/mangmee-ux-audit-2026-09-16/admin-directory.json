@@ -1,0 +1,39 @@
+{
+  "scope": "system partners directory and shared admin navigation",
+  "status": "local-ready-for-owner-review",
+  "apiChecks": {
+    "passed": 37
+  },
+  "webChecks": {
+    "passed": 23
+  },
+  "typecheck": {
+    "web": "passed",
+    "api": "passed"
+  },
+  "e2e": {
+    "distinctPassed": 4,
+    "cases": [
+      "SYS-01",
+      "SYS-01A",
+      "SYS-01B",
+      "SYS-05"
+    ],
+    "retryAfterFix": [
+      "SYS-01A",
+      "SYS-01B"
+    ],
+    "simulatedCase": "503 company list read with retry; all other listed reads use local API/DB"
+  },
+  "nativeInspection": {
+    "desktopWidth": 1512,
+    "mobileWidth": 390,
+    "viewportReset": true
+  },
+  "localUrl": "http://localhost:3000/system/partners",
+  "limits": [
+    "No other admin page content redesign",
+    "No full-console E2E claim",
+    "No CI, merge, push or deployment"
+  ]
+}

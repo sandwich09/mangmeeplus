@@ -284,11 +284,10 @@ async function main() {
       await selectedCompany.click();
       await page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true }).waitFor();
       cases.push('browser-owner-company-picker-retains-plan-interval-and-line-origin');
-      await page.getByRole('heading', { name: 'เลือกแพ็กเกจ', exact: true }).waitFor();
       assert.doesNotMatch(await page.locator('main').last().innerText(), /ซื้อใบเพิ่ม|ซื้อเฉพาะใบ/);
-      await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
+      await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
       await page.getByRole('button', { name: 'รายปี', exact: true }).click();
-      await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
+      await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
       const toggleSales = async (enabled: boolean) => {
         await client.billingSettings.update({ where: { id: `${accountId}:test` }, data: {
@@ -299,9 +298,9 @@ async function main() {
       await toggleSales(false);
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor({ state: 'hidden' });
       assert.equal(checkoutCalls, 0);
-      assert.equal(await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).count(), 0);
+      assert.equal(await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).count(), 0);
       await toggleSales(true);
-      await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
+      await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
       await page.getByRole('heading', { name: /ยืนยันซื้อ/ }).waitFor();
       cases.push('browser-runtime-sales-gate-refresh-invalidates-review-and-recovers-without-restart');
       await page.screenshot({ path: `${browser.evidenceDir}/quote-desktop.png`, fullPage: true });
@@ -454,7 +453,8 @@ async function main() {
         assert.equal(await notification.getAttribute('href'), `/companies/${companyIds[0]}/billing`);
         await notification.click();
         await browser.page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true }).waitFor();
-        await browser.page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).getByText('ชำระแล้ว เปิดใช้งานแล้ว', { exact: true }).waitFor();
+        await browser.page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).getByText('แพ็กเกจปัจจุบัน', { exact: true }).waitFor();
+        await browser.page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).getByText('ใช้งานได้', { exact: true }).waitFor();
         cases.push('browser-billing-notification-center-link-returns-to-authoritative-paid-status');
       }
       if (process.env.BILLING_NOTIFICATIONS_ONLY === '1') {
@@ -470,8 +470,9 @@ async function main() {
       const { page } = browser;
       await page.goto(`${browser.origin}/companies/${companyIds[0]}/billing/return?attempt=${checkout.body.attemptId}`, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true }).waitFor();
-      await page.getByRole('button', { name: 'เปิดใบเสร็จ', exact: true }).waitFor();
       assert.match(await page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).innerText(), /1198/);
+      await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();
+      await page.getByRole('link', { name: 'ดูเอกสาร', exact: true }).first().waitFor();
       await page.setViewportSize({ width: 390, height: 844 });
       await page.screenshot({ path: `${browser.evidenceDir}/paid-mobile.png`, fullPage: true });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
@@ -480,7 +481,7 @@ async function main() {
         await page.goto(`${browser.origin}/companies/${companyIds[0]}/billing/return${query}`, { waitUntil: 'domcontentloaded' });
         await page.getByRole('alert').filter({ hasText: /ลิงก์ไม่มีเลขรายการ|ไม่พบรายการนี้/ }).waitFor();
         assert.equal(await page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true }).count(), 0);
-        await page.getByRole('link', { name: 'กลับไปใช้งาน', exact: true }).waitFor();
+        await page.locator('aside').waitFor();
       }
       const failedQuoteId = randomUUID(), failedAttemptId = randomUUID();
       const sourceAttempt = await client.billingAttempt.findUniqueOrThrow({ where: { id: checkout.body.attemptId } });

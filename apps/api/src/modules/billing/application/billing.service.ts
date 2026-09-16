@@ -77,8 +77,14 @@ export class BillingService {
 
   async settings(tx: Prisma.TransactionClient = this.prisma.client) {
     const stripeAccountId = this.stripe.accountId, livemode = this.stripe.livemode;
-    const settings = await tx.billingSettings.upsert({ where: { stripeAccountId_livemode: { stripeAccountId, livemode } },
-      create: { id: `${stripeAccountId}:${livemode ? 'live' : 'test'}`, stripeAccountId, livemode, gatesJson: CLOSED_GATES }, update: {} });
+    const where = { stripeAccountId_livemode: { stripeAccountId, livemode } };
+    let settings = await tx.billingSettings.findUnique({ where });
+    if (!settings) {
+      // An empty-update Prisma upsert can race on the first read. ON CONFLICT must
+      // leave an existing operator's gates, policy and version untouched.
+      await tx.billingSettings.createMany({ data: [{ id: `${stripeAccountId}:${livemode ? 'live' : 'test'}`, stripeAccountId, livemode, gatesJson: CLOSED_GATES }], skipDuplicates: true });
+      settings = await tx.billingSettings.findUniqueOrThrow({ where });
+    }
     const revision = settings.policyRevisionId ? await tx.billingPolicyRevision.findUnique({ where: { id: settings.policyRevisionId } }) : null;
     let policy:BillingPolicy|null=null;
     if(revision&&revision.stripeAccountId===stripeAccountId&&revision.livemode===livemode&&revision.state==='ACTIVE') {

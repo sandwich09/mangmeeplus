@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 import type { EmailHistoryPolicyDto, EmailHistoryPolicyInput } from '@watchdog-bms/contracts';
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { statusOf } from '@/common/i18n/error-message.logic';
+import { Button } from '@/common/components/button';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 
-const button = 'rounded-xl border bg-white px-4 py-3 font-semibold disabled:opacity-50';
-const when = (at: string | null) => at ? new Date(at).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : 'ยังไม่มี';
+const when = (at: string | null) => at ? formatThaiDateTime(at) : 'ยังไม่มี';
 
 export default function EmailHistoryPolicyPanel() {
   const [data, setData] = useState<EmailHistoryPolicyDto | null>(null), [loading, setLoading] = useState(true);
@@ -48,38 +49,22 @@ export default function EmailHistoryPolicyPanel() {
       }
     } finally { inFlight.current = false; if (current === generation.current) setBusy(false); }
   };
-  return <section className="space-y-3 rounded-2xl border bg-white p-4 sm:p-6" aria-label="การเก็บประวัติเมล">
-    <h2 className="text-xl font-bold">การเก็บประวัติเมล</h2>
-    <p>ล้างเฉพาะรายละเอียดของรายการส่งสำเร็จที่ครบกำหนดออกจากประวัติทั่วไป ระบบยังเก็บหลักฐานการส่ง งานค้าง และประวัติการแก้ไขไว้</p>
-    <p>การตั้งค่านี้ใช้กับระบบมั่งมี ไม่เปลี่ยนระยะเวลาเก็บอีเมลของ Postmark</p>
-    {loading && <p role="status">กำลังโหลดการตั้งค่า…</p>}{error && <p role="alert" className="rounded-xl bg-red-50 p-3">{error}</p>}
-    {notice && <p role="status">{notice}</p>}
-    <button className={button} disabled={loading || busy || uncertain} onClick={() => { setPreview(null); setNotice(''); setReload(value => value + 1); }}>โหลดการตั้งค่าล่าสุด</button>
-    {data && <>
-      <p>ล้างอัตโนมัติ: <strong>{data.enabled ? 'เปิด' : 'ปิด'}</strong> · เก็บประวัติทั่วไป {data.retentionDays} วัน</p>
-      <p>ครบเงื่อนไขปัจจุบัน {data.eligibleCount} รายการ · ล้างล่าสุด {when(data.lastCleanupAt)} ({data.lastArchivedCount} รายการ)</p>
-      {!data.configured ? <p>ให้ผู้ดูแลระบุบัญชีส่งเมลให้ครบก่อนตั้งค่า</p> : !data.canManage ? <p>ดูได้อย่างเดียว หากต้องการแก้ไขให้ติดต่อผู้ดูแลสิทธิ์</p> : <fieldset className="space-y-3" disabled={busy || !!preview}>
-        <div><label htmlFor="mail-history-days" className="block">เก็บประวัติทั่วไปกี่วัน</label>
-          <input id="mail-history-days" type="text" inputMode="numeric" className="mt-2 w-full rounded-xl border p-3" value={days} onChange={event => setDays(event.target.value)}/></div>
-        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={enabled} onChange={event => setEnabled(event.target.checked)}/>เปิดการล้างอัตโนมัติ</label>
-        <div><label htmlFor="mail-history-reason" className="block">เหตุผลที่แก้ไข</label>
-          <textarea id="mail-history-reason" className="mt-2 w-full rounded-xl border p-3" maxLength={500} value={reason} onChange={event => setReason(event.target.value)}/></div>
-        <button className={button} onClick={review}>ตรวจรายการก่อนบันทึก</button>
+  const dirty = Boolean(data && (days !== String(data.retentionDays) || enabled !== data.enabled || reason));
+  return <section className="rounded-xl border border-gray-200 bg-white p-4 sm:p-6" aria-label="การเก็บประวัติเมล"><details>
+    <summary className="min-h-11 cursor-pointer py-2 font-semibold text-gray-700">การเก็บประวัติอีเมล</summary>
+    <div className="space-y-4 pt-3 text-gray-600"><p>กำหนดระยะเวลาเก็บรายละเอียดของรายการที่ส่งสำเร็จ ระบบยังเก็บหลักฐานการส่ง งานค้าง และประวัติการแก้ไขไว้</p><p className="text-sm">การตั้งค่านี้ใช้กับมั่งมี ไม่เปลี่ยนระยะเวลาเก็บอีเมลของ Postmark</p>
+    {loading&&<p role="status">กำลังอ่านการตั้งค่า…</p>}{error&&<p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">{error}</p>}{notice&&<p role="status" className="rounded-lg bg-brand-50 p-4 text-brand-800">{notice}</p>}
+    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold text-gray-900">การตั้งค่าปัจจุบัน</h2><Button variant="ghost" className="!min-h-11 !text-base" disabled={loading||busy||uncertain||dirty||!!preview} onClick={()=>{setPreview(null);setNotice('');setReload(value=>value+1);}}>อัปเดตการตั้งค่า</Button></div>
+    {data&&<><dl className="grid gap-3 rounded-lg bg-gray-50 p-4 sm:grid-cols-2"><div><dt className="text-sm">ล้างรายละเอียดอัตโนมัติ</dt><dd className="mt-1 font-medium text-gray-900">{data.enabled?'เปิด':'ปิด'}</dd></div><div><dt className="text-sm">เก็บประวัติทั่วไป</dt><dd className="mt-1 font-medium text-gray-900">{data.retentionDays} วัน</dd></div></dl>
+      {!data.configured?<p>ยังตั้งค่าบัญชีส่งอีเมลไม่ครบ จึงยังแก้ไขการเก็บประวัติไม่ได้</p>:!data.canManage?<p>บัญชีนี้ดูการตั้งค่าได้ แต่ไม่มีสิทธิ์แก้ไข</p>:!preview&&<fieldset className="space-y-4 border-t border-gray-100 pt-4" disabled={busy}><legend className="sr-only">แก้ไขการเก็บประวัติ</legend>
+        <div className="max-w-sm"><label htmlFor="mail-history-days" className="mb-2 block text-sm font-medium text-gray-700">เก็บประวัติทั่วไปกี่วัน</label><input id="mail-history-days" type="text" inputMode="numeric" className="mangmee-input min-h-11 w-full !text-base" value={days} onChange={event=>setDays(event.target.value)}/></div>
+        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" className="h-4 w-4 accent-green-700" checked={enabled} onChange={event=>setEnabled(event.target.checked)}/>เปิดการล้างอัตโนมัติ</label>
+        <div><label htmlFor="mail-history-reason" className="mb-2 block text-sm font-medium text-gray-700">เหตุผลที่แก้ไข</label><textarea id="mail-history-reason" className="mangmee-input min-h-24 w-full !text-base" maxLength={500} value={reason} onChange={event=>setReason(event.target.value)}/></div>
+        <Button className="!min-h-11 !text-base" onClick={review}>ตรวจรายการก่อนบันทึก</Button>
       </fieldset>}
-      {preview && <div className="space-y-3 rounded-xl bg-amber-50 p-4" aria-label="ยืนยันการเก็บประวัติเมล">
-        <p>เปลี่ยนจาก {data.retentionDays} เป็น {preview.retentionDays} วัน · ล้างอัตโนมัติจาก {data.enabled ? 'เปิด' : 'ปิด'} เป็น {preview.enabled ? 'เปิด' : 'ปิด'}</p>
-        <p className="whitespace-pre-wrap break-words">เหตุผล: {preview.reason}</p>
-        <p>เมื่อเปิด ระบบทยอยล้างไม่เกิน 100 รายการต่อชั่วโมง จำนวนที่ครบเงื่อนไขจะตรวจตามระยะเวลาใหม่ การปิดจะหยุดรอบถัดไป และไม่คืนรายละเอียดที่ล้างแล้ว</p>
-        <div className="flex flex-wrap gap-3"><button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={() => void save()}>{busy ? 'กำลังบันทึก…' : uncertain ? 'ลองรายการเดิมอีกครั้ง' : 'ยืนยันบันทึก'}</button>
-          {!uncertain && <button className={button} disabled={busy} onClick={() => setPreview(null)}>กลับไปแก้ไข</button>}</div>
-      </div>}
-      <details><summary className="cursor-pointer py-3 font-semibold">ประวัติแก้ไขล่าสุด 25 รายการ</summary>
-        {!data.history.length && <p>ยังไม่มีการแก้ไข</p>}{data.history.map(row => <article className="space-y-2 border-t py-3" key={row.id}>
-          <p>{when(row.createdAt)} · {row.actorName ?? 'ผู้ดูแลเดิม'}</p>
-          <p>{row.before.retentionDays} → {row.after.retentionDays} วัน · {row.before.enabled ? 'เปิด' : 'ปิด'} → {row.after.enabled ? 'เปิด' : 'ปิด'}</p>
-          <p className="whitespace-pre-wrap break-words">{row.reason}</p>
-        </article>)}
-      </details>
+      {preview&&<div className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900" aria-label="ยืนยันการเก็บประวัติเมล"><h2 className="font-semibold">ตรวจการเปลี่ยนแปลงก่อนยืนยัน</h2><p>เก็บประวัติ: {data.retentionDays} → {preview.retentionDays} วัน</p><p>ล้างอัตโนมัติ: {data.enabled?'เปิด':'ปิด'} → {preview.enabled?'เปิด':'ปิด'}</p><p className="whitespace-pre-wrap break-words">เหตุผล: {preview.reason}</p><p className="text-sm">เมื่อเปิด ระบบทยอยล้างไม่เกิน 100 รายการต่อชั่วโมงตามระยะเวลาใหม่ การปิดจะหยุดรอบถัดไป แต่ไม่คืนรายละเอียดที่ล้างแล้ว</p><div className="flex flex-wrap gap-3"><Button className="!min-h-11 !text-base" loading={busy} onClick={()=>void save()}>{uncertain?'ลองรายการเดิมอีกครั้ง':'ยืนยันบันทึก'}</Button>{!uncertain&&<Button variant="secondary" className="!min-h-11 !text-base" disabled={busy} onClick={()=>setPreview(null)}>กลับไปแก้ไข</Button>}</div></div>}
+      <details className="border-t border-gray-100 pt-2"><summary className="min-h-11 cursor-pointer py-2 text-sm">ประวัติการล้างและการแก้ไข</summary><div className="space-y-3 pt-2 text-sm"><p>ครบเงื่อนไขปัจจุบัน {data.eligibleCount} รายการ · ล้างล่าสุด {when(data.lastCleanupAt)} ({data.lastArchivedCount} รายการ)</p><h3 className="font-medium text-gray-800">การแก้ไขล่าสุด 25 รายการ</h3>{!data.history.length&&<p>ยังไม่มีการแก้ไข</p>}{data.history.map(row=><article className="space-y-2 border-t border-gray-100 py-3" key={row.id}><p>{when(row.createdAt)} · {row.actorName??'ผู้ดูแลเดิม'}</p><p>{row.before.retentionDays} → {row.after.retentionDays} วัน · {row.before.enabled?'เปิด':'ปิด'} → {row.after.enabled?'เปิด':'ปิด'}</p><p className="whitespace-pre-wrap break-words">{row.reason}</p></article>)}</div></details>
     </>}
+    </div></details>
   </section>;
 }

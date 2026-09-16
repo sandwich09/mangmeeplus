@@ -1,273 +1,151 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { formatThaiDate } from '@/common/i18n/thai-date';
 import { apiErrorMessage } from '@/common/api/api-error-message';
-import { useEffect, useState } from 'react';
-import { listPartners } from './system-partners.api';
-import type { PartnerCompanySummaryDto, LineContextHealth } from './system-partners.api';
+import { listPartners, type PartnerCompanySummaryDto } from './system-partners.api';
 import UserLookupSection from './UserLookupSection';
 
-// -- status badge
-
-type PartnerStatus = 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED';
-
-const STATUS_LABEL: Record<PartnerStatus, string> = {
-  ACTIVE: 'Active',
-  DISABLED: 'Disabled',
-  ARCHIVED: 'Archived',
-  SUSPENDED: 'Suspended',
+const STATUS_LABEL = { ACTIVE: 'ใช้งานอยู่', DISABLED: 'ปิดใช้งาน', ARCHIVED: 'เก็บถาวร', SUSPENDED: 'ระงับชั่วคราว' };
+const STATUS_CLASS = {
+  ACTIVE: 'border-green-200 bg-green-50 text-green-800',
+  DISABLED: 'border-amber-200 bg-amber-50 text-amber-800',
+  ARCHIVED: 'border-gray-200 bg-gray-100 text-gray-600',
+  SUSPENDED: 'border-red-200 bg-red-50 text-red-700',
 };
-
-const STATUS_CLASS: Record<PartnerStatus, string> = {
-  ACTIVE: 'bg-green-50 text-green-700 border-green-200',
-  DISABLED: 'bg-yellow-50 text-yellow-700 border-yellow-200',
-  ARCHIVED: 'bg-gray-100 text-gray-500 border-gray-200',
-  SUSPENDED: 'bg-red-50 text-red-700 border-red-200',
-};
-
-function StatusBadge({ status }: { status: PartnerStatus }) {
-  return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${STATUS_CLASS[status] ?? STATUS_CLASS.ARCHIVED}`}>
-      {STATUS_LABEL[status] ?? status}
-    </span>
-  );
-}
-
-const LINE_HEALTH_CLASS: Record<LineContextHealth, string> = {
-  LINKED: 'bg-green-50 text-green-700',
-  UNLINKED: 'bg-gray-100 text-gray-500',
-  NEEDS_COMPANY_SELECTION: 'bg-yellow-50 text-yellow-700',
-  UNKNOWN: 'bg-gray-100 text-gray-400',
-};
-
-const LINE_HEALTH_LABEL: Record<LineContextHealth, string> = {
-  LINKED: 'Linked',
-  UNLINKED: 'Unlinked',
-  NEEDS_COMPANY_SELECTION: 'Select Co.',
-  UNKNOWN: 'Unknown',
-};
-
-function LineContextBadge({ health }: { health: LineContextHealth }) {
-  return (
-    <span className={`inline-block rounded-full px-1.5 py-0.5 text-xs font-medium ${LINE_HEALTH_CLASS[health] ?? LINE_HEALTH_CLASS.UNKNOWN}`}>
-      {LINE_HEALTH_LABEL[health] ?? health}
-    </span>
-  );
-}
-
-function formatDate(iso?: string): string {
-  return formatThaiDate(iso);
-}
-
-// -- skeleton row
-function SkeletonRow() {
-  return (
-    <tr>
-      {[...Array(8)].map((_, i) => (
-        <td key={i} className="px-4 py-3">
-          <div className="h-4 bg-gray-100 rounded animate-pulse" />
-        </td>
-      ))}
-    </tr>
-  );
-}
+const LINE_LABEL = { LINKED: 'เชื่อมแล้ว', UNLINKED: 'ยังไม่เชื่อม', NEEDS_COMPANY_SELECTION: 'รอเลือกบริษัท', UNKNOWN: 'ไม่ทราบสถานะ' };
 
 export default function PartnerListPage() {
+  const searchParams = useSearchParams();
+  const isUsers = searchParams.get('view') === 'users';
+  const q = searchParams.get('q') ?? '';
+  const status = searchParams.get('status') ?? '';
+  const rawPage = Number(searchParams.get('page') ?? 1);
+  const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+  const [term, setTerm] = useState(q);
   const [items, setItems] = useState<PartnerCompanySummaryDto[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+  const [retry, setRetry] = useState(0);
   const pageSize = 20;
 
-  const load = async (p: number, status: string) => {
+  function url(changes: Record<string, string>) {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(changes)) value ? params.set(key, value) : params.delete(key);
+    return `/system/partners${params.size ? `?${params}` : ''}`;
+  }
+  function update(changes: Record<string, string>) {
+    // Same-page filters are client reads; update the URL immediately so a pending route
+    // transition cannot overwrite text typed just after clearing a previous search.
+    window.history.replaceState(null, '', url(changes));
+  }
+  useEffect(() => setTerm(q), [q]);
+  useEffect(() => {
+    if (isUsers) return;
+    let active = true;
     setLoading(true);
     setError(null);
-    try {
-      const result = await listPartners({ page: p, pageSize, status: status || undefined });
+    listPartners({ q, status: status || undefined, page, pageSize }).then(result => {
+      if (!active) return;
       setItems(result.items);
       setTotal(result.total);
-    } catch (err) {
-      const e = err as Error & { status?: number };
-      if (e.status === 403) {
-        setError('Access denied. You do not have permission to view the partner list.');
-      } else {
-        setError(apiErrorMessage(err));
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+    }).catch(err => {
+      if (active) setError((err as { status?: number }).status === 403 ? 'คุณไม่มีสิทธิ์ดูรายชื่อบริษัท' : apiErrorMessage(err));
+    }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [q, status, page, isUsers, retry]);
 
-  useEffect(() => {
-    void load(page, statusFilter);
-  }, [page, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const totalPages = Math.ceil(total / pageSize);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const clear = () => { setTerm(''); update({ q: '', status: '', page: '' }); setRetry(value => value + 1); };
 
   return (
-    <div className="min-h-dvh bg-gray-50 p-6">
-      <div className="mx-auto max-w-6xl space-y-4">
-        {/* No BackLink: this is the /system section root. '/' redirects to /login, so a back link
-            here would sign-post the admin straight out of the console. SystemHeader carries the
-            cross-section nav instead. */}
-
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">Partner Companies</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Platform admin view — metadata only</p>
-          </div>
-          <Link
-            href="/system/company-onboardings/new"
-            className="mangmee-btn mangmee-btn-primary"
-          >
-            Onboard New Partner
-          </Link>
+    <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="mb-1 text-sm text-gray-500">ดูแลลูกค้า</p>
+          <h1 className="text-2xl font-semibold text-gray-900">บริษัทและผู้ใช้งาน</h1>
+          <p className="mt-2 text-base text-gray-600">เลือกบริษัทหรือผู้ใช้งานที่ต้องการดูแล</p>
         </div>
+        {!isUsers && <Link href="/system/company-onboardings/new" className="mangmee-btn mangmee-btn-primary min-h-11">เพิ่มบริษัท</Link>}
+      </div>
 
-        {/* User lookup lives on this page (not its own tab): partner support starts from either a
-            company or a person, so both entry points sit on the console root. */}
-        <UserLookupSection />
-
-        {/* Filter bar */}
-        <div className="flex items-center gap-3">
-          <ThemedSelect
-            className="mangmee-input max-w-56"
-            value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-          >
-            <option value="">All statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="DISABLED">Disabled</option>
-            <option value="ARCHIVED">Archived</option>
-          </ThemedSelect>
-          <span className="text-sm text-gray-400">{total} partner{total !== 1 ? 's' : ''}</span>
-        </div>
-
-        {/* Error state */}
-        {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-            <button
-              type="button"
-              className="ml-3 underline"
-              disabled={loading} aria-busy={loading}
-              onClick={() => void load(page, statusFilter)}
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {/* Table */}
-        {!error && (
-          <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200 text-sm text-left">
-                <thead className="bg-gray-50 text-xs font-medium uppercase text-gray-500">
-                  <tr>
-                    <th className="px-4 py-3">Name / Code</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">Activated / Disabled</th>
-                    <th className="px-4 py-3">Features</th>
-                    <th className="px-4 py-3">AI Model</th>
-                    <th className="px-4 py-3">LINE Health</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 text-gray-700">
-                  {loading ? (
-                    [...Array(5)].map((_, i) => <SkeletonRow key={i} />)
-                  ) : items.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-gray-400">
-                        No partners found.
-                      </td>
-                    </tr>
-                  ) : (
-                    items.map((p) => (
-                      <tr key={p.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900">{p.name}</p>
-                          <p className="text-xs text-gray-400 font-mono">{p.id.slice(0, 8)}</p>
-                        </td>
-                        <td className="px-4 py-3">
-                          <StatusBadge status={p.status as PartnerStatus} />
-                        </td>
-                        <td className="px-4 py-3 text-gray-500">{formatDate(p.createdAt)}</td>
-                        <td className="px-4 py-3 text-gray-500">
-                          {p.activatedAt ? formatDate(p.activatedAt) : ''}
-                          {p.disabledAt ? <span className="text-yellow-600"> / {formatDate(p.disabledAt)}</span> : ''}
-                          {!p.activatedAt && !p.disabledAt ? '—' : ''}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500">{p.enabledFeatureKeys.length}</td>
-                        <td className="px-4 py-3 text-gray-500 font-mono text-xs">
-                          {p.configuredModelId ?? '—'}
-                        </td>
-                        <td className="px-4 py-3">
-                          <LineContextBadge health={p.lineContextHealth} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
-                            <Link
-                              href={`/system/partners/${p.id}`}
-                              className="text-brand-700 hover:text-brand-800 text-xs font-medium"
-                            >
-                              View
-                            </Link>
-                            {/* No term chip column: the list projection carries no plan-term data
-                                (list-partners.use-case selects company columns only), and widening
-                                it is a backend change this screen must not force. */}
-                            <Link
-                              href={`/system/partners/${p.id}`}
-                              className="text-brand-700 hover:text-brand-800 text-xs font-medium"
-                            >
-                              แพ็กเกจ
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+        <nav aria-label="มุมมองข้อมูลลูกค้า" className="flex gap-6 border-b border-gray-200 px-4 sm:px-6">
+          {[{ label: 'บริษัท', value: '' }, { label: 'ผู้ใช้งาน', value: 'users' }].map(view => (
+            <Link key={view.label} href={url({ view: view.value })} scroll={false} aria-current={isUsers === Boolean(view.value) ? 'page' : undefined}
+              className={`inline-flex min-h-14 items-center border-b-2 px-1 text-base font-semibold ${isUsers === Boolean(view.value) ? 'border-brand-700 text-brand-800' : 'border-transparent text-gray-600 hover:text-gray-900'}`}>
+              {view.label}
+            </Link>
+          ))}
+        </nav>
+        {isUsers ? <UserLookupSection /> : (
+          <section aria-label="รายชื่อบริษัท" aria-busy={loading}>
+            <div className="space-y-4 p-4 sm:p-6">
+              <form onSubmit={event => { event.preventDefault(); update({ q: term.trim(), page: '' }); setRetry(value => value + 1); }} className="flex flex-col gap-3 lg:flex-row lg:items-end">
+                <div className="min-w-0 flex-1">
+                  <label htmlFor="company-search" className="mb-2 block text-sm font-medium text-gray-700">ค้นหาบริษัท</label>
+                  <div className="flex gap-2">
+                    <input id="company-search" type="search" maxLength={120} value={term} onChange={e => setTerm(e.target.value)} placeholder="ชื่อบริษัท ชื่อจดทะเบียน หรือรหัสบริษัท" className="mangmee-input min-h-11 min-w-0 flex-1 !text-base" />
+                    <button type="submit" className="min-h-11 rounded-lg border border-gray-300 px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ค้นหา</button>
+                  </div>
+                </div>
+                <div className="w-full lg:w-52">
+                  <label id="company-status-label" className="mb-2 block text-sm font-medium text-gray-700">สถานะบริษัท</label>
+                  <ThemedSelect aria-label="สถานะบริษัท" className="min-h-11 !text-base" value={status} onChange={e => update({ status: e.target.value, page: '' })}>
+                    <option value="">ทุกสถานะ</option>
+                    {Object.entries(STATUS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </ThemedSelect>
+                </div>
+                <button type="button" onClick={clear} title="ล้างคำค้นและสถานะที่เลือก" className="min-h-11 shrink-0 whitespace-nowrap rounded-lg border border-gray-300 bg-white px-4 font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-brand-700">ล้างตัวกรอง</button>
+              </form>
+              <p role="status" className="text-sm text-gray-600">{loading ? 'กำลังค้นหาบริษัท…' : error ? 'ยังโหลดรายชื่อไม่ได้' : `พบ ${total.toLocaleString('th-TH')} บริษัท${q ? ` สำหรับ “${q}”` : ''}`}</p>
             </div>
 
-            {/* Pagination */}
-            {totalPages > 1 && !loading && (
-              <div className="flex flex-wrap items-center justify-between border-t border-gray-200 px-4 py-3">
-                <span className="text-xs text-gray-500">
-                  Page {page} of {totalPages}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                    className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => p + 1)}
-                    className="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-                  >
-                    Next
-                  </button>
-                </div>
+            {error ? <div role="alert" className="mx-4 mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+              <p>{error}</p><button type="button" onClick={() => setRetry(value => value + 1)} className="mt-2 min-h-11 underline">ลองอีกครั้ง</button>
+            </div> : loading ? <div className="space-y-4 border-t border-gray-100 p-6" aria-hidden="true">{[1, 2, 3].map(row => <div key={row} className="h-14 animate-pulse rounded bg-gray-100" />)}</div> : items.length === 0 ? (
+              <div className="border-t border-gray-100 px-4 py-12 text-center">
+                <p className="font-medium text-gray-800">{total > 0 ? 'ไม่มีรายการในหน้านี้' : q || status ? 'ไม่พบบริษัทที่ตรงกับการค้นหา' : 'ยังไม่มีบริษัทในระบบ'}</p>
+                <p className="mt-2 text-sm text-gray-600">{q || status ? 'ลองเปลี่ยนคำค้นหรือเลือกสถานะอื่น' : total > 0 ? 'กลับไปหน้าแรกเพื่อดูรายการล่าสุด' : 'เมื่อเพิ่มบริษัทแล้ว รายชื่อจะแสดงที่นี่'}</p>
+                {total > 0 ? <button onClick={() => update({ page: '' })} className="mt-3 min-h-11 px-3 text-brand-800 underline">กลับหน้าแรก</button> : (q || status) && <button onClick={clear} className="mt-3 min-h-11 px-3 text-brand-800 underline">แสดงบริษัททั้งหมด</button>}
               </div>
+            ) : (
+              <>
+                <table className="w-full table-fixed border-t border-gray-200 text-left text-sm sm:text-base">
+                  <caption className="sr-only">รายชื่อบริษัทที่ตรงกับคำค้นและสถานะที่เลือก</caption>
+                  <thead className="bg-gray-50 text-sm text-gray-600"><tr>
+                    <th scope="col" className="w-[44%] px-4 py-3 sm:w-[36%] sm:px-6">บริษัท</th>
+                    <th scope="col" className="w-[27%] px-2 py-3 sm:w-[18%]">สถานะ</th>
+                    <th scope="col" className="hidden w-[16%] px-2 py-3 md:table-cell">การเชื่อม LINE</th>
+                    <th scope="col" className="hidden w-[16%] px-2 py-3 lg:table-cell">วันที่เพิ่ม</th>
+                    <th scope="col" className="px-2 py-3"><span className="sr-only">รายละเอียด</span></th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {items.map(company => <tr key={company.id} className="hover:bg-gray-50">
+                      <td className="break-words px-4 py-4 sm:px-6"><p className="font-medium text-gray-900">{company.name}</p>{company.registeredName && company.registeredName !== company.name && <p className="mt-1 text-sm text-gray-500">{company.registeredName}</p>}</td>
+                      <td className="px-2 py-4"><span className={`inline-flex rounded-lg border px-2 py-1 text-sm ${STATUS_CLASS[company.status]}`}>{STATUS_LABEL[company.status]}</span></td>
+                      <td className="hidden px-2 py-4 text-sm text-gray-600 md:table-cell">{LINE_LABEL[company.lineContextHealth]}</td>
+                      <td className="hidden px-2 py-4 text-sm text-gray-600 lg:table-cell">{formatThaiDate(company.createdAt)}</td>
+                      <td className="px-2 py-4"><Link href={`/system/partners/${company.id}`} className="inline-flex min-h-11 items-center rounded px-1 text-sm font-medium text-brand-800 underline-offset-4 hover:underline focus-visible:outline-brand-700" aria-label={`ดูรายละเอียด ${company.name}`}>ดูรายละเอียด</Link></td>
+                    </tr>)}
+                  </tbody>
+                </table>
+                {totalPages > 1 && <nav aria-label="หน้ารายชื่อบริษัท" className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 p-4 sm:px-6">
+                  <p className="text-sm text-gray-600">หน้า {page} จาก {totalPages}</p>
+                  <div className="flex gap-2">
+                    <button disabled={page <= 1} onClick={() => update({ page: String(page - 1) })} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm disabled:opacity-40">ก่อนหน้า</button>
+                    <button disabled={page >= totalPages} onClick={() => update({ page: String(page + 1) })} className="min-h-11 rounded-lg border border-gray-300 px-3 text-sm disabled:opacity-40">ถัดไป</button>
+                  </div>
+                </nav>}
+              </>
             )}
-          </div>
+          </section>
         )}
       </div>
-    </div>
+    </main>
   );
 }

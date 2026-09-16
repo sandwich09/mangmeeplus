@@ -120,7 +120,7 @@ export async function checkBillingUpgrade(input: {
   assert.ok(history.segments.every(s=>s.oldOffer.offerKey==='BASIC_499'));
   let paid:{status:number;body:any};
   if(browser){const {page,origin}=browser;await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=line`,{waitUntil:'domcontentloaded'});
-    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();await page.locator('article').filter({hasText:'Pro'}).getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();
+    await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();await page.locator('article').filter({hasText:'Pro'}).getByRole('button',{name:'เลือกแพ็กเกจนี้',exact:true}).click();
     await page.getByText(/ชำระส่วนต่างและเริ่ม/).waitFor();await page.getByText(/รอบถัดไป.*9,990/).waitFor();
     await page.screenshot({path:`${browser.evidenceDir}/upgrade-review-mobile.png`,fullPage:true});
     await page.getByRole('checkbox').check();await page.getByRole('button',{name:'ยืนยันและไปชำระที่ Stripe',exact:true}).click();

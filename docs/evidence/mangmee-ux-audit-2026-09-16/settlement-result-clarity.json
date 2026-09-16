@@ -1,0 +1,26 @@
+{
+  "date": "2026-09-17",
+  "scope": "Settlement result clarity and next-action hierarchy, local only",
+  "changes": [
+    "Unobserved totals are hidden, confirmed empty results show zero, and partial totals are explicitly incomplete",
+    "Outcome and one next action precede secondary retry, cancellation and tracking controls",
+    "Source review stays visible after resume when the API retains its error code",
+    "Retry acknowledgement and separate cancellation confirmation preserve expectedVersion requests"
+  ],
+  "verification": {
+    "playwright": {
+      "file": "e2e/billing-admin-menu-ux.spec.ts",
+      "distinctFocusedChecksPassed": 3,
+      "coverage": ["blocked", "queued with retained source error", "running partial", "complete empty", "complete with differences", "provider retry wait", "cancelled", "no mutation capability", "mobile overflow", "retry acknowledgement", "cancel confirmation", "default and custom period validation", "retry idempotency"],
+      "initialFailure": "Existing date-range test ran within one minute after Bangkok midnight. Production safety guard correctly rejected the range; test now fixes the browser clock to daytime and passes."
+    },
+    "webTypecheck": "passed",
+    "diffWhitespace": "passed",
+    "nativeChrome": "Inspected existing local result and next-action layout without executing, resuming or cancelling the run; original date form preserved"
+  },
+  "limits": [
+    "Result states and action requests use mocked responses; not a live reconciliation or financial E2E claim",
+    "Local runtime Stripe secret remains absent; no credentials changed",
+    "No provider mutation, API/schema change, CI, push, merge or deploy"
+  ]
+}

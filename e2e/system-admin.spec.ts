@@ -23,16 +23,100 @@ test.describe('SYS — system admin', () => {
   test('SYS-01 @smoke system partner list renders for system admin', async ({ page }) => {
     await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
     await page.goto('/system/partners');
-    await expect(page.getByRole('heading', { name: /Partner Companies/i })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Onboard New Partner/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'บริษัทและผู้ใช้งาน', exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'เพิ่มบริษัท', exact: true })).toBeVisible();
     await expectNoClientError(page);
+  });
+
+  test('SYS-01A directory search, status, pagination and browser return share the same dataset', async ({ page }) => {
+    const databaseUrl = process.env['DATABASE_URL'];
+    test.skip(!databaseUrl, 'DATABASE_URL is required for isolated directory fixtures');
+    const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
+    const prefix = unique('directory');
+    const ids = Array.from({ length: 21 }, (_, i) => `${prefix}-${String(i).padStart(2, '0')}`);
+    try {
+      await client.company.createMany({ data: ids.map((id, i) => ({ id, name: `${prefix} ${i}`, registeredName: `${prefix} registered ${i}`, status: i === 20 ? 'SUSPENDED' as const : 'ACTIVE' as const, createdAt: new Date('2026-01-01T00:00:00Z') })) });
+      await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+      const directory = page.getByRole('region', { name: 'รายชื่อบริษัท', exact: true });
+      await page.getByLabel('ค้นหาบริษัท', { exact: true }).fill(prefix);
+      await directory.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+      await expect(directory.getByRole('status')).toContainText('พบ 21 บริษัท');
+      await expect(directory.locator('tbody tr')).toHaveCount(20);
+      await directory.getByRole('button', { name: 'ถัดไป', exact: true }).click();
+      await expect(directory.locator('tbody tr')).toHaveCount(1);
+      await expect(directory).toContainText(`${prefix} 20`);
+      await directory.getByRole('combobox', { name: 'สถานะบริษัท' }).click();
+      await page.getByRole('option', { name: 'ระงับชั่วคราว', exact: true }).click();
+      await expect(directory.getByRole('status')).toContainText('พบ 1 บริษัท');
+      await expect(page).not.toHaveURL(/page=2/);
+      await directory.getByRole('link', { name: `ดูรายละเอียด ${prefix} 20`, exact: true }).click();
+      await expect(page).toHaveURL(new RegExp(`/system/partners/${ids[20]}`));
+      await page.goBack();
+      await expect(page.getByLabel('ค้นหาบริษัท', { exact: true })).toHaveValue(prefix);
+      await expect(directory.getByRole('status')).toContainText('พบ 1 บริษัท');
+      await page.getByLabel('ค้นหาบริษัท', { exact: true }).fill(`${prefix} missing`);
+      await directory.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+      await expect(directory.getByText('ไม่พบบริษัทที่ตรงกับการค้นหา', { exact: true })).toBeVisible();
+      await expect(directory.locator('table')).toHaveCount(0);
+      await directory.getByRole('button', { name: 'แสดงบริษัททั้งหมด' }).click();
+      await expect(page.getByLabel('ค้นหาบริษัท', { exact: true })).toHaveValue('');
+      await page.getByLabel('ค้นหาบริษัท', { exact: true }).fill(`${prefix} registered 20`);
+      await directory.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+      await expect(directory.getByRole('status')).toContainText('พบ 1 บริษัท');
+      await expectNoClientError(page);
+    } finally {
+      await client.company.deleteMany({ where: { id: { in: ids } } });
+      await client.$disconnect();
+    }
+  });
+
+  test('SYS-01B mobile user lookup stays separate, retains context and recovers from errors', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
+    const menu = page.getByRole('button', { name: /^เมนู/ });
+    await expect(page.getByRole('navigation', { name: 'ส่วนงานผู้ดูแลระบบ' })).toBeHidden();
+    await menu.click();
+    const navigation = page.getByRole('navigation', { name: 'ส่วนงานผู้ดูแลระบบ' });
+    await expect(navigation.getByRole('link', { name: 'บริษัทและผู้ใช้งาน' })).toHaveAttribute('aria-current', 'page');
+    await navigation.getByRole('link', { name: 'บริษัทและผู้ใช้งาน' }).focus();
+    await page.keyboard.press('Escape');
+    await expect(navigation).toBeHidden();
+    await expect(menu).toBeFocused();
+    const views = page.getByRole('navigation', { name: 'มุมมองข้อมูลลูกค้า' });
+    await views.getByRole('link', { name: 'ผู้ใช้งาน', exact: true }).click();
+    const users = page.getByRole('region', { name: 'ค้นหาผู้ใช้งาน', exact: true });
+    await expect(page.getByRole('region', { name: 'รายชื่อบริษัท', exact: true })).toHaveCount(0);
+    await page.getByRole('searchbox', { name: 'ค้นหาผู้ใช้งาน', exact: true }).fill('Owner');
+    await users.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+    await expect(users.locator('article')).toHaveCount(1);
+    await users.getByRole('combobox', { name: 'สถานะผู้ใช้งาน' }).click();
+    await page.getByRole('option', { name: 'ปิดใช้งาน', exact: true }).click();
+    await expect(users.getByText('ไม่พบผู้ใช้งานที่ตรงกับการค้นหา', { exact: true })).toBeVisible();
+    await views.getByRole('link', { name: 'บริษัท', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'รายชื่อบริษัท', exact: true })).toBeVisible();
+    await views.getByRole('link', { name: 'ผู้ใช้งาน', exact: true }).click();
+    await expect(page.getByRole('searchbox', { name: 'ค้นหาผู้ใช้งาน', exact: true })).toHaveValue('Owner');
+    await expect(users.getByRole('combobox')).toContainText('ปิดใช้งาน');
+    await views.getByRole('link', { name: 'บริษัท', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'รายชื่อบริษัท' }).getByRole('status')).toContainText('พบ');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+    const companies = page.getByRole('region', { name: 'รายชื่อบริษัท', exact: true });
+    await page.route('**/api/v1/system/partners?*', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'ลองใหม่อีกครั้ง' }) }));
+    await page.getByLabel('ค้นหาบริษัท', { exact: true }).fill('Bloom');
+    await companies.getByRole('button', { name: 'ค้นหา', exact: true }).click();
+    await expect(companies.getByRole('alert')).toBeVisible();
+    await page.unroute('**/api/v1/system/partners?*');
+    await companies.getByRole('button', { name: 'ลองอีกครั้ง', exact: true }).click();
+    await expect(companies.getByRole('status')).toContainText('พบ 1 บริษัท');
+    await expect(page.getByLabel('ค้นหาบริษัท', { exact: true })).toHaveValue('Bloom');
   });
 
   test('SYS-02 @p1 partner detail renders metadata and feature toggles', async ({ page }) => {
     await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
     await page.goto(`/system/partners/${COMPANY_ID}`);
-    await expect(page.getByText(/WatchDog Local Company|seed-local-company|Feature/i).first()).toBeVisible();
-    await expect(page.getByText(/LINE|feature|module|สถานะ/i).first()).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'หมวดข้อมูลบริษัท', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ข้อมูลบริษัท', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'การเชื่อมบัญชี LINE', exact: true })).toBeVisible();
     await expectNoClientError(page);
   });
 
@@ -72,8 +156,9 @@ test.describe('SYS — system admin', () => {
 
       await page.setViewportSize({ width: 1280, height: 900 });
       await login(page, SEED_USERS.systemAdmin.username, SEED_USERS.systemAdmin.password);
-      await page.goto(`/system/partners/${companyId}`);
+      await page.goto(`/system/partners/${companyId}?view=package`);
       await expect(page.getByRole('heading', { name: /E2E Entitlement Cycle/i })).toBeVisible();
+      await page.getByRole('searchbox', { name: 'ค้นหาเมนู', exact: true }).fill('เอกสารขาย');
 
       const salesSwitch = () => page.locator('article').filter({ hasText: 'เอกสารขายและรับชำระ' }).first().getByRole('switch');
       const saveCycle = async (enabled: boolean) => {
@@ -88,12 +173,14 @@ test.describe('SYS — system admin', () => {
       await saveCycle(true);
       await saveCycle(false);
       await page.reload();
+      await page.getByRole('searchbox', { name: 'ค้นหาเมนู', exact: true }).fill('เอกสารขาย');
       await expect(salesSwitch()).toHaveAttribute('aria-checked', 'false');
       const desktopOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(desktopOverflow).toBeLessThanOrEqual(1);
       await page.screenshot({ path: 'docs/evidence/p27-phase6/platform-admin-entitlement-off-desktop.png', fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
+      await page.getByRole('searchbox', { name: 'ค้นหาเมนู', exact: true }).fill('เอกสารขาย');
       await expect(salesSwitch()).toHaveAttribute('aria-checked', 'false');
       const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       expect(mobileOverflow).toBeLessThanOrEqual(1);

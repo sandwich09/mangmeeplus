@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import WorkspaceLayoutClient from '@/features/web-core-workspace/WorkspaceLayout';
@@ -50,12 +49,6 @@ export default async function CompanyWorkspaceLayout({
   if (sessionResult.session.legalAcceptanceRequired !== false) {
     redirect(legalAcceptancePath(returnTo, companyId));
   }
-
-  // Billing recovery must not mount the business shell's branch/profile/notification queries.
-  // Those correctly reject an expired term and would redirect the owner away from checkout.
-  // The session, company, password and legal gates above still apply, with fresh OWNER checks
-  // on every billing API request below.
-  if (isBillingCustomerRecoveryPath(returnTo,companyId)) return <>{children}</>;
 
   return (
     <WorkspaceLayoutClient companyId={companyId} session={sessionResult.session}>

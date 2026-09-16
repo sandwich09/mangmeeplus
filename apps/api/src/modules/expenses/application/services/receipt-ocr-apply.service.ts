@@ -931,12 +931,12 @@ export class ReceiptOcrApplyService {
     const completed = completeVatFields(verifyDiscountAmount(fields));
     const lineTotal = receiptFallbackLineTotal(completed);
     let prepared = lineTotal ? prepareOcrLines(completed, lineTotal) : null;
-    const dateReview = reviewReceiptDate(
+    let dateReview = reviewReceiptDate(
       completed.expenseDate,
       options.todayIso ?? todayCivilDate(),
       completed.expenseDateAssumptions,
     );
-    const reviewReasons = [
+    let reviewReasons = [
       ...(fields.missingFields?.includes('lines') ? ['อ่านรายละเอียดบางรายการไม่ครบ เก็บยอดรวมไว้แล้ว กรุณาตรวจรายการกับภาพใบเสร็จ'] : []),
       ...(dateReview.reason ? [dateReview.reason] : []),
       ...(prepared?.chargeReviewReasons ?? []),
@@ -974,6 +974,7 @@ export class ReceiptOcrApplyService {
         select: {
           expenseCategoryId: true,
           reviewedAt: true,
+          expenseDate: true, aiVerificationSummaryJson: true,
           vendorEntityKindSnapshot: true,
           grandTotalAmount: true, vatAmount: true, whtAmount: true, netPayableAmount: true, vatMode: true,
           discountAmount: true,
@@ -999,6 +1000,16 @@ export class ReceiptOcrApplyService {
         return { stale: persistedCharges };
       }
       if (!currentExpense) throw new NotFoundException(`Expense ${expenseId} not found`);
+      const summary = currentExpense.aiVerificationSummaryJson as Record<string, unknown> | null;
+      const resolvedDate = summary?.['dateResolution'] as { expenseDate?: string; resolvedByUserId?: string } | undefined;
+      if (resolvedDate?.resolvedByUserId && resolvedDate.expenseDate
+        && resolvedDate.expenseDate === currentExpense.expenseDate?.toISOString().slice(0, 10)) {
+        // A human-supplied document date wins over an unread or different OCR date.
+        delete data['expenseDate'];
+        dateReview = { verified: true, assumed: false, status: 'verified' };
+        reviewReasons = reviewReasons.filter(reason => reason !== RECEIPT_REVIEW_REASONS.dateUnverified && reason !== RECEIPT_REVIEW_REASONS.dateImplausible);
+        data['aiVerificationStatus'] = reviewReasons.length > 0 ? 'NEEDS_REVIEW' : 'PARTIAL';
+      }
       // Re-reading a receipt must not replace a reviewer's chosen identity.
       if (currentExpense.reviewedAt) {
         for (const key of ['vendorNameSnapshot', 'vendorTaxIdSnapshot', 'vendorBranchCodeSnapshot', 'vendorDocumentNumber', 'expenseDate']) delete data[key];

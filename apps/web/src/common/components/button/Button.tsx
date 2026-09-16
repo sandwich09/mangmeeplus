@@ -14,8 +14,8 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 }
 
 const variantClass: Record<ButtonVariant, string> = {
-  // มั่งมี Brand Kit: primary = green gradient linear-gradient(150deg,#22C55E,#15803D)
-  primary: 'bg-linear-to-br from-brand-500 to-brand-700 text-white hover:from-brand-600 hover:to-brand-800',
+  // Dark brand endpoints keep normal-size white labels above 4.5:1 contrast.
+  primary: 'bg-linear-to-br from-brand-700 to-brand-800 text-white hover:from-brand-800 hover:to-brand-900',
   secondary: 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
   danger: 'bg-red-600 text-white hover:bg-red-700',
   ghost: 'text-gray-600 hover:bg-gray-100',

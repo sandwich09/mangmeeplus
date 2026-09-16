@@ -1,5 +1,8 @@
 'use client';
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isBillingCustomerRecoveryPath } from '@watchdog-bms/contracts';
+import { billingApi } from '@/features/billing/billing.api';
+import { BillingWorkspaceContext } from '@/features/billing/BillingCustomerFrame';
 import { usePathname, useRouter } from 'next/navigation';
 import { WorkspaceShell } from '@/common/components/app-shell/WorkspaceShell';
 import { stripThaiTitlePrefix } from '@/common/components/mangmee';
@@ -36,7 +39,6 @@ type Props = {
 // Only implemented entry points; permissions still decide which enabled features are visible.
 const DESIGN_HANDOFF_NAV_ORDER = [
   'dashboard',
-  'ai-suggestions',
   'inbox',
   'customers',
   'booking',
@@ -57,6 +59,30 @@ const DESIGN_HANDOFF_NAV_RANK = new Map<string, number>(DESIGN_HANDOFF_NAV_ORDER
 const ACCESS_CONTEXT_POLL_MS = 60_000;
 
 export default function WorkspaceLayoutClient({ children, companyId, session }: Props) {
+  const pathname = usePathname();
+  // Layouts survive client navigation; resolve billing access on both entry paths.
+  if (isBillingCustomerRecoveryPath(pathname, companyId)) return <BillingWorkspaceLayout companyId={companyId} session={session}>{children}</BillingWorkspaceLayout>;
+  return <BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout>;
+}
+
+function BillingWorkspaceLayout({ children, companyId, session }: Props) {
+  const [view, setView] = useState<'loading' | 'workspace' | 'recovery'>('loading');
+  useEffect(() => {
+    let active = true;
+    setView('loading');
+    // Only the recovery-safe billing read runs before knowing whether business
+    // navigation may mount. Expired/held/denied companies keep the minimal exits.
+    void billingApi(companyId).status().then(status => {
+      if (active) setView(status.accessState === 'ACTIVE' ? 'workspace' : 'recovery');
+    }).catch(() => { if (active) setView('recovery'); });
+    return () => { active = false; };
+  }, [companyId]);
+  if (view === 'loading') return <p role="status" className="p-8 text-gray-500">กำลังเปิดหน้าแพ็กเกจ…</p>;
+  if (view === 'recovery') return <>{children}</>;
+  return <BillingWorkspaceContext.Provider value={true}><BusinessWorkspaceLayout companyId={companyId} session={session}>{children}</BusinessWorkspaceLayout></BillingWorkspaceContext.Provider>;
+}
+
+function BusinessWorkspaceLayout({ children, companyId, session }: Props) {
   const locale: SupportedLocale = 'th';
   const pathname = usePathname();
   const router = useRouter();
@@ -107,8 +133,8 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
   );
 
   const allNavItems = useMemo(
-    () => buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions),
-    [filteredModules, companyId, locale, session.permissions],
+    () => buildNavItems(filteredModules, companyId, locale, ICON_MAP, session.permissions, session.roles),
+    [filteredModules, companyId, locale, session.permissions, session.roles],
   );
 
   // §15.4.1 E: the Owner asked for a mark on ตั้งค่าบริษัท "จนกว่าจะตั้งครบ". Only the holder of the
@@ -186,7 +212,7 @@ export default function WorkspaceLayoutClient({ children, companyId, session }: 
         }
         headerExtras={session.permissions.includes('notification.read') ? <NotificationBell companyId={companyId} locale={locale} /> : undefined}
         banner={<PlanTermBanner companyId={companyId} />}
-        sidebarFooter={<>{session.roles.includes('OWNER') && <a href={`/companies/${companyId}/billing`} className="m-3 block rounded-xl border px-4 py-3 text-sm font-semibold">แพ็กเกจและการชำระเงิน</a>}<PlanTermSidebarCard companyId={companyId} /></>}
+        sidebarFooter={<PlanTermSidebarCard companyId={companyId} />}
         // Owner decision 2026-08-15: the shell shows the person, not their คำนำหน้า. Stripped at the
         // shell boundary so the sidebar name and both avatar initials agree — the session name is
         // the global User row, which a company-scoped rename does not always reach.

@@ -61,12 +61,13 @@
 
 ## 7. Business Rules
 
-- สีหลักของระบบคือ brand green ตาม prototype: `#12B76A`, `#027A48`, `#059669`
+- สีหลักอ้างอิง `packages/design-tokens/tokens.json`: brand green; ปุ่มตัวอักษรขาวใช้ brand-700 ถึง brand-800 เพื่อความชัดเจน ไม่ใช้ค่าสีจาก prototype เก่าทับ tokens
 - พื้นหลัง workspace ใช้ gray-50 และ surface สีขาวแบบมี border/shadow เบา
 - Sidebar expanded กว้าง 289px และ collapsed กว้าง 86px ตาม design screenshot ล่าสุด
 - Header สูง 68px และต้องรองรับ branch selector กับ notification; profile avatar/menu ไม่แสดงซ้ำใน header
 - Company dashboard content ต้องเริ่มใกล้ sidebar และใช้ full-width workspace padding ไม่ center max-width แบบหน้า marketing
 - Text ต้องไม่ล้น container ใน desktop และ mobile
+- Owner correction 2026-09-17: หน้า dashboard เน้นภาพรวม ไม่แสดงกล่อง CTA "ใบเสร็จรอตรวจ" แยกเหนือภาพรวม; จำนวนรอตรวจยังอยู่ในสรุปข้อมูลเดิม ย้าย "ข้อมูลร้านยังไม่ครบ" ไว้ใต้ส่วนหัวก่อนข้อมูลภาพรวม โดยคงสิทธิ์ผู้เห็น การพับ และ "ไว้ก่อน" ตามเดิม
 - Component ที่ใช้ซ้ำต้องอยู่ใน common layer หรือ design token layer ไม่กระจายเป็น style เฉพาะหน้า
 - Icon tone ต้อง map จาก module key/group ผ่าน helper เดียวเพื่อให้ sidebar, tile, card ใช้สีเดียวกัน
 - หน้า Login ยังคง public entry `Forgot password?`; authenticated reset entry อยู่ใน sidebar user menu เป็น `Reset password`
@@ -228,3 +229,108 @@ Shared UI model:
 - What persisted API/table shape should own amount-based PO approval settings and how it should integrate with procurement PO approval actions
 - Whether to add screenshot regression tests once a stable seeded local stack exists
 - Whether product wants IBM Plex Sans Thai to remain or switch fully to Noto Sans Thai from the reference
+
+## 2026-09-16: UX ordering for local owner review
+
+Owner authorized implementation and local review after the [system UX audit](../research/mangmee-system-ux-audit-2026-09-16-th.md). No merge, push, CI dispatch or deployment in this batch.
+
+- Billing: show current rights/payment outcome before email settings. Verified identity email and billing recipient remain distinct; expose unmet prerequisites with a direct path, not unexplained disabled purchase buttons. Primary return after success is “กลับไปใช้งาน”. Quote and final consent remain required. Keep cancellation and recovery accessible.
+- Receipt review: one next-step primary action; destructive actions under “เพิ่มเติม” on every eligible step, including invalid drafts. Keep all capability checks, reason fields, busy states and confirmations.
+- Dashboard: work queue precedes optional profile completion. Compact optional checklist with clear nonblocking copy and existing seven-day dismissal.
+- Shared primary controls: normal-text contrast >=4.5:1, visible keyboard focus, important touch targets >=44px; preserve semantic warning/danger colors.
+- Admin billing: explain draft → impact → identity confirmation → submit/approval. Place password confirmation beside final actions; preserve five-minute proof, server permissions, audit and idempotency. Never lose the current draft on expired proof.
+- Daily lists: compact mobile summaries; show task actions before optional explanations. AI empty state has one starting action; instructions remain available in a disclosure.
+- Admin navigation: customer/daily work before system settings, Thai labels, mobile navigation without a long horizontal ribbon. Technical workflow JSON belongs in advanced settings with explicit labels.
+- Marketing: local trial remains 15 receipts, one branch, two accounts; remove decorative repeated CTA animation. Preserve current logos while brand artwork remains unconfirmed. LINE existing routing/auth aliases stay intact; do not activate a new OA menu as part of local review.
+
+Acceptance: local desktop and 390px mobile inspection of changed journeys, focused existing checks plus web typecheck; record exercised and unexercised cases separately. Local data/providers isolated from UAT/Production. No claim of whole-system E2E from representative UX checks.
+
+Local discovered acceptance additions: admin default login target is partners (explicit safe deep links still win); concurrent first billing settings reads must return the same CLOSED baseline without a409 and without resetting existing operator settings. Scroll/focus to errors or the impact result so mobile users are not stranded below an invisible message.
+
+## 2026-09-16: Company directory review, one page at a time
+
+Owner requests this page first, then pauses for visual review. `/system/partners` separates บริษัท and ผู้ใช้งาน into two views. Each view owns its search, status filter, result count, loading/error/empty state and results in one section. Company search matches company name, registered name or full company ID on the server before pagination; user lookup retains its existing exact email/username or partial display-name semantics and 20-result cap, explained in Thai. User status filtering applies before the cap. Company and user statuses are separate, all supported statuses are offered. URL state preserves both searches/filters and company page on view changes and browser return; stale responses must not replace newer results.
+
+Use Thai labels, one เพิ่มบริษัท page action, and one ดูรายละเอียด action per company. Keep technical metadata on existing detail pages; do not invent plan data absent from the list contract. Keep permission checks and metadata-only read boundaries. No business mutation, schema change or dependency change. Shared sidebar scope awaits the owner's optional preference; no other feature page content is in this review.
+
+Acceptance: local real-API search + status + clear + empty result + pagination, person/company separation, back navigation and mobile 390px usability. Exercise permission/error handling using existing checks or explicit browser simulations. Owner reviews local before any next page, merge, CI or deploy.
+
+Owner confirmed shared admin sidebar in this batch. Replace the horizontal menu with a persistent desktop sidebar, short topbar with environment badge, and a collapsible mobile menu. Keep permission filtering, support counts and logout behavior; remove duplicate global onboarding entry (company-page action remains). Other page content remains outside scope.
+
+
+## 2026-09-16: Billing directory owner review
+
+Owner approved the six-point billing-page UX review. Scope: `/system/billing` company directory and its navigation/help chrome, with existing detail/issue mutations preserved. Align with company directory theme: tab-like navigation with active state, primary company/issue/settlement destinations, advanced inspection links in a labelled disclosure, settings secondary. Search by company name/ID with a permanently visible clear button; URL-backed search and numeric page retain context on browser return. Desktop table / mobile cards show plan once, payment and access separately, trial/service end dates from termEndsAt, and paidThrough only when present. Never equate subscription NONE with unpaid or no rights.
+
+Extend the existing overview read with optional numeric `page` and optional pagination `{page,pageSize,total}`. Count and records use the same authorized company/search predicate; fixed 25/page, bounded positive page, reject simultaneous cursor+page. Existing cursor callers/batches stay compatible. No schema or payment-policy change.
+
+Remove the blanket “ติดต่อผู้ดูแลพร้อมเลขอ้างอิง” footer. On a read error show retry plus the actual request ID if returned, for internal investigation; never invent an ID or expose raw provider errors/secrets. Owner clarified that Mangmee is the operator: remove all suggestions to email Mangmee itself, including contact destinations. Loading/error must not erase search or move search controls. Keep metadata/financial permission boundaries and generation guards.
+
+Acceptance: scoped count and pagination unit check, typechecks, local real API E2E search/clear/next/previous/back/mobile plus simulated 503 with actual reference and retry. Check navigation remains available after errors and no ordinary click causes financial mutations. Owner review before another page. No CI, merge, push or deploy.
+
+## 2026-09-16: Billing issue queue theme and language
+
+Owner approved aligning `/system/billing/issues` after visual review. Name the shared destination and queue heading “ปัญหาการชำระเงิน”, explain it tracks payment/access problems, and rename the advanced disclosure “ตรวจสอบกับ Stripe” with descriptions of provider history versus confirmed batch reconciliation. Keep all capability/mode checks and existing mutation confirmations.
+
+Use the existing ThemedSelect and directory surface: filter, permanent clear, secondary “โหลดรายการใหม่”, result count for this page only, loading/error/empty state and cursor navigation in one white panel. Filters: “ยังไม่เสร็จทั้งหมด”, “ยังไม่มีคนรับเรื่อง”, “เกินกำหนดติดตาม”. Refresh reads Mangmee's stored issues; it must not trigger provider reconciliation. List each company's problem, status/responsible person and follow-up due time with one details action. Technical references stay in detail. Empty filtered/later-page/disabled-provider states must offer a useful recovery or explanation without declaring the whole system healthy. Preserve query/cursor on detail return; reset cursor on filter/clear; prevent stale reads; preserve navigation on transient read errors, clear privileges on401/403.
+
+Acceptance: local real API/DB issue fixtures for filters, paging and detail/back; loading/error/retry and no billing mutations from read controls; mobile390px themed dropdown/no overflow and desktop visual review. No API/schema/policy change, CI, merge, push or deploy. Stop for owner review.
+
+
+## 2026-09-16: Actionable billing issue detail
+
+Owner authorized making the issue detail guide real resolution, beyond work tracking. Keep the existing issue queue and its return filter/cursor. Show company/problem, a concrete next action and observed resolution; tracking/assignment and contact notes are secondary disclosures. Reuse existing preview/confirm repair commands and server permissions, source versions/hashes, idempotency and audit. Taking ownership may supply a clear automatic audit note; changing work status still requires a reason and never changes financial/access state.
+
+For PAID_NOT_APPLIED/PAID_HELD, map the issue reference (provider invoice ID or local ID) to the original invoice under the same authorized company, Stripe account and mode. Detail-only optional relatedInvoiceId; never guess an invoice or search across tenants. Allow a scoped read and existing RETRY_APPLY flow inline with an editable prefilled reason. If the invoice is absent, route to existing invoice discovery for that company with a plain explanation. Other known problem kinds lead to their existing original command/source tools; unresolved/financial decisions must not falsely report completion or create duplicate refunds.
+
+Close paid-application issues only after the original verified invoice is APPLIED with appliedAt. Resolve exact local/provider references through the existing audited issue resolver, including repeat purchases and idempotent already-applied retries. Do not close other invoices, financial/refund issues or another company/account/mode; do not add quota again. Viewing or refreshing a detail cannot mutate billing. A completed command alone is not evidence that the issue is resolved. Show the actual issue state on explicit result refresh.
+
+Acceptance: focused real-PG scope/idempotency/rollback checks, API-to-UI mapping and local browser preview/confirmation/result/error/return path checks with isolated data. Provider results may be simulated and must be labelled as such in evidence. Desktop/mobile visual check. No migration, CI, push, merge, deploy or real payment/email in this batch.
+
+Owner detail follow-up: successful tracking/contact actions and read refreshes must update in place, preserving other drafts, expanded sections, scroll and original queue/cursor URL. Keep optimistic concurrency and refresh the issue version after contact commits. Transient read failures retain drafts; revoked access clears privileged data. Contact controls use the same themed select/input styles. Steps share the same visual treatment; the inline original-invoice result action is unavailable until a server-observed submitted command exists (preview/cancel alone is insufficient). Reloading/returning may recover submitted history for the same invoice; this enables reading a result, never proves closure. Keep simple self-assignment visible and move team assignment/search under “เปลี่ยนผู้รับผิดชอบ”, with its team purpose explained. Verify actual local HTTP saves/preview/submit/cancel, preserved drafts/disclosures/context and result ordering; no external CI.
+
+Owner sequential-action correction: embedded invoice repair must present one current journey: inspect original purchase → read a plain-language summary and explicitly confirm → observe the actual issue result. Remove the preparatory button that only opens another form, nested standalone panel heading/border and repeated prose. Keep the editable audit reason and technical identifiers in a disclosure; append the original issue ID to the audited command internally, never ask operators to handle it in the main form. Explain internal references where expanded. History is collapsed, uses status/date labels and excludes the currently shown command. Group source/command refresh into one read-only control inside this disclosure (visible retry on error). Show a result action only after a submitted command is observed; terminal command observations request an in-place issue read automatically, without treating command success as issue closure. Existing preview/hash/version/idempotency, permission guards, cancellation and review/failed recovery remain unchanged. Existing drafts and disclosure state must survive these reads. Verify local initial/preview/cancel/queued/final/error/history paths and desktop/mobile layout before owner review.
+
+
+Owner history-destination correction: `/system/billing/operations/[id]` must use the same Mangmee surface and plain Thai as the issue journey. Present task, command status and its meaning, dated facts, then the next permitted action. Separate command completion/cancellation from payment/entitlement/issue outcomes. Show saved source period and actual observed result with explicit labels. Put unmodified audit reason, internal IDs and technical fields in one collapsed reference section with a purpose explanation. Remove the self-link and duplicate nested generic heading. Returning from issue history preserves validated issue/queue/cursor context for navigation only; never derive authority from the audit reason or URL. Preserve the shared loader, polling, preview/hash/version/idempotency and server allowedActions. Failed reads retain existing data but disable mutations until a successful refresh; revoked access clears data. Verify cancelled and preview history round trips, state/error/action variants, and desktop/mobile locally. No CI/merge/deploy.
+
+
+### Billing menu: company-first operator UX (owner follow-up)
+
+Admin audience: Mangmee operators, including nontechnical users. Company landing must answer current package, access, receipt balance and actionable open issues before presenting tools. Keep payment, application, access and missing data distinct; never infer success from a paid invoice or treat missing package data as a free plan. Show actual company identity and mode. Organize company overview, invoices, history and adjustments into named URL-backed sections. Keep open issues in the overview and provide direct issue resolution; no repair form or audit feed on initial landing. Company tools explain when to use them; adjustments and repair retain explicit preview/confirmation/permission/audit boundaries. No automatic mutations on page/tab/view, and navigation is never labelled as a completed action.
+
+Review all routes under /system/billing for consistent cards, readable Thai dates, input/select styles, meaningful back links, loading/empty/denied states and restrained primary actions. Fold technical references and secondary history; do not hide required warnings/impact summaries. Remove self-links and admin self-email loops. Existing provider/financial API contracts and policy remain unchanged. Test local real-API company sections/issue/history round trips and representative menu routes, including mobile, source failures and no mutation on viewing. Record route inventory and exact coverage; no claim of real provider proof. No CI, push, merge or deploy.
+
+Design references: [GOV.UK Details](https://design-system.service.gov.uk/components/details/) for secondary information disclosure; [GOV.UK Buttons](https://design-system.service.gov.uk/components/button/) for primary/secondary action hierarchy. Mangmee tokens/components remain the visual source of truth.
+
+Implementation clarification: company section changes and read refreshes retain local drafts; denied reads clear all privileged company/history UI. Selects must have explicit accessible names and honor disabled/busy/permission states even inside disabled fieldsets. Plan tools show one selected task at a time. Company invoice and history lists use25-item paging; the company issue summary explicitly labels its25-record cap. Missing source/plan data is shown as unknown, never as unlimited quota. Detailed local evidence and the37-route audit are in `docs/evidence/mangmee-ux-audit-2026-09-16/billing-menu-operator-ux.json`.
+
+### Owner correction: task clarity on five billing destinations
+
+Scope: settlement report, invoice documents, paid-invoice entitlement repair, plan adjustment (including blocked company), and configuration. A route rendering without overflow is not acceptance for operator UX. Each page must explain its purpose, current factual state and the next eligible action, use descriptive field labels, and keep reload/navigation visually secondary. Verify populated, blocked and provider-error states, not just empty route smoke.
+
+Settlement defaults to completed Bangkok calendar days with yesterday/last7days choices; custom date/time uses the existing themed date picker and explicit Bangkok time, retaining the31-day/exclusive-end/provider-lag rules. Viewing/picking a period does not create a job. Invoice document errors distinguish denied/missing/unverified source/provider unavailable, with relevant recovery and no implication that the operator lacks permission in every case. Refunds stay secondary to documents. Paid-invoice repair distinguishes paid evidence from package activation, names period/start/end facts and explains that inspection precedes confirmation without another charge. Plan adjustment eligibility failures explain why controls are unavailable and link to the company's payments rather than an unhelpful loop. Configuration opens with current settings, then one chosen edit topic; proposed values and emergency stop stay distinct. Preview replaces the edit surface, with explicit reauthentication/confirmation and unchanged server policy/audit/version/hash guards. No CI/merge/deploy or real-provider mutation.
+
+### Settlement result clarity correction
+
+- A run that has not completed and has observed zero rows has **no monetary result yet**; show “ยังสรุปยอดไม่ได้”, never default-zero money cards. A completed empty run may show confirmed zero totals. Partial results must say how many rows they cover and remain separate from completion.
+- Lead with plain outcome, selected period and one next eligible action. Blocked source verification should lead to checking the Stripe connection, with no claim that customer money is missing or totals differ. Existing coarse error codes must not be presented as a specific proven mismatch.
+- Manual resume after blocked-source review is secondary and requires the operator to acknowledge checking the cause; existing backend authorization/version checks still decide eligibility. Stop is secondary, explains that it ends only this check and does not resolve money differences, and requires an explicit second confirmation.
+- Reload is scoped to the result card. Reference IDs, internal notes and issue tracking are folded; the issue page must not be the primary route when it leads back to the same result.
+- Verify zero unobserved, partial, completed empty, blocked, waiting/retry, permission-limited, and cancellation interactions locally without provider side effects.
+### Email status and shared LINE settings theme correction
+
+Company detail follow-up: replace the continuous configuration page with five URL-backed sections: overview, members, package/features, AI/document quotas, contact/history. Only the selected section is visible; previously opened sections stay mounted to retain drafts. Visits from support requests default to contact/history. Company lifecycle actions and technical references are secondary. Feature editing defaults to a single menu group, with search across groups and existing review/dependency guards. No member/password/LINE messages or settings are mutated by navigation.
+
+- Email status and LINE settings use the existing admin typography, green controls, themed selectors, light gray card borders and responsive spacing.
+- Email status prioritizes its seven-day summary and filterable/paginated history. Historical rows can span all dates; delivery acceptance is not evidence of reading. Missing configuration is not an empty successful result. Connection diagnostics and retention policy stay secondary.
+- Refreshing/filtering email history must not remount the retention editor or discard its draft. Existing preview, scope/version, idempotency and permission gates remain.
+- LINE settings show configuration availability, provider-validation and inbound-webhook evidence separately. Technical references and credential replacement are disclosed on demand. No claim of successful message delivery from configuration availability alone.
+- Preserve existing LINE credential acknowledgement, password, version and rotation identifiers; never submit credentials while visually reviewing the page. No provider, backend or deployment changes in this correction.
+
+## Owner amendment: AI works in context — 2026-09-17
+
+- Owner approved hiding “AI แนะนำ” from primary navigation. Mark its shared menu binding `navigation: contextual`; exclude it from customer navigation, admin menu cards and sidebar preview. Keep existing authenticated suggestion review URLs and permission checks.
+- Move `ai_line_assistant` switch to the existing background-work section; keep the same pending changes, lock/disable guards, review, audit and save path. AI entitlement, quota, starter 17 keys, provider readiness and final-mutation confirmation do not change.
+- Starter remains seven capabilities: six navigation entries (including notifications in the header) plus background AI. Earlier seven-menu evidence describes the former presentation; no new feature replaces the removed menu.
+- Verify navigation absence, allowed/denied direct-route access, retained AI permission grants, admin background toggle diff, local typecheck and browser smoke. No new contextual workflow, real provider call, migration, CI, merge or deployment in this amendment.

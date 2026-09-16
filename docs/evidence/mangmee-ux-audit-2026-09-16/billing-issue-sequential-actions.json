@@ -1,0 +1,39 @@
+{
+  "observedAt": "2026-09-16T15:43:33.559831+00:00",
+  "scope": "Sequential original-invoice issue repair UX",
+  "status": "PASS",
+  "checks": {
+    "local_e2e": "billing-admin-directory 4/4 PASS (13.2s)",
+    "web_typecheck": "PASS",
+    "git_diff_check": "PASS",
+    "native_viewports": [
+      1512,
+      390
+    ],
+    "mobile_document_width": 390
+  },
+  "acceptance": [
+    "one initial main action",
+    "source preview before explicit confirmation",
+    "cancel and re-preview retain draft",
+    "internal issue reference appended to audited command, exact invoice binding retained",
+    "no visible UUID or duplicate current command in main journey",
+    "history and editable reason collapsed",
+    "source and command refresh grouped; recover from503 and revoked access",
+    "terminal command observation refreshes actual issue state; no regrant",
+    "drafts, disclosures and queue/cursor context preserved"
+  ],
+  "native": "Local preview-only visual inspection; no final repair submitted; mobile preview cancelled; earlier preview retained in local audit history",
+  "limits": [
+    "Synthetic payment evidence; no external Stripe/Postmark call",
+    "Standalone provider-specific mutation harness not rerun"
+  ],
+  "reviewUrl": "http://localhost:3000/system/billing/issues/23f77a1a-b0fb-4aeb-bc4f-aa7851044f43",
+  "ci_push_merge_deploy": false,
+  "sha256": {
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "2c4b37fef04505ab4b924002f97cdab8e7050cbe0d8f64da890f3d17bb1d98b9",
+    "apps/web/src/features/billing-admin/BillingIssueResolutionPanel.tsx": "41213c69762c2ee8c87dbac1d7c5ba6378246af477aeae4f7e8790a5c34ef6b0",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "2a65d3a43f75992579286144e02755ec45296a4e03e198714225c8cc3f0da80e",
+    "e2e/billing-admin-directory.spec.ts": "e7a7a4455d1773d182396a207fe6f58e190388b09778162fed95373e8375ae0d"
+  }
+}

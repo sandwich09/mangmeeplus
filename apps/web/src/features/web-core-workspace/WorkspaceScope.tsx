@@ -2,6 +2,7 @@
 // 10D: header company switcher + branch filter (same-page scope dimension).
 // Data comes from the cookie-session BFF (authedApiFetch); errors fall back silently to no selector.
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import { useCloseOnOutsideClick } from '@/common/hooks/use-close-on-outside-click';
 import { AlertModal } from '@/common/components/modal';
 import { useWorkspaceLocale } from '@/common/i18n/locale-context';
@@ -231,6 +232,7 @@ export function BranchSelector() {
 // ---- Company switcher ----
 
 export function CompanySwitcher({ companyId, fallbackName }: { companyId: string; fallbackName: string }) {
+  const pathname = usePathname();
   const locale = useWorkspaceLocale();
   const [companies, setCompanies] = useState<MyCompany[]>([]);
   const [settled, setSettled] = useState(false);
@@ -305,7 +307,10 @@ export function CompanySwitcher({ companyId, fallbackName }: { companyId: string
                   window.location.assign(`/companies/${c.companyId}/renew`);
                   return;
                 }
-                if (c.companyId !== companyId) window.location.assign(`/companies/${c.companyId}/dashboard`);
+                if (c.companyId !== companyId) {
+                  const destination = /^\/companies\/[^/]+\/billing(?:\/|$)/.test(pathname) && c.roles.includes('OWNER') ? 'billing' : 'dashboard';
+                  window.location.assign(`/companies/${c.companyId}/${destination}`);
+                }
               }}
             >
               {c.companyName}

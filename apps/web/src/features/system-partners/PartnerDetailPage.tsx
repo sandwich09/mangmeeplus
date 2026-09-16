@@ -17,6 +17,7 @@ import {
   type PlanTierKey,
 } from '@watchdog-bms/contracts';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { BackLink } from '@/common/components/app-shell/BackLink';
 import { ThemedDate } from '@/common/components/field/ThemedDate';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
@@ -134,10 +135,12 @@ const STATUS_CLASS: Record<PartnerStatus, string> = {
   SUSPENDED: 'bg-red-50 text-red-700 border-red-200',
 };
 
+const STATUS_LABEL: Record<PartnerStatus,string> = { ACTIVE:'ใช้งานอยู่', DISABLED:'ปิดใช้งาน', ARCHIVED:'เก็บถาวร', SUSPENDED:'ระงับชั่วคราว' };
+
 function StatusBadge({ status }: { status: PartnerStatus }) {
   return (
     <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold ${STATUS_CLASS[status] ?? STATUS_CLASS.ARCHIVED}`}>
-      {status}
+      {STATUS_LABEL[status]}
     </span>
   );
 }
@@ -150,10 +153,10 @@ const LINE_CTX_CLASS: Record<LineContextHealth, string> = {
 };
 
 const LINE_CTX_LABEL: Record<LineContextHealth, string> = {
-  LINKED: 'LINE Linked',
-  UNLINKED: 'No LINE Link',
-  NEEDS_COMPANY_SELECTION: 'Needs Company Selection',
-  UNKNOWN: 'Unknown',
+  LINKED: 'เชื่อมแล้ว',
+  UNLINKED: 'ยังไม่เชื่อม',
+  NEEDS_COMPANY_SELECTION: 'รอเลือกบริษัท',
+  UNKNOWN: 'ยังไม่ทราบ',
 };
 
 function LineContextBadge({ health }: { health: LineContextHealth }) {
@@ -170,7 +173,7 @@ function SectionCard({ title, children }: { title: string; children: React.React
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-5 py-4">
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
       </div>
       <div className="px-5 py-4 space-y-3">{children}</div>
     </div>
@@ -236,15 +239,15 @@ function VatRegistrationField({ companyId, value, disabled, showToast, onSaved }
 function ReadOnlyField({ label, value }: { label: string; value?: string }) {
   return (
     <div>
-      <p className="text-xs text-gray-500 mb-0.5">{label}</p>
-      <p className="text-sm text-gray-800 font-mono">{value || '—'}</p>
+      <p className="text-sm text-gray-500 mb-1">{label}</p>
+      <p className="break-words text-base text-gray-800">{value || '—'}</p>
     </div>
   );
 }
 
-const inputClass = 'mangmee-input';
-const btnPrimary = 'mangmee-btn mangmee-btn-primary disabled:opacity-50';
-const btnSecondary = 'rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
+const inputClass = 'mangmee-input min-h-11 !text-base';
+const btnPrimary = 'mangmee-btn mangmee-btn-primary min-h-11 !text-base disabled:opacity-50';
+const btnSecondary = 'min-h-11 rounded-lg border border-gray-300 bg-white px-4 py-2 text-base font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
 const btnDanger = 'rounded bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50';
 
 // -- lifecycle confirm modal
@@ -252,9 +255,9 @@ const btnDanger = 'rounded bg-red-600 px-4 py-2 text-sm font-medium text-white h
 type LifecycleAction = 'ACTIVE' | 'DISABLED' | 'ARCHIVED';
 
 const LIFECYCLE_CONSEQUENCE: Record<LifecycleAction, string> = {
-  ACTIVE: 'The company will be marked as ACTIVE. Users will be able to log in and use the platform.',
-  DISABLED: 'The company will be DISABLED. Existing users will lose access until re-enabled.',
-  ARCHIVED: 'The company will be ARCHIVED (soft removal). All customer access is revoked and its data becomes read-only. Data is never hard-deleted; a system admin can re-activate it later.',
+  ACTIVE: 'เปิดให้สมาชิกของบริษัทเข้าสู่ระบบและใช้งานได้อีกครั้ง',
+  DISABLED: 'สมาชิกของบริษัทจะเข้าใช้งานไม่ได้ จนกว่าจะเปิดใช้งานอีกครั้ง',
+  ARCHIVED: 'สมาชิกทุกคนจะเข้าใช้งานไม่ได้ และข้อมูลบริษัทจะอ่านได้อย่างเดียว ข้อมูลยังเก็บอยู่ ผู้ดูแลเปิดใช้งานบริษัทอีกครั้งได้',
 };
 
 function LifecycleConfirmModal({
@@ -275,22 +278,22 @@ function LifecycleConfirmModal({
       <div className="w-full max-w-md rounded-lg bg-white shadow-xl">
         <div className="border-b border-gray-200 px-5 py-4">
           <h2 className="text-base font-semibold text-gray-900">
-            Confirm: Set status to {action}
+            ยืนยันเปลี่ยนสถานะเป็น {STATUS_LABEL[action]}
           </h2>
         </div>
         <div className="px-5 py-4 space-y-3">
           <p className="text-sm text-gray-700">{LIFECYCLE_CONSEQUENCE[action]}</p>
           {action === 'ARCHIVED' && (
             <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              Warning: while archived, all customer access is revoked and fields are locked.
+              เมื่อเก็บถาวร สมาชิกทุกคนจะใช้งานไม่ได้ และแก้ไขข้อมูลบริษัทไม่ได้
             </div>
           )}
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Reason (optional)</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">เหตุผล (ถ้ามี)</label>
             <input
               className={inputClass}
               type="text"
-              placeholder="e.g. contract ended"
+              placeholder="เช่น ยุติการใช้บริการ"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               disabled={loading}
@@ -299,7 +302,7 @@ function LifecycleConfirmModal({
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-5 py-4">
           <button type="button" className={btnSecondary} onClick={onCancel} disabled={loading}>
-            Cancel
+            ยกเลิก
           </button>
           <button
             type="button"
@@ -307,7 +310,7 @@ function LifecycleConfirmModal({
             disabled={loading} aria-busy={Boolean(loading)}
             onClick={() => onConfirm(reason)}
           >
-            {loading ? 'Applying…' : `Confirm ${action}`}
+            {loading ? 'กำลังบันทึก…' : 'ยืนยันเปลี่ยนสถานะ'}
           </button>
         </div>
       </div>
@@ -350,7 +353,7 @@ function MembersSection({
       setMembersError(null);
     } catch (err) {
       const e = err as Error & { status?: number };
-      setMembersError(e.status === 403 ? 'You do not have permission to view members.' : apiErrorMessage(err));
+      setMembersError(e.status === 403 ? 'บัญชีนี้ไม่มีสิทธิ์ดูสมาชิก' : apiErrorMessage(err));
     }
   };
 
@@ -368,7 +371,7 @@ function MembersSection({
         email: contactEditing.email.trim(),
         phoneNumber: contactEditing.phoneNumber.trim(),
       });
-      showToast('Contact saved.', 'success');
+      showToast('บันทึกข้อมูลติดต่อแล้ว', 'success');
       setContactEditing(null);
       await loadMembers();
     } catch (err) {
@@ -400,17 +403,17 @@ function MembersSection({
 
   const handleResetPassword = async (member: PartnerMemberDto) => {
     const confirmed = await confirm({
-      title: 'Reset password',
-      message: `Issue a new temporary password for "${member.displayName}"? The current password stops working immediately.`,
-      confirmLabel: 'Reset password',
-      cancelLabel: 'Cancel',
+      title: 'ออกรหัสผ่านชั่วคราวใหม่',
+      message: `ออกรหัสผ่านชั่วคราวใหม่ให้ "${member.displayName}" รหัสผ่านเดิมจะใช้งานไม่ได้ทันที ยืนยันหรือไม่`,
+      confirmLabel: 'ออกรหัสผ่านชั่วคราวใหม่',
+      cancelLabel: 'ยกเลิก',
     });
     if (!confirmed) return;
     setBusyUserId(member.userId);
     try {
       const result = await resetPartnerMemberPassword(companyId, member.userId);
       setRevealed((prev) => ({ ...prev, [member.userId]: result.temporaryPassword }));
-      showToast('New temporary password issued.', 'success');
+      showToast('ออกรหัสผ่านชั่วคราวใหม่แล้ว', 'success');
       await loadMembers();
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -421,16 +424,16 @@ function MembersSection({
 
   const handleIssueLineQr = async (member: PartnerMemberDto) => {
     if (member.lineLinked && !(await confirm({
-      title: 'Issue LINE QR',
-      message: `"${member.displayName}" is already linked. A new QR lets them link a different LINE account, and the current one stops working. Continue?`,
-      confirmLabel: 'Issue QR',
-      cancelLabel: 'Cancel',
+      title: 'สร้าง QR ผูก LINE',
+      message: `"${member.displayName}" ผูก LINE แล้ว QR ใหม่ใช้เปลี่ยนบัญชี LINE ที่ผูกอยู่ โดยบัญชีเดิมจะใช้ไม่ได้ ต้องการทำต่อหรือไม่`,
+      confirmLabel: 'สร้าง QR',
+      cancelLabel: 'ยกเลิก',
     }))) return;
     setBusyUserId(member.userId);
     try {
       const result = await issuePartnerMemberLineLinkToken(companyId, member.userId);
       setIssuedQr({ displayName: member.displayName, lineLink: result.lineLink });
-      showToast('LINE link QR issued.', 'success');
+      showToast('สร้าง QR ผูก LINE แล้ว', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
     } finally {
@@ -440,16 +443,16 @@ function MembersSection({
 
   const handleUnlinkLine = async (member: PartnerMemberDto) => {
     const confirmed = await confirm({
-      title: 'Unlink LINE',
-      message: `Unlink LINE for "${member.displayName}"? They must scan a fresh QR to relink.`,
-      confirmLabel: 'Unlink LINE',
-      cancelLabel: 'Cancel',
+      title: 'ยกเลิกการผูก LINE',
+      message: `ยกเลิกการผูก LINE ของ "${member.displayName}" หากต้องการผูกอีกครั้ง จะต้องสแกน QR ใหม่`,
+      confirmLabel: 'ยกเลิกการผูก LINE',
+      cancelLabel: 'ยกเลิก',
     });
     if (!confirmed) return;
     setBusyUserId(member.userId);
     try {
       await unlinkPartnerMemberLine(companyId, member.userId);
-      showToast('LINE unlinked.', 'success');
+      showToast('ยกเลิกการผูก LINE แล้ว', 'success');
       await loadMembers();
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
@@ -459,23 +462,23 @@ function MembersSection({
   };
 
   return (
-    <SectionCard title="Members">
+    <SectionCard title="สมาชิกบริษัท">
       {membersError ? (
         <p className="text-sm text-red-600">{membersError}</p>
       ) : !members ? (
         <div className="h-16 rounded border border-gray-100 animate-pulse" />
       ) : members.length === 0 ? (
-        <p className="text-sm text-gray-500">No members.</p>
+        <p className="text-sm text-gray-500">ยังไม่มีสมาชิก</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
-                <th className="py-2 pr-4 font-medium">Member</th>
-                <th className="py-2 pr-4 font-medium">Roles</th>
+                <th className="py-2 pr-4 font-medium">สมาชิก</th>
+                <th className="py-2 pr-4 font-medium">บทบาท</th>
                 <th className="py-2 pr-4 font-medium">LINE</th>
-                <th className="py-2 pr-4 font-medium">Password</th>
-                <th className="py-2 font-medium">Actions</th>
+                <th className="py-2 pr-4 font-medium">รหัสผ่าน</th>
+                <th className="py-2 font-medium">จัดการ</th>
               </tr>
             </thead>
             <tbody>
@@ -493,13 +496,13 @@ function MembersSection({
                           <input
                             value={contactEditing.email}
                             onChange={(e) => setContactEditing((p) => (p ? { ...p, email: e.target.value } : p))}
-                            placeholder="email"
+                            aria-label="อีเมลสมาชิก" placeholder="อีเมล"
                             className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
                           />
                           <input
                             value={contactEditing.phoneNumber}
                             onChange={(e) => setContactEditing((p) => (p ? { ...p, phoneNumber: e.target.value } : p))}
-                            placeholder="mobile"
+                            aria-label="เบอร์โทรสมาชิก" placeholder="เบอร์โทรศัพท์"
                             className="block w-48 rounded border border-gray-300 px-2 py-1 text-xs"
                           />
                           <div className="flex gap-1.5">
@@ -507,9 +510,9 @@ function MembersSection({
                               type="button"
                               disabled={busy} aria-busy={Boolean(busy)}
                               onClick={() => void handleSaveContact()}
-                              className="rounded bg-gray-900 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                              className="min-h-11 rounded-lg bg-brand-700 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
                             >
-                              Save
+                              บันทึก
                             </button>
                             <button
                               type="button"
@@ -517,7 +520,7 @@ function MembersSection({
                               onClick={() => setContactEditing(null)}
                               className="rounded border border-gray-300 px-2.5 py-1 text-xs text-gray-600"
                             >
-                              Cancel
+                              ยกเลิก
                             </button>
                           </div>
                         </div>
@@ -540,9 +543,9 @@ function MembersSection({
                     </td>
                     <td className="py-2.5 pr-4">
                       {m.lineLinked ? (
-                        <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">Linked</span>
+                        <span className="rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700">เชื่อมแล้ว</span>
                       ) : (
-                        <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500">Not linked</span>
+                        <span className="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-500">ยังไม่เชื่อม</span>
                       )}
                       {m.lineLinked && m.lineMessagingReady === false && (
                         <p className="mt-1 max-w-52 text-xs text-amber-800">ตรวจช่องทาง LINE ของระบบ แล้วออก QR ใหม่เพื่อซ่อมการเชื่อมต่อ</p>
@@ -560,56 +563,56 @@ function MembersSection({
                           className="text-gray-400 hover:text-gray-700 disabled:opacity-30"
                           title={
                             shown !== undefined
-                              ? 'Hide'
+                              ? 'ซ่อนรหัสผ่าน'
                               : canReveal
-                                ? 'Show temporary password (audited)'
-                                : 'No revealable password — the user changed it. Reset to issue a new one.'
+                                ? 'ดูรหัสผ่านชั่วคราว (บันทึกประวัติการดู)'
+                                : 'ผู้ใช้เปลี่ยนรหัสผ่านแล้ว จึงแสดงรหัสเดิมไม่ได้'
                           }
                         >
                           <EyeIcon off={shown !== undefined} />
                         </button>
                       </div>
                       {m.credential?.status === 'TEMPORARY' && m.credential.expiresAt && (
-                        <p className="mt-0.5 text-xs text-gray-400">expires {formatDate(m.credential.expiresAt)}</p>
+                        <p className="mt-0.5 text-xs text-gray-400">หมดอายุ {formatDate(m.credential.expiresAt)}</p>
                       )}
                     </td>
                     <td className="py-2.5">
-                      <div className="flex items-center gap-2">
+                      <details><summary className="min-h-11 cursor-pointer py-2 font-medium text-brand-800">จัดการสมาชิก</summary><div className="flex min-w-48 flex-col items-start gap-2 py-2">
                         <button
                           type="button"
-                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                           disabled={busy}
                           onClick={() =>
                             setContactEditing({ userId: m.userId, email: m.email ?? '', phoneNumber: m.phoneNumber ?? '' })
                           }
                         >
-                          Edit contact
+                          แก้ไขข้อมูลติดต่อ
                         </button>
                         <button
                           type="button"
-                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                           disabled={busy || !m.credential} aria-busy={Boolean(busy)}
                           onClick={() => void handleResetPassword(m)}
                         >
-                          Reset password
+                          ออกรหัสผ่านชั่วคราวใหม่
                         </button>
                         <button
                           type="button"
-                          className="rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                          className="min-h-11 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                           disabled={busy} aria-busy={Boolean(busy)}
                           onClick={() => void handleIssueLineQr(m)}
                         >
-                          Issue LINE QR
+                          สร้าง QR ผูก LINE
                         </button>
                         <button
                           type="button"
-                          className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
+                          className="min-h-11 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-100 disabled:opacity-50"
                           disabled={busy || !m.lineLinked} aria-busy={Boolean(busy)}
                           onClick={() => void handleUnlinkLine(m)}
                         >
-                          Unlink LINE
+                          ยกเลิกการผูก LINE
                         </button>
-                      </div>
+                      </div></details>
                     </td>
                   </tr>
                 );
@@ -622,19 +625,19 @@ function MembersSection({
         <div className="mt-4 space-y-2 rounded border border-green-200 bg-green-50 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold text-green-900">
-              LINE link QR for {issuedQr.displayName} — send the link to them in chat
+              QR ผูก LINE ของ {issuedQr.displayName} · ส่งให้สมาชิกคนนี้เท่านั้น
             </p>
             <button
               type="button"
               className="text-xs font-medium text-gray-500 underline hover:text-gray-700"
               onClick={() => setIssuedQr(null)}
             >
-              Hide
+              ซ่อน QR
             </button>
           </div>
           <p className="text-xs text-gray-600">
-            Single use, valid 72 hours, bound to this member only. Their password is unchanged.
-            They do not need to log in — opening the link in LINE finishes the link.
+            ใช้ได้ครั้งเดียวภายใน 72 ชั่วโมง เฉพาะสมาชิกคนนี้ และไม่เปลี่ยนรหัสผ่าน
+            สมาชิกเปิดลิงก์ใน LINE เพื่อผูกบัญชีได้โดยไม่ต้องเข้าสู่ระบบ
           </p>
           <QrLinkCard
             linkUrl={issuedQr.lineLink.linkUrl}
@@ -671,6 +674,7 @@ function PackageMenuSection({
     entitlements.map(({ featureKey, enabled }) => ({ featureKey, enabled })),
   );
   const [search, setSearch] = useState('');
+  const [groupFilter, setGroupFilter] = useState('main');
   const [expandedKeys, setExpandedKeys] = useState<string[]>([]);
   const [showDisabledPreview, setShowDisabledPreview] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -700,6 +704,10 @@ function PackageMenuSection({
   const commandContractPending = !Number.isInteger(setVersion) || setVersion < 0;
   const controlsLocked = fieldsLocked || saving || normalizationPending || commandContractPending;
   const enabledCardCount = cards.filter((card) => card.enabled).length;
+  const aiEnabled = entitlementEnabled(pending, 'ai_line_assistant');
+  const aiDisableBlock = aiEnabled
+    ? disableBlockForChange(entitlements, toggleSubmenu(pending, 'ai_line_assistant', false), entitlements)
+    : null;
   const autoPostEnabled = entitlementEnabled(pending, 'expense_auto_post');
   const autoPostDisableBlock = autoPostEnabled
     ? disableBlockForChange(entitlements, toggleSubmenu(pending, 'expense_auto_post', false), entitlements)
@@ -852,9 +860,9 @@ function PackageMenuSection({
       <section className="mangmee-card">
         <div className="mangmee-card-header flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="font-bold text-gray-900">แพ็กเกจการใช้งาน</h2>
+            <h2 className="text-lg font-semibold text-gray-900">เมนูและฟีเจอร์ที่เปิดให้ใช้</h2>
             <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">
-              ชุดเริ่มต้นมี 7 เมนู แยกจากแพ็กเกจที่ซื้อ ปรับแต่ละเมนูแล้วตรวจค่าก่อน–หลังบันทึกได้
+              เลือกเมนูที่ลูกค้าจะเห็น ส่วนผู้ช่วย AI อยู่ในหัวข้อการทำงานเบื้องหลัง ตรวจรายการก่อนบันทึกทุกครั้ง
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -905,12 +913,14 @@ function PackageMenuSection({
                 className="mangmee-input"
                 placeholder="ค้นหาเมนู…"
                 value={search}
-                disabled={controlsLocked}
                 onChange={(event) => setSearch(event.target.value)}
               />
             </label>
 
-            {navGroups.map((navGroup) => {
+            <div className="flex flex-wrap items-end gap-3"><div className="min-w-0 flex-1"><label className="mb-2 block text-sm text-gray-600">หมวดเมนู</label><ThemedSelect aria-label="หมวดเมนู" className="min-h-11 !text-base" value={groupFilter} disabled={Boolean(search)} onChange={e=>setGroupFilter(e.target.value)}>{navGroups.map(group=><option key={group.group} value={group.group}>{group.labelTh||'เมนูหลัก'}</option>)}</ThemedSelect></div><button type="button" className={btnSecondary} onClick={()=>{setSearch('');setGroupFilter('main');}}>ล้างตัวกรอง</button></div>
+            {search&&<p className="text-sm text-gray-600">ค้นหาในทุกหมวดเมนู</p>}
+            {filteredCards.length===0&&<p className="py-6 text-gray-600">ไม่พบเมนูที่ตรงกับคำค้น</p>}
+            {navGroups.filter(group=>Boolean(search)||group.group===groupFilter).map((navGroup) => {
               const groupCards = cards.filter((card) => card.group === navGroup.group);
               const visibleCards = filteredCards.filter((card) => card.group === navGroup.group);
               if (visibleCards.length === 0) return null;
@@ -1100,6 +1110,23 @@ function PackageMenuSection({
                   {WORKSPACE_ICON_NODES.BoltIcon}
                 </span>
                 <div className="min-w-0 flex-1">
+                  <p className="font-bold text-gray-900">ผู้ช่วย AI ทาง LINE</p>
+                  <p className="mt-0.5 text-sm leading-6 text-gray-600">ช่วยรับข้อความและใบเสร็จผ่าน LINE ตามสิทธิ์และโควตา ไม่มีเมนู AI แนะนำในแถบข้าง</p>
+                  {aiDisableBlock && <p className="mt-1 text-xs leading-5 text-amber-700">{aiDisableBlock.reason}</p>}
+                </div>
+                <EntitlementSwitch
+                  checked={aiEnabled}
+                  disabled={controlsLocked || Boolean(aiDisableBlock)}
+                  disabledReason={aiDisableBlock?.reason}
+                  label={`${aiEnabled ? 'ปิด' : 'เปิด'}ผู้ช่วย AI ทาง LINE`}
+                  onClick={() => updatePending(toggleSubmenu(pending, 'ai_line_assistant', !aiEnabled))}
+                />
+              </article>
+              <article className="mangmee-card flex items-start gap-3 p-4 shadow-none">
+                <span className={`mangmee-icon-frame ${mangmeeToneClass.amber.icon}`}>
+                  {WORKSPACE_ICON_NODES.BoltIcon}
+                </span>
+                <div className="min-w-0 flex-1">
                   <p className="font-bold text-gray-900">ลงบัญชีค่าใช้จ่ายอัตโนมัติ</p>
                   <p className="mt-0.5 text-sm leading-6 text-gray-600">
                     ลงรายการบัญชีให้อัตโนมัติเมื่อยืนยันค่าใช้จ่าย (ต้องเปิดบัญชีแยกประเภท)
@@ -1136,15 +1163,14 @@ function PackageMenuSection({
                 </div>
                 <button
                   type="button"
-                  className="mangmee-btn mangmee-btn-secondary px-2 py-1 text-xs disabled:opacity-50 lg:hidden"
-                  disabled={controlsLocked}
+                  className="mangmee-btn mangmee-btn-secondary px-2 py-1 text-xs disabled:opacity-50"
                   aria-expanded={previewOpen}
                   onClick={() => setPreviewOpen((open) => !open)}
                 >
                   {previewOpen ? 'ซ่อน' : 'แสดง'}
                 </button>
               </div>
-              <div className={`${previewOpen ? 'block' : 'hidden'} mangmee-card-body space-y-4 lg:block`}>
+              <div className={`${previewOpen ? 'block' : 'hidden'} mangmee-card-body space-y-4`}>
                 <div className="space-y-4 rounded-xl bg-gray-50 p-3">
                   {navGroups.map((group) => {
                     const items = group.items.filter((item) => showDisabledPreview || item.enabled);
@@ -2026,7 +2052,7 @@ function PlanTermSection({ companyId, companyStatus, fieldsLocked, showToast }: 
         </Modal>
       )}
     </SectionCard>
-    <PartnerPlanAdjustmentHistory key={`${companyId}-${historyRevision}`} companyId={companyId} /></>
+    <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 text-gray-600">ดูประวัติการปรับแพ็กเกจและวันใช้งาน</summary><PartnerPlanAdjustmentHistory key={`${companyId}-${historyRevision}`} companyId={companyId} /></details></>
   );
 }
 
@@ -2165,12 +2191,21 @@ function ShopMessageSection({ companyId, supportRequestId, supportAskerRef, show
   );
 }
 
+const COMPANY_VIEWS = [{key:'overview',label:'ภาพรวม'}, {key:'members',label:'สมาชิก'}, {key:'package',label:'แพ็กเกจและฟีเจอร์'}, {key:'ai',label:'AI และโควตา'}, {key:'contact',label:'ติดต่อและประวัติ'}] as const;
+
 export default function PartnerDetailPage({ companyId, supportRequestId, supportAskerRef }: {
   companyId: string;
   /** From `?support=`/`?asker=` on the support inbox's "เปิดหน้าร้าน" link — see the route file. */
   supportRequestId?: string;
   supportAskerRef?: string;
 }) {
+  const searchParams=useSearchParams();
+  const requestedView=searchParams.get('view');
+  const view=COMPANY_VIEWS.some(item=>item.key===requestedView)?requestedView!:(supportRequestId?'contact':'overview');
+  const [visited,setVisited]=useState<string[]>([view]);
+  useEffect(()=>{setVisited(old=>old.includes(view)?old:[...old,view]);},[view]);
+  const opened=(key:string)=>view===key||visited.includes(key);
+  const viewUrl=(key:string)=>{const params=new URLSearchParams(searchParams.toString());params.set('view',key);return `/system/partners/${encodeURIComponent(companyId)}?${params}`;};
   const toast = useToast();
   const generation=useRef(0);
   const [aiHistoryRefresh,setAiHistoryRefresh]=useState(0);
@@ -2215,7 +2250,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       const d = await getPartnerDetail(companyId);
       if(token!==generation.current)return;
       setDetail(d);
-      setAiModelInput(d.aiConfiguration?.modelId ?? '');
+      if (!detail || d.aiConfiguration?.modelId !== detail.aiConfiguration?.modelId) setAiModelInput(d.aiConfiguration?.modelId ?? '');
     } catch (err) {
       if(token!==generation.current)return;
       const e = err as Error & { status?: number };
@@ -2257,7 +2292,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       });
       setDetail(updated);
       setEditMode(false);
-      showToast('Profile updated.', 'success');
+      showToast('บันทึกข้อมูลบริษัทแล้ว', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
     } finally {
@@ -2281,7 +2316,7 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       } : prev);
       setEditMode(false);
       setLifecycleAction(null);
-      showToast(`Status changed to ${lifecycleAction}.`, 'success');
+      showToast(`เปลี่ยนสถานะเป็น ${STATUS_LABEL[lifecycleAction]} แล้ว`, 'success');
     } catch (err) {
       showToast(apiErrorMessage(err), 'error');
       setLifecycleAction(null);
@@ -2316,10 +2351,10 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
     return (
       <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
-          <h1 className="text-lg font-semibold text-gray-900">Access Denied</h1>
-          <p className="text-sm text-gray-500 mt-1">You do not have permission to view partner details.</p>
+          <h1 className="text-lg font-semibold text-gray-900">ไม่มีสิทธิ์ดูบริษัทนี้</h1>
+          <p className="text-sm text-gray-500 mt-1">บัญชีนี้ไม่มีสิทธิ์เปิดข้อมูลบริษัทที่เลือก</p>
           <div className="mt-3 flex justify-center">
-            <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
+            <BackLink href="/system/partners" label="กลับรายชื่อบริษัท" />
           </div>
         </div>
       </div>
@@ -2330,10 +2365,10 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
     return (
       <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
-          <h1 className="text-lg font-semibold text-gray-900">Partner Not Found</h1>
+          <h1 className="text-lg font-semibold text-gray-900">ไม่พบบริษัทนี้</h1>
           <p className="text-sm text-gray-500 mt-1">Company ID: {companyId}</p>
           <div className="mt-3 flex justify-center">
-            <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
+            <BackLink href="/system/partners" label="กลับรายชื่อบริษัท" />
           </div>
         </div>
       </div>
@@ -2344,17 +2379,17 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
     return (
       <div className="min-h-dvh bg-gray-50 flex items-center justify-center p-4">
         <div className="text-center">
-          <h1 className="text-lg font-semibold text-gray-900">Error</h1>
+          <h1 className="text-lg font-semibold text-gray-900">ยังเปิดข้อมูลบริษัทไม่ได้</h1>
           <p className="text-sm text-gray-500 mt-1">{error}</p>
           <button type="button" className="mt-3 text-sm text-brand-700 hover:underline" disabled={loading} aria-busy={loading} onClick={() => void load()}>
-            Retry
+            ลองอีกครั้ง
           </button>
         </div>
       </div>
     );
   }
 
-  if (loading || !detail) {
+  if (!detail) {
     return (
       <div className="min-h-dvh bg-gray-50 p-6">
         <div className="mx-auto max-w-4xl space-y-4">
@@ -2372,196 +2407,76 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
   const fieldsLocked = currentStatus === 'DISABLED' || currentStatus === 'ARCHIVED';
 
   return (
-    <div className="min-h-dvh bg-gray-50 p-6">
-      {lifecycleAction && (
-        <LifecycleConfirmModal
-          action={lifecycleAction}
-          loading={lifecycleLoading}
-          onConfirm={handleLifecycleConfirm}
-          onCancel={() => setLifecycleAction(null)}
-        />
-      )}
-
-      <div className="mx-auto max-w-4xl space-y-4">
-        <BackLink href="/system/partners" label="กลับไปรายชื่อพาร์ทเนอร์" />
-
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <Link href="/system/partners" className="hover:text-brand-700">Partners</Link>
-          <span>/</span>
-          <span className="text-gray-900 font-medium">{detail.name}</span>
-        </div>
-
-        {/* Header card */}
-        <div className="rounded-lg border border-gray-200 bg-white px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h1 className="text-xl font-semibold text-gray-900">{detail.name}</h1>
-                <StatusBadge status={currentStatus} />
-              </div>
-              {detail.brandName && (
-                <p className="text-sm text-gray-500">Brand: {detail.brandName}</p>
-              )}
-              <p className="text-xs text-gray-400 font-mono">ID: {detail.id}</p>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                type="button"
-                className={btnSecondary}
-                onClick={startEdit}
-                disabled={fieldsLocked}
-                title={fieldsLocked ? `Profile is read-only while ${currentStatus}.` : undefined}
-              >
-                Edit Profile
-              </button>
-            </div>
-          </div>
-
-          {/* Lifecycle action buttons */}
-          <div className="mt-4 flex items-center gap-2 pt-4 border-t border-gray-100">
-            <span className="text-xs text-gray-500 mr-1">Lifecycle:</span>
-            {currentStatus !== 'ACTIVE' && (
-              <button
-                type="button"
-                className="rounded border border-green-300 bg-green-50 px-3 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
-                onClick={() => setLifecycleAction('ACTIVE')}
-              >
-                {currentStatus === 'ARCHIVED' ? 'Re-activate' : 'Activate'}
-              </button>
-            )}
-            {currentStatus === 'ACTIVE' && (
-              <button
-                type="button"
-                className="rounded border border-yellow-300 bg-yellow-50 px-3 py-1 text-xs font-medium text-yellow-700 hover:bg-yellow-100"
-                onClick={() => setLifecycleAction('DISABLED')}
-              >
-                Disable
-              </button>
-            )}
-            {currentStatus !== 'ARCHIVED' && (
-              <button
-                type="button"
-                className="rounded border border-red-200 bg-red-50 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-100"
-                onClick={() => setLifecycleAction('ARCHIVED')}
-              >
-                Archive
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Read-only notice for DISABLED/ARCHIVED */}
-        {fieldsLocked && (
-          <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-5 py-3 text-sm text-yellow-800">
-            This company is <span className="font-semibold">{currentStatus}</span> — profile, features, and AI model are read-only.
-            Only the lifecycle status above can be changed.
-          </div>
-        )}
-
+    <main className="mx-auto max-w-7xl space-y-6 break-words p-4 text-base sm:p-6 lg:p-8">
+      {lifecycleAction&&<LifecycleConfirmModal action={lifecycleAction} loading={lifecycleLoading} onConfirm={handleLifecycleConfirm} onCancel={()=>setLifecycleAction(null)}/>}
+      <BackLink href="/system/partners" label="กลับรายชื่อบริษัท"/>
+      <header className="space-y-3"><div className="flex flex-wrap items-center gap-3"><h1 className="text-2xl font-semibold text-gray-900">{detail.name}</h1><StatusBadge status={currentStatus}/></div>{detail.brandName&&<p className="text-gray-600">ชื่อร้าน / แบรนด์: {detail.brandName}</p>}<p className="text-gray-600">เลือกเรื่องที่ต้องการดูแล ข้อมูลทั่วไปอยู่ในภาพรวม</p></header>
+      <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
+      {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{STATUS_LABEL[currentStatus]} ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว เปลี่ยนสถานะได้ในหมวดภาพรวม</p>}
+      {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
+        <SectionCard title="ข้อมูลบริษัท"><div className="grid gap-4 sm:grid-cols-3"><ReadOnlyField label="ชื่อจดทะเบียน" value={detail.registeredName}/><ReadOnlyField label="เลขประจำตัวผู้เสียภาษี" value={detail.taxId}/><ReadOnlyField label="สกุลเงิน" value={detail.baseCurrency}/><ReadOnlyField label="อีเมลติดต่อ" value={detail.email}/><ReadOnlyField label="โทรศัพท์" value={detail.phone}/><ReadOnlyField label="วันที่เพิ่มบริษัท" value={formatDate(detail.createdAt)}/></div><div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4"><button type="button" className={btnSecondary} disabled={fieldsLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button><Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link></div></SectionCard>
         {/* Edit profile form */}
         {editMode && !fieldsLocked && (
-          <div className="rounded-lg border border-blue-200 bg-blue-50 px-5 py-4 space-y-3">
-            <h2 className="text-sm font-semibold text-gray-900">Edit Company Profile</h2>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-gray-900">แก้ไขข้อมูลบริษัท</h2>
             <form onSubmit={handleEditSubmit} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Company Name *</label>
-                <input className={inputClass} required value={editName} onChange={(e) => setEditName(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">ชื่อบริษัท *</label>
+                <input className={inputClass} required aria-label="ชื่อบริษัท" value={editName} onChange={(e) => setEditName(e.target.value)} disabled={editLoading} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Brand Name</label>
-                <input className={inputClass} value={editBrandName} onChange={(e) => setEditBrandName(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">ชื่อร้าน / แบรนด์</label>
+                <input className={inputClass} aria-label="ชื่อร้าน / แบรนด์" value={editBrandName} onChange={(e) => setEditBrandName(e.target.value)} disabled={editLoading} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Timezone *</label>
-                <input className={inputClass} required value={editTimezone} onChange={(e) => setEditTimezone(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">เขตเวลา *</label>
+                <input className={inputClass} required aria-label="เขตเวลา" value={editTimezone} onChange={(e) => setEditTimezone(e.target.value)} disabled={editLoading} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Locale *</label>
-                <input className={inputClass} required value={editLocale} onChange={(e) => setEditLocale(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">ภาษา *</label>
+                <input className={inputClass} required aria-label="ภาษา" value={editLocale} onChange={(e) => setEditLocale(e.target.value)} disabled={editLoading} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Phone</label>
-                <input className={inputClass} value={editPhone} onChange={(e) => setEditPhone(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">โทรศัพท์</label>
+                <input className={inputClass} aria-label="โทรศัพท์" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} disabled={editLoading} />
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-0.5">Email</label>
-                <input className={inputClass} type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} disabled={editLoading} />
+                <label className="block text-xs text-gray-500 mb-0.5">อีเมล</label>
+                <input className={inputClass} type="email" aria-label="อีเมล" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} disabled={editLoading} />
               </div>
               <div className="col-span-full mt-1 flex items-center gap-2">
                 <button type="submit" className={btnPrimary} disabled={editLoading} aria-busy={Boolean(editLoading)}>
-                  {editLoading ? 'Saving…' : 'Save changes'}
+                  {editLoading ? 'กำลังบันทึก…' : 'บันทึกข้อมูลบริษัท'}
                 </button>
                 <button type="button" className={btnSecondary} onClick={() => setEditMode(false)} disabled={editLoading}>
-                  Cancel
+                  ยกเลิก
                 </button>
               </div>
             </form>
           </div>
         )}
 
-        {/* Identity section */}
-        <SectionCard title="Company Identity">
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <ReadOnlyField label="Registered Name" value={detail.registeredName} />
-            <ReadOnlyField label="Tax ID" value={detail.taxId} />
-            <ReadOnlyField label="Base Currency" value={detail.baseCurrency} />
-            <ReadOnlyField label="Created At" value={formatDate(detail.createdAt)} />
-            <ReadOnlyField label="Activated At" value={formatDate(detail.activatedAt)} />
-            <ReadOnlyField label="Disabled At" value={formatDate(detail.disabledAt)} />
-          </div>
-          <VatRegistrationField
-            companyId={companyId}
-            value={detail.vatRegistration}
-            disabled={fieldsLocked}
-            showToast={showToast}
-            onSaved={load}
-          />
-        </SectionCard>
-
-        {/* P10-L §8: what happened to this shop, and the one way to answer its owner. */}
-        <ShopTimelineSection key={`timeline-${companyId}`} companyId={companyId} />
-        <ShopMessageSection
-          key={`message-${companyId}`}
-          companyId={companyId}
-          supportRequestId={supportRequestId}
-          supportAskerRef={supportAskerRef}
-          showToast={showToast}
-        />
-
-        {/* Plan limits & usage term (P29) */}
-        <PlanTermSection
-          key={`term-${companyId}`}
-          companyId={companyId}
-          companyStatus={currentStatus}
-          fieldsLocked={fieldsLocked}
-          showToast={showToast}
-        />
-
-        {/* Members: credentials + LINE link administration */}
-        <MembersSection companyId={companyId} showToast={showToast} />
-
-        {/* Feature entitlements */}
-        <PackageMenuSection
-          companyId={companyId}
-          entitlements={detail.featureEntitlements}
-          setVersion={detail.setVersion}
-          fieldsLocked={fieldsLocked}
-          normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)}
-          showToast={showToast}
-          onSaved={load}
-        />
-
+        <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">สถานะจด VAT ของบริษัท</summary><VatRegistrationField companyId={companyId} value={detail.vatRegistration} disabled={fieldsLocked} showToast={showToast} onSaved={load}/></details>
+        <SectionCard title="การเชื่อมบัญชี LINE"><div className="flex flex-wrap items-center gap-3"><LineContextBadge health={detail.lineContextHealth}/><p className="text-gray-600">สถานะการผูก LINE ของสมาชิกบริษัทนี้</p></div><p className="text-sm text-gray-600">หากสมาชิกอยู่หลายบริษัท อาจต้องเลือกบริษัทก่อนใช้ผ่าน LINE ดูสมาชิกแต่ละคนได้ในหมวดสมาชิก</p></SectionCard>
+        <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปิด–ปิดการใช้งานบริษัท</summary><div className="space-y-4 pt-3"><p className="text-gray-600">การปิดใช้งานและเก็บถาวรมีผลกับสมาชิกทุกคน ต้องยืนยันก่อนเปลี่ยนสถานะ</p><div className="flex flex-wrap gap-3">{currentStatus!=='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ACTIVE')}>เปิดใช้งานบริษัท</button>}{currentStatus==='ACTIVE'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('DISABLED')}>ปิดใช้งานบริษัท</button>}{currentStatus!=='ARCHIVED'&&<button type="button" className={btnSecondary} onClick={()=>setLifecycleAction('ARCHIVED')}>เก็บบริษัทถาวร</button>}</div></div></details>
+        <details className="rounded-xl border border-gray-200 bg-white p-5"><summary className="min-h-11 cursor-pointer py-2 text-sm text-gray-600">ข้อมูลอ้างอิงบริษัท</summary><dl className="grid gap-4 py-3 sm:grid-cols-3"><ReadOnlyField label="รหัสบริษัท" value={detail.id}/><ReadOnlyField label="วันที่เปิดใช้งาน" value={formatDate(detail.activatedAt)}/><ReadOnlyField label="วันที่ปิดใช้งาน" value={formatDate(detail.disabledAt)}/></dl></details>
+      </section>}
+      {opened('members')&&<section hidden={view!=='members'} aria-label="สมาชิกบริษัท" className="space-y-5"><p className="text-gray-600">ตรวจสมาชิกและการผูก LINE เลือกดำเนินการเฉพาะคนที่ต้องการดูแล</p><MembersSection companyId={companyId} showToast={showToast}/></section>}
+      {opened('package')&&<section hidden={view!=='package'} aria-label="แพ็กเกจและฟีเจอร์บริษัท" className="space-y-5"><PlanTermSection key={`term-${companyId}`} companyId={companyId} companyStatus={currentStatus} fieldsLocked={fieldsLocked} showToast={showToast}/><PackageMenuSection companyId={companyId} entitlements={detail.featureEntitlements} setVersion={detail.setVersion} fieldsLocked={fieldsLocked} normalizationPending={isNormalizationPending(detail.entitlementNormalizationPending)} showToast={showToast} onSaved={load}/></section>}
+      {opened('ai')&&<section hidden={view!=='ai'} aria-label="AI และโควตาบริษัท" className="space-y-5"><p className="text-gray-600">ดูการใช้งานและปรับงบ AI หรือจำนวนเอกสาร ระบบให้ตรวจผลกระทบก่อนบันทึก</p>
+        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
+        <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 font-medium text-gray-700">เปลี่ยนรุ่น AI ของบริษัท</summary>
         {/* AI model */}
         <SectionCard title="รุ่น AI ของบริษัท">
           {aiModelConfirmDialog}
           <label className="mb-3 block text-base">เหตุผลที่เปลี่ยนรุ่น AI
             <textarea aria-label="เหตุผลที่เปลี่ยนรุ่น AI" className={`${inputClass} mt-1 min-h-20 text-base`} value={aiModelReason} maxLength={500} disabled={aiModelLoading||fieldsLocked} onChange={e=>setAiModelReason(e.target.value)} />
           </label>
-          <div className="flex items-end gap-3">
+          <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1">
               <label className="block text-xs text-gray-500 mb-1">รุ่น AI ที่เปิดให้ใช้</label>
               <ThemedSelect
+                aria-label="รุ่น AI ที่เปิดให้ใช้"
                 className={inputClass}
                 value={aiModelInput}
                 onChange={(e) => setAiModelInput(e.target.value)}
@@ -2584,35 +2499,17 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
           </div>
           {detail.aiConfiguration && (
             <p className="text-xs text-gray-400 mt-1">
-              Current: <span className="font-mono">{detail.aiConfiguration.modelId}</span>
-              {' — updated '}
+              ใช้อยู่: <span className="font-mono">{detail.aiConfiguration.modelId}</span>
+              {' · อัปเดต '}
               {formatDate(detail.aiConfiguration.updatedAt)}
             </p>
           )}
         </SectionCard>
 
-        {/* AI spend meter + monthly budget override */}
-        <AiUsageBudgetSection key={`ai-budget-${companyId}`} companyId={companyId} fieldsLocked={fieldsLocked} showToast={showToast} onChanged={()=>setAiHistoryRefresh(n=>n+1)} />
-        <PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId} />
-
-        {/* LINE context health */}
-        <SectionCard title="LINE Context">
-          <div className="flex flex-wrap items-center justify-between">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">สถานะเชื่อมบัญชี LINE</span>
-                <LineContextBadge health={detail.lineContextHealth} />
-              </div>
-              <p className="text-xs text-gray-400">
-                Shows whether any member of this company has linked their LINE account.
-                NEEDS_COMPANY_SELECTION means the user belongs to multiple companies and has not yet selected this one.
-              </p>
-            </div>
-            {/* Audit H-14: hidden with the screen it points at — saving there cannot rotate a
-                credential the webhook reads from AWS/env. Restore both together. */}
-          </div>
-        </SectionCard>
-      </div>
-    </div>
+        </details>
+        <details className="rounded-xl border border-gray-200 bg-white p-4"><summary className="min-h-11 cursor-pointer py-2 text-gray-600">ดูประวัติการปรับ AI และโควตา</summary><PartnerAiAdjustmentHistory key={`ai-history-${companyId}-${aiHistoryRefresh}`} companyId={companyId}/></details>
+      </section>}
+      {opened('contact')&&<section hidden={view!=='contact'} aria-label="ติดต่อและประวัติบริษัท" className="space-y-5"><ShopMessageSection key={`message-${companyId}`} companyId={companyId} supportRequestId={supportRequestId} supportAskerRef={supportAskerRef} showToast={showToast}/><ShopTimelineSection key={`timeline-${companyId}`} companyId={companyId}/></section>}
+    </main>
   );
 }

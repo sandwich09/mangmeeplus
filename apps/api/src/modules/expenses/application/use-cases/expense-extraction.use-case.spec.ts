@@ -867,3 +867,20 @@ it('keeps human evidence choices/history on OCR reread without acknowledging the
     assert.equal(h.updates[0].aiVerificationSummaryJson.extractionRequestId, 'request-1');
   }
 });
+
+describe('receipt date provenance survives extraction summaries', () => {
+  it('retains the explicit user resolution after a successful extraction', async () => {
+    const dateResolution = { expenseDate: '2026-09-12', resolvedByUserId: 'uploader-1', resolvedAt: '2026-09-17T00:00:00Z' };
+    const { useCase, updates } = makeUseCase({ expense: { ...baseExpense, aiVerificationSummaryJson: { dateStatus: 'verified', dateResolution } },
+      gatewayResult: { status: 'ok', fields: { grandTotalAmount: '321.00' }, classification: classification() } });
+    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.deepEqual(updates[0].aiVerificationSummaryJson.dateResolution, dateResolution);
+    assert.equal(updates[0].aiVerificationSummaryJson.dateStatus, 'verified');
+  });
+  it('keeps an unknown document date unknown when the image is not an expense', async () => {
+    const { useCase, updates } = makeUseCase({ expense: { ...baseExpense, aiVerificationSummaryJson: { dateStatus: 'unverified', missingFields: ['expenseDate'] } },
+      gatewayResult: { status: 'ok', fields: {}, classification: classification('OTHER', { contentKind: 'NON_DOCUMENT', documentFamily: 'OTHER', businessDirection: 'UNKNOWN' }) } });
+    await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+    assert.equal(updates[0].aiVerificationSummaryJson.dateStatus, 'unverified');
+  });
+});

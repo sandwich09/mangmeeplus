@@ -179,7 +179,7 @@ export function buildMenuCards(
 ): MenuCard[] {
   const effective = effectiveEntitlements(entitlements);
 
-  return bindings.map((binding) => {
+  return bindings.filter((binding) => binding.navigation !== 'contextual').map((binding) => {
     const parentKey = binding.parentFeatureKey;
     const foundation = binding.entitlementKeys.length === 0;
     const enabled = foundation || (
@@ -312,6 +312,7 @@ function diffLabel(featureKey: string): string {
   }
 
   const menuLabels = MENU_ENTITLEMENT_BINDINGS
+    .filter((binding) => binding.navigation !== 'contextual')
     .filter((binding) => (
       binding.parentFeatureKey === featureKey || binding.entitlementKeys.includes(featureKey)
     ))

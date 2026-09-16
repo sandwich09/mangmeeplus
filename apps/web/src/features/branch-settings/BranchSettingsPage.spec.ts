@@ -25,6 +25,6 @@ test('historical warehouse branches retain their label and editing does not rewr
 test('only branch managers receive create/edit controls and handlers fail closed', () => {
   assert.match(source, /permissions\.includes\('company\.branch\.manage'\)/);
   assert.match(source, /if \(!canManage \|\| busy \|\| createTaxError/);
-  assert.match(source, /\{canManage && <button[\s\S]*?\+ เพิ่มสาขา/);
-  assert.match(source, /\{canManage && <button className="text-brand-700 hover:underline"/);
+  assert.match(source, /actions=\{canManage && <button[\s\S]*?\+ เพิ่มสาขา/);
+  assert.match(source, /\{canManage && <button[^>]*aria-label=\{`แก้ไขสาขา/);
 });

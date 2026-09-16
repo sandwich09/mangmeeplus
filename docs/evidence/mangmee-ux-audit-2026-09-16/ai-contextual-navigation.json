@@ -1,0 +1,45 @@
+{
+  "scope": "Owner-approved removal of AI suggestions from primary navigation; existing permission-checked review routes preserved; admin AI entitlement switch moved to background section.",
+  "date": "2026-09-17",
+  "environment": "local only",
+  "checks": [
+    {
+      "command": "pnpm --filter @watchdog-bms/contracts build",
+      "result": "PASS"
+    },
+    {
+      "command": "pnpm exec tsx --tsconfig apps/web/tsconfig.json --test apps/web/src/features/web-core-workspace/web-core-workspace.spec.ts apps/web/src/features/system-partners/system-partners.logic.spec.ts",
+      "passed": 118,
+      "failed": 0
+    },
+    {
+      "command": "pnpm exec tsx --tsconfig apps/api/tsconfig.json --test apps/api/src/modules/employee-access/domain/logic/menu-entitlement-binding.spec.ts",
+      "passed": 8,
+      "failed": 0
+    },
+    {
+      "command": "pnpm --filter @watchdog-bms/web typecheck",
+      "result": "PASS"
+    },
+    {
+      "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/ai-suggestions.spec.ts --project chromium --workers 1",
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  ],
+  "native_browser": {
+    "admin": "Background section has ผู้ช่วย AI ทาง LINE enabled; no changes pending; no AI menu card.",
+    "customer": "AX initially showed sidebar without AI; subsequent session refresh showed system-admin account has no company access. Isolated Playwright owner tests verified contextual page and absent AI link without changing native login."
+  },
+  "limits": [
+    "No real AI/LINE/OCR provider requests",
+    "No migration or quota changes",
+    "No CI/push/merge/deploy",
+    "No new contextual AI workflow implemented"
+  ]
+}

@@ -1,4 +1,5 @@
 'use client';
+import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { billingControl, billingLabel } from '../billing/billing-display';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -23,15 +24,15 @@ export default function BillingConfigurationImpactPage({operationId}:{operationI
     <Link className={button} href={`/system/billing/configuration-changes/${encodeURIComponent(operationId)}`}>กลับคำขอการตั้งค่าเดิม</Link>
     <p>ตรวจรายการปัจจุบันเทียบกับตอนตรวจผลกระทบ การเปลี่ยนการตั้งค่าสำหรับรายการใหม่ไม่แก้สัญญาที่จ่ายแล้ว</p>
     <label className="block" htmlFor="billing-impact-kind">ประเภทที่ต้องตรวจ</label>
-    <select id="billing-impact-kind" className="w-full rounded-xl border p-3" value={selection.kind} onChange={e=>setSelection({kind:e.target.value as BillingConfigurationImpactKind})}>
+    <ThemedSelect aria-label="ประเภทที่ต้องตรวจ" id="billing-impact-kind" className="mangmee-input !text-base w-full rounded-xl border border-gray-200 p-3 bg-white" value={selection.kind} onChange={e=>setSelection({kind:e.target.value as BillingConfigurationImpactKind})}>
       {BILLING_CONFIGURATION_IMPACT_KINDS.map(kind=><option key={kind} value={kind}>{labels[kind]}</option>)}
-    </select>
+    </ThemedSelect>
     <button className={button} disabled={loading} onClick={()=>{setSelection({kind:selection.kind});setReload(n=>n+1);}}>โหลดรายการใหม่จากหน้าแรก</button>
     {loading&&<p role="status">กำลังโหลดรายการที่เกี่ยวข้อง…</p>}{error&&<p role="alert">{error}</p>}
     {data&&<>
       <p role={data.matchesPreview?'status':'alert'}>{data.matchesPreview?'รายการยังตรงกับฉบับที่ตรวจผลกระทบ':'รายการเปลี่ยนหรือคำขอเดิมไม่มีหลักฐานรายชื่อ กลับคำขอเดิมแล้วสร้างฉบับร่างเพื่อตรวจผลกระทบใหม่ก่อนอนุมัติ'}</p>
       <p className="text-base">ตรวจล่าสุด {new Date(data.observedAt).toLocaleString('th-TH')}</p>
-      <section aria-label="รายการผลกระทบ" className="space-y-3">{data.items.map(item=><article key={item.reference} className="space-y-2 rounded-xl border bg-white p-4">
+      <section aria-label="รายการผลกระทบ" className="space-y-3">{data.items.map(item=><article key={item.reference} className="space-y-2 rounded-xl border border-gray-200 bg-white p-4">
         <h2 className="font-semibold">{item.companyName}</h2><p>{labels[item.kind]} · {billingLabel(item.kind==='SUBSCRIPTION'?'subscription':item.kind==='ATTEMPT'?'attempt':item.kind==='QUOTE'?'quote':'operation',item.state)}</p>
         <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงรายการ</summary><p className="break-all">เลขรายการ {item.recordId}</p></details>
         {item.boundary&&<p>{item.kind==='QUOTE'?'ใช้ใบเสนอราคาได้ถึง':'สิ้นช่วงที่จ่ายแล้ว'} {new Date(item.boundary).toLocaleString('th-TH')}</p>}

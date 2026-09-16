@@ -38,7 +38,7 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
       await page.goto(`${browser.origin}/email-access${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`, { waitUntil: 'domcontentloaded' });
       await page.getByLabel('อีเมลของคุณ', { exact: true }).fill(recipient);
       const pending = page.waitForResponse(r => r.url().endsWith('/email-access/request'));
-      await page.getByRole('button', { name: 'รับรหัสทางอีเมล', exact: true }).click();
+      await page.getByRole('button', { name: 'ส่งรหัส OTP ไปที่อีเมล', exact: true }).click();
       const response = await pending; assert.equal(response.request().postDataJSON().email, recipient, 'hydrated email field must reach BFF'); assert.equal(response.status(), 200, await response.text());
       const data = await response.json(); assert.equal(data.deliveryStatus, 'ACCEPTED');
       assert.equal('browserSecret' in data, false); assert.equal('accessToken' in data, false);

@@ -26,16 +26,17 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
     const desired={expectedVersion:initial.version,state:'WAITING_PROVIDER',note:'ส่งต่อพร้อมกำหนดผู้สำรองและเวลาติดตาม',assigneeUserId:targetId,backupUserId:input.userIds[1],priority:'CRITICAL',followUpAt:new Date(Date.now()+86400000).toISOString()};
     if(browser) {
       const page=browser.page;await page.setViewportSize({width:390,height:844});await page.goto(`${browser.origin}/system/billing/issues/${issue.id}`,{waitUntil:'domcontentloaded'});
-      await page.getByLabel('ค้นหาผู้รับผิดชอบ',{exact:true}).fill(targetId);await page.getByRole('button',{name:'ค้นหาเจ้าหน้าที่ที่มีสิทธิ์',exact:true}).click();
-      await page.getByLabel('ผู้รับผิดชอบที่เลือก',{exact:true}).selectOption(targetId);
+      await page.getByText('ผู้รับผิดชอบและบันทึกติดตาม',{exact:true}).click();
+      await page.getByText('เปลี่ยนผู้รับผิดชอบ',{exact:true}).click();await page.getByLabel('ค้นหาผู้รับผิดชอบ',{exact:true}).fill(targetId);await page.getByRole('button',{name:'ค้นหาเจ้าหน้าที่ที่มีสิทธิ์',exact:true}).click();
+      await page.getByRole('combobox',{name:'ผู้รับผิดชอบที่เลือก',exact:true}).click();await page.getByRole('option').filter({hasText:(await client.user.findUniqueOrThrow({where:{id:targetId}})).displayName!}).click();
       await page.getByLabel('ค้นหาผู้รับผิดชอบ',{exact:true}).fill(input.userIds[1]!);await page.getByRole('button',{name:'ค้นหาเจ้าหน้าที่ที่มีสิทธิ์',exact:true}).click();
-      await page.getByLabel('ผู้สำรองที่เลือก',{exact:true}).selectOption(input.userIds[1]!);
-      await page.getByLabel('สถานะ',{exact:true}).selectOption('WAITING_PROVIDER');await page.getByLabel('ความเร่งด่วน',{exact:true}).selectOption('CRITICAL');
+      await page.getByRole('combobox',{name:'ผู้สำรองที่เลือก',exact:true}).click();await page.getByRole('option').filter({hasText:(await client.user.findUniqueOrThrow({where:{id:input.userIds[1]!}})).displayName!}).click();
+      await page.getByRole('combobox',{name:'สถานะ',exact:true}).click();await page.getByRole('option',{name:'รอผู้ให้บริการ',exact:true}).click();await page.getByRole('combobox',{name:'ความเร่งด่วน',exact:true}).click();await page.getByRole('option',{name:'เร่งด่วนมาก',exact:true}).click();
       const future=await page.evaluate(()=>{const d=new Date(Date.now()+86400000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);});
       await page.getByLabel('เวลาติดตามภายใน',{exact:true}).fill(future);await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill(desired.note);
       await page.getByRole('button',{name:'บันทึกสถานะ',exact:true}).click();
       await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor({state:'attached'});
-      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor();
+      await page.getByText('ข้อมูลอ้างอิงสำหรับตรวจสอบภายใน',{exact:true}).click();await page.getByText('รอผู้ให้บริการ · เวอร์ชัน 1',{exact:true}).waitFor();
     }else assert.equal((await update(desired)).status,200);
     const assigned=(await detail()).body;assert.equal(assigned.assigneeUserId,targetId);assert.equal(assigned.backupUserId,input.userIds[1]);assert.equal(assigned.priority,'CRITICAL');assert.ok(assigned.followUpAt);
     const companyName=(await client.company.findUniqueOrThrow({where:{id:companyId}})).name;
@@ -53,10 +54,10 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
     await client.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:new Date(Date.now()-1000)}});
     assert.equal((await update({...desired,expectedVersion:assigned.version})).body.code,'CONTROL_ASSIGNEE_REVIEW');
     if(browser) {
-      const page=browser.page;await page.getByRole('button',{name:'โหลดข้อมูลล่าสุด',exact:true}).click();await page.getByText(/ผู้รับผิดชอบ .*ไม่มีสิทธิ์แล้ว เลือกคนใหม่หรือคืนคิว/).waitFor();
-      await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill('คืนคิวเพราะขอบเขตเดิมหมดอายุ');await page.getByRole('button',{name:'คืนเคสเข้าคิว',exact:true}).click();
+      const page=browser.page;await page.getByText('ประวัติการติดต่อและบันทึกเพิ่มเติม',{exact:true}).click();await page.getByRole('button',{name:'โหลดประวัติผลติดต่อล่าสุด',exact:true}).click();await page.getByText(/ผู้รับผิดชอบ .*ไม่มีสิทธิ์แล้ว/).waitFor();
+      await page.getByLabel('บันทึกการดำเนินการ',{exact:true}).fill('คืนคิวเพราะขอบเขตเดิมหมดอายุ');await page.getByRole('button',{name:'คืนเรื่องให้คนอื่นรับต่อ',exact:true}).click();
       await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor({state:'attached'});
-      await page.getByText('ข้อมูลอ้างอิงเคส',{exact:true}).click();await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor();
+      await page.getByText('รอรับงาน · เวอร์ชัน 2',{exact:true}).waitFor();
     }else assert.equal((await update({expectedVersion:assigned.version,state:'OPEN',assigneeUserId:null,backupUserId:null,note:'คืนคิวเพราะขอบเขตเดิมหมดอายุ'})).status,200);
     await client.billingOperatorScope.update({where:{id:scope.id},data:{expiresAt:scope.expiresAt}});
     await client.billingIssue.update({where:{id:issue.id},data:{followUpAt:new Date(Date.now()-60000)}});
@@ -64,9 +65,9 @@ export async function checkBillingCases(input:Parameters<typeof checkBillingConf
     assert.ok((await request(`${base}/issues?queue=UNASSIGNED`)).body.items.some((i:any)=>i.id===issue.id));
     assert.ok((await request(`${base}/issues?queue=OVERDUE`)).body.items.some((i:any)=>i.id===issue.id));
     if(browser) {
-      const page=browser.page;await page.getByRole('link',{name:'คิวตรวจสอบ',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/issues`);
-      await page.getByLabel('กรองคิว',{exact:true}).selectOption('OVERDUE');await page.locator(`a[href="/system/billing/issues/${issue.id}?queue=OVERDUE"]`).click();await page.waitForURL(`${browser.origin}/system/billing/issues/${issue.id}?queue=OVERDUE`);
-      await page.getByText(/เลยเวลาติดตาม/).waitFor();assert.equal(await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).count(),0);
+      const page=browser.page;await page.getByRole('link',{name:'ปัญหาการชำระเงิน',exact:true}).click();await page.waitForURL(`${browser.origin}/system/billing/issues`);
+      await page.getByRole('combobox',{name:'แสดงรายการ',exact:true}).click();await page.getByRole('option',{name:'เกินกำหนดติดตาม',exact:true}).click();await page.locator(`a[href="/system/billing/issues/${issue.id}?queue=OVERDUE"]`).click();await page.waitForURL(`${browser.origin}/system/billing/issues/${issue.id}?queue=OVERDUE`);
+      await page.getByText(/เกินกำหนดติดตาม/).waitFor();assert.equal(await page.getByRole('button',{name:'หน้าถัดไป',exact:true}).count(),0);
       await page.getByRole('region',{name:'รายละเอียดเคส',exact:true}).getByText(companyName,{exact:true}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await page.screenshot({path:`${browser.evidenceDir}/admin-case-followup-mobile.png`,fullPage:true});

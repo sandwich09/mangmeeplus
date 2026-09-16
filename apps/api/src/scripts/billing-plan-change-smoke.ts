@@ -147,11 +147,12 @@ export async function checkBillingPlanChange(input: {
   if(browser){
     const page=browser.page;await page.setViewportSize({width:390,height:844});
     await page.goto(`${browser.origin}/companies/${companyId}/billing`,{waitUntil:'domcontentloaded'});
+    await page.getByRole('button',{name:'การต่ออายุและชำระเงิน',exact:true}).click();
     await page.getByRole('button',{name:'ตรวจสอบการยกเลิกลดแพ็กเกจ',exact:true}).click();
     await page.getByRole('button',{name:'ยืนยันยกเลิกการลดแพ็กเกจ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอตรวจยืนยันการต่ออายุ'}).waitFor();await reconcile();
     await page.getByRole('button',{name:'ตรวจผลการต่ออายุ',exact:true}).click();
     await page.getByRole('status').filter({hasText:'ยืนยันยกเลิกการลดแพ็กเกจแล้ว'}).waitFor();
-    await page.reload();await page.getByRole('button',{name:'ตรวจลดเป็น เริ่มต้น (STARTER)',exact:true}).click();
+    await page.reload();await page.getByRole('button',{name:'การต่ออายุและชำระเงิน',exact:true}).click();await page.getByRole('button',{name:'ตรวจลดเป็น เริ่มต้น (STARTER)',exact:true}).click();
     await page.getByRole('checkbox',{name:'ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว'}).check();
     await page.getByRole('button',{name:'ใช้การเลือกนี้และตรวจสอบราคา',exact:true}).click();
     await page.getByRole('button',{name:'ยืนยันลดแพ็กเกจสิ้นรอบ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอตรวจยืนยันการต่ออายุ'}).waitFor();await reconcile();

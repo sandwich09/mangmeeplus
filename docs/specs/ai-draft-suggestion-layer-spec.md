@@ -972,3 +972,10 @@ Security tests:
 ## 24. Remaining Open Questions
 
 - Should full prompt/output retention ever be enabled for finance/tax suggestions, or should previews/hashes remain mandatory?
+
+## Owner amendment: AI works in context — 2026-09-17
+
+- Owner approved hiding “AI แนะนำ” from primary navigation. Mark its shared menu binding `navigation: contextual`; exclude it from customer navigation, admin menu cards and sidebar preview. Keep existing authenticated suggestion review URLs and permission checks.
+- Move `ai_line_assistant` switch to the existing background-work section; keep the same pending changes, lock/disable guards, review, audit and save path. AI entitlement, quota, starter 17 keys, provider readiness and final-mutation confirmation do not change.
+- Starter remains seven capabilities: six navigation entries (including notifications in the header) plus background AI. Earlier seven-menu evidence describes the former presentation; no new feature replaces the removed menu.
+- Verify navigation absence, allowed/denied direct-route access, retained AI permission grants, admin background toggle diff, local typecheck and browser smoke. No new contextual workflow, real provider call, migration, CI, merge or deployment in this amendment.

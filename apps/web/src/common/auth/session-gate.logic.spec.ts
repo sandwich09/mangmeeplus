@@ -109,7 +109,7 @@ describe('resolveLoginLanding', () => {
   });
 
   it('defaults system admins to the platform access control and everyone else to their dashboard', () => {
-    assert.equal(resolveLoginLanding(null, undefined, session({ roles: ['SYSTEM_ADMIN'] })), '/system/platform-access');
+    assert.equal(resolveLoginLanding(null, undefined, session({ roles: ['SYSTEM_ADMIN'] })), '/system/partners');
     assert.equal(resolveLoginLanding(null, undefined, session()), '/companies/c1/dashboard');
   });
 
@@ -176,7 +176,7 @@ describe('legal acceptance redirects', () => {
     assert.equal(resolvePostLegalAcceptanceTarget(null, session()), '/companies/c1/dashboard');
     assert.equal(
       resolvePostLegalAcceptanceTarget(null, session({ roles: ['SYSTEM_ADMIN'] })),
-      '/system/platform-access',
+      '/system/partners',
     );
   });
 });
@@ -255,7 +255,7 @@ describe('systemGateReturnPath', () => {
     for (const path of [null, undefined, '/', '/system', '/systematic/c1', '/companies/c1/dashboard',
       '//evil.example/system/x', 'https://evil.example/system/x', '/system/../login',
       '/legal-acceptance?next=/system/partners/c1', '/change-password']) {
-      assert.equal(systemGateReturnPath(path), '/system/platform-access', String(path));
+      assert.equal(systemGateReturnPath(path), '/system/partners', String(path));
     }
   });
 });

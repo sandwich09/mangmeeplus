@@ -32,10 +32,14 @@ export default async function SystemLayout({ children }: { children: ReactNode }
     redirect(legalAcceptancePath(returnTo, result.session.companyId));
   }
 
+  const environment = process.env.DEPLOY_ENVIRONMENT === 'uat' ? 'ระบบทดสอบ UAT'
+    : process.env.DEPLOY_ENVIRONMENT === 'production' ? 'ระบบจริง'
+      : process.env.APP_ENV === 'local' ? 'ทดสอบในเครื่อง' : undefined;
+
   return (
     <div className="min-h-dvh bg-gray-50">
-      <SystemHeader billingOnly={!isSystemAdmin(result.session)} billingAllowed={result.session.permissions.includes('system.billing.read')} emailAllowed={result.session.permissions.includes('system.email_delivery.read')} />
-      {children}
+      <SystemHeader environment={environment} billingOnly={!isSystemAdmin(result.session)} billingAllowed={result.session.permissions.includes('system.billing.read')} emailAllowed={result.session.permissions.includes('system.email_delivery.read')} />
+      <div className="min-w-0 lg:pl-64">{children}</div>
     </div>
   );
 }

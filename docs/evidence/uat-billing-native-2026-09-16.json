@@ -1,0 +1,378 @@
+{
+  "scope": "NATIVE_UAT_STRIPE_SANDBOX_INITIAL_AND_REPEAT_ONLY",
+  "observedAt": "2026-09-16T11:33:40.736Z",
+  "servingSource": "7ccff81178e547817d5d21571aa88ee2dde94628",
+  "uatOperation": "20260916T103914Z-350853d8",
+  "settingsVersion": 1,
+  "livemode": false,
+  "deliveryHold": "OWNER_DO_NOT_MERGE_BATCH_FURTHER_CHANGES",
+  "initial": {
+    "term": [
+      {
+        "tierKey": "STARTER_249",
+        "branchLimit": 1,
+        "employeeLimit": 2,
+        "monthlySlipLimit": 30,
+        "termStartAt": "2026-09-16T11:23:05.000Z",
+        "termEndsAt": "2026-10-16T11:23:05.000Z",
+        "billingReceiptAccountId": "044c916b-ae02-4ce8-8add-c44026b7f758"
+      }
+    ],
+    "accounts": [
+      {
+        "id": "044c916b-ae02-4ce8-8add-c44026b7f758",
+        "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
+        "livemode": false,
+        "customerId": "cus_VGoVEAZWymJc9Z",
+        "baseSubscriptionId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "activeAttemptId": null,
+        "subscriptionState": "active",
+        "paidThrough": "2026-10-16T11:23:05.000Z",
+        "nextChargeAt": "2026-10-16T11:23:05.000Z",
+        "cancelAtPeriodEnd": false,
+        "observedAt": "2026-09-16T11:25:22.139Z"
+      }
+    ],
+    "invoices": [
+      {
+        "id": "7b704238-4ce0-43da-b593-2752e983936b",
+        "providerInvoiceId": "in_1UGGvdRvebw5L0s31nHy7Mmd",
+        "providerNumber": "FAZ5SA7A-0001",
+        "providerChargeId": "ch_3UGGukRvebw5L0s305CGDwx6",
+        "totalSatang": 24900,
+        "paidSatang": 24900,
+        "taxSatang": 0,
+        "providerStatus": "paid",
+        "applyStatus": "APPLIED",
+        "errorCode": null,
+        "appliedAt": "2026-09-16T11:23:13.248Z",
+        "periodStart": "2026-09-16T11:23:05.000Z",
+        "periodEnd": "2026-10-16T11:23:05.000Z"
+      }
+    ],
+    "grants": [
+      {
+        "id": "c21ec817-f5b6-4ebd-9e11-f23fcd9f29a1",
+        "kind": "INITIAL",
+        "units": 30,
+        "sourceKey": "7b704238-4ce0-43da-b593-2752e983936b",
+        "serviceStart": "2026-09-16T11:23:05.000Z",
+        "serviceEnd": "2026-10-16T11:23:05.000Z",
+        "availableAt": "2026-09-16T11:23:05.000Z",
+        "expiresAt": "2026-10-16T11:23:05.000Z",
+        "revokedAt": null
+      }
+    ]
+  },
+  "settled": {
+    "term": [
+      {
+        "tierKey": "STARTER_249",
+        "branchLimit": 1,
+        "employeeLimit": 2,
+        "monthlySlipLimit": 30,
+        "termStartAt": "2026-09-16T11:23:05.000Z",
+        "termEndsAt": "2026-11-16T11:23:05.000Z",
+        "billingReceiptAccountId": "044c916b-ae02-4ce8-8add-c44026b7f758"
+      }
+    ],
+    "accounts": [
+      {
+        "id": "044c916b-ae02-4ce8-8add-c44026b7f758",
+        "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
+        "livemode": false,
+        "customerId": "cus_VGoVEAZWymJc9Z",
+        "baseSubscriptionId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "activeAttemptId": null,
+        "subscriptionState": "active",
+        "paidThrough": "2026-11-16T11:23:05.000Z",
+        "nextChargeAt": "2026-11-16T11:23:05.000Z",
+        "cancelAtPeriodEnd": false,
+        "observedAt": "2026-09-16T11:32:57.312Z"
+      }
+    ],
+    "invoices": [
+      {
+        "id": "7b704238-4ce0-43da-b593-2752e983936b",
+        "providerInvoiceId": "in_1UGGvdRvebw5L0s31nHy7Mmd",
+        "providerNumber": "FAZ5SA7A-0001",
+        "providerChargeId": "ch_3UGGukRvebw5L0s305CGDwx6",
+        "totalSatang": 24900,
+        "paidSatang": 24900,
+        "taxSatang": 0,
+        "providerStatus": "paid",
+        "applyStatus": "APPLIED",
+        "errorCode": null,
+        "appliedAt": "2026-09-16T11:23:13.248Z",
+        "periodStart": "2026-09-16T11:23:05.000Z",
+        "periodEnd": "2026-10-16T11:23:05.000Z"
+      },
+      {
+        "id": "acfaa83d-cb4f-434f-83f8-ff5c6296d406",
+        "providerInvoiceId": "in_1UGH4gRvebw5L0s3aTLhy6jT",
+        "providerNumber": "FAZ5SA7A-0002",
+        "providerChargeId": "ch_3UGH4fRvebw5L0s31zIv6SNs",
+        "totalSatang": 24900,
+        "paidSatang": 24900,
+        "taxSatang": 0,
+        "providerStatus": "paid",
+        "applyStatus": "APPLIED",
+        "errorCode": null,
+        "appliedAt": "2026-09-16T11:32:38.235Z",
+        "periodStart": "2026-10-16T11:23:05.000Z",
+        "periodEnd": "2026-11-16T11:23:05.000Z"
+      }
+    ],
+    "grants": [
+      {
+        "id": "c21ec817-f5b6-4ebd-9e11-f23fcd9f29a1",
+        "kind": "INITIAL",
+        "units": 30,
+        "sourceKey": "7b704238-4ce0-43da-b593-2752e983936b",
+        "serviceStart": "2026-09-16T11:23:05.000Z",
+        "serviceEnd": "2026-10-16T11:23:05.000Z",
+        "availableAt": "2026-09-16T11:23:05.000Z",
+        "expiresAt": "2026-11-16T11:23:05.000Z",
+        "revokedAt": null
+      },
+      {
+        "id": "c9d27435-d917-4ab4-bc5c-35d657dffa66",
+        "kind": "REPEAT",
+        "units": 30,
+        "sourceKey": "acfaa83d-cb4f-434f-83f8-ff5c6296d406",
+        "serviceStart": "2026-10-16T11:23:05.000Z",
+        "serviceEnd": "2026-11-16T11:23:05.000Z",
+        "availableAt": "2026-09-16T11:32:25.000Z",
+        "expiresAt": "2026-11-16T11:23:05.000Z",
+        "revokedAt": null
+      }
+    ],
+    "events": [
+      {
+        "eventId": "evt_1UGGvfRvebw5L0s31iftTR9z",
+        "eventType": "invoice.paid",
+        "objectId": "in_1UGGvdRvebw5L0s31nHy7Mmd",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:23:08.322Z",
+        "processedAt": "2026-09-16T11:23:13.342Z"
+      },
+      {
+        "eventId": "evt_1UGGvfRvebw5L0s39k8gBn6W",
+        "eventType": "customer.subscription.created",
+        "objectId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:23:08.410Z",
+        "processedAt": "2026-09-16T11:23:16.384Z"
+      },
+      {
+        "eventId": "evt_1UGGvfRvebw5L0s3fxJJ862A",
+        "eventType": "checkout.session.completed",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:23:08.492Z",
+        "processedAt": "2026-09-16T11:23:19.258Z"
+      },
+      {
+        "eventId": "evt_1UGH3xRvebw5L0s3pJoZtlUQ",
+        "eventType": "customer.subscription.updated",
+        "objectId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "status": "PROCESSED",
+        "attempts": 2,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:31:42.258Z",
+        "processedAt": "2026-09-16T11:32:38.295Z"
+      },
+      {
+        "eventId": "evt_1UGH4iRvebw5L0s3OTwdmMsf",
+        "eventType": "checkout.session.completed",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:32:29.548Z",
+        "processedAt": "2026-09-16T11:32:42.480Z"
+      },
+      {
+        "eventId": "evt_1UGH4jRvebw5L0s3A05zdUhU",
+        "eventType": "invoice.paid",
+        "objectId": "in_1UGH4gRvebw5L0s3aTLhy6jT",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:32:29.809Z",
+        "processedAt": "2026-09-16T11:32:46.492Z"
+      },
+      {
+        "eventId": "evt_1UGH4pRvebw5L0s3b99yDaYt",
+        "eventType": "customer.subscription.updated",
+        "objectId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:32:35.877Z",
+        "processedAt": "2026-09-16T11:32:50.345Z"
+      },
+      {
+        "eventId": "evt_1UGH4pRvebw5L0s3y9x9Vt9G",
+        "eventType": "customer.subscription.updated",
+        "objectId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:32:36.227Z",
+        "processedAt": "2026-09-16T11:32:53.805Z"
+      },
+      {
+        "eventId": "evt_1UGH4rRvebw5L0s32QnuWMQ3",
+        "eventType": "customer.subscription.updated",
+        "objectId": "sub_1UGGveRvebw5L0s3WR0UgIf7",
+        "status": "PROCESSED",
+        "attempts": 1,
+        "errorCode": null,
+        "receivedAt": "2026-09-16T11:32:38.060Z",
+        "processedAt": "2026-09-16T11:32:57.330Z"
+      }
+    ],
+    "issues": [
+      {
+        "id": "41ec267f-7140-4b1a-b238-9b8ac1d87980",
+        "kind": "NOTIFICATION_REVIEW",
+        "state": "OPEN",
+        "referenceId": "cmu40ibme003h3g58jqbhdlol"
+      },
+      {
+        "id": "431b4977-79fd-4e04-a54b-cb381652f06d",
+        "kind": "NOTIFICATION_REVIEW",
+        "state": "OPEN",
+        "referenceId": "cmu40ubo400543g581town3ad"
+      }
+    ],
+    "notifications": [
+      {
+        "triggerKey": "billing.package_updated",
+        "sourceType": "invoice",
+        "sourceId": "7b704238-4ce0-43da-b593-2752e983936b",
+        "channel": "WEB",
+        "status": "SENT",
+        "errorCode": null,
+        "attemptCount": 1,
+        "sentAt": "2026-09-16T11:23:19.816Z"
+      },
+      {
+        "triggerKey": "billing.package_updated",
+        "sourceType": "invoice",
+        "sourceId": "7b704238-4ce0-43da-b593-2752e983936b",
+        "channel": "LINE",
+        "status": "SENT",
+        "errorCode": null,
+        "attemptCount": 1,
+        "sentAt": "2026-09-16T11:23:20.139Z"
+      },
+      {
+        "triggerKey": "billing.package_updated",
+        "sourceType": "invoice",
+        "sourceId": "acfaa83d-cb4f-434f-83f8-ff5c6296d406",
+        "channel": "WEB",
+        "status": "SENT",
+        "errorCode": null,
+        "attemptCount": 1,
+        "sentAt": "2026-09-16T11:32:39.750Z"
+      },
+      {
+        "triggerKey": "billing.package_updated",
+        "sourceType": "invoice",
+        "sourceId": "acfaa83d-cb4f-434f-83f8-ff5c6296d406",
+        "channel": "LINE",
+        "status": "SENT",
+        "errorCode": null,
+        "attemptCount": 1,
+        "sentAt": "2026-09-16T11:32:40.027Z"
+      }
+    ],
+    "mailOutbox": [
+      {
+        "id": "cmu40ibme003h3g58jqbhdlol",
+        "eventType": "billing.status.email",
+        "status": "DEAD",
+        "attempts": 5,
+        "publishedAt": null,
+        "lastError": "recovery_required"
+      },
+      {
+        "id": "cmu40ubo400543g581town3ad",
+        "eventType": "billing.status.email",
+        "status": "FAILED",
+        "attempts": 1,
+        "publishedAt": null,
+        "lastError": "uat_recipient_not_allowed"
+      }
+    ],
+    "mailAttempts": [
+      {
+        "id": "04e0e7f8-7afb-4fe3-abf4-7f61cc47e910",
+        "intentKey": "billing-notice:cmu40ibme003h3g58jqbhdlol",
+        "generation": 1,
+        "purpose": "billing_status",
+        "status": "CONFIG",
+        "errorCode": "uat_recipient_not_allowed",
+        "providerMessageId": null,
+        "submittedAt": null,
+        "deliveredAt": null,
+        "suppressedAt": null
+      },
+      {
+        "id": "87aef655-3888-4c2b-9faf-95e17fa8b585",
+        "intentKey": "billing-notice:cmu40ubo400543g581town3ad",
+        "generation": 1,
+        "purpose": "billing_status",
+        "status": "CONFIG",
+        "errorCode": "uat_recipient_not_allowed",
+        "providerMessageId": null,
+        "submittedAt": null,
+        "deliveredAt": null,
+        "suppressedAt": null
+      }
+    ]
+  },
+  "attempts": [
+    {
+      "id": "379d05c0-c308-4723-8a20-0bf115eac157",
+      "status": "COMPLETED",
+      "errorCode": null,
+      "createdAt": "2026-09-16T11:20:14.357Z",
+      "updatedAt": "2026-09-16T11:23:11.218Z"
+    },
+    {
+      "id": "b7dac98e-404e-4644-a8e0-7c6c5f00b0e3",
+      "status": "COMPLETED",
+      "errorCode": null,
+      "createdAt": "2026-09-16T11:31:39.787Z",
+      "updatedAt": "2026-09-16T11:32:38.241Z"
+    }
+  ],
+  "nativeBrowser": {
+    "declinedCardRetainedTrialAndThreeReceipts": true,
+    "recoveryUsedSameCheckout": true,
+    "initialAutomaticReturnRights": "STARTER_249 / 30 / 2026-10-16",
+    "repeatAutomaticReturnRights": "STARTER_249 / 60 / 2026-11-16",
+    "hostedInitialInvoice": "FAZ5SA7A-0001",
+    "hostedInitialReceipt": "2500-2831",
+    "pdfDownloadVerified": false,
+    "receiptSupportMetadata": "SAMPLE_US_PHONE_REQUIRES_SANDBOX_CONFIG_FOLLOWUP"
+  },
+  "localVerification": {
+    "webTypecheck": "PASS",
+    "nativeEvidenceAssertions": "PASS",
+    "deployedCopyFixBrowser": "NOT_RUN"
+  },
+  "limitations": [
+    "Billing Postmark delivery blocked by UAT recipient allowlist; no provider submission for either invoice",
+    "LINE SENT means transport accepted, not native-device acceptance",
+    "Annual, plan changes, 3DS, due-date renewal, refund/dispute and PDF rendering were not run in this native smoke",
+    "Copy fix remains local; no new PR, CI, merge or deploy"
+  ]
+}

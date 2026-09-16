@@ -2,6 +2,8 @@
 // 10D: Settings > สาขา — manage branches used as the in-page data scope dimension.
 import { useCallback, useEffect, useState } from 'react';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
+import { MangmeeBadge, MangmeeCard, MangmeePage } from '@/common/components/mangmee';
+import { Modal } from '@/common/components/modal';
 import { ThemedSelect } from '@/common/components/field/ThemedSelect';
 import { useToast } from '@/common/components/toast';
 import { taxBranchCodeError } from './branch-form.logic';
@@ -107,41 +109,59 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
     }
   };
 
-  const inputClass = 'mangmee-input';
+  const inputClass = 'mangmee-input mt-2 w-full';
+  const closeEditor = () => {
+    if (busy) return;
+    setCreating(false); setEditing(null); setError(null); setErrorCode(null);
+  };
+  const openEdit = (branch: Branch) => {
+    setEditing({ ...branch }); setCreating(false); setError(null); setErrorCode(null);
+  };
+  const errorBanner = error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    {error}
+    {errorCode === 'branch_last_active_required' && canManage && !creating && <button
+      type="button" className="ml-2 font-semibold underline"
+      onClick={() => { setCreating(true); setEditing(null); setError(null); setErrorCode(null); }}
+    >สร้างสาขาใหม่ก่อน</button>}
+  </div>;
 
   return (
-    <div className="space-y-4 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">สาขา</h1>
-          <p className="text-sm text-gray-500">สาขาใช้เป็นตัวกรองในหน้าเดียวกัน และเป็นขอบเขตข้อมูลของพนักงานทั้งเว็บและ LINE</p>
+    <MangmeePage eyebrow="ตั้งค่า" title="สาขา" description="จัดการชื่อ ข้อมูลติดต่อ และสถานะของแต่ละสาขา"
+      actions={canManage && <button type="button" className="mangmee-btn mangmee-btn-primary"
+        onClick={() => { setCreating(true); setEditing(null); setError(null); setErrorCode(null); }}
+      >+ เพิ่มสาขา</button>}>
+      {!creating && !editing && errorBanner}
+      <MangmeeCard className="overflow-hidden">
+        <div className="mangmee-card-header flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-gray-900">รายชื่อสาขา</h2>
+          {!loading && !error && <MangmeeBadge tone="slate">{branches.length} สาขา</MangmeeBadge>}
         </div>
-        {canManage && <button
-          className="mangmee-btn mangmee-btn-primary"
-          onClick={() => { setCreating((c) => !c); setEditing(null); setError(null); setErrorCode(null); }}
-        >
-          {creating ? 'ยกเลิก' : '+ เพิ่มสาขา'}
-        </button>}
-      </div>
-
-      {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
-          {/* Owner decision 2026-08-31: refusing the only active branch must offer the replacement
-              in the same step, rather than leaving the operator to work out the order themselves. */}
-          {errorCode === 'branch_last_active_required' && canManage && !creating && (
-            <button
-              className="ml-2 font-medium underline"
-              onClick={() => { setCreating(true); setEditing(null); setError(null); setErrorCode(null); }}
-            >
-              สร้างสาขาใหม่ก่อน
-            </button>
-          )}
-        </div>
-      )}
-
-      {canManage && creating && (
-        <div className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4">
+        {loading ? <p role="status" className="p-6 text-sm text-gray-500">กำลังโหลดสาขา…</p> : error && !creating && !editing ?
+          <div className="p-5"><button type="button" className="mangmee-btn mangmee-btn-secondary" onClick={() => void load()}>ลองโหลดอีกครั้ง</button></div> : branches.length === 0 ?
+          <p className="p-10 text-center text-sm text-gray-500">ยังไม่มีสาขา{canManage ? ' กดเพิ่มสาขาเพื่อเริ่มต้น' : ''}</p> : <>
+          <div className="mangmee-table-scroll hidden md:block">
+            <table className="mangmee-table">
+              <thead><tr><th>ชื่อสาขา</th><th>รหัสสาขา</th><th>ประเภท</th><th>รหัสสาขาภาษี</th><th>สถานะ</th>{canManage && <th><span className="sr-only">จัดการ</span></th>}</tr></thead>
+              <tbody>{branches.map(b => <tr key={b.id}>
+                <td className="font-semibold text-gray-900">{b.name}</td>
+                <td>{b.code}</td>
+                <td>{TYPE_LABELS[b.type] ?? b.type}</td>
+                <td>{b.taxBranchCode ?? 'ยังไม่ระบุ'}</td>
+                <td><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? b.status}</MangmeeBadge></td>
+                {canManage && <td className="text-right"><button type="button" className="mangmee-btn mangmee-btn-secondary" aria-label={`แก้ไขสาขา ${b.name}`} onClick={() => openEdit(b)}>แก้ไข</button></td>}
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <div className="divide-y divide-gray-100 md:hidden">{branches.map(b => <div key={b.id} className="space-y-4 p-5">
+            <div className="flex items-start justify-between gap-3"><h3 className="min-w-0 break-words font-semibold text-gray-900">{b.name}</h3><MangmeeBadge tone={b.status === 'ACTIVE' ? 'brand' : 'slate'}>{STATUS_LABELS[b.status] ?? b.status}</MangmeeBadge></div>
+            <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-gray-500">รหัสสาขา</dt><dd className="mt-1 break-words text-gray-900">{b.code}</dd></div><div><dt className="text-gray-500">ประเภท</dt><dd className="mt-1 text-gray-900">{TYPE_LABELS[b.type] ?? b.type}</dd></div><div><dt className="text-gray-500">รหัสสาขาภาษี</dt><dd className="mt-1 text-gray-900">{b.taxBranchCode ?? 'ยังไม่ระบุ'}</dd></div></dl>
+            {canManage && <button type="button" className="mangmee-btn mangmee-btn-secondary w-full" aria-label={`แก้ไขสาขา ${b.name}`} onClick={() => openEdit(b)}>แก้ไข</button>}
+          </div>)}</div>
+        </>}
+      </MangmeeCard>
+      <Modal open={canManage && (creating || Boolean(editing))} title={creating ? 'เพิ่มสาขา' : `แก้ไขสาขา ${editing?.name ?? ''}`} onClose={closeEditor} size="md">
+        {errorBanner}
+        {creating && <div className="grid gap-5 py-2 sm:grid-cols-2">
           <label className="text-sm text-gray-700">
             รหัสสาขา (A-Z, 0-9)
             <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="เช่น BKK01" />
@@ -161,7 +181,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
             <input className={inputClass} value={form.taxBranchCode ?? ''} onChange={(e) => setForm({ ...form, taxBranchCode: e.target.value })} placeholder="เช่น 00001" inputMode="numeric" aria-invalid={Boolean(createTaxError)} aria-describedby={createTaxError ? 'create-tax-error' : undefined} />
             {createTaxError && <span id="create-tax-error" className="mt-1 block text-xs text-red-700">{createTaxError}</span>}
           </label>
-          <div className="sm:col-span-2 lg:col-span-4">
+          <div className="flex flex-wrap justify-end gap-3 border-t border-gray-100 pt-4 sm:col-span-2">
             <button
               className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
               disabled={busy || Boolean(createTaxError) || !form.code.trim() || !form.name.trim()} aria-busy={Boolean(busy)}
@@ -169,55 +189,12 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
             >
               บันทึกสาขาใหม่
             </button>
+            <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy} aria-busy={Boolean(busy)} onClick={closeEditor}>ยกเลิก</button>
           </div>
-        </div>
-      )}
 
-      {loading ? (
-        <p className="text-sm text-gray-500">กำลังโหลด...</p>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-gray-600">
-              <tr>
-                <th className="px-4 py-3">รหัส</th>
-                <th className="px-4 py-3">ชื่อสาขา</th>
-                <th className="px-4 py-3">ประเภท</th>
-                <th className="px-4 py-3">รหัสสาขาภาษี</th>
-                <th className="px-4 py-3">สถานะ</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {branches.map((b) => (
-                <tr key={b.id}>
-                  <td className="px-4 py-3 font-mono text-xs">{b.code}</td>
-                  <td className="px-4 py-3 text-gray-900">{b.name}</td>
-                  <td className="px-4 py-3">{TYPE_LABELS[b.type] ?? b.type}</td>
-                  <td className="px-4 py-3">{b.taxBranchCode ?? '-'}</td>
-                  <td className="px-4 py-3">
-                    <span className={b.status === 'ACTIVE' ? 'text-green-700' : 'text-gray-400'}>{STATUS_LABELS[b.status] ?? b.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {canManage && <button className="text-brand-700 hover:underline" onClick={() => { setEditing({ ...b }); setCreating(false); setError(null); setErrorCode(null); }}>
-                      แก้ไข
-                    </button>}
-                  </td>
-                </tr>
-              ))}
-              {branches.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">ยังไม่มีสาขา</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {canManage && editing && (
-        <div className="grid gap-3 rounded-lg border border-blue-200 bg-blue-50/40 p-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="sm:col-span-2 lg:col-span-4 text-sm font-medium text-gray-900">
-            แก้ไขสาขา {editing.code} (รหัสสาขาแก้ไม่ได้หลังมีข้อมูลอ้างอิง)
-          </div>
+        </div>}
+        {editing && <div className="grid gap-5 py-2 sm:grid-cols-2">
+          <p className="text-sm text-gray-500 sm:col-span-2">รหัสสาขา {editing.code} · ประเภท {TYPE_LABELS[editing.type]}<br />รหัสและประเภทสาขาเปลี่ยนจากหน้านี้ไม่ได้</p>
           <label className="text-sm text-gray-700">
             ชื่อสาขา
             <input className={inputClass} value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
@@ -237,7 +214,7 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
               {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </ThemedSelect>
           </label>
-          <div className="flex gap-2 sm:col-span-2 lg:col-span-4">
+          <div className="flex flex-wrap justify-end gap-3 border-t border-gray-100 pt-4 sm:col-span-2">
             <button
               className="mangmee-btn mangmee-btn-primary disabled:opacity-50"
               disabled={busy || Boolean(editTaxError) || !editing.name.trim()} aria-busy={Boolean(busy)}
@@ -245,10 +222,11 @@ export default function BranchSettingsPage({ companyId, permissions = [] }: { co
             >
               บันทึก
             </button>
-            <button className="rounded-lg border border-gray-300 px-4 py-2 text-sm" onClick={() => { setEditing(null); setError(null); setErrorCode(null); }}>ยกเลิก</button>
+            <button type="button" className="mangmee-btn mangmee-btn-secondary" disabled={busy} aria-busy={Boolean(busy)} onClick={closeEditor}>ยกเลิก</button>
           </div>
-        </div>
-      )}
-    </div>
+
+        </div>}
+      </Modal>
+    </MangmeePage>
   );
 }

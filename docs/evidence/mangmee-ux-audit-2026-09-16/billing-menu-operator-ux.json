@@ -1,0 +1,337 @@
+{
+  "date": "2026-09-16",
+  "scope": "Company billing information architecture and all billing menu UI routes",
+  "branch": "codex/uat-billing-native-20260916",
+  "environment": "localhost:3000 / isolated mangmee_ux; TEST fake Stripe identity, no provider secrets",
+  "changes": [
+    "Company overview shows package, access, receipt balance and direct issue resolution before tools",
+    "URL-backed overview/payments/history/manage sections; keep drafts mounted during section changes and company reads; clear on denied reads",
+    "Payments and timeline paginate25; references/history export folded",
+    "Choose one plan adjustment task before filling; preview/reauth/confirmation unchanged",
+    "Themed inputs/selects and neutral cards in billing menu; readable Thai dates and meaningful navigation labels",
+    "Admin invoice/refund views no self-email; refund request secondary; contextual guided repair panels",
+    "Explicit accessible select names and disabled policy selectors (fieldset alone does not disable a custom summary)"
+  ],
+  "verification": {
+    "command": "python3 .env.kamal/local-ux-20260916/run.py pnpm exec playwright test e2e/billing-admin-directory.spec.ts e2e/billing-admin-menu-ux.spec.ts --project chromium --workers 1",
+    "passed": 10,
+    "failed": 0,
+    "seconds": 42.2,
+    "webTypecheck": "PASS",
+    "diffCheck": "PASS",
+    "routeCount": 37,
+    "native": "Chrome Developer company overview/manage/history reviewed at desktop1512 and mobile390; settings desktop reviewed; viewport restored. Read-only."
+  },
+  "coverage": [
+    "Real local HTTP/PG company payments25+1, timeline25, open issue links, section URL and refresh retention, drafts,403clear/recovery",
+    "UI-contract plan and invoice fixtures; no command created by choosing task or inspecting documents",
+    "Settings real read with capability variation verifies policy selector lock",
+    "Existing directory/issue/history tests5 still pass, including explicit preview/submit/cancel and synthetic already-applied evidence resolution",
+    "37route navigation checks use real local endpoints; nonexistent detail IDs intentionally cover error/back states"
+  ],
+  "limits": [
+    "Not an exhaustive populated-state/mutation E2E for every deep route",
+    "No new real Stripe payment/refund/delivery or Postmark proof",
+    "Customer shared invoice component styling changed; admin path tested with contract fixtures; full customer billing suite not rerun",
+    "Existing pg client.query deprecation warning in older issue fixture, tests passed",
+    "No CI, push, merge, deploy, cloud access or dependency/package.json changes"
+  ],
+  "routes": [
+    {
+      "route": "/system/billing/batches/[id]",
+      "component": [
+        "BillingBatchPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/batches",
+      "component": [
+        "BillingBatchPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/checkout-expiry/[id]",
+      "component": [
+        "BillingCheckoutPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/apply-invoices/[invoiceId]",
+      "component": [
+        "BillingApplyInvoicesPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/apply-invoices",
+      "component": [
+        "BillingApplyInvoicesPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/checkouts/[attemptId]",
+      "component": [
+        "BillingCheckoutPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/checkouts",
+      "component": [
+        "BillingCheckoutPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/deliveries/[deliveryId]",
+      "component": [
+        "BillingDeliveryPanel"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/deliveries",
+      "component": [
+        "BillingDeliveryPanel"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/invoice-findings/[findingId]",
+      "component": [
+        "BillingInvoiceFindingPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/invoice-scans/[scanId]",
+      "component": [
+        "BillingProviderScansPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/invoice-scans",
+      "component": [
+        "BillingProviderScansPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/invoices/[invoiceId]",
+      "component": [
+        "BillingAdjustmentsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/invoices/[invoiceId]/refund",
+      "component": [
+        "BillingRefundPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]",
+      "component": [
+        "BillingAdminPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/plan-adjustments",
+      "component": [
+        "BillingPlanAdjustmentsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/companies/[id]/receipt-adjustments",
+      "component": [
+        "BillingReceiptAdjustmentsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/configuration-changes/[id]/affected",
+      "component": [
+        "BillingConfigurationImpactPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/configuration-changes/[id]",
+      "component": [
+        "BillingConfigurationPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/configuration-checks/[id]",
+      "component": [
+        "BillingConfigurationChecksPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/configuration-checks",
+      "component": [
+        "BillingConfigurationChecksPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/issues/[id]",
+      "component": [
+        "BillingAdminPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/issues",
+      "component": [
+        "BillingAdminPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/operations/[id]",
+      "component": [
+        "BillingOperationPanel"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/operator-scopes",
+      "component": [
+        "BillingScopesPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing",
+      "component": [
+        "BillingAdminPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/plan-adjustments/[id]",
+      "component": [
+        "BillingPlanAdjustmentsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/provider-events/[id]",
+      "component": [
+        "BillingProviderEventsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/provider-events",
+      "component": [
+        "BillingProviderEventsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/provider-scans/[id]",
+      "component": [
+        "BillingProviderScansPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/provider-scans",
+      "component": [
+        "BillingProviderScansPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/receipt-adjustments/[id]",
+      "component": [
+        "BillingReceiptAdjustmentsPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/refunds/[id]",
+      "component": [
+        "BillingRefundPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/scope-changes/[id]",
+      "component": [
+        "BillingScopesPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/settings",
+      "component": [
+        "BillingConfigurationPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/settlements/[id]",
+      "component": [
+        "BillingSettlementPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    },
+    {
+      "route": "/system/billing/settlements",
+      "component": [
+        "BillingSettlementPage"
+      ],
+      "checked": "390px local Chromium: readable H1, loading settled, billing return link attached, no horizontal overflow, no visible native select, no uncaught client errors, no billing mutation on viewing",
+      "data": "isolated populated company/issue where applicable; empty lists or unavailable record recovery for other details"
+    }
+  ]
+}

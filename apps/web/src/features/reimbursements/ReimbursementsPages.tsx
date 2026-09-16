@@ -597,16 +597,21 @@ export function ReimbursementsHubPage({ companyId, userId, permissions, roles }:
       eyebrow="การเบิกจ่าย"
       title="การเบิกจ่ายและอนุมัติ"
       description={HUB_TAB_DESCRIPTIONS[tab]}
-      actions={(
-        <div className="mangmee-segmented max-w-full overflow-x-auto">
-          {tabs.map(t => (
-            <button key={t} onClick={() => setTab(t)} className={cx('mangmee-tab', tab === t && 'mangmee-tab-active')}>
+      actions={permissions.includes('reimbursement.create') && tab === 'mine' ? (
+        <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
+      ) : undefined}
+    >
+      <nav aria-label="งานเบิกจ่าย" className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200">
+        <div className="flex max-w-full gap-1 overflow-x-auto">
+          {tabs.filter(t => t !== 'policy').map(t => (
+            <button type="button" key={t} onClick={() => setTab(t)} aria-pressed={tab === t}
+              className={cx('min-h-12 shrink-0 border-b-2 px-4 py-3 text-base font-semibold', tab === t ? 'border-brand-600 text-brand-700' : 'border-transparent text-gray-600 hover:text-brand-700')}>
               {HUB_TAB_LABELS[t]}
             </button>
           ))}
         </div>
-      )}
-    >
+        {tabs.includes('policy') && <button type="button" onClick={() => setTab('policy')} aria-pressed={tab === 'policy'} className={cx('min-h-11 rounded-lg px-3 py-2 text-sm font-semibold', tab === 'policy' ? 'bg-brand-50 text-brand-700' : 'text-gray-600 hover:bg-gray-100')}>ตั้งค่านโยบาย</button>}
+      </nav>
       {!permissions.includes('reimbursement.create') && <div role="status" className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm text-gray-600">{REIMBURSEMENT_CREATE_UNAVAILABLE}</div>}
       {tab === 'mine' && <MyRequests
         {...queueProps}
@@ -881,22 +886,13 @@ function MyRequests({ companyId, refreshKey, onOpenDetail, userId, permissions, 
 
   return (
     <div className="space-y-4">
-      {/* Creating a claim is its own page: the form is long enough that expanding it inline
-          pushed the list, filters and KPI cards out of view with no way back except ยกเลิก.
-          Reading own claims and creating one are separate permissions — a link to a page that
-          can only 403 on submit is worse than no link. */}
-      {canCreate && (
-        <div className="flex justify-end">
-          <Link href={`/companies/${companyId}/reimbursements/new`} className={cx(btnClass, 'min-h-11 w-full sm:w-auto')}>+ สร้างคำขอเบิก</Link>
-        </div>
-      )}
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <>
           {blockedDraftCount > 0 && (
             <ErrorBanner message={`มีคำขอร่าง ${blockedDraftCount} รายการที่ยังส่งไม่ได้ตามนโยบายใบเสร็จ กรุณาเปิดรายละเอียดเพื่อแนบใบเสร็จหรือแก้ไขคำขอ`} />
           )}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             <StatCard icon={ICON.doc} label="คำขอทั้งหมด" value={summary.count} sub="จำนวนใบ" {...KPI.sky} />
             <StatCard icon={ICON.edit} label="ร่างรอส่ง" value={statusCounts.draft} {...KPI.amber} />
             <StatCard icon={ICON.clock} label="รออนุมัติ/ตรวจสอบ" value={statusCounts.review} {...KPI.purple} />
@@ -1381,7 +1377,7 @@ function ApprovalQueue({ companyId, refreshKey, onOpenDetail, permissions }: Que
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label="รอคุณอนุมัติ" value={summary.count} {...KPI.amber} />
             <StatCard icon={ICON.wallet} label="ยอดรวมที่รออนุมัติ" value={baht0(summary.totalAmount)} {...KPI.purple} />
             <StatCard icon={ICON.alert} label="เกิน SLA" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />
@@ -1590,7 +1586,7 @@ function FinanceQueue({ companyId, refreshKey, onOpenDetail, permissions, onReco
       {error && <ErrorBanner message={error} />}
       {loading ? <LoadingState label="กำลังโหลด..." /> : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatCard icon={ICON.clock} label="รอตรวจ/รอจ่าย" value={summary.count} {...KPI.sky} />
             <StatCard icon={ICON.wallet} label="ยอดคงค้างรวม" value={baht0(summary.outstandingAmount)} {...KPI.purple} />
             <StatCard icon={ICON.alert} label="พบรายการที่อาจซ้ำ" value={summary.flagged} danger={summary.flagged > 0} {...KPI.danger} />

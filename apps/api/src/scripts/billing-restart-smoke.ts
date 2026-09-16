@@ -106,8 +106,8 @@ export async function checkBillingRestart(input: {
     const { page, origin } = input.browser;
     await page.goto(`${origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=line`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true }).waitFor();
-    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
-    await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
+    await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
+    await page.getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     await page.getByText(/วันและโควตาที่หมดอายุไปแล้วไม่ทบ/).waitFor();
     await page.getByRole('checkbox').check();
     const response = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(`${base.slice(3)}/checkout`) && r.request().method() === 'POST');
@@ -187,8 +187,8 @@ export async function checkBillingRestart(input: {
   if (input.browser) {
     const { page, origin } = input.browser;
     await page.goto(`${origin}/companies/${companyId}/billing?offer=STARTER_249&interval=year&channel=line`, { waitUntil: 'domcontentloaded' });
-    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
-    await page.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) }).getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
+    await page.getByRole('button', { name: /^(เลือกแพ็กเกจ|ซื้อหรือเปลี่ยนแพ็กเกจ)$/, exact: true }).click();
+    await page.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) }).getByRole('button', { name: 'เลือกแพ็กเกจนี้', exact: true }).click();
     const picker = page.getByRole('region', { name: 'เลือกสาขาและผู้ใช้' }); await picker.waitFor();
     await picker.getByRole('checkbox', { name: 'ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', exact: true }).check();
     const result = page.waitForResponse(r => new URL(r.url()).pathname.endsWith(`${base.slice(3)}/quote`) && r.request().method() === 'POST');
@@ -287,7 +287,7 @@ export async function checkBillingRestart(input: {
     await page.goto(`${origin}/companies/${companyId}/billing/return?attempt=${purchase.body.attemptId}`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'ชำระแล้ว เปิดใช้งานแล้ว', exact: true }).waitFor();
     assert.match(await page.getByRole('region', { name: 'สถานะแพ็กเกจ' }).innerText(), /360/);
-    await page.getByRole('button', { name: 'เปิดใบเสร็จ', exact: true }).first().waitFor();
+    await page.getByRole('button', { name: 'ประวัติ', exact: true }).click();await page.getByRole('link', { name: 'ดูเอกสาร', exact: true }).first().waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: `${evidenceDir}/restart-paid-mobile.png`, fullPage: true });
     cases.push('browser-restart-paid-return-new-quota-and-historical-documents');

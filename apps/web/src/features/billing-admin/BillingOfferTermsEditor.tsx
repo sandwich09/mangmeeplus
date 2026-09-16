@@ -2,7 +2,7 @@
 import { BILLING_PAID_TIERS, billingOffer, type BillingPolicy } from '@watchdog-bms/contracts';
 
 export default function BillingOfferTermsEditor({policy,onChange}:{policy:BillingPolicy;onChange:(policy:BillingPolicy)=>void}) {
-  return <details className="rounded-xl border p-3"><summary className="min-h-11 cursor-pointer py-2 font-semibold">ราคาและสิทธิ์ของแพ็กเกจ</summary>
+  return <details open className="rounded-xl border border-gray-200 p-3 bg-white"><summary className="min-h-11 cursor-pointer py-2 font-semibold">ราคาและสิทธิ์ของแพ็กเกจ</summary>
     <p className="my-3">ใช้กับรายการซื้อที่ยืนยันตามค่าชุดใหม่ รายปีได้ใบเสร็จ 12 เท่าทันที จำนวนเดิมที่ลูกค้าซื้อไว้ไม่ลดลง</p>
     <div className="grid gap-4 sm:grid-cols-3">{BILLING_PAID_TIERS.map(tier=>{
       const monthly=billingOffer(tier,'month',policy),yearly=billingOffer(tier,'year',policy);
@@ -11,7 +11,7 @@ export default function BillingOfferTermsEditor({policy,onChange}:{policy:Billin
       return <fieldset key={tier} className="space-y-3 rounded-lg bg-gray-50 p-3"><legend className="font-bold">{monthly.label}</legend>
         {([['monthlyPriceSatang','ราคารายเดือน (บาท)'],['annualPriceSatang','ราคารายปี (บาท)'],['monthlyReceiptAllowance','ใบเสร็จที่ได้เมื่อซื้อรายเดือน'],['branchLimit','จำนวนสาขาสูงสุด'],['employeeLimit','จำนวนผู้ใช้สูงสุด รวมเจ้าของ']] as const).map(([key,label])=>{
           const count=key!=='monthlyPriceSatang'&&key!=='annualPriceSatang',receipt=key==='monthlyReceiptAllowance';
-          return <label key={key} className="block">{label}<input aria-label={`${monthly.label} · ${label}`} className="mt-1 block min-h-11 w-full rounded-lg border bg-white p-2" inputMode={count?'numeric':'decimal'} required
+          return <label key={key} className="block">{label}<input aria-label={`${monthly.label} · ${label}`} className="mangmee-input !text-base mt-1 block min-h-11 w-full rounded-lg border border-gray-300 bg-white p-2" inputMode={count?'numeric':'decimal'} required
             defaultValue={count?String(terms[key]):(terms[key]/100).toFixed(2)} onChange={e=>{
               const value=e.target.value.trim(),parts=value.split('.');
               const amount=count?(/^\d+$/.test(value)?Number(value):NaN):(/^\d{1,6}(?:\.\d{1,2})?$/.test(value)?Number(parts[0])*100+Number((parts[1]??'').padEnd(2,'0')):NaN);

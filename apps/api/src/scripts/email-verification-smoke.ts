@@ -66,10 +66,10 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
       const result = await request(path, 'POST', body); assert.equal(result.status, 409); assert.equal(result.body.code, 'EMAIL_OTP_REQUIRED');
     }
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${browser.origin}/companies/${member.companyId}/settings/profile`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${browser.origin}/companies/${member.companyId}/settings/profile#account`, { waitUntil: 'domcontentloaded' });
     const panel = page.locator('section').filter({ has: page.getByRole('heading', { name: /^(อีเมลบัญชีของฉัน|ยืนยันอีเมลก่อนชำระเงิน)$/ }) }).last();
     await panel.getByLabel('อีเมลที่ต้องการยืนยัน', { exact: true }).fill(`verify-${tag}-first@example.test`);
-    await panel.getByLabel(/รหัสผ่านปัจจุบัน \(ใช้แทน/).fill(password);
+    await panel.getByLabel(/^รหัสผ่านปัจจุบัน/).fill(password);
     const sent = page.waitForResponse(r => r.url().endsWith('/auth/account/email/otp/request') && r.request().method() === 'POST');
     await panel.getByRole('button', { name: 'ขอรหัสยืนยัน', exact: true }).click(); assert.equal((await sent).status(), 202);
     assert.equal((await db.user.findUniqueOrThrow({ where: { id: user.id } })).email, null);
@@ -99,7 +99,8 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
     await db.companyPlanTerm.update({ where: { companyId: member.companyId }, data: { termEndsAt: new Date(0), termDisabledAt: new Date() } });
     await db.company.update({ where: { id: member.companyId }, data: { status: 'DISABLED' } });
     await page.goto(`${browser.origin}/companies/${member.companyId}/billing?interval=year`, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: 'เลือกแพ็กเกจ', exact: true }).waitFor();
+    await page.getByRole('heading', { name: 'แพ็กเกจและการชำระเงิน', exact: true }).waitFor();
+    await page.goto(`${browser.origin}/account/email?company=${member.companyId}&interval=year`, { waitUntil: 'domcontentloaded' });
     await panel.getByText(`verify-${tag}-first@example.test`, { exact: true }).waitFor();
     await page.route(url => url.origin === browser.origin && url.pathname === '/api/auth/line-login/start', async route => {
       // Playwright does not reroute subsequent URLs in an HTTP redirect chain. Read the

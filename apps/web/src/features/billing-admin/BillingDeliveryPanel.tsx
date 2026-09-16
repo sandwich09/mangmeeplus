@@ -1,4 +1,5 @@
 'use client';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
 import {useEffect,useState} from 'react';
 import Link from 'next/link';
 import { billingControl, billingLabel, billingDeliveryLabel } from '../billing/billing-display';
@@ -10,7 +11,7 @@ const reasons:Record<string,string>={transport_unknown:'เคยไม่ได
   ALREADY_ACCEPTED:'ผู้ให้บริการรับคำขอแล้ว ไม่ส่งซ้ำ',DELIVERY_NOT_RETRYABLE:'รายการยังอยู่ในคิวหรือไม่สามารถส่งซ้ำได้',RECIPIENT_OR_EVENT_INACTIVE:'ผู้รับหรือเหตุการณ์เดิมไม่พร้อมใช้งาน',
   PREFERENCE_SUPPRESSED:'ผู้ใช้ปิดรับการแจ้งเตือน',LINE_CONFIGURATION_MISSING:'การตั้งค่า LINE ยังไม่พร้อม ให้ผู้ดูแลระบบตรวจการเชื่อมต่อ LINE แล้วโหลดรายการส่งเดิมอีกครั้ง',NO_LINE_DELIVERY_TARGET:'ไม่พบบัญชี LINE ที่ใช้ส่งได้',LINE_BINDING_CHANGED:'ผู้รับหรือข้อความเปลี่ยน ต้องตรวจรายการเดิม',
   LINE_UNKNOWN_REVIEW:'พ้นเวลาที่ส่งซ้ำอย่างปลอดภัยได้ ต้องตรวจผลกับผู้ให้บริการ',LINE_RETRY_EXHAUSTED:'ครบจำนวนครั้งที่อนุญาต ต้องให้เจ้าหน้าที่ตรวจ',CONTROL_PERMISSION_CHANGED:'สิทธิ์ผู้สั่งกู้คืนเปลี่ยนแล้ว ต้องตรวจสอบใหม่'};
-const time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มี';
+const time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มี';
 export default function BillingDeliveryPanel({companyId,deliveryId}:{companyId:string;deliveryId?:string}){
   const [items,setItems]=useState<BillingDeliveryView[]>([]),[cursor,setCursor]=useState<string|null>(null),[next,setNext]=useState<string|null>(null);
   const [reload,setReload]=useState(0),[busy,setBusy]=useState(true),[error,setError]=useState('');
@@ -27,7 +28,7 @@ export default function BillingDeliveryPanel({companyId,deliveryId}:{companyId:s
     <button className={button} disabled={busy} onClick={()=>setReload(v=>v+1)}>โหลดรายการส่งล่าสุด</button>
     <p>หน้านี้แสดงการแจ้งเตือนบนเว็บ LINE และอีเมล สถานะผู้ให้บริการรับคำขอแล้ว ยังไม่ยืนยันว่าผู้ใช้เห็นข้อความ</p>
     {busy&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert">{error}</p>}{!busy&&!error&&!items.length&&<p>ไม่พบรายการส่งในหน้านี้</p>}
-    {items.map(item=><article key={item.id} className="space-y-3 rounded-xl border bg-white p-5"><h2 className="font-bold">{billingLabel('channel',item.channel)} · {billingDeliveryLabel(item.state,item.channel,Boolean(item.confirmedAt))}</h2>
+    {items.map(item=><article key={item.id} className="space-y-3 rounded-xl border border-gray-200 bg-white p-5"><h2 className="font-bold">{billingLabel('channel',item.channel)} · {billingDeliveryLabel(item.state,item.channel,Boolean(item.confirmedAt))}</h2>
       <p>{billingLabel('mode',item.mode)}</p><p>ผู้รับ {item.recipientName===null?'ผู้รับเดิมไม่พร้อมใช้งาน':item.recipientName??'ตรวจผู้รับจากข้อมูลอ้างอิง'}</p><p>เอกสารการชำระเงิน {item.invoiceNumber??'ยังไม่แสดงเลขเอกสาร'}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงรายการส่ง</summary><p className="break-all">บริษัท {item.companyId} · รายการส่ง {item.id} · ผู้รับ {item.recipientUserId} · ใบแจ้งหนี้ {item.invoiceId}</p></details>
       <p>{item.channel==='EMAIL'?`รอบส่งอีเมลที่ ${item.attemptCount}`:`พยายามส่ง ${item.attemptCount} ครั้ง`} · อัปเดต {time(item.updatedAt)}</p><p>รับคำขอ {time(item.acceptedAt)}{item.channel==='EMAIL'&&<> · เซิร์ฟเวอร์อีเมลปลายทางรับ {time(item.confirmedAt)}</>}</p><p>ตรวจอีกครั้ง {time(item.nextAttemptAt)}</p>
       {item.possibleDuplicate&&<p role="alert">ยังยืนยันผลการส่งเดิมไม่ได้ หากส่งใหม่ผู้รับอาจได้รับซ้ำ</p>}{item.errorCode&&<p>ผลล่าสุด: {reasons[item.errorCode]??'ต้องตรวจผลส่งเดิมก่อนทำต่อ'}</p>}
@@ -36,7 +37,7 @@ export default function BillingDeliveryPanel({companyId,deliveryId}:{companyId:s
       {item.retryOperationId&&<Link className="block underline" href={`/system/billing/operations/${item.retryOperationId}`}>เปิดคำสั่งกู้คืนเดิม</Link>}
       {deliveryId&&item.mailHistory&&<section aria-label="ประวัติการส่งอีเมล" className="space-y-2"><h3 className="font-bold">ประวัติการส่งอีเมล</h3>{item.mailHistory.map(attempt=><p key={attempt.id}>
         ครั้งที่ {attempt.generation} · {billingDeliveryLabel(attempt.state,'EMAIL',Boolean(attempt.deliveredAt))} · รับคำขอ {time(attempt.acceptedAt)} · เซิร์ฟเวอร์ปลายทางรับ {time(attempt.deliveredAt)}{attempt.possibleDuplicate?' · อาจได้รับซ้ำ':''}{attempt.errorCode?` · ${reasons[attempt.errorCode]??'ต้องตรวจผลส่งเดิมก่อนทำต่อ'}`:''}</p>)}</section>}
-      {deliveryId&&<BillingOperationPanel companyId={companyId} companyVersion={item.accountVersion} deliveryId={item.id} canRetry={item.canRetry} canCheckDelivery={item.canReconcile}/>}</article>)}
+      {deliveryId&&<BillingOperationPanel companyId={companyId} companyVersion={item.accountVersion} deliveryId={item.id} canRetry={item.canRetry} canCheckDelivery={item.canReconcile} initialReason={item.canReconcile?"ตรวจผลการส่งอีเมลเดิม":"ตรวจและส่งข้อความแจ้งเตือนเดิมอีกครั้ง"}/>}</article>)}
     {!deliveryId&&next&&<button className={button} disabled={busy} onClick={()=>setCursor(next)}>รายการส่งหน้าถัดไป</button>}{cursor&&<button className={button} disabled={busy} onClick={()=>setCursor(null)}>รายการส่งหน้าแรก</button>}
   </main>;
 }

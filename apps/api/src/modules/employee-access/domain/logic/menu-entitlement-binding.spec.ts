@@ -121,7 +121,7 @@ describe('MENU_ENTITLEMENT_BINDINGS', () => {
 });
 
 describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
-  it('starter exposes exactly the seven menus in the approved baseline', async () => {
+  it('starter retains AI access while exposing six navigation entries and contextual AI', async () => {
     const presetKeys = new Set(FEATURE_PACKAGE_PRESETS.starter.featureKeys);
     const rows = ALL_FEATURE_ENTITLEMENT_KEYS.map((featureKey) => ({
       featureKey,
@@ -132,14 +132,17 @@ describe('FEATURE_PACKAGE_PRESETS menu parity', () => {
     assert.ok(entitled);
     assert.deepEqual(
       MENU_ENTITLEMENT_BINDINGS
+        .filter((binding) => binding.navigation !== 'contextual')
         .filter((binding) => binding.entitlementKeys.length === 0 || (
           binding.parentFeatureKey !== null
           && entitled.has(binding.parentFeatureKey)
           && binding.entitlementKeys.some((key) => entitled.has(key))
         ))
         .map((binding) => binding.navKey),
-      ['dashboard', 'ai-suggestions', 'expenses', 'reimbursements', 'roles', 'settings', 'notifications'],
+      ['dashboard', 'expenses', 'reimbursements', 'roles', 'settings', 'notifications'],
     );
+    assert.ok(entitled.has('ai_line_assistant'));
+    assert.deepEqual(filterPermissionsByEntitlement(['ai.suggestion.read', 'crm.ai.read'], entitled), ['ai.suggestion.read', 'crm.ai.read']);
   });
 
   for (const [presetKey, preset] of Object.entries(FEATURE_PACKAGE_PRESETS)) {

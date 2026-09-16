@@ -78,7 +78,7 @@ export function resolveLoginLanding(
   const landing = explicit
     ?? home
     ?? (isSystemAdmin(session)
-      ? '/system/platform-access'
+      ? '/system/partners'
       : session.companyId
         ? `/companies/${session.companyId}/dashboard`
         : null);
@@ -141,7 +141,7 @@ export function resolvePostLegalAcceptanceTarget(
 ): string {
   const explicit = usablePostAcceptanceLanding(sanitizeNextPath(next));
   if (explicit) return explicit;
-  if (isSystemAdmin(session)) return '/system/platform-access';
+  if (isSystemAdmin(session)) return '/system/partners';
   return session.companyId ? `/companies/${session.companyId}/dashboard` : '/';
 }
 
@@ -198,5 +198,5 @@ export function companyGateReturnPath(requestedPath: string | null | undefined, 
 /** Preserve the proxy's system deep link through every authentication gate. */
 export function systemGateReturnPath(requestedPath: string | null | undefined): string {
   const sanitized = usablePostAcceptanceLanding(sanitizeNextPath(requestedPath));
-  return sanitized?.startsWith('/system/') ? sanitized : '/system/platform-access';
+  return sanitized?.startsWith('/system/') ? sanitized : '/system/partners';
 }

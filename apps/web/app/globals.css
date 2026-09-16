@@ -385,8 +385,8 @@ body {
 }
 
 .mangmee-btn-primary {
-  border: 1px solid var(--color-brand-600);
-  background: linear-gradient(150deg, var(--color-brand-500), var(--color-brand-700));
+  border: 1px solid var(--color-brand-700);
+  background: linear-gradient(150deg, var(--color-brand-700), var(--color-brand-800));
   color: #fff;
   box-shadow: 0 10px 20px rgb(21 128 61 / 22%);
 }

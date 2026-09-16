@@ -143,3 +143,24 @@ test.describe('REIMB — reimbursements', () => {
     });
   });
 });
+
+for (const width of [1280, 390]) {
+  test(`REIMB-HEADER keeps the primary action separate from work navigation at ${width}px`, async ({ authedPage: page, companyId }, info) => {
+    await page.setViewportSize({ width, height: 900 });
+    await gotoCompany(page, companyId, '/reimbursements');
+    const create = page.getByRole('link', { name: '+ สร้างคำขอเบิก', exact: true });
+    const nav = page.getByRole('navigation', { name: 'งานเบิกจ่าย' });
+    await expect(create).toHaveCount(1);
+    await expect(create).toBeVisible();
+    await expect(nav).toBeVisible();
+    const actionBox = await create.boundingBox(), navBox = await nav.boundingBox();
+    expect(navBox!.y).toBeGreaterThanOrEqual(actionBox!.y + actionBox!.height);
+    await nav.getByRole('button', { name: 'คิวอนุมัติ', exact: true }).click();
+    await expect(create).toBeHidden();
+    await expect(nav.getByRole('button', { name: 'คิวอนุมัติ', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await nav.getByRole('button', { name: 'รายการที่เกี่ยวข้อง', exact: true }).click();
+    await expect(create).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`reimbursement-header-${width}.png`), fullPage: true });
+  });
+}

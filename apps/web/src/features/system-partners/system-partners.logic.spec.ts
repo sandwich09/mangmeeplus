@@ -52,7 +52,7 @@ describe('buildMenuCards', () => {
 
     assert.deepEqual(
       cards.map((card) => card.navKey),
-      MENU_ENTITLEMENT_BINDINGS.map((item) => item.navKey),
+      MENU_ENTITLEMENT_BINDINGS.filter((item) => item.navigation !== 'contextual').map((item) => item.navKey),
     );
     assert.equal(cards.find((card) => card.navKey === 'inbox')?.enabled, true);
     assert.equal(cards.find((card) => card.navKey === 'booking')?.enabled, false);
@@ -220,6 +220,14 @@ describe('applyPreset', () => {
 });
 
 describe('diffEntitlements', () => {
+  it('keeps background AI editable and names its actual capability in the review', () => {
+    const before = applyPreset([], 'starter');
+    assert.equal(entitlementEnabled(before, 'ai_line_assistant'), true);
+    assert.equal(buildMenuCards(MENU_ENTITLEMENT_BINDINGS, FEATURE_CATALOG, before).some(card => card.navKey === 'ai-suggestions'), false);
+    const next = toggleSubmenu(before, 'ai_line_assistant', false);
+    assert.deepEqual(changedEntitlements(before, next), [{ featureKey: 'ai_line_assistant', enabled: false }]);
+    assert.equal(diffEntitlements(before, next).turningOff[0]?.labelTh, 'ผู้ช่วย AI ทาง LINE');
+  });
   it('reports every effective child restored by a parent with Thai labels', () => {
     const server = enabledState('expenses');
     const pending = toggleMenuCard(server, binding('expenses'), true);

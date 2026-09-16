@@ -1,4 +1,6 @@
 'use client';
+import { formatThaiDateTime } from '@/common/i18n/thai-date';
+import { billingLink } from '../billing/billing-display';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
@@ -8,7 +10,7 @@ import { authedApiFetch } from '@/common/api/authed-fetch';
 const base='/system/billing/configuration-checks',button='inline-flex min-h-11 items-center justify-center rounded-xl border px-4 py-2 text-base font-semibold disabled:opacity-50';
 const resultName=(state:Item['state'])=>({MATCH:'ตรงตามที่ตั้งไว้',DIFFERENT:'ต้องแก้ไข',UNAVAILABLE:'ยังตรวจไม่ได้',NOT_CONFIGURED:'ยังไม่ได้ตั้งค่า'}[state]);
 const stateName=(check:Check)=>check.state==='SUCCEEDED'&&check.result?resultName(check.result):({QUEUED:'รอเริ่มตรวจ',RUNNING:'กำลังตรวจ',BLOCKED:'ต้องเริ่มตรวจใหม่',CANCELLED:'ยกเลิกแล้ว',SUCCEEDED:'ตรวจเสร็จแล้ว'}[check.state]);
-const time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มีผล';
+const time=(value:string|null)=>value?formatThaiDateTime(value):'ยังไม่มีผล';
 const itemName=(item:Item)=>{
   const name={POLICY:'นโยบายการขาย',ACCOUNT:'บัญชี Stripe',PRICE:'ราคาขาย',PREPAID_PRICE:'ช่วงที่ชำระเงินล่วงหน้า',PORTAL:'หน้าแก้บัตร',TAX:'การคิดภาษี'}[item.kind];
   if(!item.offerKey)return name;
@@ -54,25 +56,25 @@ export default function BillingConfigurationChecksPage({checkId}:{checkId?:strin
   return <main className="mx-auto max-w-4xl space-y-5 break-words p-4 text-base sm:p-8">
     <h1 className="text-2xl font-bold">ตรวจการเชื่อมต่อ Stripe</h1>
     <p>ตรวจบัญชี ราคา หน้าแก้บัตร และภาษีกับค่าที่อนุมัติไว้ การตรวจนี้ไม่เรียกเก็บเงินหรือเปลี่ยนสิทธิ์ลูกค้า</p>
-    <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing/settings">แก้การตั้งค่าการจ่ายเงิน</Link><Link className={button} href="/system/billing/issues">คิวตรวจสอบ</Link>
-      {checkId&&<Link className={button} href={base}>กลับประวัติการตรวจ</Link>}</nav>
+    <nav className="flex flex-wrap gap-3"><Link className={billingLink} href="/system/billing/settings">แก้การตั้งค่าการจ่ายเงิน</Link><Link className={billingLink} href="/system/billing/issues">ปัญหาการชำระเงิน</Link>
+      {checkId&&<Link className={billingLink} href={base}>กลับประวัติการตรวจ</Link>}</nav>
     <button className={button} disabled={loading||busy} onClick={()=>setReload(value=>value+1)}>โหลดผลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลด…</p>}{error&&<p role="alert" className="rounded-xl bg-red-50 p-4">{error}</p>}
     {history&&<>
       <p>{history.mode==='DISABLED'?'ยังไม่เปิดการเชื่อมต่อ':history.mode==='TEST'?'โหมดทดสอบ · ไม่มีการตัดเงินจริง':'โหมดเงินจริง'}</p>
       {history.activeCheck&&<Link className={button} href={`${base}/${history.activeCheck.id}`}>เปิดรายการที่กำลังตรวจ</Link>}
-      {history.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-3 rounded-xl border p-4">
-        <div><label className="block" htmlFor="configuration-check-reason">เหตุผลการตรวจ</label><textarea id="configuration-check-reason" className="mt-1 block min-h-11 w-full rounded-lg border p-2" required maxLength={500} disabled={busy||!!intent.current} value={reason} onChange={event=>setReason(event.target.value)}/></div>
+      {history.canCreate&&<form onSubmit={event=>void create(event)} className="space-y-3 rounded-xl border border-gray-200 p-4 bg-white">
+        <div><label className="block" htmlFor="configuration-check-reason">เหตุผลการตรวจ</label><textarea id="configuration-check-reason" className="mangmee-input !text-base mt-1 block min-h-11 w-full rounded-lg border border-gray-200 p-2" required maxLength={500} disabled={busy||!!intent.current} value={reason} onChange={event=>setReason(event.target.value)}/></div>
         <button className={button} disabled={busy||!reason.trim()} aria-busy={Boolean(busy)}>{intent.current?'ลองคำขอเดิมอีกครั้ง':'เริ่มตรวจการเชื่อมต่อ'}</button>
       </form>}
       <section aria-label="ประวัติการตรวจ" className="space-y-3"><h2 className="text-lg font-bold">ประวัติการตรวจ</h2>
         {!history.items.length&&<p>ยังไม่มีรายการตรวจ</p>}
-        {history.items.map(item=><Link key={item.id} className="block min-h-11 rounded-xl border p-4" href={`${base}/${item.id}`}><strong>{stateName(item)}</strong><p>{item.reason}</p><p>{time(item.createdAt)}{!item.isCurrent?' · การตั้งค่าเปลี่ยนแล้ว':''}</p></Link>)}
+        {history.items.map(item=><Link key={item.id} className="block min-h-11 rounded-xl border border-gray-200 p-4 bg-white" href={`${base}/${item.id}`}><strong>{stateName(item)}</strong><p>{item.reason}</p><p>{time(item.createdAt)}{!item.isCurrent?' · การตั้งค่าเปลี่ยนแล้ว':''}</p></Link>)}
         {history.nextCursor&&<button className={button} onClick={()=>setCursor(history.nextCursor)}>ประวัติก่อนหน้า</button>}
         {cursor&&<button className={button} onClick={()=>setCursor(null)}>กลับประวัติล่าสุด</button>}
       </section>
     </>}
-    {check&&<section aria-label="ผลตรวจการเชื่อมต่อ" className="space-y-4 rounded-xl border p-4">
+    {check&&<section aria-label="ผลตรวจการเชื่อมต่อ" className="space-y-4 rounded-xl border border-gray-200 p-4 bg-white">
       <h2 className="text-xl font-bold" role="status">{stateName(check)}</h2><p>{check.reason}</p><p>{check.mode==='TEST'?'โหมดทดสอบ · ไม่มีการตัดเงินจริง':'โหมดเงินจริง'}</p>
       {!check.isCurrent&&<p role="alert">การตั้งค่าเปลี่ยนแล้ว ผลนี้ใช้กับค่าชุดเก่า ให้ตรวจใหม่จากหน้าประวัติ</p>}
       {check.state==='SUCCEEDED'&&<p>ตรวจเมื่อ {time(check.observedAt)} · เวลาตามเครื่องนี้</p>}
@@ -89,7 +91,7 @@ export default function BillingConfigurationChecksPage({checkId}:{checkId?:strin
       <div className="flex flex-wrap gap-3">{check.canRun&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('run')}>ตรวจรายการนี้ตอนนี้</button>}
         {check.canCancel&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act('cancel')}>ยกเลิกรายการตรวจนี้</button>}
         {check.reviewCaseId&&<Link className={button} href={`/system/billing/issues/${check.reviewCaseId}`}>เปิดเคสที่เกี่ยวข้อง</Link>}</div>
-      <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับทีมช่วยเหลือ</summary><p>รายการ {check.id}</p><p>รุ่นการตั้งค่า {check.sourceVersion}</p>{check.items.filter(item=>item.kind==='PREPAID_PRICE').map(item=><p key={item.offerKey}>{itemName(item)}: {resultName(item.state)}</p>)}{check.errorCode&&<p>{check.errorCode}</p>}</details>
+      <details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงสำหรับตรวจสอบภายใน</summary><p>รายการ {check.id}</p><p>รุ่นการตั้งค่า {check.sourceVersion}</p>{check.items.filter(item=>item.kind==='PREPAID_PRICE').map(item=><p key={item.offerKey}>{itemName(item)}: {resultName(item.state)}</p>)}{check.errorCode&&<p>{check.errorCode}</p>}</details>
     </section>}
   </main>;
 }

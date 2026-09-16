@@ -174,7 +174,7 @@ export class PasswordLoginUseCase {
       ...tokens,
       passwordChangeRequired,
       companyId,
-      redirectPath: isSystemAdmin ? '/system/platform-access' : `/companies/${companyId}/dashboard`,
+      redirectPath: isSystemAdmin ? '/system/partners' : `/companies/${companyId}/dashboard`,
       legalAcceptanceRequired: legalAcceptance.required,
     };
   }

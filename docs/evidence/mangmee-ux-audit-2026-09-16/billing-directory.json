@@ -1,0 +1,38 @@
+{
+  "scope": "Billing landing directory/navigation and authorized pagination read",
+  "status": "local-ready-for-owner-review",
+  "apiChecks": {
+    "passed": 3,
+    "file": "billing-overview-pagination.spec.ts"
+  },
+  "typecheck": {
+    "web": "passed",
+    "api": "passed"
+  },
+  "build": {
+    "contracts": "passed",
+    "api": "passed"
+  },
+  "e2e": {
+    "distinctPassed": 2,
+    "file": "e2e/billing-admin-directory.spec.ts",
+    "cases": [
+      "Desktop real API/DB26-company search/count/page/back/empty/clear/layout",
+      "Mobile own trial fixture/tools/Escape/no overflow/503 actual-reference/retry/queue"
+    ],
+    "simulated": "503 read outage with actual x-request-id; all normal reads use local API/DB",
+    "fixtureCleanup": "Exact test-created companies only; finally cleanup"
+  },
+  "nativeInspection": {
+    "desktopWidth": 1512,
+    "mobileWidth": 390,
+    "viewportReset": true
+  },
+  "ownerCorrection": "Mangmee is the operator: remove contact/self-email links; retain internal reference and retry",
+  "localUrl": "http://localhost:3000/system/billing",
+  "limits": [
+    "No whole-console or live-provider E2E claim",
+    "Older payment smoke selectors updated but full scripts not rerun",
+    "No CI, merge, push or deployment"
+  ]
+}

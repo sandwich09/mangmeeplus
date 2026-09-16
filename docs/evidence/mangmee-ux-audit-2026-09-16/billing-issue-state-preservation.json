@@ -1,0 +1,45 @@
+{
+  "observedAt": "2026-09-16T15:31:36.434465+00:00",
+  "scope": "Local billing issue detail draft preservation, theme and sequencing",
+  "status": "PASS",
+  "checks": {
+    "billing-admin-directory": "4/4 PASS; final changed detail case rerun PASS",
+    "web_typecheck": "PASS",
+    "api_typecheck": "PASS",
+    "diff_check": "PASS",
+    "native_viewports": [
+      1512,
+      390
+    ],
+    "mobile_document_width": 390
+  },
+  "flows": [
+    "tracking ownership/save in place",
+    "contact preview, commit, cancel and unchanged re-preview",
+    "contact version refresh before tracking save",
+    "preserve drafts, native disclosures and DOM nodes",
+    "preserve queue/cursor through contact history and return",
+    "rebase untouched fields from current server data",
+    "503 detail and command read recovery",
+    "source reload retains repair draft",
+    "preview cannot unlock result step",
+    "submitted original-invoice command unlocks result read",
+    "return recovers server-observed command history",
+    "403 clears detail and retry recovers",
+    "scoped worker verifies original invoice; audited issue closure without regrant"
+  ],
+  "providerEvidence": "Synthetic historical payment evidence; no Stripe/Postmark calls",
+  "limitations": [
+    "No full external-provider/native Stripe run",
+    "Older case/SLA smoke selector updates not run in their full mutation harness"
+  ],
+  "reviewUrl": "http://localhost:3000/system/billing/issues/23f77a1a-b0fb-4aeb-bc4f-aa7851044f43",
+  "prohibitedActionsPerformed": [],
+  "sha256": {
+    "apps/web/src/features/billing-admin/BillingAdminPage.tsx": "edaffe940933010b03a3c00a7cb6949f682c66838239f25e613b5b3ab05a3d47",
+    "apps/web/src/features/billing-admin/BillingSupportOutcomesPanel.tsx": "b223c38dcf437924b498553012ec1ae66f16c010f69c622c5d939320a5c3d6f4",
+    "apps/web/src/features/billing-admin/BillingIssueResolutionPanel.tsx": "69c38ab16d6f54a426a562a2ab386bcba2f2876dcba7af5fc5258b44bb042573",
+    "apps/web/src/features/billing-admin/BillingOperationPanel.tsx": "1f880f1889a1203a1aefb556d917d71fbdcd54c20ab9bc2dd478c90fa4a36417",
+    "e2e/billing-admin-directory.spec.ts": "dabb98cda27f716a757f1443cd75df2d8f586e88d4f16b21138b72e2dcef2824"
+  }
+}

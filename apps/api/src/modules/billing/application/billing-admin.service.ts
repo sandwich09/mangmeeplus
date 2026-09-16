@@ -105,18 +105,24 @@ export class BillingAdminService {
       branchLimit: term?.branchLimit ?? null, employeeLimit: term?.employeeLimit ?? null,
       pendingPlanChangeId: account?.pendingPlanChangeId ?? null, collectionOperationId: account?.activeCollectionOperationId ?? null };
   }
-  async overview(context: RequestContext, cursor?: string, search = ''): Promise<BillingOperatorOverview> {
+  async overview(context: RequestContext, cursor?: string, search = '', page?: number): Promise<BillingOperatorOverview> {
     const access = await this.access(context, 'system.billing.read');
     if (typeof search !== 'string' || search.length > 100) throw new BadRequestException();
+    if (page !== undefined && (cursor || !Number.isSafeInteger(page) || page < 1 || page > 1_000_000)) throw new BadRequestException();
     const where = this.companyWhere(access,search);
     if (cursor && !await this.prisma.client.company.findFirst({ where: { ...where, AND: { id: cursor } } })) throw new NotFoundException();
-    const companies = await this.prisma.client.company.findMany({ where: { ...where, ...(cursor ? { AND: { id: { gt: cursor } } } : {}) },
-      orderBy: { id: 'asc' }, take: 26, include: { planTerm: true } });
+    const [companies, total] = await Promise.all([
+      this.prisma.client.company.findMany({ where: { ...where, ...(cursor ? { AND: { id: { gt: cursor } } } : {}) },
+        ...(page === undefined ? {} : { skip: (page - 1) * 25 }),
+        orderBy: { id: 'asc' }, take: 26, include: { planTerm: true } }),
+      page === undefined ? undefined : this.prisma.client.company.count({ where }),
+    ]);
     const accounts = this.billing.stripe.enabled ? await this.prisma.client.billingAccount.findMany({ where: { stripeAccountId: this.billing.stripe.accountId,
       livemode: this.billing.stripe.livemode, companyId: { in: companies.slice(0,25).map(c=>c.id) } } }) : [];
     return { mode: this.billing.stripe.enabled ? (this.billing.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED', capabilities: access.capabilities,
       platformScope: access.platformScope, canManageScopes: access.canManageScopes,
       companies: await Promise.all(companies.slice(0,25).map(c => this.companyView(c,accounts.find(a=>a.companyId===c.id) ?? null))),
+      ...(page === undefined ? {} : { pagination: { page, pageSize: 25, total: total! } }),
       nextCursor: companies.length > 25 ? companies[24]!.id : null };
   }
   async scopedCompany(context: RequestContext, companyId: string, tx:Prisma.TransactionClient=this.prisma.client) {
@@ -213,7 +219,18 @@ export class BillingAdminService {
     const access = await this.access(context, 'system.billing.read');
     const row = await this.prisma.client.billingIssue.findFirst({ where: { id, stripeAccountId: this.billing.stripe.accountId, livemode: this.billing.stripe.livemode,
       ...(access.platformScope ? {} : { companyId: { in: access.companyIds } }) } });
-    if (!row) throw new NotFoundException(); return this.issueView(row);
+    if (!row) throw new NotFoundException();
+    const relatedAccount = row.companyId && ['PAID_NOT_APPLIED','PAID_HELD'].includes(row.kind) ? await this.prisma.client.billingAccount.findFirst({where:{
+      companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode},select:{id:true}}) : null;
+    const relatedInvoice = relatedAccount ? await this.prisma.client.billingInvoice.findFirst({where:{
+      billingAccountId:relatedAccount.id,
+      // Detector references are local IDs for held invoices, Stripe IDs for failed application.
+      ...(row.kind==='PAID_HELD'?{id:row.referenceId}:{providerInvoiceId:row.referenceId}),
+    },select:{id:true}}) : null;
+    const refund = row.companyId && row.kind==='REFUND_FAILED' && access.capabilities.includes('system.billing.financial.read') ?
+      await this.prisma.client.billingOperation.findFirst({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,
+        type:'REFUND',resultJson:{path:['refundId'],equals:row.referenceId}},orderBy:{createdAt:'desc'},select:{id:true}}) : null;
+    return {...await this.issueView(row),relatedInvoiceId:relatedInvoice?.id??null,relatedRefundOperationId:refund?.id??null,resolvedAt:row.resolvedAt?.toISOString()??null};
   }
   async assignees(context:RequestContext,id:string,search:string,cursor?:string) {
     await this.access(context,'system.billing.issue.manage');

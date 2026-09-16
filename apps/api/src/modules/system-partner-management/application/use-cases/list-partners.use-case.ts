@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import type { LineContextHealth, PaginatedPartnersDto, PartnerCompanySummaryDto } from '@watchdog-bms/contracts';
 
 export type ListPartnersQuery = {
+  q?: string;
   status?: string;
   page?: number;
   pageSize?: number;
@@ -15,9 +17,25 @@ export class ListPartnersUseCase {
   async execute(query: ListPartnersQuery): Promise<PaginatedPartnersDto> {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    if (query.q !== undefined && typeof query.q !== 'string') throw new UnprocessableEntityException('คำค้นบริษัทไม่ถูกต้อง');
+    const q = (query.q ?? '').trim();
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new UnprocessableEntityException('หน้ารายการหรือจำนวนรายการต่อหน้าไม่ถูกต้อง');
+    }
+    if (q.length > 120 || (query.status && !['ACTIVE', 'DISABLED', 'ARCHIVED', 'SUSPENDED'].includes(query.status))) {
+      throw new UnprocessableEntityException('คำค้นหรือสถานะบริษัทไม่ถูกต้อง');
+    }
     const skip = (page - 1) * pageSize;
+    if (!Number.isSafeInteger(skip) || skip > 2_147_483_647) throw new UnprocessableEntityException('หน้ารายการไม่ถูกต้อง');
 
-    const where = query.status ? { status: query.status as any } : {};
+    const where: Prisma.CompanyWhereInput = {
+      ...(query.status ? { status: query.status as 'ACTIVE' | 'DISABLED' | 'ARCHIVED' | 'SUSPENDED' } : {}),
+      ...(q ? { OR: [
+        { name: { contains: q, mode: 'insensitive' as const } },
+        { registeredName: { contains: q, mode: 'insensitive' as const } },
+        { id: q },
+      ] } : {}),
+    };
 
     // ponytail: explicit select — never touch business tables
     const [companies, total] = await Promise.all([
@@ -25,7 +43,7 @@ export class ListPartnersUseCase {
         where,
         skip,
         take: pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
         select: {
           id: true,
           name: true,
