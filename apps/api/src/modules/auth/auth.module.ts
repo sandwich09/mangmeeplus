@@ -1,3 +1,4 @@
+import { EmailAccessService } from './application/email-access.service';
 import { AccountEmailNoticeService } from './application/account-email-notice.service';
 import { EmailPasswordResetController } from './presentation/email-password-reset.controller';
 import { AccountEmailOtpController } from './presentation/account-email-otp.controller';
@@ -100,6 +101,7 @@ export function selectAuthMailer(
   controllers: [AccountEmailOtpController, SystemEmailDeliveryController, EmailPasswordResetController, PostmarkEventsController, AuthController, PublicPlatformAccessController, SystemPlatformAccessController],
   providers: [
     AccountEmailOtpService,
+    EmailAccessService,
     AccountEmailReauthService,
     DevJwtVerifierAdapter,
     WatchdogJwtVerifierAdapter,
@@ -173,6 +175,6 @@ export function selectAuthMailer(
   // adapter (disabled / local-console / ses) rather than constructing a second SES client.
   // `LineIdTokenService` is exported so the LINE-first signup surfaces verify an ID token through
   // the same audience/channel policy the employee-link and web-login lanes already use (SEC-01).
-  exports: [AccountEmailNoticeService, AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN, EmailDeliveryService, PostmarkEventsService],
+  exports: [EmailAccessService, IssueTokenUseCase, PlatformAccessService, AccountEmailNoticeService, AuthGuard, ResolveRequestContextUseCase, LineLoginVerifierAdapter, LineIdTokenService, LineChannelBindingService, AuthRateLimitService, LegalAcceptanceService, MintLineHandoffTokenUseCase, AUTH_MAILER_TOKEN, EmailDeliveryService, PostmarkEventsService],
 })
 export class AuthModule {}

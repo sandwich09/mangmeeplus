@@ -241,7 +241,7 @@ export class AccountMergeUseCase {
         // from a row the very next statement clears.
         const { email, emailVerifiedAt } = source!;
         await tx.user.update({ where: { id: userId }, data: { email: null, emailVerifiedAt: null } });
-        await tx.user.update({ where: { id: row.existingUserId }, data: { email, emailVerifiedAt } });
+        await tx.user.update({ where: { id: row.existingUserId }, data: { email, emailVerifiedAt, emailLoginEnabledAt: null } });
       }
 
       await tx.user.update({ where: { id: userId }, data: { status: 'DISABLED' } });

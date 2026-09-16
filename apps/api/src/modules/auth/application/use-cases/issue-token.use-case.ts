@@ -1,6 +1,7 @@
 import { Inject, Injectable, InternalServerErrorException, Optional, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
+import type { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -29,10 +30,11 @@ export class IssueTokenUseCase {
 
   async execute(userId: string, authProvider: 'watchdog', credentialUpdatedAt: Date): Promise<AuthTokensResult>;
   async execute(userId: string, authProvider?: 'line' | 'dev'): Promise<AuthTokensResult>;
+  async execute(userId: string, authProvider: 'email', proof: { tx: Prisma.TransactionClient; reauthBinding: string; now: Date }): Promise<AuthTokensResult>;
   async execute(
     userId: string,
-    authProvider: 'watchdog' | 'line' | 'dev' = 'dev',
-    credentialUpdatedAt?: Date,
+    authProvider: 'watchdog' | 'line' | 'dev' | 'email' = 'dev',
+    credentialUpdatedAt?: Date | { tx: Prisma.TransactionClient; reauthBinding: string; now: Date },
   ): Promise<AuthTokensResult> {
     // ponytail: prefer watchdog secret (prod); fall back to dev secret (local)
     const secret = this.config.authJwtSecret;
@@ -71,7 +73,11 @@ export class IssueTokenUseCase {
 
     const expiresAt = new Date(Date.now() + REFRESH_EXPIRES_IN * 1000);
     const sessionData = { userId, tokenId, familyId, expiresAt, status: 'ACTIVE' as const };
-    if (authProvider === 'watchdog' && credentialUpdatedAt) {
+    if (authProvider === 'email' && credentialUpdatedAt && !(credentialUpdatedAt instanceof Date)) {
+      // Caller holds account/membership locks and consumes the email proof in this transaction.
+      await credentialUpdatedAt.tx.authSession.create({ data: { ...sessionData,
+        emailReauthenticatedAt: credentialUpdatedAt.now, emailReauthBindingHash: credentialUpdatedAt.reauthBinding } });
+    } else if (authProvider === 'watchdog' && credentialUpdatedAt instanceof Date) {
       await this.prisma.client.$transaction(async (tx) => {
         // Lock the credential snapshot verified by PasswordLoginUseCase until the session row
         // exists. A concurrent password change then either runs first (this rejects the stale
@@ -92,7 +98,7 @@ export class IssueTokenUseCase {
 
     // L-10: awaited. Post-commit AuditService.log never throws, so a login cannot 500 here.
     // tokenId is reused as the requestId correlation for auth events.
-    if (this.audit) {
+    if (this.audit && authProvider !== 'email') {
       await this.audit.log({
         action: AuditAction.AUTH_LOGIN_EXCHANGE,
         actorUserId: userId,

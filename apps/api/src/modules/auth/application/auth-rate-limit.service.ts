@@ -381,6 +381,10 @@ export class AuthRateLimitService {
     );
   }
 
+  async assertEmailAccessAllowed(ip: string, action: 'request' | 'confirm' | 'signup'): Promise<void> {
+    await this.assertWithinLimit(`email-access-${action}-ip`, ip, action === 'request' ? 10 : 30, 3600);
+  }
+
   private async assertWithinLimit(scope: string, key: string, maxRequests: number, windowSeconds: number): Promise<void> {
     const decision = await this.limits.consume(scope, key, maxRequests, windowSeconds);
     this.assertDecision(scope, decision.allowed, decision.retryAfterSeconds);

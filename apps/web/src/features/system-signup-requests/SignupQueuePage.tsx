@@ -109,7 +109,7 @@ export function SignupRowActions({ item, busy, onApprove, onReject, onReissue, o
 
   return (
     <div className="flex flex-wrap gap-2">
-      {!isLineSignup(item)&&<Link className={`${rowActionClass} border-gray-300 bg-white text-gray-700`} href={`/system/signup-requests/${encodeURIComponent(item.requestId)}/mail`}>ประวัติอีเมลรับบัญชี</Link>}
+      {!isLineSignup(item)&&item.source!=='email-otp'&&<Link className={`${rowActionClass} border-gray-300 bg-white text-gray-700`} href={`/system/signup-requests/${encodeURIComponent(item.requestId)}/mail`}>ประวัติอีเมลรับบัญชี</Link>}
       {approve && (
         <button
           type="button"
@@ -296,7 +296,7 @@ export default function SignupQueuePage() {
       // The API answers 200 with the CURRENT state, so a close-out that found the run still going
       // comes back as PROVISIONING. Reporting that as done would be the same lie the chip told.
       const fromLine = isLineSignup(item);
-      const finishing = fromLine && isFinishingStrandedRow(item.state);
+      const finishing = (fromLine || item.source === 'email-otp') && isFinishingStrandedRow(item.state);
       if (!resolutionAction) return;
       const body: AdminSignupDecisionBody = {
         action: resolutionAction,
@@ -331,7 +331,7 @@ export default function SignupQueuePage() {
       } else {
         toast.success(finishing
           ? 'ปิดงานเรียบร้อย'
-          : fromLine ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
+          : (fromLine || item.source === 'email-otp') ? 'อนุมัติแล้ว เปิดร้านให้เรียบร้อย' : 'อนุมัติแล้ว ระบบกำลังส่งอีเมลตั้งรหัส');
       }
       setApproving(null);
       await load();
@@ -467,20 +467,22 @@ export default function SignupQueuePage() {
   // customer hears about it in LINE. Promising an email here would be a promise nothing keeps —
   // and for a row whose shop already exists, so would promising to open one (review LOW-2).
   const approveFromLine = approving ? isLineSignup(approving) : false;
-  const approveFinishing = approveFromLine && isFinishingStrandedRow(approving!.state);
+  const approveFromEmail = approving?.source === 'email-otp';
+  const approveFinishing = (approveFromLine || approveFromEmail) && isFinishingStrandedRow(approving!.state);
   const approveDialogTitle = approveFinishing ? 'ทำคำขอเดิมต่อ' : approveFromLine ? 'เลือกผลคำขอ LINE' : 'อนุมัติคำขอ';
   const approveDialogConfirmLabel = approveFinishing
     ? 'ทำรายการเดิมต่อ'
     : resolutionAction === 'RETURN_EXISTING' ? 'ยืนยันกลับร้านเดิม'
       : resolutionAction === 'REQUEST_INFO' ? 'บันทึกและแจ้งข้อมูลที่ต้องขอ'
         : resolutionAction === 'CREATE_NEW_SHOP' ? 'ยืนยันผลเปิดร้านใหม่'
-          : approveFromLine ? 'เลือกผลก่อน' : 'อนุมัติและส่งอีเมล';
+          : approveFromLine ? 'เลือกผลก่อน' : approveFromEmail ? 'อนุมัติและเปิดร้าน' : 'อนุมัติและส่งอีเมล';
   const approveDialogMessage = !approving
     ? ''
     : approveFinishing
       ? `ทำคำขอเดิมของร้าน ${approving.companyName} ต่อ ระบบจะใช้ผลตรวจและสิทธิ์ทดลองที่บันทึกไว้เดิม`
       : approveFromLine
         ? `เลือกผลที่จะเกิดกับคำขอของร้าน ${approving.companyName} ให้ชัดเจนก่อนบันทึก`
+        : approveFromEmail ? `เปิดร้านให้ ${approving.ownerDisplayName} ผู้สมัครกลับเข้าด้วยรหัสอีเมลเดิมได้ โดยไม่ต้องตั้งรหัสผ่าน`
         : `อนุมัติและส่งอีเมลตั้งรหัสให้ ${approving.contactEmail ?? approving.ownerDisplayName} ใช่หรือไม่`;
   // R10/F2: a row whose free text the mapping could not read may not be approved on the DEFAULT —
   // but "อื่น ๆ" chosen on purpose is a decision, and the checkbox is how it says so.
@@ -758,6 +760,7 @@ export default function SignupQueuePage() {
               <span className="mt-0.5 block text-xs text-gray-500">
                 {rejecting && isLineSignup(rejecting)
                   ? 'ค่าเริ่มต้นคือส่ง เพราะลูกค้าเปิดแชทนี้เอง ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน'
+                  : rejecting?.source === 'email-otp' ? 'ผู้สมัครตรวจผลได้ในหน้าสมัคร เลือกส่งอีเมลเพิ่มได้หากจำเป็น'
                   : 'ค่าเริ่มต้นคือไม่ส่ง เพราะอีเมลนี้ยังไม่ผ่านการยืนยัน ข้อความที่ส่งจะไม่เปิดเผยเหตุผลภายใน'}
               </span>
             </span>

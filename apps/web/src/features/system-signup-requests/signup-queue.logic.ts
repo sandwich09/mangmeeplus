@@ -86,6 +86,10 @@ export function signupIdleChip(item: AdminSignupQueueItemDto): Chip | null {
  */
 export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   const chips: Chip[] = [];
+  if (item.source === 'email-otp') {
+    chips.push({ label: 'สมัครด้วยรหัสอีเมล ยืนยันอีเมลแล้ว', tone: 'info' });
+    if (item.contactEmailConflict) chips.push({ label: 'อีเมล เบอร์โทร หรือชื่อร้านอาจซ้ำกับคำขอเดิม กรุณาตรวจก่อนเปิดร้านใหม่', tone: 'warning' });
+  }
   if (item.reviewResolution === 'PLAN_REVIEW') {
     chips.push({ label: 'รอจัดแพ็กเกจ ยังไม่เปิดร้าน', tone: 'warning' });
   }
@@ -97,7 +101,7 @@ export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   }
   // A LINE signup's email is unverified shop contact data, not an account identity. Only the
   // verified web-email flow may promise that an address match will attach an existing account.
-  if (!isLineSignup(item) && item.emailMatchesExistingUser) {
+  if (!isLineSignup(item) && item.source !== 'email-otp' && item.emailMatchesExistingUser) {
     chips.push({ label: 'อีเมลตรงกับบัญชีเดิม ระบบจะผูกให้ตอนยืนยัน', tone: 'info' });
   }
   if (item.priorRejectedRequestId) {
@@ -184,7 +188,7 @@ export function canApproveSignup(state: string, item?: AdminSignupQueueItemDto):
   // P10-L: for a LINE application, approving is also the RECOVERY. READY means the shop was built
   // and the last step did not land, so approving closes it. Idempotent behind the fence, and it
   // leaves the customer's LINE account locked until done.
-  if (item === undefined || !isLineSignup(item)) return false;
+  if (item === undefined || (!isLineSignup(item) && item.source !== 'email-otp')) return false;
   if (state === 'READY') return true;
   // An abandoned run is the third recovery. A live one is not: the API answers 200 with the row
   // still PROVISIONING (its idempotency path), so a button here would promise a close-out that

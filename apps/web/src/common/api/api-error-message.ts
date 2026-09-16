@@ -7,6 +7,13 @@ import { SUBSTITUTE_RECEIPT_RENDERABILITY_LIMITS } from '@watchdog-bms/contracts
 
 /** Stable error codes, including the `code:detail` conflicts (matched by prefix). */
 const CODE_LABELS: Record<string, string> = {
+  EMAIL_ACCESS_INVALID: 'รหัสหมดอายุหรือใช้ไม่ได้แล้ว กรุณาขอรหัสทางอีเมลใหม่',
+  EMAIL_ACCESS_EXISTING_ACCOUNT: 'กรุณาเข้าสู่บัญชีเดิมด้วยรหัสผ่านหรือ LINE ก่อน',
+  EMAIL_SIGNUP_CHANGED: 'ข้อมูลบัญชีเปลี่ยนแล้ว กรุณาเข้าสู่ระบบอีกครั้ง',
+  EMAIL_SIGNUP_INPUT_INVALID: 'กรุณาตรวจชื่อร้าน ชื่อผู้ติดต่อ และเบอร์มือถืออีกครั้ง',
+  EMAIL_LOGIN_NOT_ALLOWED: 'บัญชีผู้ดูแลระบบต้องใช้วิธีเข้าสู่ระบบเดิม',
+  external_signup_disabled: 'ขณะนี้ยังไม่เปิดรับสมัครใหม่ กรุณาติดต่อทีมงาน',
+
   BILLING_RECIPIENT_UPDATE_REQUIRED: 'กรุณาตรวจและยืนยันเปลี่ยนผู้รับเอกสารของบริษัทนี้ด้านบน แล้วตรวจสรุปการชำระเงินใหม่',
   BILLING_EMAIL_CHANGED: 'ข้อมูลอีเมลเปลี่ยนแล้ว กรุณาตรวจผู้รับเอกสารและสรุปรายการใหม่',
   BILLING_EMAIL_VERIFICATION_REQUIRED: 'กรุณาผูกและยืนยันอีเมลให้เรียบร้อยก่อนชำระเงิน',
@@ -23,7 +30,7 @@ const CODE_LABELS: Record<string, string> = {
   EMAIL_OTP_TARGET_INVALID: 'กรุณาระบุอีเมลให้ถูกต้อง',
   EMAIL_ACCOUNT_UNAVAILABLE: 'บัญชีนี้ไม่สามารถยืนยันอีเมลได้ กรุณาติดต่อทีมงาน',
   EMAIL_OTP_NOT_FOUND: 'ไม่พบคำขอยืนยันอีเมลนี้ กรุณาโหลดข้อมูลล่าสุด',
-  ACCOUNT_REAUTH_REQUIRED: 'กรุณากดปุ่มยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่านสำรอง แล้วกลับมาตั้งรหัสผ่านภายใน 5 นาที',
+  ACCOUNT_REAUTH_REQUIRED: 'กรุณายืนยันตัวตนอีกครั้งด้วยวิธีที่บัญชีรองรับ แล้วกลับมาตั้งรหัสผ่านภายใน 5 นาที',
   LAST_LOGIN_REQUIRED: 'ก่อนยกเลิกการผูก LINE ต้องมีรหัสผ่านสำรอง และมีชื่อผู้ใช้หรืออีเมลที่ยืนยันแล้ว',
 
   partner_plan_term_changed: 'มีการเปลี่ยนแพ็กเกจหรือวันใช้งานแล้ว โหลดข้อมูลล่าสุดและตรวจสอบก่อนบันทึกใหม่',

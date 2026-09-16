@@ -1,76 +1,83 @@
-# สมัครผ่านเว็บและ LINE ให้เริ่มใช้งานง่ายเท่ากัน
+# สมัครและเข้าสู่ระบบด้วยอีเมลโดยไม่ใช้รหัสผ่าน
 
-> แก้ไข 2026-09-16: เรื่องอีเมลใช้ [spec สมัคร LINE แบบไม่บังคับอีเมลและยืนยัน OTP ก่อนจ่าย](signup-optional-email-otp-billing-spec-th.md) เป็นกฎปัจจุบัน: อีเมลติดต่อร้านใน LINE เป็นทางเลือก, web claim ยังต้องมีอีเมล, การอนุมัติชำระใหม่ต้องใช้อีเมลบัญชีที่ยืนยันแล้ว และเปลี่ยนผู้รับเอกสารเดิมของบริษัทด้วยการตรวจและยืนยันแยก ข้อความเดิมด้านล่างที่ขัดกันเป็นประวัติ ไม่ใช่กฎสำหรับ implementation รอบนี้
-> **Current scope — 2026-09-16:** เส้นทางที่อนุมัติและ implement แล้วคือ official → สมัครในแอป → ตรวจคำขอ → claim → ตั้งรหัส/ใช้บัญชีเดิม → เริ่มใช้โดยไม่บังคับ LINE พร้อมยืนยันอีเมลและกู้รหัสผ่าน Postmark. ดู [ผล browser/API/PG ปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json). ส่วนฟอร์มย่อ, OTP/passwordless และ email auto-provision เป็นงาน E0 แยกจาก branch billing นี้ ไม่ใช้ผล billing/signup เดิมอ้างว่า implement เส้นทางใหม่นี้แล้ว. สถานะ BRAINSTORM ด้านล่างเป็นประวัติข้อเสนอ E0; การเปิด provider/production ยังต้องผ่าน release acceptance.
+สถานะ 2026-09-16: REVIEWED / IMPLEMENTING. Owner สั่งรีวิว bug/gap/impact แล้วเริ่ม implement. ขอบเขตนี้ต่อจาก billing และ optional-email OTP; ไม่ deploy หรือส่งเงินจริง/เมลจริงจากการทดสอบนี้.
 
-> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](../plans/mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูป โดยมติ pack amendment2026-09-12 ให้ annual รับโควตาทั้งก้อนทันทีและไม่รีเซ็ตโควตา paid รายเดือน. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full spec/native provider acceptance ยังไม่ครบ; local simulated browser/HTTP checkpoint ดูหลักฐาน integration ล่าสุด ไม่ใช้แทน native provider acceptance.
+## 1. ผลลัพธ์และข้อกำหนด
 
-> **หลัง signup → payment 2026-09-11:** ใช้ [LINE + web billing UI](mangmee-line-web-billing-ui-spec-th.md) / [แผน](../plans/mangmee-line-web-billing-ui-plan-th.md). ผู้สมัครเว็บที่ไม่มี LINE จ่ายและจัดการเอกสารผ่าน app ได้; ผู้สมัคร LINE ใช้ LIFF handoff เข้าหน้าเดียวกันโดยไม่ตั้ง password เพียงเพื่อจ่าย. Billing email แยกจาก login/recovery identity; ไม่สร้าง user/company/trial/subscription ใหม่เมื่อเปลี่ยนช่องทาง. Billing UI/routes หลังมีบัญชีมี local browser/HTTP evidence แล้วตาม implementation checkpoint; เส้นทาง easy signup ใหม่ยังต้องสรุปและ implement แยก ไม่ถือว่าเลือก OTP/link จากการทำ billing สำเร็จ.
+ลูกค้าไม่มี LINE เริ่มที่เว็บ → ยืนยันอีเมลด้วยรหัส 6 หลัก → กรอกชื่อร้าน ชื่อผู้ติดต่อ มือถือ และรับทราบข้อกำหนด → เปิดร้านเมื่อผ่านกฎเดิม หรือเห็นสถานะรอตรวจ → เริ่มใช้งาน. ไม่ขอรหัสผ่าน เลขภาษี หรือ VAT ตอนสมัคร. กลับเข้าครั้งถัดไปใช้รหัสอีเมลใหม่ ตั้งรหัสสำรอง/ผูก LINE ภายหลังได้. สิทธิ์เริ่มต้นใช้ provisioning เดิม: 7 เมนู, trial 30 วัน, 1 สาขา/2 คน, 15 ใบต่อเดือน. การเข้าสู่ระบบ/ผูกช่องทางไม่ให้ trial หรือแพ็กเกจซ้ำ.
 
-สถานะ: **BRAINSTORM / PRODUCT DIRECTION CONFIRMED 2026-09-11; DESIGN PROPOSAL, NOT IMPLEMENTED**.
+ใช้ OTP เพื่อรองรับผู้ประกอบการที่เปิดเมลคนละอุปกรณ์กับหน้าเว็บ. เปิดหน้าเว็บอุปกรณ์ใหม่ต้องขอรหัสใหม่ที่อุปกรณ์นั้น; ไม่มี bearer proof ใน URL. การกู้โดยยังเข้ากล่องอีเมลได้ใช้ OTP login เดิม; กล่องอีเมลและ LINE หายทั้งคู่ส่ง support ไม่เปลี่ยนอีเมลหรือรวมบัญชีจากชื่อ/มือถือ.
 
-Owner ยืนยัน: ลูกค้าที่ไม่ใช้ LINE ต้องสมัครและใช้งานมั่งมีผ่านเว็บได้ครบ และสมัครง่ายเหมือนทาง LINE. เอกสารนี้บันทึกเป้าหมายที่ยืนยันแล้วและข้อเสนอเพื่อคุยต่อ ไม่ถือว่า Owner เลือก OTP แทนลิงก์ ยกเลิกการตรวจทุกกรณี หรืออนุมัติเปิด email/auto-approval บน production แล้ว.
+## 2. Identity และ security contract
 
-อ้างอิง: [P10](mangmee-external-signup-contract-spec-th.md), [P10-L](mangmee-line-first-signup-spec-th.md), [นโยบาย trial/email ล่าสุด](onboarding-trial-receipt-fixes-spec.md), [P11 delivery](mangmee-email-delivery-claim-spec-th.md), [P26 billing](mangmee-billing-subscription-spec-th.md), [แผน](../plans/unified-easy-signup-plan-th.md), [เว็บไซต์ official](../../../mangmee_web/docs/specs/stripe-billing-alignment-spec-th.md).
+- Public login proof แยกจาก AccountEmailOtpService (ผูก/เปลี่ยนอีเมลหลัง authenticated). ไม่ใช้ AccountClaimToken, verification link หรือ billing recipient เป็น login proof.
+- User.emailLoginEnabledAt เป็น opt-in ของวิธี login. บัญชี email-first ใหม่ตั้งใน transaction เปิดร้าน; บัญชีเดิมต้องยืนยัน password หรือ fresh same-account LINE proof และกดยืนยันที่หน้าความปลอดภัย. อีเมลต้อง verified และบัญชี ACTIVE. ไม่เปิดวิธีใหม่อัตโนมัติให้บัญชีเก่า และไม่เพิ่ม passwordless ให้ SYSTEM_ADMIN.
+- Public challenge: email ปรับ lowercase, random UUID, browser secret สุ่มอย่างน้อย 256 bit เก็บ hash, purpose EMAIL_ACCESS_V1, environment/key version, security binding ของ user ถ้ามี, HMAC ของ OTP, expiry, failed attempts, delivery attempt, status. Raw OTP อยู่แค่ memory/transport ไม่ log/DB/outbox. เก็บ browser secret ใน HttpOnly SameSite cookie ของ BFF; JS เห็นเพียงสถานะ/challenge id.
+- OTP อายุ 10 นาที, ผิดได้ 5 ครั้ง, ขอใหม่ห่าง 60 วินาที, ไม่เกิน 5 ครั้ง/ชม./อีเมล และ 10 ครั้ง/วัน/อีเมล พร้อม shared fail-closed IP limiter. รหัสใหม่ยกเลิกรหัสเดิม; requestKey เดิมต้อง fingerprint ตรงและไม่ส่งซ้ำ. Changing email เริ่ม challenge ใหม่. Timing/result ก่อนพิสูจน์อีเมลไม่เปิดเผยว่ามีบัญชีหรือไม่.
+- Confirm ผูก browser secret + code + purpose + current identity snapshot. account disabled, email/security revision/credential/LINE binding เปลี่ยน, code expired/used/revoked ถูกปฏิเสธ. Count ผิด commit แม้ตอบ error. OTP ใช้ได้ครั้งเดียว; response หายให้ขอใหม่ ไม่คืน session จาก code เก่า. หลังพิสูจน์ใหม่ resume ร้าน/คำขอเดิมได้.
+- consume proof และสร้าง AuthSession เป็น transaction เดียวภายใต้ user/company/membership locks ตามลำดับเดิม. ต้องผ่าน platform/legal/password-change/company guards เดิม. Email session เก็บ fresh email reauthentication เพื่อให้ผู้สมัครใหม่ตั้งรหัสสำรองได้; อำนาจนี้หมดอายุ 5 นาทีตาม helper เดิม.
+- Unverified/duplicate legacy address ไม่ attach/merge/overwrite. หลัง proof แสดงให้ใช้ login เดิมหรือ support; ไม่มี account existence response ก่อน proof. Existing enabled account เข้า membership เดิมเท่านั้น ไม่เปิดร้านใหม่จากปุ่มสมัคร.
 
-## 1. เป้าหมายที่ยืนยันแล้ว
+## 3. Signup และกฎอนุมัติ
 
-- LINE เป็นทางเลือก. การสมัคร ใช้งานเว็บ กลับเข้าสู่ระบบ กู้บัญชี ดูสถานะสมัคร ติดต่อทีมงาน และต่ออายุเมื่อ billing พร้อม ต้องมีทางที่ไม่บังคับ LINE.
-- ลดขั้นตอนและเวลารอของผู้สมัครเว็บให้ใกล้เคียง LINE; ไม่ให้ช่องทางที่เลือกทำให้ได้คนละบัญชี ร้าน trial หรือ subscription โดยไม่ตั้งใจ.
-- ทั้งสองช่องทางใช้ trial เดิม FREE_TRIAL → FREE_TRIAL_15: 30 วันจาก provisioning, 1 สาขา/2 คน/15 ใบต่อเดือน. การเปลี่ยนช่องทางหรือเพิ่มวิธี login ไม่เริ่ม trial ใหม่.
-- ฟีเจอร์เฉพาะ LINE เช่น ส่งรูปในแชต เป็นความสะดวกเสริม; core business journey ต้องทำบนเว็บได้. ต้องตรวจ coverage จริงก่อนอ้างว่าทุก journey ผ่านแล้ว.
+หลัง OTP ใหม่ที่ไม่มีบัญชีให้ proof จำกัดเฉพาะ signup อายุ 10 นาที. ส่งข้อมูลผ่าน BFF พร้อม secret เดิมและ intake policy; server ไม่รับ userId, tier, approved flag จาก client. request source `email-otp`, policy EMAIL_SIGNUP_V1. บันทึก source email-otp สำหรับช่องทางสมัคร; ไม่รับ campaign/referral ใหม่ในรุ่นนี้ และไม่ใช้ attribution เป็นหลักฐานยืนยันตัวตน. ฟอร์มชื่อผู้ติดต่อเป็น displayName จริง ไม่สร้าง first/last name สมมติ.
 
-## 2. สิ่งที่โค้ดทำปัจจุบัน
+ใช้ CompanySignupRequest, onboarding, provisioning fence, trial guards, audit/outbox เดิม. เพิ่ม source-specific transitions โดยไม่เปิด VALIDATED→PROVISIONING ให้ official-site เดิม. บัญชี ownerAuth=email ไม่มี temporary password/credential. verified email และ opt-in เขียนพร้อม owner.
 
-| จุดเข้า | พฤติกรรมที่พบใน checkout |
-|---|---|
-| mangmee_web | trial request modal ส่ง Web3Forms/อีเมลหาทีมงาน; ยังไม่ได้ส่งเข้า CompanySignupRequest โดยตรง. ตอน fallback mailto ยังตั้ง trialDone=true แม้ไม่รู้ว่าผู้ใช้ส่งอีเมลแล้วหรือไม่ |
-| App /signup (Flow B) | คำขอ → manual review → approval email → mailbox claim + ตั้งรหัส/เข้าบัญชีเดิม → provision; LINE เป็นขั้นเชื่อมภายหลัง |
-| LINE OA/LIFF | verified LINE identity → ข้อมูลร้าน/มือถือ/อีเมล → AUTO_FREE เมื่อเปิดโหมดและผ่านเงื่อนไข หรือ manual review; ใช้ได้โดยไม่ตั้งรหัสผ่าน |
+AUTO_FREE ใช้ mode/cap เดียวกับ LINE (ชื่อ config เดิมคงไว้เพื่อ compatibility) และ advisory lock/day counter เดียวกัน;นับทั้งสอง source. Auto เฉพาะบัญชีใหม่ที่ไม่ชน User email/username, คำขอ/ชื่อร้าน/มือถือเดิมข้ามช่องทาง, prior reject/suspend, repeat intent และมี operator. กรณีเสี่ยง/ถึง cap/mode manual → PENDING_REVIEW ในคิวเดิม ไม่มีสิทธิ์ก่อน provision. Duplicate signal เป็นเหตุส่ง review ไม่ใช่ proof ownership. Adminต้องเห็นข้อความเตือนข้อมูลซ้ำก่อนกดอนุมัติ; สำหรับsourceemail-otpใช้contactEmailConflictเป็นสัญญาณรวม email/phone/shop-name ของคำขอ ไม่อ้างว่าเป็นตัวตนเดียวกัน. serialize source decision ภายใต้ shared cap lock และ recheck ก่อน grant.
 
-หลักฐานโค้ด: submit-company-signup.use-case.ts, signup-claim.use-case.ts, submit-line-signup.use-case.ts, provision-signup.use-case.ts, SignupPage.tsx และ actual bundled template ใน sibling index.html. ไม่ได้ตรวจ cloud/current production configuration ในรอบ brainstorm.
+หนึ่ง email-first request ต่อ normalized email สำหรับ first shop; request ที่ค้าง/rejected ไม่เปิดใหม่อัตโนมัติจาก OTP ใหม่. Refresh/response-loss/provision crash resume request เดิมด้วย fresh OTP. ผู้ดูแลอนุมัติใช้ permission/intent/audit เดิมและ source-aware provisioning; status browser เห็นได้เฉพาะผู้พิสูจน์ mailbox ของ request. Review ไม่เปิด trial จน provision สำเร็จ. Existing account/second shop ใช้ existing authenticated workflow ไม่แอบให้ auto trial ซ้ำ.
 
-## 3. Journey ที่เสนอ
+## 4. UX และ integration
 
-เว็บ official กด “เริ่มใช้ฟรี” → หน้าเริ่มสมัครในแอป → เลือก LINE หรืออีเมล. LINE OA เข้าทาง LINE เดิม; ทั้งคู่ลงคำขอในระบบมั่งมี ใช้ provisioning/สิทธิ์/คิวตรวจกลางที่มีอยู่. ฟอร์มฝากทีมงานติดต่อกลับแยกเป็น “ขอคำแนะนำ” และไม่แสดงเป็นการเปิดบัญชี.
+- `/signup` มีปุ่มเริ่มด้วยอีเมลและคำแนะนำสมัครในเมนู LINE เดิม ฟอร์ม legacy/manual claim ยังเดินต่อได้. `/login` มี “รับรหัสทางอีเมล” และ password/LINE เดิม. หน้า email flow รวม email → OTP → ข้อมูลร้าน/สถานะ; ไม่ต้องเข้าใจคำว่า token/provider.
+- ช่อง code เดียว inputMode=numeric, autocomplete=one-time-code, paste 6 หลัก, label/error focus, 390px/keyboard. Terms/privacy ตอนสมัครเป็นการรับทราบ; ยอมรับเอกสารฉบับปัจจุบันที่ legal gate หลังเข้าสู่ระบบครั้งแรก. ปุ่ม loading กันกดซ้ำ; countdown จาก server retryAt; แก้อีเมล/ขอใหม่/กลับ login/support ไม่เป็นทางตัน.
+- แสดงส่งสำเร็จเฉพาะ provider ยอมรับ; accepted ไม่แปล inbox. provider CONFIG/PERMANENT/UNKNOWN แจ้งความจริงและขอใหม่ตามเวลา ไม่ส่ง payload เดิมซ้ำเมื่อไม่รู้ผล.
+- BFF ไม่ส่ง access/refresh/browser proof กลับ JS. Same-origin mutation guard, trusted IP forwarding, no-store และ allowlisted internal next path. หน้า status ไม่เปิดเผยข้อมูลร้านอื่น. เก็บ next path ที่ผ่าน sanitizeNextPath เพื่อกลับหน้าจ่ายเงิน/ตั้งรหัสสำรองหลัง OTP; forced password change และ legal gate ต้องทำก่อนกลับ.
+- LINE link ใช้ verified LINE + current account flow เดิม; ไม่ link จาก contact email. Paid company/receipt/AI entitlement ใช้ company เดิม ไม่แก้ billing policy. Email verification gate ก่อนจ่ายยังทำงาน.
+- Marketing CTA ไป app signup ไม่จำลองว่าเปิดร้านจาก lead submit. ข้อความและ docs ของ mangmee_web ต้องสอดคล้อง;ไม่เปลี่ยน pricing.
 
-**ข้อเสนอเส้นอีเมลสำหรับลูกค้าใหม่:**
+### Contract สำหรับ web developer
 
-1. กรอกชื่อร้าน มือถือ อีเมล และยอมรับข้อกำหนด. ยังไม่ขอ username/password, VAT, เลขภาษี, ที่อยู่ หรือข้อมูลเพื่อออกเอกสารที่ยังไม่จำเป็นต่อการเริ่มใช้; การลด field ต้องปรับ DTO/provisioning ให้ตรง ไม่สร้างค่าภาษี/ตัวตนสมมติ.
-2. ยืนยันเจ้าของอีเมล. เสนอรหัสสั้นในหน้าสมัครเดิมเพื่อใช้ข้ามมือถือ/คอมได้; ลิงก์ยืนยันยังเป็นทางเลือกที่ต้องเทียบกับ code เดิม. ยังไม่ได้เลือกวิธีสุดท้ายหรือกำหนดอายุ/จำนวนครั้งจากตัวอย่างเป็น policy.
-3. ตรวจ eligibility ปัจจุบันอีกครั้ง → ผู้สมัครใหม่ที่ผ่านเกณฑ์เปิดร้านอัตโนมัติพร้อม session → หน้าเริ่มอัปโหลดใบเสร็จ. กรณีต้องตรวจ แสดงสถานะและทางติดตามโดยไม่อ้างว่าร้านพร้อมแล้ว. เวลา trial เริ่มเมื่อ provision สำเร็จ.
-4. ครั้งถัดไปเข้าได้ด้วยวิธีอีเมลที่รองรับจริง; ตั้งรหัสหรือเชื่อม LINE เพิ่มทีหลังได้. ห้ามส่งมอบ signup แบบไม่ใช้รหัสโดยยังไม่มีทางกลับเข้า/กู้บัญชีที่ไม่ใช้ LINE.
+| Same-origin BFF | JSON จากหน้าเว็บ | ผลสำเร็จ |
+|---|---|---|
+| POST /api/auth/email-access/request | email≤254, requestKey UUID, nextPath? | challengeId, expiresAt, retryAt, deliveryStatus; HttpOnly browser cookie |
+| POST /api/auth/email-access/confirm | code 6 digits | SIGNUP / EXISTING_LOGIN_REQUIRED / LOGIN |
+| POST /api/auth/email-access/signup | companyName≤120, displayName≤160, phoneNumber, consentVersion=EMAIL_SIGNUP_V1 | STATUS หรือ LOGIN |
+| POST /api/auth/email-access/status | {} | CODE / NEW / STATUS / LOGIN; ใช้ browser cookie เดิม |
+| POST /api/v1/auth/account/email/otp/login-method | enabled boolean, currentPassword? | account email status รวม emailLoginEnabled; requires authenticated permission account.password.change + fresh proof |
 
-ข้อเสนอนี้เปลี่ยนลำดับ Flow B เดิมเฉพาะ flow ใหม่เมื่อออกแบบ/implement ครบ: email proof → eligibility → auto หรือ manual review → provision. คำขอเก่าที่รออนุมัติ/claim ต้องเดินต่อด้วย policy revision เดิม ไม่ถูก approve ใหม่จากการเปลี่ยนฟอร์ม.
+BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป `/v1/public/email-access/{action}`. LOGIN ตั้ง access/refresh cookies; response ให้เฉพาะ companyId, safe redirectPath และ legal/password-change flags. ไม่มี JWT/OTP/browser secret ใน URL หรือ response ให้ JavaScript. Serverรับโทรศัพท์ไทยทั้ง0… และ+66… แล้ว normalizeเป็น0…; consentVersion เป็น intake acknowledgement ไม่ใช้แทน legal acceptance record.
 
-## 4. Identity, review และ billing boundaries
+400 EMAIL_OTP_INVALID ให้กรอกรหัสใหม่ในช่องเดิม;401 EMAIL_ACCESS_INVALID กลับขั้นอีเมลและสร้าง requestKeyใหม่.429 แสดงเวลารอจากserver.503 EMAIL_DELIVERY_UNAVAILABLE ให้ลองใหม่/ติดต่อทีมงาน. ผู้สมัครที่ค้างตรวจขอ OTP ใหม่เพื่อกลับคำขอเดิมได้โดยไม่เริ่มtrialใหม่. Configใช้ POSTMARK/EMAIL_OTP_HMAC_* และ EXTERNAL_SIGNUP_ENABLED เดิม; mode/capของLINEครอบคลุมemailด้วยตาม§3. ปิดรับสมัครใหม่ไม่ปิดlogin/statusของคำขอเดิม.
 
-- การยืนยันอีเมลพิสูจน์กล่องอีเมล ไม่พิสูจน์ว่าผู้ใช้เป็นเจ้าของร้าน/บัญชีทุกแถวที่มี contactEmail ตรงกัน. ห้าม merge หรือให้สิทธิ์บัญชีเก่าจาก unverified/contact email collision; ต้องใช้ account proof และ linking rules ที่มีอยู่.
-- บัญชีเดิมที่ตั้งรหัสหรือผูก LINE แล้วต้องไม่ถูกเปลี่ยนวิธีเข้า/กู้บัญชีหรือยกเลิกข้อจำกัดเงียบ ๆ. ให้แยก new account, existing verified account, unverified-email collision และ held/revoked account ใน contract.
-- ตรวจข้ามช่องทาง: คำขอเดิมที่ยังค้าง, ร้านเดิม, repeat-trial intent, prior rejection/hold และ concurrent submissions. ชื่อร้าน/อีเมล/มือถือเหมือนกันเป็น review signal ไม่ใช่หลักฐาน ownership. ร้านที่สองเป็น explicit intent และใช้กติกา trial ซ้ำที่อนุมัติแล้ว.
-- เสนอ auto เฉพาะ first-time eligible applicant หลัง identity proof. กรณีซ้ำ/ข้อจำกัด/เกิน cap/สัญญาณที่ต้องตรวจยังใช้คิวเดิม. ต้องป้องกันสลับเว็บ/LINE เพื่อหลบ cap หรือได้ trial ซ้ำ; ห้ามคูณเพดาน auto โดยเปิด counter ต่อช่องทางโดยไม่ตั้งใจ.
-- Persist source channel และ identity method แยกกันเพื่อวัด funnel เช่น มาจากเว็บ official แต่ยืนยันด้วย LINE; ไม่เพิ่ม analytics vendor ในงานนี้.
-- ไม่มีบัตรหรือ Stripe ตอนสมัคร trial. เมื่อ billing พร้อม OWNER เลือกบริษัทก่อนซื้อ ใช้ company billing เดิม ไม่สร้าง subscription แยกตามช่องทาง/วิธี login.
+## 5. Bug / gap / impact review
 
-## 5. Failure และ operational readiness
+| ID | ช่องโหว่/ผลกระทบ | ข้อกำหนดปิดช่องโหว่ |
+|---|---|---|
+| E01 | verification OTP ถูกใช้เป็น login โดยผิด purpose | dedicated model/purpose/public boundary |
+| E02 | ยึดบัญชี contact email เก่า/ร่วม | explicit opt-in + verified/current snapshot; no merge |
+| E03 | OTP เดาสุ่ม/ส่งเมลเกิน/DB leak | HMAC + bounded attempts/IP+recipient budgets + no raw secret |
+| E04 | login CSRF/session fixation/URL leak | browser secret HttpOnly + same-origin + mint new session |
+| E05 | response หาย/สองแท็บได้หลายร้าน | durable request id + single-use proof + provisioning fence |
+| E06 | เปลี่ยน password/email/hold ระหว่างยืนยัน | lock + current security snapshot before atomic session |
+| E07 | สมัครง่ายแต่ logout แล้วเข้าไม่ได้ | same OTP returning login + recovery/support/backup password |
+| E08 | cap/trial คูณเมื่อใช้ web+LINE | shared daily lock/count + cross-channel duplicate review |
+| E09 | admin approval ส่ง claim/password โดยผิด source | explicit email source transitions/onboarding/admin handling |
+| E10 | providerล่มแต่หน้าแจ้ง sent/ready | durable delivery status + no synthetic success |
+| E11 | new source ทำ legacy pending/LINE พัง | source-isolated transitions + old claims unchanged + regression |
+| E12 | legal/platform bypass/สิทธิ์ผิดบริษัท | existing guards/current memberships/no client entitlement |
+| E13 | อีเมลเปลี่ยนแล้ว codeเก่าใช้ได้ | securityBinding/current revision and opt-in checks |
+| E16 | ปุ่มสมัครอยู่ผิดหน้า/admin READY ไม่มีทางทำต่อ | actual marketing→signup/browser admin approve + crash/retry; source-specific copy |
+| E17 | OTP ทำเส้นทางจ่ายเงินหรือ reauth หาย/ขอใหม่วนรหัสเก่า | safe next path + legal/password gates + rotate request key after invalid proof |
+| E15 | dynamic BFF ถูก Next rewrite ส่งผิด API | static BFF endpoints + real HTTP/browser regression |
+| E18 | เพิ่ม public login แต่ maintenance pin ไม่ครอบคลุม | pin email-access service และ auth module; CLOSED ต้องไม่ออก session; validator tamper tests |
+| E14 | optional-email branch ยังไม่รวมCI | initial baseline7ef09d8e; latest dependency e477e171 integrated in own worktree; exact integrated verification |
 
-- Owner เลือก **Postmark** แล้วสำหรับ transactional email; [provider spec](mangmee-transactional-email-provider-spec-th.md), [API reference](../research/postmark-developer-reference-th.md) และ [plan](../plans/mangmee-transactional-email-provider-plan-th.md) ระบุ adapter/config/attempt/retry/webhook และแยก validation token/Sandbox/inbox proof. Receipt ค่า Postmark ใช้ลงบัญชีบริษัทเรา; customer Invoice/Receipt ใช้ Stripe. Postmark adapter/durable delivery/callback และ paid notification มี local integration evidence แล้ว; native inbox/operations/full signup ยังไม่ครบ ดูหลักฐาน integration ล่าสุด. การเลือก provider ไม่เลือก OTP/link หรือเปลี่ยน eligibility ให้เอง.
-- อีเมลผิด/ไม่มา/หมดอายุ/ใช้ซ้ำ/ส่งซ้ำ/หลายแท็บ ต้องแก้และ retry ได้จากคำขอเดิม; changing email ต้องยกเลิก proof เดิมและยืนยันใหม่. Bounded attempts/rate limits, single-use proof และ atomic claim ห้ามถูกตัดเพื่อความสั้นของฟอร์ม.
-- ปิด browser หรือ provision ล้มเหลวต้องกลับมาต่อได้ ไม่สร้างร้านซ้ำและไม่เผาวัน trial ระหว่างรอ. Refresh/กลับจากอีเมลบนคนละอุปกรณ์ไม่ทำให้การเปิดร้านสำเร็จแต่ผู้ใช้เข้าไม่ได้.
-- ถ้า email provider ปิด/ส่งล้มเหลว ให้สถานะ unavailable/retry ตามจริง ไม่อ้างว่าส่งรหัสแล้วหรือเปิดร้านได้; mailto draft ไม่ใช่หลักฐานส่งสำเร็จ.
-- มีบันทึก 2026-09-07 ว่า email delivery ถูก deferred; ไม่อนุมานว่า live ยังเป็นค่าดังกล่าววันนี้. ต้องตรวจและพิสูจน์จริงในงาน ops ก่อนเปิด email-based signup/login โดยอ่าน runbook cloud/release ก่อนเสมอ.
-- Local simulated delivery ใช้พิสูจน์ app state/API/browser ได้ แต่ inbox delivery, sender setup, bounce/complaint และ production readiness ต้องมีหลักฐานแยก. ไม่เรียก local mailer ว่าส่งอีเมลจริงผ่านแล้ว.
+## 6. Acceptance
 
-## 6. เกณฑ์ยอมรับที่เสนอ
+ต้องมี checks: new signup → logout → login → protected API; manual review → approve → OTP resume; wrong/5 attempts/expiry/resend/rate/delivery failure; replay/concurrency; unverified collision; legacy verified without opt-in; inactive user/member/company; email/password/LINE changes between request and confirm; no raw tokens in browser response; session/audit rollback; recover after provisioning crash; no duplicate trial; LINE shared cap; trial/paid entitlement unchanged; legacy signup/claim/password reset; mobile/keyboard/error/retry/back navigation. Map each result to actual check; local simulated Postmark ไม่ใช่ inbox/native acceptance. No deploy in this task.
 
-- ลูกค้าใหม่ไม่มี LINE: สมัคร → ยืนยันอีเมล → เปิดร้านอัตโนมัติเมื่อ eligible → อัปโหลดใบเสร็จบนเว็บได้; ไม่ตั้งรหัสระหว่าง onboarding ตามแบบที่เลือก.
-- Logout/กลับมาใช้และกู้บัญชีได้โดยไม่ต้องมี LINE; บัญชีเดิม/held/revoked ไม่ถูก bypass.
-- สมัครซ้ำพร้อมกัน, กลับ browser, ชนกับคำขอจาก LINE และ provision crash/retry → ไม่สร้าง user/company/trial ซ้ำโดยไม่ตั้งใจ.
-- Linking ทั้ง email-first→LINE และ LINE-first→เว็บเข้าร้านเดิม; ไม่เริ่ม trial หรือ billing ใหม่. Shared contact ไม่ attach บัญชีให้อัตโนมัติ.
-- Manual-review cases อยู่ในคิวและผู้สมัครเห็นเหตุ/next action ที่เปิดเผยได้; ไม่ให้ผล auto เพราะ client ส่ง flag หรือเปลี่ยนช่องทาง.
-- Desktop/390px/keyboard, loading/error/expired/delivery outage, consent evidence และ first business action มี browser/API/DB assertions.
-- หน้า official แสดง submitted/ready จาก backend evidence จริง; marketing handoff ส่ง attribution ที่ allowlist เท่านั้น ไม่ส่ง identity proof หรือ paid entitlement.
+Implementation evidence: [email-passwordless-signup-2026-09-16](../agent-memory/email-passwordless-signup-2026-09-16.md). Migration additive; deploy ต้อง migrate ก่อน app ที่อ่าน fields ใหม่. Public challenge ใช้ hashed evidence ตาม auth token ledger เดิม ไม่เก็บ raw OTP; ไม่ผูก cleanup กับการลบประวัติเมลหรือคำขอเปิดร้าน. การปิด email login ยกเลิก challenge และหยุด login ใหม่ ส่วน session เดิมใช้หน้าจัดการ session เดิมเพื่อออกจากอุปกรณ์.
 
-## 7. ข้อยังเป็นข้อเสนอ
-
-Email code เทียบกับ one-time link, วิธีกลับเข้าและกู้บัญชีแบบไม่ใช้ LINE, ขอบเขต email auto-approval/abuse cap และการลด required fields ต้องออกแบบให้จบก่อน runtime change. User ยืนยันเป้าหมายความง่ายและ LINE optional แล้ว; ไม่ต้องถามเป้าหมายนี้ซ้ำ. ใช้ discussion ถัดไปปรับรายละเอียดที่มีผลต่อประสบการณ์และ policy ไม่ตีความว่าระบบใหม่ทำเสร็จแล้ว.
+Rollback runtime: หลังมี email-only customer แล้ว ห้ามย้อน app ไปเวอร์ชันที่ไม่มีemail loginโดยไม่เตรียมทางเข้าบัญชีสำรองให้ครบ. Prefer forward fix; migrationเป็นadditiveและห้ามลบidentity/proofเพื่อทำให้rollbackผ่าน. การปิดloginต่อบัญชีต้องมี password/LINEที่ใช้ได้ก่อนตามLAST_LOGIN_REQUIRED.
