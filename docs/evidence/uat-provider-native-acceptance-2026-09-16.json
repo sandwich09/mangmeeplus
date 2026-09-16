@@ -1,0 +1,62 @@
+{
+  "environment": "uat",
+  "applicationSource": "ee2f55421dde0edc0fb7226aadea66c3cc52b2d0",
+  "operationId": "20260916T080218Z-b9eb3d90",
+  "status": "ACCEPTED_LINE_DEFERRED",
+  "finishedAt": "2026-09-16T08:08:54.787838+00:00",
+  "elapsedSeconds": 396.159,
+  "acceptedSha256": "d444d6c0f70ae942391a9837fb30afc171fa5e1dbd126042e5621db9a25ff7a6",
+  "signatureVerified": true,
+  "customerOpen": true,
+  "migrationCatalog": {
+    "completed": 219,
+    "pending": 0,
+    "exactChecksums": true
+  },
+  "postmark": {
+    "serverId": 20950027,
+    "webhookId": 25832029,
+    "verification": [
+      {
+        "TriggerType": "Delivery",
+        "Success": true,
+        "StatusCode": 200
+      },
+      {
+        "TriggerType": "Bounce",
+        "Success": true,
+        "StatusCode": 200
+      },
+      {
+        "TriggerType": "SpamComplaint",
+        "Success": true,
+        "StatusCode": 200
+      }
+    ],
+    "realMessageId": "91c088a1-fde8-4c57-aef3-cdec45a1f648",
+    "sendAttemptId": "af5fb947-9952-4b27-90e7-a21e25e9f65d",
+    "submittedAt": "2026-09-16T08:10:39.225Z",
+    "deliveredAt": "2026-09-16T08:10:40.000Z",
+    "callbackOutboxStatus": "PUBLISHED",
+    "callbackPublishedAt": "2026-09-16T08:11:00.258Z",
+    "syntheticBusinessEvents": 0
+  },
+  "redis": {
+    "coldFirstAllowed": true,
+    "secondRejected": true,
+    "degraded": false
+  },
+  "otpConfirmation": {
+    "realCodeSubmitted": true,
+    "result": "LEGACY_LOGIN_REQUIRED",
+    "existingAccountOptInPreserved": true,
+    "successfulPasswordlessLogin": false
+  },
+  "billing": {
+    "mode": "TEST",
+    "policyPublished": false,
+    "nativeCheckoutTested": false,
+    "blocker": "Authorized platform Admin session and distinct approver required"
+  },
+  "productionDeployed": false
+}
