@@ -1,7 +1,7 @@
 # สมัคร LINE โดยไม่บังคับ email และยืนยัน email ด้วย OTP ก่อนชำระเงิน
 
 วันที่: 2026-09-15
-สถานะ 2026-09-16: SOURCE IMPLEMENTED / LOCAL VERIFICATION — ไม่มี feature flag ใหม่; CI/integration และ native UAT/Production acceptance ยังไม่ครบ ไม่ได้ deploy
+สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / PR CI PASS — ไม่มี feature flag ใหม่; native UAT/Production acceptance ยังไม่ครบ ไม่ได้ deploy ดู [หลักฐานส่งมอบ](../evidence/signup-optional-email-local-2026-09-16.md#ci-gated-source-delivery)
 เจ้าของ: thawatchai / Codex
 แผน: [Implementation plan](../plans/signup-optional-email-otp-billing-plan-th.md)
 ฐานการวิเคราะห์: [ผลกระทบและ source references](../research/signup-optional-email-impact-2026-09-15-th.md)
