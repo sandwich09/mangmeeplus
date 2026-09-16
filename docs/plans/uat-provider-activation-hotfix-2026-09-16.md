@@ -1,6 +1,6 @@
 # UAT provider activation hotfix — 2026-09-16
 
-Status: implemented; local verification passed, CI and native UAT acceptance pending. Scope: native acceptance gaps found after main8c277dea deployed successfully. Existing billing/passwordless specs remain authoritative; no product policy change.
+Status: COMPLETE for the three scoped fixes: implemented, exact-commit full CI passed, merged develop/main, deployed and native Postmark/Redis acceptance passed. Billing activation remains a separate authenticated-actor dependency. Scope: native acceptance gaps found after main8c277dea deployed successfully. Existing billing/passwordless specs remain authoritative; no product policy change.
 
 ## Native failures and required behavior
 
@@ -24,3 +24,9 @@ Status: implemented; local verification passed, CI and native UAT acceptance pen
 - Fresh isolatedPostgreSQL18.3 all219migrations PASS; real SWC/Nest/PostgreSQL HTTP smoke8groups PASS, including three authenticated synthetic probes/no outbox changes and near-match/auth/body/persistence negatives. Existing Postmark delivery PostgreSQL suite13/13 PASS.
 - Kamal28tests (including real wrapper import/no-bytecode proof with inherited suppression removed) and production image security scanner/pin check PASS. No cloud mutations from these fixture checks.
 - Initial local HTTP invocation lacked built config workspace dependency; built existing dependency and reran successfully. Initial wrapper fixture wrongly assumed Production default normal; corrected test to its existing hotfix default. These are local harness failures, no CI/deployment retry.
+
+## Delivery and native proof
+
+PR591/develop and PR592/main delivered the exact tested56aba2c6 tree. Full CI35066936157 passed; duplicate35066933135's intermittent Next dev404 is retained, not claimed fixed. Two local exact-source replays passed8groups each. Both merge trees match validated tree; no source/CI retry or skipped test.
+
+Main ee2f5542 deployed as20260916T080218Z-b9eb3d90, signed/OPEN,396.159s. Native Postmark verification200 for Delivery/Bounce/SpamComplaint, zero synthetic business events. Real UI email/message91c088a1 received Gmail SMTP delivery and matching application callback/outbox proof. Actual coldRedis request succeeds and next request remains rate-limited. Real OTP confirmation preserves existing-account opt-in guard. Detailed evidence and remaining native Sandbox/Admin/LINE/marketing boundaries: [release report](../evidence/uat-main-readiness-2026-09-16.md).
