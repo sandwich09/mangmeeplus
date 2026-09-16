@@ -1,6 +1,6 @@
 # สมัครและเข้าสู่ระบบด้วยอีเมลโดยไม่ใช้รหัสผ่าน
 
-สถานะ 2026-09-16: REVIEWED / IMPLEMENTING. Owner สั่งรีวิว bug/gap/impact แล้วเริ่ม implement. ขอบเขตนี้ต่อจาก billing และ optional-email OTP; ไม่ deploy หรือส่งเงินจริง/เมลจริงจากการทดสอบนี้.
+สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / REQUIRED CI PASS. Reviewed E01–E18 and implemented; PR583/584 merged after CI passed. ขอบเขตนี้ต่อจาก billing และ optional-email OTP; ไม่ deploy หรือส่งเงินจริง/เมลจริงจากการทดสอบนี้.
 
 ## 1. ผลลัพธ์และข้อกำหนด
 
