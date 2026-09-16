@@ -67,10 +67,11 @@ describe('P10-L LIFF signup page', () => {
     assert.ok(html.includes('inputmode="tel"'), 'the phone field opens a phone keypad');
     assert.ok(/<input id="phone-number"[^>]*\brequired\b/.test(html), 'the phone field is required (Owner 2026-09-05)');
     assert.ok(html.includes('<label for="phone-number">เบอร์มือถือ</label>'), 'the bare label, no optional tag');
-    assert.ok(html.includes('<label for="contact-email">อีเมลเจ้าของร้าน</label>'));
-    assert.match(html, /<input id="contact-email"[^>]*type="email"[^>]*maxlength="254"[^>]*required/);
-    assert.ok(html.includes('ไม่ต้องยืนยันอีเมลหรือตั้งรหัสผ่าน'));
-    assert.equal(html.includes('ไม่บังคับ'), false, 'the phone is no longer optional');
+    assert.ok(html.includes('<label for="contact-email">อีเมลติดต่อร้าน (ไม่บังคับ)</label>'));
+    assert.match(html, /<input id="contact-email"[^>]*type="email"[^>]*maxlength="254"/);
+    assert.doesNotMatch(html, /<input id="contact-email"[^>]*\brequired\b/);
+    assert.ok(html.includes('ก่อนชำระแพ็กเกจ'));
+    assert.ok(!/<label for="phone-number">[^<]*ไม่บังคับ/.test(html), 'phone remains required');
     assert.ok(html.includes('ยอมรับและเริ่มทดลองใช้ฟรี'));
     assert.ok(html.includes('ทดลองฟรี 30 วัน ให้ AI อ่านรูปได้ 15 ครั้ง'));
     assert.equal(html.includes('progress-reference'), false, 'public signup never renders an internal request reference');
@@ -535,8 +536,8 @@ describe('P10-L LIFF client script', () => {
     });
     await settle(); await settle(); await h.click('link'); await settle();
 
-    assert.match(h.elements.status!.textContent, /3 จุด/);
-    for (const id of ['company-name', 'phone-number', 'contact-email']) {
+    assert.match(h.elements.status!.textContent, /2 จุด/);
+    for (const id of ['company-name', 'phone-number']) {
       assert.equal(h.elements[id]!.attributes['aria-invalid'], 'true', id);
       assert.equal(h.elements[id + '-error']!.hidden, false, id);
     }
@@ -716,9 +717,18 @@ describe('P10-L LIFF client script', () => {
    * geometry-independent: WHICH element holds the text, what the input is marked with, where focus
    * went. Any of them would have caught the original defect.
    */
-  describe('owner email is syntax-only and retained on refusal', () => {
-    it('does not submit blank, malformed or overlong email and keeps all typed fields', async () => {
-      for (const contactEmail of ['', ' ', 'shop', 'a@@example.com', 'a b@example.com', 'a@b', `${'a'.repeat(245)}@example.com`]) {
+  describe('owner email is optional, syntax-only and retained on refusal', () => {
+    it('submits a blank email while keeping required phone and legal evidence', async () => {
+      const h = runSignupScript('null', [{ status: 200, body: 'null' }, { status: 202, body: signupStatus({ state: 'PENDING_REVIEW' }) }], { contactEmail: ' ' });
+      await settle(); await settle(); await h.click('link'); await settle();
+      assert.equal(h.calls.length, 2);
+      const body = JSON.parse(h.calls[1]!.init.body);
+      assert.equal(body.contactEmail, '');
+      assert.ok(body.phoneNumber);
+      assert.equal(body.legal.displayChallenge, CHALLENGE);
+    });
+    it('does not submit malformed or overlong email and keeps all typed fields', async () => {
+      for (const contactEmail of ['shop', 'a@@example.com', 'a b@example.com', 'a@b', `${'a'.repeat(245)}@example.com`]) {
         const h = runSignupScript('null', [{ status: 200, body: 'null' }], { contactEmail });
         await settle(); await settle(); await h.click('link'); await settle();
         assert.equal(h.calls.length, 1, contactEmail);

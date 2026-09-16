@@ -25,6 +25,7 @@ import { currentLegalRelease } from '../auth/application/legal-acceptance.servic
 import { LegalAcceptanceService } from '../auth/application/legal-acceptance.service';
 import { LinkLineIdentityUseCase } from '../auth/application/use-cases/link-line-identity.use-case';
 import { UnlinkLineIdentityUseCase } from '../auth/application/use-cases/unlink-line-identity.use-case';
+import { hashPassword } from '../auth/domain/logic/password-credential.logic';
 import { resolveCompanyForLineUser } from '../line-ai/application/use-cases/process-line-webhook.use-case';
 import { CreateCompanyOnboardingUseCase } from '../system-onboarding/application/use-cases/create-company-onboarding.use-case';
 import { CompanySignupCoreService } from './application/company-signup-core.service';
@@ -184,6 +185,12 @@ async function seedOldShop(
     data: { lineUserId, companyId: oldCompanyId, aiPausedUntil: new Date('2099-01-01T00:00:00Z') },
   });
   return { adminUserId, oldUserId, oldCompanyId };
+}
+
+async function addBackupLogin(client: PrismaClient, userId: string) {
+  await client.user.update({ where: { id: userId }, data: { username: `${userId}-login`, credential: {
+    create: { passwordHash: hashPassword('Synthetic-backup-password-123!'), status: 'ACTIVE' },
+  } } });
 }
 
 async function cleanup(
@@ -368,7 +375,12 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       await client.user.update({ where: { id: seeded.oldUserId }, data: { email: 'shop@example.test' } });
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
 
+      await assert.rejects(h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-no-backup` }),
+        (error: any) => error.getResponse().code === 'LAST_LOGIN_REQUIRED');
+      assert.equal((await client.externalIdentity.findUniqueOrThrow({ where: { id: `${tag}-identity` } })).status, 'ACTIVE');
+
       // The owner severs the link themselves — the real use-case, so the status is the real one.
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
       const stale = await client.externalIdentity.findUniqueOrThrow({ where: { id: `${tag}-identity` } });
       assert.equal(stale.status, 'UNLINKED');
@@ -507,6 +519,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     try {
       const seeded = await seedOldShop(client, tag, lineUserId);
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId, approvalMode: 'AUTO_FREE' });
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-repeat`), NOW);
@@ -540,6 +553,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
       await client.company.update({ where: { id: seeded.oldCompanyId }, data: { status: 'ACTIVE' } });
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId, approvalMode: 'AUTO_FREE' });
       // They leave that job, their LINE is unlinked, and they open a shop of their own.
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-employee`), NOW);
@@ -574,6 +588,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     try {
       const seeded = await seedOldShop(client, tag, lineUserId, 'OWNER', 'DRAFT');
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId, approvalMode: 'AUTO_FREE' });
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
 
       const accepted = await h.submit.execute(submitCmd(`${tag}-draft`), NOW);
@@ -604,6 +619,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     try {
       const seeded = await seedOldShop(client, tag, lineUserId);
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
 
       // The other claimant: a real account with a live shop, linking this same LINE to itself.
@@ -681,6 +697,7 @@ describe('a stale LINE identity on real PostgreSQL', { skip: !databaseUrl }, () 
     try {
       const seeded = await seedOldShop(client, tag, lineUserId);
       const h = wire(client, { adminUserId: seeded.adminUserId, lineUserId });
+      await addBackupLogin(client, seeded.oldUserId);
       await h.unlink.execute({ userId: seeded.oldUserId, requestId: `${tag}-unlink` });
 
       const race = (suffix: string) => h.onboarding.execute({

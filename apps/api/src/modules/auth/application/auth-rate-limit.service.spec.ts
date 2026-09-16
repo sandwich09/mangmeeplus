@@ -210,3 +210,16 @@ describe('AuthRateLimitService account-merge preview (F6)', () => {
     await service.assertLineLoginCallbackAllowed('3.3.3.3');
   });
 });
+
+
+describe('email OTP password reauthentication budget', () => {
+  it('limits a user across changing IPs while another account remains usable', async () => {
+    const service = makeService();
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await service.assertEmailOtpIpAllowed(`192.0.2.${attempt + 1}`);
+      await service.assertEmailOtpUserAllowed('otp-budget-owner');
+    }
+    await assert.rejects(service.assertEmailOtpUserAllowed('otp-budget-owner'), /Too many requests/);
+    await service.assertEmailOtpUserAllowed('otp-budget-other-owner');
+  });
+});

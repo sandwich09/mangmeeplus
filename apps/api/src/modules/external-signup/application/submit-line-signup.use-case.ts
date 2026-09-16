@@ -23,7 +23,9 @@ import {
   normalizeLineCompanyName,
   normalizeReferralCode,
   requireThaiMobile,
-  requireLineContactEmail,
+  optionalLineContactEmail,
+  LINE_OPTIONAL_EMAIL_POLICY,
+  lineIntakeContactComplete,
 } from '../domain/line-signup.logic';
 import { CompanySignupCoreService, signupStateGuard } from './company-signup-core.service';
 import { lineSignupStatusForVerified, type VerifiedLineSignupIdentity } from './get-line-signup-status.use-case';
@@ -40,7 +42,7 @@ export type SubmitLineSignupCommand = {
   companyName: string;
   phoneNumber: string;
   /** Contact syntax is checked here; it is never proof of mailbox or account ownership. */
-  contactEmail: string;
+  contactEmail?: string | null;
   referralCode?: string;
   legal: {
     documentVersion: string;
@@ -58,7 +60,7 @@ export type SubmitLineSignupCommand = {
 type NormalizedLineSubmission = Readonly<{
   companyName: string;
   phoneNumber: string;
-  contactEmail: string;
+  contactEmail: string | null;
   referralCode: string | null;
   intent: LineSignupIntent;
   legal: SubmitLineSignupCommand['legal'];
@@ -70,7 +72,7 @@ export type CorrectLineSignupContactCommand = Readonly<{
   requestId: string;
   idToken: string;
   version: number;
-  contactEmail: string;
+  contactEmail?: string | null;
   correlationRequestId: string;
   webBaseUrl: string;
   apiBaseUrl: string;
@@ -171,9 +173,9 @@ export class SubmitLineSignupUseCase {
   ): Promise<LineSignupSubmitAcceptedDto> {
     const verified = await this.lineIdToken.verify(cmd.idToken);
     await this.rateLimit.assertLineSignupAttemptAllowed(verified.providerUserId);
-    let contactEmail: string;
+    let contactEmail: string | null;
     try {
-      contactEmail = requireLineContactEmail(cmd.contactEmail);
+      contactEmail = optionalLineContactEmail(cmd.contactEmail);
     } catch (error) {
       throw new BadRequestException((error as Error).message);
     }
@@ -195,6 +197,11 @@ export class SubmitLineSignupUseCase {
         || current.autoApproved || current.reviewResolution === 'NEW_SHOP') {
         throw new ConflictException('line_signup_contact_update_not_allowed');
       }
+      if (!contactEmail && !current.intakePolicyVersion &&
+          (!current.phoneNumber || !current.legalAcceptedAt || !current.legalStatementSha256 ||
+            !current.legalReleaseFingerprintSha256 || !current.legalDocumentVersion || !current.legalDisplayChallenge)) {
+        throw new ConflictException('line_signup_legacy_evidence_required');
+      }
       const normalized: NormalizedLineSubmission = {
         companyName: current.companyName,
         phoneNumber: current.phoneNumber ?? '',
@@ -213,10 +220,11 @@ export class SubmitLineSignupUseCase {
         where: { id: current.id },
         data: {
           contactEmail,
+          intakePolicyVersion: LINE_OPTIONAL_EMAIL_POLICY,
           payloadHash: lineSignupPayloadHash(normalized, verified),
           state: 'RECEIVED',
           failureCode: null,
-          contactEmailConflict: null,
+          contactEmailConflict: current.contactEmailConflict === true ? true : null,
           reviewResolution: null,
           resolutionNote: null,
           resolvedExistingCompanyId: null,
@@ -299,7 +307,7 @@ export class SubmitLineSignupUseCase {
     if (request.state !== 'RECEIVED' && request.state !== 'VALIDATED') return;
     // A migrated partial row can exist in either intake state. Recovery must never turn the old
     // nullable shape into an implicit validation bypass; status exposes correction/support instead.
-    if (!request.contactEmail || !request.phoneNumber) return;
+    if (!lineIntakeContactComplete(request)) return;
 
     const identity = await this.resolveLineIdentity(request.lineProviderUserId ?? '', request.lineChannelId ?? '');
     const repeatTrial = identity.userId !== null && await this.hasOwnedCompany(identity.userId);
@@ -336,12 +344,12 @@ export class SubmitLineSignupUseCase {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${requestId}, 0))`;
       const current = await tx.companySignupRequest.findUnique({ where: { id: requestId } });
       if (!current || current.state !== 'VALIDATED' || current.contactEmailConflict !== null) return current!;
-      const contactEmailConflict = await lineSignupContactEmailConflict(
+      const contactEmailConflict = current.contactEmail ? await lineSignupContactEmailConflict(
         tx,
         current.id,
-        current.contactEmail ?? '',
+        current.contactEmail,
         provenUserId,
-      );
+      ) : false;
       const request = await tx.companySignupRequest.update({
         where: { id: current.id },
         data: { contactEmailConflict, version: { increment: 1 } },
@@ -352,6 +360,7 @@ export class SubmitLineSignupUseCase {
         hasReferralCode: request.referralCode !== null,
         repeatTrial,
         emailPreviouslyUsed: contactEmailConflict,
+        contactEmailPresent: Boolean(current.contactEmail),
         ...(contactEmailConflict ? { manualReviewReason: 'email_previously_used' } : {}),
       }, tx);
       return request;
@@ -502,6 +511,7 @@ export class SubmitLineSignupUseCase {
         companyName: input.companyName,
         ownerDisplayName: verified.displayName ?? 'เจ้าของร้าน',
         contactEmail: input.contactEmail,
+        intakePolicyVersion: LINE_OPTIONAL_EMAIL_POLICY,
         consentVersion: evidence.documentVersion,
         phoneNumber: input.phoneNumber,
         ...(input.referralCode ? { referralCode: input.referralCode } : {}),
@@ -604,7 +614,7 @@ function normalizeSubmission(cmd: SubmitLineSignupCommand): NormalizedLineSubmis
     return {
       companyName: normalizeLineCompanyName(cmd.companyName),
       phoneNumber: requireThaiMobile(cmd.phoneNumber),
-      contactEmail: requireLineContactEmail(cmd.contactEmail),
+      contactEmail: optionalLineContactEmail(cmd.contactEmail),
       referralCode: normalizeReferralCode(cmd.referralCode),
       intent: cmd.intent,
       legal: cmd.legal,
@@ -665,6 +675,7 @@ export async function lineSignupContactEmailConflict(
   email: string,
   provenUserId: string | null,
 ): Promise<boolean> {
+  if (!email.trim()) return false;
   const matches = await db.$queryRaw<Array<{ id: string }>>`
     SELECT u."id" FROM "User" u
       WHERE (${provenUserId}::text IS NULL OR u."id" <> ${provenUserId})

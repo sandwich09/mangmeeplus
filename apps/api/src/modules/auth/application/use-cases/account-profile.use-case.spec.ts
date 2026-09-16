@@ -19,6 +19,7 @@ import { RequestEmailChangeUseCase } from './request-email-change.use-case';
 import { ResendEmailVerificationUseCase } from './resend-email-verification.use-case';
 import { ConfirmEmailVerificationUseCase } from './confirm-email-verification.use-case';
 import { GetAccountSecurityStateUseCase } from './get-account-security-state.use-case';
+import { emailReauthBinding } from '../../domain/logic/email-otp.logic';
 import { hashToken } from '../../domain/logic/secure-token.logic';
 
 type Row = Record<string, any>;
@@ -51,7 +52,7 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
     });
 
   const withCredential = (user: Row | undefined) =>
-    user && { ...user, credential: credentials.find((row) => row['userId'] === user['id']) ?? null };
+    user && { emailRevision: 0, ...user, externalIdentities: lineIdentities.filter(row => row.userId === user.id), credential: credentials.find((row) => row['userId'] === user['id']) ?? null };
 
   const client: any = {
     $executeRaw: async () => 1,
@@ -80,7 +81,7 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
             },
           });
         }
-        return Object.assign(user!, data);
+        return Object.assign(user!, { ...data, ...(data.emailRevision?.increment ? { emailRevision: (user!.emailRevision ?? 0) + data.emailRevision.increment } : {}) });
       },
       updateMany: async ({ where, data }: any) => {
         const matching = users.filter((row) => match(row, where));
@@ -116,6 +117,7 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
       findFirst: async () => ({ id: 'mem-1', companyId: 'company-1', roles: [{ role: { key: 'OWNER' } }] }),
     },
     authSession: {
+      findFirst: async ({ where }: any) => sessions.find(row => match(row, where)) ?? null,
       updateMany: async ({ where, data }: any) => {
         const matching = sessions.filter((row) => match(row, where));
         matching.forEach((row) => Object.assign(row, data));
@@ -132,6 +134,8 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
   client.$queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
     if (sql.includes('FOR UPDATE')) return [];
+    if (sql.includes('FROM "AuthSession"') && sql.includes('FOR SHARE')) return sessions.filter(row => row.userId === values[0]).map(row => ({ id: row.id }));
+    if (sql.includes('clock_timestamp()')) return [{ now: new Date() }];
     assert.match(sql, /lower\("username"\) = /, `unmodelled raw query: ${sql}`);
     const [callerId, desired] = values as [string, string];
     return users
@@ -141,6 +145,22 @@ function makePrisma(seed: { users?: Row[]; credentials?: Row[]; tokens?: Row[]; 
   };
   client.$transaction = async (fn: any) => fn(client);
   return { prisma: { client } as any, users, credentials, tokens, sessions, lineIdentities };
+}
+
+/** Explicit fresh LINE proof fixture; ordinary makePrisma never grants reauthentication. */
+function makeReauthenticatedPrisma(seed: Parameters<typeof makePrisma>[0] = {}) {
+  const identities: Row[] = (seed.lineIdentities ?? [{ userId: 'user-line', provider: 'LINE', providerChannelId: 'synthetic-channel', status: 'ACTIVE', providerUserId: 'line-user-1' }])
+    .map((row, i) => ({ id: `identity-${i}`, linkedAt: new Date(0), ...row }));
+  const sessions = (seed.sessions ?? [{ id: 's1', userId: 'user-line', tokenId: 'session-current', status: 'ACTIVE' }])
+    .map(row => ({ expiresAt: new Date(Date.now() + 3_600_000), ...row }));
+  const result = makePrisma({ ...seed, lineIdentities: identities, sessions });
+  const user = result.users.find(row => row.id === 'user-line');
+  const session = result.sessions.find(row => row.tokenId === 'session-current');
+  if (user && session && identities.some(row => row.userId === user.id && row.status === 'ACTIVE')) {
+    session.emailReauthenticatedAt = new Date();
+    session.emailReauthBindingHash = emailReauthBinding({ emailRevision: 0, ...user, credential: null, externalIdentities: identities.filter(row => row.userId === user.id) } as any);
+  }
+  return result;
 }
 
 /** The push is a bare `fetch`, so this is how the repo's other push specs observe one. */
@@ -164,7 +184,7 @@ const LINE_ONLY_USER = { id: 'user-line', status: 'ACTIVE', username: null, emai
 
 describe('AccountProfileUseCase — first password', () => {
   it('creates an ACTIVE credential that does not force a change, for an account that has none', async () => {
-    const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const { prisma, credentials } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }] });
     await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
 
     assert.equal(credentials.length, 1);
@@ -175,7 +195,7 @@ describe('AccountProfileUseCase — first password', () => {
 
   // The whole reason this route can skip a current-password proof: it can only ever create.
   it('refuses to overwrite an existing password and names the change-password route instead', async () => {
-    const { prisma, credentials } = makePrisma({
+    const { prisma, credentials } = makeReauthenticatedPrisma({
       users: [{ ...LINE_ONLY_USER }],
       credentials: [{ userId: 'user-line', passwordHash: 'scrypt$a$b', status: 'ACTIVE', mustChangePassword: false }],
     });
@@ -189,7 +209,7 @@ describe('AccountProfileUseCase — first password', () => {
 
   // F1: the whole point of a backup password is being able to log in with it afterwards.
   it('lets the LINE-first owner log in with the username they just set', async () => {
-    const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const { prisma, users } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }] });
     const result = await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit)
       .setInitialPassword('user-line', 'backup-password', ' MangMee.Shop ', 'req-1', 'session-current');
     assert.deepEqual(result, { username: 'mangmee.shop' }, 'the caller must be told the stored form');
@@ -205,7 +225,7 @@ describe('AccountProfileUseCase — first password', () => {
   });
 
   it('refuses a password that nothing could ever log in with', async () => {
-    const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const { prisma, credentials } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }] });
     await assert.rejects(
       () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current'),
       (error: unknown) => error instanceof BadRequestException && (error.getResponse() as Row)['code'] === 'username_required',
@@ -214,7 +234,7 @@ describe('AccountProfileUseCase — first password', () => {
   });
 
   it('accepts no username once a verified email can carry the login', async () => {
-    const { prisma, credentials } = makePrisma({
+    const { prisma, credentials } = makeReauthenticatedPrisma({
       users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: new Date() }],
     });
     await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');
@@ -224,7 +244,7 @@ describe('AccountProfileUseCase — first password', () => {
   // F5: the DB unique index is case-SENSITIVE, so this read is the only thing standing between
   // "somchai" and "Somchai" becoming two login names — and the login lookup accepts an email too.
   it('rejects a username differing only by case from one already held', async () => {
-    const { prisma } = makePrisma({
+    const { prisma } = makeReauthenticatedPrisma({
       // Stored with uppercase by another writer (`create-employee` does not lower-case), which is
       // the only shape an exact-match query would miss — the desired name is lower-cased first.
       users: [{ ...LINE_ONLY_USER }, { id: 'user-other', status: 'ACTIVE', username: 'SomChai', email: 'boss@example.com' }],
@@ -248,7 +268,7 @@ describe('AccountProfileUseCase — first password', () => {
   // undefined there and the columns arrive under `meta.driverAdapterError` instead, so the raw
   // error escaped and the caller lost the `username_taken` code entirely.
   it('answers username_taken when the name is claimed between the uniqueness read and the write', async () => {
-    const { prisma, users } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const { prisma, users } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }] });
     const read = prisma.client.$queryRaw;
     prisma.client.$queryRaw = async (...args: unknown[]) => {
       const rows = await read(...args);
@@ -264,7 +284,7 @@ describe('AccountProfileUseCase — first password', () => {
 
   // F3: a new way into the account invalidates every session opened before it.
   it('revokes the other sessions and tells the owner over LINE', async () => {
-    const { prisma, sessions } = makePrisma({
+    const { prisma, sessions } = makeReauthenticatedPrisma({
       users: [{ ...LINE_ONLY_USER }],
       sessions: [
         { id: 's1', userId: 'user-line', tokenId: 'session-current', status: 'ACTIVE' },
@@ -290,39 +310,19 @@ describe('AccountProfileUseCase — first password', () => {
     assert.match(line.pushes[0]!.text, /098-256-5628/, 'the notice must say what to do if it was not them');
   });
 
-  // L3: an unlinked identity belongs to a LINE account that no longer speaks for this user.
-  it('does not announce the password to a revoked LINE identity', async () => {
-    const { prisma, credentials } = makePrisma({
-      users: [{ ...LINE_ONLY_USER }],
-      lineIdentities: [{ userId: 'user-line', provider: 'LINE', status: 'REVOKED', providerUserId: 'line-old-phone' }],
-    });
-    const line = captureLinePush();
-    try {
-      await new AccountProfileUseCase(lineMessagingCredentialsFixture(lineConfig), prisma, audit, lineConfig)
-        .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
-    } finally {
-      line.restore();
+  it('requires a fresh proof and cannot bootstrap from only a session or a revoked LINE identity', async () => {
+    for (const lineIdentities of [[], [{ userId: 'user-line', provider: 'LINE', status: 'REVOKED', providerUserId: 'old-line' }]]) {
+      const { prisma, credentials } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }], lineIdentities });
+      await assert.rejects(() => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit)
+        .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current'),
+        (error: any) => error.getResponse().code === 'ACCOUNT_REAUTH_REQUIRED');
+      assert.equal(credentials.length, 0);
     }
-    assert.equal(credentials.length, 1, 'the password is still set');
-    assert.deepEqual(line.pushes, [], 'a revoked identity must not be told a password was set');
-  });
-
-  it('still sets the password when there is no LINE identity to notify', async () => {
-    const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
-    const line = captureLinePush();
-    try {
-      await new AccountProfileUseCase(lineMessagingCredentialsFixture(lineConfig), prisma, audit, lineConfig)
-        .setInitialPassword('user-line', 'backup-password', 'mangmee.shop', 'req-1', 'session-current');
-    } finally {
-      line.restore();
-    }
-    assert.equal(credentials.length, 1);
-    assert.equal(line.pushes.length, 0);
   });
 
   // M1: a Thai owner typing สมชาย was getting an uncoded English sentence.
   it('rejects a username that is not a usable login name, with a code the web can translate', async () => {
-    const { prisma, credentials } = makePrisma({ users: [{ ...LINE_ONLY_USER }] });
+    const { prisma, credentials } = makeReauthenticatedPrisma({ users: [{ ...LINE_ONLY_USER }] });
     for (const bad of ['สมชาย', 'ก ข', 'ab', 'som chai', 'somchai@gmail.com']) {
       await assert.rejects(
         () => new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', bad, 'req-1', 'session-current'),
@@ -335,7 +335,7 @@ describe('AccountProfileUseCase — first password', () => {
   });
 
   it('uses unverified email as a login identifier without fabricating mailbox verification', async () => {
-    const { prisma, credentials, users } = makePrisma({
+    const { prisma, credentials, users } = makeReauthenticatedPrisma({
       users: [{ ...LINE_ONLY_USER, email: 'owner@example.com', emailVerifiedAt: null }],
     });
     await new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), prisma, audit).setInitialPassword('user-line', 'backup-password', undefined, 'req-1', 'session-current');

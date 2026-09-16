@@ -57,7 +57,7 @@ LINE_SIGNUP_BUSINESS_HOURS_INPUT="${LINE_SIGNUP_BUSINESS_HOURS:-09:00-18:00}"
 RECEIPT_QUOTA_ENFORCED_INPUT="${RECEIPT_QUOTA_ENFORCED:-}"
 EMAIL_PROVIDER_INPUT="${EMAIL_PROVIDER:-}"
 SES_REGION_INPUT="${SES_REGION:-ap-southeast-1}"
-SES_FROM_ADDRESS_INPUT="${SES_FROM_ADDRESS:-}"
+SES_FROM_ADDRESS_INPUT="${SES_FROM_ADDRESS:-contact@mangmeeplus.com}"
 PRODUCTION_SERVING_MODE_INPUT="${PRODUCTION_SERVING_MODE:-}"
 RELEASE_MODE_INPUT="${RELEASE_MODE:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-14}"
@@ -255,10 +255,10 @@ if [[ ! "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]-([
   echo "ERROR: LINE_SIGNUP_BUSINESS_HOURS must look like 09:00-18:00" >&2; exit 2
 fi
 if [ -z "$EMAIL_PROVIDER_INPUT" ]; then
-  if [ "$DEPLOY_ENV" = uat ]; then EMAIL_PROVIDER_INPUT=ses; else EMAIL_PROVIDER_INPUT=disabled; fi
+  if [ "$DEPLOY_ENV" = uat ]; then EMAIL_PROVIDER_INPUT=postmark; else EMAIL_PROVIDER_INPUT=postmark; fi
 fi
-case "$EMAIL_PROVIDER_INPUT" in disabled|ses) ;; *)
-  echo "ERROR: EMAIL_PROVIDER must be exactly disabled or ses for cloud deploys" >&2; exit 2 ;;
+case "$EMAIL_PROVIDER_INPUT" in disabled|ses|postmark) ;; *)
+  echo "ERROR: EMAIL_PROVIDER must be exactly disabled, ses or postmark for cloud deploys" >&2; exit 2 ;;
 esac
 if [ "$DEPLOY_ENV" = production ] && [ "$EMAIL_PROVIDER_INPUT" = ses ]; then
   echo "ERROR: EMAIL_PROVIDER=ses is not activated for production yet" >&2
@@ -365,6 +365,9 @@ if [ "$REIMBURSEMENT_BRIDGE_INPUT" = true ] \
   exit 2
 fi
 RESOURCE_PREFIX="watchdog-bms-${RESOURCE_STAGE}"
+# Shared with Kamal; only non-secret values and environment-scoped secret ARNs reach this JSON.
+POSTMARK_DEPLOYMENT="$(python3 "$(dirname "${BASH_SOURCE[0]}")/../postmark/config.py" --environment "$DEPLOY_ENV" --provider "${EMAIL_PROVIDER:-}")"
+EMAIL_PROVIDER_INPUT="$(jq -r '.provider' <<<"$POSTMARK_DEPLOYMENT")"
 PARAM_PREFIX="/watchdog-bms/${DEPLOY_ENV}"
 SECRET_PREFIX="watchdog-bms/${DEPLOY_ENV}"
 CLUSTER_NAME="${ECS_CLUSTER_NAME:-$RESOURCE_PREFIX}"
@@ -758,6 +761,19 @@ secret_arn() {
 # policy files that concurrent runs would tear. Deliberately independent of
 # ECS_DEPLOY_MANAGE_IAM — the read-only branch races on nothing but is redundant.
 preflight() {
+  # Resolve all required references before creating/updating any service or infrastructure.
+  # Maintenance may deliberately disable outbound mail but cannot claim customer readiness.
+  if [ "$SERVING_EMAIL_PROVIDER" = postmark ]; then
+    local mail_name mail_ref mail_arn
+    while IFS=$'\t' read -r mail_name mail_ref; do
+      mail_arn="$(secret_arn "$mail_ref")"
+      case "$mail_arn" in
+        arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/"$DEPLOY_ENV"/postmark/*) ;;
+        *) echo "ERROR: Required environment-scoped mail/OTP secret is missing: $mail_name" >&2; exit 2 ;;
+      esac
+    done < <(jq -r '.secrets | to_entries[] | [.key,.value] | @tsv' <<<"$POSTMARK_DEPLOYMENT")
+    python3 "$(dirname "${BASH_SOURCE[0]}")/../postmark/config.py" --environment "$DEPLOY_ENV" --preflight
+  fi
   if [ "$DEPLOY_ENV" = uat ] && [ "$UAT_RUNTIME_MUTEX_HELD" != true ]; then
     uat_runtime_mutex_acquire "deploy-${TARGET}" || {
       echo "ERROR: UAT Redis migration/deploy mutex is active or cannot be acquired; no service mutation is allowed" >&2
@@ -1604,6 +1620,23 @@ api_container_json() {
   # Defaults to the AWS endpoint so unset = current behavior. Internal wiring below stays on $public_base_url.
   local public_web_url
   public_web_url="$(normalize_url "${PUBLIC_DOMAIN_URL:-$public_base_url}")"
+  if [ "$SERVING_EMAIL_PROVIDER" = postmark ]; then
+    local expected_mail_origin=https://mangmeeplus.com
+    [ "$DEPLOY_ENV" != uat ] || expected_mail_origin=https://uat.mangmeeplus.com
+    if [ "$public_web_url" != "$expected_mail_origin" ]; then
+      echo "ERROR: Postmark web origin does not match environment" >&2; return 2
+    fi
+  fi
+  local resolved_postmark="$POSTMARK_DEPLOYMENT" mail_name mail_ref mail_arn
+  while IFS=$'\t' read -r mail_name mail_ref; do
+    [ -n "$mail_name" ] || continue
+    mail_arn="$(secret_arn "$mail_ref")"
+    case "$mail_arn" in
+      arn:aws:secretsmanager:ap-southeast-1:311414082667:secret:watchdog-bms/"$DEPLOY_ENV"/postmark/*) ;;
+      *) echo "ERROR: Required environment-scoped mail/OTP secret is missing: $mail_name" >&2; return 2 ;;
+    esac
+    resolved_postmark="$(jq --arg name "$mail_name" --arg arn "$mail_arn" '.secrets[$name]=$arn' <<<"$resolved_postmark")"
+  done < <(jq -r '.secrets | to_entries[] | [.key,.value] | @tsv' <<<"$POSTMARK_DEPLOYMENT")
   local line_account_link_url="${WEB_LINE_ACCOUNT_LINK_URL:-}"
   if [ -z "$line_account_link_url" ] && [ -n "${LINE_LIFF_ID:-}" ]; then
     line_account_link_url="https://liff.line.me/${LINE_LIFF_ID}"
@@ -1648,6 +1681,7 @@ api_container_json() {
     --arg lineSignupBusinessHours "$LINE_SIGNUP_BUSINESS_HOURS_INPUT" \
     --arg receiptQuotaEnforced "$SERVING_RECEIPT_QUOTA_ENFORCED" \
     --arg emailProvider "$SERVING_EMAIL_PROVIDER" \
+    --argjson postmark "$resolved_postmark" \
     --arg sesRegion "$SES_REGION_INPUT" \
     --arg sesFromAddress "$SES_FROM_ADDRESS_INPUT" \
     --arg emailLogoUrl "${EMAIL_LOGO_URL:-${public_web_url}/brand/logo-mangmeeyangyuen.png}" \
@@ -1697,7 +1731,7 @@ api_container_json() {
       image: $image,
       containerPort: 3000,
       awsLogsConfiguration: {logGroup: $logGroup, logStreamPrefix: "api-web"},
-      environment: [
+      environment: ([
         {name:"NODE_ENV", value:"production"},
         {name:"APP_ENV", value:"production"},
         {name:"DEPLOY_ENVIRONMENT", value:$deployEnvironment},
@@ -1796,7 +1830,7 @@ api_container_json() {
         {name:"LOG_REDACTION_ENABLED", value:"true"},
         {name:"AUDIT_ENABLED", value:"true"},
         {name:"SWAGGER_ENABLED", value:"false"}
-      ],
+      ] + ($postmark.environment | to_entries | map({name:.key, value:.value}))),
       secrets: ([
         {name:"DATABASE_URL", valueFrom:$databaseUrl},
         {name:"REDIS_URL", valueFrom:$redisUrl},
@@ -1811,7 +1845,7 @@ api_container_json() {
         {name:"PDPA_PSEUDONYMIZATION_KEY", valueFrom:$pdpaKey},
         {name:"PDPA_PSEUDONYMIZATION_PREVIOUS_KEYS", valueFrom:$pdpaPreviousKeys},
         {name:"LINE_AI_DEBOUNCE_EXPERIMENT_SECRET", valueFrom:$lineAiDebounceExperimentSecret}
-      ] | map(select(.valueFrom != "")))
+      ] + ($postmark.secrets | to_entries | map({name:.key, valueFrom:.value})) | map(select(.valueFrom != "")))
     }'
 }
 

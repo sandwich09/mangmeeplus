@@ -98,7 +98,7 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
     const quotaCapacity=(await request(`${own}/capacity?offerKey=PRO_999&interval=year`)).body;assert.equal(quotaCapacity.branchLimit,7);assert.equal(quotaCapacity.employeeLimit,25);
     const quote=await newQuote();assert.equal(quote.offer.branchLimit,7);assert.equal(quote.offer.employeeLimit,25);assert.equal(quote.totalSatang,1099001);assert.equal(quote.purchase.receiptUnitsAdded,1500);assert.equal(quote.purchase.projectedRemainingReceipts,1500);
     if(browser){const page=browser.page;for(const channel of ['web','line']){await page.goto(`${browser.origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=${channel}`,{waitUntil:'domcontentloaded'});
-        await page.getByLabel('อีเมลรับเอกสาร',{exact:true}).fill('owner@example.test');await page.getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();await page.getByRole('heading',{name:/ยืนยันซื้อ/}).waitFor();
+        await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();await page.getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();await page.getByRole('heading',{name:/ยืนยันซื้อ/}).waitFor();
         assert.match(await page.locator('main').last().innerText(),/1,500/);assert.match(await page.locator('main').last().innerText(),/10,990\.01/);}
       cases.push('browser-web-and-line-entry-show-current-approved-price-and-1500-upfront-receipts');}
     const unused=await newQuote(),body={quoteId:quote.quoteId,consentRevision:quote.consentRevision,accepted:true,channel:'line'},key=randomUUID();

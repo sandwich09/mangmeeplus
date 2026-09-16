@@ -116,7 +116,8 @@ export function assertStripePrice(price: StripeObject, offer: BillingOffer, poli
 export function assertStripePortalConfiguration(portal: StripeObject, expectedId: string, livemode: boolean): void {
   if (portal.id !== expectedId || portal.object !== 'billing_portal.configuration' || portal.livemode !== livemode || portal.active !== true ||
       portal.features?.payment_method_update?.enabled !== true || portal.features?.subscription_update?.enabled !== false ||
-      portal.features?.subscription_cancel?.enabled !== false) {
+      portal.features?.subscription_cancel?.enabled !== false ||
+      (portal.features?.customer_update?.enabled === true && portal.features?.customer_update?.allowed_updates?.includes('email'))) {
     throw billingError('BILLING_PORTAL_CONFIG_MISMATCH', 'กำลังตรวจสอบการตั้งค่าหน้าแก้บัตร กรุณาลองใหม่หรือติดต่อทีมงาน');
   }
 }

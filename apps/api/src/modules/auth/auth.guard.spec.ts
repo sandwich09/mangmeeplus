@@ -1,7 +1,7 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
-import { AuthGuard, isBillingRecoveryRoute } from './presentation/auth.guard';
+import { AuthGuard, isBillingRecoveryRoute, isAccountEmailRecoveryRoute } from './presentation/auth.guard';
 import { DenyByDefaultGuard } from '../../common/security/deny-by-default.guard';
 import { IS_PUBLIC_ROUTE_KEY } from '../../common/security/public.decorator';
 import { REQUIRED_ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from '../../common/security/permissions.decorator';
@@ -626,6 +626,35 @@ describe('DenyByDefaultGuard', () => {
 
 
 describe('billing recovery boundaries', () => {
+  it('keeps email OTP and company recipient recovery available after expiry without widening account mutations', async () => {
+    const routes = [
+      ['GET', '/v1/auth/account/email/otp'], ['GET', '/v1/auth/account/email/otp/challenge'],
+      ...['request', 'line-reauth', 'line-reauth/start', 'challenge/resend', 'challenge/confirm', 'challenge/cancel']
+        .map(path => ['POST', `/v1/auth/account/email/otp/${path}`]),
+      ...['recipient', 'recipient/operation'].map(path => ['GET', `/v1/companies/c1/billing/${path}`]),
+      ...['recipient/preview', 'recipient/operation/submit', 'recipient/operation/cancel']
+        .map(path => ['POST', `/v1/companies/c1/billing/${path}`]),
+    ];
+    let recovery = false;
+    const resolver = { execute: async (...args: any[]) => { recovery = args[4]; return noopResolve.execute(args[0], args[1]); } } as any;
+    const guard = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any, resolver,
+      localConfig, prismaFor('test-sub', null, { termEndsAt: new Date(0) }), acceptedLegal);
+    for (const [method, path] of routes) {
+      assert.equal(await guard.canActivate(makeContext({ method, path, authHeader: 'Bearer token' })), true);
+      assert.equal(recovery, true, `${method} ${path}`);
+    }
+    for (const [method, path] of [['POST', '/v1/auth/account/email'], ['POST', '/v1/auth/account/line/unlink'],
+      ['DELETE', '/v1/auth/account/email/otp/challenge'], ['POST', '/v1/auth/account/email/otp/challenge/admin']]) {
+      assert.equal(isAccountEmailRecoveryRoute(method!, path!), false);
+    }
+    for (const path of ['recipient/operation/delete', 'recipient/operation/admin', 'recipient/other/deeper']) {
+      assert.equal(isBillingRecoveryRoute('POST', `/v1/companies/c1/billing/${path}`), false);
+    }
+    const denied = new AuthGuard(makeReflector(false), noopVerifier as any, failVerifier as any,
+      { execute: async () => { throw new ForbiddenException('Company or membership is held.'); } } as any,
+      localConfig, noopPrisma, acceptedLegal);
+    await assert.rejects(denied.canActivate(makeContext({ method: 'POST', path: '/v1/auth/account/email/otp/request', authHeader: 'Bearer token' })));
+  });
   it('permits only callback POST routes during platform closure; controllers still verify provider credentials', async () => {
     const closed = { getStatus: async () => ({ effectiveState: 'CLOSED' }) } as any;
     const guard = new AuthGuard(makeReflector(true), failVerifier as any, failVerifier as any, noopResolve, localConfig, noopPrisma, acceptedLegal, closed);

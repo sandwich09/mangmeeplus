@@ -23,6 +23,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
 import { RESUME_AI_COMMAND, STAFF_CONTACT_COMMAND } from '../line-ai/domain/logic/line-staff-menu.logic';
 import { ProcessLineWebhookUseCase } from '../line-ai/application/use-cases/process-line-webhook.use-case';
+import { hashPassword } from '../auth/domain/logic/password-credential.logic';
 import { UnlinkLineIdentityUseCase } from '../auth/application/use-cases/unlink-line-identity.use-case';
 import { LineSignupNotifyService } from './application/line-signup-notify.service';
 import { RequestLineSignupSupportUseCase } from './application/request-line-signup-support.use-case';
@@ -329,6 +330,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
       const h = wire(client);
 
       // §2.5: the unlink takes the context row with it, so nothing is left pointing at a shop.
+      await client.user.update({ where: { id: userId }, data: { username: `${tag}-login`, credential: { create: { passwordHash: hashPassword('Synthetic-backup-password-123!'), status: 'ACTIVE' } } } });
       await h.unlink.execute({ userId, requestId: `${tag}-req` });
       assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0);
 
@@ -859,6 +861,7 @@ describe('"ติดต่อเจ้าหน้าที่" on real PostgreS
 
       // §2.5: the unlink takes the context row with it. The request outlives it, so the follow-up
       // path is the one thing left holding a companyId nobody re-checked.
+      await client.user.update({ where: { id: userId }, data: { username: `${tag}-login`, credential: { create: { passwordHash: hashPassword('Synthetic-backup-password-123!'), status: 'ACTIVE' } } } });
       await h.unlink.execute({ userId, requestId: `${tag}-unlink` });
       assert.equal(await client.lineCompanyContext.count({ where: { lineUserId } }), 0);
 

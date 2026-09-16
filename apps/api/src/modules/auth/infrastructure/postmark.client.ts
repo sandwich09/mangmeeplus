@@ -65,7 +65,44 @@ export class PostmarkClient {
     return postmarkConfigurationFacts(expected, server, await this.request(`/message-streams/${encodeURIComponent(stream)}`));
   }
 
-  async send(body: Record<string, unknown>): Promise<{ messageId: string; submittedAt: Date }> {
+  async send(body: Record<string, unknown>, beforeDispatch?: () => Promise<void>): Promise<{ messageId: string; submittedAt: Date }> {
+    // ponytail: check each cloud send, including retries; no cached readiness can outlive a config change.
+    // Local fake/API-validation harnesses keep their existing transport contract.
+    if (!this.config.isLocal) {
+      const environment = this.config.deploymentIdentity?.targetEnvironment;
+      if (this.config.emailProvider !== 'postmark' || !['uat', 'production'].includes(environment)) {
+        throw new PostmarkSendError('CONFIG', 'sending_disabled_or_environment_missing');
+      }
+      const uat = environment === 'uat';
+      const from = uat ? 'developer@mangmeeplus.com' : 'contact@mangmeeplus.com';
+      const origin = uat ? 'https://uat.mangmeeplus.com' : 'https://mangmeeplus.com';
+      if (this.config.postmarkFromAddress !== from || body.From !== `${this.config.postmarkFromName} <${from}>` ||
+          body.MessageStream !== this.config.postmarkMessageStream) {
+        throw new PostmarkSendError('CONFIG', 'sender_or_stream_mismatch');
+      }
+      let web: URL;
+      try { web = new URL(this.config.sesWebBaseUrl ?? ''); }
+      catch { throw new PostmarkSendError('CONFIG', 'web_origin_mismatch'); }
+      if (web.origin !== origin || web.pathname !== '/' || web.search || web.hash || web.username || web.password) {
+        throw new PostmarkSendError('CONFIG', 'web_origin_mismatch');
+      }
+      const recipient = typeof body.To === 'string' ? body.To.trim().toLowerCase() : '';
+      if (!/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(recipient) || body.Cc != null || body.Bcc != null) {
+        throw new PostmarkSendError('PERMANENT', 'single_recipient_required');
+      }
+      if (uat && !this.config.postmarkUatAllowedRecipients?.includes(recipient)) {
+        throw new PostmarkSendError('CONFIG', 'uat_recipient_not_allowed');
+      }
+      let facts: PostmarkConfigurationFacts;
+      try { facts = await this.inspectConfiguration(); }
+      catch { throw new PostmarkSendError('CONFIG', 'readiness_unavailable'); }
+      if (facts.server !== 'MATCHED' || facts.stream !== 'MATCHED' || facts.mode !== 'LIVE' ||
+          facts.transactional !== true || facts.archived !== false) {
+        throw new PostmarkSendError('CONFIG', 'server_or_stream_not_ready');
+      }
+      if (uat) body = { ...body, Subject: `[UAT] ${typeof body.Subject === 'string' ? body.Subject : ''}` };
+    }
+    await beforeDispatch?.();
     const result = await this.request('/email', body);
     if (result.ErrorCode !== 0 || !validPostmarkMessageId(result.MessageID) ||
         typeof result.SubmittedAt !== 'string' || !Number.isFinite(Date.parse(result.SubmittedAt))) {

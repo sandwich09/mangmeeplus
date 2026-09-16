@@ -7,6 +7,7 @@ import { PrismaClient } from '../../generated/prisma/client';
 import { AccountProfileUseCase } from './application/use-cases/account-profile.use-case';
 import { ConfirmEmailVerificationUseCase } from './application/use-cases/confirm-email-verification.use-case';
 import { RequestEmailChangeUseCase } from './application/use-cases/request-email-change.use-case';
+import { emailReauthBinding } from './domain/logic/email-otp.logic';
 import { hashToken } from './domain/logic/secure-token.logic';
 import { pgSpecUnreachableReason } from '../../common/database/pg-spec-guard';
 
@@ -18,7 +19,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
   it('corrects only the LINE-linked unverified account and fences verification/password races', async (t) => {
     const url = new URL(databaseUrl!);
     assert.ok(['localhost', '127.0.0.1'].includes(url.hostname));
-    assert.equal(url.pathname, '/watchdog_bms');
+    assert.ok(['/watchdog_bms', '/email_otp_test'].includes(url.pathname));
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `owner-email-${randomUUID()}`, userId = `${tag}-owner`, otherId = `${tag}-other`;
     const profile = new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), { client } as any);
@@ -64,8 +65,11 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
       assert.equal(sent, 0);
       assert.equal(await client.emailVerificationToken.count({ where: { userId, status: 'PENDING' } }), 0);
 
+      const reauthenticatedUser = await client.user.findUniqueOrThrow({ where: { id: userId }, include: { credential: true, externalIdentities: true } });
+      await client.authSession.create({ data: { userId, tokenId: 'current', expiresAt: new Date(Date.now() + 600_000),
+        emailReauthenticatedAt: new Date(), emailReauthBindingHash: emailReauthBinding(reauthenticatedUser) } });
       // The first credential commits between the empty credential read and the parent User lock.
-      const inserted = deferred(), commitPassword = deferred(), credentialMiss = deferred(), continueCorrection = deferred();
+      const inserted = deferred(), commitPassword = deferred(), credentialMiss = deferred();
       const passwordPrisma = { client: new Proxy(client, { get(target, property) {
         if (property === '$transaction') return (fn: any) => target.$transaction(async (tx) => {
           const result = await fn(tx); inserted.resolve(); await commitPassword.promise; return result;
@@ -74,16 +78,13 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
       } }) } as any;
       const passwordWrite = new AccountProfileUseCase(lineMessagingCredentialsFixture(undefined), passwordPrisma).setInitialPassword(userId, 'owner-password', undefined, tag, 'current');
       await inserted.promise;
-      let firstCredentialRead = true;
+      // The shared account advisory lock now prevents the empty-credential window entirely.
+      // Observe the competing call before it takes that lock, then release the first writer.
       const correctingPrisma = { client: new Proxy(client, { get(target, property) {
         if (property === '$transaction') return (fn: any) => target.$transaction((tx) => fn(new Proxy(tx, { get(transaction, key) {
-          if (key === '$queryRaw') return async (...args: any[]) => {
-            const rows = await (transaction.$queryRaw as any)(...args);
-            if (firstCredentialRead && String(args[0]).includes('FROM "UserCredential"')) {
-              firstCredentialRead = false; assert.deepEqual(rows, []);
-              credentialMiss.resolve(); await continueCorrection.promise;
-            }
-            return rows;
+          if (key === '$executeRaw') return async (...args: any[]) => {
+            credentialMiss.resolve();
+            return (transaction.$executeRaw as any)(...args);
           };
           const value = Reflect.get(transaction, key); return typeof value === 'function' ? value.bind(transaction) : value;
         } })));
@@ -94,7 +95,7 @@ describe('unverified owner email on PostgreSQL', { skip: !databaseUrl }, () => {
       }), errorCode('current_password_incorrect'));
       await credentialMiss.promise;
       commitPassword.resolve();
-      await passwordWrite; continueCorrection.resolve(); await withoutPassword;
+      await passwordWrite; await withoutPassword;
       await edit(firstEmail, corrected, 'owner-password');
       assert.equal((await client.user.findUniqueOrThrow({ where: { id: userId } })).emailVerifiedAt, null);
 

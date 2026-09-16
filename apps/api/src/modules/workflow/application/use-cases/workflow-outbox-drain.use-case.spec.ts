@@ -88,6 +88,7 @@ describe('DrainWorkflowOutboxUseCase', () => {
       'billing.invoice.applied',
       'billing.status.email',
       'email.postmark.event.received',
+      'auth.email.security_notice',
       'storage.object_version_cleanup.requested',
       'email.account_claim.requested',
       'email.signup_rejected.requested',

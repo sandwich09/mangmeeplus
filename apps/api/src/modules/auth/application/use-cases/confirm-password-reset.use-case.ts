@@ -26,6 +26,8 @@ export class ConfirmPasswordResetUseCase {
       if(samePassword)throw new BadRequestException(PASSWORD_REUSE);
       const claimed=await tx.passwordResetToken.updateMany({where:{id:current.id,status:'PENDING',expiresAt:{gt:now}},data:{status:'USED',usedAt:now}});
       if(claimed.count!==1)throw invalid();
+      await tx.emailVerificationToken.updateMany({where:{userId:user.id,status:'PENDING'},data:{status:'REVOKED'}});
+      await tx.user.update({where:{id:user.id},data:{emailRevision:{increment:1}}});
       await tx.userCredential.update({where:{userId:user.id},data:{passwordHash:hashPassword(input.newPassword),status:'ACTIVE',mustChangePassword:false,expiresAt:null,tempPasswordEncrypted:null,updatedAt:now}});
       const revoked=await tx.authSession.updateMany({where:{userId:user.id,status:'ACTIVE'},data:{status:'REVOKED',revokedAt:now}});
       await tx.passwordResetToken.updateMany({where:{userId:user.id,status:'PENDING'},data:{status:'REVOKED'}});

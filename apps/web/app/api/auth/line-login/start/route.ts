@@ -1,3 +1,4 @@
+import { ACCESS_TOKEN_COOKIE, joinCookieChunks } from '@/common/auth/auth-cookies.constants';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { internalApiV1Base } from '@/common/api/internal-api-base';
@@ -20,22 +21,35 @@ type LoginChannels = { line?: { available?: boolean; channelId?: string } };
 export async function GET(request: NextRequest) {
   const origin = publicOriginFromHeaders(request.headers, request.nextUrl.origin);
 
-  const channels = await fetch(`${internalApiV1Base()}/auth/login-channels`, { cache: 'no-store' })
-    .then((res) => res.json() as Promise<LoginChannels>)
-    .catch(() => null);
-  // The API owns the flag and the credentials, so an unavailable channel never reaches LINE.
-  if (!channels?.line?.available || !channels.line.channelId) {
-    return NextResponse.redirect(new URL('/login?line=unavailable', origin));
-  }
-
   const state = randomUrlToken();
-  const nonce = randomUrlToken();
-  const verifier = randomUrlToken();
+  const emailReauth = request.nextUrl.searchParams.get('purpose') === 'email-reauth';
   const returnTo = sanitizeReturnTo(request.nextUrl.searchParams.get('returnTo'));
+  let nonce = randomUrlToken(), channelId: string;
+  if (emailReauth) {
+    // Account security is always available for an already-linked account. It does not
+    // enable the separate public LINE login feature or create/link an identity.
+    const accessToken = joinCookieChunks(name => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE);
+    if (!accessToken) return NextResponse.redirect(new URL('/login', origin));
+    const result = await fetch(`${internalApiV1Base()}/auth/account/email/otp/line-reauth/start`, {
+      method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store', signal: AbortSignal.timeout(10_000),
+    }).catch(() => null);
+    const data = result?.ok ? await result.json().catch(() => null) : null;
+    if (!data?.nonce || !data?.channelId) {
+      const failed = new URL(returnTo ?? '/', origin); failed.searchParams.set('line', 'email-reauth-failed');
+      return NextResponse.redirect(failed);
+    }
+    nonce = data.nonce; channelId = data.channelId;
+  } else {
+    const channels = await fetch(`${internalApiV1Base()}/auth/login-channels`, { cache: 'no-store' })
+      .then((res) => res.json() as Promise<LoginChannels>).catch(() => null);
+    if (!channels?.line?.available || !channels.line.channelId) return NextResponse.redirect(new URL('/login?line=unavailable', origin));
+    channelId = channels.line.channelId;
+  }
+  const verifier = randomUrlToken();
 
   const res = NextResponse.redirect(
     buildLineAuthorizeUrl({
-      channelId: channels.line.channelId,
+      channelId, emailReauth,
       redirectUri: `${origin}/api/auth/line-login/callback`,
       state,
       nonce,
@@ -45,7 +59,7 @@ export async function GET(request: NextRequest) {
   );
   res.cookies.set(
     LINE_LOGIN_TXN_COOKIE,
-    encodeLineLoginTxn({ state, nonce, verifier, ...(returnTo ? { returnTo } : {}) }),
+    encodeLineLoginTxn({ state, nonce, verifier, ...(emailReauth ? { purpose: 'email-reauth' as const } : {}), ...(returnTo ? { returnTo } : {}) }),
     {
       httpOnly: true,
       sameSite: 'lax',

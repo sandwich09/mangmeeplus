@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import { useEffect, useState } from 'react';
 import { Button } from '@/common/components/button/Button';
 import { TextField } from '@/common/components/field/Field';
@@ -14,8 +15,6 @@ import { getDefaultLocale, t } from '@/common/i18n/workspace-i18n.logic';
 import { formatThaiDateTime as formatSharedThaiDateTime } from '@/common/i18n/thai-date';
 import {
   getAccountSecurityState,
-  requestEmailChange,
-  resendEmailVerification,
   setAiAssistantEnabled,
   type AccountSecurityState as AccountSecurityStateModel,
 } from '@/features/auth/auth.api';
@@ -23,19 +22,6 @@ import { authErrorMessage } from '@/features/auth/auth.logic';
 
 const LOCALE_STORAGE_KEY = 'watchdog.workspace.locale';
 const secondaryButtonClass = 'rounded border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50';
-
-function StatusBadge({ verified }: { verified: boolean }) {
-  return (
-    <span
-      className={[
-        'inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold',
-        verified ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800',
-      ].join(' ')}
-    >
-      {verified ? 'Verified' : 'Pending verification'}
-    </span>
-  );
-}
 
 function formatDateTime(value: string | null): string | null {
   return value ? formatSharedThaiDateTime(value) : null;
@@ -51,11 +37,6 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState(true);
   const [state, setState] = useState<AccountSecurityStateModel | null>(null);
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newEmail, setNewEmail] = useState('');
   const [aiToggleLoading, setAiToggleLoading] = useState(false);
   const [aiToggleError, setAiToggleError] = useState<string | null>(null);
 
@@ -65,7 +46,6 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
     try {
       const nextState = await getAccountSecurityState();
       setState(nextState);
-      setNewEmail((current) => current || nextState.pendingEmail || nextState.email || '');
     } catch (error) {
       setLoadError(authErrorMessage(error, 'Unable to load account security details.'));
     } finally {
@@ -79,23 +59,6 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
     void loadState();
   }, []);
 
-  const handleEmailSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setEmailLoading(true);
-    setEmailError(null);
-    setEmailSuccess(null);
-    try {
-      const result = await requestEmailChange(currentPassword, newEmail);
-      setCurrentPassword('');
-      setEmailSuccess(`Verification link sent to ${result.email}.`);
-      await loadState();
-    } catch (error) {
-      setEmailError(authErrorMessage(error, 'Unable to send verification email.'));
-    } finally {
-      setEmailLoading(false);
-    }
-  };
-
   const handleAiToggle = async (currentlyOptedOut: boolean) => {
     setAiToggleLoading(true);
     setAiToggleError(null);
@@ -107,21 +70,6 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
       setAiToggleError(authErrorMessage(error, 'ไม่สามารถบันทึกการตั้งค่าผู้ช่วย AI ได้'));
     } finally {
       setAiToggleLoading(false);
-    }
-  };
-
-  const handleResend = async () => {
-    setEmailLoading(true);
-    setEmailError(null);
-    setEmailSuccess(null);
-    try {
-      const result = await resendEmailVerification();
-      setEmailSuccess(`Verification link resent to ${result.email}.`);
-      await loadState();
-    } catch (error) {
-      setEmailError(authErrorMessage(error, 'Unable to resend verification email.'));
-    } finally {
-      setEmailLoading(false);
     }
   };
 
@@ -139,8 +87,6 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
     }
   };
 
-  const verifiedLabel = state?.emailVerifiedAt ? formatDateTime(state.emailVerifiedAt) : null;
-  const pendingLabel = state?.pendingEmailExpiresAt ? formatDateTime(state.pendingEmailExpiresAt) : null;
 
   return (
     <div className="space-y-6 p-6">
@@ -174,71 +120,7 @@ export function AccountSecurityPage({ companyId }: { companyId: string }) {
           />
         ) : (
           <div className="space-y-6">
-            <section className="max-w-3xl rounded-lg border border-gray-200 bg-white p-5">
-              <div className="space-y-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <h2 className="text-base font-semibold text-gray-900">Account email</h2>
-                    <p className="text-sm text-gray-500">
-                      Add or update your verified email for account notifications.
-                    </p>
-                  </div>
-                  <StatusBadge verified={state?.emailVerified ?? false} />
-                </div>
-
-                <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                  <p><span className="font-medium">Current email:</span> {state?.email ?? 'Not set'}</p>
-                  <p><span className="font-medium">Verified at:</span> {verifiedLabel ?? 'Not verified yet'}</p>
-                  {state?.pendingEmail && (
-                    <p>
-                      <span className="font-medium">Pending email:</span> {state.pendingEmail}
-                      {pendingLabel ? ` (expires ${pendingLabel})` : ''}
-                    </p>
-                  )}
-                </div>
-
-                {emailError && (
-                  <div className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{emailError}</div>
-                )}
-                {emailSuccess && (
-                  <div className="rounded border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">{emailSuccess}</div>
-                )}
-
-                <form className="space-y-4" onSubmit={handleEmailSubmit}>
-                  <TextField
-                    label="Email"
-                    type="email"
-                    autoComplete="email"
-                    value={newEmail}
-                    onChange={(event) => setNewEmail(event.target.value)}
-                    hint="We will send a verification link before this email becomes your password-recovery address."
-                    required
-                  />
-                  <TextField
-                    label="Current password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                    hint="Required to confirm this security-sensitive change."
-                    required
-                  />
-                  <div className="flex flex-wrap gap-3">
-                    <Button type="submit" loading={emailLoading}>
-                      Send verification email
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={handleResend}
-                      disabled={!state?.pendingEmail || emailLoading} loading={Boolean(emailLoading)}
-                    >
-                      Resend latest link
-                    </Button>
-                  </div>
-                </form>
-              </div>
-            </section>
+            <AccountEmailOtpPanel onState={next => setState(current => current && ({ ...current, email: next.email, emailVerified: next.emailVerified }))} />
 
             {/* PDPA objection route (M-05 register §3.1): self-service LINE AI assistant toggle. */}
             <section className="max-w-3xl rounded-lg border border-gray-200 bg-white p-5">

@@ -38,19 +38,32 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const txn = decodeLineLoginTxn(request.cookies.get(LINE_LOGIN_TXN_COOKIE)?.value);
-  if (params.get('error')) return redirectToLogin('canceled');
+  const emailReauthReturn = (reason: string) => {
+    const url = new URL(sanitizeReturnTo(txn?.returnTo) ?? '/', origin);
+    url.searchParams.set('line', reason);
+    return clearTxn(NextResponse.redirect(url));
+  };
+  if (params.get('error')) return txn?.purpose === 'email-reauth' ? emailReauthReturn('email-reauth-canceled') : redirectToLogin('canceled');
 
   const code = params.get('code');
   const state = params.get('state');
   // No transaction, no code, or a state that does not match the one this browser started with:
   // the callback did not come from a login this session began.
-  if (!txn || !code || !state || state !== txn.state) return redirectToLogin('failed');
+  if (!txn || !code || !state || state !== txn.state) return txn?.purpose === 'email-reauth' ? emailReauthReturn('email-reauth-failed') : redirectToLogin('failed');
 
   // Two lanes end here. With an active session this is the link-after-password round trip (P12-2):
   // the user just signed in with a password, so the code is spent by an authenticated API call that
   // links the nonce-verified LINE identity to that user, and the session cookies stay untouched.
   // Without a session it is a plain LINE login and the public exchange below issues the tokens.
   const accessToken = joinCookieChunks((name) => request.cookies.get(name)?.value, ACCESS_TOKEN_COOKIE);
+  if (txn.purpose === 'email-reauth') {
+    if (!accessToken) return emailReauthReturn('email-reauth-failed');
+    const response = await fetch(`${internalApiV1Base()}/auth/account/email/otp/line-reauth`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ code, codeVerifier: txn.verifier, nonce: txn.nonce }), cache: 'no-store',
+    }).catch(() => null);
+    return emailReauthReturn(response?.ok ? 'email-reauthenticated' : 'email-reauth-failed');
+  }
   if (accessToken) {
     // This lane always starts from a page the user is already signed in to, so its failure belongs
     // back on that page: /login redirects an authenticated session straight past the notice, which

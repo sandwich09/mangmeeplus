@@ -2,6 +2,8 @@ import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsI
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
+export class BillingEmptyDto {}
+
 export class BillingVersionDto {
   @IsInt() @Min(0) expectedVersion!: number;
 }

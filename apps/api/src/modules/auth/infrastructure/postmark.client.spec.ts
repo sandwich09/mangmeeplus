@@ -6,6 +6,102 @@ import { parsePostmarkEvent, postmarkEventKey } from '../application/postmark-ev
 const id = '22222222-2222-4222-8222-222222222222';
 const config = { postmarkServerToken: 'POSTMARK_API_TEST', isLocal: true } as any;
 
+describe('Postmark cloud environment isolation before dispatch', () => {
+  const cloudConfig = (stage = 'uat') => ({
+    isLocal: false, emailProvider: 'postmark', deploymentIdentity: { targetEnvironment: stage },
+    postmarkServerToken: 'SYNTHETIC_SERVER_TOKEN', postmarkServerId: stage === 'uat' ? 123 : 456,
+    postmarkMessageStream: 'outbound', postmarkFromName: 'Mangmee Plus',
+    postmarkFromAddress: stage === 'uat' ? 'developer@mangmeeplus.com' : 'contact@mangmeeplus.com',
+    sesWebBaseUrl: stage === 'uat' ? 'https://uat.mangmeeplus.com' : 'https://mangmeeplus.com',
+    postmarkUatAllowedRecipients: ['tester@example.test'],
+  });
+  const message = (c: ReturnType<typeof cloudConfig>) => ({
+    From: `${c.postmarkFromName} <${c.postmarkFromAddress}>`, To: 'tester@example.test',
+    MessageStream: 'outbound', Subject: 'Verify account',
+  });
+  function fixture(c = cloudConfig(), server: object = { ID: c.postmarkServerId, DeliveryType: 'Live' }, stream: object = {
+    ID: 'outbound', ServerID: c.postmarkServerId, MessageStreamType: 'Transactional', ArchivedAt: null,
+  }) {
+    const calls: { method: string; path: string; body?: any }[] = [];
+    const client = new PostmarkClient(c as any, (async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname;
+      calls.push({ method: init.method!, path, body: init.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify(path === '/server' ? server : path.startsWith('/message-streams/') ? stream :
+        { ErrorCode: 0, MessageID: id, SubmittedAt: '2026-09-15T00:00:00Z' }));
+    }) as any);
+    return { client, calls };
+  }
+  it('checks exact live server and active transactional stream before every UAT/Production POST', async () => {
+    for (const stage of ['uat', 'production']) {
+      const c = cloudConfig(stage), body = message(c), { client, calls } = fixture(c);
+      await client.send(body);
+      await client.send(body);
+      assert.deepEqual(calls.map(call => `${call.method} ${call.path}`), [
+        'GET /server', 'GET /message-streams/outbound', 'POST /email',
+        'GET /server', 'GET /message-streams/outbound', 'POST /email',
+      ]);
+      assert.equal(calls[2].body.Subject, stage === 'uat' ? '[UAT] Verify account' : 'Verify account');
+      assert.equal(calls[2].body.To, 'tester@example.test');
+      assert.equal(body.Subject, 'Verify account');
+    }
+  });
+  it('refuses wrong deployment, provider, sender, origin, stream or recipient before any provider request', async () => {
+    const mutations = [
+      (c: any, b: any) => { c.emailProvider = 'disabled'; },
+      (c: any, b: any) => { c.deploymentIdentity = undefined; },
+      (c: any, b: any) => { c.deploymentIdentity.targetEnvironment = 'local'; },
+      (c: any, b: any) => { c.postmarkFromAddress = 'contact@mangmeeplus.com'; b.From = `Mangmee Plus <${c.postmarkFromAddress}>`; },
+      (c: any, b: any) => { b.From = 'Other <developer@mangmeeplus.com>'; },
+      (c: any, b: any) => { b.MessageStream = 'another'; },
+      ...['https://mangmeeplus.com', 'http://uat.mangmeeplus.com', 'https://uat.mangmeeplus.com.evil.test',
+        'https://uat.mangmeeplus.com/path', 'https://uat.mangmeeplus.com/?x=1', 'https://user@uat.mangmeeplus.com', 'invalid'].map(origin =>
+        (c: any, b: any) => { c.sesWebBaseUrl = origin; }),
+      ...['customer@example.test', 'tester@example.test.evil', 'Tester <tester@example.test>',
+        'tester@example.test,customer@example.test', 'tester@example.test;customer@example.test'].map(to =>
+        (c: any, b: any) => { b.To = to; }),
+      (c: any, b: any) => { c.postmarkUatAllowedRecipients = []; },
+      (c: any, b: any) => { b.Cc = 'tester@example.test'; },
+      (c: any, b: any) => { b.Bcc = 'tester@example.test'; },
+    ];
+    for (const mutate of mutations) {
+      const c = cloudConfig(), body = message(c); mutate(c, body);
+      const { client, calls } = fixture(c);
+      await assert.rejects(client.send(body), (error: any) => ['CONFIG', 'PERMANENT'].includes(error.kind));
+      assert.equal(calls.length, 0);
+    }
+  });
+  it('normalizes an exact UAT recipient without rewriting it, and does not apply that list to Production', async () => {
+    const c = cloudConfig(), { client, calls } = fixture(c);
+    await client.send({ ...message(c), To: 'Tester@Example.Test' });
+    assert.equal(calls[2].body.To, 'Tester@Example.Test');
+    const prod = cloudConfig('production'), other = fixture(prod);
+    await other.client.send({ ...message(prod), To: 'customer@example.test' });
+    assert.equal(other.calls[2].body.To, 'customer@example.test');
+  });
+  it('unknown, foreign, sandbox, archived and non-transactional native facts never allow POST', async () => {
+    for (const server of [{ ID: 456, DeliveryType: 'Live' }, { ID: 123 }, { ID: 123, DeliveryType: 'Sandbox' }]) {
+      const { client, calls } = fixture(cloudConfig(), server);
+      await assert.rejects(client.send(message(cloudConfig())), (error: any) => error.kind === 'CONFIG');
+      assert.ok(calls.every(call => call.method === 'GET'));
+    }
+    for (const change of [{ ID: 'other' }, { ServerID: 456 }, { MessageStreamType: 'Broadcasts' },
+      { ArchivedAt: '2026-09-15T00:00:00Z' }, { ArchivedAt: undefined }, { MessageStreamType: undefined }]) {
+      const { client, calls } = fixture(cloudConfig(), { ID: 123, DeliveryType: 'Live' }, {
+        ID: 'outbound', ServerID: 123, MessageStreamType: 'Transactional', ArchivedAt: null, ...change,
+      });
+      await assert.rejects(client.send(message(cloudConfig())), (error: any) => error.kind === 'CONFIG');
+      assert.ok(calls.every(call => call.method === 'GET'));
+    }
+  });
+  it('readiness network failure stays a sanitized config failure without an uncertain email POST', async () => {
+    const methods: string[] = [];
+    const client = new PostmarkClient(cloudConfig() as any, (async (_: string, init: RequestInit) => {
+      methods.push(init.method!); throw Error('SYNTHETIC_SERVER_TOKEN recipient private');
+    }) as any);
+    await assert.rejects(client.send(message(cloudConfig())), (error: any) => error.kind === 'CONFIG' && error.message === 'postmark.readiness_unavailable');
+    assert.deepEqual(methods, ['GET']);
+  });
+});
 describe('Postmark transport and callback contract', () => {
   it('inspects only the configured server and stream through GET without returning native secrets', async () => {
     const calls: string[] = [];

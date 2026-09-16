@@ -1,3 +1,4 @@
+import { EMAIL_SECURITY_NOTICE_EVENT } from '../../../auth/application/account-email-otp.service';
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaOutboxRepository } from '../../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { LaunchShadowProbe } from '../../../feature-launch/application/launch-shadow.probe';
@@ -87,6 +88,7 @@ export class DrainWorkflowOutboxUseCase {
         'billing.invoice.applied', // Billing owns delivery; generic workflow publishing must not swallow it.
         'billing.status.email',
         POSTMARK_EVENT_TYPE,
+        EMAIL_SECURITY_NOTICE_EVENT,
         OBJECT_VERSION_CLEANUP_EVENT_TYPE,
         // Reserved for their own consumers. Without these the generic drain would claim a claim
         // email and "publish" it as a workflow event — the applicant would never receive it. The

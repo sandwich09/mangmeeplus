@@ -9,8 +9,19 @@ import {
   normalizeReferralCode,
   normalizeThaiMobile,
   requireThaiMobile,
-  requireLineContactEmail,
+  requireLineContactEmail, optionalLineContactEmail, lineIntakeContactComplete, LINE_OPTIONAL_EMAIL_POLICY,
 } from './line-signup.logic';
+
+describe('optional LINE contact email policy', () => {
+  it('accepts an absent contact, preserves required validators and does not auto-upgrade legacy partial intake', () => {
+    for (const value of [undefined, null, '', '  ']) assert.equal(optionalLineContactEmail(value), null);
+    assert.equal(optionalLineContactEmail(' Shop@Example.test '), 'shop@example.test');
+    assert.throws(() => optionalLineContactEmail('bad'));
+    assert.equal(lineIntakeContactComplete({ phoneNumber: '0812345678', contactEmail: null, intakePolicyVersion: null }), false);
+    assert.equal(lineIntakeContactComplete({ phoneNumber: '0812345678', contactEmail: null, intakePolicyVersion: LINE_OPTIONAL_EMAIL_POLICY }), true);
+    assert.equal(lineIntakeContactComplete({ phoneNumber: null, contactEmail: null, intakePolicyVersion: LINE_OPTIONAL_EMAIL_POLICY }), false);
+  });
+});
 
 describe('requireLineContactEmail', () => {
   it('normalizes contact syntax without requiring a real mailbox or DNS record', () => {

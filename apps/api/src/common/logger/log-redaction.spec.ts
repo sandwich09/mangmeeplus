@@ -51,7 +51,7 @@ describe('L-09 deep log redaction (real pino instance)', () => {
           message: 'Unique constraint failed',
           stack: 'PrismaClientKnownRequestError: Unique constraint failed\n    at handler',
           code: 'P2002',
-          meta: { target: ['email'], password: 'db-password-in-driver-meta', user: { apiKey: 'nested-ak' } },
+          meta: { code: '000123', otp: '654321', nonce: 'sensitive-nonce', target: ['email'], password: 'db-password-in-driver-meta', user: { apiKey: 'nested-ak' } },
         },
       },
       'unhandled exception',
@@ -59,6 +59,9 @@ describe('L-09 deep log redaction (real pino instance)', () => {
     const out = last();
     const err = out['err'] as Record<string, unknown>;
     const meta = err['meta'] as Record<string, unknown>;
+    assert.equal(meta['code'], '[REDACTED]');
+    assert.equal(meta['otp'], '[REDACTED]');
+    assert.equal(meta['nonce'], '[REDACTED]');
     assert.equal(meta['password'], '[REDACTED]', 'err.meta.password must be redacted');
     assert.equal((meta['user'] as Record<string, unknown>)['apiKey'], '[REDACTED]', 'err.meta.user.apiKey is depth 4');
     assert.equal(err['code'], 'P2002', 'non-personal forensic content must survive (spec §4.4)');

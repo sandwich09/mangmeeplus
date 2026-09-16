@@ -1,3 +1,4 @@
+import { lockAccountEmail } from '../../../auth/application/account-email-state';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { revokePendingLineHandoffTokens } from '../../../auth/domain/logic/line-handoff.logic';
@@ -29,6 +30,7 @@ export class PartnerMemberLineUnlinkUseCase {
     // Interactive rather than the array form because the audit row below reports a count the
     // revoke produces, and the array form cannot feed one statement's result into the next.
     await this.prisma.client.$transaction(async (tx) => {
+      await lockAccountEmail(tx, cmd.memberUserId);
       const changed = await tx.externalIdentity.updateMany({
         where: { id: identity.id, userId: cmd.memberUserId, status: 'ACTIVE', updatedAt: identity.updatedAt },
         data: { status: 'UNLINKED', updatedAt: new Date() },

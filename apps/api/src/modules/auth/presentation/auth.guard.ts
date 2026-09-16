@@ -60,14 +60,22 @@ const TERM_RECOVERY_ROUTES = new Set([
   'POST /v1/auth/password/change', 'POST /v1/auth/logout',
 ]);
 
+// Account email proof is a prerequisite for payment, including after a term hold.
+// Keep this exact: other account mutations do not inherit recovery access.
+export function isAccountEmailRecoveryRoute(method: string, path: string): boolean {
+  const clean = cleanRequestPath(path).toLowerCase(), prefix = '/v1/auth/account/email/otp';
+  return method === 'GET' ? new RegExp(`^${prefix}(?:/[^/]+)?$`).test(clean)
+    : method === 'POST' && new RegExp(`^${prefix}/(?:request|line-reauth(?:/start)?|[^/]+/(?:resend|confirm|cancel))$`).test(clean);
+}
+
 // Only implemented billing and package-request read/create routes may recover a term hold.
 // Session, legal/platform access, tenant and route permissions still apply; mutations require OWNER.
 export function isBillingRecoveryRoute(method: string, path: string): boolean {
   const clean = cleanRequestPath(path).toLowerCase();
   if ((method === 'GET' || method === 'POST') && /^\/v1\/companies\/[^/]+\/package-change-requests$/.test(clean)) return true;
   const prefix = '/v1/companies/[^/]+/billing';
-  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
-    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);
+  return method === 'GET' ? new RegExp(`^${prefix}(?:/history|/capacity|/recipient(?:/[^/]+)?|/attempts/[^/]+|/collection/[^/]+|/invoices/[^/]+/adjustments/(?:refunds|credit-notes))?$`).test(clean)
+    : method === 'POST' && new RegExp(`^${prefix}/(?:quote|checkout|portal|refresh|recipient/preview|recipient/[^/]+/(?:submit|cancel)|collection/preview|collection/[^/]+/(?:submit|withdraw|capacity)|attempts/[^/]+/(?:resume|capacity)|documents/[^/]+/open)$`).test(clean);
 }
 
 function isTermExpiryExempt(path: string): boolean {
@@ -208,7 +216,7 @@ export class AuthGuard implements CanActivate {
     try {
       // Only authenticated, explicitly scoped recovery/session reads can resolve a term hold.
       // Permissions/legal/platform/session checks below still apply; never expose this as input.
-      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`) || isBillingRecoveryRoute(req.method, cleanPath);
+      const allowTermRecovery = TERM_RECOVERY_ROUTES.has(`${req.method} ${cleanPath}`) || isBillingRecoveryRoute(req.method, cleanPath) || isAccountEmailRecoveryRoute(req.method, cleanPath);
       req.context = await this.resolveContext.execute(subject, requestId, authProvider, companyId, allowTermRecovery);
       req.context.sessionId = session.id;
     } catch (error) {

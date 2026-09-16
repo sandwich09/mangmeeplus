@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../../generated/prisma/client';
+import { emailReauthBinding } from './domain/logic/email-otp.logic';
 import { AccountProfileUseCase } from './application/use-cases/account-profile.use-case';
 
 const databaseUrl = process.env.ACCOUNT_PROFILE_TEST_DATABASE_URL;
@@ -30,7 +31,7 @@ describe('username uniqueness on real PostgreSQL', { skip: !databaseUrl }, () =>
     // Localhost alone is NOT proof of a local database: the production access recipe port-forwards
     // prod to 127.0.0.1 through SSM. This spec writes to the real `public` schema, so it also
     // requires the local docker database by name before it creates a single row.
-    assert.equal(url.pathname, '/watchdog_bms', 'refusing to write to anything but the local docker database');
+    assert.ok(['/watchdog_bms', '/email_otp_test'].includes(url.pathname), 'refusing to write to anything but the local docker database');
     const client = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
     const tag = `acctprofile-${randomUUID().slice(0, 8)}`;
     const useCase = new AccountProfileUseCase(lineMessagingCredentialsFixture(null), { client } as any, null, null);
@@ -39,8 +40,11 @@ describe('username uniqueness on real PostgreSQL', { skip: !databaseUrl }, () =>
     const attempt = async (desired: string): Promise<'accepted' | 'taken' | 'invalid'> => {
       const subjectId = `${tag}-subject-${randomUUID().slice(0, 8)}`;
       await client.user.create({ data: { id: subjectId, displayName: 'Subject', status: 'ACTIVE' } });
+      await client.externalIdentity.create({ data: { userId: subjectId, provider: 'LINE', providerChannelId: 'test-channel', providerUserId: subjectId } });
+      const user = await client.user.findUniqueOrThrow({ where: { id: subjectId }, include: { credential: true, externalIdentities: true } });
+      await client.authSession.create({ data: { userId: subjectId, tokenId: `session-${subjectId}`, expiresAt: new Date(Date.now() + 3_600_000), emailReauthenticatedAt: new Date(), emailReauthBindingHash: emailReauthBinding(user) } });
       try {
-        await useCase.setInitialPassword(subjectId, 'backup-password', desired, 'req-1', 'session-1');
+        await useCase.setInitialPassword(subjectId, 'backup-password', desired, 'req-1', `session-${subjectId}`);
         return 'accepted';
       } catch (error) {
         if (error instanceof ConflictException) return 'taken';

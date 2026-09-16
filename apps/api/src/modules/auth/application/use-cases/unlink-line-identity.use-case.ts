@@ -1,3 +1,4 @@
+import { accountEmailState, emailError, lockAccountEmail } from '../account-email-state';
 import { ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AuditService } from '../../../audit/application/audit.service';
@@ -26,6 +27,15 @@ export class UnlinkLineIdentityUseCase {
     // failed to sever: if any of the three writes cannot land, none of them do and the caller
     // retries. Owner decision 2026-09-06.
     const handoffLinksRevoked = await this.prisma.client.$transaction(async (tx) => {
+      await lockAccountEmail(tx, userId);
+      const { user, now } = await accountEmailState(tx, userId);
+      const credential = user.credential;
+      if (!credential || credential.status === 'DISABLED' || (credential.expiresAt && credential.expiresAt <= now) ||
+          !(user.username || (user.email && user.emailVerifiedAt))) {
+        throw emailError('LAST_LOGIN_REQUIRED', 'ก่อนยกเลิกการผูก LINE ต้องมีรหัสผ่านสำรอง และมีชื่อผู้ใช้หรืออีเมลที่ยืนยันแล้ว');
+      }
+      await tx.emailVerificationToken.updateMany({ where: { userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
+      await tx.user.update({ where: { id: userId }, data: { emailRevision: { increment: 1 } } });
       const changed = await tx.externalIdentity.updateMany({
         where: { id: identity.id, userId: userId, status: 'ACTIVE', updatedAt: identity.updatedAt },
         data: { status: 'UNLINKED', updatedAt: new Date() },

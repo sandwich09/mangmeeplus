@@ -1,5 +1,7 @@
 # LINE signup recovery และการจบเคสอย่างชัดเจน
 
+> แก้ไข 2026-09-16: เรื่องอีเมลใช้ [spec สมัคร LINE แบบไม่บังคับอีเมลและยืนยัน OTP ก่อนจ่าย](signup-optional-email-otp-billing-spec-th.md) เป็นกฎปัจจุบัน: อีเมลติดต่อร้านใน LINE เป็นทางเลือก, web claim ยังต้องมีอีเมล, การอนุมัติชำระใหม่ต้องใช้อีเมลบัญชีที่ยืนยันแล้ว และเปลี่ยนผู้รับเอกสารเดิมของบริษัทด้วยการตรวจและยืนยันแยก ข้อความเดิมด้านล่างที่ขัดกันเป็นประวัติ ไม่ใช่กฎสำหรับ implementation รอบนี้
+
 2026-09-08 amendment: [Receipt UX and rejected reapplication](line-receipt-ux-signup-reapply-spec.md) supersedes automatic receipt questioning and terminal-rejection dead ends. Capture, permissions, audit and final-mutation boundaries remain.
 
 

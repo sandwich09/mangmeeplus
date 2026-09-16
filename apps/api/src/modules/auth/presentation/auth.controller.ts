@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { LineMessagingCredentialsService } from '../../../common/config/line-messaging-credentials.service';
 import {
   Body,
@@ -213,7 +214,7 @@ function extractSidFromToken(token: string | undefined): string | undefined {
 }
 
 // ponytail: Bearer header is primary; watchdog_token cookie covers the web BFF session
-function extractSid(req: Request): string | undefined {
+export function extractSid(req: Request): string | undefined {
   const bearerHeader = req.headers['authorization'] as string | undefined;
   const headerToken = bearerHeader?.startsWith('Bearer ') ? bearerHeader.slice(7) : undefined;
   const cookieToken = accessTokenFromCookies((req as Record<string, any>)['cookies']);
@@ -569,10 +570,10 @@ export class AuthController {
         <label for="phone-number">เบอร์มือถือ</label>
         <input id="phone-number" type="tel" inputmode="tel" maxlength="10" autocomplete="tel-national" required />
         <p id="phone-number-error" class="field-error" hidden></p>
-        <label for="contact-email">อีเมลเจ้าของร้าน</label>
-        <input id="contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" required aria-describedby="contact-email-help" />
+        <label for="contact-email">อีเมลติดต่อร้าน (ไม่บังคับ)</label>
+        <input id="contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" aria-describedby="contact-email-help" />
         <p id="contact-email-error" class="field-error" hidden></p>
-        <p id="contact-email-help" class="fine">เปิดร้านแล้วใช้งานผ่าน LINE ได้ทันที ไม่ต้องยืนยันอีเมลหรือตั้งรหัสผ่าน รหัสผ่านตั้งภายหลังได้</p>
+        <p id="contact-email-help" class="fine">เพิ่มภายหลังได้ ก่อนชำระแพ็กเกจจะให้ยืนยันอีเมลสำหรับรับเอกสาร ใช้งานผ่าน LINE ได้ทันที</p>
         <section class="legal">
           <p>${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.titleTh)} และ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.privacy.titleTh)} ${escapeHtml(CURRENT_LEGAL_DOCUMENTS.terms.displayVersionTh)}</p>
           <ul>
@@ -593,7 +594,7 @@ export class AuthController {
         <p id="progress-text"></p>
         <div id="existing-companies" class="actions"></div>
         <section id="email-update" hidden>
-          <label for="updated-contact-email">แก้อีเมลเจ้าของร้าน</label>
+          <label for="updated-contact-email">อีเมลติดต่อร้าน (เว้นว่างได้)</label>
           <input id="updated-contact-email" type="email" inputmode="email" maxlength="254" autocomplete="email" autocapitalize="none" />
           <p id="updated-contact-email-error" class="field-error" hidden></p>
           <button id="save-email" type="button">บันทึกอีเมลและทำคำขอเดิมต่อ</button>
@@ -864,13 +865,7 @@ export class AuthController {
     @Body() dto: RequestEmailChangeDto,
     @Req() req: Request & { context: RequestContext },
   ) {
-    await this.authRateLimit.assertEmailVerificationRequestAllowed(req.context.userId);
-    return this.requestEmailChange.execute({
-      userId: req.context.userId,
-      currentPassword: dto.currentPassword,
-      newEmail: dto.newEmail,
-      requestId: req.context.requestId,
-    });
+    throw new ConflictException({ code: 'EMAIL_OTP_REQUIRED', message: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP' });
   }
 
   @Post('account/email/resend')
@@ -879,11 +874,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Resend the latest pending email verification link' })
   @ApiResponse({ status: 202, description: 'Verification email resent' })
   async resendAccountEmailVerification(@Req() req: Request & { context: RequestContext }) {
-    await this.authRateLimit.assertEmailVerificationRequestAllowed(req.context.userId);
-    return this.resendEmailVerification.execute({
-      userId: req.context.userId,
-      requestId: req.context.requestId,
-    });
+    throw new ConflictException({ code: 'EMAIL_OTP_REQUIRED', message: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP' });
   }
 
   @Public()
@@ -893,11 +884,7 @@ export class AuthController {
   @ApiBody({ type: VerifyEmailDto })
   @ApiResponse({ status: 200, description: 'Email verified' })
   async verifyAccountEmail(@Body() dto: VerifyEmailDto, @Req() req: Request) {
-    await this.authRateLimit.assertEmailVerificationConfirmAllowed(trustedClientIp(req));
-    return this.confirmEmailVerification.execute({
-      token: dto.token,
-      requestId: (req.headers['x-request-id'] as string | undefined) ?? randomUUID(),
-    });
+    throw new ConflictException({ code: 'EMAIL_OTP_REQUIRED', message: 'ลิงก์เดิมใช้ไม่ได้แล้ว กรุณาเข้าสู่ระบบและขอรหัส OTP ใหม่' });
   }
 
   @Public()
@@ -1042,10 +1029,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Correct a LINE-linked account unverified email without email delivery' })
   @ApiBody({ type: SetUnverifiedEmailDto })
   async setMyUnverifiedEmail(@Body() dto: SetUnverifiedEmailDto, @Req() req: Request & { context: RequestContext }) {
-    await this.authRateLimit.assertAccountProfileWriteAllowed(req.context.userId);
-    const tokenId = extractSid(req);
-    if (!tokenId) throw new UnauthorizedException('Cannot identify session.');
-    return this.accountProfile.setUnverifiedEmail({ ...dto, userId: req.context.userId, requestId: req.context.requestId, currentTokenId: tokenId });
+    throw new ConflictException({ code: 'EMAIL_OTP_REQUIRED', message: 'กรุณาโหลดหน้านี้ใหม่เพื่อยืนยันอีเมลด้วยรหัส OTP' });
   }
 
   @Get('me/companies')

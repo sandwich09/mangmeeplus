@@ -300,3 +300,7 @@ export type BillingPlanAdjustmentOperation = BillingOperationView & {companyName
 export type BillingPlanAdjustments = {companyId:string;companyName:string;sourceHash:string;baseline:CompanyPlanCapacity|null;current:CompanyPlanCapacity|null;
   activeBranches:number;activeMembers:number;maxExpiresAt:string|null;canCreate:boolean;blockedReason:string|null;canManageCollection?:boolean;collectionPause?:BillingCollectionPause|null;
   unchanged:BillingPlanAdjustmentUnchanged|null;items:BillingPlanAdjustmentOperation[];nextCursor:string|null};
+
+export type BillingEmailRecipientOperation = { id: string; state: string; version: number; previewHash: string; expiresAt: string;
+  previousEmail: string | null; newEmail: string; canSubmit: boolean; canCancel: boolean };
+export type BillingEmailRecipient = { email: string | null; hasCustomer: boolean; busy?: boolean; operation: BillingEmailRecipientOperation | null };

@@ -62,6 +62,9 @@ function makeHarness(opts: HarnessOptions = {}) {
   const audits: any[] = [];
 
   const client: any = {
+    $executeRaw: async () => 0,
+    $queryRaw: async () => [],
+    emailVerificationToken: { updateMany: async () => ({ count: 0 }) },
     accountMergeTicket: {
       findUnique: async ({ where }: any) => tickets.find((t) => t.tokenHash === where.tokenHash) ?? null,
       updateMany: async ({ where, data }: any) => {
@@ -72,6 +75,7 @@ function makeHarness(opts: HarnessOptions = {}) {
       },
     },
     user: {
+      updateMany: async ({ where, data }: any) => { for (const id of where.id.in) if (users[id]) (users[id] as any).emailRevision = ((users[id] as any).emailRevision ?? 0) + data.emailRevision.increment; return { count: where.id.in.length }; },
       // Copies, like Prisma: a row read before an update must not change under the reader.
       findUnique: async ({ where }: any) => (users[where.id] ? { ...users[where.id]! } : null),
       update: async ({ where, data }: any) => Object.assign(users[where.id]!, data),
@@ -163,6 +167,9 @@ describe('AccountMergeUseCase', () => {
 
     // The emptied account's sessions die with it; refresh only reads the session row.
     assert.deepEqual(h.sessionRevocations, [{
+      where: { userId: { in: ['new-1', 'existing-1'] } },
+      data: { emailReauthenticatedAt: null, emailReauthBindingHash: null, emailReauthNonceHash: null },
+    }, {
       where: { userId: 'new-1', status: 'ACTIVE' },
       data: { status: 'REVOKED', revokedAt: h.tickets[0]!.consumedAt },
     }]);

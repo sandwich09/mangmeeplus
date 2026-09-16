@@ -1,3 +1,4 @@
+import { lockAccountEmail } from '../account-email-state';
 import { ConflictException, ForbiddenException, Inject, Injectable, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
@@ -81,6 +82,7 @@ export class LinkLineIdentityUseCase {
     if (existing?.status === 'ACTIVE' && existing.userId !== userId && !allowReassign) {
       throw new ConflictException({ code: 'line_linked_elsewhere', message: 'LINE account already linked to another user.' });
     }
+    for (const id of [...new Set([userId, ...(existing ? [existing.userId] : [])])].sort()) await lockAccountEmail(tx, id);
     if (existing && existing.userId !== userId) {
       await tx.passwordResetToken.updateMany({ where: { userId: existing.userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
       await revokePendingLineHandoffTokens(tx.lineWebHandoffToken, { lineUserId, userId: existing.userId });

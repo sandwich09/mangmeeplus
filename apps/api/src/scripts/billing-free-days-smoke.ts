@@ -14,6 +14,7 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
   const base = '/v1/system/billing', company = `${base}/companies/${companyId}`, customer = `/v1/companies/${companyId}/billing`;
   const tag = randomUUID().replaceAll('-', ''), start = new Date(Math.floor(Date.now()/1000)*1000), end = new Date(start.getTime()+30*86400000);
   const priceId = `price_FreeDays${tag}`, zeroId = `price_FreeDaysZero${tag}`, subId = `sub_FreeDays${tag}`, customerId = `cus_FreeDays${tag}`;
+  const ownerEmail = (await db.user.findUniqueOrThrow({where:{id:input.userIds[0]!}})).email;
   const offer = { ...billingOffer('BASIC_499','month'), availability:'AVAILABLE', reason:null };
   const policy = { ...(await request(`${base}/settings`)).body.policy, zeroPriceIds:{'BASIC_499:month':zeroId}, taxTreatment:'NOT_VAT_REGISTERED',taxRateId:null };
   const snapshot = {quote:{offer,totalSatang:offer.priceSatang,taxSatang:0,subtotalSatang:offer.priceSatang},policy,priceId,settingsVersion:0};
@@ -32,6 +33,7 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
   input.transport(async(url,init)=>{
     if(url.hostname!=='api.stripe.com')return;
     const path=url.pathname.replace(/^\/v1/,'');
+    if(path===`/customers/${customerId}`&&(!init?.method||init.method==='GET'))return response({id:customerId,object:'customer',livemode:false,email:ownerEmail,metadata:{billingAccountId:accountId}});
     if(path===`/prices/${priceId}`||path===`/prices/${zeroId}`)return response({id:path.endsWith(zeroId)?zeroId:priceId,object:'price',product:`prod_${tag}`,livemode:false,active:true,type:'recurring',currency:'thb',
       unit_amount:path.endsWith(zeroId)?0:offer.priceSatang,recurring:{interval:'month',interval_count:1,usage_type:'licensed'},billing_scheme:'per_unit',tax_behavior:'inclusive'});
     if(path===`/subscriptions/${subId}`&&(!init?.method||init.method==='GET'))return response(sub);
@@ -112,7 +114,7 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
     try{
       await db.billingSettings.update({where:{id:originalSettings.id},data:{policyRevisionId:quoteRevision.id,version:{increment:1}}});
       const repeat=await request(`${customer}/quote`,'POST',{offerKey:'BASIC_499',interval:'month',billingEmail:'synthetic-gift@example.test'},{'x-company-id':companyId});
-      assert.equal(repeat.status,200,JSON.stringify(repeat));
+      assert.equal(repeat.status,200,JSON.stringify(repeat));assert.equal(repeat.body.billingEmail,ownerEmail,'quote derives the verified owner email, including after gifted days');
       const currentEnd=(await db.billingAccount.findUniqueOrThrow({where:{id:accountId}})).paidThrough!;
       assert.equal(repeat.body.purchase.projectedPaidThrough,appendPackageInterval(currentEnd,'month').toISOString(),'repeat must use the shifted anniversary, not lose gift days');
     }finally{

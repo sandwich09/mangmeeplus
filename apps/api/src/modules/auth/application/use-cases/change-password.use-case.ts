@@ -1,3 +1,4 @@
+import { lockAccountEmail } from '../account-email-state';
 import { BadRequestException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { hashPassword, verifyPassword } from '../../domain/logic/password-credential.logic';
@@ -40,6 +41,12 @@ export class ChangePasswordUseCase {
     }
 
     await this.prisma.client.$transaction(async (tx) => {
+      await lockAccountEmail(tx, userId);
+      const current = await tx.userCredential.findUnique({ where: { userId } });
+      if (!current || current.passwordHash !== credential.passwordHash || current.status === 'DISABLED' ||
+          (current.expiresAt && current.expiresAt <= new Date())) throw new BadRequestException(CURRENT_PASSWORD_INCORRECT);
+      await tx.emailVerificationToken.updateMany({ where: { userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
+      await tx.user.update({ where: { id: userId }, data: { emailRevision: { increment: 1 } } });
       await tx.userCredential.update({
         where: { userId },
         data: {

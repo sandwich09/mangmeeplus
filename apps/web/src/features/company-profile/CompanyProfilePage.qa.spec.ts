@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ToastContext } from '@/common/components/toast/use-toast';
+import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
+import type { AccountEmailOtpState } from '@/features/auth/account-email-otp.api';
 
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
 
@@ -25,6 +27,7 @@ else delete require.extensions['.svg'];
 const reactRuntime = require('react') as typeof React;
 
 const source = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
+const otpSource = readFileSync(new URL('../auth/AccountEmailOtpPanel.tsx', import.meta.url), 'utf8');
 
 const FULL_IDENTITY = {
   control: { legalIdentityVersion: 0, captureWindowOpen: true, authoritativeLatched: false, fieldLatched: { registeredName: false, addressJson: false } },
@@ -42,6 +45,20 @@ const LINE_ONLY_ACCOUNT = {
   email: null, emailVerified: false, emailVerifiedAt: null, pendingEmail: null, pendingEmailExpiresAt: null,
   lineLinked: true, phoneNumber: null, hasPassword: false, username: null, emailDeliveryEnabled: true,
 };
+
+function renderEmail(account: Partial<AccountEmailOtpState> = {}): string {
+  const state: AccountEmailOtpState = { email: null, emailVerified: false, emailRevision: 0,
+    emailRequirement: 'MISSING', hasPassword: false, lineLinked: true, serverNow: new Date().toISOString(), challenge: null, ...account };
+  const realUseState = reactRuntime.useState;
+  let injected = false;
+  Reflect.set(reactRuntime, 'useState', (initial: unknown) => {
+    const pair = (realUseState as (value: unknown) => [unknown, (value: unknown) => void])(initial);
+    if (initial === null && !injected) { injected = true; return [state, pair[1]]; }
+    return pair;
+  });
+  try { return renderToStaticMarkup(React.createElement(AccountEmailOtpPanel)); }
+  finally { Reflect.set(reactRuntime, 'useState', realUseState); }
+}
 
 /**
  * Renders the page in its post-load state. `useState` is keyed on the initial value: `identity`
@@ -151,7 +168,7 @@ describe('the account section asks for what a login actually needs', () => {
   it('sends an account that already has a password to change-password instead', () => {
     const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, hasPassword: true } });
     assert.match(html, /href="\/change-password"/);
-    assert.match(html, /รหัสผ่านปัจจุบัน/, 'changing the email now needs the password that exists');
+    assert.match(renderEmail({ hasPassword: true }), /รหัสผ่านปัจจุบัน/, 'email proof offers the existing password');
     assert.doesNotMatch(html, /พิมพ์รหัสผ่านอีกครั้ง/, 'the first-password form is gone');
   });
 
@@ -159,7 +176,7 @@ describe('the account section asks for what a login actually needs', () => {
     const html = renderLoaded({ permissions: OWNER, account: {
       ...LINE_ONLY_ACCOUNT, email: 'new@example.com', pendingEmail: 'new@example.com',
     } });
-    assert.match(html, /ถ้าไม่ได้รับอีเมล ติดต่อทีมงาน/);
+    assert.match(html, /หากยังรับรหัสไม่ได้.*ติดต่อทีมงาน/);
   });
 });
 
@@ -174,7 +191,7 @@ describe('handlers that no static render reaches', () => {
   }
 
   it('builds the identity PATCH through the pinned pure builder, not inline in the handler', () => {
-    const saveShop = block('const saveShop = async () => {', 'const saveEmail = async');
+    const saveShop = block('const saveShop = async () => {', 'const savePhoneValue = async');
     assert.match(saveShop, /buildShopSave\(/, 'the request shape is tested in company-profile.logic.spec.ts');
     assert.match(saveShop, /addressErrorMessages\(error\)/, 'the per-field 422 must not collapse to a generic reload');
     assert.doesNotMatch(saveShop, /addressJson:\s*\{\s*\.\.\.address/, 'the handler must not assemble an address of its own');
@@ -201,15 +218,15 @@ describe('handlers that no static render reaches', () => {
   });
 
   it('omits the current password for an account that has none', () => {
-    const saveEmail = block('const saveEmail = async () => {', 'const savePhoneValue = async');
-    assert.match(saveEmail, /account\?\.hasPassword \? emailPassword : undefined/);
+    assert.doesNotMatch(renderEmail(), /รหัสผ่านปัจจุบัน/);
+    assert.match(renderEmail(), /ยืนยันตัวตนผ่าน LINE/);
   });
 
-  it('saves a LINE account email directly and keeps verification as a separate action', () => {
-    const saveEmail = block('const saveEmail = async () => {', 'const savePhoneValue = async');
-    assert.match(saveEmail, /setMyUnverifiedEmail\(/);
-    assert.match(saveEmail, /account\?\.email \?\? null/);
-    assert.match(saveEmail, /requestMyEmailVerification\(account\.email/);
+  it('delegates email changes to authenticated OTP and has no direct or link writer', () => {
+    assert.match(source, /<AccountEmailOtpPanel onState=/);
+    assert.doesNotMatch(source, /setMyUnverifiedEmail\(|requestMyEmailVerification\(|requestEmailChange\(/);
+    assert.match(otpSource, /currentPassword: password/);
+    assert.match(otpSource, /expectedEmailRevision: request\.current\.revision/);
   });
 
   /**
@@ -229,13 +246,13 @@ describe('handlers that no static render reaches', () => {
     assert.match(load, /if \(seeded\.current\) return;/, 'the second read must not touch the boxes');
     assert.match(load, /seeded\.current = true;/);
     // Everything the owner types lives behind that guard.
-    for (const setter of ['setRegisteredName', 'setTaxId', 'setAddress', 'setVatChoice', 'setPhone', 'setEmail']) {
+    for (const setter of ['setRegisteredName', 'setTaxId', 'setAddress', 'setVatChoice', 'setPhone']) {
       assert.ok(load.indexOf(setter) > load.indexOf('seeded.current = true;'), setter);
     }
   });
 
   it('saves both halves under one press and keeps each failure to its own banner', () => {
-    const saveShop = block('const saveShop = async () => {', 'const saveEmail = async');
+    const saveShop = block('const saveShop = async () => {', 'const savePhoneValue = async');
     assert.match(saveShop, /if \('error' in plan\)/, 'a client-side problem must stop the press');
     assert.match(saveShop, /patchCompanyIdentity\(/);
     assert.match(saveShop, /putVatRegistration\(/);
@@ -252,63 +269,57 @@ describe('handlers that no static render reaches', () => {
  * §15.4.1 B. "ตรวจดูโฟลว์การกรอก ดูไม่ make sense เช่น email ถูก verify แล้วแต่เปิดให้แก้ไขได้" — a
  * verified address in an open box under a send button whose only possible answer was the API's 409.
  */
-describe('the email block matches the state the account is actually in', () => {
-  const VERIFIED = { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com', emailVerified: true };
+describe('the shared OTP block matches current account and delivery facts', () => {
+  const challenge = { id: 'challenge-1', email: 'new@example.com', status: 'PENDING',
+    expiresAt: new Date(Date.now() + 600000).toISOString(), retryAt: new Date(0).toISOString(),
+    attemptsRemaining: 5, deliveryStatus: 'UNKNOWN', delivered: false };
 
   it('shows a verified address as a fact with one way to change it', () => {
-    const html = renderLoaded({ permissions: OWNER, account: VERIFIED });
+    const html = renderEmail({ email: 'owner@example.com', emailVerified: true, emailRequirement: 'READY' });
     assert.match(html, /owner@example\.com/);
     assert.match(html, /ยืนยันแล้ว/);
     assert.match(html, /เปลี่ยนอีเมล/);
-    assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/, 'the only answer to that button is a 409');
-    assert.doesNotMatch(html, /id="account-email"/, 'no open box over a verified address');
+    assert.doesNotMatch(html, /type="email"|ส่งลิงก์|ขอรหัสยืนยัน/);
   });
 
-  it('reports a request already in flight, and offers a resend', () => {
-    const html = renderLoaded({ permissions: OWNER, account: {
-      ...LINE_ONLY_ACCOUNT, email: 'new@example.com', pendingEmail: 'new@example.com',
-    } });
+  it('preserves the old address while a new OTP is pending and provides resend and cancellation', () => {
+    const html = renderEmail({ email: 'old@example.com', emailVerified: true, emailRequirement: 'CHANGE_PENDING', challenge });
+    assert.match(html, /old@example\.com/);
     assert.match(html, /new@example\.com/);
-    assert.match(html, /รอการยืนยัน/);
-    assert.match(html, /ลิงก์มีอายุ 15 นาที/);
-    assert.match(html, /ส่งลิงก์อีกครั้ง/);
-    assert.doesNotMatch(html, /id="account-email"/);
+    assert.match(html, /กำลังรอยืนยันอีเมลใหม่/);
+    assert.match(html, /ขอรหัสใหม่/);
+    assert.match(html, /ยกเลิกคำขอ \/ แก้อีเมล/);
+    assert.match(html, /type="text"[^>]*inputMode="numeric"[^>]*autoComplete="one-time-code"/);
+    assert.doesNotMatch(html, /ส่งลิงก์|ลิงก์มีอายุ/);
   });
 
-  it('gives a LINE account with no email a direct account-email form, labelled once', () => {
-    const html = renderLoaded({ permissions: OWNER });
-    assert.match(html, /id="account-email"/);
-    assert.match(html, /บันทึกอีเมลบัญชี/);
-    assert.doesNotMatch(html, /ส่งลิงก์ยืนยันอีเมล/);
-    // The read-only blocks carry their own caption; with the box on screen that caption is the
-    // box's own label, and rendering both put "อีเมล" on two consecutive lines.
-    assert.equal(html.match(/>อีเมลบัญชี</g)?.length, 1, 'one label for one field');
+  it('lets a LINE account request OTP without a password and never offers direct saving', () => {
+    const html = renderEmail();
+    assert.match(html, /อีเมลที่ต้องการยืนยัน/);
+    assert.match(html, /ขอรหัสยืนยัน/);
+    assert.match(html, /ยืนยันตัวตนผ่าน LINE/);
+    assert.doesNotMatch(html, /บันทึกอีเมลบัญชี|ส่งลิงก์|รหัสผ่านปัจจุบัน/);
+    assert.equal(html.match(/type="email"/g)?.length, 1);
   });
 
-  it('shows a saved unverified account email separately from optional recovery verification', () => {
-    const html = renderLoaded({ permissions: OWNER, account: { ...LINE_ONLY_ACCOUNT, email: 'owner@example.com' } });
-    assert.match(html, /อีเมลบัญชี/);
+  it('shows an existing unverified address and the requirement to verify it', () => {
+    const html = renderEmail({ email: 'owner@example.com', emailRequirement: 'UNVERIFIED' });
     assert.match(html, /owner@example\.com/);
     assert.match(html, /ยังไม่ยืนยัน/);
-    assert.match(html, /แก้ไขอีเมลบัญชี/);
-    assert.match(html, /ยืนยันอีเมลสำหรับบัญชีนี้/);
-    assert.doesNotMatch(html, /ยืนยันอีเมลเพื่อกู้บัญชี/);
-    assert.match(html, /ส่งลิงก์ยืนยัน/);
+    assert.match(html, /ขอรหัสยืนยัน/);
+    assert.doesNotMatch(html, /บันทึกอีเมลบัญชี|ส่งลิงก์/);
   });
 
-  // §15.4.1 C: production runs EMAIL_PROVIDER=disabled, where the mailer is a silent no-op.
-  it('promises nothing on an environment that cannot send mail', () => {
-    const line = renderLoaded({ permissions: OWNER, account: {
-      ...LINE_ONLY_ACCOUNT, email: 'owner@example.com', emailDeliveryEnabled: false,
-    } });
-    assert.match(line, /owner@example\.com/);
-    assert.match(line, /ยังไม่ยืนยัน/);
-    assert.match(line, /แก้ไขอีเมลบัญชี/);
-    assert.doesNotMatch(line, /ส่งลิงก์ยืนยัน|ยังเปิดส่งอีเมลยืนยันไม่ได้/);
-
-    const verified = renderLoaded({ permissions: OWNER, account: { ...VERIFIED, emailDeliveryEnabled: false } });
-    assert.doesNotMatch(verified, /ส่งลิงก์ยืนยันอีเมล/, 'no button that cannot work');
-    assert.match(verified, /ยังเปิดส่งอีเมลยืนยันไม่ได้/);
+  it('does not claim delivery for unknown or refused sends and retains a recovery action', () => {
+    const unknown = renderEmail({ emailRequirement: 'CHANGE_PENDING', challenge });
+    assert.match(unknown, /ยังยืนยันผลการส่งไม่ได้/);
+    assert.doesNotMatch(unknown, /ระบบส่งถึงเซิร์ฟเวอร์อีเมลแล้ว/);
+    const failed = renderEmail({ emailRequirement: 'CHANGE_PENDING', challenge: { ...challenge, deliveryStatus: 'PERMANENT' } });
+    assert.match(failed, /ส่งรหัสไม่สำเร็จ/);
+    assert.match(failed, /ขอรหัสใหม่/);
+    assert.match(failed, /ยกเลิกคำขอ/);
+    const verified = renderEmail({ email: 'owner@example.com', emailVerified: true, emailRequirement: 'READY' });
+    assert.doesNotMatch(verified, /ขอรหัสยืนยัน|type="email"/);
   });
 });
 
@@ -362,12 +373,13 @@ describe('the completeness card stays out of the way', () => {
   // L1: a save makes the cached answer wrong. `saveShop` now carries the VAT answer too.
   it('is invalidated by every save on the profile page', () => {
     const page = readFileSync(new URL('./CompanyProfilePage.tsx', import.meta.url), 'utf8');
-    for (const handler of ['const saveShop', 'const saveEmail', 'const savePassword']) {
+    for (const handler of ['const saveShop', 'const savePassword']) {
       const start = page.indexOf(handler);
       assert.notEqual(start, -1, handler);
       const body = page.slice(start, page.indexOf('\n  };', start));
       assert.match(body, /invalidateChecklist\(\)/, `${handler}: the dashboard would keep showing the completed item as missing`);
     }
+    assert.match(page, /<AccountEmailOtpPanel onState=\{next => \{[\s\S]*?invalidateChecklist\(\);/, 'OTP confirmation invalidates the profile checklist too');
     assert.match(page, /clearChecklistCache\(typeof window === 'undefined' \? undefined : window\.sessionStorage, companyId\)/);
   });
 
