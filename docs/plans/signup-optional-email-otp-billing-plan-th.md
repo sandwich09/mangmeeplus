@@ -1,7 +1,7 @@
 # Plan: Optional LINE email + email OTP + verified email ก่อนชำระเงิน
 
 วันที่: 2026-09-15
-สถานะ 2026-09-16: SOURCE IMPLEMENTED / LOCAL VERIFICATION — dependency integration เสร็จแล้ว; CI และ native UAT/Production readiness ยังไม่ผ่านครบ ไม่มี feature flag ใหม่
+สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / PR CI PASS — dependency integration และ CI ของทั้งสอง PR ผ่านแล้ว; native UAT/Production readiness ยังไม่ผ่านครบ ไม่มี feature flag ใหม่
 Spec: [signup-optional-email-otp-billing-spec-th.md](../specs/signup-optional-email-otp-billing-spec-th.md)
 Memory: [task state](../agent-memory/signup-optional-email-impact-2026-09-15.md)
 
@@ -131,7 +131,7 @@ Exit: เดิน flow ด้วย browser จริงโดยไม่พ�
 ### P6 — Integration, regression และ acceptance
 
 - [ ] รัน matrix §5 ด้วย actual API/PG/web/LIFF และ provider simulator รวม delayed/unknown/native-like callbacks
-- [ ] Focused API/web typecheck, relevant auth/signup/billing tests แล้ว full workspace checks ตาม CI ปัจจุบัน
+- [x] Focused API/web typecheck, relevant auth/signup/billing tests แล้ว full workspace checks ตาม CI ปัจจุบัน — CI35047624780 และ CI35047869532 ผ่าน; source/merge references อยู่ในหลักฐานส่งมอบ
 - [x] ทดสอบ migration cohorts จาก disposable database ไม่ใช้ production write หรือ customer inbox เป็น test fixture
 - [ ] Controlled native Postmark inbox acceptance เมื่อมี test mailbox ที่อนุญาต: verify correct sender/server/stream, accepted/delivered, OTP entry, expiry/resend; ไม่ใช้ native Stripe charge เพื่อพิสูจน์ auth gate
 - [ ] QA มือถือ/ผู้ใช้ทั่วไปให้ทำงานจริง รวมอย่างน้อย walkthrough ผู้สูงวัยเมื่อมีผู้ทดสอบ; ระบุ sample/ข้อจำกัด ไม่อ้างผล usability ถ้ามีเพียง automation
@@ -311,3 +311,8 @@ Integration dependency is resolved: Stripe/Postmark PR #558 merged into develop 
 Native readiness remains blocked on the absent environment-scoped Postmark/OTP secrets, application-native sender/token/callback proof and the mandatory release protocol. Defaults are canonical and no activation flag is added. Do not disable the email requirement or mark a release successful to get around missing configuration.
 
 Final integration regressions passed locally: an existing password longer than128 characters works through the actual OTP browser/API path (10 scenario groups), and final portal source/authority/email-proof checks reject customer/email changes during the provider response and portal configurations that expose direct email editing (19 groups). Providers are simulated; see the evidence document for commands and limits.
+
+
+## Source delivery — 2026-09-16
+
+[CI-gated delivery evidence](../evidence/signup-optional-email-local-2026-09-16.md#ci-gated-source-delivery): PR #575 merged into develop and PR #582 into main after both exact-head CI runs passed. Source implementation/merge is complete. P7, native inbox/LINE acceptance, missing secret provisioning, deployment/rollback rehearsal and human usability remain release work; no UAT_READY/PROD_READY claim or feature-flag activation is recorded.
