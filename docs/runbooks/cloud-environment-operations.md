@@ -135,13 +135,24 @@ created untracked Python bytecode. Retry used PYTHONDONTWRITEBYTECODE=1 without 
 clean-source guard. Isolated Docker config avoided the shared desktop credential-helper delay;
 shared Docker settings stayed unchanged. Both attempts and reconciliation timing are retained.
 
-Seven UAT Postmark/Stripe secrets and canonical parked ECS baseline are configured through non-root
-profiles. UAT uses Stripe Sandbox; Postmark server20950027 sends real allowlisted test mail.
-Native first OTP request exposed a Redis cold-connection race; second request delivered to the
-allowlisted inbox. Postmark endpoint verification rejects provider sample identities; bounded
-hotfix pending. Prepared prices/portal/Stripe webhook are not application sales activation:
-billing policy still requires native Admin publication and independent approval. Production unchanged.
-See [the complete release evidence](../evidence/uat-main-readiness-2026-09-16.md).
+Latest serving hotfix: main `ee2f55421dde0edc0fb7226aadea66c3cc52b2d0`, operation
+`20260916T080218Z-b9eb3d90`, finished08:08:54.787838UTC, ACCEPTED_LINE_DEFERRED in396.159s.
+All11phases/KMS signature/customerOPEN passed; complete219migration catalog verified with no new
+migration. AgentCorekamal_uat_a/version9; exact3service source/config/readiness passed.
+
+Seven UAT Postmark/Stripe secrets and canonical parked ECS baseline use non-root profiles.
+UAT Stripe is Sandbox; Postmark20950027 sends real allowlisted test mail. Original Postmark
+webhook25832029 now verifies all3triggers200. First post-hotfix OTP request succeeded; real message
+91c088a1-fde8-4c57-aef3-cdec45a1f648 delivered08:10:40UTC, callbackPUBLISHED08:11:00.258 and
+matching app deliveredAt. New serving-image Redis instance proves firstcall success/nextcall limit.
+
+Paid sales remain closed: prepared billing policy requires native Admin publication and distinct
+approver, unavailable in the current browser session. Existing tester passwordless login needs
+its explicit opt-in; real code confirmation returns the expected legacy-login recovery. No
+Sandbox payment/new signup or liveLINE acceptance claimed. No Production deployment in this task.
+CI35066936157 passes the identical PR591/592 head; failed duplicate35066933135 and two passing
+local replays are retained without claiming its transient Nextdev404 root cause fixed.
+See [complete release evidence and timing](../evidence/uat-main-readiness-2026-09-16.md).
 
 ## UAT Kamal update — 2026-09-11 20:28 UTC (historical proof)
 

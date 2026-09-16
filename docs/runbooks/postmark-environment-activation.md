@@ -1,6 +1,25 @@
 # Postmark environment activation and rollback
 
-Status 2026-09-15: source implementation has focused verification; dedicated Postmark Live servers created at approximately 14:38 UTC after explicit user confirmation. **No Postmark runtime activated**; last runtime observation was UAT SES, Production disabled. This runbook complements the mandatory [cloud operations](cloud-environment-operations.md) and [deployment protocol](uat-production-v2-deployment.md); it is not permission to deploy or send email.
+Historical provisioning status 2026-09-15: source implementation has focused verification; dedicated Postmark Live servers created at approximately 14:38 UTC after explicit user confirmation. **No Postmark runtime activated**; last runtime observation was UAT SES, Production disabled. This runbook complements the mandatory [cloud operations](cloud-environment-operations.md) and [deployment protocol](uat-production-v2-deployment.md); it is not permission to deploy or send email.
+
+## Current UAT activation — 2026-09-16
+
+UAT now runs Postmark20950027 under main ee2f5542, signed Kamal hotfix20260916T080218Z-b9eb3d90.
+Dedicated UAT secret references/values and exact recipient allowlist were provisioned through
+existing non-root profiles. Original webhook25832029 at `/v1/public/postmark-events` verifies
+Delivery/Bounce/SpamComplaint (all200). Real application OTP email reached Gmail SMTP and its
+authenticated callback persisted matching deliveredAt with PUBLISHED outbox evidence.
+
+The receiver acknowledges only authenticated reserved native verification samples without any
+business mutation. Real event server/stream/attempt fencing remains unchanged. Postmark's actual
+pre-provisioning API required query `?verify=false`; a body-only Verify:false did not disable
+verification. Do not create a duplicate endpoint or repeat a failed verification without evidence.
+
+Native existing-account OTP confirmation returned LEGACY_LOGIN_REQUIRED because explicit
+passwordless opt-in is off; this is not a successful login/new signup proof. Production20950034
+was not activated/deployed in this task. Earlier statements below about unprovisioned UAT settings
+are historical; canonical `infra/postmark/config.json` and the signed current release are authoritative.
+[Exact native proof, failures and remaining activation](../evidence/uat-main-readiness-2026-09-16.md).
 
 ## Canonical configuration
 
