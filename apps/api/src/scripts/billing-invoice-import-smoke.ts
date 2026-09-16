@@ -158,6 +158,11 @@ export async function checkBillingInvoiceImport(input:ProviderScansSmokeInput&{r
     if(input.browser){
       const f=await finding(),{page,origin,evidenceDir}=input.browser;await new Promise(resolve=>setTimeout(resolve,60000));
       await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/system/billing/companies/${companyId}/invoice-findings/${f.id}`,{waitUntil:'domcontentloaded'});
+      try { await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).waitFor(); }
+      catch(error) {
+        console.log(JSON.stringify({invoiceFinding:await view(f.id),path:new URL(page.url()).pathname,screen:(await page.locator('main').innerText().catch(()=>page.locator('body').innerText())).slice(0,5000)}));
+        await page.screenshot({path:`${evidenceDir}/invoice-import-finding-failed.png`,fullPage:true});throw error;
+      }
       await page.getByLabel('เหตุผลการตรวจสอบ',{exact:true}).fill('กู้ใบแจ้งหนี้จากผลตรวจเดิมผ่านเว็บ');const previewResponse=page.waitForResponse(r=>new URL(r.url()).pathname.endsWith('/system/billing/operations/preview'));await page.getByRole('button',{name:'ตรวจสอบผลกระทบ',exact:true}).click();const previewResult=await previewResponse;assert.equal(previewResult.status(),200,JSON.stringify(await previewResult.json()));try{await page.getByRole('status').filter({hasText:/^ตรวจสอบก่อนส่งคำสั่ง$/}).waitFor();}catch(error){console.log(JSON.stringify({preview:await previewResult.json(),panel:await page.getByRole('region',{name:'คำสั่งตรวจสอบการชำระเงิน',exact:true}).innerText()}));await page.screenshot({path:`${evidenceDir}/invoice-import-preview-failed.png`,fullPage:true});throw error;}
       let lost=false,commandId='';await page.route('**/system/billing/operations',async route=>{if(route.request().method()!=='POST'||lost){await route.continue();return;}const res=await route.fetch();assert.equal(res.status(),202);commandId=(await res.json()).id;lost=true;await route.abort('failed');});
       await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();await page.getByRole('alert').waitFor();await page.getByRole('button',{name:'ยืนยันส่งคำสั่งตรวจสอบ',exact:true}).click();await expect(page.getByRole('status').filter({hasText:/^รอระบบตรวจสอบ$/})).toBeVisible();

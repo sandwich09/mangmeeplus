@@ -32,7 +32,7 @@ export class UnlinkLineIdentityUseCase {
       const credential = user.credential;
       if (!credential || credential.status === 'DISABLED' || (credential.expiresAt && credential.expiresAt <= now) ||
           !(user.username || (user.email && user.emailVerifiedAt))) {
-        throw emailError('LAST_LOGIN_REQUIRED', 'กรุณาตั้งชื่อผู้ใช้และรหัสผ่านที่ใช้งานได้ก่อนยกเลิกการผูก LINE');
+        throw emailError('LAST_LOGIN_REQUIRED', 'ก่อนยกเลิกการผูก LINE ต้องมีรหัสผ่านสำรอง และมีชื่อผู้ใช้หรืออีเมลที่ยืนยันแล้ว');
       }
       await tx.emailVerificationToken.updateMany({ where: { userId, status: 'PENDING' }, data: { status: 'REVOKED' } });
       await tx.user.update({ where: { id: userId }, data: { emailRevision: { increment: 1 } } });
