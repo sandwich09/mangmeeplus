@@ -118,7 +118,32 @@ was changed. Support session `root-l5tdyxu2594req3e72dhhl6lze` is verified **Ter
 PostgreSQL18.3/TLS rehearsal passed the actual normal upgrade and subsequent hotfix, but does not
 establish AWS deployment timing, managed Redis parity, multi-AZ readiness or customer acceptance.
 
-## UAT Kamal update — 2026-09-11 20:28 UTC
+## UAT read-only inventory — 2026-09-16
+
+All three serving Kamal containers were read back running source
+`5b2fd63bf82a2917bb47dd0c9a75e2d50edf324c`, operation label
+`20260914T192255Z-e036fe7a`. API, AI and workers still use the enrolled UAT hosts below.
+Public health/login/signup return200 and customer access is OPEN. This observation does not
+recover or certify the September14 operation's signed release evidence.
+
+September16 main update `8c277dea4504b18e9537243ade031770d78ead4e` is deployed on allthree as
+Kamal operation `20260916T064124Z-125e1228`, ACCEPTED_LINE_DEFERRED in325.455s, KMS signature
+verified and customerOPEN. AgentCorekamal_uat_b/version8. Normal mode applied31pendingmigrations
+after188previous, verified complete219ledger/sync authority and allservice config/readiness.
+Initial operation20260916T061822Z-7342e27f failed before cloud/DB mutation because Postmark import
+created untracked Python bytecode. Retry used PYTHONDONTWRITEBYTECODE=1 without weakening the
+clean-source guard. Isolated Docker config avoided the shared desktop credential-helper delay;
+shared Docker settings stayed unchanged. Both attempts and reconciliation timing are retained.
+
+Seven UAT Postmark/Stripe secrets and canonical parked ECS baseline are configured through non-root
+profiles. UAT uses Stripe Sandbox; Postmark server20950027 sends real allowlisted test mail.
+Native first OTP request exposed a Redis cold-connection race; second request delivered to the
+allowlisted inbox. Postmark endpoint verification rejects provider sample identities; bounded
+hotfix pending. Prepared prices/portal/Stripe webhook are not application sales activation:
+billing policy still requires native Admin publication and independent approval. Production unchanged.
+See [the complete release evidence](../evidence/uat-main-readiness-2026-09-16.md).
+
+## UAT Kamal update — 2026-09-11 20:28 UTC (historical proof)
 
 Owner-authorized UAT Kamal proof is separate from the ECS V2 Production protocol. Production remains
 on ECS and was not changed. Dev instance `i-0883f1ff88440ca07` remains stopped. Existing UAT ECS

@@ -30,7 +30,7 @@ export type LeaseDecision =
  */
 export type StoreFailurePolicy = 'fail-closed' | 'degrade-to-local';
 
-type RedisCounter = Pick<Redis, 'eval' | 'get' | 'set' | 'ttl' | 'quit'>;
+type RedisCounter = Pick<Redis, 'eval' | 'get' | 'set' | 'ttl' | 'quit' | 'connect'>;
 type LocalBucket = { count: number; expiresAt: number };
 type LocalLease = { token: string; expiresAt: number };
 
@@ -64,6 +64,7 @@ return 0
 @Injectable()
 export class RedisRateLimitService implements OnModuleDestroy {
   private client?: RedisCounter;
+  private initialConnection?: Promise<void>;
   private readonly local = new Map<string, LocalBucket>();
   private readonly localOnce = new Map<string, number>();
   private readonly localLeases = new Map<string, LocalLease>();
@@ -107,7 +108,7 @@ export class RedisRateLimitService implements OnModuleDestroy {
     const counterKey = this.key('rate-limit', scope, rawKey);
     const onceKey = this.key('idempotency', scope, `${rawKey}:${idempotencyKey}`);
     try {
-      if (!this.client && this.config.redisUrl) this.client = this.createClient();
+      await this.ready();
       if (!this.client) return this.localConsumeOnce(counterKey, onceKey, maxRequests, windowSeconds);
       const [count, ttl, replayed] = await this.client.eval(
         CONSUME_ONCE_LUA, 2, counterKey, onceKey, String(windowSeconds),
@@ -135,7 +136,7 @@ export class RedisRateLimitService implements OnModuleDestroy {
     const key = this.key('lease', scope, rawKey);
     const token = randomUUID();
     try {
-      if (!this.client && this.config.redisUrl) this.client = this.createClient();
+      await this.ready();
       if (!this.client) return this.localLeaseDecision(key, token, ttlSeconds);
 
       const acquired = await this.client.set(key, token, 'EX', ttlSeconds, 'NX');
@@ -175,7 +176,7 @@ export class RedisRateLimitService implements OnModuleDestroy {
   ): Promise<RateLimitDecision> {
     const key = this.key('rate-limit', scope, rawKey);
     try {
-      if (!this.client && this.config.redisUrl) this.client = this.createClient();
+      await this.ready();
       if (!this.client) return this.localDecision(key, max, window, increment);
       const result = increment
         ? await this.client.eval(CONSUME_LUA, 1, key, String(window)) as [number, number]
@@ -187,6 +188,16 @@ export class RedisRateLimitService implements OnModuleDestroy {
       }
       return { ...this.localDecision(key, max, window, increment), degraded: true };
     }
+  }
+
+  private async ready(): Promise<void> {
+    if (!this.client && this.config.redisUrl) {
+      const client = this.createClient();
+      this.client = client;
+      // Share the first connection; offline queuing stays disabled and failures still fail closed.
+      this.initialConnection = client.connect().finally(() => { this.initialConnection = undefined; });
+    }
+    await this.initialConnection;
   }
 
   private createClient(): RedisCounter {

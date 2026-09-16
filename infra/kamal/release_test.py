@@ -6,6 +6,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -369,6 +370,15 @@ class Contracts(unittest.TestCase):
         for script,env in [('deploy-prod','production'),('deploy-uat','uat')]:
             text=Path(__file__).with_name(script).read_text()
             self.assertTrue(text.rstrip().endswith('"$@" --environment '+env))
+            with tempfile.TemporaryDirectory() as tmp:
+                wrapper=Path(tmp)/script;wrapper.write_text(text)
+                (Path(tmp)/'release.py').write_text('import json,sys,probe\nprint(json.dumps([sys.dont_write_bytecode,sys.argv[1:]]))\n')
+                (Path(tmp)/'probe.py').write_text('VALUE=1\n')
+                clean_env={key:value for key,value in os.environ.items() if key!='PYTHONDONTWRITEBYTECODE'}
+                result=subprocess.check_output(['sh',str(wrapper),'--mode','hotfix'],text=True,env=clean_env)
+                default_mode='hotfix' if env=='production' else 'normal'
+                self.assertEqual(json.loads(result),[True,['--mode',default_mode,'--mode','hotfix','--environment',env]])
+                self.assertFalse((Path(tmp)/'__pycache__').exists())
 
     def provider_runner(self,tmp,*,changed=False,spare=False,bad_bytes=False):
         r,_=self.runner(tmp)
