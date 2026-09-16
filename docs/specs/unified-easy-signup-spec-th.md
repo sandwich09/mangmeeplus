@@ -37,6 +37,20 @@ AUTO_FREE ใช้ mode/cap เดียวกับ LINE (ชื่อ config 
 - LINE link ใช้ verified LINE + current account flow เดิม; ไม่ link จาก contact email. Paid company/receipt/AI entitlement ใช้ company เดิม ไม่แก้ billing policy. Email verification gate ก่อนจ่ายยังทำงาน.
 - Marketing CTA ไป app signup ไม่จำลองว่าเปิดร้านจาก lead submit. ข้อความและ docs ของ mangmee_web ต้องสอดคล้อง;ไม่เปลี่ยน pricing.
 
+### Contract สำหรับ web developer
+
+| Same-origin BFF | JSON จากหน้าเว็บ | ผลสำเร็จ |
+|---|---|---|
+| POST /api/auth/email-access/request | email≤254, requestKey UUID, nextPath? | challengeId, expiresAt, retryAt, deliveryStatus; HttpOnly browser cookie |
+| POST /api/auth/email-access/confirm | code 6 digits | SIGNUP / EXISTING_LOGIN_REQUIRED / LOGIN |
+| POST /api/auth/email-access/signup | companyName≤120, displayName≤160, phoneNumber, consentVersion=EMAIL_SIGNUP_V1 | STATUS หรือ LOGIN |
+| POST /api/auth/email-access/status | {} | CODE / NEW / STATUS / LOGIN; ใช้ browser cookie เดิม |
+| POST /api/v1/auth/account/email/otp/login-method | enabled boolean, currentPassword? | account email status รวม emailLoginEnabled; requires authenticated permission account.password.change + fresh proof |
+
+BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป `/v1/public/email-access/{action}`. LOGIN ตั้ง access/refresh cookies; response ให้เฉพาะ companyId, safe redirectPath และ legal/password-change flags. ไม่มี JWT/OTP/browser secret ใน URL หรือ response ให้ JavaScript. Serverรับโทรศัพท์ไทยทั้ง0… และ+66… แล้ว normalizeเป็น0…; consentVersion เป็น intake acknowledgement ไม่ใช้แทน legal acceptance record.
+
+400 EMAIL_OTP_INVALID ให้กรอกรหัสใหม่ในช่องเดิม;401 EMAIL_ACCESS_INVALID กลับขั้นอีเมลและสร้าง requestKeyใหม่.429 แสดงเวลารอจากserver.503 EMAIL_DELIVERY_UNAVAILABLE ให้ลองใหม่/ติดต่อทีมงาน. ผู้สมัครที่ค้างตรวจขอ OTP ใหม่เพื่อกลับคำขอเดิมได้โดยไม่เริ่มtrialใหม่. Configใช้ POSTMARK/EMAIL_OTP_HMAC_* และ EXTERNAL_SIGNUP_ENABLED เดิม; mode/capของLINEครอบคลุมemailด้วยตาม§3. ปิดรับสมัครใหม่ไม่ปิดlogin/statusของคำขอเดิม.
+
 ## 5. Bug / gap / impact review
 
 | ID | ช่องโหว่/ผลกระทบ | ข้อกำหนดปิดช่องโหว่ |
