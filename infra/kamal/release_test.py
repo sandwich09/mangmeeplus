@@ -31,6 +31,59 @@ def target(kind='dev'):
 
 
 class Contracts(unittest.TestCase):
+    def test_postmark_overrides_legacy_config_with_current_secrets_and_native_evidence(self):
+        for stage in ('uat', 'production'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                r=m.Release.__new__(m.Release);r.source=m.ROOT;r.secrets=set()
+                r.args=argparse.Namespace(environment=stage)
+                origin='https://uat.mangmeeplus.com' if stage=='uat' else 'https://mangmeeplus.com'
+                r.target={'kind':stage,'publicUrl':origin}
+                settings=m.read(m.ROOT/'infra/postmark/config.json')[stage]
+                capture=Path(tmp);m.write(capture/'secret-versions.json',{'existing':{'versionId':'existing-v1'}})
+                calls=[];resolved={}
+                for key,ref in settings['secrets'].items():
+                    value='ab'*32 if key=='EMAIL_OTP_HMAC_KEY' else 'tester@example.test' if key=='POSTMARK_UAT_ALLOWED_RECIPIENTS' else 'SYNTHETIC_'+key
+                    arn=ref if ref.startswith('arn:') else f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:{ref}-abcdef'
+                    resolved[ref]={'ARN':arn,'Name':ref,'SecretString':value,'VersionId':'v1','VersionStages':['AWSCURRENT']}
+                def aws(args):
+                    calls.append(args)
+                    return resolved[args[3]]
+                r.aws=aws
+                server=int(settings['environment']['POSTMARK_SERVER_ID'])
+                stream=settings['environment']['POSTMARK_MESSAGE_STREAM']
+                facts=[{'ID':server,'DeliveryType':'Live'},
+                    {'ServerID':server,'ID':stream,'MessageStreamType':'Transactional','ArchivedAt':None}]
+                responses=[]
+                for fact in facts:
+                    response=io.BytesIO(json.dumps(fact).encode());response.status=200;responses.append(response)
+                with patch.object(m.urllib.request,'build_opener') as opener:
+                    opener.return_value.open.side_effect=responses
+                    overrides=r.postmark_configuration(capture)
+                    requests=opener.return_value.open.call_args_list
+                legacy={'EMAIL_PROVIDER':'ses','POSTMARK_FROM_ADDRESS':'old@example.test'}
+                legacy.update(overrides)
+                self.assertEqual(legacy['EMAIL_PROVIDER'],'postmark')
+                self.assertEqual(legacy['POSTMARK_FROM_ADDRESS'],settings['environment']['POSTMARK_FROM_ADDRESS'])
+                self.assertEqual(legacy['WEB_BASE_URL'],origin)
+                self.assertEqual(legacy['EMAIL_OTP_HMAC_KEY'],'ab'*32)
+                self.assertEqual(calls,[['secretsmanager','get-secret-value','--secret-id',ref,'--version-stage','AWSCURRENT'] for ref in resolved])
+                self.assertEqual([call.args[0].full_url for call in requests],
+                    ['https://api.postmarkapp.com/server','https://api.postmarkapp.com/message-streams/'+stream])
+                versions=m.read(capture/'secret-versions.json')
+                self.assertEqual(versions['existing'],{'versionId':'existing-v1'})
+                self.assertEqual({key:value for key,value in versions.items() if key!='existing'},
+                    {value['ARN']:{'versionId':'v1','value':value['SecretString']} for value in resolved.values()})
+                self.assertEqual(r.secrets,{value['SecretString'] for value in resolved.values()})
+                readiness=m.read(capture/'postmark-readiness.json')
+                self.assertEqual(readiness,{'serverId':server,'stream':stream,'mode':'Live',
+                    'sender':settings['environment']['POSTMARK_FROM_ADDRESS'],
+                    'otpKeyVersion':settings['environment']['EMAIL_OTP_HMAC_KEY_VERSION'],'outbound':'native-identity-checked'})
+                r.target['publicUrl']='https://foreign.example.test';calls.clear()
+                with patch.object(m.urllib.request,'build_opener') as opener:
+                    with self.assertRaisesRegex(ValueError,'origin'):r.postmark_configuration(capture)
+                    opener.assert_not_called()
+                self.assertEqual(calls,[])
+
     def test_targets_and_wrong_environment_rejected(self):
         for kind in ['dev','uat','production']:
             t=target(kind);m.validate_target(t,t['environment'])
@@ -405,6 +458,13 @@ class Contracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'Secrets rotated'):r.config_freshness()
             after['secretVersions']['secret']='v1';after['services']['api-web']['configurationSha256']='new'
             with self.assertRaisesRegex(ValueError,'Configuration changed'):r.config_freshness()
+            after['services']['api-web']['configurationSha256']='old'
+            ref=f'arn:aws:secretsmanager:{m.REGION}:{m.ACCOUNT}:secret:watchdog-bms/uat/postmark/token-abcdef'
+            r.manifest={'secretVersions':{ref:'v1'}}
+            r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v1':['AWSCURRENT']}}
+            r.config_freshness()
+            r.aws=lambda args:{'ARN':ref,'VersionIdsToStages':{'v2':['AWSCURRENT']}}
+            with self.assertRaisesRegex(ValueError,'Postmark secret rotated'):r.config_freshness()
 
     def test_rollback_rejects_migrations_wrong_hosts_and_mixed_old_sources(self):
         for failure in ('normal','environment','hosts','sources'):
