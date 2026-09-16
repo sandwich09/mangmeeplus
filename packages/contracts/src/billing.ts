@@ -171,8 +171,9 @@ export type BillingConfigurationCheck = { id:string; mode:BillingMode; state:'QU
   sourceVersion:number; isCurrent:boolean; reason:string; createdAt:string; observedAt:string|null; errorCode:string|null; reviewCaseId:string|null;
   result:BillingConfigurationCheckItem['state']|null; items:BillingConfigurationCheckItem[]; canRun:boolean; canCancel:boolean };
 export type BillingConfigurationCheckHistory = {items:BillingConfigurationCheck[];nextCursor:string|null;activeCheck:BillingConfigurationCheck|null;canCreate:boolean;mode:BillingMode|'DISABLED';settingsVersion:number};
+export type BillingApprovalMode = 'SINGLE_ADMIN' | 'SECOND_REVIEWER';
 export type BillingOperationView = { id: string; type: BillingOperationType; state: BillingOperationState; scope: BillingScope;
-  version: number; reason: string; initiatorUserId: string; approverUserId: string | null; errorCode: string | null;
+  version: number; reason: string; initiatorUserId: string; approverUserId: string | null; approvalMode?: BillingApprovalMode | null; errorCode: string | null;
   createdAt: string; observedAt: string | null; expiresAt: string; referenceId: string | null };
 
 export type BillingCheckoutState = 'open'|'expired'|'complete';
@@ -274,7 +275,7 @@ export type BillingConfigurationOperation = BillingOperationView & { sourceVersi
 export type BillingOperatorScopeView = { id: string; companyId: string; companyName: string; userId: string; userName: string;
   mode: BillingMode; version: number; state: 'ACTIVE' | 'EXPIRED' | 'REVOKED'; expiresAt: string | null };
 export type BillingScopeDirectory = { items: { id: string; name: string }[]; nextCursor: string | null };
-export type BillingScopeChange = { id: string; type: 'GRANT_SCOPE' | 'REVOKE_SCOPE'; state: BillingOperationState; version: number;
+export type BillingScopeChange = { approvalMode?: BillingApprovalMode | null; id: string; type: 'GRANT_SCOPE' | 'REVOKE_SCOPE'; state: BillingOperationState; version: number;
   previewHash: string; mode: BillingMode; companyId: string; companyName: string; userId: string; userName: string; capabilities: string[];
   current: BillingOperatorScopeView | null; expiresAt: string; scopeExpiresAt: string | null; reason: string; observedAt: string | null;
   allowedActions: ('submit' | 'approve' | 'cancel')[] };

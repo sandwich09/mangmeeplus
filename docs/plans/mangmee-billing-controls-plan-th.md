@@ -1,5 +1,7 @@
 # Billing controls 1–8 — implementation และ browser E2E plan
 
+Current amendment (2026-09-16): [single administrator confirmation](billing-single-admin-plan-2026-09-16.md) supersedes unconditional two-person approval for genuine SYSTEM_ADMIN only. Owner approved code support for UAT and Production; deploy UAT only.
+
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 
 > **Current follow-up:** งานแก้ฟอร์ม Admin 2026-09-15: เปลี่ยน nested label/textarea เป็น explicit htmlFor/id ใน 11 ช่องของ 10 หน้า billing Admin โดยคงข้อความและการบันทึกเดิม ทดสอบด้วย limiter จริงบนฐานข้อมูลท้องถิ่นให้คำขอสร้างงานถูกปฏิเสธด้วย 429 แล้วตรวจชื่อช่อง เหตุผล ช่วงเวลา และ retry คำสั่งเดิม ไม่ลด limiter หรือเปลี่ยน locator เพื่อข้ามข้อผิดพลาด ผลล่าสุด: forced429 ผ่านด้วย browser/API/PG จริง เหตุผล/ช่วงเวลา/คำสั่งเดิมคงอยู่และสร้างงานครั้งเดียว ดู billing-label-offer-matrix-result.json.

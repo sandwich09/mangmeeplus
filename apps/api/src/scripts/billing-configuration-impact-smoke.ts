@@ -84,7 +84,7 @@ export async function checkBillingConfigurationImpact(input: Parameters<typeof c
       assert.deepEqual(copy.proposed.policy,policyAfter);assert.deepEqual(copy.proposed.gates,original.proposed.gates);
       assert.equal((await request(`${base}/configuration-changes/${original.id}`)).body.proposed.policy.consentRevision,before.policy.consentRevision);
       await p.getByRole('button',{name:'ตรวจผลกระทบการตั้งค่า',exact:true}).click();await p.getByRole('status').filter({hasText:'ตรวจผลกระทบก่อนส่ง'}).waitFor();
-      await p.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await p.getByRole('status').filter({hasText:'รอผู้อนุมัติอีกคน'}).waitFor();
+      await p.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();await p.getByRole('status').filter({hasText:'รอยืนยันรายการ'}).waitFor();
       const href=await p.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');operations.push(href!.split('/').at(-1)!);
       await ensureProof(approveRequest);const other=await input.secondBrowser!.newPage();await other.goto(`${browser.origin}${href}`);await other.getByRole('button',{name:'อนุมัติและใช้ค่าชุดนี้',exact:true}).click();
       await other.getByRole('status').filter({hasText:'การตั้งค่านี้มีผลแล้ว'}).waitFor();await other.close();

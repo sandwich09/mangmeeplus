@@ -72,11 +72,11 @@ export async function checkBillingOfferTerms(input:Parameters<typeof checkBillin
       await page.getByText('ซื้อรายปีได้ 1,500 ใบทันที',{exact:true}).waitFor();
       await page.screenshot({fullPage:true,path:`${browser.evidenceDir}/admin-offer-terms-mobile.png`});
       await press(page,'ตรวจผลกระทบการตั้งค่า','/configuration-changes/preview');await page.getByRole('status').filter({hasText:'ตรวจผลกระทบก่อนส่ง'}).waitFor();
-      await proof();await press(page,'ส่งคำขอให้ผู้อนุมัติ','/submit');await page.getByRole('status').filter({hasText:'รอผู้อนุมัติอีกคน'}).waitFor();
+      await proof();await press(page,'บันทึกคำขอก่อนยืนยัน','/submit');await page.getByRole('status').filter({hasText:'รอยืนยันรายการ'}).waitFor();
       const original=await page.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');assert.ok(original);const id=original.split('/').at(-1)!;
       const op=(await request(`${base}/configuration-changes/${id}`)).body;const impact=op.impact.prices.find((p:any)=>p.offerKey==='PRO_999:year');
       assert.equal(impact.afterTotalSatang,1099001);assert.equal(impact.afterReceiptAllowance,1500);assert.equal(impact.beforeReceiptAllowance,1200);
-      assert.equal((await request(`${base}/configuration-changes/${id}/approve`,'POST',{expectedVersion:op.version,previewHash:op.previewHash})).status,403);
+      assert.ok(op.allowedActions.includes('approve'));
       await proof(approveRequest);const other=input.secondBrowser!.pages()[0]!;await other.goto(`${browser.origin}${original}`,{waitUntil:'domcontentloaded'});
       await press(other,'อนุมัติและใช้ค่าชุดนี้','/approve');await other.getByRole('status').filter({hasText:'การตั้งค่านี้มีผลแล้ว'}).waitFor();
       await page.goto(`${browser.origin}${original}`,{waitUntil:'domcontentloaded'});await page.getByRole('status').filter({hasText:'การตั้งค่านี้มีผลแล้ว'}).waitFor();

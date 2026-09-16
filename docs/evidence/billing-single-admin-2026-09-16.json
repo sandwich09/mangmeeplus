@@ -1,0 +1,125 @@
+{
+  "date": "2026-09-16",
+  "scope": "single-administrator billing confirmation",
+  "sourceBase": "ffa4fc913a5ee48696c570f1d8515671a0732134",
+  "sourceCI": null,
+  "uatDeployment": null,
+  "productionDeployment": "NOT_AUTHORIZED",
+  "localChecks": [
+    {
+      "name": "refunds",
+      "check": "refunds-r2",
+      "exitCode": 0,
+      "elapsedSeconds": 194.8,
+      "groupCount": 16,
+      "groups": [
+        "refund-owner-status-web-line-entry-hides-new-sales-and-private-reason-with-observed-return",
+        "refund-approved-bound-current-proof-independent-approval-command-replay-concurrent-run-once",
+        "refund-original-payment-chain-tax-preview-and-complete-page-duplicates-rejected-before-money",
+        "refund-approved-but-expired-command-cannot-dispatch-and-retains-cancel-review",
+        "refund-stale-expired-review-revoked-requester-and-changed-approver-credential-block-money-with-cancel-path",
+        "refund-scoped-finance-submits-executes-without-platform-settings-and-withdrawn-scope-hides-original",
+        "refund-lost-provider-response-recovers-original-note-with-gate-closed-and-no-second-post",
+        "refund-aged-unknown-never-blind-replays-and-positive-original-discovery-completes",
+        "refund-issued-document-pending-failed-and-bank-status-remain-separate-with-original-case",
+        "refund-real-postgres-audit-rollback-retains-unknown-and-observes-original-on-retry",
+        "refund-lost-account-operation-lease-cannot-publish-success-or-clear-replacement-and-original-recovery-writes-once",
+        "refund-worker-drain-executes-approved-original-once-and-pending-create-blocks-new-sales",
+        "browser-original-invoice-refund-form-precision-single-admin-confirmation-execution-reload-case-and-return-mobile",
+        "browser-refund-late-preview-does-not-navigate-after-leaving-and-invoice-history-recovers-the-original",
+        "browser-refund-customer-document-email-choice-is-independently-reviewed-and-private-reason-never-sent",
+        "refund-never-revokes-or-mints-package-days-receipt-quota-or-company-capacity"
+      ],
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false,
+      "logSha256": "0064f68173544d6ba040435145a6b87227ebc071b9bb2d516e0321d6ddc4a63b"
+    },
+    {
+      "name": "scheduled",
+      "check": "scheduled",
+      "exitCode": 0,
+      "elapsedSeconds": 65.85,
+      "groupCount": 12,
+      "groups": [
+        "browser-schedule-timezone-draft-reload-hash-single-admin-confirmation-mobile",
+        "schedule-strict-date-range-self-approval-idempotence-future-refusal-and-no-early-publication",
+        "schedule-worker-off-late-manual-apply-after-preview-expiry-result-reload-exactly-once",
+        "schedule-original-approver-cancel-preserves-policy-and-prevents-worker-publication",
+        "schedule-concurrent-workers-publish-once-with-service-audit",
+        "schedule-emergency-close-stale-source-deduplicated-case-copy-new-review-cancel-return",
+        "schedule-current-requester-approver-system-role-and-credential-version-revocation",
+        "schedule-provider-readiness-failure-blocks-without-changing-active-settings",
+        "schedule-authority-rechecked-after-provider-io-before-publication",
+        "schedule-running-cancel-race-lease-expiry-old-worker-fence-and-manual-reclaim",
+        "schedule-audit-failure-rolls-back-revision-settings-and-success-before-retained-case",
+        "schedule-material-impact-change-expired-approval-immediate-compatibility-and-no-financial-writes"
+      ],
+      "layer": "real-Nest-HTTP-PostgreSQL-Next-Chromium",
+      "browserE2E": true,
+      "simulatedProviders": [
+        "Stripe",
+        "Postmark",
+        "LINE"
+      ],
+      "realProviderPayment": false,
+      "logSha256": "bc8b5ed3169945dc389b224553f1a2f084c34fed5c80217171b20ad6f5c8f27c"
+    }
+  ],
+  "buildAndTypes": "contracts and API build; API and web typechecks PASS",
+  "unitChecks": {
+    "approval": 2,
+    "catalog": 4
+  },
+  "securityChecks": {
+    "productionImageSuite": 26,
+    "maintenancePinFiles": 48
+  },
+  "broadBrowser": {
+    "attempt": "configuration-r4",
+    "status": "FAILED_AT_REFUND_FIXTURE_AFTER_PRECEDING_CHANGED_SERVICES",
+    "elapsedSeconds": 495.62,
+    "cause": "The isolated CONFIG_ONLY refund fixture lacked GET customer simulation required by recipient validation. Exact fixture customer route added; final focused refund browser passed.",
+    "completedGroupsBeforeFailure": [
+      "configuration",
+      "scope grants without financial-read",
+      "package adjustments",
+      "free days",
+      "collection pause/resume",
+      "receipt adjustments",
+      "manual receipt adjustments"
+    ],
+    "overallPassClaimed": false
+  },
+  "nativeDraft": {
+    "id": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "version": 0,
+    "status": "SAVED_NOT_PUBLISHED",
+    "genuineAdminSession": true
+  },
+  "limitations": [
+    "No native Sandbox purchase yet",
+    "No Production deployment or payment",
+    "Broad browser attempt retained as failed; focused final results separate"
+  ],
+  "reproduction": {
+    "prerequisites": "Isolated local PostgreSQL with all219 migrations and isolated Redis; compile contracts/API first. Use BILLING_TEST_DATABASE_URL and REDIS_URL for these disposable services only.",
+    "http": "BILLING_CONFIG_ONLY=1 BILLING_BROWSER_E2E=0 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js",
+    "browserRefunds": "BILLING_CONFIG_ONLY=1 BILLING_REFUNDS_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js",
+    "browserScheduled": "BILLING_CONFIG_ONLY=1 BILLING_SCHEDULED_POLICY_ONLY=1 BILLING_BROWSER_E2E=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js",
+    "units": "node --test apps/api/dist/apps/api/src/modules/billing/application/billing-approval.spec.js; node --test scripts/line-ai-whole-chain-acceptance-catalog.spec.mjs"
+  },
+  "broadHttp": {
+    "status": "OPERATOR_TIMEOUT",
+    "timeoutSeconds": 600,
+    "overallPassClaimed": false,
+    "assertionFailureReported": false,
+    "logSha256": "b2918d2f5d759d388a56a68952029711f4a04a32d85c731e5cb9c6a0b176af63",
+    "note": "Additional broad replay exceeded the local wrapper limit while exercising real rate limits. It is incomplete, not a passing suite. Final focused browser proofs and preceding R4 browser paths remain separate. Required CI must complete before merge."
+  }
+}

@@ -355,6 +355,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/infrastructure/stripe.client.spec.ts',
       'src/modules/billing/line-billing-entry.spec.ts',
       'src/modules/billing/application/billing-capacity.spec.ts',
+      'src/modules/billing/application/billing-approval.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
       'src/modules/billing/application/billing-free-days.spec.ts',

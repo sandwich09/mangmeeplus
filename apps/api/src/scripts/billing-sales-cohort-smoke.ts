@@ -76,8 +76,8 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
       await page.getByRole('button', { name: `นำ ${pilot.name} ออกจากกลุ่ม`, exact: true }).waitFor();
       await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
-      await proof(); await page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await proof(); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
       const target = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(target);
       await proof(approveRequest); const second = input.secondBrowser!.pages()[0]!;
       await second.goto(`${browser.origin}${target}`, { waitUntil: 'domcontentloaded' });

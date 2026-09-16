@@ -48,13 +48,15 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
     for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
     const submitted=await command(first.body,'submit');assert.equal(submitted.status,200,JSON.stringify(submitted));
     assert.equal(submitted.body.state,'AWAITING_APPROVAL');assert.equal((await command(first.body,'submit')).body.id,first.body.id);
-    assert.equal((await command(submitted.body,'approve')).status,403);
-    const applied=await command(submitted.body,'approve',approveRequest);assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.body.state,'SUCCEEDED');
+    assert.ok(submitted.body.allowedActions.includes('approve'));
+    const applied=await command(submitted.body,'approve');assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.body.state,'SUCCEEDED');
     const grantId=applied.body.grant.id;assert.equal(applied.body.observedRemaining,5);assert.equal((await customer()).usage.remaining,5);
-    assert.equal((await command(submitted.body,'approve',approveRequest)).body.state,'SUCCEEDED');
+    assert.equal(applied.body.approvalMode,'SINGLE_ADMIN');assert.equal(applied.body.approverUserId,input.userIds[0]);
+    assert.equal((await command(submitted.body,'approve')).body.state,'SUCCEEDED');
     assert.equal(await db.billingReceiptGrant.count({where:{companyId,kind:'ADMIN_ADJUSTMENT'}}),1);
     assert.equal(await db.auditLog.count({where:{companyId,action:'billing.receipt_adjustment.approve'}}),1);
-    cases.push('admin-paid-receipts-reason-validation-expiry-password-independent-approval-replay');
+    const approvalAudit=await db.auditLog.findFirstOrThrow({where:{targetId:first.body.id,action:'billing.receipt_adjustment.approve'}});assert.equal((approvalAudit.metadataJson as any).approvalMode,'SINGLE_ADMIN');
+    cases.push('admin-paid-receipts-reason-validation-expiry-password-single-admin-confirmation-replay');
     assert.equal((await admission('receipt-ocr-web')).allowed,true);assert.equal((await admission('receipt-ocr-line')).allowed,true);
     assert.equal((await review()).remaining,3);assert.equal((await customer()).usage.remaining,3);
     const revoke=await preview({type:'REVOKE_RECEIPTS',units:undefined,expiresAt:undefined,grantId,reason:'ถอนเฉพาะใบที่ยังไม่ใช้'});assert.equal(revoke.status,200);
@@ -99,7 +101,7 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
     assert.equal((await command(auditSubmit.body,'cancel')).status,200);
     cases.push('admin-paid-receipts-audit-failure-rolls-back-grant-and-operation');
     if(browser&&secondBrowser){
-      const page=browser.page,other=secondBrowser.pages()[0]!,url=`${browser.origin}/system/billing/companies/${companyId}/receipt-adjustments`;
+      const page=browser.page,other=browser.page,url=`${browser.origin}/system/billing/companies/${companyId}/receipt-adjustments`;
       await db.companyAiConfiguration.create({data:{companyId,ocrEnabled:false}});
       await page.setViewportSize({width:390,height:844});await page.goto(url,{waitUntil:'domcontentloaded'});
       await page.getByText('ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',{exact:true}).waitFor();
@@ -118,20 +120,20 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
       const opId=new URL(page.url()).pathname.split('/').pop()!;
       for(let tries=0;;tries++){
         const response=page.waitForResponse(r=>r.url().endsWith(`/receipt-adjustments/${opId}/submit`));
-        await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();const result=await response;
+        await page.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();const result=await response;
         if(result.status()!==429){assert.equal(result.status(),200);break;}
         assert.ok(tries<2);const body=await result.json();assert.ok(Number.isInteger(body.retryAfterSeconds)&&body.retryAfterSeconds<=60);
         await page.getByRole('alert').getByText(/รอ/).waitFor();
         await new Promise(resolve=>setTimeout(resolve,Math.min(60,body.retryAfterSeconds+1)*1000));
       }
-      await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();assert.equal((await review()).remaining,0);
+      await page.getByRole('heading',{name:'รอยืนยันรายการ',exact:true}).waitFor();assert.equal((await review()).remaining,0);
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});
       const approvePath=`/receipt-adjustments/${opId}/approve`;
       await other.route(`**${approvePath}`,async route=>{const r=await route.fetch();assert.equal(r.status(),200);await route.abort('connectionreset');},{times:1});
       const failed=other.waitForEvent('requestfailed',r=>r.url().endsWith(approvePath));
       await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).click();await failed;
       await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).click();
-      await other.getByRole('heading',{name:'ปรับใบเสร็จแล้ว',exact:true}).waitFor();
+      await other.getByRole('heading',{name:'ปรับใบเสร็จแล้ว',exact:true}).waitFor();await other.getByText('ยืนยันโดยผู้ดูแลระบบคนเดียว',{exact:true}).waitFor();
       assert.equal(await db.billingReceiptGrant.count({where:{companyId,sourceKey:opId}}),1);assert.equal((await review()).remaining,7);
       await other.getByText('ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',{exact:true}).waitFor();assert.equal((await admission('receipt-ocr-web')).allowed,false);
       await db.companyAiConfiguration.update({where:{companyId},data:{ocrEnabled:true}});
@@ -145,7 +147,7 @@ export async function checkBillingReceiptAdjustments(input:Parameters<typeof che
       await other.screenshot({path:`${browser.evidenceDir}/admin-receipt-adjustments-history-mobile.png`});
       for(const channel of ['web','line']){await page.goto(`${browser.origin}/companies/${companyId}/billing?channel=${channel}`,{waitUntil:'domcontentloaded'});await page.getByText(/ใบเสร็จคงเหลือ 7 ใบ/).waitFor();}
       cases.push('browser-customer-web-and-line-billing-entry-see-admin-granted-balance');
-      cases.push('browser-admin-receipts-preview-independent-approval-response-loss-history-reload-mobile');
+      cases.push('browser-admin-receipts-preview-single-admin-confirmation-response-loss-history-reload-mobile');
     }
     assert.deepEqual(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}}),originalTerm);
     assert.deepEqual(await db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),originalAccount);

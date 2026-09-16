@@ -93,12 +93,12 @@ export async function checkBillingConfiguration(input: {
       assert.ok(href); assert.ok(href.startsWith('/system/billing/configuration-changes/'));
       await link.click();
       await page.waitForURL(`${browser!.origin}${href}`);
-      await page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).waitFor();
+      await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).waitFor();
       return request(`${base}/configuration-changes/${href.split('/').at(-1)}`);
     };
     const browserSubmit = async (op: any) => {
-      await browser!.page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).click();
-      await browser!.page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await browser!.page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await browser!.page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
       return request(`${base}/configuration-changes/${op.id}`);
     };
     const browserApprove = async (op: any) => {
@@ -126,7 +126,8 @@ export async function checkBillingConfiguration(input: {
     const reopen = await preview(before.policy, before.gates, before.version + 1, 'SET_ACTION_GATE'); assert.equal(reopen.status, 200);
     const waiting = await submit(reopen.body); assert.equal(waiting.body.state, 'AWAITING_APPROVAL');
     assert.equal((await submit(reopen.body)).body.id, waiting.body.id, 'lost submit response reuses the same intent');
-    assert.equal((await request(`${base}/configuration-changes/${waiting.body.id}/approve`, 'POST', { expectedVersion: waiting.body.version, previewHash: waiting.body.previewHash })).status, 403);
+    assert.ok(waiting.body.allowedActions.includes('approve'));
+    const selfApprove=()=>request(`${base}/configuration-changes/${waiting.body.id}/approve`,'POST',{expectedVersion:waiting.body.version,previewHash:waiting.body.previewHash});
     assert.equal((await approve(waiting.body)).body.code, 'CONTROL_REAUTH_REQUIRED');
     if (browser) {
       const engine = browser.page.context().browser()!;
@@ -135,10 +136,11 @@ export async function checkBillingConfiguration(input: {
       secondBrowser.setDefaultNavigationTimeout(60000);
       await secondBrowser.addCookies([{ name: 'watchdog_token', value: token, url: browser.origin, httpOnly: true, sameSite: 'Lax' },
         { name: 'watchdog_csrf', value: 'synthetic-second-csrf', url: browser.origin, sameSite: 'Lax' }]);
-      const page = await secondBrowser.newPage();
+      await secondBrowser.newPage();
+      assert.equal((await approveRequest(`${base}/reauthenticate`, 'POST', { password })).status, 200);
+      const page = browser.page;
+      await page.setViewportSize({ width: 390, height: 844 });
       await page.goto(`${browser.origin}/system/billing/configuration-changes/${waiting.body.id}`, { waitUntil: 'domcontentloaded' });
-      await page.getByLabel('รหัสผ่านปัจจุบัน', { exact: true }).fill(password);
-      await page.getByRole('button', { name: 'ยืนยันรหัสผ่าน', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'ยืนยันแล้วถึง' }).waitFor();
       await page.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
@@ -147,8 +149,9 @@ export async function checkBillingConfiguration(input: {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({ path: `${browser.evidenceDir}/admin-configuration-mobile.png`, fullPage: true });
     } else { assert.equal((await approveRequest(`${base}/reauthenticate`, 'POST', { password })).status, 200);
-      const approved = await approve(waiting.body); assert.equal(approved.status, 200, JSON.stringify(approved.body)); assert.equal(approved.body.state, 'SUCCEEDED'); }
-    assert.equal((await approve(waiting.body)).body.state, 'SUCCEEDED', 'approval response replay does not republish');
+      const approved = await selfApprove(); assert.equal(approved.status, 200, JSON.stringify(approved.body)); assert.equal(approved.body.state, 'SUCCEEDED'); }
+    const ownReplay=await selfApprove();assert.equal(ownReplay.body.state,'SUCCEEDED','same administrator confirmation replay does not republish');
+    assert.equal(ownReplay.body.approvalMode,'SINGLE_ADMIN');assert.equal(ownReplay.body.approverUserId,userIds[0]);
     assert.equal(await client.billingPolicyRevision.count({ where: { stripeAccountId } }), revisionCount, 'gate change does not rewrite policy');
     assert.equal((await request('/v1/billing/catalog')).body.offers.find((o: any) => o.offerKey === 'PRO_999' && o.interval === 'year').availability, 'AVAILABLE');
     const latest = (await request(`${base}/settings`)).body;

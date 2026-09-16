@@ -14,9 +14,9 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
   const preview = async (effectiveAt: unknown, extra = {}) => { const s = await settings(); return request(`${base}/configuration-changes/preview`, 'POST', {
     type: 'PUBLISH_POLICY', expectedVersion: s.version, policy: { ...s.policy, graceDays: s.policy.graceDays === 7 ? 8 : 7 }, gates: s.gates,
     reason: 'ตรวจการตั้งเวลาโดยไม่เปลี่ยนสัญญาที่จ่ายแล้ว', effectiveAt, ...extra }); };
-  const schedule = async () => { const p = await preview(new Date(Date.now() + 60000).toISOString()); assert.equal(p.status, 200, JSON.stringify(p)); ids.push(p.body.id);
+  const schedule = async (actor=approveRequest) => { const p = await preview(new Date(Date.now() + 60000).toISOString()); assert.equal(p.status, 200, JSON.stringify(p)); ids.push(p.body.id);
     await proof(); const submitted = await action(p.body, 'submit'); assert.equal(submitted.status, 200, JSON.stringify(submitted));
-    await proof(approveRequest); const approved = await action(submitted.body, 'approve', approveRequest); assert.equal(approved.status, 200, JSON.stringify(approved));
+    await proof(actor); const approved = await action(submitted.body, 'approve', actor); assert.equal(approved.status, 200, JSON.stringify(approved));
     assert.equal(approved.body.state, 'SCHEDULED'); return approved.body; };
   const due = (op: any) => mock.timers.setTime(Date.parse(op.scheduledFor) + 1);
   const state = () => db.billingSettings.findUniqueOrThrow({ where: { id: `${stripeAccountId}:test` } });
@@ -48,11 +48,11 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
       assert.equal(mismatched.body.code, 'CONTROL_PREVIEW_STALE');
       await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor(); await proof();
-      await page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
       const review = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(review);
-      const submitted = await get(review.split('/').at(-1)!); assert.equal((await action(submitted, 'approve')).status, 403);
-      await proof(approveRequest); const second = input.secondBrowser!.pages()[0]!;
+      const submitted = await get(review.split('/').at(-1)!); assert.ok(submitted.allowedActions.includes('approve'));
+      await proof(); const second = browser.page;
       await second.goto(`${browser.origin}${review}`, { waitUntil: 'domcontentloaded' });
       await second.getByRole('button', { name: 'อนุมัติและรอวันที่กำหนด', exact: true }).click();
       await second.getByRole('status').filter({ hasText: 'อนุมัติแล้ว รอถึงกำหนด' }).waitFor();
@@ -60,12 +60,12 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
       assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await second.screenshot({ path: `${browser.evidenceDir}/admin-scheduled-policy-mobile.png`, fullPage: true });
       pending = await get(submitted.id); ids.push(pending.id);
-      cases.push('browser-schedule-timezone-draft-reload-hash-independent-approval-mobile');
-    } else pending = await schedule();
+      cases.push('browser-schedule-timezone-draft-reload-hash-single-admin-confirmation-mobile');
+    } else pending = await schedule(request);
     assert.deepEqual(await state(), before); assert.equal(pending.state, 'SCHEDULED');
-    assert.equal((await action(pending, 'approve')).status, 403);
+    assert.equal(pending.approvalMode,'SINGLE_ADMIN');assert.equal((await action(pending, 'approve')).body.id,pending.id);
     assert.equal((await action(pending, 'apply')).body.code, 'CONTROL_SCHEDULE_NOT_DUE');
-    assert.equal((await action(pending, 'approve', approveRequest)).body.id, pending.id);
+    await proof(approveRequest);assert.equal((await action(pending, 'approve', approveRequest)).status,409,'a different actor cannot replace completed approval');
     await input.drainOperations(); assert.deepEqual(await state(), before); assert.equal((await get(pending.id)).state, 'SCHEDULED');
     cases.push('schedule-strict-date-range-self-approval-idempotence-future-refusal-and-no-early-publication');
     due(pending); await proof();
@@ -87,7 +87,7 @@ export async function checkBillingScheduledPolicy(input: Parameters<typeof check
     assert.deepEqual(await state(), beforeCancel); assert.equal((await get(cancelled.id)).state, 'CANCELLED');
     cases.push('schedule-original-approver-cancel-preserves-policy-and-prevents-worker-publication');
 
-    const worker = await schedule(), beforeWorker = await state(); due(worker);
+    const worker = await schedule(request), beforeWorker = await state(); due(worker);
     await Promise.all([input.drainOperations(), input.drainOperations()]);
     assert.equal((await get(worker.id)).state, 'SUCCEEDED'); assert.equal((await state()).version, beforeWorker.version + 1);
     assert.equal(await db.auditLog.count({ where: { targetId: worker.id, action: 'billing.configuration.published', actorType: 'SERVICE' } }), 1);

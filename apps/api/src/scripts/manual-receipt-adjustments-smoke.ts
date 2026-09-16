@@ -37,7 +37,7 @@ export async function checkManualReceiptAdjustments(input:Parameters<typeof chec
       await page.getByRole('textbox',{name:'เหตุผลที่ปรับใบเสร็จ',exact:true}).fill('เพิ่มใบเสริมให้ร้านทดลองจากเว็บ');
       await page.getByRole('button',{name:'ตรวจจำนวนก่อนส่งคำขอ',exact:true}).click();await page.waitForURL(/\/system\/billing\/receipt-adjustments\//);
       browserGiftId=new URL(page.url()).pathname.split('/').pop()!;
-      await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();
+      await page.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();await page.getByRole('heading',{name:'รอยืนยันรายการ',exact:true}).waitFor();
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});await other.getByRole('button',{name:'อนุมัติและปรับใบเสร็จ',exact:true}).waitFor();
       await other.getByLabel('รหัสผ่านปัจจุบัน',{exact:true}).fill(password);
       const passwordResult=other.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith(`${base}/companies/${companyId}/reauthenticate`));

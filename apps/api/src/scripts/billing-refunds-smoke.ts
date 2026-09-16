@@ -13,6 +13,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
   const cases:string[]=[],settings=async()=>(await request(`${base}/settings`)).body,initial=await settings();
   const originalAccount=await db.billingAccount.findFirstOrThrow({where:{companyId,stripeAccountId,livemode:false}}),customerId=originalAccount.customerId??`cus_Refund${run}`;
   const account=await db.billingAccount.update({where:{id:originalAccount.id},data:{customerId}});
+  const customerEmail=(await db.user.findUniqueOrThrow({where:{id:input.userIds[0]!}})).email;
   const local=await db.billingInvoice.create({data:{billingAccountId:account.id,providerInvoiceId:`in_Refund${run}`,providerChargeId:`ch_Refund${run}`,subscriptionId:`sub_Refund${run}`,
     providerNumber:'TEST-REFUND-001',offerSnapshot:{offerKey:'PRO_999',interval:'year'},policyRevisionId:initial.policyRevisionId,currency:'THB',totalSatang:999000,paidSatang:999000,taxSatang:0,
     periodStart:new Date(),periodEnd:new Date(Date.now()+365*86400000),providerStatus:'paid',evidenceHash:'synthetic-refund-paid-proof',applyStatus:'HELD'}});
@@ -41,7 +42,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
   };
   input.transport(async(url,init)=>{
     if(url.hostname!=='api.stripe.com')return undefined;const path=url.pathname.replace('/v1',''),method=init?.method??'GET';
-    const native=path===`/invoices/${local.providerInvoiceId}`||path===`/charges/${local.providerChargeId}`||path===`/payment_intents/${intentId}`||path===`/invoices/${local.providerInvoiceId}/lines`||
+    const native=path===`/customers/${customerId}`||path===`/invoices/${local.providerInvoiceId}`||path===`/charges/${local.providerChargeId}`||path===`/payment_intents/${intentId}`||path===`/invoices/${local.providerInvoiceId}/lines`||
       path==='/credit_notes'||path==='/credit_notes/preview'||path==='/refunds'||path==='/invoice_payments'||refunds.some(r=>path===`/refunds/${r.id}`)||notes.some(n=>path===`/credit_notes/${n.id}`);
     if(method!=='GET'&&path!=='/credit_notes')throw Error('Unexpected native mutation in refund scenario');
     if(!native)return undefined;assert.equal(new Headers(init?.headers).get('Stripe-Version'),STRIPE_API_VERSION);
@@ -60,6 +61,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
       if(behavior==='lose-after')throw Error('Synthetic response lost after Stripe stored note');return response(created);
     }
     assert.equal(method,'GET');
+    if(path===`/customers/${customerId}`)return response({id:customerId,object:'customer',livemode:false,email:customerEmail,metadata:{billingAccountId:account.id}});
     if(path===`/invoices/${local.providerInvoiceId}`)return response(invoice());
     if(path===`/charges/${local.providerChargeId}`)return response({...charge(),...corrupt==='charge'?{payment_intent:'pi_Foreign'}:{}});
     if(path===`/payment_intents/${intentId}`)return response({id:intentId,object:'payment_intent',livemode:false,customer:customerId,currency:'thb',status:'succeeded',amount_received:local.paidSatang,latest_charge:local.providerChargeId});
@@ -93,9 +95,10 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     const another=await preview();assert.equal(another.status,200);
     assert.equal((await request(`${base}/refunds/${another.body.id}/submit`,'POST',{expectedVersion:another.body.version,previewHash:another.body.previewHash},{'idempotency-key':`refund-submit-${good.body.id}`})).body.code,'CONTROL_IDEMPOTENCY_CONFLICT');
     assert.equal((await command(another.body,'cancel')).body.state,'CANCELLED');assert.equal((await command(another.body,'cancel')).body.state,'CANCELLED');
-    assert.equal((await command(submitted.body,'approve')).status,403);await proof(approveRequest);
-    const approved=await command(submitted.body,'approve',approveRequest);assert.equal(approved.status,200,JSON.stringify(approved));assert.equal((await command(submitted.body,'approve',approveRequest)).body.id,good.body.id);
-    assert.equal((await request(`/v1/companies/${companyId}/billing/quote`,'POST',{offerKey:'PRO_999',interval:'year',billingEmail:'refund-test@example.invalid'})).body.code,'BILLING_REFUND_PENDING');
+    assert.ok(submitted.body.allowedActions.includes('approve'));await proof(approveRequest);
+    const approved=await command(submitted.body,'approve');assert.equal(approved.status,200,JSON.stringify(approved));assert.equal(approved.body.approvalMode,'SINGLE_ADMIN');assert.equal((await command(submitted.body,'approve')).body.id,good.body.id);
+    const pendingQuote=await request(`/v1/companies/${companyId}/billing/quote`,'POST',{offerKey:'PRO_999',interval:'year',billingEmail:'refund-test@example.invalid'});
+    assert.equal(pendingQuote.body.code,'BILLING_REFUND_PENDING',JSON.stringify(pendingQuote));
     const ownerStatus=await request(`/v1/companies/${companyId}/billing`);assert.equal(ownerStatus.status,200);assert.equal(ownerStatus.body.refundReviewPending,true);
     assert.ok(!ownerStatus.body.allowedActions.includes('new_sales')&&!ownerStatus.body.allowedActions.includes('plan_changes'));
     assert.ok(!JSON.stringify(ownerStatus.body).includes('PRIVATE_REFUND')&&!JSON.stringify(ownerStatus.body).includes(good.body.id));
@@ -138,12 +141,20 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
     finally{await db.userCredential.update({where:{userId:credential.userId},data:{updatedAt:credential.updatedAt}});}
     assert.equal((await command(await get(credentialOp.id),'cancel')).body.state,'CANCELLED');
     cases.push('refund-stale-expired-review-revoked-requester-and-changed-approver-credential-block-money-with-cancel-path');
-    const scoped=await preview();await db.membershipRole.delete({where:{membershipId_roleId:{membershipId:input.membershipId,roleId:input.adminRoleId}}});
+    await proof();const ownPreview=await preview(),ownSubmitted=await command(ownPreview.body,'submit'),ownApproved=await command(ownSubmitted.body,'approve');
+    assert.equal(ownApproved.status,200,JSON.stringify(ownApproved));const ownWrites=requests.length;
+    await db.membershipRole.delete({where:{membershipId_roleId:{membershipId:input.membershipId,roleId:input.adminRoleId}}});
     const scope=await db.billingOperatorScope.create({data:{userId:input.userIds[0]!,companyId,stripeAccountId,livemode:false,createdByUserId:input.userIds[1]!}});
     try{
       assert.equal((await request(`${base}/settings`)).status,403);
+      const delegatedAccess=(await request(`${base}/overview`)).body;assert.equal(delegatedAccess.platformScope,false);
+      assert.ok(delegatedAccess.capabilities.includes('system.billing.refund.manage')&&delegatedAccess.capabilities.includes('system.billing.approval.approve'));
+      assert.equal((await execute(ownApproved.body)).state,'BLOCKED','losing SYSTEM_ADMIN blocks a self-confirmed new refund even when all delegated capabilities remain');
+      assert.equal(requests.length,ownWrites);assert.equal((await command(await get(ownApproved.body.id),'cancel')).body.state,'CANCELLED');
+      const scoped=await preview();assert.equal(scoped.status,200,JSON.stringify(scoped));
       assert.equal((await request(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
       const submittedScoped=await command(scoped.body,'submit');assert.equal(submittedScoped.status,200,JSON.stringify(submittedScoped));await proof(approveRequest);
+      assert.ok(!submittedScoped.body.allowedActions.includes('approve'));assert.equal((await command(submittedScoped.body,'approve')).status,403,'scoped Finance cannot self-confirm');
       const approvedScoped=await command(submittedScoped.body,'approve',approveRequest);assert.equal(approvedScoped.status,200,JSON.stringify(approvedScoped));
       assert.equal((await execute(approvedScoped.body)).state,'SUCCEEDED');
       await db.billingOperatorScope.update({where:{id:scope.id},data:{revokedAt:new Date()}});assert.equal((await request(`${base}/refunds/${scoped.body.id}`)).status,404);
@@ -247,9 +258,10 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
         }
         assert.fail('Refund browser command did not recover within the actual rate limit');
       };
-      await proof();await proof(approveRequest);await browserCommand(page,'ส่งคำขอให้ผู้อนุมัติ','submit');await page.getByRole('status').filter({hasText:'รอผู้อนุมัติอีกคน'}).waitFor();
-      const other=input.secondBrowser!.pages()[0]!;await other.goto(page.url(),{waitUntil:'domcontentloaded'});await browserCommand(other,'อนุมัติคำขอคืนเงิน','approve');await other.getByRole('status').filter({hasText:'รับคำขอแล้ว'}).waitFor();
+      await proof();await proof(approveRequest);await browserCommand(page,'บันทึกคำขอก่อนยืนยัน','submit');await page.getByRole('status').filter({hasText:'รอยืนยันรายการ'}).waitFor();
+      const other=browser.page;await other.goto(page.url(),{waitUntil:'domcontentloaded'});await browserCommand(other,'อนุมัติคำขอคืนเงิน','approve');await other.getByRole('status').filter({hasText:'รับคำขอแล้ว'}).waitFor();
       await browserCommand(other,'ตรวจและดำเนินการคำขอเดิม','run');await other.getByRole('status').filter({hasText:'Stripe ดำเนินการคืนเงินสำเร็จ'}).waitFor();assert.equal((await get(id)).state,'SUCCEEDED');
+      assert.equal((await get(id)).approvalMode,'SINGLE_ADMIN');await other.getByText('ยืนยันโดยผู้ดูแลระบบคนเดียว',{exact:true}).waitFor();
       assert.equal((await get(id)).notifyCustomer,true);assert.equal(new URLSearchParams(requests.at(-1)!.body).get('email_type'),'credit_note');
       assert.equal(new URLSearchParams(requests[0]!.body).get('email_type'),'none');
       await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('region',{name:'ผลกระทบการคืนเงิน',exact:true}).waitFor();assert.equal(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -257,7 +269,7 @@ export async function checkBillingRefunds(input:Parameters<typeof checkBillingCo
       await openReview(other,()=>other.getByRole('link',{name:'กลับไปคำขอของใบแจ้งหนี้นี้',exact:true}).click());await other.getByRole('region',{name:'คำขอคืนเงินเดิม',exact:true}).waitFor();
       await page.goto(`${browser.origin}/system/billing/issues/${failedView.reviewCaseId}`,{waitUntil:'domcontentloaded'});await page.getByRole('link',{name:'เปิดคำสั่งเดิมของเคสนี้',exact:true}).click();await page.getByRole('status').filter({hasText:'คืนเงินไม่สำเร็จ'}).waitFor();
       await page.screenshot({path:`${browser.evidenceDir}/admin-refund-failed-mobile.png`,fullPage:true});
-      cases.push('browser-original-invoice-refund-form-precision-independent-approval-execution-reload-case-and-return-mobile');
+      cases.push('browser-original-invoice-refund-form-precision-single-admin-confirmation-execution-reload-case-and-return-mobile');
       cases.push('browser-refund-late-preview-does-not-navigate-after-leaving-and-invoice-history-recovers-the-original');
       cases.push('browser-refund-customer-document-email-choice-is-independently-reviewed-and-private-reason-never-sent');
       if(readLimited)cases.push('browser-refund-rate-limited-initial-read-reloads-original-invoice-after-bounded-wait');

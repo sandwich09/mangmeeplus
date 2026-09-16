@@ -1,5 +1,7 @@
 # Billing controls 1–8 — ควบคุมผ่าน Admin เว็บและกู้ปัญหาได้
 
+Current amendment (2026-09-16): [single administrator confirmation](billing-single-admin-spec-2026-09-16.md) supersedes unconditional two-person approval for genuine SYSTEM_ADMIN only. Owner approved code support for UAT and Production; deploy UAT only.
+
 > **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
 
 > **Current follow-up:** ข้อกำหนดการกู้ฟอร์ม Admin: หลังคำขอถูกปฏิเสธ (รวม 429) ต้องคงเหตุผล ช่วงเวลา และคำสั่งเดิมให้ลองต่อได้ ช่องข้อความหลายบรรทัดต้องมี label แยกที่ผูกด้วย htmlFor/id เพื่อให้ชื่อช่องไม่รวมข้อความที่ผู้ดูแลพิมพ์เมื่อ React อัปเดตค่า ใช้หลักเดียวกันกับช่องเหตุผล/บันทึก/ข้อความให้ลูกค้าใน billing Admin.

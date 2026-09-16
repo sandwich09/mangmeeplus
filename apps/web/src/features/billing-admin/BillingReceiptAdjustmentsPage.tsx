@@ -5,11 +5,11 @@ import {useRouter} from 'next/navigation';
 import type {BillingReceiptAdjustments,BillingReceiptAdjustmentOperation,BillingReceiptAdjustmentInput} from '@watchdog-bms/contracts';
 import {authedApiFetch} from '@/common/api/authed-fetch';
 import {apiErrorCode,apiErrorMessage} from '@/common/api/api-error-message';
-import {billingControl as button,billingMonthlyAllowanceText} from '@/features/billing/billing-display';
+import {billingApprovalLabel, billingControl as button,billingMonthlyAllowanceText} from '@/features/billing/billing-display';
 
 const field='mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const date=(value:string)=>new Date(value).toLocaleString('th-TH',{timeZone:'Asia/Bangkok'});
-const state:Record<string,string>={PREVIEW:'ตรวจจำนวนก่อนส่งคำขอ',AWAITING_APPROVAL:'รอผู้อนุมัติอีกคน',SUCCEEDED:'ปรับใบเสร็จแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
+const state:Record<string,string>={PREVIEW:'ตรวจจำนวนก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',SUCCEEDED:'ปรับใบเสร็จแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing${path}`,{cache:'no-store',suppressErrorToast:true,...body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...key?{'Idempotency-Key':key}:{}},body:JSON.stringify(body)}});
 const errors:Record<string,string>={CONTROL_RECEIPT_TERM_REQUIRED:'ร้านนี้ยังไม่มีระยะใช้งานหรือหมดอายุแล้ว กลับไปตรวจและต่ออายุแพ็กเกจก่อน',CONTROL_PAID_RECEIPTS_REQUIRED:'หน้านี้เพิ่มใบเสร็จให้แพ็กเกจที่ชำระเงินและยังไม่หมดอายุ กรุณากลับไปดูสถานะแพ็กเกจ',CONTROL_COMPANY_HELD:'บริษัทนี้ถูกพักใช้งาน กรุณาตรวจสถานะบริษัทก่อน',CONTROL_OPERATION_IN_PROGRESS:'มีรายการเดิมกำลังดำเนินการ เปิดสถานะแพ็กเกจเพื่อตรวจให้เสร็จก่อน',CONTROL_PREVIEW_STALE:'ข้อมูลหรือวันหมดอายุเปลี่ยนแล้ว ยกเลิกคำขอเดิมและตรวจข้อมูลใหม่'};
 const readWarnings={OCR_DISABLED:'ร้านนี้ปิดการอ่านเอกสารด้วย AI อยู่',OCR_LIMIT_REACHED:'ร้านนี้ใช้จำนวนครั้งอ่านเอกสารครบแล้ว',AI_BUDGET_REACHED:'ร้านนี้ใช้งบ AI ครบแล้ว'};
@@ -55,7 +55,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
   return <main className="mx-auto max-w-3xl space-y-5 p-4 text-base">
     <Link onClick={leaving} className={button} href={companyPath}>กลับไปสถานะแพ็กเกจ</Link>
     <h1 className="text-2xl font-bold">ใบเสร็จที่ผู้ดูแลเพิ่มให้</h1>
-    <p>เพิ่มจำนวนใบที่อ่านได้ โดยผู้มีสิทธิ์อีกคนตรวจและอนุมัติ รายการนี้ไม่เรียกเก็บเงินและไม่ออกใบเสร็จรับเงินใหม่</p>
+    <p>เพิ่มจำนวนใบที่อ่านได้ โดยตรวจผลกระทบและยืนยันก่อน รายการนี้ไม่เรียกเก็บเงินและไม่ออกใบเสร็จรับเงินใหม่</p>
     <button className={button} disabled={busy||loading} onClick={()=>{generation.current++;setData(null);setOperation(null);setLoading(true);setRefresh(n=>n+1);}}>โหลดข้อมูลล่าสุด</button>
     {loading&&<p role="status">กำลังโหลดข้อมูล…</p>}{error&&<p role="alert" className="rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}{notice&&<p role="status" className="rounded-lg bg-green-50 p-3">{notice}</p>}
     {(data?.readWarnings??operation?.readWarnings??[]).length>0&&<section className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-4" aria-label="การตั้งค่าที่จำกัดการอ่านเอกสาร">
@@ -78,7 +78,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
       <section className="scroll-mt-40 space-y-3" aria-label="ประวัติการเพิ่มใบเสร็จ"><h2 className="font-bold">ประวัติคำขอและผู้แก้</h2>
         {!data.items.length&&<p>ยังไม่มีคำขอ</p>}
         {data.items.map(item=><article key={item.id} className="space-y-2 rounded-xl border p-4"><Link onClick={leaving} className="block min-h-11 underline" href={`/system/billing/receipt-adjustments/${encodeURIComponent(item.id)}`}>{item.type==='GRANT_RECEIPTS'?'เพิ่มใบเสร็จ':'ถอนใบที่ยังไม่ใช้'} {item.units.toLocaleString('th-TH')} ใบ · {state[item.state]??'ต้องตรวจสอบ'}</Link>
-          <p>ผู้ขอ: {item.requesterName??'ไม่พบชื่อ'} · {date(item.createdAt)}</p><p>ผู้อนุมัติ: {item.approverName??'ยังไม่มี'}</p><p>เหตุผล: {item.reason}</p>
+          <p>ผู้ขอ: {item.requesterName??'ไม่พบชื่อ'} · {date(item.createdAt)}</p><p>ผู้อนุมัติ: {item.approverName??'ยังไม่มี'}</p>{item.approvalMode&&<p>{billingApprovalLabel(item.approvalMode)}</p>}<p>เหตุผล: {item.reason}</p>
           {item.grant&&<p>จากรายการนี้ ใช้แล้ว {item.grant.used} ใบ · เหลือ {item.grant.remaining} ใบ · {item.grant.revokedAt?'ถอนสิทธิ์แล้ว':item.grant.active?`ใช้ได้ถึง ${date(item.grant.expiresAt)}`:'หมดอายุแล้ว'}</p>}
           {data.canCreate&&item.type==='GRANT_RECEIPTS'&&item.grant?.active&&<button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void preview(item.grant!.id)}>ขอถอนใบที่ยังไม่ใช้จากรายการนี้</button>}
         </article>)}
@@ -92,12 +92,13 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
         <p>ผู้ขอ: {operation.requesterName??'ไม่พบชื่อ'} · ผู้อนุมัติ: {operation.approverName??'ยังไม่มี'}</p><p>เหตุผล: {operation.reason}</p>
         {operation.grant&&<p>รายการที่ผู้ดูแลเพิ่มนี้ ใช้แล้ว {operation.grant.used.toLocaleString('th-TH')} ใบ · เหลือที่ยังใช้ได้ {operation.grant.remaining.toLocaleString('th-TH')} ใบ</p>}
         <p>วันหมดอายุแพ็กเกจและวันเก็บเงินครั้งถัดไปยังคงเดิม จำนวนที่ใช้แล้วเก็บไว้ในประวัติ</p>
-        {operation.state==='AWAITING_APPROVAL'&&<p>เปิดลิงก์คำขอนี้ให้ผู้มีสิทธิ์อีกคนตรวจ ผู้ขออนุมัติรายการตัวเองไม่ได้</p>}
+        {operation.approvalMode&&<p>{billingApprovalLabel(operation.approvalMode)}</p>}
+        {operation.state==='AWAITING_APPROVAL'&&<p>{operation.allowedActions.includes('approve')?'ตรวจข้อมูลและยืนยันรหัสผ่าน แล้วกดอนุมัติรายการนี้':'ให้ผู้ดูแลระบบหรือผู้มีสิทธิ์อีกคนเปิดลิงก์คำขอนี้เพื่อตรวจและอนุมัติ'}</p>}
         <Link className={button} href={`/system/billing/receipt-adjustments/${encodeURIComponent(operation.id)}`}>เปิดลิงก์คำขอนี้</Link>
       </section>
       {!!operation.allowedActions.length&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2><p>ยืนยันครั้งเดียวใช้ได้ 5 นาที หากยืนยันแล้ว กดดำเนินการต่อได้เลย</p>
         <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link className={button} onClick={leaving} href="/forgot-password">กู้รหัสผ่าน</Link></form>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับใบเสร็จ',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'บันทึกคำขอก่อนยืนยัน',approve:'อนุมัติและปรับใบเสร็จ',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
       </section>}
       <Link onClick={leaving} className={button} href={`${companyPath}/receipt-adjustments`}>กลับไปประวัติการเพิ่มใบเสร็จ</Link>
     </>}

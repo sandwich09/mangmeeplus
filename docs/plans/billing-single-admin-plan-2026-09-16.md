@@ -1,0 +1,12 @@
+# Billing single administrator implementation plan
+
+Status: IMPLEMENTED; local verification recorded below, CI/UAT/native activation pending. Source: [approved spec](../specs/billing-single-admin-spec-2026-09-16.md).
+
+1. Add one shared permission predicate using existing platformScope and exact action plus approval capabilities; use it in reads, command transactions and deferred execution.
+2. Update configuration/schedules, company scope grants, receipts, plan/free-day/collection changes and refunds. Derive confirmation mode from retained real actor IDs and include it in DTO/audit evidence without schema changes.
+3. Replace two-person-only Thai instructions with accurate confirmation/recovery/history copy. Keep separate review, password proof and explicit final confirmation.
+4. Extend existing focused real HTTP/PostgreSQL/browser smoke fixtures for single-admin success and delegated self-denial; retain independent-approval regressions, stale/replay/permission/credential controls and worker tests. Build/typecheck and inspect mobile UI.
+5. Batch source changes for CI once locally ready; reuse exact-commit successful validation for both target branches where the repository supports it. Merge develop/main only after CI succeeds. Read the mandatory deployment protocol before one UAT hotfix and verify signed result/customer OPEN. No Production deploy.
+6. Continue native UAT Sandbox activation and paid E2E through the authorized Admin session when available; record any exact credential/session blocker separately from product-policy decisions.
+
+Verification/results: contracts/API build, API/web typechecks, shared approval2/2, catalog4/4, local image security26tests and maintenance48file pins passed. Final real PostgreSQL/HTTP/Chromium refunds16groups and scheduled12groups passed. Broad configuration browser R4 completed the preceding changed service groups but failed a missing provider customer fixture at refunds; the fixture is corrected and the focused final refund replay passes. Preserve the failed broad result honestly. An additional full HTTP replay exceeded the operator600s limit; it is incomplete, not PASS. Required CI is still mandatory before merge. See [verification evidence](../evidence/billing-single-admin-2026-09-16.json) and [task memory](../agent-memory/billing-single-admin-2026-09-16.md). Native Admin draft is saved; the currently running UAT release does not yet support self-confirmation.
