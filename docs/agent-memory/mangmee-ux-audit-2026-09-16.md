@@ -371,3 +371,7 @@ Verification so far: initial combined browser run 5/7 passed, two failures refer
 - New PG issue-resolution and concurrent-settings tests passed 7 cases against the explicitly isolated local watchdog_postmark_ci database; wired both into the existing CI PostgreSQL stage.
 - Action-loading audit: 527 covered, zero gaps. Security audit passed its high-severity gate (0 high/critical; 13 moderate, 1 low reported). git diff --check passed. No package.json/dependency edits.
 - Deployment remains out of scope. Next: commit this accumulated owner-authorized batch, automatic PR CI, admin merge develop then fast-forward the exact merge to main after success; record run/PR/SHAs.
+
+CI delivery: PR #597 (https://github.com/MangmeeDev/mangmeeplus/pull/597), source 630b6cae00b7eda17a3feb2dc01c07db95940231, automatic CI run 35144924997. No manual/repeated dispatch. Awaiting terminal result before admin merge.
+
+CI 35144924997 failed at Resolve Source before test fan-out: maintenance enforcement pins still referenced the old login landing/session gate and company/system layout bytes. Ran the repository pin synchronizer, reviewed only the four expected source digests plus validator workflow digest, and --check passed all 48 exact files. Full production-image-security contract suite passed, including 26 migration-authority tests; it uses local/fake cloud boundaries and did not deploy. Commit the regenerated pins and allow automatic CI for the new head; no duplicate workflow dispatch.
