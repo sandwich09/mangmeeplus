@@ -1,4 +1,4 @@
-# Email OTP signup / passwordless — local verification
+# Email OTP signup / passwordless — verification and source delivery
 
 Date: 2026-09-16. Feature checkpoint `1dcd01b1` with final type/security, duplicate-warning and initial-resume corrections; optional-email dependency integration is recorded below. Worktree `mangmeeplus-email-passwordless`; marketing `mangmee_web-email-signup`. No deploy, native mail delivery, payment or customer lead submission.
 
@@ -62,6 +62,29 @@ BILLING_TEST_DATABASE_URL=<local-watchdog_postmark_ci-url> node apps/api/dist/ap
 BILLING_TEST_DATABASE_URL=<local-watchdog_postmark_ci-url> BILLING_CONFIG_ONLY=1 BILLING_PLAN_ADJUSTMENTS_ONLY=1 node apps/api/dist/apps/api/src/scripts/billing-http-smoke.js
 ```
 
-Machine-local logs: `/tmp/email-passwordless-*-final.log`, `/tmp/email-passwordless-legacy-pg.log`, `/tmp/email-passwordless-billing-regression.log`; screenshots `/tmp/email-passwordless-browser/email-signup-390.png` and `email-returning-390.png`. Full billing regression passed in `/tmp/email-passwordless-billing-full.log`; the expected synthetic LINE warning did not fail any assertion. Core required CI and develop/main merge remain pending.
+Machine-local logs: `/tmp/email-passwordless-*-final.log`, `/tmp/email-passwordless-legacy-pg.log`, `/tmp/email-passwordless-billing-regression.log`; screenshots `/tmp/email-passwordless-browser/email-signup-390.png` and `email-returning-390.png`. Full billing regression passed in `/tmp/email-passwordless-billing-full.log`; the expected synthetic LINE warning did not fail any assertion. Core required CI and develop/main merges are complete; see the final delivery section below.
 
-Marketing is merged: PR4→develop (`d8c25e86`, CI35048055608 PASS) and PR5→main (`d5c141ec`, CI35048182393 PASS). Both validated catalog5/5 and had no deployment. Core CI must validate the final integrated head; these marketing results do not substitute for it.
+Marketing is merged: PR4→develop (`d8c25e86`, CI35048055608 PASS) and PR5→main (`d5c141ec`, CI35048182393 PASS). Both validated catalog5/5 and had no deployment. Core CI separately validated the final integrated head; these marketing results do not substitute for it.
+
+## CI navigation failure investigation
+
+Main CI35049794245 attempt1 failed when the existing admin apply-invoice list navigation showed a Next404. The new email signup browser journey passed all5 CI groups before this failure. Develop CI35049514012, with an identical source tree, passed the same complete browser step. Local focused apply-retry passed16 groups; the7 CI browser commands were then replayed in order from a fresh Next cache and all passed (8/7/10/5/7/16/67 groups, overlap included). Logs: /tmp/email-passwordless-main-ci-failure.log, /tmp/email-passwordless-apply-retry-diagnostic.log, /tmp/email-passwordless-ci-sequence.log.
+
+The failure is not reproduced and the underlying cause is not established; do not describe it as a fixed application defect. No production source or assertion was weakened. Wait for the full develop result before a bounded failed-job-only retry of main on the same head. This local evidence does not replace main CI acceptance.
+
+Develop CI35049514012 attempt1 completed SUCCESS on44f3ff7c. After that complete result and local sequence replay, main CI35049794245 was retried once with --failed on unchanged23acbd1f at03:54UTC. Acceptance of main remains pending attempt2; the earlier failed attempt is retained as evidence.
+
+## ส่งมอบ source หลัง CI ผ่าน — 2026-09-16
+
+| Target | Tested head | CI | Merge |
+|---|---|---|---|
+| develop | `44f3ff7c3e0d5c864b56ec87db2196c94a01dc97` | [35049514012](https://github.com/MangmeeDev/mangmeeplus/actions/runs/35049514012), attempt1 SUCCESS | [PR583](https://github.com/MangmeeDev/mangmeeplus/pull/583), `2361157b1e18a336ff6537d84fa47925b9e0ee64` |
+| main | `23acbd1f19a7c2ee3d7ff8315f8d076db25e59ef` | [35049794245](https://github.com/MangmeeDev/mangmeeplus/actions/runs/35049794245), attempt2 SUCCESS | [PR584](https://github.com/MangmeeDev/mangmeeplus/pull/584), `670e88ce856306914809cde7735589f21145234d` |
+
+Admin merge develop occurred at04:58:14UTC, then main at04:58:37UTC, after both runs passed. Required Typecheck and Test, Security Audit, Secret Scan, Migration Review and Production Config Validation all passed. Image/publication jobs were intentionally skipped; no deployment happened.
+
+Both merged trees are `bcabfc01d241f953ae7e3207bf4af8d486dbab8a`. They preserve the four prerequisite completion documents that landed while CI ran; all non-doc files match tested tree `a190b1ff3fec69378d84ec0c7d0ec397f73bc685` exactly. Marketing PR4/5 already merged after their own successful CI.
+
+Main attempt1's admin navigation404 remains recorded above; it was not reproduced in the focused16-group browser run, the full7-command cold-cache replay, develop CI, or main attempt2. One failed-job-only retry was used; no product-code change or weakened assertion was made. The underlying cause was not established, so this is not evidence of a fixed application defect.
+
+Source implementation, automated verification and requested merges are complete. Native Postmark inbox/callback acceptance, deployment and human usability testing were not performed in this task. Future release must follow the existing mandatory runbooks; additive migration and email-only rollback constraints still apply.
