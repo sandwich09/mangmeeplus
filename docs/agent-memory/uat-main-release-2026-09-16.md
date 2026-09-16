@@ -1,6 +1,6 @@
 # Agent Memory: UAT main release — 2026-09-16
 
-Status: Deployment and native mail acceptance complete; Sandbox purchase activation blocked on real Admin session and independent approver. Release evidence is recorded in this documentation-only report. No active deploy/source CI.
+Status: Deployment and native mail acceptance complete; Sandbox purchase activation blocked on real Admin session and the current two-person rule; owner reports only one operator. Release evidence is recorded in this documentation-only report. No active deploy/source CI.
 Owner: Codex under explicit owner authorization; UAT only.
 Scope: Latest main application, migrations, Stripe Sandbox/Postmark UAT configuration, actual timing and native acceptance. Production excluded.
 
@@ -12,6 +12,7 @@ Decisions:
 - Develop merge db47a2ca, main merge ee2f5542. Documentation-only report changes afterward do not alter application bytes or require redeploy.
 
 Open questions/blockers:
+- Owner now states there is only one operator. Scope clarification is pending: support single-operator controls in both UAT/Production code versus UAT-only, with no Production deployment either way. Review configuration, scheduled publication, receipt/plan/day adjustments, collection and refunds together. Do not fabricate a second approver or silently relax the current runtime rule.
 - Chrome Developer current UAT user has no platform-admin permission. Existing async request asks owner to sign into an authorized UAT Admin; no password in chat. Native policy publication needs current-password proof plus another actual authorized approver. Do not forge approval/actors, elevate permissions or directly mutate billing policy.
 - Prepared six-offer Sandbox policy is NOT published. No Checkout/payment/customer/subscription created by this task. Actual Sandbox paid e2e remains pending.
 - Existing allowlisted tester account returnedLEGACY_LOGIN_REQUIRED after valid real OTP before and after hotfix; explicit passwordless opt-in remains required. No successful passwordless login/new signup claimed.
@@ -37,5 +38,5 @@ Verification:
 
 Next:
 - This report batch changes documentation only; final report PR/merge identities belong in the private handoff evidence. Do not rerun source CI or redeploy for docs.
-- Hand off current blockers clearly. When genuine Admin/approver sessions are available, continue native policy/Checkout acceptance through reviewed application controls.
+- Hand off current blockers clearly. Resolve and implement the single-operator product amendment after its scope is clear; then continue native policy/Checkout acceptance with a real authorized Admin session.
 - Browser2/Chrome Developer: uatAdminTab325831760 and uatBillingTab325831763 markedhandoff. UATemail325831761 showslegacyoptinrecovery. Postmarkverification25832029 done; research/OTPtemporary tabs need not survive. No active deployment process.
