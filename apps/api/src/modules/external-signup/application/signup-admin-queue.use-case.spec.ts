@@ -641,7 +641,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
     const { items } = await h.useCase.list(NOW);
     assert.equal(items.length, 1);
     assert.deepEqual(h.requestQueries[0].where.OR[1], {
-      state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa',
+      state: { in: ['READY', 'PROVISIONING'] }, source: { in: ['line-oa', 'email-otp'] },
     });
   });
 
@@ -745,7 +745,7 @@ describe('SignupAdminQueueUseCase.decide — LINE-first source', () => {
 
     assert.deepEqual(h.requestQueries[0].where.OR, [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
-      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: { in: ['line-oa', 'email-otp'] } },
       { source: 'line-oa', state: { in: ['RECEIVED', 'VALIDATED'] } },
     ]);
   });
@@ -864,7 +864,7 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
   const queueWhereForDefaultTab = () => ({
     OR: [
       { state: { in: ['PENDING_REVIEW', 'EMAIL_PENDING', 'EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } },
-      { state: { in: ['READY', 'PROVISIONING'] }, source: 'line-oa' },
+      { state: { in: ['READY', 'PROVISIONING'] }, source: { in: ['line-oa', 'email-otp'] } },
       { state: { in: ['RECEIVED', 'VALIDATED'] }, source: 'line-oa' },
     ],
   });
@@ -959,14 +959,14 @@ describe('SignupAdminQueueUseCase.list — filtering, paging and counts', () => 
     const stale = branches.find((b: any) => b.provisioningStartedAt);
     assert.ok(stale, 'the problem tab must ask for abandoned runs, not only for failed states');
     assert.equal(stale.state, 'PROVISIONING');
-    assert.equal(stale.source, 'line-oa');
+    assert.deepEqual(stale.source, { in: ['line-oa', 'email-otp'] });
     // The same clock the fence uses, or the queue and the fence disagree about what abandoned is.
     assert.equal(NOW.getTime() - (stale.provisioningStartedAt.lt as Date).getTime(), STALE_PROVISIONING_MS);
     // And the states that are problems by state alone are still there. Review F2 made a failed
     // provisioning an EVERY-source row, so it is asked for by state — not behind the LINE filter,
     // which would have hidden a Flow B failure from the one tab that exists to surface it.
     assert.deepEqual(branches[0], { state: { in: ['EMAIL_FAILED', 'EXPIRED', 'PROVISIONING_FAILED'] } });
-    assert.deepEqual(branches[1], { state: { in: ['READY'] }, source: 'line-oa' });
+    assert.deepEqual(branches[1], { state: { in: ['READY'] }, source: { in: ['line-oa', 'email-otp'] } });
   });
 
   it('counts the WHOLE queue, not the page it just read', async () => {

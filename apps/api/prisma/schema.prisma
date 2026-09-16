@@ -559,6 +559,7 @@ model User {
   email                   String?                  @unique
   emailVerifiedAt         DateTime?
   emailRevision           Int                      @default(0)
+  emailLoginEnabledAt     DateTime?
   phoneNumber             String?
   status                  UserStatus               @default(ACTIVE)
   isSystemProtected       Boolean                  @default(false)
@@ -3209,6 +3210,7 @@ model CompanySignupRequest {
   // requires one at its own validator; the DB no longer pretends every source has a mailbox.
   contactEmail           String?
   intakePolicyVersion    String?
+  emailProofVerifiedAt   DateTime?
   consentVersion         String
   referralCode           String?
   requestedOfferKey      String?
@@ -9233,4 +9235,27 @@ model BillingOperation {
   @@unique([stripeAccountId, livemode, idempotencyKey])
   @@index([state, createdAt])
   @@index([stripeAccountId, livemode, state, scheduledFor], map: "BillingOperation_schedule_idx")
+}
+
+/// Public email access proof; deliberately separate from authenticated account email changes.
+model EmailAccessChallenge {
+  id                   String   @id
+  email                String
+  browserSecretHash    String
+  requestKey           String   @unique
+  codeHash             String
+  keyVersion           String
+  environment          String
+  userId               String?
+  securityBindingHash  String?
+  status               String   @default("PENDING")
+  failedAttempts       Int      @default(0)
+  sendAttemptId        String?
+  signupRequestId      String?
+  expiresAt            DateTime
+  verifiedAt           DateTime?
+  usedAt               DateTime?
+  createdAt            DateTime @default(now())
+  @@index([email, createdAt])
+  @@index([expiresAt])
 }

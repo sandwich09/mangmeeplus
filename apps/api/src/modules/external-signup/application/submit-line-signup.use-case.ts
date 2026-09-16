@@ -17,6 +17,7 @@ import {
   LINE_OPEN_APPLICATION_STATES,
   OWNED_COMPANY_MEMBERSHIP,
   SIGNUP_SOURCE_LINE_OA,
+  SIGNUP_SOURCE_EMAIL_OTP,
 } from '../domain/company-signup.logic';
 import {
   lineExternalSignupId,
@@ -469,15 +470,23 @@ export class SubmitLineSignupUseCase {
       }
       if (current.autoApproved && current.reviewResolution === 'NEW_SHOP') {
         const approvedToday = await tx.companySignupRequest.count({
-          where: { source: SIGNUP_SOURCE_LINE_OA, autoApproved: true, ...approvedOnOrCreatedToday(now) },
+          where: { source: { in: [SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP] }, autoApproved: true, ...approvedOnOrCreatedToday(now) },
         });
         return { claimed: true, approvedToday };
       }
       // Recheck at the claim boundary: changing contact data never clears rejection history.
       const prior = await this.priorRejection(tx, current);
       if (prior) return { claimed: false, approvedToday: 0, priorRejectedRequestId: prior.id };
+      const crossChannel = await tx.companySignupRequest.findFirst({ where: {
+        source: SIGNUP_SOURCE_EMAIL_OTP, OR: [
+          ...(current.contactEmail ? [{ contactEmail: current.contactEmail }] : []),
+          ...(current.phoneNumber ? [{ phoneNumber: current.phoneNumber }] : []),
+          { companyName: current.companyName },
+        ],
+      }, select: { id: true } });
+      if (crossChannel) return { claimed: false, approvedToday: 0 };
       const approvedToday = await tx.companySignupRequest.count({
-        where: { source: SIGNUP_SOURCE_LINE_OA, autoApproved: true, ...approvedOnOrCreatedToday(now) },
+        where: { source: { in: [SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP] }, autoApproved: true, ...approvedOnOrCreatedToday(now) },
       });
       if (approvedToday >= this.config.lineSignupAutoDailyCap) return { claimed: false, approvedToday };
       await tx.companySignupRequest.update({

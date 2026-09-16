@@ -20,6 +20,7 @@ api_exact_files=(
   apps/api/src/modules/auth/presentation/platform-access.controller.ts
   apps/api/src/modules/auth/presentation/auth.guard.ts
   apps/api/src/modules/auth/auth.module.ts
+  apps/api/src/modules/auth/application/email-access.service.ts
   apps/api/src/modules/auth/application/use-cases/refresh-session.use-case.ts
   apps/web/app/api/auth/login/route.ts
   apps/web/src/features/auth/login-failure-response.server.ts

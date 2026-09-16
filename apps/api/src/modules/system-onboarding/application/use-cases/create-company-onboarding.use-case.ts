@@ -1,3 +1,5 @@
+import { emailSecurityBinding } from '../../../auth/domain/logic/email-otp.logic';
+import { emailUserInclude } from '../../../auth/application/account-email-state';
 import { ConflictException, Injectable, Logger, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -91,7 +93,8 @@ export type CreateCompanyOnboardingCommand = {
   ownerAuth?:
     | { kind: 'password' }
     | { kind: 'line'; providerUserId: string; channelId: string; displayName?: string }
-    | { kind: 'line-link-later' };
+    | { kind: 'line-link-later' }
+    | { kind: 'email'; verifiedAt: Date };
   /**
    * Clickwrap evidence collected before this account existed (on LIFF), replayed into
    * `LegalDocumentActionRecord` inside this transaction so the owner is not stopped by the
@@ -197,9 +200,13 @@ export class CreateCompanyOnboardingUseCase {
     // from the default path are "no username" and "no temporary password". Everything else — the
     // owner LINE-link QR included — is the path that already exists.
     const lineLinkLater = cmd.ownerAuth?.kind === 'line-link-later';
+    const emailOwner = cmd.ownerAuth?.kind === 'email' ? cmd.ownerAuth : null;
+    if (emailOwner && (!cmd.claimedOwner?.email || attach || !cmd.linkSignupRequestId)) {
+      throw new UnprocessableEntityException('email_owner_requires_verified_signup');
+    }
     // Every pre-existing caller reaches here: the console DTO validates the username at the HTTP
     // boundary and provisioning derives one, so this only catches a new caller that forgot.
-    if (!lineOwner && !lineLinkLater && !attach && !cmd.ownerUsername) {
+    if (!lineOwner && !lineLinkLater && !emailOwner && !attach && !cmd.ownerUsername) {
       throw new UnprocessableEntityException('ownerUsername is required unless the owner signs in with LINE');
     }
     // Same normalisation and rule as CompanyIdentityUseCase.patch — one definition of what a valid
@@ -254,7 +261,7 @@ export class CreateCompanyOnboardingUseCase {
     // A claim-verified owner sets their own password at the link, so no temporary one is ever
     // minted, encrypted or handed over for this path (spec §2 rule 4: no temp password, ever).
     // A LINE-first owner has no credential at all — LINE-ONBOARD-01.
-    const tempPassword = attach || cmd.claimedOwner?.passwordHash || lineOwner || lineLinkLater
+    const tempPassword = attach || cmd.claimedOwner?.passwordHash || lineOwner || lineLinkLater || emailOwner
       ? undefined
       : generateTempPassword();
     const passwordHash = tempPassword ? hashPassword(tempPassword) : undefined;
@@ -309,13 +316,18 @@ export class CreateCompanyOnboardingUseCase {
       // then finds the winner's company and adopts it.
       if (cmd.linkSignupRequestId) {
         const linked = await tx.companySignupRequest.updateMany({
-          where: { id: cmd.linkSignupRequestId, companyId: null },
+          where: { id: cmd.linkSignupRequestId, companyId: null, ...(emailOwner ? { source: 'email-otp', state: 'PROVISIONING' as const } : {}) },
           data: { companyId: company.id },
         });
         if (linked.count !== 1) throw new ConflictException('signup_already_provisioned');
       }
 
       const claimed = cmd.claimedOwner;
+      if (emailOwner) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`email-otp-recipient:${claimed!.email!}`}, 0))`;
+        const taken = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM "User" WHERE lower(email) = ${claimed!.email!} OR lower(username) = ${claimed!.email!} LIMIT 1`;
+        if (taken.length) throw new ConflictException('email_signup_account_changed');
+      }
       const owner = attach
         ? (await tx.user.findUniqueOrThrow({ where: { id: existingUser!.id } }))
         : await tx.user.create({
@@ -326,7 +338,8 @@ export class CreateCompanyOnboardingUseCase {
               status: 'ACTIVE',
               // Written here, in the company transaction, so a unique-email clash can never leave a
               // company behind with no owner contact — the whole create fails together.
-              ...(claimed?.email ? { email: claimed.email, emailVerifiedAt: new Date() } : {}),
+              ...(claimed?.email ? { email: claimed.email, emailVerifiedAt: emailOwner?.verifiedAt ?? new Date() } : {}),
+              ...(emailOwner ? { emailLoginEnabledAt: new Date() } : {}),
               ...(claimed?.phoneNumber ? { phoneNumber: claimed.phoneNumber } : {}),
             },
           });
@@ -663,6 +676,11 @@ export class CreateCompanyOnboardingUseCase {
         },
       });
 
+      if (emailOwner) {
+        const currentOwner = await tx.user.findUniqueOrThrow({ where: { id: owner.id }, include: emailUserInclude });
+        await tx.emailAccessChallenge.updateMany({ where: { signupRequestId: cmd.linkSignupRequestId!, email: claimed!.email!, status: 'VERIFIED', userId: null },
+          data: { userId: owner.id, securityBindingHash: emailSecurityBinding(currentOwner) } });
+      }
       return { run, company, owner, handoffUrl, chartOfAccounts, taxConfiguration, expenseCategories };
     }, { maxWait: 5_000, timeout: 15_000 });
 

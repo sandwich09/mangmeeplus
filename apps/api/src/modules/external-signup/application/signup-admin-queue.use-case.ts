@@ -23,6 +23,7 @@ import type { RequestContext } from '../../auth/domain/models/request-context.mo
 import {
   OWNED_COMPANY_MEMBERSHIP,
   SIGNUP_SOURCE_LINE_OA,
+  SIGNUP_SOURCE_EMAIL_OTP,
   STALE_PROVISIONING_MS,
   isStaleProvisioning,
   type CompanySignupState,
@@ -208,7 +209,7 @@ export class SignupAdminQueueUseCase {
     ]);
 
     const total = (state: CompanySignupState, lineOnly = false) => grouped
-      .filter((row) => row.state === state && (!lineOnly || row.source === SIGNUP_SOURCE_LINE_OA))
+      .filter((row) => row.state === state && (!lineOnly || row.source === SIGNUP_SOURCE_LINE_OA || (row.source === SIGNUP_SOURCE_EMAIL_OTP && ['READY', 'PROVISIONING'].includes(state))))
       .reduce((sum, row) => sum + row._count._all, 0);
 
     const pendingReview = total('PENDING_REVIEW');
@@ -447,7 +448,7 @@ export class SignupAdminQueueUseCase {
       // Review F2: retrying a failed provisioning is the same action on both sources — the fence
       // released precisely so somebody could try again, and adopt-on-retry makes it idempotent.
       const retryingProvisioning = request.state === 'PROVISIONING_FAILED';
-      const approvable = lineOa
+      const approvable = (lineOa || request.source === SIGNUP_SOURCE_EMAIL_OTP)
         ? LINE_APPROVABLE_STATES.includes(request.state as CompanySignupState)
           || isStaleProvisioning(request, now)
         : request.state === 'PENDING_REVIEW' || retryingProvisioning;
@@ -467,7 +468,7 @@ export class SignupAdminQueueUseCase {
           return { requestId, state: request.state };
         }
         // Anything else is a real conflict the admin should see.
-        if (lineOa && SETTLED_STATES.includes(request.state as CompanySignupState)) {
+        if ((lineOa || request.source === SIGNUP_SOURCE_EMAIL_OTP) && SETTLED_STATES.includes(request.state as CompanySignupState)) {
           return { requestId, state: request.state };
         }
         throw new ConflictException(`invalid_signup_decision:${request.state}`);
@@ -485,7 +486,7 @@ export class SignupAdminQueueUseCase {
       // A LINE approval IS provisioning; so is a retry from PROVISIONING_FAILED on either source.
       // A web retry must never take the branch below it: that row claimed its link long ago, and
       // sending it back to EMAIL_PENDING would ask for a mailbox proof it has already given.
-      if (lineOa || retryingProvisioning) {
+      if (lineOa || request.source === SIGNUP_SOURCE_EMAIL_OTP || retryingProvisioning) {
         // No claim email exists for this source, so approval IS provisioning.
         // Review LOW-3: the approval stamp records WHEN this application was decided, so only a
         // first decision writes it. Closing a row that is already past the decision — a retry or a
@@ -525,7 +526,7 @@ export class SignupAdminQueueUseCase {
         });
         // A LINE application finishes; a web one parks at the LINE step on its own welcome page,
         // so a retry must report where the row actually is rather than claiming it is done (F2).
-        return { requestId, state: lineOa ? 'COMPLETED' : 'LINE_LINK_PENDING' };
+        return { requestId, state: lineOa || request.source === SIGNUP_SOURCE_EMAIL_OTP ? 'COMPLETED' : 'LINE_LINK_PENDING' };
       }
       // Review R08: state, the approval facts and the letter commit together or not at all. As
       // three separate writes, a failure between any two left the applicant in EMAIL_PENDING
@@ -1079,7 +1080,7 @@ function keysetAfter(after: { createdAt: Date; id: string }) {
 function staleProvisioningWhere(now: Date) {
   return {
     state: 'PROVISIONING' as CompanySignupState,
-    source: SIGNUP_SOURCE_LINE_OA,
+    source: { in: [SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP] },
     provisioningStartedAt: { lt: new Date(now.getTime() - STALE_PROVISIONING_MS) },
   };
 }
@@ -1101,7 +1102,7 @@ function queueWhere(tab: string | undefined, now: Date) {
     return {
       OR: [
         { state: { in: PROBLEM_STATES as CompanySignupState[] } },
-        { state: { in: LINE_PROBLEM_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+        { state: { in: LINE_PROBLEM_STATES as CompanySignupState[] }, source: { in: [SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP] } },
         { state: { in: LINE_INTAKE_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
         staleProvisioningWhere(now),
       ],
@@ -1110,7 +1111,7 @@ function queueWhere(tab: string | undefined, now: Date) {
   return {
     OR: [
       { state: { in: QUEUE_STATES as CompanySignupState[] } },
-      { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
+      { state: { in: LINE_ONLY_QUEUE_STATES as CompanySignupState[] }, source: { in: [SIGNUP_SOURCE_LINE_OA, SIGNUP_SOURCE_EMAIL_OTP] } },
       { state: { in: LINE_INTAKE_QUEUE_STATES as CompanySignupState[] }, source: SIGNUP_SOURCE_LINE_OA },
     ],
   };
@@ -1143,7 +1144,7 @@ function toQueueItem(
     // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
     // reader can mistake an empty string for a real address (review B-03).
     ...(request.contactEmail ? { contactEmail: request.contactEmail } : {}),
-    ...(request.source === SIGNUP_SOURCE_LINE_OA
+    ...((request.source === SIGNUP_SOURCE_LINE_OA || request.source === SIGNUP_SOURCE_EMAIL_OTP)
       ? { contactEmailConflict: request.contactEmailConflict === true }
       : {}),
     ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),

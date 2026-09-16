@@ -88,3 +88,36 @@ export async function checkBillingMarketing(input: { page: Page; appOrigin: stri
     await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done()));
   }
 }
+
+/** Actual marketing bundle → fixed app signup; assistance remains a separate, unsubmitted lead. */
+export async function checkEmailSignupMarketing(input: { page: Page; appOrigin: string; directory: string; evidenceDir: string }) {
+  const html = await readFile(resolve(input.directory, 'index.html'));
+  const script = await readFile(resolve(input.directory, 'billing-catalog.js'));
+  const server = createServer((req, res) => {
+    if (!['/', '/billing-catalog.js'].includes(req.url ?? '')) { res.writeHead(404).end(); return; }
+    res.setHeader('Content-Type', req.url === '/' ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8');
+    res.end(req.url === '/' ? html : script);
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const address = server.address(); assert.ok(address && typeof address !== 'string');
+  const page = input.page, catalog = 'https://mangmeeplus.com/api/public/billing/catalog', signup = 'https://mangmeeplus.com/signup';
+  await page.route(catalog, async route => route.fulfill({ status: 503, body: '{}' }));
+  await page.route(signup, route => route.fulfill({ status: 302, headers: { location: `${input.appOrigin}/signup` } }));
+  try {
+    await page.goto(`http://127.0.0.1:${address.port}`, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: 'ให้ทีมงานช่วยสมัคร', exact: true }).click();
+    await page.locator('.tmodal').waitFor();
+    assert.equal(new URL(page.url()).hostname, '127.0.0.1');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const start = page.locator('#free-trial-offer').getByRole('button', { name: 'เริ่มใช้ฟรี 30 วัน', exact: true });
+    await start.focus(); await page.keyboard.press('Enter');
+    await page.waitForURL(`${input.appOrigin}/signup`);
+    await page.getByRole('link', { name: 'สมัครด้วยรหัสทางอีเมล ไม่ต้องตั้งรหัสผ่าน', exact: true }).click();
+    await page.getByLabel('อีเมลของคุณ', { exact: true }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/email-access');
+    return ['marketing actual bundle keyboard CTA→real app signup→email signup; separate assistance form without lead submission'];
+  } finally {
+    await page.unroute(catalog); await page.unroute(signup);
+    await new Promise<void>(done => server.close(() => done()));
+  }
+}

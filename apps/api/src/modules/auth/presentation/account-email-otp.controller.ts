@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Header, HttpCode, Param, Post, Req, UnauthorizedException } from '@nestjs/common';
-import { IsInt, IsOptional, IsString, IsUUID, Matches, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID, Matches, MaxLength, Min } from 'class-validator';
 import type { Request } from 'express';
 import { RequirePermissions } from '../../../common/security/permissions.decorator';
 import { trustedClientIp } from '../../../common/security/trusted-client-ip';
@@ -17,6 +17,10 @@ export class EmailOtpRequestDto {
 }
 export class EmailOtpConfirmDto {
   @IsString() @Matches(/^\d{6}$/) code!: string;
+}
+class EmailLoginEnableDto {
+  @IsBoolean() enabled!: boolean;
+  @IsOptional() @IsString() currentPassword?: string;
 }
 class EmailLineReauthDto {
   @IsString() @MaxLength(4096) code!: string;
@@ -40,6 +44,12 @@ export class AccountEmailOtpController {
 
   @Get(':id') @RequirePermissions('account.session.read') @Header('Cache-Control', 'no-store')
   challenge(@Param('id') id: string, @Req() req: AccountRequest) { return this.otp.status(req.context.userId, id); }
+
+  @Post('login-method') @HttpCode(200) @RequirePermissions('account.password.change') @Header('Cache-Control', 'no-store')
+  async loginMethod(@Body() dto: EmailLoginEnableDto, @Req() req: AccountRequest) {
+    await this.limits.assertEmailOtpUserAllowed(req.context.userId);
+    return this.otp.setEmailLogin({ ...dto, ...caller(req) });
+  }
 
   @Post('request') @HttpCode(202) @RequirePermissions('account.password.change') @Header('Cache-Control', 'no-store')
   async request(@Body() dto: EmailOtpRequestDto, @Req() req: AccountRequest) {

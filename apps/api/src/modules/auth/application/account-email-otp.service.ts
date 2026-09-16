@@ -85,7 +85,7 @@ export class AccountEmailOtpService {
     if (challengeId && !token) throw emailError('EMAIL_OTP_NOT_FOUND', 'ไม่พบรายการยืนยันอีเมลนี้', 404);
     const attempt = token?.sendAttemptId && await this.prisma.client.emailSendAttempt.findUnique({ where: { id: token.sendAttemptId } });
     return { serverNow: now.toISOString(), email: user.email, emailVerified: Boolean(user.email?.trim() && user.emailVerifiedAt),
-      emailRevision: user.emailRevision, emailRequirement: requirement,
+      emailRevision: user.emailRevision, emailRequirement: requirement, emailLoginEnabled: Boolean(user.emailLoginEnabledAt),
       hasPassword: Boolean(user.credential && user.credential.status !== 'DISABLED' && (!user.credential.expiresAt || user.credential.expiresAt > now)),
       lineLinked: user.externalIdentities.some(i => i.status === 'ACTIVE' && i.provider === 'LINE'),
       challenge: token ? { id: token.id, email: token.newEmail,
@@ -94,6 +94,33 @@ export class AccountEmailOtpService {
         attemptsRemaining: Math.max(0, 5 - token.failedAttempts), deliveryStatus: attempt ? attempt.status : 'CONFIG',
         delivered: Boolean(attempt && attempt.deliveredAt),
       } : null };
+  }
+
+  async setEmailLogin(input: Caller & { enabled: boolean; currentPassword?: string }) {
+    await this.prisma.client.$transaction(async tx => {
+      await lockAccountEmail(tx, input.userId);
+      const { user, now, requirement } = await accountEmailState(tx, input.userId);
+      const session = await this.session(tx, input, now);
+      const credential = user.credential;
+      const passwordUsable = Boolean(credential && credential.status === 'ACTIVE' && !credential.mustChangePassword && (!credential.expiresAt || credential.expiresAt > now));
+      const fresh = session.emailReauthenticatedAt && now.getTime() - session.emailReauthenticatedAt.getTime() <= EMAIL_REAUTH_TTL_MS && session.emailReauthBindingHash === emailReauthBinding(user);
+      if (!(passwordUsable && input.currentPassword && verifyPassword(input.currentPassword, credential!.passwordHash)) && !fresh) {
+        throw emailError('EMAIL_REAUTH_REQUIRED', 'กรุณายืนยันรหัสผ่านปัจจุบัน หรือยืนยันตัวตนอีกครั้งก่อนเปลี่ยนวิธีเข้าสู่ระบบ', 403);
+      }
+      if (input.enabled) {
+        if (requirement !== 'READY') throw emailError('EMAIL_VERIFICATION_REQUIRED', 'กรุณายืนยันอีเมลให้เรียบร้อยก่อน', 409);
+        if (user.isSystemProtected || await tx.companyMembership.findFirst({ where: { userId: user.id, roles: { some: { role: { key: 'SYSTEM_ADMIN' } } } }, select: { id: true } })) {
+          throw emailError('EMAIL_LOGIN_NOT_ALLOWED', 'บัญชีผู้ดูแลระบบต้องใช้วิธีเข้าสู่ระบบเดิม', 403);
+        }
+      } else if (!passwordUsable && !user.externalIdentities.some(i => i.provider === 'LINE' && i.status === 'ACTIVE')) {
+        throw emailError('LAST_LOGIN_REQUIRED', 'กรุณาตั้งรหัสผ่านสำรองหรือเชื่อม LINE ก่อนปิดการเข้าด้วยอีเมล', 409);
+      }
+      const updated = await tx.user.update({ where: { id: user.id }, data: { emailLoginEnabledAt: input.enabled ? (user.emailLoginEnabledAt ?? now) : null }, include: emailUserInclude });
+      await tx.emailAccessChallenge.updateMany({ where: { userId: user.id, status: { in: ['PENDING', 'VERIFIED'] } }, data: { status: 'REVOKED' } });
+      await tx.authSession.update({ where: { id: session.id }, data: { emailReauthenticatedAt: now, emailReauthBindingHash: emailReauthBinding(updated) } });
+      await this.audit(tx, input, input.enabled ? 'auth.email_login.enabled' : 'auth.email_login.disabled', user.id);
+    });
+    return this.status(input.userId);
   }
 
   async request(input: RequestInput) {
@@ -133,11 +160,13 @@ export class AccountEmailOtpService {
       const hourly = recent.filter(t => t.createdAt.getTime() > now.getTime() - 3_600_000);
       const recipientRecent = await tx.emailVerificationToken.findMany({ where: { newEmail: email, proofKind: 'OTP',
         createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } });
+      const accessRecent = await tx.emailAccessChallenge.findMany({ where: { email, createdAt: { gt: new Date(now.getTime() - 3_600_000) } }, select: { createdAt: true } });
+      const sharedRecent = [...recipientRecent, ...accessRecent].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
       const retryTimes = [
         recent[0] ? recent[0].createdAt.getTime() + EMAIL_OTP_COOLDOWN_MS : 0,
         hourly.length >= 5 ? hourly[hourly.length - 1]!.createdAt.getTime() + 3_600_000 : 0,
         recent.length >= 10 ? recent[recent.length - 1]!.createdAt.getTime() + 86_400_000 : 0,
-        recipientRecent.length >= 5 ? recipientRecent[0]!.createdAt.getTime() + 3_600_000 : 0,
+        sharedRecent.length >= 5 ? sharedRecent[0]!.createdAt.getTime() + 3_600_000 : 0,
       ];
       const retryAfterSeconds = Math.ceil((Math.max(...retryTimes) - now.getTime()) / 1000);
       if (retryAfterSeconds > 0) throw emailError('EMAIL_OTP_RATE_LIMITED', 'กรุณารอก่อนขอรหัสใหม่', 429, { retryAfterSeconds });

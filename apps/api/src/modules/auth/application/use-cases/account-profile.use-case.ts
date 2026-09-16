@@ -173,7 +173,7 @@ export class AccountProfileUseCase {
           OR: [{ tokenId: currentTokenId }, { previousTokenId: currentTokenId }] } }) : null;
         if (!session?.emailReauthenticatedAt || now.getTime() - session.emailReauthenticatedAt.getTime() > EMAIL_REAUTH_TTL_MS ||
             session.emailReauthBindingHash !== emailReauthBinding(current)) {
-          throw emailError('ACCOUNT_REAUTH_REQUIRED', 'กรุณายืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่านสำรอง', 403);
+          throw emailError('ACCOUNT_REAUTH_REQUIRED', 'กรุณายืนยันตัวตนอีกครั้งก่อนตั้งรหัสผ่านสำรอง', 403);
         }
         if (current.credential) throw new ConflictException({ code: 'password_already_set', message: 'This account already has a password.' });
 

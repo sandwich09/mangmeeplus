@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { emailOtpDigest, matchesEmailOtp, newEmailOtp, emailRequirement, emailReauthBinding,
@@ -55,4 +56,30 @@ test('mail contains the same code in text and HTML, never in subject or a URL', 
   assert.ok(!result.subject.includes('000012'));
   assert.ok(!result.html.includes('href='));
   assert.throws(() => renderEmailOtp('12', binding.expiresAt));
+});
+
+import { emailAccessDigest, matchesEmailAccessCode, matchesEmailBrowserSecret } from './email-access.logic';
+import { hashToken } from './secure-token.logic';
+test('public email login code is purpose/browser/identity bound and never accepts account-change OTP', () => {
+  const secret = 'a'.repeat(43);
+  const proof = { id: 'public', email: 'owner@example.com', browserSecretHash: hashToken(secret), keyVersion: '1',
+    environment: 'local', userId: 'user', securityBindingHash: 'security', expiresAt: now };
+  const digest = emailAccessDigest('000012', proof, key);
+  assert.ok(matchesEmailAccessCode('000012', digest, proof, key));
+  assert.ok(matchesEmailBrowserSecret(secret, proof.browserSecretHash));
+  assert.equal(matchesEmailBrowserSecret('b'.repeat(43), proof.browserSecretHash), false);
+  for (const change of [{ id: 'other' }, { email: 'other@example.com' }, { browserSecretHash: 'changed' },
+    { environment: 'production' }, { userId: null }, { keyVersion: '2' }, { securityBindingHash: 'changed' }, { expiresAt: new Date(0) }]) {
+    assert.equal(matchesEmailAccessCode('000012', digest, { ...proof, ...change }, key), false);
+  }
+  assert.equal(matchesEmailAccessCode('000012', emailOtpDigest('000012', binding, key), proof, key), false);
+  for (const code of ['12', ' 000012', '000012\n', '000013']) assert.equal(matchesEmailAccessCode(code, digest, proof, key), false);
+});
+
+test('existing proof hashes remain byte-identical until passwordless opt-in', () => {
+  const user = { id: 'owner', status: 'ACTIVE', email: 'a@example.test', emailVerifiedAt: now, emailRevision: 4, credential: null, externalIdentities: [] };
+  const legacy = createHash('sha256').update(JSON.stringify([user.id, user.status, user.email, now.toISOString(), 4, null, []])).digest('hex');
+  assert.equal(emailSecurityBinding(user), legacy);
+  assert.equal(emailSecurityBinding({ ...user, emailLoginEnabledAt: null }), legacy);
+  assert.notEqual(emailSecurityBinding({ ...user, emailLoginEnabledAt: now }), legacy);
 });
