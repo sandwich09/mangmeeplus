@@ -33,6 +33,38 @@ class FakeRedis {
 }
 
 describe('RedisRateLimitService', () => {
+  it('shares the cold connection before concurrent first requests spend the same budget', async () => {
+    const redis = new FakeRedis();
+    let connected = false, connects = 0;
+    const originalEval = redis.eval.bind(redis);
+    redis.eval = async (...args) => {
+      assert.equal(connected, true, 'No Redis command may race the initial connection');
+      return originalEval(...args);
+    };
+    const service = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as any);
+    (service as any).createClient = () => Object.assign(redis, { connect: async () => {
+      connects += 1;
+      await new Promise(resolve => setTimeout(resolve, 5));
+      connected = true;
+    } });
+    const results = await Promise.all(Array.from({ length: 3 }, () => service.consume('login', 'same-user', 2, 60)));
+    assert.equal(connects, 1);
+    assert.deepEqual(results.map(result => result.allowed), [true, true, false]);
+    assert.ok(results.every(result => !result.degraded));
+  });
+
+  it('keeps cold connection failures closed and does not replace the shared client per request', async () => {
+    const service = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as any);
+    let connects = 0;
+    (service as any).createClient = () => ({ connect: async () => { connects += 1; throw new Error('unavailable'); },
+      eval: async () => { throw new Error('unavailable'); } });
+    const results = await Promise.allSettled([service.consume('login', 'first', 1, 60), service.tryAcquireLease('ocr', 'second', 60)]);
+    assert.equal(connects, 1);
+    assert.ok(results.every(result => result.status === 'rejected' && result.reason instanceof ServiceUnavailableException));
+    await assert.rejects(service.consumeOnce('mail', 'third', 'request', 1, 60), ServiceUnavailableException);
+    assert.equal(connects, 1);
+  });
+
   it('shares one atomic budget across service instances', async () => {
     const redis = new FakeRedis();
     const first = new RedisRateLimitService({ redisUrl: 'redis://unused', isProduction: true } as any);

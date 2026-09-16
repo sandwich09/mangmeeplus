@@ -49,6 +49,11 @@ export class PostmarkEventsService {
     const digest = (v: string) => createHash('sha256').update(v).digest();
     if (!timingSafeEqual(digest(expected), digest(authorization))) throw new UnauthorizedException();
     const event = parsePostmarkEvent(body);
+    // Postmark verifies endpoints with reserved sample identities, not the configured server.
+    // Acknowledge authenticated probes only; never enqueue their synthetic bounce/suppression.
+    if (event.messageId === '00000000-0000-0000-0000-000000000000' && event.recipient === 'john@example.com' &&
+        event.stream === 'outbound' && event.stream === this.config.postmarkMessageStream && event.attemptId === null &&
+        event.serverId === (event.kind === 'Delivery' ? 23 : 1234)) return { accepted: true };
     if (event.serverId !== this.config.postmarkServerId || event.stream !== this.config.postmarkMessageStream) throw new BadRequestException('Postmark environment mismatch');
     const eventKey = postmarkEventKey(event);
     // Persist only sanitized facts, never Content/Details/Subject or authentication headers.

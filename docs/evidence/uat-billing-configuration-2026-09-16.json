@@ -1,0 +1,48 @@
+{
+  "status": "PREPARED_NOT_PUBLISHED",
+  "environment": "uat",
+  "mode": "TEST",
+  "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
+  "sourceCommit": "8c277dea4504b18e9537243ade031770d78ead4e",
+  "type": "PUBLISH_POLICY",
+  "policy": {
+    "schemaVersion": 1,
+    "paidStart": "IMMEDIATE",
+    "taxTreatment": "NOT_VAT_REGISTERED",
+    "graceDays": 7,
+    "cancellation": "PERIOD_END",
+    "planChanges": "UPGRADE_PRORATED_DOWNGRADE_PERIOD_END",
+    "debtRecovery": "MANUAL_REVIEW",
+    "refundPolicy": "MANUAL_REVIEW",
+    "priceIds": {
+      "STARTER_249:month": "price_1UGBvQRvebw5L0s3Qkd2aOQl",
+      "STARTER_249:year": "price_1UGBvSRvebw5L0s3whIldbVI",
+      "BASIC_499:month": "price_1UGBvURvebw5L0s3jwlXM5Pw",
+      "BASIC_499:year": "price_1UGBvWRvebw5L0s3o5KhlHdN",
+      "PRO_999:month": "price_1UGBvZRvebw5L0s3sRK0bhYD",
+      "PRO_999:year": "price_1UGBvbRvebw5L0s3D24P8Ira"
+    },
+    "taxRateId": null,
+    "portalConfigurationId": "bpc_1UGBvdRvebw5L0s3qCKXmqO6",
+    "consentRevision": "billing-v2-upfront-annual",
+    "zeroPriceIds": {
+      "STARTER_249:month": "price_1UGBvRRvebw5L0s3xfmGXch4",
+      "STARTER_249:year": "price_1UGBvTRvebw5L0s3S8jTuere",
+      "BASIC_499:month": "price_1UGBvVRvebw5L0s3nfBaBzBP",
+      "BASIC_499:year": "price_1UGBvXRvebw5L0s3tCCfHzzt",
+      "PRO_999:month": "price_1UGBvaRvebw5L0s3ijuZBKit",
+      "PRO_999:year": "price_1UGBvcRvebw5L0s3SPTn14ng"
+    }
+  },
+  "gates": {
+    "new_sales": true,
+    "plan_changes": true,
+    "portal_payment_method": true,
+    "portal_change_plan": false,
+    "portal_cancel_subscription": true,
+    "notification_delivery": true,
+    "refunds": false
+  },
+  "reason": "เปิดทดสอบซื้อแพ็กเกจ Stripe Sandbox บน UAT หลัง release 20260916T064124Z-125e1228; ราคาและโควตาตาม spec, VAT OFF, ยังไม่เปิดคำสั่งคืนเงิน",
+  "applicationInstructions": "Use current Admin settings version and native preview; confirm impact; submit with current password; another authorized user must approve. Do not apply this file directly to the database. No credentials are included."
+}

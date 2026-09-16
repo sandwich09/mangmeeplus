@@ -12,7 +12,7 @@ async function main() {
   const database = new URL(databaseUrl);
   assert.ok(['localhost', '127.0.0.1'].includes(database.hostname));
   assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci'].includes(database.pathname));
-  const serverId = Math.floor(Math.random() * 1_000_000) + 1;
+  const serverId = Math.floor(Math.random() * 1_000_000) + 10_000;
   const webhookPassword = randomUUID();
   Object.assign(process.env, {
     APP_ENV: 'local', DEPLOY_ENVIRONMENT: 'local', NODE_ENV: 'test', SERVICE_NAME: 'postmark-http-smoke',
@@ -66,6 +66,20 @@ async function main() {
       assert.equal((await post({ ...body, Content: 'x'.repeat(256 * 1024) }, authorization, path)).status, 413);
     }
     caseIds.push('oversize-case-and-trailing-slash');
+    const beforeProbes = await client.outboxEvent.count();
+    for (const kind of ['Delivery', 'Bounce', 'SpamComplaint']) {
+      const probe = { RecordType: kind, ServerID: kind === 'Delivery' ? 23 : 1234, MessageStream: 'outbound',
+        MessageID: '00000000-0000-0000-0000-000000000000', Recipient: 'john@example.com', Email: 'john@example.com',
+        DeliveredAt: new Date().toISOString(), BouncedAt: new Date().toISOString(), ID: 42, Inactive: true };
+      assert.equal((await post(probe, '')).status, 401);
+      assert.equal((await post(probe)).status, 200);
+      for (const change of [{ MessageID: randomUUID() }, { ServerID: serverId + 1 }, { MessageStream: 'foreign' },
+        { Recipient: 'other@example.com', Email: 'other@example.com' }, { Metadata: { sendAttemptId: randomUUID() } }]) {
+        assert.equal((await post({ ...probe, ...change })).status, 400);
+      }
+    }
+    assert.equal(await client.outboxEvent.count(), beforeProbes, 'Provider verification must not enqueue synthetic delivery or suppression');
+    caseIds.push('authenticated-provider-verification-without-business-writes');
     assert.equal((await post(body)).status, 200);
     assert.equal((await post(body)).status, 200);
     const rows = await client.outboxEvent.findMany({ where: { eventType: POSTMARK_EVENT_TYPE, payloadJson: { path: ['serverId'], equals: serverId } } });
