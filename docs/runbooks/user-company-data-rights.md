@@ -1,6 +1,7 @@
 # MangmeePlus — User and Company Data Rights Runbook
 
 Status: INTERIM MANUAL CONTROL — durable case orchestration is implemented; destructive execution, trusted evidence resolution, backup replay and external approvals remain release blockers
+Design of record from 2026-09-15: [P31 spec](../specs/mangmee-company-data-lifecycle-deletion-spec-th.md) / [P31 plan](../plans/mangmee-company-data-lifecycle-deletion-plan-th.md) — not yet implemented, so every procedure below still applies as written.
 Effective draft: 2026-08-09
 Public notices: `/privacy`, `/data-deletion`
 
@@ -20,6 +21,8 @@ Do not tell a requester that deletion is complete merely because a row is hidden
 - **Security incident owner:** joins immediately if the request reveals unauthorized access or a personal-data breach.
 
 One person may hold several roles in a small team, but the executor must not approve their own evidence for a full-company irreversible deletion.
+
+**Single-admin reality (Owner confirmed 2026-09-15).** This project runs with exactly one System Admin, so the rule above cannot be met by staffing. `data-rights.service.ts` currently enforces four distinct-actor checks (lines 552/570/584/612) — stricter than this runbook requires — which makes a case unable to leave `APPROVED`. That is not the safe failure it looks like: it blocks every deletion, including a lawful PDPA erasure request whose 90-day clock is already running. P31 §8 resolves this the way the repo already resolved the same problem for expense approvals (`substitute-receipt.use-case.ts:43-47`): permit the single-operator path, then record truthfully that one person held every role, and replace the missing second pair of eyes with machine gates (fresh hashed inventory report, typed company name, tooling-generated evidence, and a one-day cooling-off that can only be waived with a typed reason). Creating a second admin account for the same human is explicitly forbidden — it writes false dual-control evidence into a compliance record.
 
 ## 3. Intake and case record
 
