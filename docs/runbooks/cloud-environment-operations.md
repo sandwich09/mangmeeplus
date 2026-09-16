@@ -146,10 +146,19 @@ webhook25832029 now verifies all3triggers200. First post-hotfix OTP request succ
 91c088a1-fde8-4c57-aef3-cdec45a1f648 delivered08:10:40UTC, callbackPUBLISHED08:11:00.258 and
 matching app deliveredAt. New serving-image Redis instance proves firstcall success/nextcall limit.
 
-Paid sales remain closed: prepared billing policy requires native Admin publication and distinct
-approver, unavailable in the current browser session. Existing tester passwordless login needs
-its explicit opt-in; real code confirmation returns the expected legacy-login recovery. No
-Sandbox payment/new signup or liveLINE acceptance claimed. No Production deployment in this task.
+Later single-admin hotfix main `7ccff81178e547817d5d21571aa88ee2dde94628` now serves all3services:
+operation `20260916T103914Z-350853d8`,443.532s,11phases passed, KMS signature verified and fresh
+customerOPEN. AgentCorekamal_uat_b/version10;219migration catalog verified,0new/pending. Full
+source CI35080266183 passed before PR595/admin develop merge and identical main fast-forward;
+only one full source CI was dispatched. [Exact release and native status](../evidence/billing-single-admin-uat-release-2026-09-16.md).
+
+UAT Sandbox sales are now enabled through native Admin current-password proof and explicit
+single-admin confirmation: request69214c53-9bab-48ed-99fe-c2767421a777/version2, settingsversion1.
+Published native Stripe check0fd91395-5017-475a-ae05-c37315db87b4 passed10:55:10UTC for policy,
+account,6paid/6zero prices,Portal and tax. VAT/refunds remainoff. The original customer company
+requires its separate owner login for an actual test purchase. Existing tester passwordless login
+still needs explicit opt-in. No Sandbox payment/new signup or liveLINE acceptance claimed, and no
+Production deployment in this task.
 CI35066936157 passes the identical PR591/592 head; failed duplicate35066933135 and two passing
 local replays are retained without claiming its transient Nextdev404 root cause fixed.
 See [complete release evidence and timing](../evidence/uat-main-readiness-2026-09-16.md).

@@ -1,10 +1,10 @@
 # Agent Memory: billing single administrator
 
-Status: implemented locally; focused verification complete; preparing one source CI. Not deployed yet.
+Status: implemented, CI passed, develop/main merged and UAT deployed. Native Sandbox policy published with genuine single-admin confirmation; published Stripe configuration check passed. Native paid purchase awaits a company-owner session.
 Owner: Codex, under explicit owner instruction 2026-09-16.
 Scope: both environments in code; UAT deployment only. No role elevation or live charge.
 Decisions: genuine active SYSTEM_ADMIN plus exact action and approval permissions may self-confirm; preserve password, preview, explicit confirmation, idempotency, audit and worker authority checks. Scoped delegates still need another reviewer. No synthetic actor, migration or new config.
-Open questions: no product-policy question pending. Owner has signed into native Chrome as real platform Admin. Current-password reauthentication will be needed immediately before policy publication after deployment; never request it in chat.
+Open questions: no product-policy question pending. Owner completed current-password reauthentication in Chrome; Sandbox policy is published. Requested genuine company-owner login for purchase because the current Admin has no membership in WatchDog UAT. Never request a password in chat.
 Artifacts: docs/specs/billing-single-admin-spec-2026-09-16.md; docs/plans/billing-single-admin-plan-2026-09-16.md; docs/evidence/billing-single-admin-2026-09-16.json. Worktree mangmeeplus-uat-release, branch codex/billing-single-admin-20260916, base main ffa4fc91. Original checkout preserved.
 Verification:
 - Contracts/API builds and API/web typechecks passed. Final production-code API typecheck46001 exit0. Shared approval units2/2; executable catalog4/4. No package.json changes.
@@ -17,8 +17,23 @@ Verification:
 - Local production-image security suite passed26tests, maintenance pins48files passed. No controller/security files changed.
 - Isolated PostgreSQL18.3 container mangmee-single-admin-pg-20260916/15441 with219migrations; Redis mangmee-single-admin-redis-20260916/16389. Clean only these owned disposable containers after verification.
 - Private evidence .env.kamal/uat/single-admin-20260916 retains logs, failed attempts, screenshots and generated Next guidance. Generated Next files excluded from source.
-Native state:
-- UAT still serves ee2f5542, accepted operation20260916T080218Z-b9eb3d90, signed/customerOPEN. No new release for this amendment.
+Historical native state before the single-admin deployment:
+- UAT still serves ee2f5542, accepted operation20260916T080218Z-b9eb3d90, signed/customerOPEN. Historical state before this amendment; current release is recorded below.
 - Real Admin Chrome tab325831760 can access platform Billing Admin. Saved native draft8b376fa9-4553-475a-af71-732cb53db90b/version0 with all12Sandbox prices, Portal, VAToff,7days and approved gates. Settingsversion0/unpublished; no Checkout/payment. Reuse this draft after deploy, do not create a duplicate or preview before CI finishes.
 - User/browser password proof remains required; do not bypass through direct DB/API credentials. Native paid E2E still outstanding; real Postmark delivery already recorded in prior release evidence.
-Next: one PR/source CI; authorized admin merge after success and synchronize develop/main without duplicate paid validation when supported; reread deploy protocol and run one UAT hotfix with signed/customerOPEN acceptance; publish native draft with genuine reauthentication, then Sandbox purchase/rights/history. No Production deploy.
+Delivery:
+- Source70168b9187e7ef747e27219781310411b854a3d4, tree2b7e5693862dd7306021c2979a08bf0dc989e537, PR595. Full source CI35080266183 SUCCESS,09:35:19–10:36:31UTC,3672s. Real billingHTTP257groups and all configured browser suites pass. Only one full CI dispatched. Prior local broad failures/timeouts remain historical evidence, not passing attempts.
+- Admin merge into develop7ccff81178e547817d5d21571aa88ee2dde94628; main fast-forwarded to the same merge after exact tree/ancestry verification. GitHub explicitly reported the PR-only branch rule bypass authorized by owner. No force push/protection change/duplicate source CI.
+- Read-only preflight20260916T093631Z-a5691f5a passed9.815s. First invocation omitted the existing --uat-smoke-acceptance flag and stopped in constructor before cloud action; documented flag restored without source/security change.
+- UAT hotfix20260916T103914Z-350853d8, source7ccff811,443.532s,11phases passed; signatureECDSA_SHA_256 verified; acceptedSHA256c2f522fbe4c0064f895d4b8db544af5dce338eb50db1b4eb11fa10efcd8eb195; fresh public gateOPEN. AgentCorekamal_uat_b/version10.219migration catalog,0new/pending. UAT/READY/Production workflowIDs N/A local Kamal. Production unchanged.
+- Known historical jobless queue record31611733340 reverified exact Aug12timestamp/source/checkSuite85752682208,0jobs/0check-runs/0pending-deployments; no cancel/rerun/delete. No executable release overlaps.
+- Both owned disposable local containers removed; logs/screenshots retained. Other containers untouched.
+- Native Chrome Admin325831760 now shows deployed self-confirmation copy. Actual Stripe preview69214c53-9bab-48ed-99fe-c2767421a777/version0 validates all6paid offers and zero-price mappings; impact0members/0inflight/0quotes. Expires17:57:42Bangkok. Source draft8b376fa9-4553-475a-af71-732cb53db90b remains saved. Preview not submitted/published. User was asked to confirm current password in Chrome (5minute proof), no password in chat.
+- Current genuine Admin has no membership in the original WatchDog UAT customer company. Native purchase needs its real owner login after policy publication; do not elevate or impersonate.
+Native publication completed:
+- Owner confirmed current password through Chrome; UI proof was valid until17:54:42Bangkok. Submitted existing preview69214c53, then explicitly approved before expiry. Final requestversion2, active settingsversion1, TEST, UI says policy applied and single-administrator confirmation. No direct database write or role change.
+- New sales/repeat-plan/card-portal/cancellation/notifications enabled under the approved policy. VAToff,7-daygrace, refunds and Portal plan changes remainoff. Scope all UAT companies including future signups. Impact0members/0inflight/0quotes.
+- Native published configuration check0fd91395-5017-475a-ae05-c37315db87b4 passed at10:55:10UTC, settingsversion1: policy/account/all6paid/all6zero prices/Portal/tax. The worker completed the original check; an attempted manual check click found its removed button after that state transition, with no duplicate request.
+- Reloaded customer tab confirms real Admin still has no WatchDog UAT membership. Owner-login handoff requested; no impersonation or native Checkout/payment yet. Admin published result and configuration-check tabs retained as deliverables; customer billing tab retained for handoff.
+Documentation follow-up verification: staged diff whitespace check, both JSON files parse, all added local links resolve, changed-content credential-pattern check clean; maintenance48file pins and production-image security contract suite (including26migration boundary tests) passed again. Exactly8documentation files; no application/runtime change. Initial whole-file credential-pattern scan matched historical runbook sample content; current additions are clean, historical text preserved.
+Next: when the owner logs in, use that genuine company-owner session for native Checkout/webhook/rights/history. Finish documentation-only delivery without rerunning full source CI or redeploying. No Production deploy.
