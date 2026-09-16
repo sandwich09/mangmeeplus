@@ -22,7 +22,7 @@ export function pkceChallengeS256(verifier: string): string {
 }
 
 export function buildLineAuthorizeUrl(input: {
-  channelId: string; redirectUri: string; state: string; nonce: string; codeChallenge: string;
+  channelId: string; redirectUri: string; state: string; nonce: string; codeChallenge: string; emailReauth?: boolean;
 }): string {
   const params = new URLSearchParams({
     response_type: 'code',
@@ -37,6 +37,7 @@ export function buildLineAuthorizeUrl(input: {
     // the OA are one step instead of two. 'normal' asks; it never adds the friend without consent.
     bot_prompt: 'normal',
   });
+  if (input.emailReauth) { params.set('prompt', 'login'); params.set('max_age', '0'); }
   return `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
 }
 
@@ -47,7 +48,7 @@ export function sanitizeReturnTo(raw: string | null | undefined): string | null 
   return raw;
 }
 
-export interface LineLoginTxn { state: string; nonce: string; verifier: string; returnTo?: string }
+export interface LineLoginTxn { state: string; nonce: string; verifier: string; returnTo?: string; purpose?: 'email-reauth' }
 
 export function encodeLineLoginTxn(txn: LineLoginTxn): string {
   return Buffer.from(JSON.stringify(txn), 'utf8').toString('base64url');

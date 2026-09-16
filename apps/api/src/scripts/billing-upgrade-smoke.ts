@@ -54,7 +54,7 @@ export async function checkBillingUpgrade(input: {
   await client.billingAttempt.create({data:{id:attemptId,billingAccountId:account.id,initiatingUserId:input.userId,quoteId,channel:'web',idempotencyKey:randomUUID(),
     requestHash:'synthetic-upgrade-history',quoteSnapshot:json,policyRevisionId:revision.id,consentRevision:policy.consentRevision,consentAt:new Date(start*1000),status:'COMPLETED',subscriptionId:subId}});
   await client.billingSubscriptionContract.create({data:{billingAccountId:account.id,sourceAttemptId:attemptId,effectiveAt:new Date(start*1000),snapshotJson:json}});
-  provider.customers!.push({id:customerId,object:'customer',livemode:false,email:'owner@example.test',metadata:{billingAccountId:account.id}});
+  provider.customers!.push({id:customerId,object:'customer',livemode:false,email:snapshot.quote.billingEmail,metadata:{billingAccountId:account.id}});
   const sub:Obj={id:subId,object:'subscription',livemode:false,customer:customerId,status:'active',metadata:{billingAccountId:account.id,billingAttemptId:attemptId},
     cancel_at_period_end:false,collection_method:'charge_automatically',billing_mode:{type:'classic'},billing_cycle_anchor:start,items:{data:[{id:`si_${suffix}`,price:'price_StarterYear',quantity:1,current_period_start:start,current_period_end:end}]}};
   const invoice:Obj={id:`in_upgrade${suffix}`,object:'invoice',livemode:false,customer:customerId,parent:{subscription_details:{subscription:subId}},status:'paid',collection_method:'charge_automatically',currency:'thb',
@@ -120,7 +120,7 @@ export async function checkBillingUpgrade(input: {
   assert.ok(history.segments.every(s=>s.oldOffer.offerKey==='BASIC_499'));
   let paid:{status:number;body:any};
   if(browser){const {page,origin}=browser;await page.setViewportSize({width:390,height:844});await page.goto(`${origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=line`,{waitUntil:'domcontentloaded'});
-    await page.getByLabel('อีเมลรับเอกสาร').fill('owner@example.test');await page.locator('article').filter({hasText:'Pro'}).getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();
+    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();await page.locator('article').filter({hasText:'Pro'}).getByRole('button',{name:'ตรวจสอบราคา',exact:true}).click();
     await page.getByText(/ชำระส่วนต่างและเริ่ม/).waitFor();await page.getByText(/รอบถัดไป.*9,990/).waitFor();
     await page.screenshot({path:`${browser.evidenceDir}/upgrade-review-mobile.png`,fullPage:true});
     await page.getByRole('checkbox').check();await page.getByRole('button',{name:'ยืนยันและไปชำระที่ Stripe',exact:true}).click();

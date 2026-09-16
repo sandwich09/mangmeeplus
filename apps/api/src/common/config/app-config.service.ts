@@ -176,6 +176,9 @@ export class AppConfigService {
   get postmarkMessageStream(): string { return this.config.POSTMARK_MESSAGE_STREAM; }
   get postmarkFromAddress(): string | undefined { return this.config.POSTMARK_FROM_ADDRESS; }
   get postmarkFromName(): string { return this.config.POSTMARK_FROM_NAME; }
+  get postmarkUatAllowedRecipients(): string[] {
+    return this.config.POSTMARK_UAT_ALLOWED_RECIPIENTS.split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
+  }
   get postmarkWebhookUsername(): string | undefined { return this.config.POSTMARK_WEBHOOK_USERNAME; }
   get postmarkWebhookPassword(): string | undefined { return this.config.POSTMARK_WEBHOOK_PASSWORD; }
   get sesRegion(): string | undefined { return this.config.SES_REGION; }
@@ -210,6 +213,8 @@ export class AppConfigService {
   get customerRegisterMaxPerIpChannel(): number { return this.config.CUSTOMER_REGISTER_MAX_PER_IP_CHANNEL; }
   get customerRegisterWindowSeconds(): number { return this.config.CUSTOMER_REGISTER_WINDOW_SECONDS; }
   get emailVerificationRequestMaxPerUser(): number { return this.config.EMAIL_VERIFICATION_REQUEST_MAX_PER_USER; }
+  get emailOtpHmacKey(): string | undefined { return this.config.EMAIL_OTP_HMAC_KEY; }
+  get emailOtpHmacKeyVersion(): string | undefined { return this.config.EMAIL_OTP_HMAC_KEY_VERSION; }
   get emailVerificationRequestWindowSeconds(): number { return this.config.EMAIL_VERIFICATION_REQUEST_WINDOW_SECONDS; }
   get emailVerificationConfirmMaxPerIp(): number { return this.config.EMAIL_VERIFICATION_CONFIRM_MAX_PER_IP; }
   get emailVerificationConfirmWindowSeconds(): number { return this.config.EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS; }

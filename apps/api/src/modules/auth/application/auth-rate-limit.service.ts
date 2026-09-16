@@ -340,6 +340,16 @@ export class AuthRateLimitService {
     );
   }
 
+  /** Per-account OTP budgets live in the same DB transaction as the proof. This bounds IP floods. */
+  async assertEmailOtpIpAllowed(ipAddress: string): Promise<void> {
+    await this.assertWithinLimit('email-otp-ip', ipAddress, 120, 3600);
+  }
+
+  async assertEmailOtpUserAllowed(userId: string): Promise<void> {
+    // Bound current-password guessing across different visitor IPs before reserving an OTP.
+    await this.assertWithinLimit('email-otp-reauth-user', userId, 20, 3600);
+  }
+
   /** Self-service writes on the caller's own account: phone number and first password. */
   async assertAccountProfileWriteAllowed(userId: string): Promise<void> {
     await this.assertWithinLimit(

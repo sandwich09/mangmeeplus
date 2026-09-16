@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { lineIntakeContactComplete } from '../domain/line-signup.logic';
 import type {
   LineSignupIntent,
   LineSignupReviewResolution,
@@ -118,7 +119,7 @@ function toProgress(
     existingAccount,
     businessHours,
     canRetryIntake: !sideEffectsStarted && resolution === undefined
-      && Boolean(request.contactEmail && request.phoneNumber) && INTAKE_STATES.has(request.state),
+      && lineIntakeContactComplete(request) && INTAKE_STATES.has(request.state),
     canUpdateContactEmail: !sideEffectsStarted && !request.autoApproved
       && request.reviewResolution !== 'NEW_SHOP' && EDITABLE_STATES.has(request.state),
     companyCreated: request.companyId !== null,

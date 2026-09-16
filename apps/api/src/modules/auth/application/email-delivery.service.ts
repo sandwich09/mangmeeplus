@@ -99,7 +99,7 @@ export class EmailDeliveryService {
       possibleDuplicate:previous?.possibleDuplicate||previous?.errorCode==='delivery_unconfirmed_possible_duplicate'}});
   }
 
-  async send(attempt: EmailSendAttempt, content: { subject: string; html: string; text: string }): Promise<string> {
+  async send(attempt: EmailSendAttempt, content: { subject: string; html: string; text: string }, beforeDispatch?: () => Promise<void>): Promise<string> {
     const current = await this.prisma.client.emailSendAttempt.findUnique({ where: { id: attempt.id } });
     if (current?.status === 'ACCEPTED' && current.providerMessageId) return current.providerMessageId;
     if (!current || !['READY','SENDING'].includes(current.status) || current.suppressedAt) throw new PostmarkSendError('PERMANENT', 'attempt_not_sendable');
@@ -124,7 +124,7 @@ export class EmailDeliveryService {
         Subject: content.subject, TextBody: content.text, HtmlBody: content.html,
         MessageStream: current.stream, TrackOpens: false, TrackLinks: 'None', Tag: current.purpose,
         Metadata: { sendAttemptId: current.id },
-      });
+      }, beforeDispatch);
       await this.prisma.client.$transaction(async (tx) => {
         // A callback may already have bound this ID or suppressed the message. Never erase it.
         const latest = await tx.emailSendAttempt.findUnique({ where: { id: attempt.id } });

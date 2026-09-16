@@ -47,6 +47,7 @@ import { createHash } from 'node:crypto';
 import { ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import { CompleteEmployeeLineLinkUseCase } from './application/use-cases/complete-employee-line-link.use-case';
 import { LinkLineIdentityUseCase } from './application/use-cases/link-line-identity.use-case';
+import { hashPassword } from './domain/logic/password-credential.logic';
 import { UnlinkLineIdentityUseCase } from './application/use-cases/unlink-line-identity.use-case';
 import { PartnerMemberLineUnlinkUseCase } from '../system-partner-management/application/use-cases/partner-member-line-unlink.use-case';
 
@@ -175,6 +176,9 @@ describe('Admin QR actual PostgreSQL repair', { skip: !databaseUrl }, () => {
 
   for (const lane of ['account', 'admin']) for (const mutation of ['owner', 'revision']) {
     it(`keeps current identity/context/handoff when ${lane} unlink races a newer ${mutation}`, async () => withQrFixture(async (h) => {
+      if (lane === 'account') await h.client.user.update({ where: { id: h.userId }, data: { username: `${h.tag}-login`,
+        credential: { create: { passwordHash: hashPassword('Synthetic-backup-password-123!'), status: 'ACTIVE' } },
+      } });
       const identity = await h.identity();
       await h.client.lineCompanyContext.create({ data: { lineUserId: h.oldSubject, companyId: h.companyId } });
       await h.client.lineWebHandoffToken.create({ data: { tokenHash: h.tag, userId: h.userId,

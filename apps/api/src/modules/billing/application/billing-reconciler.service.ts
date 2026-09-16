@@ -160,6 +160,10 @@ export class BillingReconcilerService {
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       }
       if (!account.customerId) return;
+      if (account.activeEmailOperationId) {
+        await this.billing.emailRecipient.advance(account, leaseToken);
+        account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
+      }
       if (account.activeCollectionOperationId) {
         const operation=await this.prisma.client.billingOperation.findUniqueOrThrow({where:{id:account.activeCollectionOperationId}});
         if(['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(operation.type)){

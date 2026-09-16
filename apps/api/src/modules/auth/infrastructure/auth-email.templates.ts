@@ -18,6 +18,14 @@ function formatExpiry(value: Date): string {
   }).format(value);
 }
 
+export function renderEmailOtp(code: string, expiresAt: Date): RenderedEmail {
+  if (!/^\d{6}$/.test(code)) throw new Error('Invalid OTP template input.');
+  const title = 'รหัสยืนยันอีเมล Mangmee Plus';
+  const instructions = `กรอกรหัสนี้ในหน้าที่ยืนยันอีเมล รหัสหมดอายุ ${formatExpiry(expiresAt)} น. ใช้ได้ครั้งเดียว อย่าส่งรหัสให้ผู้อื่น หากไม่ได้ทำรายการ ไม่ต้องดำเนินการใด ๆ`;
+  return { subject: title, text: `${title}\n\n${instructions}\n\n${code}`,
+    html: `<!doctype html><html lang="th"><body style="font:18px/1.7 Arial,sans-serif;color:#17352b"><main style="max-width:560px;margin:auto;padding:24px"><h1 style="font-size:24px">${title}</h1><p>${instructions}</p><p style="font-size:32px;letter-spacing:6px;font-weight:bold">${code}</p></main></body></html>` };
+}
+
 function link(baseUrl: string, pathname: string, token: string, signupRequestId?: string): string {
   const url = new URL(pathname, baseUrl);
   // Active email proofs stay out of HTTP request URLs; legacy mail stays readable.

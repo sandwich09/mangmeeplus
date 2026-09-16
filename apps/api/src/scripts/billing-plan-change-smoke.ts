@@ -54,7 +54,7 @@ export async function checkBillingPlanChange(input: {
   await client.billingAttempt.create({data:{id:attemptId,billingAccountId:account.id,initiatingUserId:input.userId,quoteId,channel:'web',idempotencyKey:randomUUID(),
     requestHash:'synthetic-upgrade-history',quoteSnapshot:json,policyRevisionId:revision.id,consentRevision:policy.consentRevision,consentAt:new Date(start*1000),status:'COMPLETED',subscriptionId:subId}});
   await client.billingSubscriptionContract.create({data:{billingAccountId:account.id,sourceAttemptId:attemptId,effectiveAt:new Date(start*1000),snapshotJson:json}});
-  provider.customers!.push({id:customerId,object:'customer',livemode:false,email:'owner@example.test',metadata:{billingAccountId:account.id}});
+  provider.customers!.push({id:customerId,object:'customer',livemode:false,email:snapshot.quote.billingEmail,metadata:{billingAccountId:account.id}});
   const sub:Obj={id:subId,object:'subscription',livemode:false,customer:customerId,status:'active',metadata:{billingAccountId:account.id,billingAttemptId:attemptId},
     cancel_at_period_end:false,collection_method:'charge_automatically',billing_mode:{type:'classic'},billing_cycle_anchor:start,items:{data:[{id:`si_${suffix}`,price:'price_BasicYear',quantity:1,current_period_start:start,current_period_end:end}]}};
   const invoice:Obj={id:`in_upgrade${suffix}`,object:'invoice',livemode:false,customer:customerId,parent:{subscription_details:{subscription:subId}},status:'paid',collection_method:'charge_automatically',currency:'thb',

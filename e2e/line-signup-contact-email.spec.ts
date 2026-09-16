@@ -59,17 +59,11 @@ for (const width of [390, 1280]) {
     await expect(submit).toBeEnabled();
     await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านทดสอบเปิดใหม่');
     await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
-    const email = page.getByLabel('อีเมลเจ้าของร้าน', { exact: true });
+    const email = page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true });
     await expect(email).toHaveAttribute('type', 'email');
-    await expect(email).toHaveAttribute('required', '');
+    await expect(email).not.toHaveAttribute('required', '');
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
-    await expect(page.locator('#contact-email-help')).toContainText('ไม่ต้องยืนยันอีเมลหรือตั้งรหัสผ่าน');
-    await submit.click();
-    await expect(email).toBeFocused();
-    await expect(email).toHaveAttribute('aria-invalid', 'true');
-    await expect(page.locator('#contact-email-error')).toBeVisible();
-    expect(submissions).toHaveLength(0);
-
+    await expect(page.locator('#contact-email-help')).toContainText('ก่อนชำระแพ็กเกจ');
     await email.fill('not-an-email');
     await submit.click();
     await expect(email).toBeFocused();
@@ -91,12 +85,14 @@ for (const width of [390, 1280]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath(`signup-contact-email-${width}.png`), fullPage: true });
 
+    await email.fill('');
     await submit.click();
     await expect(page.locator('#progress-view')).toBeVisible();
     await expect(page.locator('#progress-title')).toHaveText('รับคำขอแล้ว');
     await expect(page.locator('body')).not.toContainText('line-e2e-1');
     expect(submissions).toHaveLength(2);
-    expect(submissions[1]?.contactEmail).toBe('shop+contact@example.test');
+    expect(submissions[1]?.contactEmail).toBe('');
+    expect(submissions[1]?.legal.displayChallenge).toMatch(/^[a-f0-9]{64}$/);
   });
 }
 
@@ -123,7 +119,7 @@ test('a previously used owner email waits for review without showing an active-s
   expect(response?.ok()).toBe(true);
   await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านเดิมที่ต้องตรวจ');
   await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
-  const email = page.getByLabel('อีเมลเจ้าของร้าน', { exact: true });
+  const email = page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true });
   await email.fill('used-owner@example.test');
   await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
 
@@ -171,7 +167,7 @@ test('a completed response and reopen stay completed until the owner explicitly 
   expect(response?.headers()['content-security-policy']).toContain("script-src 'self' https://static.line-scdn.net");
   await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านพร้อมใช้');
   await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
-  await page.getByLabel('อีเมลเจ้าของร้าน', { exact: true }).fill('ready@example.test');
+  await page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true }).fill('ready@example.test');
   await page.getByRole('button', { name: 'ยอมรับและเริ่มทดลองใช้ฟรี', exact: true }).click();
 
   await expect(page.locator('#progress-title')).toHaveText('พร้อมเริ่มใช้งาน');
@@ -252,7 +248,7 @@ for (const existingShop of [false, true]) {
     await page.getByRole('button', { name: 'สมัครใหม่', exact: true }).click();
     await page.getByLabel('ชื่อร้าน', { exact: true }).fill('ร้านใหม่อีกครั้ง');
     await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('0812345678');
-    await page.getByLabel('อีเมลเจ้าของร้าน', { exact: true }).fill('new-contact@example.test');
+    await page.getByLabel('อีเมลติดต่อร้าน (ไม่บังคับ)', { exact: true }).fill('new-contact@example.test');
     const submit = page.getByRole('button', { name: 'ส่งคำขอให้ทีมงานตรวจสอบ', exact: true });
     expect((await submit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
     await submit.click();

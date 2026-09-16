@@ -28,7 +28,7 @@ const URLS = { webBaseUrl: 'https://app.example.test', apiBaseUrl: 'https://api.
 function connect(): PrismaClient {
   const url = new URL(databaseUrl!);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname), 'only a local disposable database is allowed');
-  assert.equal(url.pathname, '/watchdog_bms', 'never write to a forwarded customer database');
+  assert.ok(['/watchdog_bms', '/email_otp_test'].includes(url.pathname), 'never write to a forwarded customer database');
   return new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
 }
 
@@ -134,6 +134,24 @@ async function assertManual(client: PrismaClient, h: ReturnType<typeof wire>, re
 }
 
 describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, () => {
+  it('no-email first shop provisions once; replay and add shop retain LINE ownership without another trial', async (t) => fixture(t, async (client, tag) => {
+    const h = wire(client, tag, `U${tag}-no-email`), firstCommand = command(tag, '', 'no-email-first');
+    const first = await h.submit.execute(firstCommand);
+    assert.equal(first.progress?.state, 'COMPLETED');
+    const saved = await client.companySignupRequest.findUniqueOrThrow({ where: { id: first.progress!.requestId } });
+    assert.equal(saved.contactEmail, null); assert.equal(saved.intakePolicyVersion, 'LINE_CONTACT_OPTIONAL_V1');
+    assert.ok(saved.companyId && saved.ownerUserId);
+    const owner = await client.user.findUniqueOrThrow({ where: { id: saved.ownerUserId }, include: { credential: true } });
+    assert.equal(owner.email, null); assert.equal(owner.emailVerifiedAt, null); assert.equal(owner.credential, null);
+    assert.equal((await h.submit.execute(firstCommand)).progress?.requestId, saved.id);
+    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
+    const second = await h.submit.execute({ ...command(tag, '', 'no-email-second'), intent: 'ADD_SHOP' });
+    assert.equal(second.progress?.state, 'PENDING_REVIEW'); assert.equal(second.progress?.existingAccount, true);
+    const pending = await client.companySignupRequest.findUniqueOrThrow({ where: { id: second.progress!.requestId } });
+    assert.equal(pending.contactEmail, null); assert.equal(pending.contactEmailConflict, false);
+    assert.equal(pending.attachUserId, saved.ownerUserId); assert.equal(pending.autoApproved, false);
+    assert.equal(await client.company.count({ where: { name: { startsWith: tag } } }), 1);
+  }));
   it('opens the first fresh email immediately, then sends its normalized repeat to review without a second shop', async (t) => fixture(t, async (client, tag) => {
     const email = `${tag}@example.test`;
     const first = wire(client, tag, `U${tag}-first`);
@@ -183,6 +201,7 @@ describe('duplicate LINE signup email on PostgreSQL', { skip: !databaseUrl }, ()
       existingAccount: true,
       hasReferralCode: false,
       emailPreviouslyUsed: false,
+      contactEmailPresent: true,
     });
     assert.ok(await client.auditLog.findFirst({
       where: { targetId: secondSaved.id, action: 'signup.line.auto_approve_repeat_trial' },

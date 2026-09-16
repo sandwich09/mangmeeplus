@@ -39,8 +39,11 @@ describe('LINE recovery credential lifecycle', () => {
       return { ok: true } as Response;
     }) as typeof fetch;
     const client: any = {
+      $executeRaw: async () => 1,
       $queryRaw: async () => [{ id: 'credential-1' }],
+      emailVerificationToken: { updateMany: async () => ({ count: 0 }) },
       user: {
+        update: async () => ({}),
         findFirst: async () => ({ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }),
         findMany: async () => [{ id: 'user-1', status: 'ACTIVE', credential: { ...credential } }],
       },
@@ -617,7 +620,10 @@ describe('ChangePasswordUseCase', () => {
           findUnique: async () => ({ status: 'TEMPORARY', passwordHash: oldHash, expiresAt: null }),
         },
         $transaction: async (fn: any) => fn({
-          userCredential: { update: async (args: unknown) => { updateArgs = args; return {}; } },
+          $executeRaw: async () => 1, $queryRaw: async () => [],
+          user: { update: async () => ({}) },
+          emailVerificationToken: { updateMany: async () => ({ count: 0 }) },
+          userCredential: { findUnique: async () => ({ status: 'TEMPORARY', passwordHash: oldHash, expiresAt: null }), update: async (args: unknown) => { updateArgs = args; return {}; } },
           authSession: { updateMany: async (args: unknown) => { revokeArgs = args; return { count: 2 }; } },
         }),
       },

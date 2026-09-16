@@ -291,9 +291,18 @@ describe('SubmitLineSignupUseCase — identity and clickwrap', () => {
     assert.ok(h.identityReads.every((read) => read.where.providerUserId === 'Uline-1' && !('email' in read.where)));
   });
 
+  it('creates LINE applications without an email using an explicit policy version', async () => {
+    for (const contactEmail of [undefined, null, '', ' ']) {
+      const h = harness(); await h.useCase.execute({ ...CMD, contactEmail } as any, NOW);
+      assert.equal(h.created.length, 1);
+      assert.equal(h.created[0].contactEmail, null);
+      assert.equal(h.created[0].intakePolicyVersion, 'LINE_CONTACT_OPTIONAL_V1');
+    }
+  });
+
   it('rejects invalid contact before creating an application or spending a shop creation', async () => {
     const h = harness();
-    for (const contactEmail of [undefined, null, '', ' ', 123, 'broken', 'a@@example.com', `${'a'.repeat(245)}@example.com`]) {
+    for (const contactEmail of [123, 'broken', 'a@@example.com', `${'a'.repeat(245)}@example.com`]) {
       await assert.rejects(() => h.useCase.execute({ ...CMD, contactEmail } as any, NOW), BadRequestException);
     }
     assert.deepEqual(h.created, []);

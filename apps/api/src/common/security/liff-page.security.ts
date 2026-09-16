@@ -204,6 +204,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const SIGNUP_GUIDANCE = {
     line_signup_phone_required: { tone: 'warning', text: 'ยังไม่ได้ใส่เบอร์มือถือ', advice: PHONE_RULE_TH, field: 'phone-number' },
     line_signup_phone_invalid: { tone: 'warning', text: 'เบอร์มือถือยังไม่ถูกต้อง', advice: PHONE_RULE_TH, field: 'phone-number' },
+    line_signup_legacy_evidence_required: { tone: 'warning', text: 'คำขอเดิมยังมีข้อมูลไม่ครบ', advice: 'กดขอความช่วยเหลือด้านล่างให้เจ้าหน้าที่ตรวจคำขอเดิม หรือโทร 098-256-5628 โดยไม่ต้องสมัครซ้ำ' },
     line_signup_email_required: { tone: 'warning', text: 'ยังไม่ได้ใส่อีเมลเจ้าของร้าน', advice: EMAIL_RULE_TH, field: 'contact-email' },
     line_signup_email_invalid: { tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH, field: 'contact-email' },
     invalid_companyName: { tone: 'warning', text: 'ยังไม่ได้ใส่ชื่อร้าน', advice: 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ', field: 'company-name' },
@@ -815,7 +816,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     const fields = {};
     if (!companyName) fields['company-name'] = 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ';
     if (!/^0[0-9]{9}$/.test(phoneNumber)) fields['phone-number'] = PHONE_RULE_TH;
-    if (!contactEmail || contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    if (contactEmail && ( contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
       fields['contact-email'] = EMAIL_RULE_TH;
     }
     const missing = savedSubmission ? [] : FIELD_IDS.filter(function (id) { return !!fields[id]; });
@@ -858,8 +859,13 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       renderSignupStatus(await readSignupStatus(idToken));
       return;
     }
-    // Every other refusal becomes what went wrong plus what to do next, in the right tone.
-    if (!res.ok) throw refusal(signupGuidance(res.status, text));
+    // A definite pre-admission field refusal allows correction. Unknown outcomes retain
+    // the exact submission key/body so a retry cannot create a second shop.
+    if (!res.ok) {
+      const guidance = signupGuidance(res.status, text);
+      if (res.status === 400 && FIELD_IDS.indexOf(guidance.field) >= 0) clearSavedSubmission(body.submissionId);
+      throw refusal(guidance);
+    }
     renderSignupStatus(JSON.parse(text));
   }
 
@@ -905,7 +911,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (!progress || !progress.canUpdateContactEmail) throw refusal(SIGNUP_GUIDANCE.line_signup_contact_update_not_allowed);
     const input = document.getElementById('updated-contact-email');
     const contactEmail = (input.value || '').trim().toLowerCase();
-    if (!contactEmail || contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    if (contactEmail && ( contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
       setMessage(document.getElementById('updated-contact-email-error'), EMAIL_RULE_TH);
       input.setAttribute('aria-invalid', 'true');
       if (input.focus) input.focus();

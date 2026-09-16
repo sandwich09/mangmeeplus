@@ -6,7 +6,7 @@ import { BillingCheckoutExpiryService } from '../application/billing-checkout-ex
 import { BillingBatchesService } from '../application/billing-batches.service';
 import { BillingSettlementService } from '../application/billing-settlement.service';
 import type { BillingSupportOutcomeKind } from '@watchdog-bms/contracts';
-import { BillingTimelineExportDto, BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
+import { BillingPlanAdjustmentDto, BillingReceiptAdjustmentDto, BillingRefundDto, BillingBatchDto, BillingTimelineExportDto, BillingEmptyDto, BillingConfigurationCheckDto, BillingScanScheduleDto, BillingSupportOutcomeDto, BillingProviderScanDto, BillingVersionDto, BillingEventPreviewDto, BillingScopePreviewDto, BillingCommandDto, BillingReauthenticateDto, BillingConfigurationDto, BillingCloseDto, BillingRepairPreviewDto, BillingSubmitDto, BillingIssueDto, BillingCollectionPreviewDto, BillingCapacityRepairDto, BillingQuoteDto, BillingCheckoutDto, BillingPortalDto, BillingDocumentDto } from './billing.dto';
 import { BadRequestException, Body, Controller, Get, Header, Headers, HttpCode, HttpException, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import type { BillingCheckoutBody, BillingConfigurationInput, BillingConfigurationDraftInput } from '@watchdog-bms/contracts';
@@ -470,6 +470,21 @@ export class BillingController {
     await this.billing.assertOwner(req.context);
     const result = await this.limits.consume('billing-command', `${req.context.companyId}:${req.context.userId}`, 30, 60);
     if (!result.allowed) throw new HttpException({ code: 'BILLING_RATE_LIMIT', message: 'กรุณารอสักครู่แล้วลองใหม่', retryAfterSeconds: result.retryAfterSeconds }, 429);
+  }
+
+  @Get('recipient') recipient(@Req() req: AuthedRequest) { return this.billing.emailRecipient.current(req.context); }
+  @Post('recipient/preview') @HttpCode(200)
+  async recipientPreview(@Req() req: AuthedRequest, @Body() body: BillingEmptyDto) { bodyFields(body, []); await this.limit(req); return this.billing.emailRecipient.preview(req.context); }
+  @Get('recipient/:id') recipientOperation(@Req() req: AuthedRequest, @Param('id') id: string) { return this.billing.emailRecipient.get(req.context, uuid(id)); }
+  @Post('recipient/:id/:action') @HttpCode(200)
+  async recipientCommand(@Req() req: AuthedRequest, @Param('id') id: string, @Param('action') action: string,
+    @Body() body: BillingCommandDto, @Headers('idempotency-key') key?: string) {
+    if (action !== 'submit' && action !== 'cancel') invalid();
+    const fields = bodyFields(body, action === 'submit' ? ['expectedVersion', 'previewHash', 'accepted'] : ['expectedVersion']);
+    if (!Number.isSafeInteger(fields.expectedVersion) || (fields.expectedVersion as number) < 0 || (action === 'submit' && fields.accepted !== true)) invalid();
+    await this.limit(req);
+    return this.billing.emailRecipient.command(req.context, uuid(id), action, fields.expectedVersion as number,
+      action === 'submit' ? textField(fields.previewHash, 64) : '', key ?? '');
   }
 
   @Get() status(@Req() req: AuthedRequest) { return this.billing.status(req.context); }

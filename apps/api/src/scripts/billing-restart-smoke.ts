@@ -42,7 +42,7 @@ export async function checkBillingRestart(input: {
     status: 'COMPLETED', subscriptionId: account.baseSubscriptionId } });
   await client.billingSubscriptionContract.create({ data: { billingAccountId: account.id, sourceAttemptId: oldAttemptId,
     effectiveAt: new Date(oldStart * 1000), snapshotJson: json } });
-  provider.customers!.push({ id: customerId, object: 'customer', livemode: false, metadata: { billingAccountId: account.id } });
+  provider.customers!.push({ id: customerId, object: 'customer', livemode: false, email: snapshot.quote.billingEmail, metadata: { billingAccountId: account.id } });
 
   function paidContract(id: string, attemptId: string, start: number, end: number, priceId = 'price_ProYear', amount = 999000) {
     const sub: Obj = { id: `sub_${id}`, object: 'subscription', livemode: false, customer: customerId, status: 'active',
@@ -106,7 +106,7 @@ export async function checkBillingRestart(input: {
     const { page, origin } = input.browser;
     await page.goto(`${origin}/companies/${companyId}/billing?offer=PRO_999&interval=year&channel=line`, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: 'ครบกำหนดใช้งานแล้ว', exact: true }).waitFor();
-    await page.getByLabel('อีเมลรับเอกสาร').fill('owner@example.test');
+    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
     await page.getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
     await page.getByText(/วันและโควตาที่หมดอายุไปแล้วไม่ทบ/).waitFor();
     await page.getByRole('checkbox').check();
@@ -187,7 +187,7 @@ export async function checkBillingRestart(input: {
   if (input.browser) {
     const { page, origin } = input.browser;
     await page.goto(`${origin}/companies/${companyId}/billing?offer=STARTER_249&interval=year&channel=line`, { waitUntil: 'domcontentloaded' });
-    await page.getByLabel('อีเมลรับเอกสาร').fill('owner@example.test');
+    await page.getByText((await request('/v1/auth/account/email/otp')).body.email, { exact: true }).first().waitFor();
     await page.locator('article').filter({ has: page.getByRole('heading', { name: 'เริ่มต้น (STARTER)', exact: true }) }).getByRole('button', { name: 'ตรวจสอบราคา', exact: true }).click();
     const picker = page.getByRole('region', { name: 'เลือกสาขาและผู้ใช้' }); await picker.waitFor();
     await picker.getByRole('checkbox', { name: 'ฉันตรวจสอบรายการที่คงไว้และรายการที่จะพักแล้ว', exact: true }).check();

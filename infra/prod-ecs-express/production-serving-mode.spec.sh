@@ -122,7 +122,7 @@ done
 grep -Fq '{name:"WEB_BASE_URL", value:$publicWebUrl}' "$deploy" \
   || { echo 'FAIL: WEB_BASE_URL is not exported to the api task definition'; exit 1; }
 assert_rejected deploy-invalid-email-provider \
-  'EMAIL_PROVIDER must be exactly disabled or ses for cloud deploys' \
+  'EMAIL_PROVIDER must be exactly disabled, ses or postmark for cloud deploys' \
   env -i PATH="$PATH" DEPLOY_ENV=uat EMAIL_PROVIDER=local-console bash "$deploy" all
 assert_rejected deploy-production-ses-not-activated \
   'EMAIL_PROVIDER=ses is not activated for production yet' \
@@ -135,8 +135,7 @@ cat >> "$tmp_dir/config.sh" <<'EOF'
 printf '%s\n' "$LINE_SIGNUP_ENABLED_INPUT|$EXTERNAL_SIGNUP_ENABLED_INPUT|$LINE_SIGNUP_APPROVAL_MODE_INPUT|$RECEIPT_QUOTA_ENFORCED_INPUT|$LINE_AI_DRAFT_EDIT_ENABLED_INPUT|$EMAIL_PROVIDER_INPUT"
 EOF
 for stage in uat production; do
-  expected_email=disabled
-  [ "$stage" != uat ] || expected_email=ses
+  expected_email=postmark
   actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live bash "$tmp_dir/config.sh")"
   test "$actual" = "true|true|AUTO_FREE|true|true|$expected_email"
   actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live \
@@ -402,8 +401,7 @@ cat >> "$tmp_dir/receipt-config.sh" <<'EOF'
 printf '%s\n' "$SERVING_LINE_EXPENSE_DRAFT_CONVERSATION_ENABLED|$SERVING_LINE_AI_TERMINAL_OUTCOME_REPLAY_ENABLED|$SERVING_EMAIL_PROVIDER"
 EOF
 for stage in uat production; do
-  expected_email=disabled
-  [ "$stage" != uat ] || expected_email=ses
+  expected_email=postmark
   actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live bash "$tmp_dir/receipt-config.sh")"
   test "$actual" = "true|true|$expected_email"
   actual="$(env -i PATH="$PATH" DEPLOY_ENV="$stage" PRODUCTION_SERVING_MODE=live \

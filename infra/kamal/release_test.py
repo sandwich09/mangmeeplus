@@ -396,6 +396,7 @@ class Contracts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             r,_=self.runner(tmp);del r.config_freshness;r.args.profile=''
             before={'services':{'api-web':{'configurationSha256':'old'}},'secretVersions':{'secret':'v1'},'readAt':'now'}
+            r.manifest={'secretVersions':dict(before['secretVersions'])}
             m.write(r.work/'capture-evidence.json',before)
             after=copy.deepcopy(before)
             r.command=lambda *a,**k:m.write(r.work/'recapture-evidence.json',after)

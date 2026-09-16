@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { AccountEmailOtpPanel } from '@/features/auth/AccountEmailOtpPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { todayCivilDate, type CompanyIdentityResponse, type CompanyLegalAddress, type VatRegistrationStatus } from '@watchdog-bms/contracts';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
@@ -14,18 +15,14 @@ import {
   getCompanyIdentity,
   patchCompanyIdentity,
   putVatRegistration,
-  requestMyEmailVerification,
-  resendMyEmailVerification,
   setMyFirstPassword,
   setMyPhoneNumber,
-  setMyUnverifiedEmail,
   type AccountProfileState,
 } from './company-profile.api';
 import {
   addressErrorMessages,
   buildShopSave,
   clearChecklistCache,
-  emailSectionMode,
   isThaiMobileInput,
   passwordFormError,
   sectionIdFromHash,
@@ -40,7 +37,6 @@ const EMPTY_ADDRESS: CompanyLegalAddress = {
 
 const SUPPORT_CONTACT = 'ติดต่อทีมงานได้ที่ โทร 098-256-5628 หรืออีเมล contact@mangmeeplus.com นะคะ';
 /** The id `TextField` derives, so the "เปลี่ยนอีเมล" button can move focus into the box it opens. */
-const EMAIL_FIELD_ID = 'account-email';
 
 function Banner({ tone, children }: { tone: 'error' | 'ok' | 'note'; children: React.ReactNode }) {
   const className = tone === 'error'
@@ -85,13 +81,6 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   const [shopSaving, setShopSaving] = useState(false);
 
   // บัญชีของฉัน
-  const [email, setEmail] = useState('');
-  const [emailEditing, setEmailEditing] = useState(false);
-  const [emailPassword, setEmailPassword] = useState('');
-  const [emailError, setEmailError] = useState<string | null>(null);
-  const [emailErrorCode, setEmailErrorCode] = useState<string | null>(null);
-  const [emailSent, setEmailSent] = useState(false);
-  const [emailSaving, setEmailSaving] = useState(false);
   const [phone, setPhone] = useState('');
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [phoneSaving, setPhoneSaving] = useState(false);
@@ -132,9 +121,6 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       }
       setVatChoice(nextIdentity.vatRegistration?.status ?? 'UNKNOWN');
       setPhone(nextAccount.phoneNumber ?? '');
-      setEmail(nextAccount.lineLinked && !nextAccount.emailVerified
-        ? nextAccount.email ?? ''
-        : nextAccount.pendingEmail ?? nextAccount.email ?? '');
     } catch (error) {
       setLoadError(apiErrorMessage(error));
     } finally {
@@ -177,8 +163,6 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
   // `PasswordLoginUseCase` looks accounts up by username OR the stored account email. With neither, a
   // password would be unusable, so the username stops being optional.
   const usernameRequired = usernameFieldRequired(account);
-  const emailMode = emailSectionMode(account, emailEditing);
-  const directEmailEdit = Boolean(account?.lineLinked && !account.emailVerified);
 
   const saveShop = async () => {
     if (!control || !canEditShop) return;
@@ -230,88 +214,7 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
     }
   };
 
-  const startEmailEdit = () => {
-    setEmailError(null);
-    setEmailErrorCode(null);
-    setEmailSent(false);
-    setEmail(directEmailEdit ? account?.email ?? '' : account?.pendingEmail ?? account?.email ?? '');
-    setEmailEditing(true);
-  };
 
-  // The button that reveals the box is not the box: without this the owner has to hunt for it.
-  useEffect(() => {
-    if (emailEditing) document.getElementById(EMAIL_FIELD_ID)?.focus();
-  }, [emailEditing]);
-
-  const saveEmail = async () => {
-    setEmailError(null);
-    setEmailErrorCode(null);
-    setEmailSent(false);
-    if (!email.trim()) {
-      setEmailError('กรอกอีเมลก่อนนะคะ');
-      return;
-    }
-    setEmailSaving(true);
-    try {
-      if (directEmailEdit) {
-        const saved = await setMyUnverifiedEmail(
-          email.trim(),
-          account?.email ?? null,
-          account?.hasPassword ? emailPassword : undefined,
-        );
-        setEmail(saved.email);
-        toast.success('บันทึกอีเมลบัญชีแล้วค่ะ');
-      } else {
-        await requestMyEmailVerification(email.trim(), account?.hasPassword ? emailPassword : undefined);
-        setEmailSent(true);
-      }
-      invalidateChecklist();
-      setEmailEditing(false);
-      setEmailPassword('');
-      await load();
-    } catch (error) {
-      setEmailError(apiErrorMessage(error));
-      setEmailErrorCode(apiErrorCode(error));
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-
-  const verifyAccountEmail = async () => {
-    if (!account?.email) return;
-    setEmailError(null);
-    setEmailErrorCode(null);
-    setEmailSaving(true);
-    try {
-      await requestMyEmailVerification(account.email, account.hasPassword ? emailPassword : undefined);
-      setEmailSent(true);
-      setEmailPassword('');
-      await load();
-    } catch (error) {
-      setEmailError(apiErrorMessage(error));
-      setEmailErrorCode(apiErrorCode(error));
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-
-  const resendEmail = async () => {
-    setEmailError(null);
-    setEmailErrorCode(null);
-    setEmailSaving(true);
-    try {
-      await resendMyEmailVerification();
-      setEmailSent(true);
-      await load();
-    } catch (error) {
-      setEmailError(apiErrorMessage(error));
-      setEmailErrorCode(apiErrorCode(error));
-    } finally {
-      setEmailSaving(false);
-    }
-  };
-
-  /** Blank clears the stored number; the button that sends blank says so in words. */
   const savePhoneValue = async (next: string) => {
     setPhoneError(null);
     if (next && !isThaiMobileInput(next)) {
@@ -387,26 +290,6 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
       required={required}
       onChange={(event) => setAddress((current) => ({ ...current, [key]: event.target.value }))}
     />
-  );
-
-  const emailErrorBanner = emailError && (
-    <Banner tone="error">
-      {emailErrorCode === 'email_belongs_to_other_account' ? (
-        <>
-          อีเมลนี้มีบัญชีอื่นใช้อยู่แล้วค่ะ ถ้าเป็นบัญชีของคุณเอง เข้าสู่ระบบด้วยบัญชีเดิมแล้วผูก LINE
-          เข้ากับบัญชีนั้น ระบบจะเสนอให้รวมบัญชีให้เอง{' '}
-          <Link className="underline" href="/login">ไปหน้าเข้าสู่ระบบ</Link>
-        </>
-      ) : emailErrorCode === 'account_email_conflict' ? (
-        <>อีเมลนี้มีบัญชีอื่นใช้อยู่แล้วค่ะ กรุณาใช้อีเมลอื่น อีเมลบัญชีของคุณยังไม่เปลี่ยน</>
-      ) : emailErrorCode === 'account_email_changed' ? (
-        <>อีเมลบัญชีถูกเปลี่ยนจากอีกหน้าหรืออุปกรณ์แล้วค่ะ โหลดหน้านี้ใหม่ก่อนแก้อีกครั้ง</>
-      ) : emailErrorCode === 'account_email_verified' ? (
-        <>อีเมลบัญชีนี้ยืนยันแล้วค่ะ โหลดหน้านี้ใหม่เพื่อใช้ขั้นตอนเปลี่ยนอีเมลที่ยืนยันแล้ว</>
-      ) : emailErrorCode === 'invalid_email' ? (
-        <>รูปแบบอีเมลไม่ถูกต้องค่ะ เช่น somchai@gmail.com</>
-      ) : emailError}
-    </Banner>
   );
 
   return (
@@ -520,167 +403,10 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             hint="เผื่อวันหนึ่งเปลี่ยนมือถือแล้ว LINE หลุด จะได้กลับเข้าร้านได้ค่ะ"
           />
 
-          <div className="grid gap-4">
-            {/* The read-only blocks need a caption; the two form modes get theirs from the box. */}
-            {emailMode !== 'edit' && emailMode !== 'none' && (
-              <div className="text-sm font-medium text-gray-700">
-                {emailMode === 'unverified' ? 'อีเมลบัญชี' : 'อีเมล'}
-              </div>
-            )}
-
-            {/* §15.4.1 C: with no mailer there is nothing to offer, so nothing is offered. */}
-            {emailMode === 'unavailable' && (
-              <>
-                <p className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
-                  <span className="font-medium">{account?.email ?? 'ยังไม่ได้กรอกอีเมล'}</span>
-                  {account?.emailVerified && <MangmeeBadge tone="lime">ยืนยันแล้ว</MangmeeBadge>}
-                </p>
-                <Banner tone="note">
-                  ระบบนี้ยังเปิดส่งอีเมลยืนยันไม่ได้ {SUPPORT_CONTACT}
-                </Banner>
-              </>
-            )}
-
-            {/* §15.4.1 B: a verified address is a fact, not an open box under a button whose only
-                possible answer is the API's 409 "already verified for your account". */}
-            {emailMode === 'verified' && (
-              <>
-                <p className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
-                  <span className="font-medium">{account?.email}</span>
-                  <MangmeeBadge tone="lime">ยืนยันแล้ว</MangmeeBadge>
-                </p>
-                <button type="button" className={LINK_BUTTON} onClick={startEmailEdit}>เปลี่ยนอีเมล</button>
-              </>
-            )}
-
-            {emailMode === 'unverified' && (
-              <>
-                <p className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
-                  <span className="font-medium">{account?.email}</span>
-                  <MangmeeBadge tone="amber">ยังไม่ยืนยัน</MangmeeBadge>
-                </p>
-                <p className="text-sm text-gray-600">
-                  {account?.hasPassword
-                    ? 'ใช้อีเมลนี้เข้าสู่ระบบได้ เมื่อยืนยันแล้วจะใช้กู้รหัสผ่านและรับการแจ้งเตือนได้'
-                    : 'อีเมลนี้ใช้เข้าเว็บได้หลังจากตั้งรหัสผ่านสำรองด้านล่าง'}
-                </p>
-                <button type="button" className={LINK_BUTTON} onClick={startEmailEdit}>แก้ไขอีเมลบัญชี</button>
-                {account && account.emailDeliveryEnabled !== false && (
-                  <div className="mt-1 grid gap-3 rounded-lg border border-gray-200 p-3">
-                    <p className="text-sm font-semibold text-gray-900">ยืนยันอีเมลสำหรับบัญชีนี้</p>
-                    {account.pendingEmail ? (
-                      <>
-                        <Banner tone={emailSent ? 'ok' : 'note'}>
-                          ส่งลิงก์ยืนยันไปที่ {account.pendingEmail} แล้ว รอการยืนยัน (ลิงก์มีอายุ 15 นาที)
-                          {' '}ถ้าไม่ได้รับอีเมล {SUPPORT_CONTACT}
-                        </Banner>
-                        {emailErrorBanner}
-                        <button
-                          type="button"
-                          className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto sm:justify-self-start"
-                          disabled={emailSaving} aria-busy={Boolean(emailSaving)}
-                          onClick={() => void resendEmail()}
-                        >
-                          {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์อีกครั้ง'}
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm text-gray-600">ระบบจะส่งลิงก์ยืนยันไปที่อีเมลบัญชีนี้</p>
-                        {account?.hasPassword && (
-                          <TextField
-                            label="รหัสผ่านปัจจุบันสำหรับยืนยันอีเมล"
-                            type="password"
-                            value={emailPassword}
-                            autoComplete="current-password"
-                            disabled={emailSaving}
-                            onChange={(event) => setEmailPassword(event.target.value)}
-                          />
-                        )}
-                        {emailErrorBanner}
-                        <button
-                          type="button"
-                          className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto sm:justify-self-start"
-                          disabled={emailSaving} aria-busy={Boolean(emailSaving)}
-                          onClick={() => void verifyAccountEmail()}
-                        >
-                          {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์ยืนยัน'}
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-
-            {emailMode === 'pending' && (
-              <>
-                <Banner tone={emailSent ? 'ok' : 'note'}>
-                  ส่งลิงก์ยืนยันไปที่ {account?.pendingEmail} แล้ว รอการยืนยัน (ลิงก์มีอายุ 15 นาที)
-                  {' '}ถ้าไม่ได้รับอีเมล {SUPPORT_CONTACT}
-                </Banner>
-                {emailErrorBanner}
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    className="mangmee-btn mangmee-btn-secondary w-full sm:w-auto"
-                    disabled={emailSaving} aria-busy={Boolean(emailSaving)}
-                    onClick={() => void resendEmail()}
-                  >
-                    {emailSaving ? 'กำลังส่ง...' : 'ส่งลิงก์อีกครั้ง'}
-                  </button>
-                  <button type="button" className={LINK_BUTTON} disabled={emailSaving} aria-busy={Boolean(emailSaving)} onClick={startEmailEdit}>เปลี่ยนอีเมล</button>
-                </div>
-              </>
-            )}
-
-            {(emailMode === 'edit' || emailMode === 'none') && (
-              <>
-                <TextField
-                  id={EMAIL_FIELD_ID}
-                  label={directEmailEdit ? 'อีเมลบัญชี' : 'อีเมล'}
-                  aria-label={directEmailEdit ? 'อีเมลบัญชี' : 'อีเมล'}
-                  type="email"
-                  maxLength={254}
-                  value={email}
-                  disabled={emailSaving}
-                  hint={directEmailEdit
-                    ? 'ใช้คู่กับรหัสผ่านสำรองเพื่อเข้าเว็บได้ การบันทึกนี้ยังไม่ใช่การยืนยันอีเมล'
-                    : 'เราจะส่งลิงก์ยืนยันไปที่อีเมลนี้'}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-                {account?.hasPassword && (
-                  <TextField
-                    label="รหัสผ่านปัจจุบัน"
-                    type="password"
-                    value={emailPassword}
-                    autoComplete="current-password"
-                    disabled={emailSaving}
-                    hint="ยืนยันว่าเป็นคุณจริง ก่อนเปลี่ยนอีเมล"
-                    onChange={(event) => setEmailPassword(event.target.value)}
-                  />
-                )}
-                {emailErrorBanner}
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    className="mangmee-btn mangmee-btn-primary w-full sm:w-auto"
-                    disabled={emailSaving} aria-busy={Boolean(emailSaving)}
-                    onClick={() => void saveEmail()}
-                  >
-                    {emailSaving
-                      ? directEmailEdit ? 'กำลังบันทึก...' : 'กำลังส่ง...'
-                      : directEmailEdit ? 'บันทึกอีเมลบัญชี' : 'ส่งลิงก์ยืนยันอีเมล'}
-                  </button>
-                  {emailEditing && account?.email && (
-                    <button type="button" className={LINK_BUTTON} disabled={emailSaving} onClick={() => setEmailEditing(false)}>
-                      ยกเลิก
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          <AccountEmailOtpPanel onState={next => {
+            setAccount(current => current && ({ ...current, email: next.email, emailVerified: next.emailVerified, pendingEmail: next.emailRequirement === 'CHANGE_PENDING' ? next.challenge?.email ?? null : null }));
+            invalidateChecklist();
+          }} />
 
           <div className="mt-6 grid gap-4 border-t border-gray-200 pt-5">
             <TextField
@@ -720,8 +446,9 @@ export function CompanyProfilePage({ companyId, permissions }: { companyId: stri
             ) : (
               <>
                 <p className="text-sm text-gray-600">
-                  ตั้งไว้เพื่อเข้าใช้งานบนคอมพิวเตอร์โดยไม่ต้องใช้ LINE ไม่บังคับค่ะ
+                  ตั้งไว้เพื่อเข้าใช้งานบนคอมพิวเตอร์โดยไม่ต้องใช้ LINE ไม่บังคับค่ะ ก่อนตั้งรหัสผ่านให้ยืนยันตัวตนผ่าน LINE ด้านล่าง
                 </p>
+                <Link className="mangmee-btn mangmee-btn-secondary min-h-11 text-base" href={`/api/auth/line-login/start?purpose=email-reauth&returnTo=${encodeURIComponent(`/companies/${companyId}/settings/profile#account`)}`}>ยืนยันตัวตนผ่าน LINE ก่อนตั้งรหัสผ่าน</Link>
                 {usernameRequired ? (
                   <TextField
                     label="ชื่อผู้ใช้"

@@ -1637,7 +1637,7 @@ function AiUsageBudgetSection({
                   placeholder="เว้นว่าง = ไม่จำกัด"
                   value={ocrLimitInput}
                   onChange={(event) => setOcrLimitInput(event.target.value)}
-                  disabled={ocrLoading || budgetLoading || fieldsLocked}
+                  disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
                   เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน

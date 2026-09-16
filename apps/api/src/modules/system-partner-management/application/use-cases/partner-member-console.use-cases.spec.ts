@@ -25,6 +25,7 @@ function makePrisma(opts: {
   const contextDeletes: any[] = [];
   const handoffRevokes: any[] = [];
   const ops = {
+    $executeRaw: async () => 1, $queryRaw: async () => [],
     passwordResetToken: { updateMany: async () => ({ count: 0 }) },
     companyMembership: {
       findFirst: async () =>

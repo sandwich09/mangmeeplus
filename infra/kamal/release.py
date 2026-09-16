@@ -13,6 +13,7 @@ import fcntl
 import hashlib
 import http.cookiejar
 import ipaddress
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ ORDER = ('ai-gateway', 'api-web', 'workers')
 ACCOUNT = '311414082667'
 REGION = 'ap-southeast-1'
 CONTROLLER_FILES = tuple('infra/kamal/'+p for p in ('release.py','config.json','retire-builds.cjs','deploy-uat','deploy-prod')) + tuple('infra/dev-kamal/'+p for p in ('build-complete.py','capture-config.py','release_inventory.py','verify-config.mjs','Dockerfile.tools'))
+CONTROLLER_FILES += ('infra/postmark/config.py', 'infra/postmark/config.json')
 
 def controller_manifest():
     return {p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in CONTROLLER_FILES}
@@ -343,6 +345,7 @@ class Release:
         self.receipt['controllerConfigSha256'] = hashlib.sha256(config_path.read_bytes()).hexdigest()
         configured = read(config_path)[self.args.environment]
         overrides = make_overrides(self.target,self.build['sourceCommit'],self.build['agentcore']['sha256'],configured)
+        overrides['api-web'].update(self.postmark_configuration(capture))
         self.secrets.update(v for values in overrides.values() for v in values.values() if isinstance(v,str) and len(v)>=8)
         write(self.work/'overrides.json',overrides)
         self.envdir = self.work/'environments'
@@ -363,6 +366,28 @@ class Release:
         self.receipt['releaseId']=self.manifest['releaseId']
         self.receipt['configSecretVersions']=self.manifest['secretVersions']
 
+    def postmark_configuration(self, capture):
+        if self.target['kind'] == 'dev':
+            return {}
+        # Canonical mail settings override the legacy ECS baseline on every Kamal release.
+        mail_path = self.source/'infra/postmark/config.py'
+        spec = importlib.util.spec_from_file_location('postmark_deployment', mail_path)
+        mail = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mail)
+        settings = mail.deployment_config(read(mail_path.with_name('config.json')), self.args.environment)
+        origin = 'https://uat.mangmeeplus.com' if self.args.environment == 'uat' else 'https://mangmeeplus.com'
+        if settings['provider'] == 'postmark':
+            require(self.target['publicUrl'].rstrip('/') == origin, 'Postmark web origin does not match environment')
+        values, versions = mail.resolve_secrets(settings, lambda ref: self.aws([
+            'secretsmanager','get-secret-value','--secret-id',ref,'--version-stage','AWSCURRENT']))
+        self.secrets.update(values.values())
+        write(capture/'postmark-readiness.json', mail.native_preflight(settings, values))
+        secret_versions = read(capture/'secret-versions.json')
+        secret_versions.update(versions)
+        write(capture/'secret-versions.json', secret_versions)
+        return dict(settings['environment'], **values, EMAIL_PROVIDER=settings['provider'],
+            WEB_BASE_URL=self.target['publicUrl'].rstrip('/'))
+
     def config_freshness(self):
         if 'controllerManifest' in self.receipt:
             require(controller_manifest()==self.receipt['controllerManifest'], 'Controller changed during release')
@@ -372,6 +397,12 @@ class Release:
         self.command(cmd,timeout=180,log='config-freshness')
         before,after=read(self.work/'capture-evidence.json'),read(self.work/'recapture-evidence.json')
         require(before['secretVersions']==after['secretVersions'], 'Secrets rotated after capture; stop before runtime mutation')
+        for ref, version in self.manifest['secretVersions'].items():
+            if '/postmark/' in ref:
+                current = self.aws(['secretsmanager','describe-secret','--secret-id',ref])
+                active = [key for key, stages in current.get('VersionIdsToStages', {}).items() if 'AWSCURRENT' in stages]
+                require(current.get('ARN') == ref and not current.get('DeletedDate') and active == [version],
+                    'Postmark secret rotated after capture; stop before runtime mutation')
         require({s:v['configurationSha256'] for s,v in before['services'].items()}==
                 {s:v['configurationSha256'] for s,v in after['services'].items()}, 'Configuration changed after capture')
         self.receipt['configFreshnessVerifiedAt']=after['readAt']

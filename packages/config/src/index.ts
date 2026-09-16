@@ -359,6 +359,7 @@ export const apiConfigSchema = baseConfigSchema.extend({
   POSTMARK_MESSAGE_STREAM: z.string().regex(/^[a-zA-Z0-9_-]+$/).default('outbound'),
   POSTMARK_FROM_ADDRESS: z.string().email().optional(),
   POSTMARK_FROM_NAME: z.string().max(80).regex(/^[^<>\r\n]*$/).default('Mangmee Plus'),
+  POSTMARK_UAT_ALLOWED_RECIPIENTS: z.string().default(''),
   POSTMARK_WEBHOOK_USERNAME: z.string().optional(),
   POSTMARK_WEBHOOK_PASSWORD: z.string().optional(),
   SES_REGION: z.string().optional(),
@@ -396,6 +397,8 @@ export const apiConfigSchema = baseConfigSchema.extend({
   CUSTOMER_REGISTER_MAX_PER_IP_CHANNEL: z.coerce.number().int().positive().default(10),
   CUSTOMER_REGISTER_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   EMAIL_VERIFICATION_REQUEST_MAX_PER_USER: z.coerce.number().int().positive().default(3),
+  EMAIL_OTP_HMAC_KEY: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  EMAIL_OTP_HMAC_KEY_VERSION: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).optional(),
   EMAIL_VERIFICATION_REQUEST_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
   EMAIL_VERIFICATION_CONFIRM_MAX_PER_IP: z.coerce.number().int().positive().default(10),
   EMAIL_VERIFICATION_CONFIRM_WINDOW_SECONDS: z.coerce.number().int().positive().default(900),
@@ -945,7 +948,7 @@ export function validateProductionConfig(config: Record<string, unknown>): void 
  * Log pipeline only. The audit trail keeps personal data until an erasure request (L-11).
  */
 export const SENSITIVE_LOG_KEY_PATTERN =
-  /authorization|passwd|password|token|secret|cookie|key|credential|signature|hmac|jwt|bearer|prompt|actordelegation|phone|email|lineuserid|nationalid|taxid|idcardnumber|address|displayname/i;
+  /authorization|passwd|password|token|secret|cookie|key|credential|signature|hmac|jwt|bearer|otp|nonce|^code$|prompt|actordelegation|phone|email|lineuserid|nationalid|taxid|idcardnumber|address|displayname/i;
 
 const REDACTED = '[REDACTED]';
 // ponytail: depth 6 covers err.meta.cause.detail nesting; deeper is truncated, not dropped
@@ -980,7 +983,8 @@ function redactWalk(value: unknown, depth: number, seen: WeakSet<object>): unkno
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => [
         key,
-        SENSITIVE_LOG_KEY_PATTERN.test(key) ? REDACTED : redactWalk(entry, depth + 1, seen),
+        SENSITIVE_LOG_KEY_PATTERN.test(key) && !(key === 'code' && typeof entry === 'string' && /^P\d{4}$/.test(entry))
+          ? REDACTED : redactWalk(entry, depth + 1, seen),
       ]),
     );
   } finally {
