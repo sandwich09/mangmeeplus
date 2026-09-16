@@ -1,6 +1,6 @@
 # Agent Memory: Optional signup email, OTP and billing verification
 
-Status: Source implemented in isolated worktree; dependency integrated. PR #575 awaits green exact-head CI after the integration corrections recorded below. User authorized commit/push and admin merge into develop/main only after CI passes. Native release acceptance remains pending. The dated checkpoints below are history; the last checkpoint is current.
+Status: Implementation and CI-gated admin delivery complete: PR #575 merged into develop and PR #582 into main after exact-head CI passed. Native release acceptance remains pending; no deployment or native send was performed in this implementation task. The dated checkpoints below are history; the last checkpoint is current.
 Owner: Codex / thawatchai
 Scope: Optional LINE contact email, account email OTP link/change, current verified email before new financial authorization, UX/SA/dev impacts, legacy migration and acceptance.
 
@@ -125,3 +125,13 @@ Final correction verification: readiness/portal19 groups PASS (`/tmp/email-otp-p
 - Added the missing synthetic customer/owner email and a regression assertion: stale client billingEmail is ignored, server-derived verified email is returned, and the existing shifted-anniversary assertion remains. No production logic changed.
 - Plan/collection/gift-day Nest/PG/Next/Chromium27 groups and API TypeScript pass (`/tmp/email-otp-gift-final.log`, `/tmp/email-otp-gift-types.log`). Full primary HTTP runner passed256 groups on stable integrated source (`/tmp/email-otp-full-http-finalbase.log`, exit0), covering the previous failure and the remaining billing regression. Commit/push and another exact-head CI follow. No native send/payment/deploy.
 - Current remote develop includes docs-only PRs #578/#580 after the already integrated Billing base; preserve those documents when refreshing the merge base. Root checkout remains untouched.
+
+
+## CI-gated source delivery — 2026-09-16
+
+- Develop candidate `e477e171c6bfff0602ed5eda010080f143f59ebd`: [CI35047624780](https://github.com/MangmeeDev/mangmeeplus/actions/runs/35047624780) SUCCESS. Main candidate `ffd39ca128a90e42ea29cc03cb5891220d380325`: [CI35047869532](https://github.com/MangmeeDev/mangmeeplus/actions/runs/35047869532) SUCCESS. Both passed Typecheck and Test, Secret Scan, Security Audit, Migration Review and Production Config Validation. Image/publication jobs are intentionally skipped for PR CI.
+- Admin merged [PR #575](https://github.com/MangmeeDev/mangmeeplus/pull/575) into develop at `dc574682f646033c9e21c3db39c55bfcadf7b154`, then [PR #582](https://github.com/MangmeeDev/mangmeeplus/pull/582) into main at `3e922b64eb02ce535e71a4ced2ef415c8b41b24d`. Both source trees are `3230ae05a0ced9d7d8ba1d8714f91bc9497571fb`; both contain the tested feature head. No package.json edits or root-checkout mutations.
+- Complete integration CI includes the OTP/recipient PG suite, primary billing HTTP runner, signup/OTP/LINE browser journeys, historical invoice discovery/import, billing controls/portal and release-control tests. Historical failed runs above are not counted as passing.
+- This final documentation-only record changes no runtime source. Native application OTP/callback/LINE acceptance, actual target secret provisioning, rotation/rollback/release rehearsal and signed UAT/READY/Production/customer OPEN remain pending. The earlier read-only secret metadata observation is dated evidence, not a fresh deployed-state check.
+
+Next: Source implementation/commit/push/admin merge request is fulfilled. For a separately authorized release, follow the mandatory runbooks and complete target readiness; no new feature flag must be enabled. Do not use this source merge as native readiness or deployment evidence.
