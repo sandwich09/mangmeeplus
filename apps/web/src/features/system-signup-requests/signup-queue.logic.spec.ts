@@ -425,3 +425,10 @@ describe('queue tabs', () => {
     }
   });
 });
+
+it('email OTP recovery closes existing provisioning and never promises legacy account attachment', () => {
+  for (const state of ['READY', 'PROVISIONING_FAILED', 'PROVISIONING']) assert.equal(canApproveSignup(state, item({ source: 'email-otp', state, staleProvisioning: true })), true);
+  const hints = signupHintChips(item({ source: 'email-otp', emailMatchesExistingUser: true }));
+  assert.ok(hints.some(h => h.label.includes('ยืนยันอีเมลแล้ว')));
+  assert.ok(hints.every(h => !h.label.includes('ระบบจะผูกให้')));
+});

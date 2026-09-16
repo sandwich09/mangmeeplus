@@ -10,7 +10,7 @@ import { SignupAdminNotifyService } from './signup-admin-notify.service';
 import { LineSignupNotifyService } from './line-signup-notify.service';
 import { SignupOpsAlertService } from './signup-ops-alert.service';
 import { suggestedUsernameFromEmail } from '../domain/account-claim.logic';
-import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
+import { OWNED_COMPANY_MEMBERSHIP, SIGNUP_SOURCE_EMAIL_OTP, SIGNUP_SOURCE_LINE_OA } from '../domain/company-signup.logic';
 
 export type ProvisionSignupCommand = {
   requestId: string;
@@ -65,6 +65,7 @@ export class ProvisionSignupUseCase {
     const request = claim.request;
     // P10-L §6: which owner shape applies is decided by the row's source, once, here.
     const lineOa = request.source === SIGNUP_SOURCE_LINE_OA;
+    const emailOtp = request.source === SIGNUP_SOURCE_EMAIL_OTP;
     if (lineOa && request.resolvedExistingCompanyId) {
       throw new ConflictException('line_signup_existing_resolution_not_provisionable');
     }
@@ -74,9 +75,9 @@ export class ProvisionSignupUseCase {
       // Review HIGH-C: a LINE row stranded at READY has a finished company and one missing hop —
       // a failure between `completeProvisioning` and this advance used to park it there forever,
       // where the open-application fence also kept its LINE account locked out.
-      if (lineOa && request.state === 'READY') {
+      if ((lineOa || emailOtp) && request.state === 'READY') {
         await this.core.advance(request.id, 'COMPLETED', cmd.correlationRequestId);
-        await this.announceReady(request);
+        if (lineOa) await this.announceReady(request);
       }
       return {
         companyId: request.companyId,
@@ -99,6 +100,9 @@ export class ProvisionSignupUseCase {
 
     try {
       if (lineOa) await this.assertLineProvisionAuthorized(request);
+      if (emailOtp && (!request.emailProofVerifiedAt || request.intakePolicyVersion !== 'EMAIL_SIGNUP_V1' || request.attachUserId)) {
+        throw new ConflictException('email_signup_proof_required');
+      }
       // Review MEDIUM-A: this id lands in two foreign keys to User, so an operator that cannot be
       // resolved has to fail here, by name, rather than at the constraint with a Prisma code.
       const operator = await this.resolveOperator(request, cmd);
@@ -169,7 +173,7 @@ export class ProvisionSignupUseCase {
       // Spec §4F: the LINE step lives on the success page and may be skipped, so the web-form
       // request parks at LINE_LINK_PENDING. A LINE application has nothing left to link — the
       // identity was created inside the company transaction — so it finishes (§5).
-      await this.core.advance(request.id, lineOa ? 'COMPLETED' : 'LINE_LINK_PENDING', cmd.correlationRequestId);
+      await this.core.advance(request.id, lineOa || emailOtp ? 'COMPLETED' : 'LINE_LINK_PENDING', cmd.correlationRequestId);
       if (lineOa) await this.announceReady({ ...request, attachUserId: result.attachedExistingOwner ? request.attachUserId : null });
 
       return {
@@ -362,7 +366,9 @@ export class ProvisionSignupUseCase {
     if (!contactEmail) throw new ConflictException('signup_contact_email_missing');
     const attachUserId = request.attachUserId;
     return {
-      ownerUsername: username ?? suggestedUsernameFromEmail(contactEmail) ?? contactEmail,
+      ...(request.source === SIGNUP_SOURCE_EMAIL_OTP
+        ? { ownerAuth: { kind: 'email' as const, verifiedAt: request.emailProofVerifiedAt! } }
+        : { ownerUsername: username ?? suggestedUsernameFromEmail(contactEmail) ?? contactEmail }),
       claimedOwner: {
         email: contactEmail,
         ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
@@ -558,6 +564,7 @@ const SIGNUP_TRIAL_TIER = SIGNUP_TRIAL_TIER_KEY;
 
 /** The subset of `CompanySignupRequest` provisioning reads. */
 type SignupRow = {
+  emailProofVerifiedAt?: Date | null;
   id: string;
   state: string;
   source: string;

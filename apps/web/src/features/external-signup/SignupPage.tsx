@@ -211,6 +211,9 @@ export default function SignupPage() {
           ) : (
             <>
               <h1 className="text-[22px] font-extrabold leading-9 text-gray-900">สมัครใช้งานมั่งมีพลัส</h1>
+              <Link href="/email-access" className="mt-5 block rounded-xl bg-green-700 px-4 py-3 text-center text-base font-semibold text-white">สมัครด้วยรหัสทางอีเมล ไม่ต้องตั้งรหัสผ่าน</Link>
+              <p className="my-4 text-[15px] leading-7 text-gray-600">ใช้ LINE อยู่แล้ว? สมัครผ่านเมนูใน LINE มั่งมี หรือ <Link href="/login" className="underline">เข้าสู่บัญชีเดิม</Link></p>
+              <h2 className="text-lg font-semibold">ให้ทีมงานช่วยสมัคร</h2>
               <p className="mt-1.5 text-[15px] leading-7 text-gray-600">
                 กรอกข้อมูลร้านของคุณ ทีมงานจะตรวจสอบ แล้วส่งอีเมลให้ตั้งรหัสผ่าน
               </p>

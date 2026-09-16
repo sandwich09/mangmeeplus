@@ -32,6 +32,10 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
   input.transport(async(url,init)=>{
     if(url.hostname!=='api.stripe.com')return;
     const path=url.pathname.replace(/^\/v1/,'');
+    if(path===`/customers/${customerId}`&&(!init?.method||init.method==='GET')){
+      const owner=await db.user.findUniqueOrThrow({where:{id:input.userIds[0]!}});
+      return response({id:customerId,object:'customer',livemode:false,email:owner.email,metadata:{billingAccountId:accountId}});
+    }
     if(path===`/prices/${priceId}`||path===`/prices/${zeroId}`)return response({id:path.endsWith(zeroId)?zeroId:priceId,object:'price',product:`prod_${tag}`,livemode:false,active:true,type:'recurring',currency:'thb',
       unit_amount:path.endsWith(zeroId)?0:offer.priceSatang,recurring:{interval:'month',interval_count:1,usage_type:'licensed'},billing_scheme:'per_unit',tax_behavior:'inclusive'});
     if(path===`/subscriptions/${subId}`&&(!init?.method||init.method==='GET'))return response(sub);

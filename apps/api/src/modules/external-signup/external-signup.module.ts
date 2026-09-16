@@ -1,3 +1,5 @@
+import { PublicEmailAccessController } from './presentation/http/public-email-access.controller';
+import { EmailSignupService } from './application/email-signup.service';
 import { Module } from '@nestjs/common';
 import { LoggerModule } from '../../common/logger/logger.module';
 import { AuthModule } from '../auth/auth.module';
@@ -37,6 +39,7 @@ import { SystemSupportRequestController } from './presentation/http/system-suppo
   // DashboardNotificationsModule: the notification event use case the admin announcement reuses.
   imports: [AuthModule, DashboardNotificationsModule, DataModelCoreModule, SystemOnboardingModule, LoggerModule],
   controllers: [
+    PublicEmailAccessController,
     PublicCompanySignupController,
     PublicLineSignupController,
     PublicSesEventsController,
@@ -46,6 +49,7 @@ import { SystemSupportRequestController } from './presentation/http/system-suppo
     SignupClaimEmailInternalController,
   ],
   providers: [
+    EmailSignupService,
     CompanySignupCoreService,
     AccountClaimTokenService,
     SubmitCompanySignupUseCase,

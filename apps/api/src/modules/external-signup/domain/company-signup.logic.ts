@@ -86,6 +86,7 @@ const TRANSITIONS: Readonly<Record<CompanySignupState, readonly CompanySignupSta
 
 export const SIGNUP_SOURCE_OFFICIAL_SITE = 'official-site';
 export const SIGNUP_SOURCE_LINE_OA = 'line-oa';
+export const SIGNUP_SOURCE_EMAIL_OTP = 'email-otp';
 
 /**
  * Review B-05: "one open application per LINE account", enforced by the partial unique index in
@@ -224,7 +225,7 @@ export function companySignupPayloadHash(input: NormalizedCompanySignupInput): s
 export function signupTransitionTable(
   source: string,
 ): Readonly<Record<CompanySignupState, readonly CompanySignupState[]>> {
-  return source === SIGNUP_SOURCE_LINE_OA ? LINE_OA_TRANSITIONS : TRANSITIONS;
+  return source === SIGNUP_SOURCE_LINE_OA || source === SIGNUP_SOURCE_EMAIL_OTP ? LINE_OA_TRANSITIONS : TRANSITIONS;
 }
 
 export function canTransitionCompanySignup(

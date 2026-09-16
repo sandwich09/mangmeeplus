@@ -570,6 +570,8 @@ function LoginForm({ accessState }: { accessState: 'OPEN' | 'CLOSED' }) {
             </Button>
           </form>
 
+          {!linkMode && <Link href={nextPath ? `/email-access?next=${encodeURIComponent(nextPath)}` : "/email-access"} className="mt-3 block rounded-xl border px-4 py-3 text-center text-base font-semibold text-brand-700">รับรหัสทางอีเมล</Link>}
+
           {lineLoginAvailable ? (
             <>
               {qrApproveLead ? null : (

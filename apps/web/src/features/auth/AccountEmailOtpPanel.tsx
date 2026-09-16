@@ -17,7 +17,7 @@ export function AccountEmailOtpPanel({ onState, billing = false, billingInterval
     if (!mounted.current) return;
     offset.current = Date.parse(next.serverNow) - Date.now(); setNow(Date.parse(next.serverNow));
     setState(next);
-    const fingerprint = JSON.stringify([next.emailRevision, next.emailRequirement, next.email]);
+    const fingerprint = JSON.stringify([next.emailRevision, next.emailRequirement, next.email, next.emailLoginEnabled]);
     if (previous.current !== fingerprint) { previous.current = fingerprint; callback.current?.(next); }
     setEmail(value => value || next.challenge?.email || next.email || '');
   }, []);
@@ -89,7 +89,14 @@ export function AccountEmailOtpPanel({ onState, billing = false, billingInterval
       </>}
       {state.emailRequirement === 'READY' && !editing && <button type="button" className={button} onClick={() => { setEmail(state.email ?? ''); setEditing(true); }}>เปลี่ยนอีเมล</button>}
       {state.emailRequirement === 'READY' && editing && <button type="button" className={button} disabled={busy} onClick={() => setEditing(false)}>ปิดการแก้ไข</button>}
-      {!state.hasPassword && <p className="text-gray-600">อีเมลที่ยืนยันแล้วไม่ใช่รหัสผ่าน หากต้องการเข้าเว็บโดยไม่ใช้ LINE ให้ตั้งชื่อผู้ใช้และรหัสผ่านสำรองในหน้าบัญชีของฉัน</p>}
+      {!billing && state.emailRequirement === 'READY' && <div className="space-y-3 rounded-xl border p-4">
+        <p className="font-semibold">เข้าสู่ระบบด้วยรหัสทางอีเมล</p>
+        <p>รับรหัส 6 หลักทางอีเมลทุกครั้งที่เข้าเว็บ ไม่ต้องจำรหัสผ่าน</p>
+        {state.hasPassword ? <label className="block">รหัสผ่านปัจจุบัน<input type="password" autoComplete="current-password" className={field} value={password} disabled={busy} onChange={e => setPassword(e.target.value)} /></label>
+          : !state.emailLoginEnabled && <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={reauthenticate}>ยืนยันตัวตนผ่าน LINE</button>}
+        <button type="button" className={button} disabled={busy} aria-busy={busy} onClick={() => void run(() => accountEmailOtpCommand('/login-method', { enabled: !state.emailLoginEnabled, ...(password ? { currentPassword: password } : {}) }), 'บันทึกวิธีเข้าสู่ระบบแล้ว')}>{state.emailLoginEnabled ? 'ปิดการเข้าด้วยอีเมล' : 'เปิดการเข้าด้วยอีเมล'}</button>
+      </div>}
+      {!state.hasPassword && !state.emailLoginEnabled && <p className="text-gray-600">อีเมลที่ยืนยันแล้วไม่ใช่รหัสผ่าน หากต้องการเข้าเว็บโดยไม่ใช้ LINE ให้ตั้งชื่อผู้ใช้และรหัสผ่านสำรองในหน้าบัญชีของฉัน</p>}
     </>}
     <p className="text-gray-600">หากยังรับรหัสไม่ได้ คุณยังใช้งานร้าน ดูเอกสารเดิม และยกเลิกต่ออายุได้ ติดต่อทีมงาน 098-256-5628</p>
   </section>;

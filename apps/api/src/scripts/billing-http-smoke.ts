@@ -1,3 +1,4 @@
+import { checkEmailAccess } from './email-access-smoke';
 import { checkBillingAdjustments } from './billing-adjustments-smoke';
 import { checkBillingSupportOutcomes } from './billing-support-outcomes-smoke';
 import { checkLineBinding } from './line-binding-smoke';
@@ -47,7 +48,7 @@ async function main() {
   assert.ok(databaseUrl, 'BILLING_TEST_DATABASE_URL is required');
   const db = new URL(databaseUrl);
   assert.ok(['localhost', '127.0.0.1'].includes(db.hostname));
-  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/email_otp_test'].includes(db.pathname));
+  assert.ok(['/mangmee_billing_20260912', '/watchdog_postmark_ci', '/email_otp_test', '/email_access_test'].includes(db.pathname));
   const run = randomUUID().replaceAll('-', ''), accountId = `acct_${run}`;
   const companyIds = [`billing-http-${run}`, `billing-http-other-${run}`], userIds = [`owner-${run}`, `staff-${run}`];
   const secret = randomUUID(), webhookSecret = `whsec_${run}`, workerToken = randomUUID();
@@ -196,6 +197,11 @@ async function main() {
         drainOperations:()=>request('/v1/internal/billing/drain','POST',{}, {'x-worker-token':workerToken}),
         drain:()=>request('/v1/internal/billing/provider-scans/drain','POST',{}, {'x-worker-token':workerToken}),transport:hook=>{journeyTransport=hook;}});
     };
+    if(process.env.BILLING_EMAIL_ACCESS_ONLY==='1'){
+      const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
+      cases.push(...await checkEmailAccess({app,prisma,membershipId:memberId,request,browser,transport:hook=>{journeyTransport=hook;}}));
+      console.log(JSON.stringify({layer:'real-Nest-HTTP-PostgreSQL-Next-Chromium',passed:cases,browserE2E:true,simulatedProviders:['Postmark'],realProviderDelivery:false}));return;
+    }
     if(process.env.BILLING_SUPPORT_OUTCOMES_ONLY==='1'){
       const {startBillingBrowser}=await import('./billing-browser-smoke');browser=await startBillingBrowser({apiOrigin:origin,token,companyId:companyIds[0]!});
       cases.push(...await checkBillingSupportOutcomes({prisma,userId:userIds[0]!,companyId:companyIds[0]!,membershipId:memberId,stripeAccountId:accountId,request,browser}));

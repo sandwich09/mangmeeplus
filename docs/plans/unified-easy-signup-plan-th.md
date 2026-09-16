@@ -1,20 +1,26 @@
-# แผนร่าง — สมัครเว็บง่ายเหมือน LINE
+# แผน implement สมัครและเข้าสู่ระบบด้วย email OTP
 
-> **Current scope — 2026-09-16:** เส้นทางที่อนุมัติและ implement แล้วคือ official → สมัครในแอป → ตรวจคำขอ → claim → ตั้งรหัส/ใช้บัญชีเดิม → เริ่มใช้โดยไม่บังคับ LINE พร้อมยืนยันอีเมลและกู้รหัสผ่าน Postmark. ดู [ผล browser/API/PG ปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json). ส่วนฟอร์มย่อ, OTP/passwordless และ email auto-provision เป็นงาน E0 แยกจาก branch billing นี้ ไม่ใช้ผล billing/signup เดิมอ้างว่า implement เส้นทางใหม่นี้แล้ว. สถานะ BRAINSTORM ด้านล่างเป็นประวัติข้อเสนอ E0; การเปิด provider/production ยังต้องผ่าน release acceptance.
+สถานะ 2026-09-16: IMPLEMENTING. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
 
-> **Package amendment 2026-09-11:** [สิทธิ์/ราคา/7เมนู default](../specs/mangmee-package-entitlements-spec-th.md) และ [PE-S0–S5 / PE01–PE36](mangmee-package-entitlements-plan-th.md) เป็นข้อกำหนดล่าสุด: สมัครอย่างเดียวได้ starter7เมนู + FREE_TRIAL_15 (1สาขา/ผู้ใช้รวม2คน/15ใบต่อเดือน/30วัน) ไม่ผูกบัตร; paid รองรับ month/year ตามรูป โดยมติ pack amendment2026-09-12 ให้ annual รับโควตาทั้งก้อนทันทีและไม่รีเซ็ตโควตา paid รายเดือน. ENTERPRISE_1999 ทั้งเดือน/ปี + ภ.ง.ด.53/50ทวิ Coming soon ห้ามจ่าย; ไม่กระทบ PRO_999. B01/B02/B09 ตัดสินแล้วเฉพาะขอบเขตนี้; นโยบายอื่นคงเดิม. Full spec/native provider acceptance ยังไม่ครบ; local simulated browser/HTTP checkpoint ดูหลักฐาน integration ล่าสุด ไม่ใช้แทน native provider acceptance.
+## ลำดับงานและเกณฑ์จบ
 
-สถานะ: **BRAINSTORM / NOT STARTED 2026-09-11**. [Spec และทิศทาง Owner](../specs/unified-easy-signup-spec-th.md) เป็น source of truth. LINE optional และ easy web signup ยืนยันแล้ว; วิธี email proof/login/auto approval ยังเป็นข้อเสนอ. ไม่เปลี่ยน runtime, เปิด provider, deploy หรือส่งข้อความในรอบนี้.
+- [x] E0 ตรวจ actual auth/session/onboarding/signup source/LINE cap/BFF; แก้ spec และบันทึก E01–E17.
+- [x] E1 เพิ่ม additive public challenge/opt-in schema, OTP crypto/rate/delivery, atomic confirm+session; test replay/expiry/attempt/snapshot/rollback.
+- [x] E2 เพิ่ม email-first request/admission/source transitions, shared cap+duplicates, existing onboarding email owner, admin approval/status/resume; verify one company/trial and review boundaries.
+- [x] E3 BFF HttpOnly browser binding, email/login/signup/status UI, opt-in/backup/LINE return และ marketing consistency; loading/error/retry/390px/keyboard.
+- [ ] E4 isolated PG + HTTP/browser Postmark simulated journey; legacy and cross-channel regressions/typechecks. Fix found gaps before claiming passed.
+- [ ] E5 exact-source evidence/memory; stage only own changes; paid CI only after local candidate passes. Integrate with latest dependency, wait required CI before approved admin merge develop/main; never deploy.
 
-**Mail-provider decision 2026-09-11:** Owner เลือก Postmarkแล้ว. [M0–M4 / EM01–EM18](mangmee-transactional-email-provider-plan-th.md) เป็น delivery dependency ของ E1–E3; M0 docsพร้อม, M1/M2ต้องผ่านก่อนเปิดflowอีเมล และ M4แยกactual inboxจากsimulation. Receipt ค่า Postmarkใช้ลงบัญชีบริษัทเรา; Stripeออก/ส่งInvoice/Receiptของลูกค้า. B06ข้อมูลการคิดภาษีไม่ใช่fieldที่ต้องเพิ่มตอนเริ่มใช้ฟรี; custom fiscal generator/e-Taxไม่ใช่งานmail provider.
+## การตรวจผล
 
-| ขั้น | งานและขอบเขต | หลักฐานก่อนถือว่าเสร็จ |
-|---|---|---|
-| E0 Contract | เลือก email proof + returning login/recovery ให้ครบ; ลด fields; แยกคำขอใหม่/legacy pending; eligibility/review/cap ข้ามช่องทาง; map state เดิมกับ flow ใหม่แบบ source/policy-aware | ไม่ทำลาย Flow B เดิม; existing/unverified/held identity และ signup→access journey ระบุได้ |
-| E1 Identity + admission | reuse token/atomic-claim/session/consent/rate-limit/outbox/provision patterns; ไม่เอา AccountClaimToken เดิมมาให้สิทธิ์ login โดยขยายขอบเขตเงียบ ๆ; เพิ่ม schema/contract เท่าที่แบบที่เลือกต้องใช้ | real PG replay/concurrency/expiry/collision + negative authorization; ส่งเมลจำลองระบุขอบเขตชัด |
-| E2 App + official | ฟอร์มสั้นในแอป, email verify/loading/pending/recovery/login, first receipt; official handoff และแยก contact lead; LINE entry ใช้ core ร่วมที่ปรับแล้ว | browser/API/DB end-to-end ไม่มี LINE, เปลี่ยนอุปกรณ์/หลายแท็บ/สมัครค้าง, link ทั้งสองทิศ, 390px/desktop/keyboard |
-| E3 Delivery + rollout | ตรวจ provider/inbox/bounce และ latency จริงตาม runbooks; เปิดเฉพาะเมื่อ flow กลับเข้า/กู้บัญชีพร้อม, คง recovery ของคำขอเดิม, วัด signup→first receipt แยก source/method | local proof แยกจาก inbox/UAT/LIVE, no false-sent/ready state, release protocol ผ่านก่อนเปิดจริง |
+ใช้ test tools/dependencies เดิม ไม่แก้ package.json นอกจาก dependency change (ไม่มีแผนเพิ่ม). PG fixture ต้อง isolated และใช้ migrations ของ candidate. Unit tests ไม่แทน transaction/race evidence. API/browser หลักฐานต้องแยกจำลอง provider จาก native. No live mail/payment/cloud actions. จำนวน checks ไม่ใช่เปอร์เซ็นต์ความพร้อม production.
 
-ชุด regression ต้องครอบคลุม: new account/no LINE, existing verified account, unverified contact collision, repeat trial/shop, foreign membership/holds, same request parallel, cross-channel signup, OTP/link expiry/resend/rate limit, delivery disabled/failure, provisioning commit/response-loss, logout/return/recovery และ payment independence. ยังไม่มี test ใหม่นี้ถูกรัน; billing S-pre results ไม่ใช้แทน signup proof.
+Run focused OTP/domain tests then API/web typechecks and integration tests of changed flows. เพิ่ม required suite coverage registration ตาม pattern เดิม. ไม่ rerun full suite/CI ซ้ำถ้าไม่มีการเปลี่ยนหรือพบข้อกังวลใหม่.
 
-งานที่ทำแล้ว: ตรวจ actual official template, app Flow B/claim/provision, LINE AUTO_FREE admission, auth email-delivery guard/port/factory และ historical email readiness memo; บันทึก spec/plan/cross-repo links. OwnerเลือกPostmarkแล้วและยืนยันStripecustomerdocuments; ตรวจofficialAPIและระบุruntime migration/test planครบ. ยังไม่ตรวจlive environmentหรือactivateprovider.
+## สถานะ dependency / impact
+
+Optional-email/postmark task มี CI/release work แยก;ไม่แก้ใน worktree นั้น. Shared source changes ต้องตรวจ E01–E17 และ compatibility กับ verified-email-before-payment. UI ไม่กล่าวว่า verified email ของบัญชีเก่าทำ passwordless ได้จน opt-in สำเร็จ. Existing official-site rows ไม่ถูก auto-approve.
+
+## Evidence
+
+Local checkpoint: API suite/typecheck passed; web 1731/1731; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups passed including marketing and admin crash recovery. Safe return-path follow-up and integrated dependency checks are pending at this checkpoint. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.

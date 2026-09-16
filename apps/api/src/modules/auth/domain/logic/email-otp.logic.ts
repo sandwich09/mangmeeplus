@@ -12,7 +12,7 @@ export type EmailProof = {
 
 type SecurityUser = {
   id: string; status: string; email: string | null; emailVerifiedAt: Date | null;
-  emailRevision: number;
+  emailRevision: number; emailLoginEnabledAt?: Date | null;
   credential: { id: string; passwordHash: string; status: string; updatedAt: Date; expiresAt: Date | null } | null;
   externalIdentities: { id: string; provider: string; providerChannelId: string; providerUserId: string; status: string; linkedAt: Date }[];
 };
@@ -25,6 +25,8 @@ export function emailSecurityBinding(user: SecurityUser): string {
       user.credential.updatedAt.toISOString(), user.credential.expiresAt?.toISOString()],
     [...user.externalIdentities].sort((a, b) => a.id.localeCompare(b.id)).map(i =>
       [i.id, i.provider, i.providerChannelId, i.providerUserId, i.status, i.linkedAt.toISOString()]),
+    // Preserve pre-passwordless proof hashes for every existing account until explicit opt-in.
+    ...(user.emailLoginEnabledAt ? [['EMAIL_LOGIN_ENABLED', user.emailLoginEnabledAt.toISOString()]] : []),
   ])).digest('hex');
 }
 

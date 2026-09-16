@@ -534,7 +534,7 @@ describe('SubmitLineSignupUseCase — where the application goes', () => {
 
     assert.ok(h.locks.some((values) => values[0] === 'line-signup-auto-cap:2026-09-03'));
     const where = h.capCounts[0].where;
-    assert.equal(where.source, 'line-oa');
+    assert.deepEqual(where.source, { in: ['line-oa', 'email-otp'] });
     assert.equal(where.autoApproved, true);
     // Bangkok midnight of 2026-09-03 is 2026-09-02T17:00Z.
     assert.equal(where.OR[0].approvedAt.gte.toISOString(), '2026-09-02T17:00:00.000Z');
