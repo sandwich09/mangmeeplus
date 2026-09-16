@@ -178,7 +178,7 @@ export class EmailAccessService {
       return this.login(tx, token, user, membership, now, input.requestId);
     });
     if ('error' in result) {
-      if ('attemptsRemaining' in result && result.attemptsRemaining > 0) throw emailError('EMAIL_OTP_INVALID', 'รหัสไม่ถูกต้อง กรุณาตรวจรหัสจากอีเมลล่าสุด', 400, { attemptsRemaining: result.attemptsRemaining });
+      if ('attemptsRemaining' in result && typeof result.attemptsRemaining === 'number' && result.attemptsRemaining > 0) throw emailError('EMAIL_OTP_INVALID', 'รหัสไม่ถูกต้อง กรุณาตรวจรหัสจากอีเมลล่าสุด', 400, { attemptsRemaining: result.attemptsRemaining });
       throw invalid();
     }
     return result;

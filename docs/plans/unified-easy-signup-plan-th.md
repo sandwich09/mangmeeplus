@@ -8,7 +8,7 @@
 - [x] E1 เพิ่ม additive public challenge/opt-in schema, OTP crypto/rate/delivery, atomic confirm+session; test replay/expiry/attempt/snapshot/rollback.
 - [x] E2 เพิ่ม email-first request/admission/source transitions, shared cap+duplicates, existing onboarding email owner, admin approval/status/resume; verify one company/trial and review boundaries.
 - [x] E3 BFF HttpOnly browser binding, email/login/signup/status UI, opt-in/backup/LINE return และ marketing consistency; loading/error/retry/390px/keyboard.
-- [ ] E4 isolated PG + HTTP/browser Postmark simulated journey; legacy and cross-channel regressions/typechecks. Fix found gaps before claiming passed.
+- [x] E4 isolated PG + HTTP/browser Postmark simulated journey; legacy and cross-channel regressions/typechecks. Fix found gaps before claiming passed.
 - [ ] E5 exact-source evidence/memory; stage only own changes; paid CI only after local candidate passes. Integrate with latest dependency, wait required CI before approved admin merge develop/main; never deploy.
 
 ## การตรวจผล
@@ -23,4 +23,4 @@ Optional-email/postmark task มี CI/release work แยก;ไม่แก้
 
 ## Evidence
 
-Local checkpoint: API suite/typecheck passed; web 1731/1731; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups passed including marketing and admin crash recovery. Safe return-path follow-up and integrated dependency checks are pending at this checkpoint. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.
+Local checkpoint: API suite/typecheck passed; web 1731/1731; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups passed including marketing and admin crash recovery. Safe return-path follow-up passes; integrated dependency is3e2f4157. Current web1732/1732; billing plan-adjustment23 HTTP/PG groups pass. See [evidence](../evidence/email-passwordless-signup-2026-09-16.md). Required CI/merge remain E5. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.

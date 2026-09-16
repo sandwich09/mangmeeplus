@@ -71,11 +71,15 @@ describe('email access transaction integration', { skip: !url }, () => {
     await assert.rejects(f.service.confirm(f.proof), rejected);
   });
   test('changed email/security, disabled membership and expired code grant no session', async () => {
-    for (const change of ['email', 'member', 'expiry']) {
+    for (const change of ['email', 'member', 'expiry', 'user', 'company', 'credential', 'line']) {
       const f = await fixture();
       if (change === 'email') await prisma.client.user.update({ where: { id: f.user!.id }, data: { emailRevision: { increment: 1 } } });
       if (change === 'member') await prisma.client.companyMembership.updateMany({ where: { userId: f.user!.id }, data: { status: 'DISABLED' } });
       if (change === 'expiry') await prisma.client.emailAccessChallenge.update({ where: { id: f.issued.challengeId }, data: { expiresAt: new Date(0) } });
+      if (change === 'user') await prisma.client.user.update({ where: { id: f.user!.id }, data: { status: 'DISABLED' } });
+      if (change === 'company') await prisma.client.company.update({ where: { id: f.company.id }, data: { status: 'DISABLED' } });
+      if (change === 'credential') await prisma.client.userCredential.create({ data: { userId: f.user!.id, passwordHash: hashPassword('Changed-credential-123!') } });
+      if (change === 'line') await prisma.client.externalIdentity.create({ data: { userId: f.user!.id, provider: 'LINE', providerChannelId: 'synthetic', providerUserId: randomUUID() } });
       const result = await f.service.confirm(f.proof).catch(e => e);
       assert.notEqual(result.kind, 'LOGIN');
       assert.equal(await prisma.client.authSession.count({ where: { userId: f.user!.id } }), 0);
