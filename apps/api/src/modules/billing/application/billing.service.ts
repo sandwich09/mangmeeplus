@@ -535,7 +535,7 @@ export class BillingService {
         stripeId(session.configuration) !== state.policy.portalConfigurationId || session.return_url !== returnUrl)
       throw billingError('BILLING_PORTAL_UNAVAILABLE', 'กรุณาลองใหม่หรือติดต่อทีมงาน');
     await this.prisma.client.$transaction(async tx => {
-      await this.assertOwner(context, tx);
+      await assertCurrent(tx);
       await tx.auditLog.create({ data: { companyId: context.companyId, actorUserId: context.userId, action: 'billing.portal.opened',
         targetType: 'BillingAccount', targetId: account.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'LOW',
         metadataJson: { action: 'portal_payment_method' } } });

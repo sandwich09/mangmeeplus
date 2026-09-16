@@ -1,7 +1,7 @@
 # Plan: Optional LINE email + email OTP + verified email ก่อนชำระเงิน
 
 วันที่: 2026-09-15
-สถานะ 2026-09-16: SOURCE IMPLEMENTED / LOCAL VERIFICATION — CI/dependency integration และ native UAT/Production readiness ยังไม่ผ่านครบ ไม่มี feature flag ใหม่
+สถานะ 2026-09-16: SOURCE IMPLEMENTED / LOCAL VERIFICATION — dependency integration เสร็จแล้ว; CI และ native UAT/Production readiness ยังไม่ผ่านครบ ไม่มี feature flag ใหม่
 Spec: [signup-optional-email-otp-billing-spec-th.md](../specs/signup-optional-email-otp-billing-spec-th.md)
 Memory: [task state](../agent-memory/signup-optional-email-impact-2026-09-15.md)
 
@@ -309,3 +309,5 @@ See [commands, results and limits](../evidence/signup-optional-email-local-2026-
 Integration dependency is the still-open Stripe/Postmark PR #558 and its subsequent local baseline `c0c925968e945d452a2b483b4ddd8b5fec99e847`; develop does not yet contain the Billing module. Preserve concurrent source work and do not admin-merge all unrelated predecessor changes merely to land this feature. CI must pass for the exact final integrated source before merging either develop or main.
 
 Native readiness remains blocked on the absent environment-scoped Postmark/OTP secrets, application-native sender/token/callback proof and the mandatory release protocol. Defaults are canonical and no activation flag is added. Do not disable the email requirement or mark a release successful to get around missing configuration.
+
+Final integration regression: verify an existing password longer than128 characters through the real OTP browser/API path. Preserve the final portal source/authority/email-proof check after provider response; test customer/email changes during that response and refuse portal configurations that expose direct email editing. Record evidence before the final correction push.

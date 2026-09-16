@@ -59,3 +59,10 @@ CI35004735415 on3e31d545 passed the core tests and several real browser sequence
 4. A provider unable to prove an old recipient update leaves new financial authorization under explicit support review. ERP/read/cancel paths remain available; this is not a promise that every payment completes automatically.
 
 [Spec](../specs/signup-optional-email-otp-billing-spec-th.md) · [Plan](../plans/signup-optional-email-otp-billing-plan-th.md) · [Memory](../agent-memory/signup-optional-email-impact-2026-09-15.md)
+
+## Integrated-base and final correction evidence
+
+- Base develop d419169b fully integrated; web1726 and OTP/recipient/collection PostgreSQL28 pass. Provider5/Kamal23 and47 maintenance pins/fixtures pass. Shared Next build browser sequence passes OTP10, invoice import9, adjustment observation, cohorts, SLA and scheduled policy (`/tmp/email-otp-newbase-*.log`).
+- Readiness browser reproduced a portal race: bound customer changed during Stripe POST, but the old source returned status200/portal URL. `/tmp/email-otp-readiness-diagnostic.log` preserves the synthetic response. Restored the complete final source/authority check and added a concurrent email-proof-change case and direct-email-editing portal configuration refusal. Corrected readiness/portal19 groups pass in `/tmp/email-otp-portal-fixed.log`.
+- OTP current-password input/DTO no longer impose a stricter length than historical login. Existing long-password OTP passes the actual browser/API path with all10 scenario groups in `/tmp/email-otp-long-password.log`. Final API/web TypeScript pass.
+- CI35043320918 on7ef09d8e is superseded by this final correction; do not treat its results as final merge acceptance. The new exact-head run is recorded in PR575. No native send/payment/deployment occurred.

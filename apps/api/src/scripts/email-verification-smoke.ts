@@ -19,7 +19,7 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
   const member = await db.companyMembership.findUniqueOrThrow({ where: { id: input.membershipId }, include: { roles: true } });
   const term = await db.companyPlanTerm.findUniqueOrThrow({ where: { companyId: member.companyId } }), roleId = member.roles[0]!.roleId;
   const company = await db.company.findUniqueOrThrow({ where: { id: member.companyId } });
-  const password = 'Synthetic-OTP-password-123!', addedPermissions: string[] = [];
+  const password = 'Synthetic-OTP-password-123!'.repeat(12), addedPermissions: string[] = [];
   const service = app.get(AccountEmailOtpService), confirm = service.confirm.bind(service), page = browser.page, urls: string[] = [];
   const base = '/v1/auth/account/email/otp';
   const billingBase = `/v1/companies/${member.companyId}/billing`;
@@ -146,7 +146,7 @@ export async function checkEmailVerification(input: { app: INestApplication; pri
     await page.waitForURL(url => !url.hash && !url.searchParams.has('token'));
     assert.equal(await page.getByRole('link', { name: 'เข้าสู่ระบบเพื่อขอรหัส OTP' }).getAttribute('href'), '/login');
     assert.equal(await page.getByRole('main').getByRole('button').count(), 0, 'legacy page must not offer a retired verification mutation');
-    return ['expired-company-OTP-LINE-reauth-recipient-payment-recovery', 'legacy-link-browser-OTP-recovery-and-token-removal', 'optional-email-authenticated-OTP-real-HTTP-PG-browser', 'retired-link-and-direct-email-writers-refuse',
+    return ['expired-company-OTP-LINE-reauth-recipient-payment-recovery', 'legacy-link-browser-OTP-recovery-and-token-removal', 'optional-email-authenticated-OTP-real-HTTP-PG-browser-existing-long-password', 'retired-link-and-direct-email-writers-refuse',
       'OTP-leading-zero-reload-explicit-confirm-no-URL-secret', 'unverified-billing-gate',
       'OTP-idempotent-request-and-confirm-after-lost-response', 'company-recipient-review-submit-reconcile-real-HTTP', 'LINE-reauth-BFF-browser-same-session-no-password-email-request', 'OTP-panel-320-390-768-1280'];
   } catch (error) {

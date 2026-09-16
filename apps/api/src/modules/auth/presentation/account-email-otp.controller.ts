@@ -13,7 +13,7 @@ export class EmailOtpRequestDto {
   @IsString() @MaxLength(320) newEmail!: string;
   @IsUUID('4') requestKey!: string;
   @IsInt() @Min(0) expectedEmailRevision!: number;
-  @IsOptional() @IsString() @MaxLength(128) currentPassword?: string;
+  @IsOptional() @IsString() currentPassword?: string;
 }
 export class EmailOtpConfirmDto {
   @IsString() @Matches(/^\d{6}$/) code!: string;
