@@ -1,6 +1,6 @@
 # แผน implement สมัครและเข้าสู่ระบบด้วย email OTP
 
-สถานะ 2026-09-16: IMPLEMENTED / LOCAL VERIFIED; core CI/merge pending. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
+สถานะ 2026-09-16: SOURCE MERGED DEVELOP + MAIN / REQUIRED CI PASS; no deployment. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
 
 ## ลำดับงานและเกณฑ์จบ
 
@@ -9,7 +9,7 @@
 - [x] E2 เพิ่ม email-first request/admission/source transitions, shared cap+duplicates, existing onboarding email owner, admin approval/status/resume; verify one company/trial and review boundaries.
 - [x] E3 BFF HttpOnly browser binding, email/login/signup/status UI, opt-in/backup/LINE return และ marketing consistency; loading/error/retry/390px/keyboard.
 - [x] E4 isolated PG + HTTP/browser Postmark simulated journey; legacy and cross-channel regressions/typechecks. Fix found gaps before claiming passed.
-- [ ] E5 exact-source evidence/memory; stage only own changes; paid CI only after local candidate passes. Integrate with latest dependency, wait required CI before approved admin merge develop/main; never deploy.
+- [x] E5 exact-source evidence/memory; stage only own changes; paid CI only after local candidate passes. Integrate with latest dependency, wait required CI before approved admin merge develop/main; never deploy.
 
 ## การตรวจผล
 
@@ -23,4 +23,6 @@ Optional-email/postmark task มี CI/release work แยก;ไม่แก้
 
 ## Evidence
 
-Local: API suite/typecheck PASS; web1732/1732; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups PASS including marketing and admin crash recovery. Billing focused23/full256 HTTP/PG groups PASS. Admin API68/web60 and maintenance validator/tamper PASS. Marketing PR4/5 merged develop/main after CI35048055608/35048182393 PASS. Dependency e477e171 integrated in15a29950; focused23 groups pass after preserving its stronger fixture assertion. Core CI pending. See [evidence](../evidence/email-passwordless-signup-2026-09-16.md). Required CI/merge remain E5. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.
+Local: API suite/typecheck PASS; web1732/1732; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups PASS including marketing and admin crash recovery. Billing focused23/full256 HTTP/PG groups PASS. Admin API68/web60 and maintenance validator/tamper PASS. Marketing PR4/5 merged develop/main after CI35048055608/35048182393 PASS. Dependency e477e171 integrated in15a29950; focused23 groups pass after preserving its stronger fixture assertion. Core CI35049514012 attempt1 and35049794245 attempt2 SUCCESS; PR583/584 merged. See [evidence](../evidence/email-passwordless-signup-2026-09-16.md). E5 complete: exact-head CI passed before both admin merges; source delivery evidence records the first failed main attempt and the bounded retry. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.
+
+Source delivery: develop2361157b / main670e88ce; identical merged treebcabfc01. Native provider acceptance and deployment remain separate release work.
