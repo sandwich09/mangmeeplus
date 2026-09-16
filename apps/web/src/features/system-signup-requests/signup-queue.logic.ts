@@ -86,7 +86,10 @@ export function signupIdleChip(item: AdminSignupQueueItemDto): Chip | null {
  */
 export function signupHintChips(item: AdminSignupQueueItemDto): Chip[] {
   const chips: Chip[] = [];
-  if (item.source === 'email-otp') chips.push({ label: 'สมัครด้วยรหัสอีเมล ยืนยันอีเมลแล้ว', tone: 'info' });
+  if (item.source === 'email-otp') {
+    chips.push({ label: 'สมัครด้วยรหัสอีเมล ยืนยันอีเมลแล้ว', tone: 'info' });
+    if (item.contactEmailConflict) chips.push({ label: 'อีเมล เบอร์โทร หรือชื่อร้านอาจซ้ำกับคำขอเดิม กรุณาตรวจก่อนเปิดร้านใหม่', tone: 'warning' });
+  }
   if (item.reviewResolution === 'PLAN_REVIEW') {
     chips.push({ label: 'รอจัดแพ็กเกจ ยังไม่เปิดร้าน', tone: 'warning' });
   }

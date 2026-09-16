@@ -111,7 +111,7 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     await page.getByRole('heading', { name: 'เริ่มต้นร้านของคุณ', exact: true }).waitFor();
     await page.getByLabel('ชื่อร้าน', { exact: true }).fill(`Manual ${tag}`);
     await page.getByLabel('ชื่อผู้ติดต่อ', { exact: true }).fill('ผู้สมัครรอตรวจ');
-    await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('088' + tag.split('').map(x => parseInt(x, 16) % 10).join('').slice(0, 7));
+    await page.getByLabel('เบอร์มือถือ', { exact: true }).fill('089' + tag.split('').map(x => parseInt(x, 16) % 10).join('').slice(0, 7));
     await page.getByRole('button', { name: 'เริ่มใช้ฟรี', exact: true }).click();
     await page.getByRole('heading', { name: 'ทีมงานกำลังตรวจคำขอของคุณ', exact: true }).waitFor();
     const manual = await db.companySignupRequest.findFirstOrThrow({ where: { source: 'email-otp', contactEmail: recipient } });
@@ -120,6 +120,7 @@ export async function checkEmailAccess(input: { app: INestApplication; prisma: P
     const admin = browser.page;
     await admin.goto(`${browser.origin}/system/signup-requests`, { waitUntil: 'domcontentloaded' });
     const row = admin.getByRole('row').filter({ hasText: `Manual ${tag}` });
+    await row.getByText('อีเมล เบอร์โทร หรือชื่อร้านอาจซ้ำกับคำขอเดิม กรุณาตรวจก่อนเปิดร้านใหม่', { exact: true }).waitFor();
     await row.getByRole('button', { name: 'อนุมัติ', exact: true }).click();
     const dialog = admin.getByRole('dialog');
     assert.match(await dialog.innerText(), /ไม่ต้องตั้งรหัสผ่าน/);

@@ -16,7 +16,7 @@ export default function EmailAccessPage() {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const [notice, setNotice] = useState(''), [state, setState] = useState(''), [retryAt, setRetryAt] = useState(0), [now, setNow] = useState(Date.now());
   const running = useRef(false), key = useRef(''), otp = useRef<HTMLInputElement>(null), alert = useRef<HTMLParagraphElement>(null);
-  useEffect(() => { setReady(true); const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => { if (step === 'code') otp.current?.focus(); }, [step]);
   useEffect(() => { if (error) alert.current?.focus(); }, [error]);
   const wait = Math.max(0, Math.ceil((retryAt - now) / 1000));
@@ -32,8 +32,13 @@ export default function EmailAccessPage() {
   }
   useEffect(() => {
     // Browser binding lives in HttpOnly cookie; a reload can resume without saving secrets in JS.
-    void fetch('/api/auth/email-access/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(async response => { if (response.ok) await apply(await response.json()); }).catch(() => {});
+    // Resolve the previous browser proof before accepting a new email; a late resume must not switch the user's account.
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 10_000);
+    let active = true;
+    void fetch('/api/auth/email-access/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', signal: controller.signal })
+      .then(async response => { if (active && response.ok) await apply(await response.json()); }).catch(() => {})
+      .finally(() => { clearTimeout(timeout); if (active) setReady(true); });
+    return () => { active = false; clearTimeout(timeout); controller.abort(); };
   }, []);
   async function apply(result: Result) {
     if (result.kind === 'CODE') { setEmail(result.email ?? ''); setRetryAt(Date.parse(result.retryAt ?? '') || 0); setStep('code'); setNotice('กรอกรหัสล่าสุดที่ได้รับทางอีเมล หรือขอรหัสใหม่เมื่อครบเวลา'); return; }
@@ -70,7 +75,7 @@ export default function EmailAccessPage() {
     {error && <p ref={alert} tabIndex={-1} role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">{error}</p>}
     {step === 'email' && <form className="space-y-5" onSubmit={e => { e.preventDefault(); send(); }}>
       <label className="block" htmlFor="access-email">อีเมลของคุณ<input id="access-email" className={field} type="email" autoComplete="email" maxLength={254} required value={email} disabled={!ready || busy} onChange={e => { setEmail(e.target.value); key.current = ''; }} /></label>
-      <button className={`${button} w-full bg-green-700 text-white`} disabled={!ready || busy || wait > 0} aria-busy={busy}>{busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'รับรหัสทางอีเมล'}</button>
+      <button className={`${button} w-full bg-green-700 text-white`} disabled={!ready || busy || wait > 0} aria-busy={busy}>{!ready ? 'กำลังเตรียมหน้า…' : busy ? 'กำลังส่งรหัส…' : wait ? `ขอรหัสใหม่ได้ใน ${wait} วินาที` : 'รับรหัสทางอีเมล'}</button>
     </form>}
     {step === 'code' && <form className="space-y-4" onSubmit={e => { e.preventDefault(); void run(async () => apply(await call('confirm', { code }))); }}>
       <p className="break-words">อีเมล <strong>{email}</strong></p><p role="status" className="text-gray-600">{notice}</p>

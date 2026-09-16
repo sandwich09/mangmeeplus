@@ -23,7 +23,8 @@ expected_password_login=0deb1baa2149e6711bac3e02a1524fc5627cf73e811f559305e3004f
 expected_password_reset=9f900e6d57fbc39b7e9340e5eb037230fa3351923dbb5b1153a16beff2499755
 expected_platform_controller=55fd64ba00ee930f30fec57a956af6dc6b8a49669c705add2d310e3b60273ca5
 expected_auth_guard=a8e2b9d9eab3f9ab5f860d38573f3905f87cfe8d84c87e710409528b618b5712
-expected_auth_module=61941f9a3643a381aeab4233d12d1a7855de2d3b293db5354e1f8179efd10794
+expected_auth_module=a1c021183d1cc3bdc4f274cd783ed8134b1fcd912a20d685c6c00b6e8dcce709
+expected_email_access=02fea818e6c647abc566cedeb183f47e5944d1fa7cfc0db7604a59e08f7d8ac3
 expected_session_refresh=40565d6e1252c3479f9a7fa2496c67afd8eab28d681f39128f78e031bf0e35e6
 expected_login_bff=af26e54f6490e856a0b9931dbfd3292a92b55d82da1884f41d22b7760f55e6e9
 expected_login_failure=f32db402e2af86707ba1d9b9fd5b4b5aa06f8b522b95b170d7a9c5848f687459
@@ -104,6 +105,7 @@ check_file apps/api/src/modules/auth/application/use-cases/confirm-password-rese
 check_file apps/api/src/modules/auth/presentation/platform-access.controller.ts "$expected_platform_controller"
 check_file apps/api/src/modules/auth/presentation/auth.guard.ts "$expected_auth_guard"
 check_file apps/api/src/modules/auth/auth.module.ts "$expected_auth_module"
+check_file apps/api/src/modules/auth/application/email-access.service.ts "$expected_email_access"
 check_file apps/api/src/modules/auth/application/use-cases/refresh-session.use-case.ts "$expected_session_refresh"
 check_file apps/web/app/api/auth/login/route.ts "$expected_login_bff"
 check_file apps/web/src/features/auth/login-failure-response.server.ts "$expected_login_failure"

@@ -1,10 +1,10 @@
 # แผน implement สมัครและเข้าสู่ระบบด้วย email OTP
 
-สถานะ 2026-09-16: IMPLEMENTING. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
+สถานะ 2026-09-16: IMPLEMENTED / LOCAL VERIFIED; core CI/merge pending. Spec: [unified-easy-signup-spec-th.md](../specs/unified-easy-signup-spec-th.md). Owner อนุมัติ review แล้วเริ่ม implementation. Baseline `7ef09d8e` รวม optional-email OTP + completed billing; branch `codex/email-passwordless-signup-20260916` แยกจากงานอื่น.
 
 ## ลำดับงานและเกณฑ์จบ
 
-- [x] E0 ตรวจ actual auth/session/onboarding/signup source/LINE cap/BFF; แก้ spec และบันทึก E01–E17.
+- [x] E0 ตรวจ actual auth/session/onboarding/signup source/LINE cap/BFF; แก้ spec และบันทึก E01–E18.
 - [x] E1 เพิ่ม additive public challenge/opt-in schema, OTP crypto/rate/delivery, atomic confirm+session; test replay/expiry/attempt/snapshot/rollback.
 - [x] E2 เพิ่ม email-first request/admission/source transitions, shared cap+duplicates, existing onboarding email owner, admin approval/status/resume; verify one company/trial and review boundaries.
 - [x] E3 BFF HttpOnly browser binding, email/login/signup/status UI, opt-in/backup/LINE return และ marketing consistency; loading/error/retry/390px/keyboard.
@@ -19,8 +19,8 @@ Run focused OTP/domain tests then API/web typechecks and integration tests of ch
 
 ## สถานะ dependency / impact
 
-Optional-email/postmark task มี CI/release work แยก;ไม่แก้ใน worktree นั้น. Shared source changes ต้องตรวจ E01–E17 และ compatibility กับ verified-email-before-payment. UI ไม่กล่าวว่า verified email ของบัญชีเก่าทำ passwordless ได้จน opt-in สำเร็จ. Existing official-site rows ไม่ถูก auto-approve.
+Optional-email/postmark task มี CI/release work แยก;ไม่แก้ใน worktree นั้น. Shared source changes ต้องตรวจ E01–E18 และ compatibility กับ verified-email-before-payment. UI ไม่กล่าวว่า verified email ของบัญชีเก่าทำ passwordless ได้จน opt-in สำเร็จ. Existing official-site rows ไม่ถูก auto-approve.
 
 ## Evidence
 
-Local checkpoint: API suite/typecheck passed; web 1731/1731; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups passed including marketing and admin crash recovery. Safe return-path follow-up passes; integrated dependency is3e2f4157. Current web1732/1732; billing plan-adjustment23 HTTP/PG groups pass. See [evidence](../evidence/email-passwordless-signup-2026-09-16.md). Required CI/merge remain E5. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.
+Local: API suite/typecheck PASS; web1732/1732; public PG16/16; legacy email/billing-recipient PG22/22; six real browser groups PASS including marketing and admin crash recovery. Billing focused23/full256 HTTP/PG groups PASS. Admin API68/web60 and maintenance validator/tamper PASS. Marketing PR4/5 merged develop/main after CI35048055608/35048182393 PASS. Integrate dependency e477e171 before core CI. See [evidence](../evidence/email-passwordless-signup-2026-09-16.md). Required CI/merge remain E5. Update [memory](../agent-memory/email-passwordless-signup-2026-09-16.md) พร้อม commands/results/remaining before handoff.

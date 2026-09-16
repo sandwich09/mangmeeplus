@@ -24,7 +24,7 @@
 
 ใช้ CompanySignupRequest, onboarding, provisioning fence, trial guards, audit/outbox เดิม. เพิ่ม source-specific transitions โดยไม่เปิด VALIDATED→PROVISIONING ให้ official-site เดิม. บัญชี ownerAuth=email ไม่มี temporary password/credential. verified email และ opt-in เขียนพร้อม owner.
 
-AUTO_FREE ใช้ mode/cap เดียวกับ LINE (ชื่อ config เดิมคงไว้เพื่อ compatibility) และ advisory lock/day counter เดียวกัน;นับทั้งสอง source. Auto เฉพาะบัญชีใหม่ที่ไม่ชน User email/username, คำขอ/ชื่อร้าน/มือถือเดิมข้ามช่องทาง, prior reject/suspend, repeat intent และมี operator. กรณีเสี่ยง/ถึง cap/mode manual → PENDING_REVIEW ในคิวเดิม ไม่มีสิทธิ์ก่อน provision. Duplicate signal เป็นเหตุส่ง review ไม่ใช่ proof ownership. serialize source decision ภายใต้ shared cap lock และ recheck ก่อน grant.
+AUTO_FREE ใช้ mode/cap เดียวกับ LINE (ชื่อ config เดิมคงไว้เพื่อ compatibility) และ advisory lock/day counter เดียวกัน;นับทั้งสอง source. Auto เฉพาะบัญชีใหม่ที่ไม่ชน User email/username, คำขอ/ชื่อร้าน/มือถือเดิมข้ามช่องทาง, prior reject/suspend, repeat intent และมี operator. กรณีเสี่ยง/ถึง cap/mode manual → PENDING_REVIEW ในคิวเดิม ไม่มีสิทธิ์ก่อน provision. Duplicate signal เป็นเหตุส่ง review ไม่ใช่ proof ownership. Adminต้องเห็นข้อความเตือนข้อมูลซ้ำก่อนกดอนุมัติ; สำหรับsourceemail-otpใช้contactEmailConflictเป็นสัญญาณรวม email/phone/shop-name ของคำขอ ไม่อ้างว่าเป็นตัวตนเดียวกัน. serialize source decision ภายใต้ shared cap lock และ recheck ก่อน grant.
 
 หนึ่ง email-first request ต่อ normalized email สำหรับ first shop; request ที่ค้าง/rejected ไม่เปิดใหม่อัตโนมัติจาก OTP ใหม่. Refresh/response-loss/provision crash resume request เดิมด้วย fresh OTP. ผู้ดูแลอนุมัติใช้ permission/intent/audit เดิมและ source-aware provisioning; status browser เห็นได้เฉพาะผู้พิสูจน์ mailbox ของ request. Review ไม่เปิด trial จน provision สำเร็จ. Existing account/second shop ใช้ existing authenticated workflow ไม่แอบให้ auto trial ซ้ำ.
 
@@ -71,6 +71,7 @@ BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป 
 | E16 | ปุ่มสมัครอยู่ผิดหน้า/admin READY ไม่มีทางทำต่อ | actual marketing→signup/browser admin approve + crash/retry; source-specific copy |
 | E17 | OTP ทำเส้นทางจ่ายเงินหรือ reauth หาย/ขอใหม่วนรหัสเก่า | safe next path + legal/password gates + rotate request key after invalid proof |
 | E15 | dynamic BFF ถูก Next rewrite ส่งผิด API | static BFF endpoints + real HTTP/browser regression |
+| E18 | เพิ่ม public login แต่ maintenance pin ไม่ครอบคลุม | pin email-access service และ auth module; CLOSED ต้องไม่ออก session; validator tamper tests |
 | E14 | optional-email branch ยังไม่รวมCI | pin baseline7ef09d8e; own worktree; exact integrated verification |
 
 ## 6. Acceptance
@@ -78,3 +79,5 @@ BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป 
 ต้องมี checks: new signup → logout → login → protected API; manual review → approve → OTP resume; wrong/5 attempts/expiry/resend/rate/delivery failure; replay/concurrency; unverified collision; legacy verified without opt-in; inactive user/member/company; email/password/LINE changes between request and confirm; no raw tokens in browser response; session/audit rollback; recover after provisioning crash; no duplicate trial; LINE shared cap; trial/paid entitlement unchanged; legacy signup/claim/password reset; mobile/keyboard/error/retry/back navigation. Map each result to actual check; local simulated Postmark ไม่ใช่ inbox/native acceptance. No deploy in this task.
 
 Implementation evidence: [email-passwordless-signup-2026-09-16](../agent-memory/email-passwordless-signup-2026-09-16.md). Migration additive; deploy ต้อง migrate ก่อน app ที่อ่าน fields ใหม่. Public challenge ใช้ hashed evidence ตาม auth token ledger เดิม ไม่เก็บ raw OTP; ไม่ผูก cleanup กับการลบประวัติเมลหรือคำขอเปิดร้าน. การปิด email login ยกเลิก challenge และหยุด login ใหม่ ส่วน session เดิมใช้หน้าจัดการ session เดิมเพื่อออกจากอุปกรณ์.
+
+Rollback runtime: หลังมี email-only customer แล้ว ห้ามย้อน app ไปเวอร์ชันที่ไม่มีemail loginโดยไม่เตรียมทางเข้าบัญชีสำรองให้ครบ. Prefer forward fix; migrationเป็นadditiveและห้ามลบidentity/proofเพื่อทำให้rollbackผ่าน. การปิดloginต่อบัญชีต้องมี password/LINEที่ใช้ได้ก่อนตามLAST_LOGIN_REQUIRED.

@@ -1144,7 +1144,7 @@ function toQueueItem(
     // Omitted rather than blanked when the application came from LINE: the queue shows "—" and no
     // reader can mistake an empty string for a real address (review B-03).
     ...(request.contactEmail ? { contactEmail: request.contactEmail } : {}),
-    ...(request.source === SIGNUP_SOURCE_LINE_OA
+    ...((request.source === SIGNUP_SOURCE_LINE_OA || request.source === SIGNUP_SOURCE_EMAIL_OTP)
       ? { contactEmailConflict: request.contactEmailConflict === true }
       : {}),
     ...(request.phoneNumber ? { phoneNumber: request.phoneNumber } : {}),
