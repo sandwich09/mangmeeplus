@@ -1,12 +1,14 @@
+import { observedCollectionPause } from './billing-admin-collection';
+import { BillingPlanAdjustmentsService } from './billing-plan-adjustments.service';
 import { invoiceFindingSource } from './billing-invoice-finding';
 import { detectBillingIssue, resolveBillingIssue } from './billing-issues';
 import type { ScheduledChange } from './billing-schedule';
-import { BadRequestException, Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { STRIPE_API_VERSION } from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
-import type { BillingAccount, BillingAttempt, Prisma } from '../../../generated/prisma/client';
+import { Prisma, type BillingAccount, type BillingAttempt } from '../../../generated/prisma/client';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { PartnerLifecycleTransitionUseCase } from '../../system-partner-management/application/use-cases/partner-lifecycle-transition.use-case';
 import { StripeClient, stripeId, verifyStripeSignature, type StripeObject } from '../infrastructure/stripe.client';
@@ -35,7 +37,7 @@ export function validBillingEvent(event: StripeObject, accountId: string, livemo
 @Injectable()
 export class BillingReconcilerService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly stripe: StripeClient,
-    private readonly billing: BillingService, private readonly lifecycle: PartnerLifecycleTransitionUseCase) {}
+    private readonly billing: BillingService, private readonly lifecycle: PartnerLifecycleTransitionUseCase, @Optional() private readonly planAdjustments?: BillingPlanAdjustmentsService) {}
 
   async receive(raw: Buffer | undefined, signature: string | undefined): Promise<{ accepted: true }> {
     if (!this.stripe.enabled || !this.config.stripeWebhookSecret) throw new ServiceUnavailableException('Stripe receiver is not configured');
@@ -163,7 +165,11 @@ export class BillingReconcilerService {
         account = await this.prisma.client.billingAccount.findUniqueOrThrow({ where: { id: account.id } });
       }
       if (account.activeCollectionOperationId) {
-        await this.billing.collection.advance(account, leaseToken);
+        const operation=await this.prisma.client.billingOperation.findUniqueOrThrow({where:{id:account.activeCollectionOperationId}});
+        if(['GRANT_FREE_DAYS','CHANGE_COLLECTION'].includes(operation.type)){
+          if(!this.planAdjustments)throw new Error('billing.free_days_handler_missing');
+          await this.planAdjustments.advanceFreeDays(account,leaseToken);
+        }else await this.billing.collection.advance(account, leaseToken);
         if (financialChargeId) await observeBillingCharges(this.prisma, this.stripe, account, leaseToken, financialChargeId);
         return;
       }
@@ -282,6 +288,7 @@ export class BillingReconcilerService {
         const next = prepaidNext ?? (typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null);
         await tx.billingAccount.update({ where: { id: account.id }, data: { baseSubscriptionId: subscription.id,
           contractAttemptId: contract.id, activeAttemptId: null, subscriptionState: subscription.status,
+          collectionPauseJson: observedCollectionPause(subscription) ? observedCollectionPause(subscription) as Prisma.InputJsonValue : Prisma.DbNull,
           cancelAtPeriodEnd: subscription.cancel_at_period_end === true || (typeof subscription.cancel_at === 'number' && subscription.cancel_at * 1000 === current.paidThrough?.getTime()),
           nextChargeAt: subscription.cancel_at_period_end || subscription.cancel_at || ['canceled', 'incomplete_expired'].includes(subscription.status) ? null : next,
           observedAt: new Date(), version: { increment: 1 },

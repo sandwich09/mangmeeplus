@@ -413,14 +413,24 @@ describe('retireLaunchBuilds (real database)', () => {
     await seedRoute(SYSTEM_ROUTE, 'SYSTEM', [DRAINED, ACTIVE]);
     await seedRoute(HUMAN_ROUTE, actorUserId, [DRAINED], GENERATION);
     // The operator closes and reopens the human route while the pass is between its two phases.
-    const pass = retireLaunchBuilds(service(), {
+    let moved = false;
+    const surveyedThenMoved = { client: new Proxy(clients[0]!, {
+      get(target, key) {
+        if (key === '$transaction') return async (...args: unknown[]) => {
+          if (!moved) { moved = true; await clients[1]!.featureLaunchGate.update({ where: whereOf(HUMAN_ROUTE), data: { generation: GENERATION + 1 } }); }
+          return (target.$transaction as any)(...args);
+        };
+        const value = Reflect.get(target, key);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) } as any;
+    const result = await retireLaunchBuilds(surveyedThenMoved, {
       activeBuilds: [ACTIVE],
       deployment: { targetEnvironment: ENVIRONMENT as any, buildReleaseId: ACTIVE },
       requestId: `${TAG}-pass`,
       deploymentArn: DEPLOYMENT_ARN,
     });
-    await clients[1]!.featureLaunchGate.update({ where: whereOf(HUMAN_ROUTE), data: { generation: GENERATION + 1 } });
-    const result = await pass;
+    assert.equal(moved, true, 'advance the generation after survey and before its first lock');
 
     assert.ok(
       !result.retired.some((row) => row.gateKey === HUMAN_ROUTE.gateKey)
@@ -497,7 +507,7 @@ describe('no-op command replay vs retirement (real database)', () => {
     await clients[0]!.featureLaunchGateTransition.deleteMany({
       where: { gateKey: ROUTE.gateKey, routeKey: ROUTE.routeKey, seq: { gt: baseline?.lastSeq ?? 0 } },
     });
-    await clients[0]!.featureLaunchGate.update({ where, data: { state: 'OPEN', generation, lastSeq, reason: TAG } });
+    await clients[0]!.featureLaunchGate.upsert({ where, create: { gateKey: ROUTE.gateKey, routeKey: ROUTE.routeKey, state: 'OPEN', generation, lastSeq, reason: TAG }, update: { state: 'OPEN', generation, lastSeq, reason: TAG } });
     await clients[0]!.featureLaunchGateTransition.create({
       data: {
         gateKey: ROUTE.gateKey,

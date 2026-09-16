@@ -1,4 +1,7 @@
+import {ensureBillingCompanyProof} from './billing-configuration-drafts-smoke';
 import assert from 'node:assert/strict';
+import {checkBillingFeatureControls} from './billing-feature-controls-smoke';
+import {checkBillingFreeDays} from './billing-free-days-smoke';
 import {randomUUID} from 'node:crypto';
 import type {checkBillingConfigurationDrafts} from './billing-configuration-drafts-smoke';
 import {receiptQuotaSnapshot} from '../modules/line-ai/application/company-ocr-governance';
@@ -33,9 +36,10 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     const customer=async()=>{const r=await request(`/v1/companies/${companyId}/billing`,'GET',undefined,{'x-company-id':companyId});assert.equal(r.status,200,JSON.stringify(r));assert.doesNotMatch(JSON.stringify(r.body),/ช่วยร้านตามคำขอที่ตรวจแล้ว|requesterName|approverName/);return r.body;};
     const approve=async(op:any)=>{const s=await command(op,'submit');assert.equal(s.status,200,JSON.stringify(s));const r=await command(s.body,'approve',approveRequest);assert.equal(r.status,200,JSON.stringify(r));return r.body;};
     const originalAccount=await db.billingAccount.findUniqueOrThrow({where:{id:account.id}});
-    const partnerPermissions=await Promise.all(['system.partner_dashboard.read','system.partner_company.update','system.company_onboarding.read'].map(key=>db.permission.upsert({where:{key},create:{key,description:key},update:{}})));
+    const partnerPermissions=await Promise.all(['system.partner_dashboard.read','system.partner_company.update','system.company_onboarding.read','system.partner_feature.manage'].map(key=>db.permission.upsert({where:{key},create:{key,description:key},update:{}})));
     const partnerRole=await db.role.create({data:{key:`PLAN_REVIEW_${randomUUID()}`,scopeKey:'system',isSystem:true,companyId:null,name:'Synthetic plan Admin UI',permissions:{create:partnerPermissions.map(p=>({permissionId:p.id}))}}});partnerRoleId=partnerRole.id;
     await db.membershipRole.create({data:{membershipId:input.membershipId,roleId:partnerRole.id}});
+    if(process.env.BILLING_FEATURE_CONTROLS_ONLY==='1')return await checkBillingFeatureControls(input,companyId);
     const termHttp=await request(`/v1/system/partners/${companyId}/plan-term`);assert.equal(termHttp.status,200,JSON.stringify(termHttp));assert.equal(termHttp.body.term.paidPlan,true);
     const direct=await request(`/v1/system/partners/${companyId}/plan-term`,'PUT',{commandId:randomUUID(),reason:'ตรวจแพ็กเกจที่ชำระ',expectedVersion:(await new GetCompanyPlanTermUseCase(prisma).execute(companyId)).sourceVersion!,tierKey:'PRO_999',branchLimit:5,employeeLimit:10,monthlySlipLimit:100});assert.equal(direct.status,409,JSON.stringify(direct));assert.equal(direct.body.code,'paid_plan_review_required');
     const legacy=await db.packageChangeRequest.create({data:{companyId,requestedByUserId:input.userIds[0]!,requestedTierKey:'PRO_999'}});
@@ -49,7 +53,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     const first=await preview();assert.equal(first.status,200,JSON.stringify(first));
     await db.authSession.updateMany({where:{userId:{in:input.userIds.slice(0,2)}},data:{billingReauthenticatedAt:null,billingCredentialVersion:null}});
     assert.equal((await command(first.body,'submit')).status,409);
-    for(const actor of [request,approveRequest])assert.equal((await actor(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
+    for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
     const submitted=await command(first.body,'submit');assert.equal(submitted.status,200);assert.equal((await command(first.body,'submit')).body.id,first.body.id);
     assert.equal((await command(submitted.body,'approve')).status,403);
     const applied=await command(submitted.body,'approve',approveRequest);assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.body.state,'SUCCEEDED');
@@ -108,7 +112,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
       const page=browser.page,other=secondBrowser.pages()[0]!,url=`${browser.origin}/system/billing/companies/${companyId}/plan-adjustments`;
       const click=async(p:typeof page,name:string,suffix:string)=>{for(let tries=0;;tries++){const pending=p.waitForResponse(r=>r.url().endsWith(suffix));await p.getByRole('button',{name,exact:true}).click();const r=await pending;
         if(r.status()!==429){assert.equal(r.status(),200,JSON.stringify(await r.json()));return;}assert.ok(tries<2);const body=await r.json();assert.ok(body.retryAfterSeconds<=60);await p.getByRole('alert').getByText(/รอ/).waitFor();await new Promise(resolve=>setTimeout(resolve,Math.min(60,body.retryAfterSeconds+1)*1000));}};
-      for(const actor of [request,approveRequest])assert.equal((await actor(`${base}/companies/${companyId}/reauthenticate`,'POST',{password})).status,200);
+      for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
       await page.setViewportSize({width:390,height:844});
       await page.goto(`${browser.origin}/system/partners/${companyId}`,{waitUntil:'domcontentloaded'});
       await page.getByRole('link',{name:'ปรับแพ็กเกจชั่วคราวและดูประวัติ',exact:true}).click();await page.waitForURL(url);
@@ -132,7 +136,9 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     const finalTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(termProjectionHash(finalTerm),termProjectionHash(baseline));
     assert.deepEqual(await db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),originalAccount);assert.deepEqual(await db.billingReceiptGrant.findUniqueOrThrow({where:{id:purchase.id}}),purchase);
     assert.equal(await db.billingInvoice.count({where:{billingAccountId:account.id}}),0);assert.equal(providerWrites,0);
-    cases.push('admin-paid-plan-preserves-paid-hash-dates-collection-receipts-and-fiscal-evidence');return cases;
+    cases.push('admin-paid-plan-preserves-paid-hash-dates-collection-receipts-and-fiscal-evidence');
+    cases.push(...await checkBillingFreeDays(input,companyId,account.id));
+    cases.push(...await checkBillingFeatureControls(input,companyId));return cases;
   }finally{
     input.transport();if(partnerRoleId){await db.membershipRole.deleteMany({where:{roleId:partnerRoleId}});await db.rolePermission.deleteMany({where:{roleId:partnerRoleId}});await db.role.deleteMany({where:{id:partnerRoleId}});}
     await db.packageChangeRequest.deleteMany({where:{companyId}});await db.companyPlanTerm.deleteMany({where:{companyId}});await db.billingReceiptGrant.deleteMany({where:{companyId}});await db.billingOperation.deleteMany({where:{companyId}});await db.auditLog.deleteMany({where:{companyId}});

@@ -348,6 +348,8 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/common/security/liff-start-handoff.spec.ts',
       // Web/LINE signup shares the durable mail consumer; preserve its provider boundary too.
       'src/modules/auth/infrastructure/postmark.client.spec.ts',
+      'src/modules/auth/infrastructure/postmark-configuration.spec.ts',
+      'src/modules/system-partner-management/application/partner-ai-adjustment-history.spec.ts',
       'src/modules/billing/domain/billing-package.spec.ts',
       'src/modules/billing/domain/paid-checkout-invoice.spec.ts',
       'src/modules/billing/infrastructure/stripe.client.spec.ts',
@@ -355,6 +357,7 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       'src/modules/billing/application/billing-capacity.spec.ts',
       'src/modules/system-partner-management/domain/logic/plan-capacity.spec.ts',
       'src/modules/billing/application/billing-collection.spec.ts',
+      'src/modules/billing/application/billing-free-days.spec.ts',
       'src/modules/billing/application/billing-financial.spec.ts',
       'src/modules/billing/application/billing-refund-source.spec.ts',
       'src/modules/billing/application/billing-settlement-source.spec.ts',

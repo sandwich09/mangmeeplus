@@ -15,7 +15,18 @@ export async function checkBillingProviderEvents(input: {
   interceptRead:(hook?: (path:string)=>Promise<void>)=>void;
   browser?:Awaited<ReturnType<typeof startBillingBrowser>>;
 }):Promise<string[]> {
-  const {request,prisma,userId,membershipId,stripeAccountId,reconciler,operations,provider,browser}=input,db=prisma.client;
+  const {prisma,userId,membershipId,stripeAccountId,reconciler,operations,provider,browser}=input,db=prisma.client;
+  let requestRateLimits=0;
+  const request:typeof input.request=async(...args)=>{
+    for(let attempt=0;;attempt++){
+      const result=await input.request(...args);
+      if(result.status!==429||attempt>=2)return result;
+      assert.equal(result.body.code,'BILLING_RATE_LIMIT');
+      assert.ok(Number.isInteger(result.body.retryAfterSeconds)&&result.body.retryAfterSeconds>=1&&result.body.retryAfterSeconds<=60);
+      requestRateLimits++;
+      await new Promise(resolve=>setTimeout(resolve,(result.body.retryAfterSeconds+1)*1000));
+    }
+  };
   const base='/v1/system/billing',run=randomUUID().replaceAll('-',''),companyId=`provider-event-${run}`,roleId=randomUUID();
   const invoiceId=`in_event${run}`,customerId=`cus_event${run}`,eventIds:string[]=[];
   const member=await db.companyMembership.findUniqueOrThrow({where:{id:membershipId}});
@@ -103,9 +114,24 @@ export async function checkBillingProviderEvents(input: {
     release();assert.equal(await running,'BUSY','lost lease cannot count as processed');input.interceptRead();
     assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:racing.id}})).status,'PROCESSING');
     assert.equal(await reconciler.reconcileEvent(racing.id,true),'PROCESSED');
-    const cancelled=await create(),cancelPreview=await preview(cancelled.id);
-    await request(`${base}/operations/${cancelPreview.body.id}/cancel`,'POST',{expectedVersion:0});
+    const cancelled=await create();
+    if(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1'){
+      const before=await db.billingOperation.count({where:{referenceId:cancelled.id}});let limited=false;
+      for(let i=0;i<=30;i++){
+        const probe=await input.request(`${base}/provider-events/${cancelled.id}/preview`,'POST',{sourceHash:'stale-test-source',reason:'ตรวจข้อจำกัดคำขอจำลอง'});
+        if(probe.status===429){assert.equal(probe.body.code,'BILLING_RATE_LIMIT');limited=true;break;}
+        assert.equal(probe.status,409,JSON.stringify(probe));
+      }
+      assert.ok(limited,'exercise the actual command limiter before cancellation review');
+      assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),before,'stale probes create no operation');
+    }
+    const cancelPreview=await preview(cancelled.id);assert.equal(cancelPreview.status,200,JSON.stringify(cancelPreview));
+    const cancel=await request(`${base}/operations/${cancelPreview.body.id}/cancel`,'POST',{expectedVersion:cancelPreview.body.version});
+    assert.equal(cancel.status,200,JSON.stringify(cancel));assert.equal(cancel.body.state,'CANCELLED');
     assert.equal((await submit(cancelPreview.body)).status,409);
+    assert.equal(await db.billingOperation.count({where:{referenceId:cancelled.id}}),1,'retry creates only the original cancelled preview');
+    assert.equal((await db.billingProviderEvent.findUniqueOrThrow({where:{id:cancelled.id}})).attempts,10,'cancelled preview cannot dispatch provider work');
+    if(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1')assert.ok(requestRateLimits>0);
     for(let index=0;index<26;index++)await create();
     const firstPage=await request(`${base}/provider-events`);assert.equal(firstPage.status,200);assert.equal(firstPage.body.items.length,25);assert.ok(firstPage.body.nextCursor);
     const secondPage=await request(`${base}/provider-events?cursor=${firstPage.body.nextCursor}`);assert.equal(secondPage.status,200);
@@ -148,6 +174,7 @@ export async function checkBillingProviderEvents(input: {
     return ['provider-event-platform-scope-mode-redaction-pagination','provider-event-preview-stale-lease-dedupe-and-cancel',
       'provider-event-reauthorization-unavailable-unmapped-same-command-recovery','provider-event-shared-worker-lease-loss-and-processed-replay',
       'provider-event-evidenced-case-resolution-audit-and-no-manual-grant',...(browser?['browser-provider-event-case-preview-command-reload-and-return']:[]),
+      ...(process.env.BILLING_PROVIDER_EVENTS_FORCE_RATE_LIMIT==='1'?['provider-event-real-429-original-preview-cancel-no-duplicate-operation-or-provider-dispatch']:[]),
       ...(browserRateLimit?['browser-provider-event-real-rate-limit-wait-preserves-input-and-no-command-on-refusal']:[])];
   } finally {
     input.interceptRead();

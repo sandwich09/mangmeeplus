@@ -28,3 +28,13 @@ export interface SystemEmailConnectionDto {
     mode: 'LIVE' | 'SANDBOX' | 'UNKNOWN'; transactional: boolean | null; archived: boolean | null;
   };
 }
+
+export interface EmailHistoryPolicyInput {
+  scopeKey: string; version: number; retentionDays: number; enabled: boolean; reason: string; commandId: string;
+}
+export interface EmailHistoryPolicyDto {
+  configured: boolean; canManage: boolean; scopeKey: string | null; version: number; retentionDays: number; enabled: boolean;
+  eligibleCount: number; lastCleanupAt: string | null; lastArchivedCount: number;
+  history: Array<{ id: string; createdAt: string; actorName: string | null; reason: string;
+    before: { enabled: boolean; retentionDays: number }; after: { enabled: boolean; retentionDays: number } }>;
+}

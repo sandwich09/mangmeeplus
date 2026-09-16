@@ -39,7 +39,7 @@ export async function ownedSchedule(tx: Prisma.TransactionClient, account: Billi
   const attempts = await tx.billingAttempt.findMany({ where: { billingAccountId: account.id, status: 'COMPLETED' }, select: { collectionJson: true } });
   if (attempts.some(a => (a.collectionJson as { scheduleId?: string } | null)?.scheduleId === scheduleId)) return true;
   const commands = await tx.billingOperation.findMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
-    livemode: account.livemode, type: 'CUSTOMER_SCHEDULE_DOWNGRADE', state: { in: ['SUCCEEDED', 'SUPERSEDED', 'APPLIED'] } }, select: { proposedJson: true, resultJson: true } });
+    livemode: account.livemode, type: { in: ['CUSTOMER_SCHEDULE_DOWNGRADE', 'GRANT_FREE_DAYS'] }, state: { in: ['SUCCEEDED', 'SUPERSEDED', 'APPLIED'] } }, select: { proposedJson: true, resultJson: true } });
   return commands.some(o => (o.proposedJson as unknown as ScheduledChange).accountId === account.id &&
     (o.resultJson as { scheduleId?: string } | null)?.scheduleId === scheduleId);
 }

@@ -86,7 +86,7 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
       await second.reload({ waitUntil: 'domcontentloaded' });
       await second.getByRole('status').filter({ hasText: 'การตั้งค่านี้มีผลแล้ว' }).waitFor();
       assert.ok(await second.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      await second.screenshot({ path: '/tmp/mangmee-billing-browser-evidence/admin-sales-cohort-mobile.png', fullPage: true });
+      await second.screenshot({ path: `${browser.evidenceDir}/admin-sales-cohort-mobile.png`, fullPage: true });
       cases.push('browser-cohort-company-selection-lost-draft-response-same-command-reload-independent-approval-permanent-result-mobile');
     } else await publish([pilot.id]);
     assert.deepEqual((await settings()).policy.salesCompanyIds, [pilot.id]);

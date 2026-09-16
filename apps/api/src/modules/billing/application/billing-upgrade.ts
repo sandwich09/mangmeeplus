@@ -33,9 +33,24 @@ export async function upgradeHistory(db: Prisma.TransactionClient, account: Bill
       grant.availableAt > at || grant.expiresAt < account.paidThrough!) throw review();
     return invoice;
   };
+  const giftRows = await db.billingOperation.findMany({ where: { companyId: account.companyId, stripeAccountId: account.stripeAccountId,
+    livemode: account.livemode, type: 'GRANT_FREE_DAYS', state: 'SUCCEEDED' }, select: { id: true, proposedJson: true } });
+  const gifts = giftRows.map(row => {
+    const p = row.proposedJson as unknown as { accountId: string; dayExtension: { days: number; before: string; after: string } };
+    const start = Date.parse(p.dayExtension?.before), end = Date.parse(p.dayExtension?.after);
+    if (p.accountId !== account.id || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || !Number.isSafeInteger(p.dayExtension.days) ||
+      p.dayExtension.days < 1 || end - start !== p.dayExtension.days * 86400000) throw review();
+    return { id: row.id, start, end };
+  }).filter(gift => gift.end > at.getTime()).sort((a, b) => a.start - b.start);
+  const skipFree = (from: number, until: number) => {
+    let cursor = from;
+    for (const gift of gifts) if (gift.start <= cursor && gift.end > cursor) cursor = Math.min(until, gift.end);
+    return cursor;
+  };
   let cursor = at.getTime();
   const segments: UpgradeSegment[] = base.map(grant => {
     const invoice = invoiceFor(grant), original = invoice.contractSnapshot as unknown as BillingSnapshot;
+    cursor = skipFree(cursor, Math.max(at.getTime(), grant.serviceStart.getTime()));
     if (grant.units !== original.quote.offer.receiptAllowance || Math.max(at.getTime(), grant.serviceStart.getTime()) !== cursor ||
       grant.serviceEnd <= grant.serviceStart || grant.serviceEnd > account.paidThrough!) throw review();
     cursor = grant.serviceEnd.getTime();
@@ -55,11 +70,13 @@ export async function upgradeHistory(db: Prisma.TransactionClient, account: Bill
       receiptUnitsAdded: proratedReceiptIncrease([{ start: grant.serviceStart, end: grant.serviceEnd,
         oldAllowance: accepted.quote.offer.receiptAllowance, newAllowance: offer.receiptAllowance }], at) };
   });
+  cursor = skipFree(cursor, account.paidThrough.getTime());
+  if (!segments.length && gifts.length && cursor === account.paidThrough.getTime()) throw billingError('BILLING_UPGRADE_GIFT_ONLY', 'เวลาที่เหลือเป็นวันแถม ซื้อแพ็กเกจเดิมเพิ่มก่อน แล้วจึงเปลี่ยนเป็นแพ็กเกจที่สูงขึ้น');
   if (!segments.length || cursor !== account.paidThrough.getTime() || new Set(segments.map(s => s.oldOffer.offerKey)).size !== 1) throw review();
   const amountSatang = segments.reduce((sum,s) => sum+s.amountSatang,0), receiptUnitsAdded = segments.reduce((sum,s) => sum+s.receiptUnitsAdded,0);
   if (!Number.isSafeInteger(amountSatang) || amountSatang < 1000 || !Number.isSafeInteger(receiptUnitsAdded) || receiptUnitsAdded > 2147483647) throw review();
   return { prorationAt, segments, amountSatang, receiptUnitsAdded, sourceHash: hashBilling([account.id, account.baseSubscriptionId,
-    account.paidThrough, segments, grants.map(g => [g.id,g.sourceHash,g.revokedAt]), invoices.sort((a,b)=>a.id.localeCompare(b.id)).map(i => [i.id,i.evidenceHash,i.refundedSatang,i.disputed])]) };
+    account.paidThrough, gifts, segments, grants.map(g => [g.id,g.sourceHash,g.revokedAt]), invoices.sort((a,b)=>a.id.localeCompare(b.id)).map(i => [i.id,i.evidenceHash,i.refundedSatang,i.disputed])]) };
 }
 
 export async function upgradePreview(stripe: StripeClient, amount: number, policy: BillingPolicy) {

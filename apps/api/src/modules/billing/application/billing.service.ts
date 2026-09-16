@@ -1,6 +1,7 @@
 import { BillingEmailRecipient } from './billing-email-recipient';
 import { assertAccountEmailProof, lockAccountEmail, verifiedAccountEmailProof } from '../../auth/application/account-email-state';
 import type { EmailProof } from '../../auth/domain/logic/email-otp.logic';
+import { BillingAdminCollection } from './billing-admin-collection';
 import { effectivePlanCapacity } from '../../system-partner-management/domain/logic/plan-capacity';
 import { assertNoPendingRefund, pendingRefund } from './billing-refund-source';
 import { readInvoiceAdjustments, readInvoiceDocument, sameInvoiceSource } from './billing-invoice-details';
@@ -31,6 +32,7 @@ import { termProjectionHash } from '../domain/paid-invoice';
 import { receiptQuotaSnapshot } from '../../line-ai/application/company-ocr-governance';
 import { paidReceiptBalance } from './billing-receipt-grants';
 import { billingState } from '../domain/billing-state';
+import { BillingFreeDays } from './billing-free-days';
 import { detectBillingIssue } from './billing-issues';
 
 export type BillingSnapshot = { emailProof?: EmailProof; quote: BillingQuote; priceId: string; policy: BillingPolicy; settingsVersion?: number; termVersion: string | null; termHash: string; repeat?: RepeatSource; restart?: RestartSource; upgrade?: UpgradeSource; capacity?: BillingCapacitySelection; planChangeId?: string; pendingChange?: { id: string; version: number; proposed: ScheduledChange } };
@@ -42,6 +44,7 @@ export class BillingService {
     @Optional() private readonly lifecycle?: PartnerLifecycleTransitionUseCase) {}
 
   get emailRecipient() { return new BillingEmailRecipient(this.prisma, this.stripe, this); }
+  get freeDays() { return new BillingFreeDays(this.prisma, this, this.lifecycle); }
   get repeater() { return new BillingRepeat(this.prisma, this.stripe, this, this.lifecycle); }
   get collection() { return new BillingCollection(this.prisma, this.stripe, this); }
 
@@ -439,6 +442,8 @@ export class BillingService {
     return this.prisma.client.$transaction(tx=>detectBillingIssue(tx,{stripeAccountId:this.stripe.accountId,livemode:this.stripe.livemode,companyId,kind,referenceId}));
   }
 
+  get adminCollection() { return new BillingAdminCollection(this.prisma,this); }
+
   async status(context: RequestContext): Promise<BillingStatus> {
     await this.assertOwner(context);
     const company = await this.prisma.client.company.findUnique({ where: { id: context.companyId }, include: { planTerm: true } });
@@ -472,13 +477,14 @@ export class BillingService {
     const issues = this.config.stripeAccountId ? await this.prisma.client.billingIssue.findMany({ where: { companyId: company.id, stripeAccountId: this.stripe.accountId,
       livemode: this.stripe.livemode, state: { not: 'RESOLVED' } }, take: 10, select: { id: true, kind: true } }) : [];
     return { companyId: company.id, companyName: company.name, mode: this.stripe.enabled ? (this.stripe.livemode ? 'LIVE' : 'TEST') : 'DISABLED',
+      collectionPause: account?.collectionPauseJson as BillingStatus['collectionPause'],
       purchaseEligibility: eligible ? 'ELIGIBLE' : 'COMPANY_SALES_CLOSED', refundReviewPending,
       policyRevision: settings?.revision?.id ?? null, ...state, subscriptionState: account?.subscriptionState ?? 'NONE',
       attemptId: attempt?.id ?? null, reference: invoice?.id ?? attempt?.id ?? null, observedAt: account?.observedAt?.toISOString() ?? null,
       effectiveCapacity: term ? effectivePlanCapacity(term) : null, tierKey: term?.tierKey ?? null, interval: snapshot?.interval ?? null, termEndsAt: term?.termEndsAt.toISOString() ?? null, paidThrough: account?.paidThrough?.toISOString() ?? null,
-      nextChargeAt: account?.nextChargeAt?.toISOString() ?? null, cancelAtPeriodEnd: account?.cancelAtPeriodEnd ?? false,
+      nextChargeAt: account?.collectionPauseJson ? null : account?.nextChargeAt?.toISOString() ?? null, cancelAtPeriodEnd: account?.cancelAtPeriodEnd ?? false,
       graceEndsAt: account?.graceEndsAt?.toISOString() ?? null,
-      allowedActions: allowedActions.filter(action => !refundReviewPending || !['new_sales', 'plan_changes', ...(account?.cancelAtPeriodEnd ? ['portal_cancel_subscription'] : [])].includes(action)),
+      allowedActions: allowedActions.filter(action => (!account?.collectionPauseJson || !['new_sales','plan_changes','portal_cancel_subscription'].includes(action)) && (!refundReviewPending || !['new_sales', 'plan_changes', ...(account?.cancelAtPeriodEnd ? ['portal_cancel_subscription'] : [])].includes(action))),
       usage: await this.usage(company.id),
       pendingPlanChange: pending,
       planCapacityRepair: !held && pending && invoice?.applyStatus === 'HELD' && invoice.errorCode === 'BILLING_CAP_SELECTION_REQUIRED' &&

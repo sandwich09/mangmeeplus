@@ -5,6 +5,8 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import type { EmailSendAttempt, Prisma } from '../../../generated/prisma/client';
 import { PostmarkClient, PostmarkSendError, validPostmarkMessageId } from '../infrastructure/postmark.client';
 
+import { maintainEmailHistory } from './email-history-retention';
+
 export const POSTMARK_EVENT_TYPE = 'email.postmark.event.received';
 const RETRY_MINUTES = [1, 5, 15, 60];
 function recoveryAt(generation: number, minimumSeconds = 60): Date {
@@ -16,6 +18,10 @@ export type PreparedMail = { purpose: string; recipient: string; signupRequestId
 @Injectable()
 export class EmailDeliveryService {
   constructor(private readonly prisma: PrismaService, private readonly config: AppConfigService, private readonly postmark: PostmarkClient) {}
+
+  async maintainHistory() {
+    return maintainEmailHistory(this.prisma, this.config.postmarkServerId, this.config.postmarkMessageStream);
+  }
 
   get isPostmark(): boolean { return this.config.emailProvider === 'postmark'; }
 

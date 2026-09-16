@@ -1,4 +1,4 @@
-import { IsArray, Allow, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { Allow, ArrayMinSize, ArrayMaxSize, IsArray, IsIn, IsBoolean, IsInt, IsISO8601, IsObject, IsOptional, IsString, IsUUID, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 // Concrete runtime DTOs for the global whitelist. Existing command parsers still own
 // conditional fields, policy/capacity semantics, versions, consent and provider invariants.
@@ -106,21 +106,22 @@ export class BillingDocumentDto {
   @IsOptional() @IsString() @MaxLength(124) creditNoteId?: string;
 }
 
-// These existing billing writers already use domain parsers. Keep the HTTP whitelist
-// concrete as well, so a new field cannot silently bypass the common boundary.
 export class BillingPlanAdjustmentDto extends BillingEventPreviewDto {
-  @IsString() @MaxLength(40) type!: 'GRANT_OVERRIDE' | 'REVOKE_OVERRIDE';
-  @IsOptional() @IsString() @MaxLength(40) tierKey?: 'STARTER_249' | 'BASIC_499' | 'PRO_999';
-  @IsOptional() @IsInt() branchLimit?: number;
-  @IsOptional() @IsInt() employeeLimit?: number;
-  @IsOptional() @IsString() @MaxLength(40) expiresAt?: string;
-  @IsOptional() @IsString() @MaxLength(128) overrideId?: string;
+  @IsIn(['GRANT_OVERRIDE','REVOKE_OVERRIDE','GRANT_FREE_DAYS','CHANGE_COLLECTION']) type!: string;
+  @IsOptional() @IsIn(['PAUSE','RESUME']) collectionAction?: string;
+  @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) resumesAt?: string;
+  @IsOptional() @IsInt() @Min(1) days?: number;
+  @IsOptional() @IsIn(['STARTER_249','BASIC_499','PRO_999']) tierKey?: string;
+  @IsOptional() @IsInt() @Min(1) branchLimit?: number;
+  @IsOptional() @IsInt() @Min(1) employeeLimit?: number;
+  @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;
+  @IsOptional() @IsUUID() overrideId?: string;
 }
 export class BillingReceiptAdjustmentDto extends BillingEventPreviewDto {
-  @IsString() @MaxLength(40) type!: 'GRANT_RECEIPTS' | 'REVOKE_RECEIPTS';
-  @IsOptional() @IsInt() units?: number;
-  @IsOptional() @IsString() @MaxLength(40) expiresAt?: string;
-  @IsOptional() @IsString() @MaxLength(128) grantId?: string;
+  @IsIn(['GRANT_RECEIPTS','REVOKE_RECEIPTS']) type!: string;
+  @IsOptional() @IsInt() @Min(1) units?: number;
+  @IsOptional() @IsISO8601({strict:true,strictSeparator:true}) expiresAt?: string;
+  @IsOptional() @IsUUID() grantId?: string;
 }
 export class BillingRefundDto extends BillingEventPreviewDto {
   @IsInt() @Min(1) amountSatang!: number;
@@ -128,9 +129,11 @@ export class BillingRefundDto extends BillingEventPreviewDto {
   @IsBoolean() notifyCustomer!: boolean;
 }
 export class BillingBatchDto {
-  @IsArray() companies!: unknown[];
+  // Existing reconcileBatchInput validates every nested field and rejects unknown keys.
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(25) companies!: unknown[];
   @IsString() @MinLength(1) @MaxLength(500) reason!: string;
 }
+
 export class BillingTimelineExportDto {
-  @IsOptional() @IsString() @MaxLength(180) cursor?: string;
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(180) cursor?: string;
 }

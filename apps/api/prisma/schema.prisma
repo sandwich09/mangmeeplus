@@ -8924,6 +8924,7 @@ model EmailSendAttempt {
   status             String   @default("SENDING")
   possibleDuplicate  Boolean  @default(false)
   dispatchStartedAt  DateTime?
+  historyArchivedAt  DateTime?
   errorCode          String?
   deadlineAt         DateTime?
   submittedAt        DateTime?
@@ -8938,6 +8939,21 @@ model EmailSendAttempt {
   @@index([status, nextRecoveryAt])
   @@index([signupRequestId])
   @@index([provider, providerServerId, stream, createdAt, id], map: "EmailSendAttempt_monitor_history_idx")
+}
+
+// Scoped operational-history cleanup. Transport and audit evidence is retained.
+model EmailHistoryPolicy {
+  id                String   @id
+  providerServerId  Int
+  stream            String
+  retentionDays     Int      @default(180)
+  enabled           Boolean  @default(false)
+  version           Int      @default(0)
+  lastCleanupAt     DateTime?
+  lastArchivedCount Int      @default(0)
+  updatedAt         DateTime @updatedAt
+
+  @@unique([providerServerId, stream])
 }
 
 model EmailSuppression {
@@ -9005,6 +9021,7 @@ model BillingAccount {
   activeAttemptId     String?
   activeEmailOperationId      String? @unique
   activeCollectionOperationId String? @unique
+  collectionPauseJson Json?
   pendingPlanChangeId  String? @unique
   contractAttemptId   String?
   termProjectionHash  String?

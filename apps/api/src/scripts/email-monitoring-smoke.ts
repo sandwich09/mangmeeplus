@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { checkEmailRetention } from './email-retention-smoke';
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { AppConfigService } from '../common/config/app-config.service';
@@ -187,6 +188,7 @@ export async function checkEmailMonitoring(input: { app: INestApplication; prism
       assert.equal(await snapshots(), snapshot);
       cases.push('browser-email-monitor-mobile-navigation-filter-pages-reload-provider-retry-and-permission-recovery');
     }
+    cases.push(...await checkEmailRetention({ prisma, serverId: scopeId, roleId, request, browser }));
     return cases;
   } finally {
     input.transport();

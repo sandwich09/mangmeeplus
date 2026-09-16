@@ -41,13 +41,14 @@ export default function BillingCollectionPanel({ companyId, status, catalog, ope
     } catch (cause) { setError(apiErrorMessage(cause)); }
     finally { setBusy(false); }
   }
-  if (!operation && !id && !status.pendingPlanChange && !status.allowedActions.includes('plan_changes') && !status.allowedActions.includes('portal_cancel_subscription')) return null;
+  if (!operation && !id && !status.collectionPause && !status.pendingPlanChange && !status.allowedActions.includes('plan_changes') && !status.allowedActions.includes('portal_cancel_subscription')) return null;
   const targetTiers = ['STARTER_249', 'BASIC_499', 'PRO_999'];
   const targetOffers = catalog.offers.filter(o => o.interval === status.interval && targetTiers.indexOf(o.offerKey) >= 0 && targetTiers.indexOf(o.offerKey) < targetTiers.indexOf(status.tierKey ?? ''));
-  const actionLabel = (value: BillingCollectionOperation['action']) => ({ CANCEL_RENEWAL: 'หยุดต่ออายุ', RESUME_RENEWAL: 'กลับมาต่ออายุ', SCHEDULE_DOWNGRADE: 'ลดแพ็กเกจสิ้นรอบ', CANCEL_DOWNGRADE: 'ยกเลิกการลดแพ็กเกจ' })[value];
+  const actionLabel = (value: BillingCollectionOperation['action']) => ({ ADMIN_PAUSE_COLLECTION:'พักเก็บเงิน', ADMIN_RESUME_COLLECTION:'กลับมาเก็บเงิน', EXTEND_TERM: 'เพิ่มวันใช้งานและเลื่อนวันเก็บเงิน', CANCEL_RENEWAL: 'หยุดต่ออายุ', RESUME_RENEWAL: 'กลับมาต่ออายุ', SCHEDULE_DOWNGRADE: 'ลดแพ็กเกจสิ้นรอบ', CANCEL_DOWNGRADE: 'ยกเลิกการลดแพ็กเกจ' })[value];
   return <section className="space-y-3 rounded-2xl border bg-white p-5" aria-label="จัดการการต่ออายุ">
     <h2 className="text-lg font-bold">การต่ออายุแพ็กเกจ</h2>
     <p>{refreshingStatus ? 'กำลังตรวจสถานะล่าสุด' : status.cancelAtPeriodEnd ? 'หยุดต่ออายุเมื่อครบระยะที่จ่ายแล้ว' : 'ระบบต่ออายุตามสัญญาที่เลือกไว้'}</p>
+    {status.collectionPause && <div className="rounded-xl bg-amber-50 p-4"><p>พักเก็บเงินอยู่ตามสถานะที่ตรวจล่าสุด</p><p>{status.collectionPause.resumesAt?`กำหนดกลับมาเก็บเงิน ${new Date(status.collectionPause.resumesAt).toLocaleString('th-TH')}`:'ยังไม่กำหนดวันกลับมาเก็บเงิน'}</p><p>วันใช้งานและใบเสร็จคงเดิม บิลที่ออกไว้ก่อนพักอาจยังถูกเรียกเก็บ ติดต่อทีมงานหากต้องการปรับการต่ออายุ</p></div>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3">{error}</p>}
     {operationId && <Link className="inline-block underline" href={`/companies/${encodeURIComponent(companyId)}/billing`}>กลับหน้าจัดการแพ็กเกจ</Link>}
@@ -73,11 +74,11 @@ export default function BillingCollectionPanel({ companyId, status, catalog, ope
         setSelection(null); onChange(); }} />}
     {operation && <article className="space-y-3 rounded-xl bg-gray-50 p-4">
       <h3 role="status" className="font-semibold">{operation.state === 'SUCCEEDED' ? operation.action === 'CANCEL_RENEWAL' ? 'ยืนยันหยุดการต่ออายุแล้ว' : operation.action === 'RESUME_RENEWAL' ? 'ยืนยันกลับมาต่ออายุแล้ว' : `ยืนยัน${actionLabel(operation.action)}แล้ว` : labels[operation.state] ?? operation.state}</h3>
-      <p>สิทธิ์ที่ซื้อไว้ถึง {new Date(operation.effectiveAt).toLocaleString('th-TH')}</p>
-      {operation.action !== 'CANCEL_RENEWAL' && <p>ยอดต่ออายุถัดไป {new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(operation.nextRenewalTotalSatang / 100)}</p>}
+      <p>{operation.action==='ADMIN_PAUSE_COLLECTION'?'กำหนดกลับมาเก็บเงิน':operation.action==='ADMIN_RESUME_COLLECTION'?'วันที่ขอกลับมาเก็บเงิน':operation.action==='EXTEND_TERM'?'วันที่ขอขยายการใช้งานถึง':'สิทธิ์ที่ซื้อไว้ถึง'} {new Date(operation.effectiveAt).toLocaleString('th-TH')}</p>
+      {operation.action !== 'CANCEL_RENEWAL' && operation.action !== 'EXTEND_TERM' && !operation.action.startsWith('ADMIN_') && <p>ยอดต่ออายุถัดไป {new Intl.NumberFormat('th-TH', { style: 'currency', currency: 'THB' }).format(operation.nextRenewalTotalSatang / 100)}</p>}
       {operation.targetOffer && <p>เมื่อชำระรอบใหม่สำเร็จ: {operation.targetOffer.label} · {operation.targetOffer.branchLimit} สาขา · {operation.targetOffer.employeeLimit} ผู้ใช้ · {operation.targetOffer.receiptAllowance} ใบ</p>}
       {operation.capacity && <div><p>คงสาขา: {operation.capacity.retainedBranches.join(', ')} · พักสาขา: {operation.capacity.suspendedBranches.join(', ') || 'ไม่มี'}</p><p>คงผู้ใช้: {operation.capacity.retainedMembers.join(', ')} · พักผู้ใช้: {operation.capacity.suspendedMembers.join(', ') || 'ไม่มี'}</p><p>ข้อมูลและประวัติยังอยู่ หากรายชื่อเปลี่ยนจะให้ตรวจเลือกอีกครั้ง</p></div>}
-      <p>วันและจำนวนใบเสร็จที่ซื้อไว้คงเดิม การเปลี่ยนการต่ออายุไม่เพิ่มโควตาหรือคืนเงิน</p>
+      <p>{operation.action.startsWith('ADMIN_') ? 'รายการนี้ปรับเฉพาะการเก็บเงิน ไม่เพิ่มวันใช้งานหรือโควตา และไม่เรียกเก็บบิลร่างย้อนหลัง' : operation.action==='EXTEND_TERM' ? operation.state === 'SUCCEEDED' ? 'เพิ่มวันใช้งานแล้ว รายการนี้ไม่มีค่าใช้จ่ายและไม่เพิ่มโควตา' : 'ผู้ดูแลกำลังดำเนินการแถมวัน ไม่เพิ่มโควตาหรือเรียกเก็บเงินจากรายการนี้ ตรวจสถานะล่าสุดเพื่อดูวันที่ยืนยันแล้ว' : 'วันและจำนวนใบเสร็จที่ซื้อไว้คงเดิม การเปลี่ยนการต่ออายุไม่เพิ่มโควตาหรือคืนเงิน'}</p>
       {['past_due', 'unpaid'].includes(status.subscriptionState) && <p>ยอดค้างเดิมยังต้องตรวจแยกกับทีมงาน การหยุดต่ออายุไม่ใช่การยกเว้นหนี้</p>}
       {operation.state === 'PREVIEW' && <p>ตรวจและยืนยันได้ถึง {new Date(operation.expiresAt).toLocaleTimeString('th-TH')}</p>}
       {(ended || operation.state === 'UNKNOWN') && <p>กลับมาเปิดลิงก์รายการเดิมหรือติดต่อทีมงานพร้อมเลขอ้างอิงได้</p>}

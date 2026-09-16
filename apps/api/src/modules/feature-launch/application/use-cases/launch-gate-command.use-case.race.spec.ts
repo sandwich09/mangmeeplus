@@ -126,9 +126,10 @@ describe('launch-gate command vs bootstrap attestation (real database)', () => {
     await clients[0]!.featureLaunchGateTransition.deleteMany({
       where: { gateKey: ROUTE.gateKey, routeKey: ROUTE.routeKey, seq: { gt: baseline?.lastSeq ?? 0 } },
     });
-    await clients[0]!.featureLaunchGate.update({
+    await clients[0]!.featureLaunchGate.upsert({
       where,
-      data: { state: 'OPEN', generation: GENERATION + round, lastSeq, reason: TAG },
+      create: { gateKey: ROUTE.gateKey, routeKey: ROUTE.routeKey, state: 'OPEN', generation: GENERATION + round, lastSeq, reason: TAG },
+      update: { state: 'OPEN', generation: GENERATION + round, lastSeq, reason: TAG },
     });
     await clients[0]!.featureLaunchGateTransition.create({
       data: {

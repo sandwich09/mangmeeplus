@@ -68,7 +68,7 @@ export class BillingAdminController {
   @Get('companies/:id/plan-adjustments') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   planAdjustmentList(@Req() req:AuthedRequest,@Param('id') id:string,@Query() query:unknown){
     const fields=bodyFields(query,['cursor']);return this.planAdjustments.list(req.context,textField(id,128),fields.cursor===undefined?undefined:uuid(fields.cursor));}
-  @Post('companies/:id/plan-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.override.manage') @Header('Cache-Control','no-store')
+  @Post('companies/:id/plan-adjustments/preview') @HttpCode(200) @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')
   async planAdjustmentPreview(@Req() req:AuthedRequest,@Param('id') id:string,@Body() body:BillingPlanAdjustmentDto){
     await this.operationLimit(req);return this.planAdjustments.preview(req.context,textField(id,128),body as BillingPlanAdjustmentInput);}
   @Get('plan-adjustments/:id') @RequirePermissions('system.billing.financial.read') @Header('Cache-Control','no-store')

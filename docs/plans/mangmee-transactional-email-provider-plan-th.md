@@ -1,6 +1,14 @@
 # แผน implement Postmark และใช้เอกสารลูกค้าจาก Stripe
 
-สถานะล่าสุด 2026-09-15: **NATIVE SERVERS CREATED / MANUAL SMTP DELIVERY CONFIRMED; APPLICATION ROLLOUT PENDING**. สร้าง Postmark Live แยก UAT/Production และทดสอบส่งจริงไป Gmail ที่ผู้ใช้ระบุแล้ว. Source implementation อยู่ในงานแยก [PR #558](https://github.com/MangmeeDev/mangmeeplus/pull/558) และ working tree ที่เกี่ยวข้อง; การเปลี่ยนชุดนี้มีเฉพาะเอกสาร ไม่รวม source/runtime activation หรือ CI acceptance ของงานนั้น.
+> **Current delivery checkpoint — 2026-09-16:** โค้ดตามขอบเขตที่อนุมัติและ local acceptance ผ่านแล้ว ดู [ผลปัจจุบัน](../evidence/billing-integration-2026-09-13/final-integration-result.json), [CT/AP 57 กลุ่ม](../evidence/billing-integration-2026-09-13/final-acceptance-map.md) และ [สถานะส่งมอบ](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). กำลังรอ CI ก่อน Admin merge develop/main ทั้งสอง repo; ไม่ deploy. Native provider/device acceptance เป็นขั้นก่อนเปิดบริการจริง ข้อความ IN PROGRESS/BLOCKED/NOT RUN ตามวันที่เก่าด้านล่างเป็นประวัติและไม่ใช่งานโค้ดค้างปัจจุบัน. OTP/passwordless/auto-provision เป็นงานแยก ไม่รวมในขอบเขตส่งมอบของ branch billing นี้.
+
+> **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
+
+
+สถานะ: **POSTMARK IMPLEMENTATION IN PROGRESS 2026-09-12; LOCAL TRANSPORT/PG/HTTP CHECKS PASS; FULL EM01–EM18 NOT COMPLETE**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
+
+
+EM05 verification increment2026-09-14: implemented and passed6 actual HTTP/PG/Next/390px browser groups. Explicit confirm, fragment/legacy handling, current-token loading/error/retry, profile return after lost response, proof purpose/expiry/single-use and transactional ACTIVE-user/resend-source races are verified. Auth93/web1703 and final API/web typechecks PASS; exact sources/mobile captures in email-verification-result.json. Independent of the primary150 and signup8 checkpoints. New CI pending; full EM05/EM09 recovery/retention/identity coverage remains open. Historical status at that checkpoint: email recovery was awaiting Owner approval. The 2026-09-15 owner amendment supersedes it; email recovery is now implemented and locally verified in email-password-reset-result.json.
 
 ## Native provider evidence — 2026-09-15
 
@@ -12,14 +20,6 @@
 Domain mangmeeplus.com ยืนยัน DKIM และ Return-Path แล้ว. ส่งรวม 3 ฉบับ: UAT 1, Production แรกเลือก From ผิดเป็น developer 1 และฉบับแก้ไขจาก contact 1; [หลักฐาน Message IDs และข้อจำกัด](../evidence/postmark-native-delivery-2026-09-15.md) บันทึกครบ. การส่งผ่าน native template editor ไม่พิสูจน์ app token binding, deployed From/allowlist guards, outbox, webhook, OTP/link flow หรือ Inbox placement. Existing My First Server `20896570` คงเดิมและไม่ผูกกับสอง environment นี้.
 
 ยังต้องผูก secret references แยกระบบ, ตั้งค่าและพิสูจน์ webhook, กำหนด UAT allowlist, ทดสอบ application journey และผ่าน deployment protocol ก่อนเปิด provider ในเว็บ. การอนุญาตส่งทดสอบรอบนี้ไม่ใช่การเพิ่มผู้รับเข้า allowlist ถาวร. ตาราง implementation ด้านล่างเก็บ baseline ของแผนเดิม; สถานะ source ใน PR แยกไม่ถือว่า merge หรือ deploy แล้วจากหลักฐาน native นี้.
-
-> **Implementation status — IN PROGRESS:** สถานะโค้ด, CI, งานที่ยังค้าง และข้อจำกัดล่าสุดอยู่ที่ [implementation status](../agent-memory/stripe-postmark-implementation-status-2026-09-13.md). ผล E2E และ source ที่ทดสอบดู [หลักฐานกลาง](../evidence/billing-integration-2026-09-13/README.md); แยกผลจำลองออกจากผล native provider และไม่รวมจำนวนทดสอบที่ซ้ำกัน. ข้อความตามวันที่ด้านล่างเป็นประวัติของแต่ละช่วงงาน. ยังไม่ deploy; การ merge develop/main ต้องผ่าน CI และตรวจ scope ที่ค้างก่อน.
-
-
-สถานะ: **POSTMARK IMPLEMENTATION IN PROGRESS 2026-09-12; LOCAL TRANSPORT/PG/HTTP CHECKS PASS; FULL EM01–EM18 NOT COMPLETE**. Owner เลือก Postmark เพื่อมี Receipt ค่าอีเมลลงบัญชีบริษัท และให้ **Stripe ออก/ส่ง Invoice กับ Receipt ฝั่งลูกค้ามั่งมี**. [Spec](../specs/mangmee-transactional-email-provider-spec-th.md) / [Postmark API reference](../research/postmark-developer-reference-th.md) กำหนด contract ปัจจุบัน; ไม่ต้องเลือก provider ซ้ำ. ไม่มี account purchase/provider send/cloud change/deploy ในรอบเอกสาร.
-
-
-EM05 verification increment2026-09-14: implemented and passed6 actual HTTP/PG/Next/390px browser groups. Explicit confirm, fragment/legacy handling, current-token loading/error/retry, profile return after lost response, proof purpose/expiry/single-use and transactional ACTIVE-user/resend-source races are verified. Auth93/web1703 and final API/web typechecks PASS; exact sources/mobile captures in email-verification-result.json. Independent of the primary150 and signup8 checkpoints. New CI pending; full EM05/EM09 recovery/retention/identity coverage remains open. Historical status at that checkpoint: email recovery was awaiting Owner approval. The 2026-09-15 owner amendment supersedes it; email recovery is now implemented and locally verified in email-password-reset-result.json.
 
 ## 1. ลำดับงาน
 
@@ -107,7 +107,8 @@ Prove CONFIG→review→READY→accepted, UNKNOWN→same-message lookup with no 
 - [x] API/auth/error/webhook/idempotency/attachment/sandbox docsตรวจแล้ว; sender-specific assumptionsถูกแทนที่.
 - [x] ระบุruntime gaps, migration, permission/state/secret boundariesและtest matrixที่ใช้จริง.
 - [x] เชื่อม P11/P26/easy signup/ADR/mangmee_web และแยก scope tax/e-Taxที่ยังไม่ทำ.
-- [ ] M1–M4 implementation + EM01–EM18; actual provider/Stripe document acceptance.
+- [x] M1–M4 implementation และ local acceptance ตาม final-integration-result.json; provider transport จำลอง.
+- [ ] Actual provider/Stripe document acceptance ก่อนเปิดบริการจริงตาม EM matrix และ release runbook.
 
 ผลตรวจเอกสาร/ลิงก์/fixturesบันทึกใน [task memory](../agent-memory/unified-easy-signup-2026-09-11.md). Docs-readyไม่ใช่production-ready; ไม่อ้าง API/inbox/E2Eผ่านจากการอ่านเอกสาร.
 
@@ -154,3 +155,12 @@ Implementation continuation: add scoped seven-day aggregate observations and all
 
 
 Postmark monitoring checkpoint2026-09-15: dedicated current global permission, configured server/stream history, seven-day local facts and all-retained25+1 pages, explicit read-only native identity inspection and original authorized signup/billing return paths are implemented. Six real local HTTP/PostgreSQL/Next/Chromium groups PASS with simulated native GET;68 focused tests PASS (including five adjacent environment-isolation checks), API/web typechecks PASS, two mobile captures inspected. See email-monitoring-result.json for exact source and limits. Recipient-server acceptance is distinct from inbox/read confirmation; quota/retention and native identity acceptance remain open. Receipt-focused regression9 also PASS after resetting only synthetic prior password proof and retaining input on actual429 preview retry. The broader combined run stopped at receipt navigation and is NOT a final combined pass. No CI/push/merge/deploy or native send/payment.
+
+
+## Owner approval2026-09-15 — local mail-history retention
+
+Default180days, automatic cleanupOFF. Add a Postmark server/stream-scoped runtime policy with versioned update, current dedicated management permission, reason and append-only actor/before/after audit. The Admin page shows the selected duration, OFF/ON, eligible count, last cleanup, a plain-language review before save and permanent recent change history. Lost save responses retry the original command; concurrent edits require reload. Policy changes do not configure Postmark retention or send messages.
+
+Cleanup means removing completed ordinary rows from the general operational history while retaining the original transport evidence needed for late callbacks and deduplication. Mark archival on successful delivered attempts; do not delete their intent/generation/provider/recipient bindings, delivery/suppression facts or original purpose history. Compact only already-PUBLISHED, successful Delivery callback payloads linked to eligible completed attempts to a minimal tombstone retaining eventKey, attempt/provider/stream references and cleanup time. Never compact bounce/complaint, unresolved/failed/dead callbacks, billing source events, suppression or audit. Do not archive an intent with an unresolved generation, future proof deadline, duplicate uncertainty, suppression or unfinished signup source. A late failure must remain visible in the review queue even if the earlier successful history was archived. The page explicitly explains this retained-evidence boundary; do not claim complete personal-data deletion or equivalent Postmark deletion.
+
+Use the existing periodic claim-mail drain for a bounded batch, scoped lock and live policy read; OFF prevents subsequent cleanup, including stale worker reads. Changing the duration does not recreate already-compacted ordinary diagnostics. Cleanup and audit commit atomically, retry is harmless, one batch never scans or rewrites all history. Verify real DB, HTTP and browser for defaults, permission, invalid inputs, conflict/lost response, ON/OFF, cutoff, pending/callback/suppression protection and late-event handling. New source acceptance and final CI remain required.

@@ -95,7 +95,7 @@ export default function BillingReceiptAdjustmentsPage({companyId,operationId}:{c
         {operation.state==='AWAITING_APPROVAL'&&<p>เปิดลิงก์คำขอนี้ให้ผู้มีสิทธิ์อีกคนตรวจ ผู้ขออนุมัติรายการตัวเองไม่ได้</p>}
         <Link className={button} href={`/system/billing/receipt-adjustments/${encodeURIComponent(operation.id)}`}>เปิดลิงก์คำขอนี้</Link>
       </section>
-      {!!operation.allowedActions.length&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2>
+      {!!operation.allowedActions.length&&<section className="space-y-3 rounded-xl border p-4"><h2 className="font-bold">ยืนยันตัวตนก่อนดำเนินการ</h2><p>ยืนยันครั้งเดียวใช้ได้ 5 นาที หากยืนยันแล้ว กดดำเนินการต่อได้เลย</p>
         <form onSubmit={e=>{e.preventDefault();void act('reauthenticate');}} className="space-y-3"><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label><button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link className={button} onClick={leaving} href="/forgot-password">กู้รหัสผ่าน</Link></form>
         <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติและปรับใบเสร็จ',cancel:'ยกเลิกคำขอ'})[action]}</button>)}</div>
       </section>}

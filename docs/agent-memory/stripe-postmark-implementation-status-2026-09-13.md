@@ -1,65 +1,51 @@
 # Agent Memory: Stripe/Postmark implementation status
 
-Status: LOCAL CHECKPOINT VERIFIED; overall task IN PROGRESS, not100% and not merged.
+Status: APPROVED SOURCE IMPLEMENTED; local browser/API acceptance and CI fixture correction PASS. Marketing Admin merged develop/main. Core corrected-head CI, develop merge and main promotion remain. No deploy or provider activation.
 Owner: Codex / repository owner.
-Scope: Stripe packages, Postmark, Admin C01–C08, web/LINE access, simulated E2E, practical Thai UX, final green-CI develop/main merges in both repos. NO DEPLOY.
+Scope: Approved Stripe packages, Postmark, Admin C01–C08, web/LINE permissions, existing signup/claim and approved email recovery; code and aligned docs in both repos.
+Decisions: No pending Owner answer. Gift days shift service and next collection equally with no receipt/AI grant. Collection pause/resume uses reviewed keep_as_draft and an explicit resume date. Local ordinary mail history180days/OFF. OTP/passwordless email auto-provision is separate work and is not claimed as delivered by this billing integration branch.
+Artifacts: [Final acceptance](../evidence/billing-integration-2026-09-13/final-integration-result.json), [57 CT/AP rows](../evidence/billing-integration-2026-09-13/final-acceptance-map.md), [source receipt](../evidence/billing-integration-2026-09-13/final-source-receipt.json).
 
-## Current checkpoint
+## Integration and corrections
 
-Current checkpoint 2026-09-15: local combined308 groups PASS, including74 browser groups and all12 STARTER/BASIC/PRO × month/year × web/LINE-origin purchases. The later Admin AI budget parser/Thai forms pass a separate12-group real browser/HTTP/PG follow-up and75 unit/error guards. Receipt source/current access:24 unit,341 receipt/webhook,10 new PG and7 existing PG PASS. Signature/current LINE source:598 focused PASS. Counts overlap; source/build and simulation boundaries are explicit in the evidence. API/web typechecks and SWC pass. Full task acceptance, the two pending Owner decisions, final clean-source CI and both develop/main merges remain open. No CI/push/merge/deploy.
+Clean worktree: /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus-stripe-final-20260915; branch codex/stripe-postmark-final-integration-20260915. Base1fe5172b incorporates1d74cf1d controls and develop647a3db4. Preserved concurrent dirty original core/marketing worktrees. Marketing isolated branch codex/stripe-postmark-implementation-20260912. Existing PR558(core) and PR2(marketing) are the final readiness targets.
 
-Parent checkpoints before this increment: core bba55f6c; marketing c262cb6 (marketing runtime969e4c0). Use git log for the new scoped local commits. No running browser/API smoke remains; no queued patch needs applying.
+- Added runtime DTO classes to14 HTTP body boundaries without increasing validation backlog or weakening conditional/source parsers. Optional class properties must not be mistaken for supplied values.
+- Applied existing loading audit to actual in-flight controls;501 covered/0gaps. Fixed Admin company search accepting input before initial hydration/loading completed.
+- Collection-only delegated Admin can read password proof and preview/submit via collection permission, without refund, package override or approval permission. Gift/package forms stay unavailable; independent approval and current worker permissions still apply. All27 focused plan/gift/collection/feature groups pass.
+- Real429 UI shows the bounded wait and preserves the original command; collection browser proof now waits and retries identical payload/key. No limiter changes. Earlier failing attempts are retained in /tmp/mangmee-final-combined-search-failure.log and /tmp/mangmee-final-combined-collection-submit-failure.log.
+- Isolated feature-launch PG fixtures now seed absent gate baselines and deterministically advance generation between survey and lock. Product launch code unchanged. Final full API7448/7448,0skip passes after earlier4 fixture failures.
 
-## Verified changes
+Verification: See exact commands, group counts and overlapping-test limits in the final result. Current API/web typechecks, fresh isolated database migrations, web1725, contracts246, marketing4, LINE current-source PostgreSQL78 and whole-chain acceptance pass. Maintenance45 pins match the merged bytes; security audit has no high/critical findings. New feature preset browser tests use actual Admin/API/PG and390px with original-command lost-response recovery. Ordinary mail retention11 groups include bounded cleanup, transaction rollback, late complaint resurfacing and original request retry. Final combined database is isolated localhost:15432/watchdog_postmark_ci and browser artifacts use /tmp/mangmee-billing-final-20260916, separate from concurrent OTP work. Older LINE source PG evidence used the earlier isolated mangmee_billing_20260912 database. Providers are simulated; no real charge/send or native/device readiness claim.
 
-| Change | Evidence | Boundary |
-|---|---|---|
-|11 Admin textarea labels, actual429 reason/window/same-key recovery;12 initial offers | billing-label-offer-matrix-result.json | HTTP67/browser79/focused80 overlap; simulated providers |
-|Original expense revision + atomic attachment/retirement/duplicates + current post-storage access | receipt-upload-source-result.json |24 unit/341 receipt+webhook/10 new PG/7 existing PG,0skip; real permission resolver and DB, simulated storage |
-|Signature activation/current owner and original LINE event; supporting/payment-media pre-write check | signature-upload-access-result.json |598 focused,0skip; current compiled AppModule/53 HTTP groups and combined proof |
-|Current combined billing/Admin/marketing runtime | combined-upload-access-result.json |308 groups/74 browser/12 matrix; /tmp/mangmee-upload-signature-combined-source-freeze.json; predates later budget UX only |
-|Admin budget overflow/invalid-input safety, Thai platform page/reload, upload-error copy | admin-budget-input-result.json |12 actual browser/HTTP/PG groups,75 unit/error guards, no provider calls; screenshots inspected |
-|Earlier original LINE questions/ordered choices and read/media/draft/text/correction/substitute sources | line-clarification-source-result.json and respective source receipts | Already locally verified; do not relist these as wholly missing |
+## Approved package behavior
 
-All evidence is in docs/evidence/billing-integration-2026-09-13/. Test groups overlap; never add them into an overall percentage or business-flow count. Current working-tree imports include concurrent environment/config edits; final clean-source evidence is still owed.
+Buy/charge immediately; trial days do not carry. Repeat full package adds quota immediately and extends from max(paidThrough,paidAt). Annual grants Starter360/Basic600/Pro1200 upfront, no paid monthly reset. Upgrade charges approved prorated paid-segment difference immediately and keeps the end; downgrade at paid boundary retains selected resources without deletion. Receipt-only sales hidden. Enterprise1999 and SYSTEM ภ.ง.ด.53/50ทวิ Coming soon/no checkout. Default signup7menus(17keys),1branch/2members including Owner,15receipts/Bangkok month and30day trial. VAT OFF; future configured inclusive/exclusive VAT requires reviewed revision. Paid renewal failure retains remaining rights7day grace then stops collection/usage; cancel at paid boundary. Refund/dispute/old debt require review.
 
-## Defects fixed and test corrections
+## Next
 
-- React textarea defaultValue became nested-label text, changing the accessible name. The form/reason were retained; explicit sibling labels fix the cause without weakening limits or exact locators.
-- Shared receipt completion could overwrite concurrent CONFIRMED state and partially replace a receipt. Original revision CAS and one transaction now preserve human work; fresh access/source checks stop business writes after storage when authority changed. Completed private bytes may remain without an expense/signature link.
-- Shared budget parser accepted overflowing nonempty text as Infinity; JSON converted it to null (clear override). Safe-integer parsing and decimal text inputs now refuse invalid values before confirmation/HTTP while preserving intentional blank inheritance. Company/platform forms and new source errors use Thai guidance.
-- Combined fixture corrections: manual/invoice alert locators exclude the empty Next announcer; restart revision allocation follows max historical version+1 after restored settings. The focused platform failure test now holds reads unavailable until the real error appears, then restores transport before reload. Production billing behavior was not changed for these fixture defects.
+1. Commit only owned clean-worktree code/docs/evidence; exclude generated next-env/AGENTS/CLAUDE and never stage original concurrent changes. No package.json/dependency edit by this work; incoming develop owns the PDF dependency patch.
+2. Push readiness revision to existing feature branches once, wait exact-head PR CI success, Admin merge develop then main for both repos. No deployment workflows or live customer gates. User explicitly authorized these merges after green CI.
+3. Record final PR/CI/merge IDs in local handoff evidence and report actual results. Native Stripe capability/live money, deployed Postmark secret/webhook/inbox and native LINE return remain release acceptance.
 
-## Remaining work
+[Historical checkpoint](stripe-postmark-implementation-history-through-controls-2026-09-15.md). Historical percentages or open questions do not override this state.
 
-1. Review current evidence against full CT01–CT32/AP01–AP24 acceptance and record any still-unproven combinations precisely. Native LINE/LIFF/provider/device acceptance is separate;308 simulated groups do not certify every row.
-2. Complete paid Admin free-day collection behavior and local mail-history retention only after the earlier Owner decisions below. Do not guess financial timing or retention defaults, and do not repeat the questions.
-3. Final clean-source verification/review, one readiness-driven CI cycle and authorized develop/main merges in BOTH repos. Preserve other ongoing work. No deployment or intermediate CI/push.
+## Final delivery — CI dispatched2026-09-16
 
-## Pending Owner decisions — do not repeat the questions
+Core revision `bcb11ae7a96c769be3b23d45ae147640d20dd381` pushed to existing PR558 branch; final CI35009007986 in progress. Marketing revision `4163e8ce3a0020f943043ef3f87661d245fe1814` pushed to existing PR2; final CI35009018640 in progress. Both PRs ready. One readiness push per repository after local333 combined + signup8/verification6/recovery7 passed. Settlement forced13 and scoped collection/gift27 pass. No deploy. Wait exact-head CI success, Admin merge develop, create/promote main PRs, wait CI and Admin merge. This post-commit delivery journal is local to avoid a new CI for status only.
 
-- Do Admin free days for an already-paid customer move the next Stripe collection date, or keep it? Manual/trial renewal and paid temporary capacities/receipts/AI controls are already implemented; this financial timing decision remains unanswered.
-- How long should local email-delivery history be retained, and should automatic cleanup start disabled? The asynchronous question remains unanswered. Never delete unresolved work, dedupe/send-attempt proof, suppression or audit evidence merely to clean history. Local retention does not set Postmark's retention.
+Marketing completed: PR2 Admin merged develop after CI35009018640 success; PR3 Admin merged main after CI35009177590 success. Develop942411ba and mainf8d7c9b3 have identical treefb3eb5bf. Core CI35009007986 still running Typecheck and Test; other required jobs success. Exact delivery IDs in local `../evidence/billing-integration-2026-09-13/final-delivery-result.json`. No deployment.
 
-## Approved business decisions
+## CI35009007986 failure and local reproduction
 
-- Confirmed purchase starts and charges immediately; unused trial days do not carry.
-- Same full package adds quota now and duration after max(paidThrough, paidAt). Annual Starter360/Basic600/Pro1200 upfront; no monthly reset of paid grants. Pro annual with8months left plus another year adds1200 receipts and ends20months later.
-- Upgrade charges prorated difference over prepaid segments, starts immediately, keeps expiry. Downgrade takes effect at the paid boundary with retained resource selection; no deletion.
-- Receipt-only offers hidden/closed. Enterprise1999 and SYSTEM ภ.ง.ด.53/50ทวิ Coming soon, no Checkout. Manually entered external tax documents remain separate.
-- Signup FREE_TRIAL_15:7menus (6parents/17keys),1branch,2members including OWNER,15receipts per Bangkok month,30days from provisioning. Keep approved signup/eligibility/account-link policy.
-- VAT OFF; future7% inclusive/exclusive and issuer changes use Admin review/independent approval. Stripe provides customer Invoice/Receipt; Postmark handles auth/claim/status mail without duplicate fiscal PDFs.
-- Previously paid renewal failure gives7day grace with old rights/remaining receipts, then suspend and stop collection. Cancel at paid boundary. Refund/dispute/old debt require manual review.
+CI failed at billing-provider-events-smoke cancellation after18min of HTTP scenarios: expected409, received400 because the preceding preview was429 and its body was used without status validation. CI completed typechecks, full package tests, whole-chain, boot, Postmark HTTP and preceding PostgreSQL stages successfully. No core merge. Marketing both merges remain complete. Local forced real limiter reproduction34995 on SWC11 produced429 at the new preview-status assertion, saved `/tmp/mangmee-ci-provider-event-rate-red.log`. Fixture now waits only bounded BILLING_RATE_LIMIT and repeats the same arguments, asserts preview/cancel success, one original operation, and no cancelled dispatch. Only test harness source changed; production code unchanged frombcb11ae7. SWC12 PASS; next forced HTTP, forced browser, full CI-equivalent non-browser locally, then one corrected readiness push/CI. Do not rerun `/tmp/mangmee-complete-local-docs.py` or rewrite the historical333 proof.
 
-## Repository and workflow boundaries
+Correction focused HTTP6 and browser7 PASS; API typecheck PASS. Sequential runner24009 now running CI-equivalent default non-browser billing HTTP since2026-09-15T19:23:38Z. Logs `/tmp/mangmee-ci-provider-events-forced-pass.log`, `/tmp/mangmee-ci-provider-events-browser-pass.log`, `/tmp/mangmee-ci-correction-typecheck.log`; full default PASS target `/tmp/mangmee-ci-default-billing-pass.log`. New corrected source fingerprint `/tmp/mangmee-ci-correction-source.json`, SWC12. Only billing-provider-events-smoke.ts differs from prior source receipt. No second CI dispatched yet.
 
-Core /Users/thawatchai/Project/MangmeeYungYuen/mangmeeplus, branch codex/stripe-postmark-implementation-20260912, draft PR558→develop. Last known remote def8470215f587632136d67288c2b38d199ac9f8 (not freshly fetched).
-Marketing isolated /Users/thawatchai/Project/MangmeeYungYuen/mangmee_web-stripe-postmark-20260912, same branch, draft PR2→develop. Last known remote4169ea219b2b4c0163bdd747e05b6d1ffea44343 (not freshly fetched). Original dirty mangmee_web is untouched.
+CI correction local closure: forced HTTP6, forced browser7, full CI-default non-browser256 PASS. Evidence `../evidence/billing-integration-2026-09-13/ci-correction-result.json`. Only one test file changed sincebcb11ae7; all product hashes unchanged. Next selectively commit this fixture and correction docs (keep final-delivery-result.json local), update PR558 evidence, one corrected push, wait exact-head CI and Admin merge core develop/main. Marketing already complete.
 
-Preserve concurrent Postmark/config/environment/CI/cloud/signup edits, research/memory files and untracked apps/web/CLAUDE.md. Never add-A, broadly restore, or commit their catalog hunk. No package.json edits, new dependencies, subagents, goals, automations, native messages or live payments. Owner permits final admin merge only after green CI; CI costs money, so intermediate commits remain local. Before any remote event, verify current workflows cannot deploy from it; mandatory cloud/deploy runbooks still apply to actual cloud actions.
+Corrected revision `a14736fd70cdafb4bc352e91690e03e0ac7836c6` committed and pushed once to PR558. Exact-head CI35015360774 started2026-09-15T19:43:53Z. Local forced HTTP6/browser7 and full CI-default256 PASS; no additional product changes. Wait green CI before Admin merge develop, then main promotion CI/Admin merge. Delivery journal stays local to avoid a status-only CI.
 
-## Local verification
+CI35015360774: provider-event correction/full HTTP PASS, signup/recovery browser, LINE credentials, scheduled discovery, historical invoice discovery/import all PASS. Failed support-SLA browser after cohorts passed: waiting for first-page button after clicking next page. Exact log `/tmp/mangmee-ci-35015360774-failed.log`; unchanged focused local CI flags (sales cohort1/config1/SLA1/browser1) PASS8 `/tmp/mangmee-ci-sla-unchanged-pass.log`. No merge/core retry CI. Investigating actual pagination navigation vs fixture timing before correction. Current branch a14736fd.
 
-Guarded DB only: localhost/127.0.0.1:15432/mangmee_billing_20260912. /tmp/mangmee-run-billing-smoke.mjs loads local fixture env without printing secrets. Full run uses BILLING_BROWSER_E2E=1 and MANGMEE_MARKETING_DIR pointing to the isolated repo. SWC output /tmp/mangmee-postmark-api-build. No overlapping SWC/browser runs. API tsc8GB/web6GB. /tmp/mangmee-run-line-source-pg.mjs runs four source/draft/delivery PG suites; all latest included cases ran with zero skips. Copy each final log before another runner overwrites it. Restore only known generated next-env/screenshot files after browser exit; inspect git diff first.
-
-[Historical checkpoints and prior provisional85% estimate](stripe-postmark-implementation-history-through-source-2026-09-15.md) are retained for provenance, not current missing-work claims. The old8–16hour estimate was preliminary effort excluding tests/CI/merge, not a deadline.
+Browser CI correction closed locally: broad SLA filter response predicate matched Next.js RSC text/x-component (CPU6x expected-red proof), now bound to exact API path/queue/cursor, actual rows and URL. Slow9 plus exact final CI browser sequence and17 offline tail contract commands pass, API typecheck PASS. Evidence `../evidence/billing-integration-2026-09-13/ci-browser-correction-result.json`. Product/runtime/workflow hashes unchanged frombcb. Selectively commit SLA fixture and evidence; one corrected CI push, wait exact-head success then Admin merge develop/main. Keep final-delivery-result.json local; no deploy.
