@@ -2,7 +2,7 @@
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { openSync, closeSync, mkdirSync } from 'node:fs';
+import { openSync, closeSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, type Page } from '@playwright/test';
 import assert from 'node:assert/strict';
@@ -17,9 +17,11 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
       server.close(() => done(address.port)); });
   });
   const origin = `http://127.0.0.1:${port}`;
+  // Each server has a different API origin; never reuse another server's compiled routes/rewrites.
+  const distDir = `.next/billing-browser-${process.pid}-${port}`;
   const log = openSync(`${evidenceDir}/next.log`, 'w', 0o600);
   const child = spawn(process.execPath, [resolve(root, 'apps/web/node_modules/next/dist/bin/next'), 'dev', '--hostname', '127.0.0.1', '--port', String(port)], {
-    cwd: resolve(root, 'apps/web'), env: { ...process.env, NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1',
+    cwd: resolve(root, 'apps/web'), env: { ...process.env, NODE_ENV: 'development', NEXT_TELEMETRY_DISABLED: '1', NEXT_DIST_DIR: distDir,
       INTERNAL_API_URL: `${input.apiOrigin}/v1`, NEXT_PUBLIC_API_BASE_URL: `${input.apiOrigin}/v1`, WEB_BASE_URL: origin }, stdio: ['ignore', log, log],
   });
   let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
@@ -29,6 +31,7 @@ export async function startBillingBrowser(input: { apiOrigin: string; token: str
       try{await closed;}catch{if(child.exitCode===null&&child.signalCode===null){const killed=once(child,'close');child.kill('SIGKILL');await killed;}}
     }
     closeSync(log);
+    rmSync(resolve(root, 'apps/web', distDir), { recursive: true, force: true });
   };
 
   try {

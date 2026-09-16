@@ -574,9 +574,12 @@ async function main() {
   } catch (error) {
     if (browser) {
       await browser.page.screenshot({ path: `${browser.evidenceDir}/failure.png`, fullPage: true, timeout: 10000 }).catch(() => {});
-      writeFileSync(`${browser.evidenceDir}/failure.json`, JSON.stringify({
+      const failure = {
         pathname: new URL(browser.page.url()).pathname, error: error instanceof Error ? error.message : 'Billing smoke failed',
-      }, null, 2), { mode: 0o600 });
+        headings: await browser.page.getByRole('heading').allTextContents().catch(() => []),
+      };
+      console.error('Billing browser failure:', JSON.stringify(failure));
+      writeFileSync(`${browser.evidenceDir}/failure.json`, JSON.stringify(failure, null, 2), { mode: 0o600 });
     }
     throw error;
   } finally {
