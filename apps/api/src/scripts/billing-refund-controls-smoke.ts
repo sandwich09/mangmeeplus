@@ -34,10 +34,10 @@ export async function checkBillingRefundControls(input:Parameters<typeof checkBi
       const draftHref=await p.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');assert.ok(draftHref);
       await p.goto(`${browser.origin}${draftHref}`,{waitUntil:'domcontentloaded'});await limit.waitFor();assert.equal(await limit.inputValue(),'249.01');
       await p.getByRole('button',{name:'ตรวจผลกระทบการตั้งค่า',exact:true}).click();await p.getByRole('region',{name:'ผลต่อวงเงินคืนเงิน',exact:true}).waitFor();
-      await p.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await p.getByRole('status').filter({hasText:'รอผู้อนุมัติอีกคน'}).waitFor();
+      await p.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();await p.getByRole('status').filter({hasText:'รอยืนยันรายการ'}).waitFor();
       const href=await p.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');assert.ok(href);
       const waiting=(await request(`${base}/configuration-changes/${href.split('/').at(-1)}`)).body;
-      assert.equal((await request(`${base}/configuration-changes/${waiting.id}/approve`,'POST',{expectedVersion:waiting.version,previewHash:waiting.previewHash})).status,403);
+      assert.ok(waiting.allowedActions.includes('approve'),'platform administrator can also confirm the request');
       const other=input.secondBrowser!.pages()[0]!;await other.goto(`${browser.origin}${href}`,{waitUntil:'domcontentloaded'});
       await other.getByRole('button',{name:'อนุมัติและใช้ค่าชุดนี้',exact:true}).click();await other.getByRole('status').filter({hasText:'การตั้งค่านี้มีผลแล้ว'}).waitFor();
       await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('region',{name:'ผลต่อวงเงินคืนเงิน',exact:true}).waitFor();

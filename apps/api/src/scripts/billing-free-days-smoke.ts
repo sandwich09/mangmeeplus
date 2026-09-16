@@ -57,8 +57,8 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
     let result=await preview();assert.equal(result.status,200,JSON.stringify(result));let op=result.body;ids.push(op.id);
     assert.equal(op.dayExtension.days,7);assert.equal(op.dayExtension.after,new Date(end.getTime()+7*86400000).toISOString());
     result=await cmd(op,'submit');assert.equal(result.status,200,JSON.stringify(result));op=result.body;
-    assert.equal((await cmd(op,'approve')).status,403,'requester cannot approve own gift');
-    result=await cmd(op,'approve',approveRequest);assert.equal(result.status,200,JSON.stringify(result));op=result.body;assert.equal(op.state,'QUEUED');
+    assert.ok(op.allowedActions.includes('approve'),'platform administrator can confirm own gift');
+    result=await cmd(op,'approve');assert.equal(result.status,200,JSON.stringify(result));op=result.body;assert.equal(op.state,'QUEUED');assert.equal(op.approvalMode,'SINGLE_ADMIN');
     const customerPending=await request(customer,'GET',undefined,{'x-company-id':companyId});assert.equal(customerPending.status,200,JSON.stringify(customerPending));assert.equal(customerPending.body.collection.action,'EXTEND_TERM');
     assert.equal((await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}})).termEndsAt.toISOString(),end.toISOString());
     fixture.lose('scheduleUpdate');await input.reconcile(accountId);
@@ -73,7 +73,8 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
     assert.deepEqual(await db.companyAiConfiguration.findUnique({where:{companyId}}),aiBefore);
     assert.deepEqual(await db.billingInvoice.findUniqueOrThrow({where:{id:invoice.id}}),invoice);
     assert.equal(await db.auditLog.count({where:{targetId:op.id,action:'billing.free_days.applied'}}),1);
-    assert.equal((await cmd(op,'approve',approveRequest)).body.state,'SUCCEEDED');
+    assert.equal((await cmd(op,'approve')).body.state,'SUCCEEDED');
+    assert.equal((await cmd(op,'approve',approveRequest)).status,409,'a different actor cannot replay the original confirmation');
 
     let cancel=await request(`${customer}/collection/preview`,'POST',{action:'CANCEL_RENEWAL'},{'x-company-id':companyId});assert.equal(cancel.status,200,JSON.stringify(cancel));
     const cancelled=await request(`${customer}/collection/${cancel.body.id}/submit`,'POST',{expectedVersion:cancel.body.version,previewHash:cancel.body.previewHash,accepted:true},{'x-company-id':companyId,'idempotency-key':`cancel-free-${tag}`});assert.equal(cancelled.status,200,JSON.stringify(cancelled));
@@ -122,13 +123,13 @@ export async function checkBillingFreeDays(input: Parameters<typeof checkBilling
       await db.billingQuote.deleteMany({where:{companyId,policyRevisionId:quoteRevision.id}});await db.billingPolicyRevision.delete({where:{id:quoteRevision.id}});
     }
     if(browser&&secondBrowser){
-      const page=browser.page,other=secondBrowser.pages()[0]!;
+      const page=browser.page,other=browser.page;
       await page.goto(`${browser.origin}/system/billing/companies/${companyId}/plan-adjustments`,{waitUntil:'domcontentloaded'});
       const panel=page.getByRole('region',{name:'แถมวันใช้งาน',exact:true});
       await panel.getByLabel('จำนวนวันแถม',{exact:true}).fill('3');await panel.getByLabel('เหตุผลที่แถมวัน',{exact:true}).fill('แถมวันจากหน้าเว็บ');
       await panel.getByRole('button',{name:'ตรวจวันใช้งานก่อนส่งคำขอ',exact:true}).click();await page.waitForURL(/\/system\/billing\/plan-adjustments\//);
       const id=new URL(page.url()).pathname.split('/').pop()!;ids.push(id);
-      await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();
+      await page.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();await page.getByRole('heading',{name:'รอยืนยันรายการ',exact:true}).waitFor();
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});await other.getByRole('button',{name:'อนุมัติและปรับสิทธิ์',exact:true}).click();
       await other.getByRole('heading',{name:'รอปรับวันกับ Stripe',exact:true}).waitFor();
       await input.reconcile(accountId);await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('heading',{name:'เพิ่มวันใช้งานแล้ว',exact:true}).waitFor();

@@ -1,3 +1,4 @@
+import { billingApprovalMode } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import type { BillingOperatorScopeView, BillingScopeChange, BillingScopeDirectory } from '@watchdog-bms/contracts';
 import type { BillingOperation, BillingOperatorScope, Prisma } from '../../../generated/prisma/client';
@@ -72,12 +73,12 @@ export class BillingScopesService {
   }
   private view(row: BillingOperation, context: RequestContext): BillingScopeChange {
     const p = row.proposedJson as unknown as Proposed;
-    return { id: row.id, type: row.type as BillingScopeChange['type'], state: row.state as BillingScopeChange['state'], version: row.version,
+    return { approvalMode: billingApprovalMode(row), id: row.id, type: row.type as BillingScopeChange['type'], state: row.state as BillingScopeChange['state'], version: row.version,
       previewHash: row.requestHash, mode: row.livemode ? 'LIVE' : 'TEST', companyId: p.companyId, companyName: p.source.companyName,
       userId: p.userId, userName: p.source.userName, capabilities: p.source.capabilities, current: p.source.scope, scopeExpiresAt: p.expiresAt,
       expiresAt: row.expiresAt.toISOString(), reason: row.reason, observedAt: row.observedAt?.toISOString() ?? null,
       allowedActions: [...(row.state === 'PREVIEW' && row.expiresAt > new Date() && row.initiatorUserId === context.userId ? ['submit' as const] : []),
-        ...(row.state === 'AWAITING_APPROVAL' && row.expiresAt > new Date() && row.initiatorUserId !== context.userId && context.permissions.includes('system.billing.approval.approve') ? ['approve' as const] : []),
+        ...(row.state === 'AWAITING_APPROVAL' && row.expiresAt > new Date() && context.permissions.includes('system.billing.approval.approve') ? ['approve' as const] : []),
         ...(['PREVIEW','AWAITING_APPROVAL'].includes(row.state) ? ['cancel' as const] : [])] };
   }
   private async row(context: RequestContext, id: string, tx: Prisma.TransactionClient = this.prisma.client) {
@@ -125,7 +126,8 @@ export class BillingScopesService {
       await this.configuration.requireProof(context,tx);
       if (action === 'submit' && (current.state !== 'PREVIEW' || current.initiatorUserId !== context.userId)) throw new ForbiddenException();
       if (action === 'approve') {
-        if (current.state !== 'AWAITING_APPROVAL' || current.initiatorUserId === context.userId || current.type !== 'GRANT_SCOPE') throw new ForbiddenException();
+        if (current.state !== 'AWAITING_APPROVAL' || current.type !== 'GRANT_SCOPE') throw new ForbiddenException();
+        await this.configuration.requireApprovalActor(current,context,'system.billing.read',tx,null);
         await this.manager(context,tx,true);
         const member = await tx.companyMembership.findUnique({ where: { id: p.membershipId }, include: { roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } } });
         if (!member) throw new ForbiddenException();
@@ -152,6 +154,6 @@ export class BillingScopesService {
   private audit(tx:Prisma.TransactionClient,context:RequestContext,row:BillingOperation,action:string) {
     const p=row.proposedJson as unknown as Proposed;
     return tx.auditLog.create({data:{companyId:p.companyId,actorUserId:context.userId,action:`billing.operator_scope.${action}`,targetType:'BillingOperation',targetId:row.id,
-      requestId:context.requestId,result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{userId:p.userId,type:row.type,mode:row.livemode?'LIVE':'TEST',sourceHash:p.source.hash,reason:row.reason}}});
+      requestId:context.requestId,result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{userId:p.userId,type:row.type,mode:row.livemode?'LIVE':'TEST',sourceHash:p.source.hash,reason:row.reason,approvalMode:billingApprovalMode(row),initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId}}});
   }
 }

@@ -1,3 +1,4 @@
+import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import type { AdminCollectionSource } from './billing-admin-collection';
 import type { FreeDaySource } from './billing-free-days';
 import { AppConfigService } from '../../../common/config/app-config.service';
@@ -73,7 +74,7 @@ export class BillingPlanAdjustmentsService {
     const unchanged=await this.unchanged(s,tx);
     await this.scope(context,row.companyId!,tx);
     return {id:row.id,type:row.type as BillingPlanAdjustmentOperation['type'],state:row.state as BillingPlanAdjustmentOperation['state'],scope:{kind:'COMPANY',companyId:row.companyId!,mode:row.livemode?'LIVE':'TEST'},
-      companyName:s.company.name,version:row.version,reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,errorCode:row.errorCode,
+      companyName:s.company.name,version:row.version,reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,approvalMode:billingApprovalMode(row),errorCode:row.errorCode,
       createdAt:row.createdAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,expiresAt:row.expiresAt.toISOString(),referenceId:row.referenceId,
       ...(p.collectionChange?{collectionChange:{action:p.collectionChange.action,before:p.collectionChange.before,after:p.collectionChange.after,openInvoices:p.collectionChange.openInvoices,draftInvoices:p.collectionChange.draftInvoices,outstandingSatang:p.collectionChange.outstandingSatang,paidThrough:p.collectionChange.paidThrough,graceEndsAt:p.collectionChange.graceEndsAt,cancelAtPeriodEnd:p.collectionChange.cancelAtPeriodEnd}}:{}),
       ...(p.dayExtension?{dayExtension:{days:p.dayExtension.days,before:p.dayExtension.before,after:p.dayExtension.after,nextChargeBefore:p.dayExtension.nextChargeBefore,nextChargeAfter:p.dayExtension.nextChargeAfter}}:{}),
@@ -81,7 +82,7 @@ export class BillingPlanAdjustmentsService {
       requesterName:actors.find(a=>a.id===row.initiatorUserId)?.displayName??null,approverName:actors.find(a=>a.id===row.approverUserId)?.displayName??null,
       current:s.company.planTerm?effectivePlanCapacity(s.company.planTerm):null,
       allowedActions:[...(fresh&&own&&manage&&row.state==='PREVIEW'?['submit' as const]:[]),
-        ...(fresh&&!own&&approve&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
+        ...(fresh&&canApproveBillingChange(s.access,row.initiatorUserId,context.userId,managePermission(row.type))&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...((['PREVIEW','AWAITING_APPROVAL'].includes(row.state)||(providerOperation(row.type)&&['QUEUED','BLOCKED'].includes(row.state)&&!(row.resultJson as Journal|null)?.freeDays?.createAt&&!(row.resultJson as Journal|null)?.freeDays?.updateAt&&!(row.resultJson as Journal|null)?.collectionControl?.dispatchedAt))&&(manage||approve)?['cancel' as const]:[])]};
   }
   async get(context:RequestContext,id:string){return this.view(context,await this.row(context,id));}
@@ -166,7 +167,8 @@ export class BillingPlanAdjustmentsService {
           if(row.initiatorUserId!==context.userId||row.state!=='PREVIEW')throw new ForbiddenException();
           j.requesterCredentialVersion=(await tx.userCredential.findUniqueOrThrow({where:{userId:context.userId}})).updatedAt.toISOString();
         }else{
-          if(row.initiatorUserId===context.userId||row.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          if(row.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          await this.configuration.requireApprovalActor(row,context,managePermission(row.type),tx);
           await this.configuration.operationActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,managePermission(row.type),tx,row.companyId!);
           await tx.$queryRaw`SELECT "userId" FROM "UserCredential" WHERE "userId"=${row.initiatorUserId} FOR SHARE`;
           const credential=await tx.userCredential.findUnique({where:{userId:row.initiatorUserId}});
@@ -189,7 +191,7 @@ export class BillingPlanAdjustmentsService {
       await tx.auditLog.create({data:{companyId:row.companyId,actorUserId:context.userId,action:`billing.plan_adjustment.${action}`,targetType:'BillingOperation',targetId:id,
         requestId:context.requestId,result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{source:'ADMIN_ADJUSTMENT',reason:row.reason,fromState:row.state,toState:updated.state,
           before:json(p.before),after:action==='approve'?json(p.after):null,previousOverrideId:p.overrideId,expiresAt:p.overrideExpiresAt,...p.dayExtension?{dayExtension:json(p.dayExtension)}:{},...p.collectionChange?{collectionChange:json(p.collectionChange)}:{},
-          initiatorUserId:row.initiatorUserId,approverUserId:updated.approverUserId}}});
+          initiatorUserId:row.initiatorUserId,approverUserId:updated.approverUserId,approvalMode:billingApprovalMode(updated)}}});
       return updated;
     });return this.view(context,row);
   }
@@ -200,7 +202,8 @@ export class BillingPlanAdjustmentsService {
       if(!current.approverUserId||!j.approverMembershipId||!j.approverCompanyId)throw new ForbiddenException();
       for(const actor of [{id:current.initiatorUserId,member:p.membershipId,company:p.actorCompanyId,permission:managePermission(current.type),credential:j.requesterCredentialVersion},
         {id:current.approverUserId,member:j.approverMembershipId,company:j.approverCompanyId,permission:'system.billing.approval.approve',credential:j.approverCredentialVersion}]){
-        await this.configuration.operationActor(current,actor.id,actor.member,actor.company,actor.permission,tx,account.companyId);
+        const context=await this.configuration.operationActor(current,actor.id,actor.member,actor.company,actor.permission,tx,account.companyId);
+        if(actor.permission==='system.billing.approval.approve')await this.configuration.requireApprovalActor(current,context,managePermission(current.type),tx);
         const credential=await tx.userCredential.findUnique({where:{userId:actor.id}});
         if(!credential||credential.status!=='ACTIVE'||credential.mustChangePassword||credential.updatedAt.toISOString()!==actor.credential||(credential.expiresAt&&credential.expiresAt<=new Date()))throw new ForbiddenException();
       }

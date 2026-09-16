@@ -48,11 +48,11 @@ export async function checkBillingSupportSla(input: Parameters<typeof checkBilli
       await page.getByRole('button', { name: 'ตรวจผลกระทบการตั้งค่า', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'ตรวจผลกระทบก่อนส่ง' }).waitFor();
       await page.getByRole('region', { name: 'ผลต่อกำหนดเวลาติดตามเคส', exact: true }).getByText('เดิม: ปิดเกณฑ์อัตโนมัติ', { exact: true }).waitFor();
-      await proof(); await page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await proof(); await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
       const href = await page.getByRole('link', { name: 'เปิดลิงก์คำขอนี้', exact: true }).getAttribute('href'); assert.ok(href);
       const waiting = (await request(`${base}/configuration-changes/${href.split('/').at(-1)}`)).body;
-      assert.equal((await request(`${base}/configuration-changes/${waiting.id}/approve`, 'POST', { expectedVersion: waiting.version, previewHash: waiting.previewHash })).status, 403);
+      assert.ok(waiting.allowedActions.includes('approve'));
       await proof(approveRequest); const second = input.secondBrowser!.pages()[0]!;
       await second.goto(`${browser.origin}${href}`, { waitUntil: 'domcontentloaded' });
       await second.getByRole('button', { name: 'อนุมัติและใช้ค่าชุดนี้', exact: true }).click();

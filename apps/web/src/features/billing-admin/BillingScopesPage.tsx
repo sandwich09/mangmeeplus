@@ -1,5 +1,5 @@
 'use client';
-import { billingControl, billingLabel, billingPermissionLabel } from '../billing/billing-display';
+import { billingApprovalLabel, billingControl, billingLabel, billingPermissionLabel } from '../billing/billing-display';
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import type { BillingOperatorScopeView, BillingScopeChange, BillingScopeDirectory } from '@watchdog-bms/contracts';
@@ -9,7 +9,7 @@ const base='/system/billing', button=billingControl;
 const get=<T,>(path:string)=>authedApiFetch<T>(base+path,{cache:'no-store',suppressErrorToast:true});
 const post=<T,>(path:string,body:unknown,key?:string)=>authedApiFetch<T>(base+path,{method:'POST',headers:{'Content-Type':'application/json',...(key?{'Idempotency-Key':key}:{})},body:JSON.stringify(body),suppressErrorToast:true});
 const date=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ไม่กำหนดวันหมดอายุ';
-const states:Record<string,string>={PREVIEW:'ตรวจสอบขอบเขตก่อนยืนยัน',AWAITING_APPROVAL:'รอผู้อนุมัติอีกคน',SUCCEEDED:'บันทึกขอบเขตแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
+const states:Record<string,string>={PREVIEW:'ตรวจสอบขอบเขตก่อนยืนยัน',AWAITING_APPROVAL:'รอยืนยันรายการ',SUCCEEDED:'บันทึกขอบเขตแล้ว',CANCELLED:'ยกเลิกคำขอแล้ว'};
 export default function BillingScopesPage({operationId}:{operationId?:string}) {
   const [scopes,setScopes]=useState<{items:BillingOperatorScopeView[];nextCursor:string|null}|null>(null),[changes,setChanges]=useState<{items:BillingScopeChange[];nextCursor:string|null}|null>(null);
   const [change,setChange]=useState<BillingScopeChange|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
@@ -31,7 +31,7 @@ export default function BillingScopesPage({operationId}:{operationId?:string}) {
   return <main className="mx-auto max-w-5xl space-y-5 break-words p-4 sm:p-8">
     <h1 className="text-2xl font-bold">บริษัทที่เจ้าหน้าที่การชำระเงินดูแล</h1>
     <nav className="flex flex-wrap gap-3"><Link className={button} href="/system/billing">กลับหน้าดูแลการชำระเงิน</Link><Link className={button} href="/system/billing/operator-scopes">รายการขอบเขตทั้งหมด</Link></nav>
-    <p>เลือกบริษัทที่เจ้าหน้าที่ดูแลได้ สิทธิ์ทำงานยังเป็นไปตามบทบาทเดิม การเพิ่มขอบเขตต้องมีผู้อนุมัติอีกคน การถอนขอบเขตไม่ลบผู้ใช้หรือข้อมูลบริษัท</p>
+    <p>เลือกบริษัทที่เจ้าหน้าที่ดูแลได้ สิทธิ์ทำงานยังเป็นไปตามบทบาทเดิม ผู้ดูแลระบบตรวจและยืนยันเพิ่มขอบเขตได้เอง การถอนขอบเขตไม่ลบผู้ใช้หรือข้อมูลบริษัท</p>
     {error&&<p role="alert" className="rounded-xl bg-red-50 p-3">{error}</p>}{notice&&<p role="status">{notice}</p>}
     <button className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={load}>โหลดข้อมูลล่าสุด</button>
     {!scopes&&!error&&<p role="status">กำลังโหลดขอบเขต…</p>}
@@ -57,9 +57,11 @@ export default function BillingScopesPage({operationId}:{operationId?:string}) {
         <h2 role="status" className="font-bold">{states[change.state]??billingLabel('operation',change.state)}</h2><p>{billingLabel('mode',change.mode)} · {change.userName} · {change.companyName}</p>
         <p>{change.type==='GRANT_SCOPE'?'ให้/ปรับขอบเขต':'ถอนขอบเขตทันทีเมื่อยืนยัน'} · เดิม {change.current?billingLabel('scope',change.current.state):'ยังไม่มีขอบเขต'} · {change.type==='GRANT_SCOPE'?date(change.scopeExpiresAt):'ไม่มีสิทธิ์ผ่านขอบเขตนี้หลังถอน'}</p>
         <p>สิทธิ์ตามบทบาทปัจจุบัน: {change.capabilities.map(billingPermissionLabel).join(' · ')||'ไม่มี'}</p><p>เหตุผล: {change.reason}</p><p>ตรวจได้ถึง {date(change.expiresAt)}</p><details><summary className="min-h-11 cursor-pointer py-2">ข้อมูลอ้างอิงคำขอ</summary><p>เลขอ้างอิง {change.id} · เวอร์ชัน {change.version}</p><p>{change.capabilities.join(", ")}</p></details>
+        {change.approvalMode&&<p>{billingApprovalLabel(change.approvalMode)}</p>}
+        <p>ผู้ดูแลระบบยืนยันคำขอของตนเองได้ โดยต้องตรวจข้อมูลและยืนยันรหัสผ่านก่อน</p>
         <div className="flex flex-wrap gap-3">{change.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(async()=>{
           const result=await post<BillingScopeChange>(`/scope-changes/${change.id}/${action}`,{expectedVersion:change.version,previewHash:change.previewHash},action==='submit'?`billing-scope-${change.id}`:undefined);setChange(result);load();
-        })}>{action==='submit'?(change.type==='GRANT_SCOPE'?'ส่งคำขอให้ผู้อนุมัติ':'ยืนยันถอนขอบเขต'):action==='approve'?'อนุมัติขอบเขตนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
+        })}>{action==='submit'?(change.type==='GRANT_SCOPE'?'บันทึกคำขอก่อนยืนยัน':'ยืนยันถอนขอบเขต'):action==='approve'?'อนุมัติขอบเขตนี้':'ยกเลิกคำขอนี้'}</button>)}</div>
         <Link className="inline-block underline" href={`/system/billing/scope-changes/${change.id}`}>เปิดคำขอขอบเขตนี้</Link>
       </section>}
       <section className="space-y-3" aria-label="ขอบเขตปัจจุบัน"><h2 className="text-lg font-bold">ขอบเขตปัจจุบัน</h2>

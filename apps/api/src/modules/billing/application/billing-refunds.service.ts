@@ -1,3 +1,4 @@
+import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { BillingRefundInput, BillingRefundReview, BillingRefundOperation, BillingStatus } from '@watchdog-bms/contracts';
@@ -47,8 +48,9 @@ export class BillingRefundsService {
     const p=row.proposedJson as unknown as Proposed,j=(row.resultJson??{}) as Journal;
     await this.configuration.operationActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,'system.billing.refund.manage',tx,row.companyId!);
     if(await this.credential(tx,row.initiatorUserId)!==j.submittedCredentialVersion)throw new ForbiddenException();
-    if(needApproval){const a=j.approval;if(!a||!row.approverUserId||row.approverUserId===row.initiatorUserId)throw new ForbiddenException();
-      await this.configuration.operationActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx,row.companyId!);
+    if(needApproval){const a=j.approval;if(!a||!row.approverUserId)throw new ForbiddenException();
+      const approver=await this.configuration.operationActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx,row.companyId!);
+      await this.configuration.requireApprovalActor(row,approver,'system.billing.refund.manage',tx);
       if(await this.credential(tx,row.approverUserId)!==a.credentialVersion)throw new ForbiddenException();}
   }
   private async policy(amount:number,tx:Prisma.TransactionClient=this.prisma.client){
@@ -100,10 +102,10 @@ export class BillingRefundsService {
     const own=row.initiatorUserId===context.userId,fresh=row.expiresAt>new Date(),manage=access.capabilities.includes('system.billing.refund.manage'),approve=access.capabilities.includes('system.billing.approval.approve');
     const issue=await this.prisma.client.billingIssue.findFirst({where:{companyId:row.companyId,stripeAccountId:row.stripeAccountId,livemode:row.livemode,kind:'CONTROL_OPERATION_REVIEW',referenceId:row.id}});
     return {id:row.id,type:'REFUND',state:row.state as BillingRefundOperation['state'],scope:{kind:'COMPANY',companyId:row.companyId!,mode:row.livemode?'LIVE':'TEST'},version:row.version,
-      reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,errorCode:row.errorCode,createdAt:row.createdAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,
+      reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,approvalMode:billingApprovalMode(row),errorCode:row.errorCode,createdAt:row.createdAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,
       expiresAt:row.expiresAt.toISOString(),referenceId:row.referenceId,sourceVersion:row.sourceVersion,previewHash:row.requestHash,companyName:company.name,invoiceNumber:p.invoiceNumber,
       amountSatang:p.amountSatang,taxSatang:p.projection.taxSatang,memo:p.memo,notifyCustomer:p.notifyCustomer,paidSatang:p.paidSatang,previousRefundedSatang:p.previousRefundedSatang,usage:p.usage,
-      allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(!own&&approve&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
+      allowedActions:[...(own&&manage&&fresh&&row.state==='PREVIEW'?['submit' as const]:[]),...(canApproveBillingChange(access,row.initiatorUserId,context.userId,'system.billing.refund.manage')&&fresh&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(!j.dispatchedAt&&['PREVIEW','AWAITING_APPROVAL','QUEUED','BLOCKED'].includes(row.state)&&(manage||approve)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['cancel' as const]:[]),
         ...((manage||approve)&&['QUEUED','RUNNING','UNKNOWN','BLOCKED','FAILED'].includes(row.state)&&(!row.leaseUntil||row.leaseUntil<=new Date())?['run' as const]:[])],
       dispatchedAt:j.dispatchedAt??null,creditNoteId:j.creditNoteId??null,creditNoteNumber:j.creditNoteNumber??null,refundId:j.refundId??null,refundState:j.refundState??null,reviewCaseId:issue?.id??null,bankReceiptConfirmed:false};
@@ -128,7 +130,7 @@ export class BillingRefundsService {
   }
   private audit(tx:Prisma.TransactionClient,row:BillingOperation,action:string,actor?:string){
     return tx.auditLog.create({data:{companyId:row.companyId,actorUserId:actor??null,...!actor?{actorType:'SERVICE',actorRefId:'billing-refund-worker'}:{},action:`billing.refund.${action}`,targetType:'BillingOperation',targetId:row.id,requestId:row.id,
-      result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{sourceHash:row.requestHash,invoiceId:row.referenceId,state:row.state,version:row.version}}});
+      result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{sourceHash:row.requestHash,invoiceId:row.referenceId,state:row.state,version:row.version,approvalMode:billingApprovalMode(row),initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId}}});
   }
   async command(context:RequestContext,id:string,action:'submit'|'approve'|'cancel',version:number,hash:string,key?:string){
     const original=await this.row(context,id);
@@ -156,7 +158,8 @@ export class BillingRefundsService {
           if(current.initiatorUserId!==context.userId||current.state!=='PREVIEW')throw new ForbiddenException();
           j.submittedCredentialVersion=await this.credential(tx,context.userId);
         }else{
-          if(current.initiatorUserId===context.userId||current.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          if(current.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          await this.configuration.requireApprovalActor(current,context,'system.billing.refund.manage',tx);
           await this.actors(current,tx,false);j.approval={membershipId:context.membershipId,companyId:context.companyId,credentialVersion:await this.credential(tx,context.userId),approvedAt:new Date().toISOString()};
         }
       }

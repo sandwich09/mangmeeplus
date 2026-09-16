@@ -57,7 +57,7 @@ export async function checkBillingConfigurationDrafts(input:Parameters<typeof ch
     const submitted=await request(`${base}/configuration-changes/${immutable.id}/submit`,'POST',{expectedVersion:immutable.version,previewHash:immutable.previewHash},{'idempotency-key':`draft-publish-${immutable.id}`});
     assert.equal(submitted.status,200,JSON.stringify(submitted));assert.equal(submitted.body.state,'AWAITING_APPROVAL');
     const approval={expectedVersion:submitted.body.version,previewHash:submitted.body.previewHash};
-    assert.equal((await request(`${base}/configuration-changes/${immutable.id}/approve`,'POST',approval)).status,403);
+    assert.ok(submitted.body.allowedActions.includes('approve'));
     assert.equal((await approveRequest(`${base}/configuration-changes/${immutable.id}/approve`,'POST',approval)).body.state,'SUCCEEDED');
     assert.deepEqual((await settings()).body.policy,initial.policy);
     assert.equal(((await state()).gatesJson as any).portal_change_plan,false,'legacy preview cannot enable native Portal plan updates');
@@ -76,7 +76,7 @@ export async function checkBillingConfigurationDrafts(input:Parameters<typeof ch
       await page.getByRole('button',{name:'บันทึกฉบับร่าง',exact:true}).click();await page.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='ตรวจผลกระทบการตั้งค่า')?.disabled);
       await page.reload();assert.equal(await page.getByLabel('เหตุผลการเปลี่ยนค่า',{exact:true}).inputValue(),'แก้ร่างหลังโหลดจากรายการเดิม');
       await page.getByRole('button',{name:'ตรวจผลกระทบการตั้งค่า',exact:true}).click();await page.getByRole('status').filter({hasText:'ตรวจผลกระทบก่อนส่ง'}).waitFor();
-      await page.getByRole('button',{name:'ส่งคำขอให้ผู้อนุมัติ',exact:true}).click();await page.getByRole('status').filter({hasText:'รอผู้อนุมัติอีกคน'}).waitFor();
+      await page.getByRole('button',{name:'บันทึกคำขอก่อนยืนยัน',exact:true}).click();await page.getByRole('status').filter({hasText:'รอยืนยันรายการ'}).waitFor();
       const href=await page.getByRole('link',{name:'เปิดลิงก์คำขอนี้',exact:true}).getAttribute('href');ids.push(href!.split('/').at(-1)!);
       const other=await input.secondBrowser!.newPage();await other.goto(`${browser.origin}${href}`,{waitUntil:'domcontentloaded'});await other.getByRole('button',{name:'อนุมัติและใช้ค่าชุดนี้',exact:true}).click();
       await other.getByRole('status').filter({hasText:'การตั้งค่านี้มีผลแล้ว'}).waitFor();await other.close();

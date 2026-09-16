@@ -118,8 +118,8 @@ export async function checkAdminCollectionControl(input:Parameters<typeof checkB
       await panel.getByLabel('กลับมาเก็บเงินเมื่อไร (เวลาประเทศไทย)',{exact:true}).fill(new Date(Date.now()+86400000+7*3600000).toISOString().slice(0,16));
       await panel.getByLabel('เหตุผลที่ปรับการเก็บเงิน',{exact:true}).fill('พักเก็บเงินจากหน้าเว็บ');
       await press(page,'ตรวจผลต่อบิลก่อนส่งคำขอ',`${company}/plan-adjustments/preview`);await page.waitForURL(/\/system\/billing\/plan-adjustments\//);
-      await page.getByText('บิลเดิมที่ยังเปิด 1 รายการ',{exact:false}).waitFor();await press(page,'ส่งคำขอให้ผู้อนุมัติ',`${base}/plan-adjustments/${page.url().split('/').at(-1)}/submit`);
-      await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();await other.goto(page.url(),{waitUntil:'domcontentloaded'});
+      await page.getByText('บิลเดิมที่ยังเปิด 1 รายการ',{exact:false}).waitFor();await press(page,'บันทึกคำขอก่อนยืนยัน',`${base}/plan-adjustments/${page.url().split('/').at(-1)}/submit`);
+      await page.getByRole('heading',{name:'รอยืนยันรายการ',exact:true}).waitFor();await other.goto(page.url(),{waitUntil:'domcontentloaded'});
       await press(other,'อนุมัติปรับการเก็บเงิน',`${base}/plan-adjustments/${page.url().split('/').at(-1)}/approve`);await other.getByRole('heading',{name:'รอตรวจการเก็บเงินกับ Stripe',exact:true}).waitFor();
       await input.reconcile(accountId);await other.reload({waitUntil:'domcontentloaded'});await other.getByRole('heading',{name:'ยืนยันการปรับเก็บเงินแล้ว',exact:true}).waitFor();
       assert.ok(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await other.screenshot({path:`${browser.evidenceDir}/admin-collection-control-20260915.png`,fullPage:true});
@@ -127,6 +127,14 @@ export async function checkAdminCollectionControl(input:Parameters<typeof checkB
       const resumeBrowser=await approve('RESUME');await input.reconcile(accountId);assert.equal((await get(resumeBrowser.id)).state,'SUCCEEDED');
       results.push('browser-admin-collection-pause-invoice-review-independent-approval-owner-status-and-resume');
     }
+    await db.membershipRole.deleteMany({where:{membershipId:input.membershipId}});await db.membershipRole.createMany({data:originalRoles});
+    await proof();
+    for(const action of ['PAUSE','RESUME']){
+      let own=await preview(action);assert.equal(own.status,200,JSON.stringify(own));own=await cmd(own.body,'submit');assert.equal(own.status,200,JSON.stringify(own));
+      own=await cmd(own.body,'approve');assert.equal(own.status,200,JSON.stringify(own));assert.equal(own.body.approvalMode,'SINGLE_ADMIN');
+      await input.reconcile(accountId);assert.equal((await get(own.body.id)).state,'SUCCEEDED');
+    }
+    results.push('admin-collection-single-admin-pause-resume-current-authority-and-worker-execution');
     assert.deepEqual(await unchanged(),before);assert.deepEqual(invoices,invoiceSource);
     return results;
   }finally{

@@ -6,12 +6,12 @@ import type { BillingRefundReview, BillingRefundOperation } from '@watchdog-bms/
 import { authedApiFetch } from '@/common/api/authed-fetch';
 import { apiErrorCode, apiErrorMessage } from '@/common/api/api-error-message';
 import { PLAN_TERM_CONTACT_EMAIL } from '@/features/plan-term/plan-term.logic';
-import { billingControl as button } from '@/features/billing/billing-display';
+import { billingApprovalLabel, billingControl as button } from '@/features/billing/billing-display';
 const field='mt-1 block min-h-11 w-full rounded-lg border bg-white p-2';
 const money=(value:number)=>new Intl.NumberFormat('th-TH',{style:'currency',currency:'THB'}).format(value/100);
 const time=(value:string|null)=>value?new Date(value).toLocaleString('th-TH'):'ยังไม่มีผลตรวจ';
 
-const states:Record<string,string>={PREVIEW:'ตรวจยอดก่อนส่งคำขอ',AWAITING_APPROVAL:'รอผู้อนุมัติอีกคน',QUEUED:'รับคำขอแล้ว รอตรวจผลจาก Stripe',RUNNING:'กำลังตรวจรายการเดิมกับ Stripe',SUCCEEDED:'Stripe ดำเนินการคืนเงินสำเร็จ',UNKNOWN:'ยังยืนยันผลคืนเงินไม่ได้',BLOCKED:'ต้องตรวจข้อมูลก่อนดำเนินการ',FAILED:'คืนเงินไม่สำเร็จ ต้องให้เจ้าหน้าที่ตรวจ',CANCELLED:'ยกเลิกคำขอแล้ว'};
+const states:Record<string,string>={PREVIEW:'ตรวจยอดก่อนส่งคำขอ',AWAITING_APPROVAL:'รอยืนยันรายการ',QUEUED:'รับคำขอแล้ว รอตรวจผลจาก Stripe',RUNNING:'กำลังตรวจรายการเดิมกับ Stripe',SUCCEEDED:'Stripe ดำเนินการคืนเงินสำเร็จ',UNKNOWN:'ยังยืนยันผลคืนเงินไม่ได้',BLOCKED:'ต้องตรวจข้อมูลก่อนดำเนินการ',FAILED:'คืนเงินไม่สำเร็จ ต้องให้เจ้าหน้าที่ตรวจ',CANCELLED:'ยกเลิกคำขอแล้ว'};
 const refundStates:Record<string,string>={pending:'Stripe รับเรื่องแล้ว กำลังรอผลคืนเงิน',requires_action:'ต้องให้เจ้าหน้าที่ตรวจขั้นตอนเพิ่มเติม',succeeded:'Stripe ดำเนินการคืนเงินสำเร็จ',failed:'Stripe แจ้งว่าคืนเงินไม่สำเร็จ',canceled:'Stripe ยกเลิกการคืนเงิน',unknown:'ยังยืนยันผลคืนเงินไม่ได้'};
 const errors:Record<string,string>={CONTROL_REFUND_PENDING:'มีเงินที่กำลังรอคืน ตรวจคำขอเดิมก่อนเริ่มคำขอเพิ่มเติม',CONTROL_REFUND_FULL:'คืนเงินหรือปรับยอดครบแล้ว เปิดเอกสารเดิมเพื่อตรวจรายละเอียด',CONTROL_REFUNDS_CLOSED:'ยังไม่เปิดรับคำขอคืนเงิน ติดต่อผู้ดูแลวงเงิน',CONTROL_REFUND_CONFIG_REQUIRED:'ยังไม่ได้กำหนดวงเงินคืนเงิน ติดต่อผู้ดูแลการตั้งค่า',CONTROL_REFUND_LIMIT:'ยอดนี้เกินวงเงินต่อคำขอ ติดต่อผู้ดูแลวงเงิน',CONTROL_REFUND_DISPUTED:'รายการนี้มีข้อพิพาท ต้องให้เจ้าหน้าที่ตรวจแยกก่อน',BILLING_REFUND_PENDING:'มีรายการเดิมที่ยังต้องตรวจสอบ เปิดคำขอเดิมหรือติดต่อทีมงาน',CONTROL_REAUTH_REQUIRED:'กรุณายืนยันรหัสผ่านปัจจุบันก่อน',CONTROL_REAUTH_FAILED:'ยืนยันไม่ได้ กรุณาตรวจรหัสผ่านหรือใช้หน้ากู้บัญชี',CONTROL_PREVIEW_STALE:'ข้อมูลเปลี่ยนหรือรายการหมดอายุ โหลดข้อมูลล่าสุดแล้วตรวจใหม่',CONTROL_REFUND_SOURCE_CHANGED:'หลักฐานการคืนเงินเปลี่ยนหรือยังไม่ครบ โหลดรายการล่าสุดหรือติดต่อทีมงาน',CONTROL_PERMISSION_CHANGED:'สิทธิ์ผู้ดำเนินการเปลี่ยน กรุณาติดต่อผู้ดูแลสิทธิ์',CONTROL_REFUND_AGED_UNKNOWN:'ต้องให้เจ้าหน้าที่ตรวจรายการ Stripe เดิมก่อน ระบบจะไม่สร้างรายการคืนเงินใหม่',CONTROL_REFUND_FAILED:'ตรวจรายการเดิมกับทีมงานก่อนดำเนินการเพิ่มเติม'};
 const api=<T,>(path:string,body?:unknown,key?:string)=>authedApiFetch<T>(`/system/billing${path}`,{cache:'no-store',suppressErrorToast:true,...body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json',...key?{'Idempotency-Key':key}:{}},body:JSON.stringify(body)}});
@@ -77,7 +77,7 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         <div><label className="block" htmlFor="refund-private-reason">เหตุผลภายใน (ลูกค้าไม่เห็น)</label><textarea id="refund-private-reason" className={field} required maxLength={500} value={reason} disabled={busy} onChange={e=>setReason(e.target.value)}/></div>
         <div><label className="block" htmlFor="refund-customer-memo">ข้อความบนเอกสารให้ลูกค้า (ไม่บังคับ)</label><textarea id="refund-customer-memo" className={field} maxLength={500} value={memo} disabled={busy} onChange={e=>setMemo(e.target.value)}/></div>
         <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={notifyCustomer} disabled={busy} onChange={e=>setNotifyCustomer(e.target.checked)}/>ให้ Stripe ส่งอีเมลเอกสารปรับยอดให้ลูกค้า</label>
-        <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะมีผู้อนุมัติอีกคน</p><button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจยอดและผลกระทบ</button>
+        <p>ขั้นต่อไปตรวจยอดและผลกระทบ ยังไม่คืนเงินจนกว่าจะยืนยันคำขอ</p><button className={button} disabled={busy} aria-busy={Boolean(busy)}>ตรวจยอดและผลกระทบ</button>
       </form>:<p role="status" className="rounded-xl border p-4">{errors[review.blockedReason??'']??'ยังเริ่มคำขอไม่ได้ กรุณาติดต่อทีมงาน'}</p>}
       <section className="space-y-3" aria-label="คำขอคืนเงินเดิม"><h2 className="font-bold">คำขอของใบแจ้งหนี้นี้</h2>{!history.length&&<p>ไม่พบคำขอในหน้านี้</p>}
         {history.map(op=><Link key={op.id} className="block min-h-11 rounded-xl border p-4 underline" href={`/system/billing/refunds/${encodeURIComponent(op.id)}`}>{states[op.state]??'ต้องตรวจสอบ'} · {money(op.amountSatang)} · {time(op.createdAt)}<span className="block">{op.reason}</span></Link>)}
@@ -90,7 +90,8 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         <p>ขอคืน {money(operation.amountSatang)} · ภาษีในเอกสารปรับยอด {money(operation.taxSatang)}</p><p>ยอดจ่ายเดิม {money(operation.paidSatang)} · เคยคืนแล้ว ณ เวลาตรวจ {money(operation.previousRefundedSatang)}</p>
         <p>ใช้สิทธิ์อ่านใบเสร็จแล้ว {operation.usage.used.toLocaleString('th-TH')} ใบ ณ เวลาตรวจคำขอ</p><p>วันหมดอายุ โควตา สาขา และผู้ใช้ของแพ็กเกจยังคงเดิม</p>
         <p>เหตุผลภายใน: {operation.reason}</p><p>ข้อความให้ลูกค้า: {operation.memo||'ไม่มีข้อความเพิ่มเติม'}</p><p>{operation.notifyCustomer?'ให้ Stripe ส่งอีเมลเอกสารปรับยอด':'ไม่ส่งอีเมลเอกสารปรับยอด'}</p>
-        {operation.state==='AWAITING_APPROVAL'&&<p>เปิดลิงก์คำขอนี้ให้ผู้มีสิทธิ์อีกคนตรวจและอนุมัติ ผู้ขออนุมัติรายการของตัวเองไม่ได้</p>}
+        {operation.approvalMode&&<p>{billingApprovalLabel(operation.approvalMode)}</p>}
+        {operation.state==='AWAITING_APPROVAL'&&<p>{operation.allowedActions.includes('approve')?'ตรวจข้อมูลและยืนยันรหัสผ่าน แล้วกดอนุมัติรายการนี้':'ให้ผู้ดูแลระบบหรือผู้มีสิทธิ์อีกคนเปิดลิงก์คำขอนี้เพื่อตรวจและอนุมัติ'}</p>}
         {operation.errorCode&&<p>{errors[operation.errorCode]??'ต้องตรวจรายการเดิมอีกครั้ง หรือติดต่อทีมงานพร้อมเลขคำขอ'}</p>}
         {operation.refundState&&<p className="font-semibold">{refundStates[operation.refundState]??'ยังยืนยันผลคืนเงินไม่ได้'}</p>}
         {operation.creditNoteId&&<p>ออกเอกสารปรับยอดแล้ว {operation.creditNoteNumber} เปิดเอกสารได้จากใบแจ้งหนี้เดิม</p>}
@@ -104,7 +105,7 @@ export default function BillingRefundPage({companyId,invoiceId,operationId}:{com
         {proof&&<p role="status">ยืนยันแล้วถึง {time(proof)}</p>}
         <form className="space-y-3" onSubmit={e=>{e.preventDefault();void act('reauthenticate');}}><label className="block">รหัสผ่านปัจจุบัน<input className={field} type="password" autoComplete="current-password" maxLength={1024} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)}/></label>
           <button className={button} disabled={busy||!password} aria-busy={Boolean(busy)}>ยืนยันรหัสผ่าน</button><Link className={button} href="/forgot-password">กู้รหัสผ่าน</Link></form>
-        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'ส่งคำขอให้ผู้อนุมัติ',approve:'อนุมัติคำขอคืนเงิน',cancel:'ยกเลิกคำขอที่ยังไม่ส่ง',run:'ตรวจและดำเนินการคำขอเดิม'})[action]}</button>)}</div>
+        <div className="flex flex-wrap gap-3">{operation.allowedActions.map(action=><button key={action} className={button} disabled={busy} aria-busy={Boolean(busy)} onClick={()=>void act(action)}>{({submit:'บันทึกคำขอก่อนยืนยัน',approve:'อนุมัติคำขอคืนเงิน',cancel:'ยกเลิกคำขอที่ยังไม่ส่ง',run:'ตรวจและดำเนินการคำขอเดิม'})[action]}</button>)}</div>
       </section>}
       {invoicePath&&<Link className={button} href={`/system/billing${invoicePath}/refund`}>กลับไปคำขอของใบแจ้งหนี้นี้</Link>}
     </>}

@@ -1,3 +1,4 @@
+import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { BillingReceiptReadWarning, BillingAdminReceiptGrant, BillingReceiptAdjustmentInput, BillingReceiptAdjustmentOperation, BillingReceiptAdjustments } from '@watchdog-bms/contracts';
@@ -84,12 +85,12 @@ export class BillingReceiptAdjustmentsService {
     const actors=await tx.user.findMany({where:{id:{in:[row.initiatorUserId,...row.approverUserId?[row.approverUserId]:[]]}},select:{id:true,displayName:true}});
     const grantId=j.grantId??p.grantId,grant=grantId?await this.grant(tx,row.companyId!,p.accountId,grantId):null;
     return {id:row.id,type:row.type as BillingReceiptAdjustmentOperation['type'],state:row.state as BillingReceiptAdjustmentOperation['state'],scope:{kind:'COMPANY',companyId:row.companyId!,mode:row.livemode?'LIVE':'TEST'},
-      companyName:s.company.name,version:row.version,reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,errorCode:row.errorCode,
+      companyName:s.company.name,version:row.version,reason:row.reason,initiatorUserId:row.initiatorUserId,approverUserId:row.approverUserId,approvalMode:billingApprovalMode(row),errorCode:row.errorCode,
       createdAt:row.createdAt.toISOString(),observedAt:row.observedAt?.toISOString()??null,expiresAt:row.expiresAt.toISOString(),referenceId:row.referenceId,
       previewHash:row.requestHash,units:p.units,grantExpiresAt:p.grantExpiresAt,beforeRemaining:p.beforeRemaining,observedRemaining:j.observedRemaining??null,
       requesterName:actors.find(a=>a.id===row.initiatorUserId)?.displayName??null,approverName:actors.find(a=>a.id===row.approverUserId)?.displayName??null,
       grant:grant?this.grantView(grant):null,readWarnings:warnings??await this.readWarnings(row.companyId!,tx),allowedActions:[...(fresh&&own&&manage&&row.state==='PREVIEW'?['submit' as const]:[]),
-        ...(fresh&&!own&&approve&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
+        ...(fresh&&canApproveBillingChange(s.access,row.initiatorUserId,context.userId,'system.billing.override.manage')&&row.state==='AWAITING_APPROVAL'?['approve' as const]:[]),
         ...(['PREVIEW','AWAITING_APPROVAL'].includes(row.state)&&(manage||approve)?['cancel' as const]:[])]};
   }
   async get(context:RequestContext,id:string){return this.view(context,await this.row(context,id));}
@@ -158,7 +159,8 @@ export class BillingReceiptAdjustmentsService {
           if(row.initiatorUserId!==context.userId||row.state!=='PREVIEW')throw new ForbiddenException();
           j.requesterCredentialVersion=(await tx.userCredential.findUniqueOrThrow({where:{userId:context.userId}})).updatedAt.toISOString();
         }else{
-          if(row.initiatorUserId===context.userId||row.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          if(row.state!=='AWAITING_APPROVAL')throw new ForbiddenException();
+          await this.configuration.requireApprovalActor(row,context,'system.billing.override.manage',tx);
           await this.configuration.operationActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,'system.billing.override.manage',tx,row.companyId!);
           await tx.$queryRaw`SELECT "userId" FROM "UserCredential" WHERE "userId"=${row.initiatorUserId} FOR SHARE`;
           const credential=await tx.userCredential.findUnique({where:{userId:row.initiatorUserId}});
@@ -186,7 +188,7 @@ export class BillingReceiptAdjustmentsService {
         ...action==='submit'?{idempotencyKey:key}:{},...action==='approve'?{approverUserId:context.userId,observedAt:new Date()}:{},resultJson:json(j),version:{increment:1}}});
       await tx.auditLog.create({data:{companyId:row.companyId,actorUserId:context.userId,action:`billing.receipt_adjustment.${action}`,targetType:'BillingOperation',targetId:id,
         requestId:context.requestId,result:'SUCCESS',riskLevel:'CRITICAL',metadataJson:{source:'ADMIN_ADJUSTMENT',reason:row.reason,fromState:row.state,toState:updated.state,
-          beforeRemaining:before,afterRemaining:after,requestedUnits:p.units,grantId,expiresAt:p.grantExpiresAt,initiatorUserId:row.initiatorUserId,approverUserId:updated.approverUserId}}});
+          beforeRemaining:before,afterRemaining:after,requestedUnits:p.units,grantId,expiresAt:p.grantExpiresAt,initiatorUserId:row.initiatorUserId,approverUserId:updated.approverUserId,approvalMode:billingApprovalMode(updated)}}});
       return updated;
     });return this.view(context,row);
   }

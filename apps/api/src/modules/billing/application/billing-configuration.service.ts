@@ -1,3 +1,4 @@
+import { billingApprovalMode, canApproveBillingChange } from './billing-approval';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { BILLING_ACTIONS, BILLING_CONFIGURATION_IMPACT_KINDS, BILLING_DRAFT_POLICY, BILLING_PAID_TIERS, billingOffer, type BillingPolicy, type BillingConfiguration,
   type BillingConfigurationImpactPage, type BillingConfigurationImpactKind,
@@ -147,14 +148,14 @@ export class BillingConfigurationService {
     const own = row.initiatorUserId === context.userId, fresh = row.expiresAt > new Date();
     return { id: row.id, type: row.type as BillingConfigurationInput['type'], state: row.state as BillingConfigurationOperation['state'],
       scope: { kind: 'PLATFORM', mode: row.livemode ? 'LIVE' : 'TEST' }, version: row.version, reason: row.reason, initiatorUserId: row.initiatorUserId,
-      approverUserId: row.approverUserId, errorCode: row.errorCode, createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null,
+      approverUserId: row.approverUserId, approvalMode: billingApprovalMode(row), errorCode: row.errorCode, createdAt: row.createdAt.toISOString(), observedAt: row.observedAt?.toISOString() ?? null,
       expiresAt: row.expiresAt.toISOString(), referenceId: row.referenceId, sourceVersion: row.sourceVersion, previewHash: row.requestHash,
       proposed: { policy: p.policy, gates: effectiveBillingGates(p.gates),...p.effectiveAt?{effectiveAt:p.effectiveAt}:{} }, impact: p.impact, activeRevisionId: (row.resultJson as { activeRevisionId?: string } | null)?.activeRevisionId ?? null,
       scheduledFor:row.scheduledFor?.toISOString()??null,scheduleDue:Boolean(row.scheduledFor&&row.scheduledFor<=new Date()),
       salesCompanies: await this.salesCompanies(p.policy.salesCompanyIds),
       canEditDraft:row.state==='DRAFT'&&own&&access.capabilities.includes(permission(row.type)),sourceDraftVersion:p.draftVersion,
       allowedActions: [...(own && fresh && row.state === 'PREVIEW' && access.capabilities.includes(permission(row.type)) ? ['submit' as const] : []),
-        ...(!own && fresh && row.state === 'AWAITING_APPROVAL' && access.capabilities.includes('system.billing.approval.approve') ? ['approve' as const] : []),
+        ...(fresh && row.state === 'AWAITING_APPROVAL' && canApproveBillingChange(access, row.initiatorUserId, context.userId, permission(row.type)) ? ['approve' as const] : []),
         ...(['SCHEDULED','RUNNING'].includes(row.state)&&(!row.leaseUntil||row.leaseUntil<=new Date())&&row.scheduledFor&&row.scheduledFor<=new Date()&&access.capabilities.includes(permission(row.type))?['apply' as const]:[]),
         ...((own&&['DRAFT','PREVIEW','AWAITING_APPROVAL'].includes(row.state))||
           (row.scheduledFor&&['SCHEDULED','BLOCKED'].includes(row.state)&&(own||row.approverUserId===context.userId||access.capabilities.includes(permission(row.type))))?['cancel' as const]:[])] };
@@ -255,7 +256,7 @@ export class BillingConfigurationService {
   private audit(tx: Prisma.TransactionClient, context: RequestContext, row: BillingOperation, action: string,worker=false) {
     return tx.auditLog.create({ data: { companyId: context.companyId, actorType:worker?'SERVICE':'USER',actorRefId:worker?'billing-configuration-worker':undefined,actorUserId: worker?null:context.userId, action: `billing.configuration.${action}`,
       targetType: 'BillingOperation', targetId: row.id, requestId: context.requestId, result: 'SUCCESS', riskLevel: 'HIGH',
-      metadataJson: { hash: row.requestHash, reason: row.reason, sourceVersion: row.sourceVersion, type: row.type } } });
+      metadataJson: { hash: row.requestHash, reason: row.reason, sourceVersion: row.sourceVersion, type: row.type, approvalMode: billingApprovalMode(row), initiatorUserId: row.initiatorUserId, approverUserId: row.approverUserId } } });
   }
   async submit(context: RequestContext, id: string, expectedVersion: number, previewHash: string, key: string) {
     if (!/^[a-zA-Z0-9_-]{16,120}$/.test(key)) throw new BadRequestException('Invalid idempotency key');
@@ -277,7 +278,7 @@ export class BillingConfigurationService {
   async approve(context: RequestContext, id: string, expectedVersion: number, previewHash: string) {
     const candidate = await this.row(context, id);
     await this.platform(context, 'system.billing.approval.approve');
-    if (candidate.initiatorUserId === context.userId) throw new ForbiddenException('ผู้ขออนุมัติรายการของตนเองไม่ได้');
+    await this.requireApprovalActor(candidate, context, permission(candidate.type), this.prisma.client);
     if (['SUCCEEDED','SCHEDULED'].includes(candidate.state) && candidate.approverUserId === context.userId && candidate.requestHash === previewHash) return this.view(candidate, context);
     await this.requireProof(context, this.prisma.client);
     const proposed = candidate.proposedJson as unknown as Proposed;
@@ -287,7 +288,7 @@ export class BillingConfigurationService {
       const companyIds = [...new Set([...(proposed.impact?.salesCohort?.before ?? []), ...(proposed.policy.salesCompanyIds ?? [])])].sort();
       if (companyIds.length) await tx.$queryRaw(Prisma.sql`SELECT id FROM "Company" WHERE id IN (${Prisma.join(companyIds)}) ORDER BY id FOR SHARE`);
       const state = await this.lock(tx), current = await this.row(context, id, tx);
-      await this.platform(context, 'system.billing.approval.approve', tx); await this.requireProof(context, tx);
+      await this.requireApprovalActor(current, context, permission(current.type), tx); await this.requireProof(context, tx);
       if (current.state !== 'AWAITING_APPROVAL' || current.version !== expectedVersion || current.requestHash !== previewHash || current.expiresAt <= new Date() || current.sourceVersion !== state.settings.version) throw stale();
       const member = await tx.companyMembership.findUniqueOrThrow({ where: { id: proposed.membershipId }, include: { roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } } } });
       const initiator: RequestContext = { ...context, userId: current.initiatorUserId, companyId: proposed.actorCompanyId, membershipId: member.id,
@@ -326,9 +327,15 @@ export class BillingConfigurationService {
     }
     return context;
   }
+  async requireApprovalActor(row:BillingOperation,context:RequestContext,managePermission:string,tx:Prisma.TransactionClient,targetCompanyId:string|null=row.companyId) {
+    const current=await this.operationActor(row,context.userId,context.membershipId,context.companyId,'system.billing.approval.approve',tx,targetCompanyId??undefined);
+    const access=await this.admin.access(current,'system.billing.approval.approve',tx);
+    if(!canApproveBillingChange(access,row.initiatorUserId,current.userId,managePermission))
+      throw new ForbiddenException('เฉพาะผู้ดูแลระบบที่มีสิทธิ์ทำรายการนี้ยืนยันคำขอของตนเองได้');
+  }
   private async scheduledActors(row:BillingOperation,state:Awaited<ReturnType<BillingService['settings']>>,tx:Prisma.TransactionClient){
     const p=row.proposedJson as Proposed,a=(row.resultJson as {scheduledApproval?:ScheduledApproval}|null)?.scheduledApproval;
-    if(!a||!row.approverUserId||row.approverUserId===row.initiatorUserId||!row.scheduledFor||row.scheduledFor.toISOString()!==p.effectiveAt||
+    if(!a||!row.approverUserId||!row.scheduledFor||row.scheduledFor.toISOString()!==p.effectiveAt||
       ![a.membershipId,a.companyId,a.credentialVersion,a.initiatorCredentialVersion,a.approvedAt].every(v=>typeof v==='string'&&v.length>0))throw stale();
     if(row.requestHash!==configurationHash([row.type,row.sourceVersion,p,row.reason,row.referenceId??null])||
       !Number.isFinite(Date.parse(a.approvedAt))||Date.parse(a.approvedAt)>=row.scheduledFor.getTime())throw stale();
@@ -336,6 +343,7 @@ export class BillingConfigurationService {
     const initiator=await this.operationActor(row,row.initiatorUserId,p.membershipId,p.actorCompanyId,permission(row.type),tx);
     if(configurationHash(effectiveBillingGates(p.gates))!==configurationHash(state.gates))await this.platform(initiator,'system.billing.gate.manage',tx);
     const approver=await this.operationActor(row,row.approverUserId,a.membershipId,a.companyId,'system.billing.approval.approve',tx);
+    await this.requireApprovalActor(row,approver,permission(row.type),tx);
     if((await this.activeCredential(tx,row.initiatorUserId)).updatedAt.toISOString()!==a.initiatorCredentialVersion||
       (await this.activeCredential(tx,row.approverUserId)).updatedAt.toISOString()!==a.credentialVersion)throw new ForbiddenException();
     return approver;

@@ -97,10 +97,10 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
       await page.getByRole('link', { name: 'เปิดคำขอขอบเขตนี้', exact: true }).click();
       await page.waitForURL(`${browser.origin}${href}`);
       await proof(page);
-      await page.getByRole('button', { name: 'ส่งคำขอให้ผู้อนุมัติ', exact: true }).click();
-      await page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await page.getByRole('button', { name: 'บันทึกคำขอก่อนยืนยัน', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await page.getByRole('status').filter({ hasText: 'รอผู้อนุมัติอีกคน' }).waitFor();
+      await page.getByRole('status').filter({ hasText: 'รอยืนยันรายการ' }).waitFor();
     } else {
       const result = await preview(); assert.equal(result.status, 200); proposed = result.body;
       assert.equal((await submit(proposed)).body.code, 'CONTROL_REAUTH_REQUIRED');
@@ -109,10 +109,16 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
     }
     const waiting = (await request(`${base}/scope-changes/${proposed.id}`)).body;
     assert.equal((await submit(proposed)).body.id, proposed.id);
-    assert.equal((await request(`${base}/scope-changes/${waiting.id}/approve`, 'POST', body(waiting))).status, 403);
+    assert.ok(waiting.allowedActions.includes('approve'));
+    const selfApprove=()=>request(`${base}/scope-changes/${waiting.id}/approve`,'POST',body(waiting));
     assert.equal((await approve(waiting)).body.code, 'CONTROL_REAUTH_REQUIRED');
+    const actorRoleIds=(await client.membershipRole.findMany({where:{membershipId:input.membershipId}})).map(r=>r.roleId);
+    const financialGrants=await client.rolePermission.findMany({where:{roleId:{in:actorRoleIds},permission:{key:'system.billing.financial.read'}}});
+    try {
+      await client.rolePermission.deleteMany({where:{roleId:{in:actorRoleIds},permission:{key:'system.billing.financial.read'}}});
+      assert.ok(!(await request(`${base}/overview`)).body.capabilities.includes('system.billing.financial.read'));
     if (browser) {
-      const page = input.secondBrowser!.pages()[0]!;
+      const page = browser.page;
       await page.goto(`${browser.origin}/system/billing/scope-changes/${waiting.id}`, { waitUntil: 'domcontentloaded' });
       await proof(page); await page.getByRole('button', { name: 'อนุมัติขอบเขตนี้', exact: true }).click();
       await page.getByRole('status').filter({ hasText: 'บันทึกขอบเขตแล้ว' }).waitFor();
@@ -121,8 +127,11 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
       await page.getByRole('link', { name: 'รายการขอบเขตทั้งหมด', exact: true }).click();
       await page.getByRole('region', { name: 'ขอบเขตปัจจุบัน', exact: true }).getByText(/ดูแลบริษัทนี้ได้/).waitFor();
     } else { assert.equal((await approveRequest(`${base}/reauthenticate`, 'POST', { password })).status, 200);
-      assert.equal((await approve(waiting)).body.state, 'SUCCEEDED'); }
-    assert.equal((await approve(waiting)).body.state, 'SUCCEEDED');
+      assert.equal((await selfApprove()).body.state, 'SUCCEEDED'); }
+    } finally { await client.rolePermission.createMany({data:financialGrants}); }
+    assert.equal((await selfApprove()).body.state, 'SUCCEEDED');
+    assert.equal((await selfApprove()).body.approvalMode,'SINGLE_ADMIN');
+    assert.equal((await approveRequest(`${base}/reauthenticate`,'POST',{password})).status,200);
     assert.deepEqual((await delegated(`${base}/overview`)).body.companies.map((c: any) => c.companyId), [companyId]);
     const detail = await delegated(`${base}/companies/${companyId}`); assert.equal(detail.status, 200); assert.equal(detail.body.financial, null);
     assert.equal((await delegated(`${base}/companies/${pageCompanies[0]!.id}`)).status, 404);
@@ -142,7 +151,8 @@ export async function checkBillingScopes(input: Parameters<typeof checkBillingCo
     } else assert.equal((await submit((await preview('REVOKE_SCOPE')).body)).body.state, 'SUCCEEDED');
     assert.equal((await delegated(`${base}/companies/${companyId}`)).status, 404);
     assert.equal((await submit(proposed)).body.state, 'SUCCEEDED');
-    assert.equal((await approve(waiting)).body.state, 'SUCCEEDED');
+    assert.equal((await selfApprove()).body.state,'SUCCEEDED');
+    assert.equal((await approve(waiting)).status,409,'another actor cannot replace the original confirmation');
     assert.equal((await delegated(`${base}/companies/${companyId}`)).status, 404, 'old successful submit/approval replay never regrants a revoked scope');
     const staleRole = (await submit((await preview()).body)).body;
     await client.rolePermission.create({ data: { roleId: role.id, permissionId: manage.id } });

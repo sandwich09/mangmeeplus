@@ -55,16 +55,18 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     assert.equal((await command(first.body,'submit')).status,409);
     for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
     const submitted=await command(first.body,'submit');assert.equal(submitted.status,200);assert.equal((await command(first.body,'submit')).body.id,first.body.id);
-    assert.equal((await command(submitted.body,'approve')).status,403);
-    const applied=await command(submitted.body,'approve',approveRequest);assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.body.state,'SUCCEEDED');
-    assert.equal((await command(submitted.body,'approve',approveRequest)).body.state,'SUCCEEDED');
+    assert.ok(submitted.body.allowedActions.includes('approve'));
+    const applied=await command(submitted.body,'approve');assert.equal(applied.status,200,JSON.stringify(applied));assert.equal(applied.body.state,'SUCCEEDED');
+    assert.equal(applied.body.approvalMode,'SINGLE_ADMIN');assert.equal(applied.body.approverUserId,input.userIds[0]);
+    assert.equal((await command(submitted.body,'approve')).body.state,'SUCCEEDED');
     assert.equal(await db.auditLog.count({where:{companyId,action:'billing.plan_adjustment.approve'}}),1);
+    const approvalAudit=await db.auditLog.findFirstOrThrow({where:{targetId:first.body.id,action:'billing.plan_adjustment.approve'}});assert.equal((approvalAudit.metadataJson as any).approvalMode,'SINGLE_ADMIN');
     assert.equal((await customer()).tierKey,'BASIC_499');assert.equal((await customer()).effectiveCapacity.tierKey,'PRO_999');assert.equal((await customer()).usage.remaining,50);
     assert.equal((await new GetCompanyPlanTermUseCase(prisma).execute(companyId)).term?.effectiveCapacity?.tierKey,'PRO_999');
     assert.equal((await receiptQuotaSnapshot(prisma,companyId,'2026-09')).tierKey,'PRO_999');
     assert.equal(termProjectionHash(await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}})),termProjectionHash(baseline));
     await assert.rejects(new SetCompanyPlanTermUseCase(prisma).execute({companyId,tierKey:'PRO_999',branchLimit:5,employeeLimit:10,monthlySlipLimit:100,requestingAdminUserId:input.userIds[0]!,requestId:randomUUID(),commandId:randomUUID(),reason:'ตรวจแพ็กเกจที่ชำระ',expectedVersion:(await new GetCompanyPlanTermUseCase(prisma).execute(companyId)).sourceVersion!}), (e:any)=>e.getStatus()===409&&e.getResponse().code==='paid_plan_review_required');
-    cases.push('admin-paid-plan-current-proof-independent-approval-replay-and-shared-web-line-projection');
+    cases.push('admin-paid-plan-current-proof-single-admin-confirmation-replay-and-shared-web-line-projection');
     await assertBranchLimit(prisma,companyId);await assertEmployeeLimit(prisma,companyId);
     const lower=await preview({tierKey:'STARTER_249',branchLimit:1,employeeLimit:1,reason:'ลดเพดานโดยเก็บรายการเดิม'});assert.equal(lower.status,200);
     const lowered=await approve(lower.body);assert.equal(lowered.referenceId,first.body.id);assert.equal(lowered.activeBranches,2);
@@ -109,7 +111,7 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
     const race=await Promise.allSettled([add(),add()]);assert.equal(race.filter(r=>r.status==='fulfilled').length,1);assert.equal(await db.branch.count({where:{companyId,status:'ACTIVE'}}),3);
     cases.push('admin-paid-plan-shared-company-lock-final-branch-slot-race');
     if(browser&&secondBrowser){
-      const page=browser.page,other=secondBrowser.pages()[0]!,url=`${browser.origin}/system/billing/companies/${companyId}/plan-adjustments`;
+      const page=browser.page,other=browser.page,url=`${browser.origin}/system/billing/companies/${companyId}/plan-adjustments`;
       const click=async(p:typeof page,name:string,suffix:string)=>{for(let tries=0;;tries++){const pending=p.waitForResponse(r=>r.url().endsWith(suffix));await p.getByRole('button',{name,exact:true}).click();const r=await pending;
         if(r.status()!==429){assert.equal(r.status(),200,JSON.stringify(await r.json()));return;}assert.ok(tries<2);const body=await r.json();assert.ok(body.retryAfterSeconds<=60);await p.getByRole('alert').getByText(/รอ/).waitFor();await new Promise(resolve=>setTimeout(resolve,Math.min(60,body.retryAfterSeconds+1)*1000));}};
       for(const actor of [request,approveRequest])await ensureBillingCompanyProof(actor,companyId,password);
@@ -121,17 +123,17 @@ export async function checkBillingPlanAdjustments(input:Parameters<typeof checkB
       await page.getByRole('textbox',{name:'เหตุผลที่ปรับสิทธิ์',exact:true}).fill('ปรับจากหน้าเว็บโดยเก็บสาขาเดิม');
       await click(page,'ตรวจสิทธิ์ก่อนส่งคำขอ',`/companies/${companyId}/plan-adjustments/preview`);await page.waitForURL(/\/system\/billing\/plan-adjustments\//);
       const opId=new URL(page.url()).pathname.split('/').pop()!;await page.getByText(/จำนวนที่ใช้อยู่เกินเพดานใหม่/).waitFor();
-      await click(page,'ส่งคำขอให้ผู้อนุมัติ',`/plan-adjustments/${opId}/submit`);await page.getByRole('heading',{name:'รอผู้อนุมัติอีกคน',exact:true}).waitFor();
+      await click(page,'บันทึกคำขอก่อนยืนยัน',`/plan-adjustments/${opId}/submit`);await page.getByRole('heading',{name:'รอยืนยันรายการ',exact:true}).waitFor();
       await other.goto(page.url(),{waitUntil:'domcontentloaded'});const approvePath=`/plan-adjustments/${opId}/approve`;
       await other.route(`**${approvePath}`,async route=>{const r=await route.fetch();assert.equal(r.status(),200);await route.abort('connectionreset');},{times:1});
       const failed=other.waitForEvent('requestfailed',r=>r.url().endsWith(approvePath));await other.getByRole('button',{name:'อนุมัติและปรับสิทธิ์',exact:true}).click();await failed;
-      await click(other,'อนุมัติและปรับสิทธิ์',approvePath);await other.getByRole('heading',{name:'ปรับสิทธิ์แล้ว',exact:true}).waitFor();
+      await click(other,'อนุมัติและปรับสิทธิ์',approvePath);await other.getByRole('heading',{name:'ปรับสิทธิ์แล้ว',exact:true}).waitFor();await other.getByText('ยืนยันโดยผู้ดูแลระบบคนเดียว',{exact:true}).waitFor();
       assert.equal(await db.auditLog.count({where:{targetId:opId,action:'billing.plan_adjustment.approve'}}),1);
       await other.getByRole('link',{name:'กลับไปประวัติการปรับแพ็กเกจ',exact:true}).click();await other.waitForURL(url);await other.getByRole('region',{name:'ประวัติการปรับแพ็กเกจ',exact:true}).waitFor();
       await other.reload({waitUntil:'domcontentloaded'});await other.getByText('เหตุผล: ปรับจากหน้าเว็บโดยเก็บสาขาเดิม',{exact:true}).waitFor();assert.equal(await other.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await other.evaluate(()=>scrollTo(0,0));await other.screenshot({path:`${browser.evidenceDir}/admin-plan-adjustments-mobile.png`});
       for(const channel of ['web','line']){await page.goto(`${browser.origin}/companies/${companyId}/billing?channel=${channel}`,{waitUntil:'domcontentloaded'});await page.getByRole('region',{name:'สิทธิ์แพ็กเกจชั่วคราว',exact:true}).waitFor();await page.getByText(/ใบเสร็จคงเหลือ 50 ใบ/).waitFor();}
-      cases.push('browser-admin-plan-impact-independent-approval-response-loss-history-reload-and-web-line-current-rights');
+      cases.push('browser-admin-plan-impact-single-admin-confirmation-response-loss-history-reload-and-web-line-current-rights');
     }
     const finalTerm=await db.companyPlanTerm.findUniqueOrThrow({where:{companyId}});assert.equal(termProjectionHash(finalTerm),termProjectionHash(baseline));
     assert.deepEqual(await db.billingAccount.findUniqueOrThrow({where:{id:account.id}}),originalAccount);assert.deepEqual(await db.billingReceiptGrant.findUniqueOrThrow({where:{id:purchase.id}}),purchase);

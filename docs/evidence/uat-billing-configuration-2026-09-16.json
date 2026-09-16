@@ -1,5 +1,5 @@
 {
-  "status": "PREPARED_NOT_PUBLISHED",
+  "status": "NATIVE_DRAFT_SAVED_NOT_PUBLISHED",
   "environment": "uat",
   "mode": "TEST",
   "stripeAccountId": "acct_1UEk5IRvebw5L0s3",
@@ -43,6 +43,14 @@
     "notification_delivery": true,
     "refunds": false
   },
-  "reason": "เปิดทดสอบซื้อแพ็กเกจ Stripe Sandbox บน UAT หลัง release 20260916T064124Z-125e1228; ราคาและโควตาตาม spec, VAT OFF, ยังไม่เปิดคำสั่งคืนเงิน",
-  "applicationInstructions": "Use current Admin settings version and native preview; confirm impact; submit with current password; another authorized user must approve. Do not apply this file directly to the database. No credentials are included."
+  "reason": "เตรียมทดสอบซื้อแพ็กเกจ Stripe Sandbox บน UAT ตาม spec; ราคาและโควตาเดิม, VAT ปิด, ยังไม่เปิดคืนเงิน",
+  "applicationInstructions": "After deploying the single-admin amendment, use the current Admin settings version and native preview; confirm impact; verify the current password; submit, then explicitly approve with the genuine SYSTEM_ADMIN account and required capabilities. A different authorized reviewer remains supported. Do not apply this file directly to the database. No credentials are included.",
+  "nativeDraft": {
+    "id": "8b376fa9-4553-475a-af71-732cb53db90b",
+    "version": 0,
+    "createdThrough": "authenticated Admin browser UI",
+    "servingSourceCommit": "ee2f55421dde0edc0fb7226aadea66c3cc52b2d0",
+    "settingsVersion": 0,
+    "salesActivated": false
+  }
 }
