@@ -72,7 +72,7 @@ BFF เท่านั้นที่ใส่ challengeId/browserSecret ไป 
 | E17 | OTP ทำเส้นทางจ่ายเงินหรือ reauth หาย/ขอใหม่วนรหัสเก่า | safe next path + legal/password gates + rotate request key after invalid proof |
 | E15 | dynamic BFF ถูก Next rewrite ส่งผิด API | static BFF endpoints + real HTTP/browser regression |
 | E18 | เพิ่ม public login แต่ maintenance pin ไม่ครอบคลุม | pin email-access service และ auth module; CLOSED ต้องไม่ออก session; validator tamper tests |
-| E14 | optional-email branch ยังไม่รวมCI | pin baseline7ef09d8e; own worktree; exact integrated verification |
+| E14 | optional-email branch ยังไม่รวมCI | initial baseline7ef09d8e; latest dependency e477e171 integrated in own worktree; exact integrated verification |
 
 ## 6. Acceptance
 
