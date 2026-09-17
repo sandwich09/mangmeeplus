@@ -1,5 +1,9 @@
 # Company OCR Governance Spec (Platform Admin)
 
+เพิ่มเติม 2026-09-17: [spec รวม NOGROUP / budget / intake cost](line-ai-ledger-lifecycle-remediation-spec-th.md) §9–12 กำหนดข้อความเมื่อเงิน AI เต็มและเพดานเงิน CHAT/OCR แยกตาม owner decision งานใหม่นี้ยังไม่ implement/activate และไม่เปลี่ยนความหมาย OCR count quota, receipt grants, permissions หรือการอัปโหลด/กรอกเองในเอกสารนี้
+
+สำหรับ failure/refund ให้ใช้ amendment [Onboarding/trial receipt fixes — Issue 4](onboarding-trial-receipt-fixes-spec.md): customer read admission ที่ไม่ได้ usable persisted result ต้องคืนตาม exact identity แม้ provider อาจทำงานแล้ว ข้อนี้ supersedes ข้อความ retained failure counts ใน §3.1/§5 ด้านล่าง ส่วนเงินจริงที่เกิดกับ provider ไม่ถูกคืนเพราะ refund จำนวนสิทธิ์ OCR
+
 สถานะ: `IMPLEMENTED / LOCAL VERIFIED`
 วันที่: 2026-08-27 (Asia/Bangkok)
 Owner: Platform / AI / Finance Operations
