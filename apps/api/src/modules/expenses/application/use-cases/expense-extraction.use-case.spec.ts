@@ -884,3 +884,73 @@ describe('receipt date provenance survives extraction summaries', () => {
     assert.equal(updates[0].aiVerificationSummaryJson.dateStatus, 'unverified');
   });
 });
+
+/**
+ * Remediation spec §9.1/§9.2 (B-03). A money refusal is a decision, not a read failure: the file and
+ * the draft stay exactly as they were, the result carries the typed code AND the scope, and the
+ * reason is written onto the saved summary so a reload (or a resumed attempt) reports the same
+ * answer instead of asking the gate again under today's budget.
+ */
+describe('RequestReceiptExtractionUseCase – company AI money refusals (spec §9.1)', () => {
+  const priorSummary = {
+    status: 'OCR_EXTRACTED_NEEDS_REVIEW',
+    extractionRequestId: 'older-request',
+    extractionAttachmentId: 'attachment-1',
+    recognizedFields: { vendorName: 'ร้านเดิม' },
+    dateStatus: 'verified',
+  };
+
+  for (const [code, scope] of [
+    ['AI_MONTHLY_BUDGET_EXCEEDED', 'TOTAL'],
+    ['AI_BUDGET_INSUFFICIENT', 'TOTAL'],
+    ['AI_BUDGET_UNAVAILABLE', undefined],
+  ] as const) {
+    it(`returns the typed reason and stores it without touching the draft: ${code}`, async () => {
+      const { useCase, updates, audits } = makeUseCase({
+        expense: { ...baseExpense, updatedAt: new Date('2026-09-15T00:00:00Z'), aiVerificationSummaryJson: priorSummary },
+        gatewayResult: { status: 'failed', errorCode: code, ...(scope ? { budgetScope: scope } : {}) },
+      });
+
+      const result = await useCase.execute(ctx(['expense.ocr.request']), 'expense-1');
+
+      assert.deepEqual(result, { status: 'failed', errorCode: code, ...(scope ? { budgetScope: scope } : {}) });
+      assert.equal(updates.length, 1, 'exactly one write: the reason, nothing else');
+      const summary = updates[0].aiVerificationSummaryJson;
+      // Nothing an earlier read or a reviewer put there is cleared (B-03).
+      assert.equal(summary.recognizedFields.vendorName, 'ร้านเดิม');
+      assert.equal(summary.status, 'OCR_EXTRACTED_NEEDS_REVIEW');
+      assert.equal(summary.dateStatus, 'verified');
+      assert.equal(summary.extractionRequestId, 'older-request', 'the last SUCCESSFUL read still owns these');
+      assert.deepEqual(
+        { ...summary.aiBudgetRefusal, at: undefined },
+        { errorCode: code, ...(scope ? { budgetScope: scope } : {}), extractionRequestId: 'request-1', extractionAttachmentId: 'attachment-1', at: undefined },
+      );
+      assert.equal(updates[0].aiVerificationStatus, undefined, 'a refused read does not restate the review state');
+      assert.equal(audits.find((entry) => entry.action === 'expense.ocr.request').metadataJson.errorCode, code);
+      // Internal money never reaches the tenant-visible result or the saved summary.
+      assert.equal(/satang|budgetSatang/i.test(JSON.stringify([result, summary])), false);
+    });
+  }
+
+  it('never fails the request when the summary write loses an optimistic lock', async () => {
+    const { useCase, repo } = makeUseCase({
+      expense: { ...baseExpense, updatedAt: new Date('2026-09-15T00:00:00Z') },
+      gatewayResult: { status: 'failed', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' },
+    });
+    repo.updateExpense = mock.fn(async () => { throw new Error('RECORD_CHANGED'); }) as any;
+
+    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), {
+      status: 'failed', errorCode: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL',
+    });
+  });
+
+  it('leaves an ordinary read failure alone — no summary write, no budget words', async () => {
+    const { useCase, updates } = makeUseCase({
+      expense: { ...baseExpense, updatedAt: new Date('2026-09-15T00:00:00Z') },
+      gatewayResult: { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' },
+    });
+
+    assert.deepEqual(await useCase.execute(ctx(['expense.ocr.request']), 'expense-1'), { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' });
+    assert.deepEqual(updates, []);
+  });
+});

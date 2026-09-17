@@ -250,6 +250,38 @@ describe('CrmAiSummaryUseCase', () => {
     assert.equal(result.status, 'unavailable');
     assert.equal(result.error.code, 'PROVIDER_UNKNOWN');
     assert.equal(result.error.message, 'gateway_unreachable');
+    assert.equal(result.error.retryable, true);
+  });
+
+  // Remediation spec §9.4 / R-09: waiting cannot open the money gate this month, so the panel must
+  // not be told to try again — each press is another admission attempt against a closed gate.
+  it('never offers a retry for a permanent money refusal, and keeps its code', async () => {
+    for (const code of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
+      const gateway = makeGateway({ summary: () => {
+        const error: any = new Error(code);
+        error.getStatus = () => 429;
+        error.getResponse = () => ({ code, budgetScope: 'TOTAL' });
+        throw error;
+      } });
+      const uc = new CrmAiSummaryUseCase(makeRepo(), makeContext(), gateway);
+      const result = await uc.execute(ctx(), 'conv-1');
+      assert.equal(result.status, 'unavailable');
+      assert.deepEqual(result.error, { code: 'PROVIDER_BUDGET_EXHAUSTED', message: code, retryable: false, budgetScope: 'TOTAL' });
+    }
+  });
+
+  it('leaves contention and an unreadable meter on the existing retryable path', async () => {
+    for (const code of ['AI_BUDGET_BUSY', 'AI_BUDGET_UNAVAILABLE']) {
+      const gateway = makeGateway({ summary: () => {
+        const error: any = new Error(code);
+        error.getStatus = () => 429;
+        error.getResponse = () => ({ code });
+        throw error;
+      } });
+      const uc = new CrmAiSummaryUseCase(makeRepo(), makeContext(), gateway);
+      const result = await uc.execute(ctx(), 'conv-1');
+      assert.equal((result as any).error.code, 'PROVIDER_UNKNOWN', code);
+    }
   });
 });
 
