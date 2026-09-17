@@ -1,6 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AI_BUDGET_BUCKET_LABELS,
+  AI_REQUEST_KIND_LABELS,
+  AI_USAGE_BASIS_LABELS,
+  aiAverageCostLabel,
+  aiCacheCostLabel,
+  aiCoverageNotice,
+  hasAiUsageBreakdown,
+  aiUsageBasisNote,
   budgetBarClass,
   budgetBarWidth,
   budgetPercent,
@@ -156,5 +164,62 @@ describe('OCR monthly limit', () => {
     assert.equal(reloads, 1);
     assert.match(OCR_CONFIG_STALE_MESSAGE, /ผู้ดูแลอีกคน/);
     assert.match(OCR_CONFIG_STALE_MESSAGE, /โหลดค่าล่าสุด/);
+  });
+});
+
+describe('AI usage breakdown labels (remediation spec §11.1)', () => {
+  it('shows the average per provider call, and "—" rather than ฿0.00 when nothing was called', () => {
+    assert.equal(aiAverageCostLabel(1_000, 4), '฿2.50');
+    assert.equal(aiAverageCostLabel(347, 3), '฿1.16', 'fractional satang round to the displayed baht');
+    assert.equal(aiAverageCostLabel(0, 0), '—');
+    // A month with only a correction has cost but no call — an average would be a lie, not 0.
+    assert.equal(aiAverageCostLabel(-250, 0), '—');
+  });
+
+  it('labels buckets and kinds in Thai, including the honest UNKNOWN row', () => {
+    assert.equal(AI_BUDGET_BUCKET_LABELS['CHAT'], 'แชตและ AI ทั่วไป');
+    assert.equal(AI_BUDGET_BUCKET_LABELS['OCR'], 'AI อ่านเอกสาร');
+    assert.equal(AI_BUDGET_BUCKET_LABELS['UNKNOWN'], 'ไม่ทราบประเภท');
+    assert.equal(AI_REQUEST_KIND_LABELS['UNKNOWN'], 'ไม่ทราบประเภท');
+    assert.match(AI_USAGE_BASIS_LABELS['CONSERVATIVE_ESTIMATE']!, /ประมาณ/);
+  });
+
+  it('reports missing cache pricing as unavailable, never as zero baht', () => {
+    assert.equal(aiCacheCostLabel(null), 'ไม่มีข้อมูล');
+    assert.equal(aiCacheCostLabel({ read: 5, write: 50 }), 'อ่าน ฿0.05 / เขียน ฿0.50');
+    assert.equal(aiCacheCostLabel({ read: 0, write: 0 }), 'อ่าน ฿0.00 / เขียน ฿0.00', 'a priced zero is still evidence');
+  });
+
+  it('names partial metadata coverage with the date collection started', () => {
+    const format = (value: string) => `วันที่ ${value.slice(0, 10)}`;
+    assert.equal(aiCoverageNotice({ status: 'complete', calls: 9, callsWithMetadata: 9, firstMetadataAt: 'x' }, format), null);
+    assert.equal(aiCoverageNotice({ status: 'none', calls: 0, callsWithMetadata: 0, firstMetadataAt: null }, format), null);
+    const partial = aiCoverageNotice(
+      { status: 'partial', calls: 10, callsWithMetadata: 4, firstMetadataAt: '2026-09-17T03:00:00.000Z' }, format)!;
+    assert.match(partial, /4 จาก 10 ครั้ง/);
+    assert.match(partial, /วันที่ 2026-09-17/);
+    assert.match(aiCoverageNotice({ status: 'none', calls: 6, callsWithMetadata: 0, firstMetadataAt: null }, format)!, /ไม่ทราบประเภท/);
+  });
+
+  it('warns when part of the month rests on estimated or unknown counters', () => {
+    const measured = [{ usageBasis: 'PROVIDER_REPORTED', costSatang: 900, calls: 3 }];
+    assert.equal(aiUsageBasisNote(measured), null);
+    const mixed = aiUsageBasisNote([
+      ...measured,
+      { usageBasis: 'CONSERVATIVE_ESTIMATE', costSatang: 200, calls: 2 },
+      { usageBasis: 'UNKNOWN', costSatang: 400, calls: 5 },
+    ])!;
+    assert.match(mixed, /ค่าประมาณเมื่อหมดเวลา 2 ครั้ง \(฿2\.00\)/);
+    assert.match(mixed, /ไม่ทราบที่มา 5 ครั้ง \(฿4\.00\)/);
+    // An empty slice is present in every response; it must not raise a false alarm.
+    assert.equal(aiUsageBasisNote([{ usageBasis: 'CONSERVATIVE_ESTIMATE', costSatang: 0, calls: 0 }]), null);
+  });
+
+  it('hides the whole section for a pre-D1 response instead of throwing mid-render', () => {
+    // A rolling deploy can serve this page from an API that predates the breakdown fields.
+    assert.equal(hasAiUsageBreakdown({ breakdown: { monthKey: '2026-09' } }), true);
+    assert.equal(hasAiUsageBreakdown({}), false);
+    assert.equal(hasAiUsageBreakdown({ breakdown: null }), false);
+    assert.equal(hasAiUsageBreakdown(null), false);
   });
 });

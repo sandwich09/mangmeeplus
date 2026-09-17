@@ -9,6 +9,7 @@ import {
   __resetCompanyAiBudgetCache,
   bangkokMonthKey,
   previousBangkokMonthKey,
+  recordCompanyAiCostAdjustment,
 } from '../../../line-ai/application/company-ai-usage-meter';
 
 const CURRENT = bangkokMonthKey();
@@ -30,10 +31,26 @@ function monthRow(monthKey: string, costSatang: number) {
   };
 }
 
+/** One row of the grouped current-month read, with the defaults of a legacy (untagged) row. */
+function eventGroup(over: Partial<BreakdownRow> = {}): BreakdownRow {
+  return {
+    usageTag: 'line_turn', requestKind: null, budgetBucket: null, usageBasis: null, eventKind: 'MODEL_CALL',
+    rows: 1, costSatang: 0, inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+    cacheReadSatang: null, cacheWriteSatang: null, firstAt: new Date('2026-09-17T03:00:00.000Z'), ...over,
+  };
+}
+
+type BreakdownRow = {
+  usageTag: string; requestKind: string | null; budgetBucket: string | null; usageBasis: string | null;
+  eventKind: string; rows: number; costSatang: number; inputTokens: number; outputTokens: number;
+  cacheReadInputTokens: number; cacheWriteInputTokens: number;
+  cacheReadSatang: number | null; cacheWriteSatang: number | null; firstAt: Date;
+};
+
 function makePrisma(opts: {
   months?: Array<ReturnType<typeof monthRow>>;
   overrideSatang?: number | null;
-  tags?: Array<{ usageTag: string; _sum: { costSatang: number | null }; _count: { _all: number } }>;
+  events?: BreakdownRow[];
   companyExists?: boolean;
   paid?: boolean;
   ocrConfig?: { enabled: boolean; monthlyLimit: number | null; version?: number; updatedAt?: Date; receiptQuotaEnforced?: boolean | null };
@@ -41,7 +58,7 @@ function makePrisma(opts: {
   ocrSources?: Array<{ monthKey: string; sourceRoute: string; _count: { _all: number } }>;
   uploads?: [number, number];
 } = {}) {
-  const calls: { monthWhere?: any; groupBy?: any; ocrGroupBy?: any; uploadWhere?: any[]; transactionOptions?: any } = {};
+  const calls: { monthWhere?: any; rawSql?: string; rawParams?: unknown[]; ocrGroupBy?: any; uploadWhere?: any[]; transactionOptions?: any } = {};
   let uploadIndex = 0;
   const client: any = {
       company: {
@@ -60,8 +77,10 @@ function makePrisma(opts: {
           updatedAt: opts.ocrConfig?.updatedAt ?? new Date('2026-08-27T00:00:00.000Z'),
         }),
       },
-      aiUsageEvent: {
-        groupBy: async (args: any) => { calls.groupBy = args; return opts.tags ?? []; },
+      $queryRaw: async (strings: TemplateStringsArray, ...params: unknown[]) => {
+        calls.rawSql = strings.join('?');
+        calls.rawParams = params;
+        return opts.events ?? [];
       },
       companyOcrMonthlyUsage: {
         findMany: async () => opts.ocrMonths ?? [],
@@ -132,22 +151,123 @@ describe('GetPartnerAiUsageUseCase', () => {
     });
   });
 
-  it('maps top tags and asks the DB for the current month only, cost-desc, capped at 10', async () => {
+  it('maps top tags cost-desc and asks the DB for the current month only, with bound parameters', async () => {
     const prisma = makePrisma({
-      tags: [
-        { usageTag: 'line-turn', _sum: { costSatang: 500 }, _count: { _all: 4 } },
-        { usageTag: 'receipt-ocr', _sum: { costSatang: null }, _count: { _all: 1 } },
+      events: [
+        eventGroup({ usageTag: 'line-turn', rows: 4, costSatang: 500, inputTokens: 40, outputTokens: 4 }),
+        eventGroup({ usageTag: 'receipt-ocr', rows: 1, costSatang: 0 }),
       ],
     });
     const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
 
-    assert.deepEqual(result.topTags, [
-      { tag: 'line-turn', costSatang: 500, calls: 4 },
-      { tag: 'receipt-ocr', costSatang: 0, calls: 1 },
+    assert.deepEqual(result.topTags.map((row) => [row.tag, row.costSatang, row.calls]), [
+      ['line-turn', 500, 4],
+      ['receipt-ocr', 0, 1],
     ]);
-    assert.deepEqual(prisma.calls.groupBy.where, { companyId: 'co-1', monthKey: CURRENT });
-    assert.deepEqual(prisma.calls.groupBy.orderBy, { _sum: { costSatang: 'desc' } });
-    assert.equal(prisma.calls.groupBy.take, 10);
+    assert.equal(result.topTags[0]!.inputTokens, 40);
+    assert.equal(result.topTags[0]!.cacheCostSatang, null, 'no snapshot is UNAVAILABLE, never ฿0.00');
+    assert.deepEqual(prisma.calls.rawParams, ['co-1', CURRENT]);
+    assert.match(prisma.calls.rawSql!, /GROUP BY "usageTag", "requestKind", "budgetBucket", "usageBasis", "eventKind"/);
+  });
+
+  it('caps top tags at 10 and puts the remainder in otherTags so the table reconciles', async () => {
+    const events = Array.from({ length: 13 }, (_, index) =>
+      eventGroup({ usageTag: `tag-${index}`, rows: 2, costSatang: 1_300 - index * 100, inputTokens: 5 }));
+    const prisma = makePrisma({ events });
+    const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
+
+    assert.equal(result.topTags.length, 10);
+    assert.equal(result.topTags[0]!.tag, 'tag-0', 'highest cost first');
+    assert.equal(result.otherTags.tags, 3);
+    assert.equal(
+      result.topTags.reduce((sum, row) => sum + row.costSatang, 0) + result.otherTags.costSatang,
+      result.breakdown.total.costSatang,
+      'top 10 + other must equal the event-derived month total',
+    );
+    assert.equal(result.otherTags.calls, 6);
+    assert.equal(result.otherTags.inputTokens, 15);
+  });
+
+  it('breaks the month down by kind, bucket and basis with UNKNOWN always included', async () => {
+    const prisma = makePrisma({
+      events: [
+        eventGroup({ usageTag: 'line.intake-route', requestKind: 'IMAGE', budgetBucket: 'OCR', usageBasis: 'PROVIDER_REPORTED', rows: 3, costSatang: 900, cacheReadSatang: 40, cacheWriteSatang: 60 }),
+        eventGroup({ usageTag: 'line_turn', requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'CONSERVATIVE_ESTIMATE', rows: 2, costSatang: 200, cacheReadSatang: 1, cacheWriteSatang: 2 }),
+        // A legacy row: no metadata at all, so it must land in UNKNOWN on every axis.
+        eventGroup({ usageTag: 'line_turn', rows: 5, costSatang: 400 }),
+      ],
+    });
+    const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
+    const { breakdown } = result;
+
+    assert.deepEqual(breakdown.byRequestKind.map((row) => [row.requestKind, row.costSatang, row.calls]),
+      [['TEXT', 200, 2], ['IMAGE', 900, 3], ['OTHER', 0, 0], ['UNKNOWN', 400, 5]]);
+    assert.deepEqual(breakdown.byBudgetBucket.map((row) => [row.budgetBucket, row.costSatang, row.calls]),
+      [['CHAT', 200, 2], ['OCR', 900, 3], ['UNKNOWN', 400, 5]]);
+    assert.deepEqual(breakdown.byUsageBasis.map((row) => [row.usageBasis, row.costSatang, row.calls]),
+      [['PROVIDER_REPORTED', 900, 3], ['CONSERVATIVE_ESTIMATE', 200, 2], ['UNKNOWN', 400, 5]]);
+
+    for (const slice of [breakdown.byRequestKind, breakdown.byBudgetBucket, breakdown.byUsageBasis]) {
+      assert.equal(slice.reduce((sum, row) => sum + row.costSatang, 0), breakdown.total.costSatang);
+      assert.equal(slice.reduce((sum, row) => sum + row.calls, 0), breakdown.total.calls);
+    }
+    assert.deepEqual(breakdown.total.cacheCostSatang, { read: 41, write: 62 });
+    // The untagged legacy slice has no priced evidence of its own.
+    assert.equal(breakdown.byRequestKind.find((row) => row.requestKind === 'UNKNOWN')!.cacheCostSatang, null);
+    assert.equal(breakdown.monthKey, CURRENT);
+  });
+
+  it('labels metadata coverage honestly and reports when tagging started', async () => {
+    const complete = await new GetPartnerAiUsageUseCase(makePrisma({
+      events: [eventGroup({ requestKind: 'TEXT', budgetBucket: 'CHAT', rows: 4 })],
+    }), makeConfig()).execute('co-1');
+    assert.equal(complete.breakdown.coverage.status, 'complete');
+    assert.equal(complete.breakdown.coverage.firstMetadataAt, '2026-09-17T03:00:00.000Z');
+
+    const partial = await new GetPartnerAiUsageUseCase(makePrisma({
+      events: [
+        eventGroup({ rows: 6, firstAt: new Date('2026-09-01T00:00:00.000Z') }),
+        eventGroup({ requestKind: 'IMAGE', budgetBucket: 'OCR', rows: 2, firstAt: new Date('2026-09-17T03:00:00.000Z') }),
+      ],
+    }), makeConfig()).execute('co-1');
+    assert.deepEqual(partial.breakdown.coverage, {
+      status: 'partial', calls: 8, callsWithMetadata: 2, firstMetadataAt: '2026-09-17T03:00:00.000Z',
+    });
+
+    const none = await new GetPartnerAiUsageUseCase(makePrisma({ events: [eventGroup({ rows: 3 })] }), makeConfig()).execute('co-1');
+    assert.equal(none.breakdown.coverage.status, 'none');
+    assert.equal(none.breakdown.coverage.firstMetadataAt, null);
+  });
+
+  it('lets a COST_ADJUSTMENT move cost and tokens without ever counting as a call', async () => {
+    const prisma = makePrisma({
+      events: [
+        eventGroup({ usageTag: 'line_turn', requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'CONSERVATIVE_ESTIMATE', rows: 4, costSatang: 1_000, inputTokens: 900 }),
+        eventGroup({ usageTag: 'line_turn', requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'PROVIDER_REPORTED', eventKind: 'COST_ADJUSTMENT', rows: 1, costSatang: -250, inputTokens: -100 }),
+      ],
+    });
+    const result = await new GetPartnerAiUsageUseCase(prisma, makeConfig()).execute('co-1');
+
+    assert.equal(result.breakdown.total.costSatang, 750);
+    assert.equal(result.breakdown.total.inputTokens, 800);
+    assert.equal(result.breakdown.total.calls, 4, 'a correction is not a provider call');
+    assert.deepEqual(result.breakdown.adjustments, { costSatang: -250, rows: 1 });
+    assert.equal(result.breakdown.coverage.calls, 4);
+    assert.equal(result.topTags[0]!.calls, 4, 'topTags counts model calls, not _count._all');
+  });
+
+  it('returns an empty, zero-call month without inventing rows', async () => {
+    const result = await new GetPartnerAiUsageUseCase(makePrisma(), makeConfig()).execute('co-1');
+
+    assert.deepEqual(result.topTags, []);
+    assert.deepEqual(result.otherTags, {
+      tags: 0, costSatang: 0, calls: 0, inputTokens: 0, outputTokens: 0,
+      cacheReadInputTokens: 0, cacheWriteInputTokens: 0, cacheCostSatang: null,
+    });
+    assert.equal(result.breakdown.total.calls, 0);
+    assert.equal(result.breakdown.total.cacheCostSatang, null);
+    assert.equal(result.breakdown.coverage.status, 'none');
+    assert.equal(result.breakdown.byBudgetBucket.length, 3, 'the bucket rows exist even with no spend');
   });
 
   it('reports OCR configuration, logical reads by seam, and uploaded receipt documents separately', async () => {
@@ -289,6 +409,126 @@ describe('GetPartnerAiUsageUseCase', () => {
     } finally {
       if (companyId) await reader.company.deleteMany({ where: { id: companyId } });
       await Promise.all([reader.$disconnect().catch(() => undefined), writer.$disconnect().catch(() => undefined)]);
+    }
+  });
+
+  it('real PostgreSQL: the additive columns and the grouped breakdown query hold on the live catalog', async (t) => {
+    const databaseUrl = process.env.DATABASE_URL?.trim();
+    if (!databaseUrl) {
+      if (process.env.OCR_REQUIRE_POSTGRES === 'true') throw new Error('OCR PostgreSQL test database is required');
+      return t.skip('DATABASE_URL is not set');
+    }
+    const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
+    let companyId = '';
+    try {
+      const unreachable = await pgSpecUnreachableReason(() => prisma.$queryRaw`SELECT 1`, 'OCR_REQUIRE_POSTGRES');
+      if (unreachable) return t.skip(unreachable);
+      companyId = (await prisma.company.create({
+        data: { name: `ai-usage-breakdown-${process.pid}-${randomUUID()}`, status: 'ACTIVE' },
+        select: { id: true },
+      })).id;
+      const base = {
+        companyId, monthKey: CURRENT, modelId: 'global.anthropic.claude-sonnet-4-6', ok: true,
+        thbPerUsd: 33, thbPerUsdSource: 'env-fallback' as const,
+      };
+      // A legacy row written by the pre-D1 binary: every new column stays at its default/NULL.
+      const legacy = await prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-turn', usageTag: 'line_turn', costSatang: 400,
+          inputTokens: 1_000, outputTokens: 100, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+        },
+        select: { id: true, requestKind: true, budgetBucket: true, usageBasis: true, eventKind: true, pricingSnapshot: true },
+      });
+      assert.deepEqual(
+        [legacy.requestKind, legacy.budgetBucket, legacy.usageBasis, legacy.eventKind, legacy.pricingSnapshot],
+        [null, null, null, 'MODEL_CALL', null],
+        'an old writer keeps inserting valid rows and is reported as UNKNOWN, not guessed',
+      );
+      const tagged = await prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-intake-route', usageTag: 'line.intake-route', costSatang: 1_000,
+          inputTokens: 2_000, outputTokens: 300, cacheReadInputTokens: 5_000, cacheWriteInputTokens: 4_000,
+          requestKind: 'IMAGE', budgetBucket: 'OCR', usageBasis: 'PROVIDER_REPORTED', eventKind: 'MODEL_CALL',
+          pricingSnapshot: {
+            usdPerMTok: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }, thbPerUsd: 33, unknownModel: false,
+            componentSatang: { input: 20, output: 15, cacheRead: 5, cacheWrite: 50, rounding: 910 },
+          },
+        },
+        select: { id: true },
+      });
+      await prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-intake-route', usageTag: 'line.intake-route', costSatang: -150,
+          inputTokens: -200, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+          requestKind: 'IMAGE', budgetBucket: 'OCR', usageBasis: 'PROVIDER_REPORTED',
+          eventKind: 'COST_ADJUSTMENT', adjustsEventId: tagged.id, correctionKey: `settle-${randomUUID()}`,
+        },
+      });
+      // A snapshot whose cacheRead component is a STRING (a future writer, or a manual fix). The
+      // cast must not abort the whole admin read; the malformed component contributes nothing and
+      // its well-formed sibling still counts.
+      await prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-turn', usageTag: 'line_turn', costSatang: 0,
+          inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+          requestKind: 'TEXT', budgetBucket: 'CHAT', usageBasis: 'PROVIDER_REPORTED',
+          pricingSnapshot: { componentSatang: { input: 0, output: 0, cacheRead: '5', cacheWrite: 7, rounding: 0 } },
+        },
+      });
+      await prisma.companyAiMonthlyUsage.create({
+        data: {
+          companyId, monthKey: CURRENT, costSatang: 1_250, callCount: 3,
+          inputTokens: 2_800, outputTokens: 400, cacheReadInputTokens: 5_000, cacheWriteInputTokens: 4_000,
+        },
+      });
+
+      __resetCompanyAiBudgetCache();
+      const result = await new GetPartnerAiUsageUseCase({ client: prisma } as any, makeConfig()).execute(companyId);
+
+      assert.equal(result.breakdown.total.costSatang, 1_250);
+      assert.equal(result.breakdown.total.calls, 3, 'the adjustment row is not a provider call');
+      assert.equal(result.current?.costSatang, 1_250, 'the running aggregate agrees with the events');
+      assert.deepEqual(result.breakdown.adjustments, { costSatang: -150, rows: 1 });
+      assert.deepEqual(result.breakdown.byBudgetBucket.map((row) => [row.budgetBucket, row.costSatang, row.calls]),
+        [['CHAT', 0, 1], ['OCR', 850, 1], ['UNKNOWN', 400, 1]]);
+      assert.deepEqual(result.breakdown.byRequestKind.find((row) => row.requestKind === 'IMAGE')!.cacheCostSatang,
+        { read: 5, write: 50 }, 'component cost is summed out of the JSON snapshot');
+      assert.deepEqual(result.breakdown.byRequestKind.find((row) => row.requestKind === 'TEXT')!.cacheCostSatang,
+        { read: 0, write: 7 }, 'a string component contributes nothing instead of aborting the read');
+      assert.deepEqual(result.breakdown.total.cacheCostSatang, { read: 5, write: 57 });
+      assert.equal(result.breakdown.byRequestKind.find((row) => row.requestKind === 'UNKNOWN')!.cacheCostSatang, null);
+      assert.deepEqual(result.breakdown.coverage.status, 'partial');
+      assert.equal(result.breakdown.coverage.callsWithMetadata, 2);
+      assert.equal(
+        result.topTags.reduce((sum, row) => sum + row.costSatang, 0) + result.otherTags.costSatang,
+        result.breakdown.total.costSatang,
+      );
+      // The replay fence is a real unique index, not an application convention.
+      const applied = await prisma.aiUsageEvent.findFirstOrThrow({
+        where: { companyId, eventKind: 'COST_ADJUSTMENT' }, select: { correctionKey: true },
+      });
+      await assert.rejects(() => prisma.aiUsageEvent.create({
+        data: {
+          ...base, sourceRoute: 'line-turn', usageTag: 'line_turn', costSatang: 0,
+          inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0,
+          eventKind: 'COST_ADJUSTMENT', adjustsEventId: tagged.id, correctionKey: applied.correctionKey!,
+        },
+      }));
+
+      // Two settlements of the same evidence racing each other: the loser's INSERT hits the unique
+      // index, its whole transaction rolls back, and it reports 'duplicate' rather than throwing.
+      const raced = await Promise.all([
+        recordCompanyAiCostAdjustment({ client: prisma } as any, { eventId: tagged.id, correctionKey: 'race-key', costSatang: -100 }),
+        recordCompanyAiCostAdjustment({ client: prisma } as any, { eventId: tagged.id, correctionKey: 'race-key', costSatang: -100 }),
+      ]);
+      assert.deepEqual([...raced].sort(), ['applied', 'duplicate']);
+      assert.equal((await prisma.companyAiMonthlyUsage.findUniqueOrThrow({
+        where: { companyId_monthKey: { companyId, monthKey: CURRENT } }, select: { costSatang: true, callCount: true },
+      })).costSatang, 1_150, 'the aggregate moved exactly once');
+      assert.equal(await prisma.aiUsageEvent.count({ where: { companyId, correctionKey: 'race-key' } }), 1);
+    } finally {
+      if (companyId) await prisma.company.deleteMany({ where: { id: companyId } });
+      await prisma.$disconnect().catch(() => undefined);
     }
   });
 

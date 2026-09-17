@@ -26,12 +26,12 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 
 ### A. Ledger lifecycle — spec §4–7
 
-- [ ] เพิ่ม fake regression absent stream/missing group ให้สะท้อน Redis NOGROUP และแดงบนต้นเหตุ
-- [ ] เพิ่ม exact-key `exists` ใน interface เดิม; เฉพาะ XPENDING NOGROUP + EXISTS=0 เท่านั้นที่คืน empty
-- [ ] Existing stream, failed EXISTS, other Redis errors และ marker lookup failure ยัง unavailable
-- [ ] คง append/TTL/ack/claim/durable marker/tenant/chat semantics ไม่สร้าง/reset group ใน read path
-- [ ] เพิ่ม structured reason ที่ไม่มี raw LINE/chat key และ dispatcher coverage direct text + delivery
-- [ ] เพิ่ม bounded pending pagination/incomplete read outcome สำหรับ >50 entries และหลายผู้ถาม; isolate missing-group key ใน reclaim โดยไม่ปิด healthy key ทั้ง batch
+- [x] เพิ่ม fake regression absent stream/missing group ให้สะท้อน Redis NOGROUP และแดงบนต้นเหตุ
+- [x] เพิ่ม exact-key `exists` ใน interface เดิม; เฉพาะ XPENDING NOGROUP + EXISTS=0 เท่านั้นที่คืน empty
+- [x] Existing stream, failed EXISTS, other Redis errors และ marker lookup failure ยัง unavailable
+- [x] คง append/TTL/ack/claim/durable marker/tenant/chat semantics ไม่สร้าง/reset group ใน read path
+- [x] เพิ่ม structured reason ที่ไม่มี raw LINE/chat key และ dispatcher coverage direct text + delivery
+- [x] เพิ่ม bounded pending pagination/incomplete read outcome สำหรับ >50 entries และหลายผู้ถาม; isolate missing-group key ใน reclaim โดยไม่ปิด healthy key ทั้ง batch
 
 ไฟล์หลัก: `line-ai-ledger.service.ts`, service specs และ `process-line-webhook.use-case.spec.ts` ใน `apps/api/src/modules/line-ai/application/` ไม่มี schema change ในช่วง A
 
@@ -50,13 +50,15 @@ Owner เลือกแยกเพดาน CHAT/OCR ภายในเพด�
 
 ### D1. Usage metadata และ baseline ก่อนเปลี่ยน prompt — spec §10.1, §11
 
-- [ ] เพิ่ม additive server-derived request kind/budget bucket, pricing/component snapshot และ execution identity โดยไม่ rewrite history
-- [ ] ส่ง usageBasis ตลอด provider/interceptor/API/ledger; เพิ่ม MODEL_CALL/COST_ADJUSTMENT และ reconcile signed deltas โดย callCount ไม่เพิ่มจาก correction
-- [ ] ระบุ unknown/partial metadata อย่างชัดเจน; no inferred backfill จาก tag/request peers
+- [x] เพิ่ม additive server-derived request kind/budget bucket, pricing/component snapshot โดยไม่ rewrite history — execution identity ยัง**ไม่**ทำในช่วงนี้ตาม §12.6 (ดูหมายเหตุด้านล่าง)
+- [x] ส่ง usageBasis ตลอด provider/interceptor/API/ledger; เพิ่ม MODEL_CALL/COST_ADJUSTMENT และ reconcile signed deltas โดย callCount ไม่เพิ่มจาก correction
+- [x] ระบุ unknown/partial metadata อย่างชัดเจน; no inferred backfill จาก tag/request peers
 - [x] ทำ baseline corpus text/image, cold/warm cache และต้นทุนรวมทุก calls/retries ต่อ successful task — [baseline 2026-09-17](../research/line-ai-intake-cost-benchmark-2026-09-17.md): 82 attempted tasks / 212 calls / THB 70.47 บน Sonnet 4.6 จริง; cold/warm วัดรายคอลตาม §4.4 (run นี้ warm 96% จึงต้องถ่วงน้ำหนักด้วยตัวเลข cold รายคอล ไม่ใช่ค่าเฉลี่ยของ run)
-- [ ] ต่อ `GET ai-usage` ให้รวม totals/top tags/other tags/request kind/buckets/cache ใน snapshot เดียว พร้อม contract tests
+- [x] ต่อ `GET ai-usage` ให้รวม totals/top tags/other tags/request kind/buckets/cache ใน snapshot เดียว พร้อม contract tests
 - [ ] เพิ่ม frontend breakdown/average/coverage/Thai labels, loading/error/retry/read-only และไม่สับสน calls กับ receipt counts
 - [x] Freeze baseline manifest/expected outcomes/repetitions; รายงาน attempted-task cost และ completion/refusal/parse rates ควบคู่ successful-task cost — manifest `scripts/line-ai-intake-cost.corpus.ts` hash `cf9bce44…` ตรึงด้วย `scripts/line-ai-intake-cost.corpus.spec.ts`; repetitions=2, FX=33; รายงาน THB/attempted 0.86 คู่กับ THB/successful 0.93 พร้อม refusal 0.0% / parse 1.2% / truncation 0.0%
+
+หมายเหตุสถานะ D1 (2026-09-17): migration `20260917140000_ai_usage_metadata` เป็น additive ล้วน มี CHECK ของค่าที่รับได้ และ unique `correctionKey` สำหรับ replay fence เท่านั้น **ไม่**เพิ่ม execution/invocation unique key เพราะ semantics อยู่ใน §12.6 ของงาน E และการใส่ fence ตอนนี้จะทำให้ metering replay กลายเป็น usage ที่หายแทนที่จะถูก dedupe ข้อ frontend ยังเปิดอยู่เพราะมีเพียง unit test ของ logic กับ typecheck ยังไม่มีหลักฐาน render จริง desktop/mobile ตาม D matrix ส่วนข้อ baseline corpus ทั้งสองเป็นของงานต้นทุน (C) ตามเดิม
 
 ไฟล์หลัก: `apps/api/prisma/schema.prisma` + additive migration, `packages/contracts/src/ai-lineage.ts`, `partner-management.ts`, `company-ai-usage-meter.ts`, `get-partner-ai-usage.use-case.ts`, `PartnerDetailPage.tsx`, `system-partners.api.ts` และ logic/specs ที่เกี่ยวข้อง
 

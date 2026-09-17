@@ -127,22 +127,24 @@ Reclaim loop ต้อง isolate known missing/expired stream ต่อ key: ke
 
 ## 7. เกณฑ์ยอมรับ
 
-- [ ] AC-01 Redis จริง: chat key ที่ยังไม่มีให้ NOGROUP; service คืน empty และ text turn ไปถึง routing ได้
-- [ ] AC-02 Redis จริง: key หมด TTL แล้วให้ผลเหมือนแชตใหม่ โดยไม่ restart service หรือกด menu
-- [ ] AC-03 Existing stream + missing group ยัง unavailable, entries เดิมไม่เปลี่ยน และไม่เกิด group reset/replay
-- [ ] AC-04 Existing group + empty pending ยังคุยได้ตามเดิม
-- [ ] AC-05 Waiting clarification ของผู้ถามยังส่งต่อครบ รวม source proof/pending media; อีก user/company/chat ใช้แทนกันไม่ได้
-- [ ] AC-06 Consumed clarification ถูกกรองแม้ XACK ล้มเหลว; marker lookup ล้มเหลวต้องไม่ dispatch mutation
-- [ ] AC-07 Redis connection/timeout/WRONGTYPE และการตรวจ EXISTS ที่ล้มเหลว fail-closed
-- [ ] AC-08 ครอบคลุม key expiry และ concurrent creation ระหว่าง XPENDING กับ absence read; ไม่มี unbounded retry หรือ destructive repair
-- [ ] AC-09 FakeRedis โยน NOGROUP ตาม Redis จริง; regression test ต้องแดงบนโค้ดที่เป็นต้นเหตุและเขียวหลังแก้
+- [x] AC-01 Redis จริง: chat key ที่ยังไม่มีให้ NOGROUP; service คืน empty และ text turn ไปถึง routing ได้
+- [x] AC-02 Redis จริง: key หมด TTL แล้วให้ผลเหมือนแชตใหม่ โดยไม่ restart service หรือกด menu
+- [x] AC-03 Existing stream + missing group ยัง unavailable, entries เดิมไม่เปลี่ยน และไม่เกิด group reset/replay
+- [x] AC-04 Existing group + empty pending ยังคุยได้ตามเดิม
+- [x] AC-05 Waiting clarification ของผู้ถามยังส่งต่อครบ รวม source proof/pending media; อีก user/company/chat ใช้แทนกันไม่ได้
+- [x] AC-06 Consumed clarification ถูกกรองแม้ XACK ล้มเหลว; marker lookup ล้มเหลวต้องไม่ dispatch mutation
+- [x] AC-07 Redis connection/timeout/WRONGTYPE และการตรวจ EXISTS ที่ล้มเหลว fail-closed
+- [x] AC-08 ครอบคลุม key expiry และ concurrent creation ระหว่าง XPENDING กับ absence read; ไม่มี unbounded retry หรือ destructive repair
+- [x] AC-09 FakeRedis โยน NOGROUP ตาม Redis จริง; regression test ต้องแดงบนโค้ดที่เป็นต้นเหตุและเขียวหลังแก้
 - [ ] AC-10 แชตใหม่และหลัง expiry: พิมพ์ “ว่าไง” โดยตรงได้คำตอบที่ส่งสำเร็จ; เมนู greeting สำเร็จอย่างเดียวไม่นับผ่าน
 - [ ] AC-11 Support pause, explicit resume, unlinked, legal acceptance, entitlement/permission denial และ company selection ยังคงผลเดิม
 - [ ] AC-12 ข้อความเลขล้วน/คำตอบเก่าหลัง context หมดอายุไม่สร้างหรือแก้ draft จากการเดา; webhook redelivery ไม่เพิ่ม mutation/delivery ซ้ำจาก fix นี้
-- [ ] AC-13 Logs ใหม่ไม่เปิดเผย raw chat/provider ID หรือ secret; normal absence ไม่ถูกนับเป็น outage
+- [x] AC-13 Logs ใหม่ไม่เปิดเผย raw chat/provider ID หรือ secret; normal absence ไม่ถูกนับเป็น outage
 - [ ] AC-14 ผ่าน focused automated checks + Redis จริงที่แยกจาก live data และ UAT real-LINE journey พร้อม terminal/delivery evidence
 - [ ] AC-15 Production promotion ใช้ protocol และ exact signed release evidence ตาม runbook; แยกผล incident ในภาพออกจากผล acceptance ของ fix
 - [ ] AC-16 Missing-ledger recovery ไม่ bypass monthly AI budget: เมื่อยอดใช้ถึงงบ effective ของบริษัท ต้องยังปฏิเสธ provider call และส่งการ์ดโควตาเต็มตาม contract เดิม; static menu greeting ไม่ reset งบ
+
+ข้อที่ติ๊กแล้วใช้หลักฐานตาม verification matrix ช่วง A คือ fake regression ร่วมกับ isolated real Redis (db index แยก, synthetic tagged keys, ลบเฉพาะ key ของตัวเอง) ไม่ใช่ unit test อย่างเดียวตาม §14; evidence class ต่อข้อและส่วนที่พิสูจน์ด้วย fake เท่านั้นบันทึกไว้ใน [task memory](../agent-memory/uat-line-chat-nogroup-2026-09-17.md) ส่วน AC-10, AC-11, AC-12, AC-14, AC-15 และ AC-16 ยังเปิด เพราะต้องใช้ UAT real-LINE journey, release protocol และผลรวมของช่วงอื่น
 
 ## 8. Production investigation ที่ต้องปิดแยก
 
@@ -409,7 +411,7 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [ ] C-03 บิลยาว/รูปอ่านยากไม่เกิด truncation หรือ retry เพิ่มจากลด output; valid transcription/plan reuse ยังคงถูกต้อง
 - [ ] C-04 Cache metrics บันทึกตามจริง; โมเดล/config เดิม และไม่มี extra call เพื่อหา budget bucket
 - [ ] D-01 API/web แสดง total, kinds, buckets, cache, average, other tags และ partial history ได้ตรง snapshot และ reconcile กับ ledger
-- [ ] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ
+- [x] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ — ผ่านด้วย focused specs + real-PostgreSQL breakdown (2026-09-17, D1)
 - [ ] D-03 Loading/error/retry/read-only, saved/draft, stale version, company switch, desktop/mobile และ audit history ผ่าน; tenant API อ่าน/แก้ budget ไม่ได้
 - [ ] E-01 Split validation: C/O เป็น satang ไม่ติดลบ, zero closes bucket, C+O<=T; null/malformed/unauthorized/stale writes ไม่ผ่าน
 - [ ] E-02 CHAT เต็ม/OCR เหลือ อ่านได้ตามวงเงินจอง; OCR เต็ม/CHAT เหลือ คุยได้; TOTAL เต็มหยุดทั้งคู่ โดยไม่ยืมเงิน
@@ -436,8 +438,8 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [ ] R-08 Real HTTP DTO/controller/web save ส่ง split fields ครบ; absent/null/zero/CAS/read-only/locked company/audit-history ถูกต้อง ไม่เพียง test use case โดยตรง
 - [ ] R-09 Drain/CRM/draft/statement permanent budget refusal ไม่วน retry จนกลายเป็น poison/error อื่น และ reply recovery คง reason/scope ของ attempt เดิม
 - [ ] R-10 Partner support/billing grant/plan warnings เห็น OCR-only exhaustion/active holds; เพิ่ม receipt grants ไม่สื่อว่าเพิ่มเงิน AI และไม่รั่ว internal money fields
-- [ ] R-11 Pending มากกว่า 50/หลาย user/trim ระหว่าง read ไม่ถูกอ้างว่า empty; malformed Redis read fail closed; corrupt key ไม่ทำให้ reclaim ของ key อื่นทั้ง batch หาย
-- [ ] R-12 Estimated/legacy/unknown usage แสดงตาม basis; evidence corrections reconcile cost โดยไม่เพิ่ม calls; cost corpus ไม่ตัด failures/refusals จาก denominator
+- [x] R-11 Pending มากกว่า 50/หลาย user/trim ระหว่าง read ไม่ถูกอ้างว่า empty; malformed Redis read fail closed; corrupt key ไม่ทำให้ reclaim ของ key อื่นทั้ง batch หาย
+- [ ] R-12 Estimated/legacy/unknown usage แสดงตาม basis; evidence corrections reconcile cost โดยไม่เพิ่ม calls; cost corpus ไม่ตัด failures/refusals จาก denominator — สองข้อแรกผ่านแล้วใน D1 (2026-09-17); ยังเปิดเพราะ cost corpus เป็นของงาน C
 
 ## 14. ส่งมอบและขอบเขตที่ไม่ทำ
 

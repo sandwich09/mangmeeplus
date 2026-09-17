@@ -25,7 +25,7 @@ import { getMangmeeMenuTone, mangmeeToneClass } from '@/common/components/mangme
 import { Modal } from '@/common/components/modal/Modal';
 import { useConfirm } from '@/common/components/modal';
 import { useToast } from '@/common/components/toast';
-import { formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
+import { formatThaiDate, formatThaiDateTime, formatThaiMonth } from '@/common/i18n/thai-date';
 import { useEffect, useRef, useState } from 'react';
 import { WORKSPACE_ICON_NODES } from '@/features/web-core-workspace/design-icons';
 import { QrLinkCard } from '@/features/employee-access/EmployeeAccessPages';
@@ -57,15 +57,24 @@ import type {
   PartnerCompanyDetailDto,
   LineContextHealth,
   PartnerAiUsageDto,
+  PartnerAiUsageMeasuresDto,
   PartnerMemberDto,
   EmployeeLineLinkPackage,
   PartnerTimelineEntryDto,
 } from './system-partners.api';
 import {
+  AI_BUDGET_BUCKET_LABELS,
+  AI_REQUEST_KIND_LABELS,
+  AI_USAGE_BASIS_LABELS,
+  aiAverageCostLabel,
+  aiCacheCostLabel,
+  aiCoverageNotice,
+  aiUsageBasisNote,
   budgetBarClass,
   budgetBarWidth,
   budgetPercent,
   budgetTextClass,
+  hasAiUsageBreakdown,
   OCR_CONFIG_STALE_MESSAGE,
   parseBudgetBahtInput,
   parseOcrMonthlyLimitInput,
@@ -1289,6 +1298,92 @@ function EntitlementSwitch({
   );
 }
 
+/** One measure row of a breakdown; stacks at 390px instead of forcing the page to scroll. */
+function AiMeasureRow({ label, measures }: { label: string; measures: PartnerAiUsageMeasuresDto }) {
+  return (
+    <li className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-gray-100 py-2 last:border-b-0">
+      <span className="text-sm text-gray-700">{label}</span>
+      <span className="tabular-nums text-sm text-gray-900">{satangToBaht(measures.costSatang)}</span>
+      <span className="w-full text-xs text-gray-500">
+        {measures.calls.toLocaleString('th-TH')} ครั้ง · เฉลี่ย {aiAverageCostLabel(measures.costSatang, measures.calls)}
+        {' · '}{measures.inputTokens.toLocaleString('th-TH')} in / {measures.outputTokens.toLocaleString('th-TH')} out
+        {' · cache '}{measures.cacheReadInputTokens.toLocaleString('th-TH')} อ่าน / {measures.cacheWriteInputTokens.toLocaleString('th-TH')} เขียน
+      </span>
+    </li>
+  );
+}
+
+/** Current-month kind/bucket/basis breakdown (remediation spec §11.1). Read-only: nothing here
+ *  depends on the unsaved budget/OCR draft below, so a typed-but-unsaved value never moves a number. */
+function AiUsageBreakdown({ usage }: { usage: PartnerAiUsageDto }) {
+  // Version skew: a rolling deploy can serve this page from a pre-D1 API with no breakdown at all.
+  // Fall back to the old card rather than throwing on the first missing field.
+  if (!hasAiUsageBreakdown(usage)) return null;
+  const { breakdown } = usage;
+  const coverageNotice = aiCoverageNotice(breakdown.coverage, formatThaiDate);
+  const basisNote = aiUsageBasisNote(breakdown.byUsageBasis);
+  return (
+    <section className="space-y-3 rounded-xl border border-gray-100 bg-gray-50/60 p-3" aria-labelledby="ai-usage-breakdown-title">
+      <div>
+        <h3 id="ai-usage-breakdown-title" className="text-sm font-bold text-gray-900">
+          แยกตามประเภท ({formatThaiMonth(breakdown.monthKey)})
+        </h3>
+        <p className="mt-1 text-xs leading-5 text-gray-600">
+          “ครั้ง” คือจำนวนครั้งที่เรียกโมเดล ไม่ใช่จำนวนใบเสร็จ — การอ่านรูปหนึ่งใบอาจใช้หลายครั้ง
+          และการทักแชตพร้อมรูปจะรวมการอ่านรูปไว้ในครั้งเดียวกัน
+        </p>
+      </div>
+
+      <p className="text-sm text-gray-700">
+        รวมจากรายการจริง <span className="font-semibold tabular-nums">{satangToBaht(breakdown.total.costSatang)}</span>
+        {' · '}{breakdown.total.calls.toLocaleString('th-TH')} ครั้ง
+        {' · เฉลี่ย '}<span className="tabular-nums">{aiAverageCostLabel(breakdown.total.costSatang, breakdown.total.calls)}</span> ต่อครั้ง
+        {' · ต้นทุน cache '}{aiCacheCostLabel(breakdown.total.cacheCostSatang)}
+      </p>
+
+      {coverageNotice && (
+        <p className="rounded-lg bg-yellow-50 px-3 py-2 text-xs leading-5 text-yellow-800">{coverageNotice}</p>
+      )}
+      {basisNote && (
+        <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">{basisNote}</p>
+      )}
+      {breakdown.adjustments.rows > 0 && (
+        <p className="text-xs leading-5 text-gray-600">
+          รวมรายการปรับปรุงต้นทุน {breakdown.adjustments.rows.toLocaleString('th-TH')} รายการ
+          ({satangToBaht(breakdown.adjustments.costSatang)}) ซึ่งไม่นับเป็นจำนวนครั้งที่เรียกโมเดล
+        </p>
+      )}
+
+      <div>
+        <p className="text-xs font-medium text-gray-500">งบตามส่วน</p>
+        <ul className="mt-1">
+          {breakdown.byBudgetBucket.map((row) => (
+            <AiMeasureRow key={row.budgetBucket} label={AI_BUDGET_BUCKET_LABELS[row.budgetBucket] ?? row.budgetBucket} measures={row} />
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-gray-500">ชนิดคำขอ</p>
+        <ul className="mt-1">
+          {breakdown.byRequestKind.map((row) => (
+            <AiMeasureRow key={row.requestKind} label={AI_REQUEST_KIND_LABELS[row.requestKind] ?? row.requestKind} measures={row} />
+          ))}
+        </ul>
+      </div>
+
+      <div>
+        <p className="text-xs font-medium text-gray-500">ที่มาของตัวเลข token</p>
+        <ul className="mt-1">
+          {breakdown.byUsageBasis.map((row) => (
+            <AiMeasureRow key={row.usageBasis} label={AI_USAGE_BASIS_LABELS[row.usageBasis] ?? row.usageBasis} measures={row} />
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
 // -- AI usage meter + monthly budget override (metering spec §7.7)
 
 function AiUsageBudgetSection({
@@ -1481,16 +1576,21 @@ function AiUsageBudgetSection({
               : 'เดือนก่อนยังไม่มีค่าใช้จ่าย AI'}
           </p>
 
+          <AiUsageBreakdown usage={usage} />
+
           {usage.topTags.length === 0 ? (
             <p className="text-sm text-gray-500">เดือนนี้ยังไม่มีการใช้งาน AI</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              {/* Five columns cannot be read at 390px; scroll inside this container, never the page. */}
+              <table className="w-full min-w-[560px] text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                     <th className="py-2 pr-4 font-medium">ประเภทการใช้งาน</th>
                     <th className="py-2 pr-4 font-medium">ค่าใช้จ่าย</th>
-                    <th className="py-2 font-medium">จำนวนครั้ง</th>
+                    <th className="py-2 pr-4 font-medium">จำนวนครั้ง</th>
+                    <th className="py-2 pr-4 font-medium">in / out tokens</th>
+                    <th className="py-2 font-medium">ต้นทุน cache</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1498,9 +1598,25 @@ function AiUsageBudgetSection({
                     <tr key={row.tag} className="border-b border-gray-100">
                       <td className="py-2.5 pr-4 font-mono text-gray-700">{row.tag}</td>
                       <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(row.costSatang)}</td>
-                      <td className="py-2.5 tabular-nums text-gray-800">{row.calls}</td>
+                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{row.calls}</td>
+                      <td className="py-2.5 pr-4 tabular-nums text-gray-600">
+                        {row.inputTokens.toLocaleString('th-TH')} / {row.outputTokens.toLocaleString('th-TH')}
+                      </td>
+                      <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(row.cacheCostSatang)}</td>
                     </tr>
                   ))}
+                  {/* Optional chaining for the same version skew: a pre-D1 response has no remainder row. */}
+                  {(usage.otherTags?.tags ?? 0) > 0 && (
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <td className="py-2.5 pr-4 text-gray-700">อื่น ๆ ({usage.otherTags.tags.toLocaleString('th-TH')} ประเภท)</td>
+                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(usage.otherTags.costSatang)}</td>
+                      <td className="py-2.5 pr-4 tabular-nums text-gray-800">{usage.otherTags.calls}</td>
+                      <td className="py-2.5 pr-4 tabular-nums text-gray-600">
+                        {usage.otherTags.inputTokens.toLocaleString('th-TH')} / {usage.otherTags.outputTokens.toLocaleString('th-TH')}
+                      </td>
+                      <td className="py-2.5 tabular-nums text-gray-600">{aiCacheCostLabel(usage.otherTags.cacheCostSatang)}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

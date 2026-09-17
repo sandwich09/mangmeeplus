@@ -3,7 +3,7 @@ import type { RequestContext, AiDraftGenerationResult, AiRiskLevel, AiSuggestion
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { RedisRateLimitService } from '../../../../common/security/redis-rate-limit.service';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../../line-ai/application/company-ai-usage-meter';
 import { PrismaAiDraftRepository } from '../../infrastructure/prisma-ai-draft.repository';
 import type { PersistCandidateActionInput } from '../../infrastructure/prisma-ai-draft.repository';
 import { PermissionResolverService } from '../../../access-control/application/permission-resolver.service';
@@ -114,7 +114,11 @@ export class GenerateSuggestionUseCase {
             await recordCompanyAiUsage(
               this.prisma,
               this.config,
-              { companyId, sourceRoute: 'draft-generate', requestId: request.id, monthKey: budgetMonthKey },
+              {
+                companyId, sourceRoute: 'draft-generate', requestId: request.id, monthKey: budgetMonthKey,
+                // Draft generation prompts from server-built facts/citations only — text, CHAT (§12.2).
+                ...classifyAiUsageRequest('draft-generate', 'text'),
+              },
               generated.usage,
             );
           } catch (err) {

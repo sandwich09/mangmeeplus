@@ -101,3 +101,56 @@ Verification:
 
 Next:
 - Implement the unified [plan](../plans/line-ai-ledger-lifecycle-remediation-plan-th.md) when requested. The earlier explanation is complete; do not ask again whether the owner wants reserve versus split caps.
+
+## Phase D1 implementation — 2026-09-17
+
+Status: implemented on branch `codex/line-ai-remediation-d1-usage-20260917` (worktree only, not pushed, no PR, no deploy).
+
+Decisions:
+- Additive migration only. `requestKind`, `budgetBucket`, `usageBasis`, `pricingSnapshot`, `adjustsEventId`, `correctionKey` are nullable; `eventKind` defaults to `MODEL_CALL`. No backfill, no re-pricing, no rewrite. Plain `String` columns with CHECK constraints, matching the newest models in this schema (`BillingReceiptGrant.kind`, `EmailAccessChallenge.status`) and the existing `sourceRoute`/`thbPerUsdSource` style — not Prisma enums.
+- No execution/invocation unique key in this phase. Its attempt-vs-invocation-vs-transport semantics belong to §12.6 (phase E); adding the fence now would turn a metering replay into a LOST usage write. Recorded as a comment in `schema.prisma` and in the migration.
+- The bucket/kind decision lives in ONE exported pure function, `classifyAiUsageRequest(sourceRoute, content)`, so phase E reuses it. `line-intake-route` + image = OCR for the whole call; `line-turn` stays CHAT even with an attachment; `receipt-ocr` and `bank-statement-extract` are always OCR. The function never reads `usageTag` — the intake image path is tagged `line.intake-route`.
+- `costSatang` stays the single half-up rounding in `computeCostSatang`. `buildPricingSnapshot` splits it into components and puts the residue in `rounding`, so a snapshot can never contradict the money on its row.
+- `usageBasis` arriving from the gateway is untrusted wire JSON and is normalised to the two known values or NULL.
+- The report derives EVERY slice (tags, kinds, buckets, basis, adjustments, coverage) from one grouped `$queryRaw` inside the existing RepeatableRead transaction, so the slices reconcile by construction. Raw SQL is needed because component cost lives inside the `pricingSnapshot` JSON, which `groupBy` cannot sum. `breakdown.total` (event-derived) is exposed next to `current` (the running aggregate) rather than reconciled away.
+- `recordCompanyAiCostAdjustment` was implemented (~35 lines): the aggregate move is one conditional `updateMany` whose WHERE requires every total to stay >= 0, so it refuses atomically with no isolation level and no read-then-write race. Idempotent on `correctionKey`, never touches `callCount`, refuses to correct a correction. No HTTP endpoint and no caller yet.
+
+Artifacts:
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260917140000_ai_usage_metadata/migration.sql`
+- `apps/api/src/modules/line-ai/application/company-ai-usage-meter.ts` (+ `ai-model-pricing.ts`), the five metering seams
+- `apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts`
+- `packages/contracts/src/ai-lineage.ts`, `packages/contracts/src/partner-management.ts`
+- `apps/ai-gateway/src/modules/line-ai/infrastructure/provider/{bedrock,openai}.provider.ts`
+- `apps/web/src/features/system-partners/{ai-budget.logic.ts,PartnerDetailPage.tsx,system-partners.api.ts}`
+
+Verification:
+- `pnpm exec tsx --test` (apps/api): `company-ai-usage-meter.spec.ts` + `get-partner-ai-usage.use-case.spec.ts` + `ai-gateway.client.spec.ts` + `crm-ai-gateway.client.spec.ts` + `partner.controller.spec.ts` + `security-event-emitters.spec.ts` → 186 tests, 182 pass, 0 fail, 4 skipped (real-PostgreSQL skips without `DATABASE_URL`).
+- `pnpm exec tsx --test` (apps/ai-gateway): bedrock + openai provider specs and both usage specs → 52 tests, 52 pass, 0 fail.
+- `pnpm test` (apps/web, the repo's own unit runner) → 1745 tests, 1745 pass, 0 fail.
+- Real PostgreSQL (throwaway `postgres:16-alpine`, 127.0.0.1:15571, dropped afterwards): `prisma migrate deploy` applied all migrations including `20260917140000_ai_usage_metadata`; the spec's new real-DB case and a scratch probe then proved a legacy-shaped row stores NULL metadata, a new-shaped row stores kind/bucket/basis/snapshot, snapshot components reconstruct `costSatang` exactly (47=47, 251=251, 47=47), the correction applied → replayed as `duplicate` → an over-large negative delta `refused-negative`, the aggregate moved 345→195 with `callCount` still 3, and the DTO reported `total.calls 3`, `adjustments {-150, 1}`, `coverage partial 2/3` with UNKNOWN present in every slice.
+- `prisma validate`, `migration:review`, `git diff --check` clean. Typechecks (serialised on the `/tmp/mangmee-heavy.lock` mkdir mutex): api, ai-gateway, web all rc=0.
+
+Next:
+- D-01/D-03 stay open: the web breakdown has unit-tested logic and a typecheck but no rendered desktop/mobile evidence, company-switch/stale-version/audit-history evidence, or real HTTP round trip.
+- R-12 stays open on its cost-corpus half; the baseline-corpus plan items belong to phase C.
+- `recordCompanyAiCostAdjustment` has no caller; phase E wires late-actual settlement to it.
+- The migration adds four CHECK constraints to `AiUsageEvent`, which Postgres validates with a table scan under an ACCESS EXCLUSIVE lock. The table is small (about 92 rows/company-month on Production) so this is expected to be brief, but it was only measured against an empty catalog here.
+
+### D1 controller review follow-ups — 2026-09-17
+
+Five hardening changes on top of the D1 commit, same branch:
+
+1. **Version skew.** `AiUsageBreakdown` now returns `null` unless `hasAiUsageBreakdown(usage)` (a new one-line predicate in `ai-budget.logic.ts`), and the "อื่น ๆ" row uses `usage.otherTags?.tags ?? 0`. A rolling deploy that serves this page from a pre-D1 API degrades to the old card instead of throwing mid-render. The contract types stay required — the current API always sends both fields.
+2. **Dead code.** `aiTagsReconcile` and its test are deleted; reconciliation is structural on the server and already asserted in the use-case spec.
+3. **Adjustment race.** Two callers with the same `correctionKey` can both pass the `findUnique`; the loser's INSERT raised P2002 out of `$transaction` instead of the documented `'duplicate'`. `recordCompanyAiCostAdjustment` now catches that ONE case outside the transaction. **Measured, not assumed:** Prisma 7's pg adapter leaves `meta.target` undefined and reports the column through `meta.driverAdapterError.cause.constraint.fields` **quoted** — `['"correctionKey"']`. The first attempt compared unquoted and the real-PG test caught it. The detector strips quotes, also accepts `meta.target` and a constraint/index name, and re-throws everything else.
+4. **Malformed snapshot.** The grouped SQL wrapped each component in `CASE WHEN jsonb_typeof(...) = 'number' THEN (...)::numeric END`, rounded and cast once after the `SUM`. One snapshot row with a non-number component now contributes NULL instead of aborting the cast and taking the whole partner page down.
+5. **Gateway trust boundary.** `recordCompanyAiUsage` drops an entry whose four counters are not non-negative safe integers, or whose `modelId`/`tag` is not a non-empty string, or whose `ok` is not a boolean (that last clause is beyond the letter of the review: a non-boolean would fail the insert for every sibling row in the batch). Dropped entries log one `ai.usage.malformed_entry` warn with ids only — never the payload — and the remaining entries are still recorded. An all-malformed batch takes the existing `ai.usage.absent` path. A negative counter can no longer lower a company's month aggregate.
+
+Verification of the follow-ups (fresh throwaway `postgres:16-alpine`, `mangmee-d1-pg2-18263`, db `d1b_10977`, 127.0.0.1:15583, migrated and stopped afterwards):
+
+- `pnpm exec tsx --test --test-reporter=tap` (apps/api, meter + get-partner-ai-usage) **with** `DATABASE_URL` + `OCR_REQUIRE_POSTGRES=true`: 135 tests, 135 pass, 0 fail, 0 skipped. The real-PG case proves the `Promise.all` race returns exactly `['applied','duplicate']`, the aggregate moved once (1250 → 1150) and only one `race-key` row exists, and that a row whose snapshot holds the string `'5'` in `componentSatang.cacheRead` reports `{ read: 0, write: 7 }` for its slice instead of failing the read.
+- Same focused api set without `DATABASE_URL` (meter, get-partner-ai-usage, ai-gateway.client, crm-ai-gateway.client, partner.controller, security-event-emitters): 197 tests, 193 pass, 0 fail, 4 skipped (the real-PG cases).
+- `pnpm test` (apps/web): 1745 tests, 1745 pass, 0 fail.
+- api typecheck rc=0, web typecheck rc=0 (both serialised on the `/tmp/mangmee-heavy.lock` mkdir mutex). `git diff --check` clean.
+
+The ai-gateway typecheck was not re-run: no gateway file changed in this round.

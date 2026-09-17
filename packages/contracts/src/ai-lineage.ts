@@ -24,4 +24,12 @@ export type AiUsageEntry = {
   cacheReadInputTokens: number;
   cacheWriteInputTokens: number;
   durationMs: number;
+  /**
+   * How the counters above were obtained (remediation spec §11.2, F-11). Absent from an older
+   * gateway and from any provider that cannot tell — the API then stores NULL and the console
+   * reports UNKNOWN. A conservative timeout ceiling must never be displayed as measured tokens.
+   */
+  usageBasis?: AiUsageBasis;
 };
+
+export type AiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE';

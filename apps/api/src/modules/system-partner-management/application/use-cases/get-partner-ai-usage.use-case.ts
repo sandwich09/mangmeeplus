@@ -1,5 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { PartnerAiUsageDto, PartnerAiUsageMonthDto, PartnerOcrUsageMonthDto } from '@watchdog-bms/contracts';
+import type {
+  PartnerAiBudgetBucket,
+  PartnerAiRequestKind,
+  PartnerAiUsageBasis,
+  PartnerAiUsageBreakdownDto,
+  PartnerAiUsageDto,
+  PartnerAiUsageMeasuresDto,
+  PartnerAiUsageMonthDto,
+  PartnerOcrUsageMonthDto,
+} from '@watchdog-bms/contracts';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
 import { Prisma } from '../../../../generated/prisma/client';
@@ -22,6 +31,150 @@ const MONTH_SELECT = {
 
 const OCR_SOURCE_ROUTES = ['receipt-ocr-web', 'receipt-ocr-line', 'bank-statement-extract'] as const;
 const RECEIPT_UPLOAD_PURPOSES = ['expense.receipt.primary', 'expense.receipt.supporting'] as const;
+
+const REQUEST_KINDS: PartnerAiRequestKind[] = ['TEXT', 'IMAGE', 'OTHER', 'UNKNOWN'];
+const BUDGET_BUCKETS: PartnerAiBudgetBucket[] = ['CHAT', 'OCR', 'UNKNOWN'];
+const USAGE_BASES: PartnerAiUsageBasis[] = ['PROVIDER_REPORTED', 'CONSERVATIVE_ESTIMATE', 'UNKNOWN'];
+const TOP_TAG_LIMIT = 10;
+
+/**
+ * One grouped row of the current month's event ledger. Grouping on the four metadata columns plus
+ * the tag keeps the result set tiny (tags × a handful of metadata combinations) while letting every
+ * breakdown be folded from the SAME rows — so the slices cannot drift apart or double count.
+ */
+type AiUsageBreakdownRow = {
+  usageTag: string;
+  requestKind: string | null;
+  budgetBucket: string | null;
+  usageBasis: string | null;
+  eventKind: string;
+  rows: number;
+  costSatang: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+  /** NULL when no row in the group carries a pricing snapshot — UNAVAILABLE, not zero. */
+  cacheReadSatang: number | null;
+  cacheWriteSatang: number | null;
+  firstAt: Date;
+};
+
+type MeasureAccumulator = Omit<PartnerAiUsageMeasuresDto, 'cacheCostSatang'>
+  & { cacheReadSatang: number | null; cacheWriteSatang: number | null };
+
+const emptyMeasures = (): MeasureAccumulator => ({
+  costSatang: 0, calls: 0, inputTokens: 0, outputTokens: 0,
+  cacheReadInputTokens: 0, cacheWriteInputTokens: 0, cacheReadSatang: null, cacheWriteSatang: null,
+});
+
+function addRow(acc: MeasureAccumulator, row: AiUsageBreakdownRow): MeasureAccumulator {
+  acc.costSatang += row.costSatang;
+  // A COST_ADJUSTMENT moves money and counters but is not a provider call (spec §11.2).
+  if (row.eventKind === 'MODEL_CALL') acc.calls += row.rows;
+  acc.inputTokens += row.inputTokens;
+  acc.outputTokens += row.outputTokens;
+  acc.cacheReadInputTokens += row.cacheReadInputTokens;
+  acc.cacheWriteInputTokens += row.cacheWriteInputTokens;
+  if (row.cacheReadSatang !== null) acc.cacheReadSatang = (acc.cacheReadSatang ?? 0) + row.cacheReadSatang;
+  if (row.cacheWriteSatang !== null) acc.cacheWriteSatang = (acc.cacheWriteSatang ?? 0) + row.cacheWriteSatang;
+  return acc;
+}
+
+/** Same rules as {@link addRow}, but folding an already-summed slice (the `otherTags` remainder). */
+function mergeMeasures(acc: MeasureAccumulator, other: MeasureAccumulator): MeasureAccumulator {
+  acc.costSatang += other.costSatang;
+  acc.calls += other.calls;
+  acc.inputTokens += other.inputTokens;
+  acc.outputTokens += other.outputTokens;
+  acc.cacheReadInputTokens += other.cacheReadInputTokens;
+  acc.cacheWriteInputTokens += other.cacheWriteInputTokens;
+  if (other.cacheReadSatang !== null) acc.cacheReadSatang = (acc.cacheReadSatang ?? 0) + other.cacheReadSatang;
+  if (other.cacheWriteSatang !== null) acc.cacheWriteSatang = (acc.cacheWriteSatang ?? 0) + other.cacheWriteSatang;
+  return acc;
+}
+
+function toMeasures(acc: MeasureAccumulator): PartnerAiUsageMeasuresDto {
+  const { cacheReadSatang, cacheWriteSatang, ...rest } = acc;
+  return {
+    ...rest,
+    cacheCostSatang: cacheReadSatang === null && cacheWriteSatang === null
+      ? null
+      : { read: cacheReadSatang ?? 0, write: cacheWriteSatang ?? 0 },
+  };
+}
+
+/**
+ * Folds one slice from the row set, always emitting the full key list so UNKNOWN is never dropped
+ * and the slice reconciles with the total. A stored value outside `keys` (which the column CHECK
+ * constraints already prevent) folds into the last key — UNKNOWN — rather than disappearing.
+ */
+function foldBy<K extends string>(
+  rows: AiUsageBreakdownRow[],
+  keys: K[],
+  column: (row: AiUsageBreakdownRow) => string | null,
+): Array<{ key: K } & PartnerAiUsageMeasuresDto> {
+  const unknown = keys[keys.length - 1]!;
+  const buckets = new Map<K, MeasureAccumulator>(keys.map((key) => [key, emptyMeasures()]));
+  for (const row of rows) {
+    const value = column(row) as K | null;
+    addRow(buckets.get(value !== null && buckets.has(value) ? value : unknown)!, row);
+  }
+  return keys.map((key) => ({ key, ...toMeasures(buckets.get(key)!) }));
+}
+
+/** Everything the console shows about the current month, derived from the event rows alone. */
+export function buildAiUsageBreakdown(monthKey: string, rows: AiUsageBreakdownRow[]): {
+  breakdown: PartnerAiUsageBreakdownDto;
+  topTags: PartnerAiUsageDto['topTags'];
+  otherTags: PartnerAiUsageDto['otherTags'];
+} {
+  const tagged = new Map<string, MeasureAccumulator>();
+  for (const row of rows) {
+    if (!tagged.has(row.usageTag)) tagged.set(row.usageTag, emptyMeasures());
+    addRow(tagged.get(row.usageTag)!, row);
+  }
+  const ranked = [...tagged].sort((a, b) => b[1].costSatang - a[1].costSatang || a[0].localeCompare(b[0]));
+  const topTags = ranked.slice(0, TOP_TAG_LIMIT).map(([tag, acc]) => ({ tag, ...toMeasures(acc) }));
+  const remainder = ranked.slice(TOP_TAG_LIMIT);
+  const otherTags = {
+    tags: remainder.length,
+    ...toMeasures(remainder.reduce((acc, [, tag]) => mergeMeasures(acc, tag), emptyMeasures())),
+  };
+
+  const modelCalls = rows.filter((row) => row.eventKind === 'MODEL_CALL');
+  const calls = modelCalls.reduce((sum, row) => sum + row.rows, 0);
+  const withMetadata = modelCalls.filter((row) => row.requestKind !== null);
+  const callsWithMetadata = withMetadata.reduce((sum, row) => sum + row.rows, 0);
+  const firstMetadataAt = withMetadata.reduce<Date | null>(
+    (earliest, row) => (earliest === null || row.firstAt < earliest ? row.firstAt : earliest), null);
+  const adjustmentRows = rows.filter((row) => row.eventKind === 'COST_ADJUSTMENT');
+
+  return {
+    topTags,
+    otherTags,
+    breakdown: {
+      monthKey,
+      total: toMeasures(rows.reduce(addRow, emptyMeasures())),
+      byRequestKind: foldBy(rows, REQUEST_KINDS, (row) => row.requestKind)
+        .map(({ key, ...measures }) => ({ requestKind: key, ...measures })),
+      byBudgetBucket: foldBy(rows, BUDGET_BUCKETS, (row) => row.budgetBucket)
+        .map(({ key, ...measures }) => ({ budgetBucket: key, ...measures })),
+      byUsageBasis: foldBy(rows, USAGE_BASES, (row) => row.usageBasis)
+        .map(({ key, ...measures }) => ({ usageBasis: key, ...measures })),
+      adjustments: {
+        costSatang: adjustmentRows.reduce((sum, row) => sum + row.costSatang, 0),
+        rows: adjustmentRows.reduce((sum, row) => sum + row.rows, 0),
+      },
+      coverage: {
+        status: calls === 0 || callsWithMetadata === 0 ? 'none' : callsWithMetadata === calls ? 'complete' : 'partial',
+        calls,
+        callsWithMetadata,
+        firstMetadataAt: firstMetadataAt?.toISOString() ?? null,
+      },
+    },
+  };
+}
 
 function bangkokMonthRange(monthKey: string): { gte: Date; lt: Date } {
   const [year, month] = monthKey.split('-').map(Number);
@@ -74,14 +227,30 @@ export class GetPartnerAiUsageUseCase {
           updatedAt: true,
         },
       });
-      const tagGroups = await tx.aiUsageEvent.groupBy({
-        by: ['usageTag'],
-        where: { companyId, monthKey },
-        _sum: { costSatang: true },
-        _count: { _all: true },
-        orderBy: { _sum: { costSatang: 'desc' } },
-        take: 10,
-      });
+      // One grouped read feeds tags, kinds, buckets, basis, adjustments and coverage, so every
+      // slice reconciles with the same snapshot by construction. Component cost lives inside
+      // `pricingSnapshot`, which `groupBy` cannot sum — hence raw SQL (parameters are bound, and
+      // the two values are a route parameter and a server-derived month key).
+      const breakdownRows = await tx.$queryRaw<AiUsageBreakdownRow[]>`
+        SELECT "usageTag", "requestKind", "budgetBucket", "usageBasis", "eventKind",
+          COUNT(*)::int AS "rows",
+          COALESCE(SUM("costSatang"), 0)::int AS "costSatang",
+          COALESCE(SUM("inputTokens"), 0)::int AS "inputTokens",
+          COALESCE(SUM("outputTokens"), 0)::int AS "outputTokens",
+          COALESCE(SUM("cacheReadInputTokens"), 0)::int AS "cacheReadInputTokens",
+          COALESCE(SUM("cacheWriteInputTokens"), 0)::int AS "cacheWriteInputTokens",
+          -- A snapshot whose component is not a JSON number contributes NULL instead of aborting
+          -- the cast: one malformed row (a future writer, a manual fix) must not take the whole
+          -- admin page down. SUM over nothing stays NULL, which is how UNAVAILABLE is reported.
+          ROUND(SUM(CASE WHEN jsonb_typeof("pricingSnapshot" #> '{componentSatang,cacheRead}') = 'number'
+            THEN ("pricingSnapshot" #>> '{componentSatang,cacheRead}')::numeric END))::int AS "cacheReadSatang",
+          ROUND(SUM(CASE WHEN jsonb_typeof("pricingSnapshot" #> '{componentSatang,cacheWrite}') = 'number'
+            THEN ("pricingSnapshot" #>> '{componentSatang,cacheWrite}')::numeric END))::int AS "cacheWriteSatang",
+          MIN("createdAt") AS "firstAt"
+        FROM "AiUsageEvent"
+        WHERE "companyId" = ${companyId} AND "monthKey" = ${monthKey}
+        GROUP BY "usageTag", "requestKind", "budgetBucket", "usageBasis", "eventKind"
+      `;
       // The console must quote what a company actually inherits, which is the platform settings
       // row when one exists — the same value the five enforcement seams compare against.
       const platform = await resolvePlatformAiBudget(txPrisma, this.config, true);
@@ -92,16 +261,18 @@ export class GetPartnerAiUsageUseCase {
       });
       const currentUploads = await this.countUploadedReceipts(tx, companyId, monthKey);
       const previousUploads = await this.countUploadedReceipts(tx, companyId, previousMonthKey);
-      return { company, months, configuration, tagGroups, platform, ocrMonths, ocrSources, currentUploads, previousUploads };
+      return { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads };
     }, {
       isolationLevel: 'RepeatableRead',
       maxWait: 5_000,
       timeout: 15_000,
     });
 
-    const { company, months, configuration, tagGroups, platform, ocrMonths, ocrSources, currentUploads, previousUploads } = reads;
+    const { company, months, configuration, breakdownRows, platform, ocrMonths, ocrSources, currentUploads, previousUploads } = reads;
 
     if (!company) throw new NotFoundException(`Partner company "${companyId}" not found.`);
+
+    const { breakdown, topTags, otherTags } = buildAiUsageBreakdown(monthKey, breakdownRows ?? []);
 
     const overrideSatang = configuration?.monthlyBudgetSatang ?? null;
     const defaultSatang = platform.monthlyBudgetSatang;
@@ -125,11 +296,9 @@ export class GetPartnerAiUsageUseCase {
         defaultSatang,
         ceilingSatang: platform.ceilingSatang,
       },
-      topTags: tagGroups.map((group) => ({
-        tag: group.usageTag,
-        costSatang: group._sum.costSatang ?? 0,
-        calls: group._count._all,
-      })),
+      topTags,
+      otherTags,
+      breakdown,
       ocr: {
         config: {
           enabled: configuration?.ocrEnabled ?? true,
