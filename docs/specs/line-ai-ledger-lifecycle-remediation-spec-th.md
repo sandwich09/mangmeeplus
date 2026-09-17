@@ -409,7 +409,7 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [ ] C-03 บิลยาว/รูปอ่านยากไม่เกิด truncation หรือ retry เพิ่มจากลด output; valid transcription/plan reuse ยังคงถูกต้อง
 - [ ] C-04 Cache metrics บันทึกตามจริง; โมเดล/config เดิม และไม่มี extra call เพื่อหา budget bucket
 - [ ] D-01 API/web แสดง total, kinds, buckets, cache, average, other tags และ partial history ได้ตรง snapshot และ reconcile กับ ledger
-- [ ] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ
+- [x] D-02 Historical unknown ไม่ถูกเดา, missing pricing ไม่เป็น 0, component rounding มีหลักฐาน และ calls ไม่ถูกแสดงเป็นจำนวนใบเสร็จ — ผ่านด้วย focused specs + real-PostgreSQL breakdown (2026-09-17, D1)
 - [ ] D-03 Loading/error/retry/read-only, saved/draft, stale version, company switch, desktop/mobile และ audit history ผ่าน; tenant API อ่าน/แก้ budget ไม่ได้
 - [ ] E-01 Split validation: C/O เป็น satang ไม่ติดลบ, zero closes bucket, C+O<=T; null/malformed/unauthorized/stale writes ไม่ผ่าน
 - [ ] E-02 CHAT เต็ม/OCR เหลือ อ่านได้ตามวงเงินจอง; OCR เต็ม/CHAT เหลือ คุยได้; TOTAL เต็มหยุดทั้งคู่ โดยไม่ยืมเงิน
@@ -437,7 +437,7 @@ Cutover ต้องมีหลักฐาน **ครบทุก writer/runt
 - [ ] R-09 Drain/CRM/draft/statement permanent budget refusal ไม่วน retry จนกลายเป็น poison/error อื่น และ reply recovery คง reason/scope ของ attempt เดิม
 - [ ] R-10 Partner support/billing grant/plan warnings เห็น OCR-only exhaustion/active holds; เพิ่ม receipt grants ไม่สื่อว่าเพิ่มเงิน AI และไม่รั่ว internal money fields
 - [ ] R-11 Pending มากกว่า 50/หลาย user/trim ระหว่าง read ไม่ถูกอ้างว่า empty; malformed Redis read fail closed; corrupt key ไม่ทำให้ reclaim ของ key อื่นทั้ง batch หาย
-- [ ] R-12 Estimated/legacy/unknown usage แสดงตาม basis; evidence corrections reconcile cost โดยไม่เพิ่ม calls; cost corpus ไม่ตัด failures/refusals จาก denominator
+- [ ] R-12 Estimated/legacy/unknown usage แสดงตาม basis; evidence corrections reconcile cost โดยไม่เพิ่ม calls; cost corpus ไม่ตัด failures/refusals จาก denominator — สองข้อแรกผ่านแล้วใน D1 (2026-09-17); ยังเปิดเพราะ cost corpus เป็นของงาน C
 
 ## 14. ส่งมอบและขอบเขตที่ไม่ทำ
 

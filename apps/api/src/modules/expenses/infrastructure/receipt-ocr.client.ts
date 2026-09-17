@@ -6,7 +6,7 @@ import { RedisRateLimitService } from '../../../common/security/redis-rate-limit
 import { safeLineErrorDetails } from '../../line-ai/infrastructure/line-reply.adapter';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 import {
   type CompanyOcrAdmissionIdentity,
   admitCompanyOcr,
@@ -145,7 +145,10 @@ export class ReceiptOcrClient {
       await recordCompanyAiUsage(
         this.prisma,
         this.config,
-        { companyId: request.companyId, sourceRoute: 'receipt-ocr', requestId: request.requestId, monthKey: budgetMonthKey },
+        {
+          companyId: request.companyId, sourceRoute: 'receipt-ocr', requestId: request.requestId, monthKey: budgetMonthKey,
+          ...classifyAiUsageRequest('receipt-ocr', request.attachment.mimeType === 'application/pdf' ? 'document' : 'image'),
+        },
         result.usage,
       );
     } catch (err) {

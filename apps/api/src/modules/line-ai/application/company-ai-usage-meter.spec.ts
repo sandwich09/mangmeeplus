@@ -30,6 +30,8 @@ import {
   invalidateCompanyAiBudgetConfiguration,
   assertCompanyAiBudget,
   bangkokMonthKey,
+  classifyAiUsageRequest,
+  recordCompanyAiCostAdjustment,
   recordCompanyAiUsage,
   resolvePlatformAiBudget,
   retryBusyAdmission,
@@ -644,6 +646,191 @@ describe('recordCompanyAiUsage', () => {
 
     assert.ok(transactions[0]![0]!.args.data[0].costSatang > 0);
     assert.equal(warnings.filter((w) => w?.msg === 'ai.usage.unknown_model_price').length, 1);
+  });
+
+  // ── D1 metadata (remediation spec §11.2) ───────────────────────────────────
+
+  it('stamps the server-derived kind/bucket, the reported basis, MODEL_CALL and a pricing snapshot', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    await recordCompanyAiUsage(
+      prisma,
+      config,
+      { companyId: 'co-1', sourceRoute: 'line-intake-route', requestId: 'req-1', requestKind: 'IMAGE', budgetBucket: 'OCR' },
+      [usage({ usageBasis: 'CONSERVATIVE_ESTIMATE' })],
+    );
+
+    const row = transactions[0]![0]!.args.data[0];
+    assert.equal(row.requestKind, 'IMAGE');
+    assert.equal(row.budgetBucket, 'OCR');
+    assert.equal(row.usageBasis, 'CONSERVATIVE_ESTIMATE');
+    assert.equal(row.eventKind, 'MODEL_CALL');
+    assert.deepEqual(row.pricingSnapshot.usdPerMTok, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 });
+    assert.equal(row.pricingSnapshot.thbPerUsd, 33);
+    assert.equal(row.pricingSnapshot.unknownModel, false);
+  });
+
+  it('meters a legacy-shaped entry with no basis and an untagged seam as UNKNOWN, not a guess', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    // An older gateway artifact reports no basis, and an older API seam passes no classification.
+    await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'line-turn' }, [usage()]);
+
+    const row = transactions[0]![0]!.args.data[0];
+    assert.equal(row.usageBasis, null);
+    assert.equal(row.requestKind, null);
+    assert.equal(row.budgetBucket, null);
+    assert.equal(row.costSatang, 347, 'the money is metered exactly as before');
+    assert.deepEqual(transactions[0]![1]!.args.update.callCount, { increment: 1 }, 'the aggregate is unchanged');
+  });
+
+  it('refuses a basis the gateway response invented rather than storing wire text', async () => {
+    const { prisma, transactions } = fakePrisma();
+
+    await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'line-turn' },
+      [usage({ usageBasis: "MEASURED'; DROP" as any })]);
+
+    assert.equal(transactions[0]![0]!.args.data[0].usageBasis, null);
+  });
+
+  for (const [label, entry] of [
+    ['awkward fractions', usage({ inputTokens: 1, outputTokens: 3, cacheReadInputTokens: 7, cacheWriteInputTokens: 11 })],
+    ['cache-only', usage({ inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 123_457, cacheWriteInputTokens: 1 })],
+    ['zero counters', usage({ inputTokens: 0, outputTokens: 0, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 })],
+    ['unknown model at max price', usage({ modelId: 'some.unlisted-model-v9', inputTokens: 3, outputTokens: 5 })],
+  ] as const) {
+    it(`snapshot components sum exactly to costSatang — ${label}`, async () => {
+      const { prisma, transactions } = fakePrisma();
+
+      await recordCompanyAiUsage(prisma, config, { companyId: 'co-1', sourceRoute: 'line-turn' }, [entry]);
+
+      const row = transactions[0]![0]!.args.data[0];
+      const parts = row.pricingSnapshot.componentSatang;
+      assert.equal(
+        parts.input + parts.output + parts.cacheRead + parts.cacheWrite + parts.rounding,
+        row.costSatang,
+        'components plus the rounding term must reconstruct the authoritative money',
+      );
+    });
+  }
+});
+
+describe('classifyAiUsageRequest', () => {
+  const table: Array<[string, 'text' | 'image' | 'document', 'TEXT' | 'IMAGE' | 'OTHER', 'CHAT' | 'OCR']> = [
+    ['line-turn', 'text', 'TEXT', 'CHAT'],
+    // Attaching a picture to a chat turn must not move the turn's ERP reasoning onto the OCR budget.
+    ['line-turn', 'image', 'IMAGE', 'CHAT'],
+    ['line-turn', 'document', 'OTHER', 'CHAT'],
+    ['line-intake-route', 'text', 'TEXT', 'CHAT'],
+    // A LINE intake carrying a JPEG/PNG runs the governed image reader: the WHOLE call is OCR.
+    ['line-intake-route', 'image', 'IMAGE', 'OCR'],
+    ['receipt-ocr', 'image', 'IMAGE', 'OCR'],
+    ['receipt-ocr', 'document', 'OTHER', 'OCR'],
+    ['bank-statement-extract', 'image', 'IMAGE', 'OCR'],
+    ['crm-summary', 'text', 'TEXT', 'CHAT'],
+    ['crm-reply-draft', 'text', 'TEXT', 'CHAT'],
+    ['draft-generate', 'text', 'TEXT', 'CHAT'],
+  ];
+
+  for (const [sourceRoute, content, requestKind, budgetBucket] of table) {
+    it(`${sourceRoute} + ${content} → ${requestKind} / ${budgetBucket}`, () => {
+      assert.deepEqual(classifyAiUsageRequest(sourceRoute, content), { requestKind, budgetBucket });
+    });
+  }
+
+  it('never reads the usage tag: the intake image path is tagged line.intake-route', () => {
+    // `usageTag.startsWith('ocr')` would classify this CHAT; the route + content say OCR.
+    assert.equal(classifyAiUsageRequest('line-intake-route', 'image').budgetBucket, 'OCR');
+    assert.equal(classifyAiUsageRequest('ocr-sounding-but-unknown-route', 'text').budgetBucket, 'CHAT');
+  });
+});
+
+describe('recordCompanyAiCostAdjustment', () => {
+  /** Minimal ledger fake: one original row, one aggregate, and the unique correctionKey fence. */
+  function adjustmentPrisma(options: { aggregate?: Record<string, number>; eventKind?: string } = {}) {
+    const events = new Map<string, any>([['evt-1', {
+      id: 'evt-1', companyId: 'co-1', monthKey: '2026-09', sourceRoute: 'line-turn', usageTag: 'line_turn',
+      modelId: 'sonnet', thbPerUsd: 33, thbPerUsdSource: 'env-fallback', requestKind: 'TEXT', budgetBucket: 'CHAT',
+      usageBasis: 'PROVIDER_REPORTED', requestId: 'req-1', eventKind: options.eventKind ?? 'MODEL_CALL',
+    }]]);
+    const aggregate: Record<string, number> = {
+      costSatang: 1_000, callCount: 3, inputTokens: 100, outputTokens: 100,
+      cacheReadInputTokens: 100, cacheWriteInputTokens: 100, ...options.aggregate,
+    };
+    const created: any[] = [];
+    const client = {
+      $transaction: async (fn: (tx: any) => Promise<any>) => fn({
+        aiUsageEvent: {
+          findUnique: async (args: any) => args.where.correctionKey !== undefined
+            ? created.find((row) => row.correctionKey === args.where.correctionKey) ?? null
+            : events.get(args.where.id) ?? null,
+          create: async (args: any) => { created.push(args.data); return args.data; },
+        },
+        companyAiMonthlyUsage: {
+          updateMany: async (args: any) => {
+            const blocked = Object.entries(args.where)
+              .filter(([, value]) => typeof value === 'object' && value !== null && 'gte' in (value as any))
+              .some(([field, value]) => aggregate[field]! < (value as any).gte);
+            if (blocked) return { count: 0 };
+            for (const [field, value] of Object.entries(args.data)) aggregate[field] = aggregate[field]! + (value as any).increment;
+            return { count: 1 };
+          },
+        },
+      }),
+    };
+    return { prisma: { client } as any, aggregate, created };
+  }
+
+  it('moves cost and tokens on the original month without touching callCount', async () => {
+    const { prisma, aggregate, created } = adjustmentPrisma();
+
+    const outcome = await recordCompanyAiCostAdjustment(prisma, {
+      eventId: 'evt-1', correctionKey: 'settle-1', costSatang: -120, inputTokens: -40,
+    });
+
+    assert.equal(outcome, 'applied');
+    assert.equal(aggregate.costSatang, 880);
+    assert.equal(aggregate.inputTokens, 60);
+    assert.equal(aggregate.callCount, 3, 'a correction is never a provider call');
+    assert.equal(created[0].eventKind, 'COST_ADJUSTMENT');
+    assert.equal(created[0].adjustsEventId, 'evt-1');
+    assert.equal(created[0].monthKey, '2026-09', 'the ORIGINAL month absorbs the delta');
+    assert.equal(created[0].pricingSnapshot, null, 'an adjustment carries no new priced evidence');
+  });
+
+  it('is idempotent on the correction identity', async () => {
+    const { prisma, aggregate, created } = adjustmentPrisma();
+    const correction = { eventId: 'evt-1', correctionKey: 'settle-1', costSatang: -120 };
+
+    assert.equal(await recordCompanyAiCostAdjustment(prisma, correction), 'applied');
+    assert.equal(await recordCompanyAiCostAdjustment(prisma, correction), 'duplicate');
+    assert.equal(aggregate.costSatang, 880, 'a replayed correction applies once');
+    assert.equal(created.length, 1);
+  });
+
+  it('refuses a delta that would drive an aggregate negative, and writes nothing', async () => {
+    const { prisma, aggregate, created } = adjustmentPrisma();
+
+    assert.equal(
+      await recordCompanyAiCostAdjustment(prisma, { eventId: 'evt-1', correctionKey: 'settle-2', costSatang: -1_001 }),
+      'refused-negative',
+    );
+    assert.equal(aggregate.costSatang, 1_000);
+    assert.equal(created.length, 0);
+  });
+
+  it('refuses an unknown event and refuses to correct a correction', async () => {
+    const missing = adjustmentPrisma();
+    assert.equal(
+      await recordCompanyAiCostAdjustment(missing.prisma, { eventId: 'nope', correctionKey: 'k1', costSatang: -1 }),
+      'unknown-event',
+    );
+    const chained = adjustmentPrisma({ eventKind: 'COST_ADJUSTMENT' });
+    assert.equal(
+      await recordCompanyAiCostAdjustment(chained.prisma, { eventId: 'evt-1', correctionKey: 'k2', costSatang: -1 }),
+      'unknown-event',
+    );
+    assert.equal(chained.aggregate.costSatang, 1_000);
   });
 });
 

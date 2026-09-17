@@ -101,3 +101,37 @@ Verification:
 
 Next:
 - Implement the unified [plan](../plans/line-ai-ledger-lifecycle-remediation-plan-th.md) when requested. The earlier explanation is complete; do not ask again whether the owner wants reserve versus split caps.
+
+## Phase D1 implementation — 2026-09-17
+
+Status: implemented on branch `codex/line-ai-remediation-d1-usage-20260917` (worktree only, not pushed, no PR, no deploy).
+
+Decisions:
+- Additive migration only. `requestKind`, `budgetBucket`, `usageBasis`, `pricingSnapshot`, `adjustsEventId`, `correctionKey` are nullable; `eventKind` defaults to `MODEL_CALL`. No backfill, no re-pricing, no rewrite. Plain `String` columns with CHECK constraints, matching the newest models in this schema (`BillingReceiptGrant.kind`, `EmailAccessChallenge.status`) and the existing `sourceRoute`/`thbPerUsdSource` style — not Prisma enums.
+- No execution/invocation unique key in this phase. Its attempt-vs-invocation-vs-transport semantics belong to §12.6 (phase E); adding the fence now would turn a metering replay into a LOST usage write. Recorded as a comment in `schema.prisma` and in the migration.
+- The bucket/kind decision lives in ONE exported pure function, `classifyAiUsageRequest(sourceRoute, content)`, so phase E reuses it. `line-intake-route` + image = OCR for the whole call; `line-turn` stays CHAT even with an attachment; `receipt-ocr` and `bank-statement-extract` are always OCR. The function never reads `usageTag` — the intake image path is tagged `line.intake-route`.
+- `costSatang` stays the single half-up rounding in `computeCostSatang`. `buildPricingSnapshot` splits it into components and puts the residue in `rounding`, so a snapshot can never contradict the money on its row.
+- `usageBasis` arriving from the gateway is untrusted wire JSON and is normalised to the two known values or NULL.
+- The report derives EVERY slice (tags, kinds, buckets, basis, adjustments, coverage) from one grouped `$queryRaw` inside the existing RepeatableRead transaction, so the slices reconcile by construction. Raw SQL is needed because component cost lives inside the `pricingSnapshot` JSON, which `groupBy` cannot sum. `breakdown.total` (event-derived) is exposed next to `current` (the running aggregate) rather than reconciled away.
+- `recordCompanyAiCostAdjustment` was implemented (~35 lines): the aggregate move is one conditional `updateMany` whose WHERE requires every total to stay >= 0, so it refuses atomically with no isolation level and no read-then-write race. Idempotent on `correctionKey`, never touches `callCount`, refuses to correct a correction. No HTTP endpoint and no caller yet.
+
+Artifacts:
+- `apps/api/prisma/schema.prisma`, `apps/api/prisma/migrations/20260917140000_ai_usage_metadata/migration.sql`
+- `apps/api/src/modules/line-ai/application/company-ai-usage-meter.ts` (+ `ai-model-pricing.ts`), the five metering seams
+- `apps/api/src/modules/system-partner-management/application/use-cases/get-partner-ai-usage.use-case.ts`
+- `packages/contracts/src/ai-lineage.ts`, `packages/contracts/src/partner-management.ts`
+- `apps/ai-gateway/src/modules/line-ai/infrastructure/provider/{bedrock,openai}.provider.ts`
+- `apps/web/src/features/system-partners/{ai-budget.logic.ts,PartnerDetailPage.tsx,system-partners.api.ts}`
+
+Verification:
+- `pnpm exec tsx --test` (apps/api): `company-ai-usage-meter.spec.ts` + `get-partner-ai-usage.use-case.spec.ts` + `ai-gateway.client.spec.ts` + `crm-ai-gateway.client.spec.ts` + `partner.controller.spec.ts` + `security-event-emitters.spec.ts` → 186 tests, 182 pass, 0 fail, 4 skipped (real-PostgreSQL skips without `DATABASE_URL`).
+- `pnpm exec tsx --test` (apps/ai-gateway): bedrock + openai provider specs and both usage specs → 52 tests, 52 pass, 0 fail.
+- `pnpm test` (apps/web, the repo's own unit runner) → 1745 tests, 1745 pass, 0 fail.
+- Real PostgreSQL (throwaway `postgres:16-alpine`, 127.0.0.1:15571, dropped afterwards): `prisma migrate deploy` applied all migrations including `20260917140000_ai_usage_metadata`; the spec's new real-DB case and a scratch probe then proved a legacy-shaped row stores NULL metadata, a new-shaped row stores kind/bucket/basis/snapshot, snapshot components reconstruct `costSatang` exactly (47=47, 251=251, 47=47), the correction applied → replayed as `duplicate` → an over-large negative delta `refused-negative`, the aggregate moved 345→195 with `callCount` still 3, and the DTO reported `total.calls 3`, `adjustments {-150, 1}`, `coverage partial 2/3` with UNKNOWN present in every slice.
+- `prisma validate`, `migration:review`, `git diff --check` clean. Typechecks (serialised on the `/tmp/mangmee-heavy.lock` mkdir mutex): api, ai-gateway, web all rc=0.
+
+Next:
+- D-01/D-03 stay open: the web breakdown has unit-tested logic and a typecheck but no rendered desktop/mobile evidence, company-switch/stale-version/audit-history evidence, or real HTTP round trip.
+- R-12 stays open on its cost-corpus half; the baseline-corpus plan items belong to phase C.
+- `recordCompanyAiCostAdjustment` has no caller; phase E wires late-actual settlement to it.
+- The migration adds four CHECK constraints to `AiUsageEvent`, which Postgres validates with a table scan under an ACCESS EXCLUSIVE lock. The table is small (about 92 rows/company-month on Production) so this is expected to be brief, but it was only measured against an empty catalog here.

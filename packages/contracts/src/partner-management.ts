@@ -225,6 +225,59 @@ export type PartnerAiUsageMonthDto = {
   cacheWriteInputTokens: number;
 };
 
+export type PartnerAiRequestKind = 'TEXT' | 'IMAGE' | 'OTHER' | 'UNKNOWN';
+export type PartnerAiBudgetBucket = 'CHAT' | 'OCR' | 'UNKNOWN';
+export type PartnerAiUsageBasis = 'PROVIDER_REPORTED' | 'CONSERVATIVE_ESTIMATE' | 'UNKNOWN';
+
+/**
+ * One slice of a month's AI spend, derived from `AiUsageEvent` rows (remediation spec §11.1).
+ * Money is integer satang on the wire like every other money field.
+ */
+export type PartnerAiUsageMeasuresDto = {
+  costSatang: number;
+  /** Provider calls = MODEL_CALL rows only. NOT a receipt count: one picture can cost several calls. */
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+  /**
+   * Cache cost summed from the pricing snapshots of the rows that carry one. `null` = UNAVAILABLE
+   * (no priced evidence in this slice), never 0. When `coverage.status` is `partial` this covers
+   * only the rows that have a snapshot — the token counts above still cover every row.
+   */
+  cacheCostSatang: { read: number; write: number } | null;
+};
+
+/**
+ * Current-month breakdown derived from the event ledger (remediation spec §11.1–11.3).
+ * Every list always contains its `UNKNOWN` row, so each list reconciles exactly with `total`.
+ */
+export type PartnerAiUsageBreakdownDto = {
+  monthKey: string;
+  /**
+   * Event-derived month total. `PartnerAiUsageDto.current` is the running `CompanyAiMonthlyUsage`
+   * aggregate instead; the two are normally identical and may legitimately differ if events are
+   * ever pruned. Both are exposed rather than reconciled away.
+   */
+  total: PartnerAiUsageMeasuresDto;
+  /** Server-derived before the provider call; `UNKNOWN` is history without metadata, never guessed. */
+  byRequestKind: Array<{ requestKind: PartnerAiRequestKind } & PartnerAiUsageMeasuresDto>;
+  /** Spend only in this phase; `reserved`/`available` per bucket are added in §12 without renaming. */
+  byBudgetBucket: Array<{ budgetBucket: PartnerAiBudgetBucket } & PartnerAiUsageMeasuresDto>;
+  /** A CONSERVATIVE_ESTIMATE slice must never be presented as measured provider tokens. */
+  byUsageBasis: Array<{ usageBasis: PartnerAiUsageBasis } & PartnerAiUsageMeasuresDto>;
+  /** Signed COST_ADJUSTMENT totals, already included in `total` cost/tokens and never in `calls`. */
+  adjustments: { costSatang: number; rows: number };
+  /** Honest label for the rollout month; `firstMetadataAt` is when this company's first tagged row landed. */
+  coverage: {
+    status: 'complete' | 'partial' | 'none';
+    calls: number;
+    callsWithMetadata: number;
+    firstMetadataAt: string | null;
+  };
+};
+
 /** Partner-console AI spend meter (metering spec §7.7) — system-admin surface only. */
 export type PartnerAiUsageDto = {
   current: PartnerAiUsageMonthDto | null;
@@ -237,7 +290,10 @@ export type PartnerAiUsageDto = {
     ceilingSatang: number;
   };
   /** Current month's spend by `usageTag`, highest first, at most 10 rows. */
-  topTags: Array<{ tag: string; costSatang: number; calls: number }>;
+  topTags: Array<{ tag: string } & PartnerAiUsageMeasuresDto>;
+  /** Everything outside `topTags`, so top-10 + other reconciles with `breakdown.total`. */
+  otherTags: { tags: number } & PartnerAiUsageMeasuresDto;
+  breakdown: PartnerAiUsageBreakdownDto;
   ocr: {
     config: PartnerOcrConfigDto;
     /** Observed enforcement, independent from the operational OCR cap. Paid grants cannot be bypassed. */
