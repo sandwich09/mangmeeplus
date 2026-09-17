@@ -2,6 +2,8 @@ import { ConflictException, Injectable, NotFoundException, UnprocessableEntityEx
 import {
   civilDateToUtcDate,
   todayCivilDate,
+  normalizeCompanyBusinessType,
+  type PatchCompanyBusinessTypeRequest,
   utcDateToCivilDate,
   type CompanyIdentityResponse,
   type CompanyLegalAddress,
@@ -49,6 +51,7 @@ export class CompanyIdentityUseCase {
       where: { id: companyId },
       select: {
         id: true, name: true, registeredName: true, taxId: true, addressJson: true,
+        businessTypeCode: true, businessTypeOther: true, businessTypeVersion: true,
         legalIdentityVersion: true, legalIdentityCaptureCompletedAt: true, lastLegalChangeEffectiveDate: true,
         legalIdentityAuthoritativeAt: true, legalIdentityAuthoritativeReason: true, legalIdentityAuthoritativeRef: true,
         tinExistsStatus: true, tinExistsAt: true, vatDetailStatus: true, vatDetailAt: true,
@@ -117,6 +120,7 @@ export class CompanyIdentityUseCase {
     response.identity = can('company.legal_identity.read')
       ? {
           masked: false,
+          businessType: { code: company.businessTypeCode ?? null, other: company.businessTypeOther ?? null, version: company.businessTypeVersion ?? 0 },
           displayName: company.name,
           registeredName: company.registeredName,
           taxId: company.taxId,
@@ -182,6 +186,29 @@ export class CompanyIdentityUseCase {
     }
 
     return response;
+  }
+
+  async patchBusinessType(ctx: RequestContext, companyId: string, body: PatchCompanyBusinessTypeRequest) {
+    let value;
+    try { value = normalizeCompanyBusinessType(body.code, body.other); }
+    catch (error) { throw new UnprocessableEntityException({ code: (error as Error).message }); }
+    if (!Number.isInteger(body.expectedVersion) || body.expectedVersion < 0) {
+      throw new UnprocessableEntityException('expectedVersion must be a non-negative integer');
+    }
+    return this.prisma.client.$transaction(async (tx) => {
+      const updated = await tx.company.updateMany({
+        where: { id: companyId, businessTypeVersion: body.expectedVersion },
+        data: { businessTypeCode: value.code, businessTypeOther: value.other, businessTypeVersion: { increment: 1 } },
+      });
+      if (updated.count !== 1) throw new ConflictException('company_business_type_version_conflict');
+      await this.audit.log({
+        companyId, actorUserId: ctx.userId, action: 'company.business_type.update',
+        targetType: 'company', targetId: companyId, requestId: ctx.requestId,
+        result: 'SUCCESS', riskLevel: 'LOW',
+        metadataJson: { businessTypeVersion: body.expectedVersion + 1, otherProvided: value.other !== null },
+      }, tx);
+      return { ...value, version: body.expectedVersion + 1 };
+    });
   }
 
   async patch(ctx: RequestContext, companyId: string, body: PatchCompanyIdentityRequest) {

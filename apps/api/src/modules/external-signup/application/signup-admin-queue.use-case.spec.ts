@@ -211,6 +211,17 @@ function harness(options: {
 }
 
 describe('SignupAdminQueueUseCase.list', () => {
+  it('returns attribution in both the review queue and approved list', async () => {
+    const h = harness({ requests: [
+      { ...REQUEST, discoverySource: 'OTHER', discoverySourceOther: 'เพื่อนแนะนำ' },
+      { ...REQUEST, id: 'legacy' },
+    ] });
+    for (const result of [await h.useCase.list(NOW), await h.useCase.listAutoApproved(14, NOW)]) {
+      assert.equal(result.items[0]!.discoverySource, 'OTHER');
+      assert.equal(result.items[0]!.discoverySourceOther, 'เพื่อนแนะนำ');
+      assert.equal(result.items[1]!.discoverySource, undefined);
+    }
+  });
   it('shows the durable email-review reason independently of account attachment or a current email match', async () => {
     const h = harness({
       requests: [{ ...REQUEST, id: 'duplicate-line', source: 'line-oa' }, { ...REQUEST, id: 'fresh-line', source: 'line-oa' }],

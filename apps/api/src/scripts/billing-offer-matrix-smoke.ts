@@ -1,3 +1,4 @@
+import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
 import {appendPackageInterval} from '../modules/billing/domain/billing-package';
 import {parseBillingPolicy} from '../modules/billing/domain/billing-policy';
 import assert from 'node:assert/strict';
@@ -29,7 +30,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
       const account=await db.billingAccount.findUnique({where:{id:accountId}});
       if(!account||!companies.has(account.companyId))return undefined;
       const customerId=customers.get(accountId)??`cus_Matrix${tag}${customers.size}`;
-      if(!customers.has(accountId))provider.customers!.push({id:customerId,object:'customer',livemode:false,email:form.get('email'),metadata:{billingAccountId:accountId}});
+      if(!customers.has(accountId))provider.customers!.push(applySyntheticCustomerFields({id:customerId,object:'customer',livemode:false,email:form.get('email'),metadata:{billingAccountId:accountId}},form));
       customers.set(accountId,customerId);return response(provider.customers!.find(customer=>customer.id===customerId));
     }
     if(method==='POST'&&path==='/checkout/sessions'&&[...customers.values()].includes(form.get('customer')??'')) {
@@ -56,7 +57,7 @@ export async function checkBillingOfferMatrix(input:Parameters<typeof checkBilli
     for(const tier of BILLING_PAID_TIERS)for(const interval of ['month','year'] as const)for(const channel of ['web','line'] as const) {
       const name=`${tier}-${interval}-${channel}`,companyId=`matrix-${tag}-${name}`,own=`/v1/companies/${companyId}/billing`;
       companies.add(companyId);input.companyIds.push(companyId);
-      await db.company.create({data:{id:companyId,name:`ร้านทดสอบ ${name}`}});
+      await db.company.create({data:{id:companyId,name:`ร้านทดสอบ ${name}`,addressJson:BILLING_TEST_ADDRESS}});
       const member=await db.companyMembership.create({data:{companyId,userId:input.userIds[0]!,roles:{create:{roleId:owner.roleId}}}});
       await input.recordLegal(input.userIds[0]!,member.id,companyId);
       await db.companyPlanTerm.create({data:{companyId,tierKey:'FREE_TRIAL_15',branchLimit:1,employeeLimit:2,monthlySlipLimit:15,

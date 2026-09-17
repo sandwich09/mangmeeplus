@@ -1,5 +1,8 @@
 'use client';
 import Link from 'next/link';
+import { Modal } from '@/common/components/modal';
+import { BILLING_PROFILE_FIELD_LABELS, type BillingProfileField } from '@watchdog-bms/contracts';
+import { billingProfileHref, billingProfileSelection } from './billing-profile-navigation';
 import { useRouter } from 'next/navigation';
 import { MangmeeBadge } from '@/common/components/mangmee';
 import BillingCustomerFrame from './BillingCustomerFrame';
@@ -30,6 +33,7 @@ function errorText(error: unknown): string {
   if (status === 403) return 'เฉพาะเจ้าของบริษัทเท่านั้นที่จัดการการชำระเงินได้';
   if (status === 429) return 'กรุณารอสักครู่แล้วลองใหม่';
   if (code === 'BILLING_QUOTE_STALE') return 'รายการหมดอายุหรือข้อมูลเปลี่ยน กรุณาเลือกราคาและยืนยันใหม่';
+  if (code === 'BILLING_COMPANY_PROFILE_REQUIRED') return 'กรุณากรอกข้อมูลบริษัทให้ครบก่อนซื้อแพ็กเกจ';
   if (code === 'BILLING_PLAN_CHANGE_REQUIRED') return 'กรุณากลับไปเลือกแพ็กเกจ เพื่อตรวจสอบวิธีเปลี่ยนแพ็กเกจและรอบชำระ';
   if (code === 'BILLING_CADENCE_PENDING_CHANGE') return 'มีรายการเปลี่ยนแพ็กเกจรอบถัดไป กรุณาตรวจสอบและยกเลิกรายการนั้นในแท็บการต่ออายุและชำระเงิน ก่อนซื้อรายปี';
   if (code === 'BILLING_REPEAT_NOT_READY') return 'การซื้อแพ็กเกจซ้ำยังไม่เปิดให้บริการ กรุณาติดต่อทีมงาน';
@@ -58,6 +62,9 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
 }) {
   const router = useRouter();
   const [previewCollectionId, setPreviewCollectionId] = useState<string>();
+  const [profileMissing, setProfileMissing] = useState<BillingProfileField[] | null>(null);
+  const pendingPurchase = useRef<{ offer: string; interval: string; channel: string } | null>(null);
+  const resumedProfile = useRef(false);
   const activeCollectionId = collectionId ?? previewCollectionId;
   const [cadenceNotice, setCadenceNotice] = useState<'upgrade' | 'pending' | false>(false);
   const api = useMemo(() => preview?.api ?? billingApi(companyId), [companyId, preview]);
@@ -76,6 +83,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
   const collectionChanged = useCallback(() => setReload(value => value + 1), []);
   const [emailState, setEmailState] = useState<AccountEmailOtpState | null>(null), [emailReadError, setEmailReadError] = useState(false);
   const email = emailState?.email ?? '', emailReady = emailState?.emailRequirement === 'READY';
+  useEffect(() => {
+    if (resumedProfile.current || !data || !emailReady) return;
+    const params = new URLSearchParams(window.location.search), selection = billingProfileSelection(window.location.search);
+    if (!selection || params.get('profile') !== 'updated') return;
+    resumedProfile.current = true;
+    setChoosing(true); setSection('package'); setInterval(selection.interval === 'year' ? 'year' : 'month');
+    void action(async () => { await requestQuote(selection.offer, selection.interval, email); });
+  }, [data, emailReady, email]);
   const [interval, setInterval] = useState<'month' | 'year'>('month');
   const emailFingerprint = useRef('');
   const [quote, setQuote] = useState<BillingQuote | null>(null), [accepted, setAccepted] = useState(false);
@@ -174,10 +189,19 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     running.current = true; setBusy(true); setError('');
     const current = generation.current;
     try { await work((url, kind) => { if (current === generation.current) (preview?.navigate ?? navigateProvider)(url, kind); }); }
-    catch (e) { if (current === generation.current) { if ([401, 403].includes(errorStatus(e) ?? 0)) setData(null); setError(errorText(e)); } }
+    catch (e) { if (current === generation.current) {
+      if (apiErrorCode(e) === 'BILLING_COMPANY_PROFILE_REQUIRED') {
+        const details = (e as { details?: { missingFields?: unknown } }).details;
+        const fields = details?.missingFields ?? (e as { missingFields?: unknown }).missingFields;
+        setProfileMissing(Array.isArray(fields) ? fields.filter((field): field is BillingProfileField => typeof field === 'string' && Object.hasOwn(BILLING_PROFILE_FIELD_LABELS, field)) : []);
+        setQuote(null); setAccepted(false);
+      } else { if ([401, 403].includes(errorStatus(e) ?? 0)) setData(null); setError(errorText(e)); }
+    } }
     finally { if (current === generation.current) { running.current = false; setBusy(false); } }
   }
   async function requestQuote(offerKey: string, selectedInterval: string, billingEmail: string, selection?: BillingCapacitySelection) {
+    pendingPurchase.current = { offer: offerKey, interval: selectedInterval,
+      channel: new URLSearchParams(window.location.search).get('channel') === 'line' ? 'line' : 'web' };
     setCadenceNotice(false);
     const paid = data?.status;
     if (paid?.paidThrough && Date.parse(paid.paidThrough) > Date.now()) {
@@ -195,6 +219,10 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       }
     }
     try {
+      const latest = await api.status();
+      setData(value => value && { ...value, status: latest });
+      if (!latest.billingProfile) throw new Error('billing_company_profile_unavailable');
+      if (latest.billingProfile.missingFields.length) { setProfileMissing(latest.billingProfile.missingFields); setQuote(null); return; }
       const result = await api.quote(offerKey, selectedInterval, billingEmail, selection);
       if (!selection) capacityDraft.current = null;
       key.current = crypto.randomUUID(); setAccepted(false); setQuote(result); setCapacity(null);
@@ -220,6 +248,14 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
     actions={previewHref && <Link className="mangmee-btn mangmee-btn-secondary" href={previewHref}>พรีวิวขั้นตอน (local)</Link>}
     backHref={status?.accessState === 'ACTIVE' ? `/companies/${encodeURIComponent(companyId)}/dashboard` : '/billing/companies'}
     backLabel={status?.accessState === 'ACTIVE' ? 'กลับแดชบอร์ด' : 'กลับหน้าเลือกบริษัท'}>
+    <Modal open={profileMissing !== null} title="กรอกข้อมูลบริษัทก่อนซื้อแพ็กเกจ" onClose={() => setProfileMissing(null)} size="sm"
+      footer={<><button className={button} onClick={() => setProfileMissing(null)}>ไว้ก่อน</button>
+        <Link className="mangmee-btn mangmee-btn-primary" href={pendingPurchase.current
+          ? billingProfileHref(companyId, pendingPurchase.current) : `/companies/${encodeURIComponent(companyId)}/settings/profile#shop`}>กรอกข้อมูลบริษัท</Link></>}>
+      <p>กรุณากรอกข้อมูลสำหรับออกใบแจ้งหนี้และใบเสร็จก่อนชำระเงิน</p>
+      {!!profileMissing?.length && <ul className="mt-3 list-disc space-y-1 pl-5">{profileMissing.map(field => <li key={field}>{BILLING_PROFILE_FIELD_LABELS[field]}</li>)}</ul>}
+      <p className="mt-4 text-sm text-gray-600">ใช้ชื่อจดทะเบียนบนเอกสาร หากเว้นว่างจะใช้ชื่อร้านที่สมัครไว้</p>
+    </Modal>
     {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4">{error}<button className={`${button} ml-3`} disabled={busy} onClick={() => setReload(value => value + 1)}>ลองใหม่</button></div>}
     {!data && !error && <p role="status">กำลังตรวจสอบสิทธิ์และรายการชำระเงิน…</p>}
     {data && status && <>
@@ -327,7 +363,15 @@ export default function BillingPage({ companyId, returning = false, returnAttemp
       </section>}
       {quote && <section aria-label="ยืนยันซื้อแพ็กเกจ" className="mangmee-card space-y-5 p-5 sm:p-6">
         <p>{quote.purchase?.kind === 'REPEAT' ? 'สิทธิ์คงเดิม:' : 'สิทธิ์หลังชำระสำเร็จ:'} สูงสุด {quote.offer.branchLimit} สาขา · {quote.offer.employeeLimit} ผู้ใช้ รวมเจ้าของ</p>
-        <p>{quote.companyName} · {quote.billingEmail}</p><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
+        <div className="rounded-xl border border-gray-200 p-4" aria-label="ข้อมูลออกเอกสาร">
+          <p className="font-semibold">ข้อมูลออกเอกสาร</p>
+          <p className="mt-2 break-words">{quote.billingProfile?.name ?? quote.companyName}</p>
+          {quote.billingProfile && <p className="mt-1 break-words">{Object.values(quote.billingProfile.address).filter(Boolean).join(' ')}</p>}
+          <p className="mt-1 break-words">{quote.billingEmail}</p>
+          <Link className="mt-2 inline-flex min-h-11 items-center text-brand-700 underline" href={billingProfileHref(companyId, {
+            offer: quote.offer.offerKey, interval: quote.offer.interval, channel: pendingPurchase.current?.channel ?? 'web',
+          })}>แก้ไขข้อมูลบริษัท</Link>
+        </div><p>ราคาก่อนภาษี {money(quote.subtotalSatang)} · ภาษี {money(quote.taxSatang)}</p>
         {quote.purchase?.kind === 'REPEAT' ? <dl className={`grid gap-5 rounded-xl bg-brand-50 p-5 ${annualConversion ? 'sm:grid-cols-2 xl:grid-cols-4' : 'sm:grid-cols-3'}`}>
           <div><dt className="text-sm text-brand-800">ชำระวันนี้</dt><dd className="mt-1 text-2xl font-bold text-brand-800">{money(quote.totalSatang)}</dd></div>
           <div><dt className="text-sm text-gray-600">โควตาที่เพิ่ม</dt><dd className="mt-1 text-xl font-bold">{quote.purchase.receiptUnitsAdded.toLocaleString('th-TH')} ใบ<span className="mt-1 block text-sm font-normal text-gray-600">ใช้ได้ทันทีเมื่อชำระสำเร็จ</span></dd></div>

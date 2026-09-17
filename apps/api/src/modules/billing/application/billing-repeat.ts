@@ -19,11 +19,13 @@ import { collectionContract, ownedSchedule, simpleCollection } from './billing-s
 import { capacityOptions, capacityValid } from './billing-capacity';
 import { upgradeHistory } from './billing-upgrade';
 import type { BillingService, BillingSnapshot } from './billing.service';
+import { assertBillingProfileUnchanged, stripeBillingProfile, stripeBillingProfileMatches } from './billing-company-profile';
 
 export type RepeatSource = { subscriptionId: string; paidThrough: string; productId: string; zeroPriceId: string;
   sourceInterval?: BillingOffer['interval'];
   currentPriceId: string; currentPeriodStart: number; sourcePriceId: string; sourceTaxRateId: string | null; currentTaxRateId?: string | null; sourceTotal: number; anchorDay: number; billingCycleAnchor?: number; scheduleId: string | null };
 type Journal = { commands: Record<string, { at: string; hash: string }>; beforeInvoiceIds?: string[]; heldAt?: number;
+  profileSynced?: boolean;
   zeroInvoiceIds?: string[];
   checkoutExpiresAt?: number; scheduleId?: string; phaseStart?: number; paidThrough?: string; serviceStart?: string;
   completed?: boolean; aborted?: boolean; abortRequested?: boolean };
@@ -197,12 +199,14 @@ export class BillingRepeat {
     const command = async (step: string, path: string, params: Record<string, unknown>) => {
       const hash = hashBilling([path, params]), old = journal.commands[step];
       if (old && (old.hash !== hash || Date.now() - Date.parse(old.at) > 23 * 3600000)) throw review();
-      if (!old && ['hold', 'billingEmail', 'checkout'].includes(step) && !journal.commands.checkout) {
+      if (!old && ['hold', 'billingEmail', 'billingProfile', 'checkout'].includes(step) && !journal.commands.checkout) {
         await this.prisma.client.$transaction(async tx => {
           await this.fence(tx, account, attempt, lease);
           await this.billing.assertOwner({ companyId: account.companyId, userId: attempt.initiatingUserId } as RequestContext, tx);
           await lockAccountEmail(tx, attempt.initiatingUserId);
           await assertAccountEmailProof(tx, attempt.initiatingUserId, snapshot.emailProof);
+          const company = await tx.company.findUniqueOrThrow({ where: { id: account.companyId } });
+          assertBillingProfileUnchanged(company, snapshot.quote);
           journal.commands[step] = { at: new Date().toISOString(), hash };
           await tx.billingAttempt.update({ where: { id: attempt.id }, data: { collectionJson: json(journal), version: { increment: 1 } } });
         });
@@ -230,6 +234,12 @@ export class BillingRepeat {
     };
     try {
       await this.stripe.assertAccount();
+      // Settle a timed-out profile command before releasing the old purchase barrier.
+      if (journal.commands.billingProfile && !journal.profileSynced) {
+        const customer = await command('billingProfile', `/customers/${account.customerId}`, stripeBillingProfile(snapshot.quote.billingProfile!));
+        if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(customer, snapshot.quote.billingProfile!)) throw review();
+        journal.profileSynced = true; await save();
+      }
       if (journal.abortRequested) return await abort('FAILED');
       let sub = await this.stripe.request('GET', `/subscriptions/${source.subscriptionId}`);
       this.assertSubscription(sub, account);
@@ -268,6 +278,11 @@ export class BillingRepeat {
         let customer = await this.stripe.request('GET', `/customers/${account.customerId}`);
         if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id) throw review();
         if (customer.email !== snapshot.quote.billingEmail) throw review();
+        if (!journal.commands.checkout && !stripeBillingProfileMatches(customer, snapshot.quote.billingProfile!)) {
+          customer = await command('billingProfile', `/customers/${account.customerId}`, stripeBillingProfile(snapshot.quote.billingProfile!));
+          if (customer.id !== account.customerId || customer.metadata?.billingAccountId !== account.id || !stripeBillingProfileMatches(customer, snapshot.quote.billingProfile!)) throw review();
+          journal.profileSynced = true; await save();
+        }
         const returnUrl = new URL(`/companies/${account.companyId}/billing/return?attempt=${attempt.id}`, origin).toString();
         const metadata = { billingAttemptId: attempt.id, billingAccountId: account.id };
         sessions = [await command('checkout', '/checkout/sessions', { mode: 'payment', customer: account.customerId,

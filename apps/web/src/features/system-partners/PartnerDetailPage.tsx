@@ -7,6 +7,8 @@ import {
   PARTNER_LINE_MESSAGE_MAX_LENGTH,
   PLAN_TIER_PRESETS,
   partnerAdjustmentReason,
+  signupDiscoveryLabel,
+  companyBusinessTypeLabel,
   type CompanyPlanTermDto,
   type CompanyPlanTermViewDto,
   type SetCompanyPlanTermBody,
@@ -2530,7 +2532,30 @@ export default function PartnerDetailPage({ companyId, supportRequestId, support
       <nav aria-label="หมวดข้อมูลบริษัท" className="flex flex-wrap gap-x-5 border-b border-gray-200">{COMPANY_VIEWS.map(item=><Link key={item.key} href={viewUrl(item.key)} scroll={false} aria-current={view===item.key?'page':undefined} className={`inline-flex min-h-14 items-center border-b-2 px-1 font-semibold ${view===item.key?'border-brand-700 text-brand-800':'border-transparent text-gray-600 hover:text-gray-900'}`} onClick={event=>{if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();window.history.pushState(null,'',viewUrl(item.key));}}>{item.label}</Link>)}</nav>
       {fieldsLocked&&<p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">บริษัทนี้{STATUS_LABEL[currentStatus]} ข้อมูลบริษัท ฟีเจอร์ และ AI จึงอ่านได้อย่างเดียว เปลี่ยนสถานะได้ในหมวดภาพรวม</p>}
       {opened('overview')&&<section hidden={view!=='overview'} aria-label="ภาพรวมบริษัท" className="space-y-5">
-        <SectionCard title="ข้อมูลบริษัท"><div className="grid gap-4 sm:grid-cols-3"><ReadOnlyField label="ชื่อจดทะเบียน" value={detail.registeredName}/><ReadOnlyField label="เลขประจำตัวผู้เสียภาษี" value={detail.taxId}/><ReadOnlyField label="สกุลเงิน" value={detail.baseCurrency}/><ReadOnlyField label="อีเมลติดต่อ" value={detail.email}/><ReadOnlyField label="โทรศัพท์" value={detail.phone}/><ReadOnlyField label="วันที่เพิ่มบริษัท" value={formatDate(detail.createdAt)}/></div><div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4"><button type="button" className={btnSecondary} disabled={fieldsLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button><Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link></div></SectionCard>
+        <SectionCard title="ข้อมูลบริษัท">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <ReadOnlyField label="ชื่อจดทะเบียน" value={detail.registeredName}/>
+            <ReadOnlyField label="เลขประจำตัวผู้เสียภาษี" value={detail.taxId}/>
+            <ReadOnlyField label="ประเภทธุรกิจ" value={companyBusinessTypeLabel(detail.businessType)}/>
+            <ReadOnlyField label="ที่อยู่ (บ้านเลขที่ ถนน)" value={detail.addressJson?.line1}/>
+            <ReadOnlyField label="ที่อยู่เพิ่มเติม" value={detail.addressJson?.line2 ?? undefined}/>
+            <ReadOnlyField label="ตำบล / แขวง" value={detail.addressJson?.subdistrict}/>
+            <ReadOnlyField label="อำเภอ / เขต" value={detail.addressJson?.district}/>
+            <ReadOnlyField label="จังหวัด" value={detail.addressJson?.province}/>
+            <ReadOnlyField label="รหัสไปรษณีย์" value={detail.addressJson?.postalCode}/>
+            <ReadOnlyField label="สถานะ VAT" value={detail.vatRegistration.status === 'REGISTERED' ? 'จดทะเบียน VAT แล้ว' : detail.vatRegistration.status === 'NOT_REGISTERED' ? 'ยังไม่ได้จดทะเบียน VAT' : 'ยังไม่ได้ตอบ'}/>
+            <ReadOnlyField label="วันที่มีผล VAT" value={detail.vatRegistration.effectiveFrom}/>
+            <ReadOnlyField label="สกุลเงิน" value={detail.baseCurrency}/>
+            <ReadOnlyField label="อีเมลติดต่อ" value={detail.email}/>
+            <ReadOnlyField label="โทรศัพท์" value={detail.phone}/>
+            <ReadOnlyField label="วันที่เพิ่มบริษัท" value={formatDate(detail.createdAt)}/>
+            <ReadOnlyField label="รู้จักเราทางไหน" value={signupDiscoveryLabel(detail.discoverySource, detail.discoverySourceOther)}/>
+          </div>
+          <div className="flex flex-wrap gap-3 border-t border-gray-100 pt-4">
+            <button type="button" className={btnSecondary} disabled={fieldsLocked} onClick={startEdit}>แก้ไขข้อมูลบริษัท</button>
+            <Link className="inline-flex min-h-11 items-center px-2 text-brand-800 underline underline-offset-4" href={`/system/billing/companies/${encodeURIComponent(companyId)}`}>ดูการชำระเงินของบริษัท</Link>
+          </div>
+        </SectionCard>
         {/* Edit profile form */}
         {editMode && !fieldsLocked && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">

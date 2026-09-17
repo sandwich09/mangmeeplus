@@ -141,7 +141,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   const detailEl = document.getElementById('detail');
   const actionEl = document.getElementById('notice-action');
   /** Inputs that can carry their own error message; the signup form is the only page with any. */
-  const FIELD_IDS = ['company-name', 'phone-number', 'contact-email'];
+  const FIELD_IDS = ['company-name', 'phone-number', 'contact-email', 'discovery-source', 'discovery-source-other'];
   const actionBtn = document.getElementById(mode === 'customer' ? 'register' : 'link');
   const openLineEl = document.getElementById('open-line');
   const noticeEl = document.getElementById('client-notice');
@@ -209,6 +209,8 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     line_signup_email_invalid: { tone: 'warning', text: 'อีเมลเจ้าของร้านยังไม่ถูกต้อง', advice: EMAIL_RULE_TH, field: 'contact-email' },
     invalid_companyName: { tone: 'warning', text: 'ยังไม่ได้ใส่ชื่อร้าน', advice: 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ', field: 'company-name' },
     invalid_referralCode: { tone: 'warning', text: 'โค้ดแนะนำในลิงก์ไม่ถูกต้อง', advice: 'ปิดหน้านี้แล้วเปิดใหม่จากเมนูใน LINE โดยไม่ต้องใช้ลิงก์เดิมนะคะ' },
+    line_signup_discovery_source_invalid: { tone: 'warning', text: 'ช่องทางที่เลือกยังไม่ถูกต้อง', advice: 'เลือกช่องทางที่รู้จักเราจากตัวเลือกอีกครั้งนะคะ', field: 'discovery-source' },
+    line_signup_discovery_other_invalid: { tone: 'warning', text: 'ช่องทางอื่น ๆ ยาวเกินไป', advice: 'ระบุช่องทางไม่เกิน 200 ตัวอักษรนะคะ', field: 'discovery-source-other' },
     // The release moved under a page left open. Only a real reload re-renders the text being agreed to.
     legal_release_changed: { tone: 'warning', text: 'หน้านี้เปิดค้างไว้นาน ข้อกำหนดมีฉบับใหม่แล้ว', advice: 'แตะปุ่มด้านล่างเพื่อโหลดหน้าใหม่ แล้วยอมรับอีกครั้งนะคะ', action: 'reload' },
     line_signup_already_pending: { tone: 'info', text: 'มีคำขอเดิมรออนุมัติอยู่แล้ว', advice: 'ทีมงานกำลังตรวจสอบให้อยู่ค่ะ พร้อมใช้เมื่อไหร่จะแจ้งในแชทนี้นะคะ' },
@@ -377,6 +379,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
     if (status === 400 && Array.isArray(body.message) && body.message.some(function (message) {
       return typeof message === 'string' && message.indexOf('contactEmail ') === 0;
     })) return SIGNUP_GUIDANCE.line_signup_email_invalid;
+    if (status === 400 && Array.isArray(body.message)) {
+      if (body.message.some(function (message) { return typeof message === 'string' && message.indexOf('discoverySource ') === 0; })) return SIGNUP_GUIDANCE.line_signup_discovery_source_invalid;
+      if (body.message.some(function (message) { return typeof message === 'string' && message.indexOf('discoverySourceOther ') === 0; })) return SIGNUP_GUIDANCE.line_signup_discovery_other_invalid;
+    }
     if (status === 429) {
       const seconds = typeof body.retryAfterSeconds === 'number' ? body.retryAfterSeconds : 0;
       return {
@@ -781,6 +787,10 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       const progress = lastSignupStatus && lastSignupStatus.progress;
       document.getElementById('phone-number').value = progress && progress.phoneNumber ? progress.phoneNumber : '';
       document.getElementById('contact-email').value = progress && progress.contactEmail ? progress.contactEmail : '';
+      const choices = document.querySelectorAll('input[name="discovery-source"]');
+      for (let index = 0; index < choices.length; index += 1) choices[index].checked = false;
+      document.getElementById('discovery-source-other').value = '';
+      toggleDiscoveryOther();
     }
     setFieldError('', '');
     setStatus('');
@@ -814,6 +824,11 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       ? savedSubmission.contactEmail
       : (document.getElementById('contact-email').value || '').trim().toLowerCase();
     const fields = {};
+    const selectedDiscovery = document.querySelector('input[name="discovery-source"]:checked');
+    const discoverySource = selectedDiscovery ? selectedDiscovery.value : '';
+    const discoverySourceOther = discoverySource === 'OTHER'
+      ? (document.getElementById('discovery-source-other').value || '').trim() : '';
+    if (discoverySourceOther.length > 200) fields['discovery-source-other'] = 'ระบุช่องทางไม่เกิน 200 ตัวอักษรนะคะ';
     if (!companyName) fields['company-name'] = 'ใส่ชื่อร้านที่ลูกค้าเรียก ยาวไม่เกิน 120 ตัวอักษรนะคะ';
     if (!/^0[0-9]{9}$/.test(phoneNumber)) fields['phone-number'] = PHONE_RULE_TH;
     if (contactEmail && ( contactEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail))) {
@@ -839,6 +854,7 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
       phoneNumber,
       contactEmail,
       ...(referralCode ? { referralCode } : {}),
+      ...(discoverySource ? { discoverySource, ...(discoverySourceOther ? { discoverySourceOther } : {}) } : {}),
       legal: {
         documentVersion: root.dataset.legalVersion || '',
         statementSha256: root.dataset.legalStatement || '',
@@ -1083,6 +1099,17 @@ export const LIFF_PAGE_SCRIPT = String.raw`'use strict';
   }
 
   if (actionBtn) actionBtn.addEventListener('click', run);
+  function toggleDiscoveryOther() {
+    const selected = document.querySelector('input[name="discovery-source"]:checked');
+    const show = !!selected && selected.value === 'OTHER';
+    document.getElementById('discovery-other-fields').hidden = !show;
+    document.getElementById('discovery-source-other').disabled = !show;
+  }
+  const discoveryGroup = document.getElementById('discovery-source');
+  if (discoveryGroup) {
+    discoveryGroup.addEventListener('change', toggleDiscoveryOther);
+    toggleDiscoveryOther();
+  }
   const retryStatusBtn = document.getElementById('retry-status');
   if (retryStatusBtn) retryStatusBtn.addEventListener('click', function () {
     void runWith(refreshSignupStatus, retryStatusBtn, 'กำลังตรวจสอบ…');

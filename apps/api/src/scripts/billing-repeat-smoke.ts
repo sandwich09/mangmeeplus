@@ -5,6 +5,7 @@ import type { BillingReconcilerService } from '../modules/billing/application/bi
 import type { startBillingBrowser } from './billing-browser-smoke';
 import { appendPackageInterval } from '../modules/billing/domain/billing-package';
 import { checkRepeatApply } from './billing-repeat-apply-smoke';
+import { applySyntheticCustomerFields } from './billing-profile-fixture';
 import type { BillingOperationsService } from '../modules/billing/application/billing-operations.service';
 
 type ObjectValue = Record<string, any>;
@@ -55,6 +56,8 @@ export function repeatProviderFixture(run: string, provider: Record<string, Obje
     if (method !== 'POST') return;
     if (key && commands.has(key)) return commands.get(key);
     let result: ObjectValue | undefined, step = '';
+    const customer = provider.customers!.find(c => path === `/customers/${c.id}`);
+    if (customer && form.has('address[line1]')) { result = applySyntheticCustomerFields(customer, form); step = 'billingProfile'; }
     const sub = provider.subscriptions!.find(s => path === `/subscriptions/${s.id}`);
     if (sub) {
       if (form.has('pause_collection[behavior]')) {
@@ -169,6 +172,16 @@ export async function checkRepeatPurchase(input: {
     assert.equal(result.status, 200, JSON.stringify(result)); assert.equal(result.body.purchase.kind, 'REPEAT'); return result.body;
   };
   const checkout = async (q: any) => request(`${base}/checkout`, 'POST', { quoteId: q.quoteId, consentRevision: q.consentRevision, accepted: true, channel: 'line' }, { 'idempotency-key': randomUUID() });
+  await client.company.update({ where: { id: companyId }, data: { registeredName: 'บริษัท ทดสอบซื้อซ้ำ จำกัด' } });
+  fixture.lose('billingProfile');
+  const profileTimeout = await checkout(await quote());
+  assert.equal(profileTimeout.body.state, 'UNKNOWN', JSON.stringify(profileTimeout));
+  assert.equal(fixture.checkoutCalls(), 0);
+  await reconciler.reconcileAccount(account.id);
+  assert.equal((await client.billingAttempt.findUniqueOrThrow({ where: { id: profileTimeout.body.attemptId } })).status, 'FAILED');
+  assert.equal((await client.billingAccount.findUniqueOrThrow({ where: { id: account.id } })).activeAttemptId, null);
+  assert.equal(provider.customers!.find(c => c.id === account.customerId)!.name, 'บริษัท ทดสอบซื้อซ้ำ จำกัด');
+  assert.equal(fixture.calls.get('billingProfile'), 1, 'the lost profile response reuses the original provider command');
   fixture.race();
   const raced = await checkout(await quote()); assert.equal(raced.body.state, 'UNKNOWN');
   const racedInvoice = provider.invoices!.at(-1)!; assert.equal(racedInvoice.status, 'draft');
@@ -220,7 +233,7 @@ export async function checkRepeatPurchase(input: {
   assert.equal(fixture.calls.get('scheduleUpdate'), 1);
   assert.equal(held.status, 'void'); assert.equal(held.amount_paid, 0);
   assert.equal(fixture.calls.get('finalize'), 1); assert.equal(fixture.calls.get('void'), 1);
-  assert.equal(fixture.calls.get('resume'), 3, 'raced/expired checkouts restore collection and paid repeat resumes once');
+  assert.equal(fixture.calls.get('resume'), 4, 'profile timeout, raced/expired checkouts restore collection and paid repeat resumes once');
   assert.equal(await client.auditLog.count({ where: { companyId, action: 'billing.package.repeated' } }), 1);
   for (const kind of ['invoice', 'pdf', 'receipt']) assert.equal((await request(`${base}/documents/${paidPending.invoiceReference}/open`, 'POST', { kind })).status, 200);
   if (browser) {
@@ -244,7 +257,7 @@ export async function checkRepeatPurchase(input: {
   assert.equal(provider.subscriptions!.length, 1); assert.equal(fixture.schedules.length, 1); assert.equal(fixture.schedules[0]!.phases.length, 2);
   assert.equal(await client.billingReceiptGrant.count({ where: { companyId } }), 3);
   assert.equal(await client.billingSubscriptionContract.count({ where: { billingAccountId: account.id } }), 3);
-  return ['repeat-renewal-race-blocks-checkout-and-restores-original-collection', 'repeat-exact-held-renewal-finalized-without-charge-and-voided', 'repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases', 'repeat-concurrent-intent-reservation', 'repeat-expired-checkout-restores-collection-without-quota', 'repeat-lost-checkout-response-reuses-single-session',
+  return ['repeat-profile-timeout-settles-original-command-before-abort-or-new-purchase', 'repeat-renewal-race-blocks-checkout-and-restores-original-collection', 'repeat-exact-held-renewal-finalized-without-charge-and-voided', 'repeat-exhausted-quota-and-multiple-prepaid-years-use-one-subscription-two-phases', 'repeat-concurrent-intent-reservation', 'repeat-expired-checkout-restores-collection-without-quota', 'repeat-lost-checkout-response-reuses-single-session',
     'repeat-paid-schedule-and-unpause-crash-recovery-grants-once', 'repeat-calendar-extension-old-quota-carry-and-invoice-receipt',
     ...(browser ? ['browser-repeat-quote-and-verified-return'] : []),...applyCases];
 }

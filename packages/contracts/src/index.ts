@@ -3,6 +3,8 @@ export type HealthStatus = {
   status: 'ok';
   timestamp: string;
 };
+export * from './company-business-type.js';
+export * from './billing-company-profile.js';
 
 export type TenantContext = {
   companyId: string;

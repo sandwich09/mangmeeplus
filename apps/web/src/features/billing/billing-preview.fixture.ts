@@ -1,5 +1,6 @@
 import { BILLING_PAID_TIERS, billingOffer, type BillingCatalog, type BillingStatus, type BillingQuote, type BillingOffer, type BillingCollectionOperation, type BillingEmailRecipientOperation } from '@watchdog-bms/contracts';
 import type { billingApi } from './billing.api';
+import { companyBillingProfile } from '@watchdog-bms/contracts';
 
 export const previewScenarios = {
   start: 'ทดลองใช้ → ซื้อแพ็กเกจแรก', capacity: 'เลือกสาขาและผู้ใช้', 'capacity-work': 'งานค้างเกินแพ็กเกจที่เลือก', upgrade: 'มีแพ็กเกจ BASIC → ซื้อเพิ่มหรือเปลี่ยน', 'scheduled-change': 'มีคำสั่งเปลี่ยนแพ็กเกจสิ้นรอบ', expired: 'แพ็กเกจหมดอายุ → ซื้อใหม่',
@@ -26,6 +27,9 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
     ...billingOffer(tier, interval), availability: tier === 'ENTERPRISE_1999' ? 'COMING_SOON' : 'AVAILABLE', reason: null,
   })));
   const status: BillingStatus = {
+    billingProfile: companyBillingProfile({ name: 'บริษัทตัวอย่าง · ข้อมูลพรีวิว', addressJson: {
+      line1: '99 ถนนตัวอย่าง', subdistrict: 'คลองเตย', district: 'คลองเตย', province: 'กรุงเทพมหานคร', postalCode: '10110',
+    } }),
     companyId, companyName: 'บริษัทตัวอย่าง · ข้อมูลพรีวิว', mode: 'TEST', policyRevision: 'preview-policy',
     paymentState: paid ? 'PAID' : scenario === 'failed' ? 'FAILED' : attempted ? 'PENDING' : 'NONE',
     applyState: scenario === 'activating' ? 'PENDING' : scenario === 'held' ? 'HELD' : paid ? 'APPLIED' : 'NONE',
@@ -72,7 +76,7 @@ export function createBillingPreview(companyId: string, scenario: PreviewScenari
       const total = isUpgrade ? offer.priceSatang - currentOffer.priceSatang : offer.priceSatang;
       const added = isUpgrade ? offer.receiptAllowance - currentOffer.receiptAllowance : offer.receiptAllowance;
       const trialUnits = !paid && scenario !== 'expired' ? status.usage.remaining ?? 0 : 0;
-      quote = { quoteId: 'preview-quote', companyId, companyName: status.companyName, policyRevision: 'preview-policy', expiresAt: date(1),
+      quote = { quoteId: 'preview-quote', companyId, companyName: status.companyName, billingProfile: status.billingProfile, policyRevision: 'preview-policy', expiresAt: date(1),
         offer, subtotalSatang: total, taxSatang: 0, totalSatang: total, taxTreatment: 'NOT_VAT_REGISTERED', consentRevision: 'preview-consent',
         paidStart: 'IMMEDIATE', billingEmail, trialEndsAt: !paid && scenario !== 'expired' ? date(7) : null, usage: status.usage,
         purchase: { kind: isUpgrade ? 'UPGRADE' : isRepeat ? 'REPEAT' : scenario === 'expired' ? 'RESTART' : 'INITIAL', previousPaidThrough: status.paidThrough, ...(isRepeat && currentOffer.interval !== offer.interval ? { previousInterval: currentOffer.interval } : {}),

@@ -1,3 +1,4 @@
+import { BILLING_TEST_ADDRESS, applySyntheticCustomerFields } from './billing-profile-fixture';
 import { selectBillingOption, clickBillingConfiguration, confirmBillingPassword } from './billing-browser-smoke';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -22,7 +23,7 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
   const status = (companyId: string) => request(`/v1/companies/${companyId}/billing`);
   const viewport = browser?.page.viewportSize(), cases: string[] = [];
   try {
-    await db.company.createMany({ data: companies });
+    await db.company.createMany({ data: companies.map(company => ({ ...company, addressJson: BILLING_TEST_ADDRESS })) });
     const owner = await db.role.findFirstOrThrow({ where: { companyId: input.companyId, key: 'OWNER' } });
     for (const company of [pilot, excluded]) {
       const member = await db.companyMembership.create({ data: { companyId: company.id, userId: input.userIds[0]!, roles: { create: { roleId: owner.id } } } }); memberships.push(member.id);
@@ -151,8 +152,10 @@ export async function checkBillingSalesCohort(input: Parameters<typeof checkBill
       if (url.pathname === '/v1/customers' && init?.method === 'POST' && !closedAtCustomer) {
         closedAtCustomer = true; await publish([]);
         const form = new URLSearchParams(String(init.body ?? ''));
-        return new Response(JSON.stringify({ object: 'customer', id: `cus_cohort${run.replaceAll('-', '')}`, livemode: false,
-          metadata: { billingAccountId: form.get('metadata[billingAccountId]') } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        const customer = applySyntheticCustomerFields({ object: 'customer', id: `cus_cohort${run.replaceAll('-', '')}`, livemode: false,
+          metadata: { billingAccountId: form.get('metadata[billingAccountId]') } }, form);
+        input.provider.customers!.push(customer);
+        return new Response(JSON.stringify(customer), { status: 200, headers: { 'content-type': 'application/json' } });
       }
       return undefined;
     });

@@ -18,5 +18,5 @@ export default async function CompanyProfileSettingsPage({
   if (forbidden) return forbidden;
   // Permissions decide which controls are writable at all; the API enforces the same keys, so a
   // caller who edits the markup gains a 403, not a saved change.
-  return <CompanyProfilePage companyId={companyId} permissions={session?.permissions ?? []} />;
+  return <CompanyProfilePage key={companyId} companyId={companyId} permissions={session?.permissions ?? []} />;
 }

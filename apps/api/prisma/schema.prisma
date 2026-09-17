@@ -312,6 +312,10 @@ model Company {
   // Nullable column, required onboarding field: companies created before the tripwire have
   // no category and are not backfilled here, but every new one carries a declared value.
   businessCategory                  CompanyBusinessCategory?
+  // Self-reported DBD TSIC activity; never substitutes for the PDPA businessCategory.
+  businessTypeCode                  String?                                   @db.VarChar(5)
+  businessTypeOther                 String?                                   @db.VarChar(200)
+  businessTypeVersion               Int                                       @default(0)
   vatRegistered                     Boolean                                   @default(false)
   phone                             String?
   email                             String?
@@ -3215,6 +3219,9 @@ model CompanySignupRequest {
   emailProofVerifiedAt   DateTime?
   consentVersion         String
   referralCode           String?
+  // Optional self-reported discovery; independent of the rail and influencer code.
+  discoverySource        String?
+  discoverySourceOther   String?            @db.VarChar(200)
   requestedOfferKey      String?
   state                  CompanySignupState @default(RECEIVED)
   version                Int                @default(0)
