@@ -6,6 +6,7 @@ import { Controller, Get, Post, Body, Headers, BadRequestException, HttpCode, In
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import sharp from 'sharp';
 import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
+import { providerErrorEnvelope } from '../../../../common/usage/ai-budget-provider';
 import { Public } from '../../../../common/security/public.decorator';
 import { assertInternalSecret } from '../../../../common/security/internal-secret';
 import { AiGatewayConfigService } from '../../../../common/config/ai-gateway-config.service';
@@ -13,7 +14,7 @@ import { LineAiTurnUseCase } from '../../application/use-cases/line-ai-turn.use-
 import { createProvider } from '../../infrastructure/provider/provider.factory';
 import { IntentRouterAgent } from '../../agents/intent-router.agent';
 import { gateBusinessDocumentClassification, parseBusinessDocumentClassification } from '../../domain/logic/business-document-classification.logic';
-import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
+import { AI_DOCUMENT_OCR_TIMEOUT_MS, LINE_AI_AGENT_REGISTRY, LINE_TOOL_REGISTRY, RECEIPT_ADDITIONAL_CHARGE_KINDS, asIntakeRouterCapabilities, extractValueCandidates, isAmbiguousDateCandidate, mapThaiDigits, todayCivilDate, receiptPayeeEntityKind, VALUE_ASSUMPTIONS, type AiBudgetScope, type AiModelLineage, type LineAiTurnRequest, type LineAiTurnResponse, type LineIntakeRoutePlan, type LineIntakeRouteRequest, type ReceiptOcrRequest, type ReceiptOcrResponse, type BankStatementAiExtractRequest, type BankStatementAiExtractResponse, type BankStatementAiExtractRow } from '@watchdog-bms/contracts';
 
 // JSON bodies on these routes carry base64 media and need main.ts's 16mb parser
 // (UPLOAD_MAX_BYTES 10MB inflates to ~13.7MB in base64); every other route stays at
@@ -41,7 +42,8 @@ const RECEIPT_EXTRACTION_MAX_TOKENS = 8192;
 
 type ReceiptUnderstanding =
   | { ok: true; fields?: ReceiptOcrResponse['fields']; classification?: ReceiptOcrResponse['classification'] }
-  | { ok: false; errorCode: NonNullable<ReceiptOcrResponse['errorCode']> };
+  /** `budgetScope` is set only when the money gate refused this step (spec §9.1). */
+  | { ok: false; errorCode: NonNullable<ReceiptOcrResponse['errorCode']>; budgetScope?: AiBudgetScope };
 
 /** The API's expense gate refuses every field unless a confirmed total survives, so this is the
  *  same bar the re-read has to clear before it may replace a first reading. */
@@ -188,7 +190,9 @@ export class LineAiInternalController {
       stageOneText = JSON.stringify({ natural_text: forwardedText });
     } else {
       const stageOne = await this.readDocumentText(mimeType, body.attachment.contentBase64, readerModelId, 'receipt', hasAlternateView ? alternate! : undefined);
-      if (!stageOne.ok) return { status: stageOne.status, errorCode: stageOne.errorCode };
+      if (!stageOne.ok) {
+        return { status: stageOne.status, errorCode: stageOne.errorCode, ...(stageOne.budgetScope ? { budgetScope: stageOne.budgetScope } : {}) };
+      }
       stageOneText = stageOne.text;
     }
     let stageOneLineage: AiModelLineage = modelLineage(this.config, 'receipt_ocr_read', readerModelId);
@@ -205,7 +209,12 @@ export class LineAiInternalController {
     // still covers at most four provider calls. A bad JSON response is not an unreadable image.
     const repairedStructure = !understood.ok && ['OCR_OUTPUT_TRUNCATED', 'OCR_JSON_PARSE_FAILED', 'OCR_SCHEMA_INVALID'].includes(understood.errorCode);
     if (repairedStructure) understood = await this.understandReceiptText(provider, documentText, activeCategories, true);
-    if (!understood.ok) return { status: 'failed', errorCode: understood.errorCode };
+    // The money refusal of a LATER step (spec §12.3): the stage-1 read already happened and is
+    // still reported as usage — nothing is refunded and nothing claims the expense is complete.
+    // The route answers with the seam's own code so the caller can tell "เหลือไม่พอ" from a failure.
+    if (!understood.ok) {
+      return { status: 'failed', errorCode: understood.errorCode, ...(understood.budgetScope ? { budgetScope: understood.budgetScope } : {}) };
+    }
 
     // A warped or low-resolution photo can cost the stage-one read either the printed total or an explicitly
     // signalled VAT amount. Run at most one vision re-read. A replacement total must clear the full
@@ -275,7 +284,7 @@ export class LineAiInternalController {
     modelId: string | undefined,
     label: string,
     alternate?: { mimeType: 'image/jpeg' | 'image/png'; contentBase64: string },
-  ): Promise<{ ok: true; text: string } | { ok: false; status: 'failed' | 'not_configured'; errorCode: string }> {
+  ): Promise<{ ok: true; text: string } | { ok: false; status: 'failed' | 'not_configured'; errorCode: string; budgetScope?: AiBudgetScope }> {
     const isPdf = mimeType === 'application/pdf';
     // Images go to whichever configured provider reads vision; a PDF still needs Bedrock, whose
     // Converse document block is the only channel that carries one.
@@ -294,7 +303,7 @@ export class LineAiInternalController {
       maxTokens: 4096,
       usageTag: `ocr.${label === 'receipt' ? 'receipt' : 'bank-statement'}.${isPdf ? 'pdf' : 'image'}-read`,
     });
-    if (!read.ok) return { ok: false, status: 'failed', errorCode: read.error.code };
+    if (!read.ok) return { ok: false, status: 'failed', ...providerErrorEnvelope(read.error) };
     if (read.stopReason === 'max_tokens') return { ok: false, status: 'failed', errorCode: 'OCR_OUTPUT_TRUNCATED' };
     return { ok: true, text: read.text };
   }
@@ -322,7 +331,7 @@ export class LineAiInternalController {
       maxTokens: RECEIPT_EXTRACTION_MAX_TOKENS,
       usageTag: repair ? 'ocr.receipt.extract-repair' : 'ocr.receipt.extract',
     });
-    if (!extraction.ok) return { ok: false, errorCode: extraction.error.code };
+    if (!extraction.ok) return { ok: false, ...providerErrorEnvelope(extraction.error) };
     if (extraction.stopReason === 'max_tokens') return { ok: false, errorCode: 'OCR_OUTPUT_TRUNCATED' };
 
     const parsed = parseReceiptOcrJson(extraction.text, documentText, new Set(activeCategories.map((category) => category.id)));
@@ -362,7 +371,9 @@ export class LineAiInternalController {
     const statementRead = await this.readDocumentText(
       body.attachment.mimeType, body.attachment.contentBase64, statementReaderModelId, 'bank statement',
     );
-    if (!statementRead.ok) return { status: statementRead.status, errorCode: statementRead.errorCode };
+    if (!statementRead.ok) {
+      return { status: statementRead.status, errorCode: statementRead.errorCode, ...(statementRead.budgetScope ? { budgetScope: statementRead.budgetScope } : {}) };
+    }
     const documentText = parseStageOneNaturalText(statementRead.text);
     if (!documentText) return { status: 'failed', errorCode: 'OCR_EMPTY_OUTPUT' };
 
@@ -375,7 +386,7 @@ export class LineAiInternalController {
       usageTag: 'ocr.bank-statement',
     });
     if (!extraction.ok) {
-      return { status: 'failed', errorCode: extraction.error.code };
+      return { status: 'failed', ...providerErrorEnvelope(extraction.error) };
     }
 
     const rows = parseStatementRowsJson(extraction.text);

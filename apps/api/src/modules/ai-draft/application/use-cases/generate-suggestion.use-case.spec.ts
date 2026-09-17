@@ -1,5 +1,6 @@
 import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { AI_BUDGET_STEP_BOUNDS } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../../../line-ai/application/company-ai-usage-meter';
 import { GenerateSuggestionUseCase } from './generate-suggestion.use-case';
 import { SuggestionGeneratorService } from '../generators/suggestion-generator.service';
@@ -164,6 +165,128 @@ describe('GenerateSuggestionUseCase (AI-authored)', () => {
 
     assert.equal(out.status, 'READY');
     assert.equal(persisted.length, 1);
+  });
+
+  // ── E1c: the SPLIT envelope. This seam reserved money before E1c but ran the gateway
+  // unenforced, which is the one gap ADR 0013 §13b called out.
+
+  const HAIKU = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const splitConfig = { aiThbPerUsd: 33, aiMonthlyBudgetSatang: 200_000, approvedAiModelIds: [HAIKU] } as any;
+
+  /** Reservation-capable ledger fake: one SPLIT config row, the aggregates, and a hold table. */
+  function splitPrisma() {
+    const reservations = new Map<string, any>();
+    const events = new Map<string, any>();
+    const configRow = {
+      modelId: HAIKU, monthlyBudgetSatang: 200_000, budgetMode: 'SPLIT',
+      chatMonthlyBudgetSatang: 100_000, ocrMonthlyBudgetSatang: 100_000,
+      budgetConfigVersion: 1, pendingBudgetPolicy: null,
+    };
+    const tx: any = {
+      $executeRaw: async () => 0,
+      companyAiConfiguration: { findUnique: async () => configRow },
+      platformAiBudgetConfig: { findUnique: async () => null },
+      aiBudgetReservation: {
+        findUnique: async (args: any) => (args.where.invocationKey !== undefined
+          ? [...reservations.values()].find((r) => r.invocationKey === args.where.invocationKey) ?? null
+          : reservations.get(args.where.id) ?? null),
+        findFirst: async () => null,
+        groupBy: async () => [],
+        count: async () => 0,
+        create: async (args: any) => {
+          const row = { id: `res-${reservations.size + 1}`, ...args.data };
+          reservations.set(row.id, row);
+          return { id: row.id };
+        },
+        update: async (args: any) => Object.assign(reservations.get(args.where.id), args.data),
+        updateMany: async (args: any) => {
+          const matched = [...reservations.values()].filter((r) =>
+            (args.where.id === undefined || r.id === args.where.id)
+            && (args.where.ownerToken === undefined || r.ownerToken === args.where.ownerToken)
+            && (args.where.status === undefined
+              || (typeof args.where.status === 'string' ? r.status === args.where.status : args.where.status.in.includes(r.status)))
+            && args.where.createdAt === undefined && args.where.dispatchedAt === undefined);
+          for (const row of matched) Object.assign(row, args.data);
+          return { count: matched.length };
+        },
+      },
+      companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: 0 }), upsert: async () => ({ costSatang: 0 }) },
+      companyAiMonthlyBucketUsage: { findUnique: async () => ({ costSatang: 0 }), upsert: async () => ({}) },
+      aiUsageEvent: {
+        findUnique: async (args: any) => events.get(args.where.invocationKey) ?? null,
+        create: async (args: any) => { events.set(args.data.invocationKey, args.data); return args.data; },
+        createMany: async (args: any) => ({ count: args.data.length }),
+      },
+    };
+    const client = { ...tx, $transaction: async (fn: (t: any) => Promise<any>) => fn(tx) };
+    return { prisma: { client } as any, reservations, events };
+  }
+
+  const draftUsage = { tag: 'ai.draft', modelId: HAIKU, ok: true, inputTokens: 100, outputTokens: 10,
+    cacheReadInputTokens: 0, cacheWriteInputTokens: 0, durationMs: 5, usageBasis: 'PROVIDER_REPORTED' as const };
+
+  it('sends companyId + the envelope under SPLIT, and settles the invocation it names', async () => {
+    __resetCompanyAiBudgetCache();
+    const { prisma, reservations, events } = splitPrisma();
+    const { repo } = makeRepo(makeRequest());
+    const bodies: any[] = [];
+    const provider = { mode: 'bedrock', available: true, generate: async (input: any) => {
+      bodies.push(input);
+      return { ok: true, provider: 'bedrock', summary: 's', recommendation: 'r', usage: [draftUsage] };
+    } } as any;
+
+    await new GenerateSuggestionUseCase(repo, resolver, makeGenerator(), noopAudit, provider, prisma, splitConfig)
+      .execute('co-1', 'req1');
+
+    const hold = [...reservations.values()][0];
+    assert.ok(hold, 'the draft lane holds money under SPLIT');
+    assert.equal(bodies[0].companyId, 'co-1', 'the gateway needs the tenant to validate the fence');
+    assert.equal(bodies[0].budgetEnvelope.invocationKey, hold.invocationKey);
+    assert.equal(bodies[0].budgetEnvelope.stepKind, 'draft-generate');
+    assert.equal(bodies[0].budgetEnvelope.bucket, 'CHAT');
+    assert.equal(bodies[0].budgetEnvelope.modelId, HAIKU);
+    assert.deepEqual(bodies[0].budgetEnvelope.bounds, AI_BUDGET_STEP_BOUNDS['draft-generate']);
+    // The owner token is API-only and must never ride on the wire.
+    assert.equal(JSON.stringify(bodies[0]).includes('ownerToken'), false);
+    assert.equal(hold.status, 'SETTLED');
+    assert.equal(events.size, 1);
+    assert.equal([...events.values()][0].invocationKey, hold.invocationKey);
+  });
+
+  it('keeps a SHARED request body byte-identical — no companyId, no envelope', async () => {
+    __resetCompanyAiBudgetCache();
+    const { repo } = makeRepo(makeRequest());
+    const bodies: any[] = [];
+    const provider = { mode: 'bedrock', available: true, generate: async (input: any) => {
+      bodies.push(input);
+      return { ok: true, provider: 'bedrock', summary: 's', recommendation: 'r' };
+    } } as any;
+
+    await new GenerateSuggestionUseCase(
+      repo, resolver, makeGenerator(), noopAudit, provider,
+      budgetPrisma({ costSatang: 0 }), budgetConfig,
+    ).execute('co-1', 'req1');
+
+    assert.deepEqual(Object.keys(bodies[0]).sort(), [
+      'agent', 'citations', 'defaultTitle', 'domain', 'facts', 'language', 'templateKey', 'wantsChecklist',
+    ], 'a company with no hold sends exactly the fields it always sent');
+  });
+
+  it('releases the hold when the gateway refused before its provider (E1c)', async () => {
+    __resetCompanyAiBudgetCache();
+    const { prisma, reservations, events } = splitPrisma();
+    const { repo } = makeRepo(makeRequest());
+    const provider = { mode: 'bedrock', available: true, generate: async () => ({
+      ok: false, error: { code: 'AI_BUDGET_UNAVAILABLE', message: 'envelope_invalid', retryable: false, budgetScope: 'CHAT' },
+    }) } as any;
+
+    await new GenerateSuggestionUseCase(repo, resolver, makeGenerator(), noopAudit, provider, prisma, splitConfig)
+      .execute('co-1', 'req1');
+
+    const hold = [...reservations.values()][0];
+    assert.equal(hold.status, 'CANCELLED');
+    assert.equal((hold.evidenceJson as { proof: string }).proof, 'gateway_pre_provider_refusal');
+    assert.equal(events.size, 0, 'nothing ran, so nothing is billed');
   });
 
   it('is idempotent: does not regenerate when a suggestion already exists', async () => {

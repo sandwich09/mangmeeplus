@@ -5,7 +5,8 @@
  */
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { LineAiTurnRequest, LineAiTurnResponse, ToolResult, SourceRef } from '@watchdog-bms/contracts';
-import { asIntakeRouteIntent, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, asIntakeRouteIntent, isBusinessIntakeIntent, parseLineAiPreparedPlan } from '@watchdog-bms/contracts';
+import { currentBudgetState } from '../../../../common/usage/usage-context';
 import { classifyIntent, chooseAgent, selectTools, getRefusalReason, validateTurnRequest } from '../../domain/logic/line-ai-turn.logic';
 import { ErpToolClient, type ErpToolContext } from '../../infrastructure/erp-tool.client';
 import { OrchestratorAgent } from '../../agents/orchestrator.agent';
@@ -25,6 +26,11 @@ const FORBIDDEN_REPLY = '🔒 คุณไม่มีสิทธิ์เข�
 /** Matches the errorCode the ERP tool boundary returns when a company feature is off. */
 const FEATURE_NOT_ENABLED_CODE = 'FEATURE_NOT_ENABLED';
 const ERROR_REPLY = '⏳ เกิดข้อผิดพลาดชั่วคราว กรุณาลองใหม่อีกครั้งนะคะ';
+/** Spec §9.1: say the budget could not be CHECKED, never that it is full and never "something
+ *  broke". Same wording the API uses for its own `AI_BUDGET_UNAVAILABLE`, so one situation reads
+ *  the same to the shop whichever hop refused it. */
+const AI_BUDGET_UNAVAILABLE_REPLY = '⏳ ตอนนี้ยังตรวจสอบงบ AI ของร้านไม่ได้ค่ะ น้องมั่งมีเลยยังไม่เริ่มงานให้ '
+  + 'รบกวนลองใหม่อีกครั้งในอีกสักครู่นะคะ ระหว่างนี้ใช้งานผ่านเว็บแอปได้ตามปกติค่ะ';
 const NO_DATA_REPLY = '📭 ไม่พบข้อมูลที่ตรงกันค่ะ กรุณาลองถามใหม่อีกครั้งนะคะ';
 const CAPTURE_PENDING_REPLY = [
   '🧾 ได้รับบิล/สลิปแล้วค่ะ',
@@ -168,6 +174,18 @@ export class LineAiTurnUseCase {
 
   private async runOrchestratorPath(req: LineAiTurnRequest, startMs: number): Promise<LineAiTurnResponse> {
     if (this.config.lineAiAgentRuntime === 'agentcore') {
+      // Spec §12.6 / ADR 0013 §6: the AgentCore artifact runs the model in its OWN process, so it
+      // honours no invocation envelope — it cannot budget-step before its calls, and the rows it
+      // reports back arrive after every one of them is already paid for. A SPLIT company's traffic
+      // must therefore be REFUSED here rather than fall back to an unreserved runtime; anything
+      // else is the "silently fallback ไป runtime ที่ไม่มี reservation" this clause forbids.
+      if (currentBudgetState()) {
+        this.logger.warn({ msg: 'ai.budget.runtime_unsupported', requestId: req.requestId, runtime: 'agentcore' });
+        return {
+          ...this.buildRefusedResponse(req, 'tool_unavailable', AI_BUDGET_UNAVAILABLE_REPLY, startMs),
+          errorCode: AI_BUDGET_REFUSAL_CODES.unavailable,
+        };
+      }
       return this.runAgentCorePath(req, startMs);
     }
     return this.runLocalOrchestratorPath(req, startMs);

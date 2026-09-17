@@ -38,6 +38,7 @@ import { resolveCompanyAiModelPolicy } from '../application/company-ai-model-pol
 import {
   aiBudgetAttemptHash,
   cancelAiBudgetStep,
+  cancelAiBudgetStepIfGatewayUnspent,
   type AiBudgetCancelProof,
   type ReservedAiBudgetStep,
 } from '../application/company-ai-budget-reservation';
@@ -285,18 +286,19 @@ export class AiGatewayClient {
     const media = request.attachments?.find((attachment) =>
       Boolean(attachment.contentBase64)
       && (attachment.mimeType === 'image/jpeg' || attachment.mimeType === 'image/png'));
-    let modelPolicy: Awaited<ReturnType<typeof resolveCompanyAiModelPolicy>>;
-    if (media) {
-      if (!this.config.aiGatewayInternalSecret) {
-        return {
-          status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
-          errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: 'AI_GATEWAY_UNAVAILABLE',
-        };
-      }
-      // Match the receipt OCR seam: a bad tenant policy is local readiness and must fail before
-      // the durable document-read admission.
-      modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
+    if (media && !this.config.aiGatewayInternalSecret) {
+      return {
+        status: 'UNAVAILABLE', intent: 'UNSUPPORTED', language: 'th', confidence: 0,
+        errorCode: 'ROUTER_UNREACHABLE', ocrAdmission: 'denied', ocrErrorCode: 'AI_GATEWAY_UNAVAILABLE',
+      };
     }
+    // Resolved for BOTH lanes, like every other cost-bearing seam (receipt OCR, CRM). E1b resolved
+    // it only when the intake carried a picture, which left the TEXT lane reserving with an empty
+    // model id — and a SPLIT company's every text message would then be refused `model_unknown`
+    // (ADR 0013 §11.3), i.e. the shop goes quiet on chat while the picture lane still works.
+    // For the media lane this still runs BEFORE the durable document-read admission, so a bad
+    // tenant policy remains local readiness rather than a spent OCR count.
+    const modelPolicy = await resolveCompanyAiModelPolicy(this.prisma, companyId, this.config.approvedAiModelIds);
     const plan = await this.runBudgeted(
       companyId,
       (monthKey, hold) => this.requestLineIntakeRouteAdmitted(request, media?.id, monthKey, options.retryWebhookEventId, options.onAdmitted, hold),
@@ -304,10 +306,14 @@ export class AiGatewayClient {
       media ? 'media' : 'chat',
       {
         // A picture routes AND transcribes in ONE provider call, so the whole call is OCR (§12.2).
-        // The LINE message id is the durable identity of that picture; the text lane has no webhook
-        // id on this contract and falls back to its request id (see ADR 0013 implementation notes).
+        // The LINE message id is the durable identity of that picture; the text lane uses the
+        // ORIGINAL webhook event when the caller sends one (E1c closed that contract gap) and only
+        // falls back to the transport request id for a caller that does not — a fallback a LINE
+        // redelivery under a fresh request id would let buy a second hold.
         stepKind: media ? 'line-intake-image' : 'line-intake-text',
-        attemptKey: media ? `line-image:${aiBudgetAttemptHash(media.id)}` : `line-text:${aiBudgetAttemptHash(request.requestId)}`,
+        attemptKey: media
+          ? `line-image:${aiBudgetAttemptHash(media.id)}`
+          : `line-text:${aiBudgetAttemptHash(request.webhookEventId ?? request.requestId)}`,
         sourceRoute: 'line-intake-route', modelId: modelPolicy?.modelId ?? '', requestId: request.requestId,
         ...classifyAiUsageRequest('line-intake-route', media ? 'image' : 'text'),
       },
@@ -501,6 +507,15 @@ export class AiGatewayClient {
     }
 
     const result = (await response.json()) as T;
+    // E1c: the gateway's own guard can refuse this invocation BEFORE its provider (a model or
+    // bound outside the envelope, or an envelope that did not validate). Such an answer carries
+    // one of our refusal codes and zero usage rows, which is proof nothing was spent — so the
+    // hold is released here instead of becoming a permanent UNRESOLVED one. All three routes of
+    // this client report their code on `errorCode`, so one hook covers them.
+    await cancelAiBudgetStepIfGatewayUnspent(this.prisma, hold, {
+      budgetCode: (result as { errorCode?: string })?.errorCode,
+      usage: (result as { usage?: AiUsageEntry[] })?.usage,
+    });
     // One seam for all three routes ('line-turn' | 'receipt-ocr' | 'line-intake-route');
     // sourceRoute comes from the path, the tenant from the request envelope.
     await this.meterUsage(

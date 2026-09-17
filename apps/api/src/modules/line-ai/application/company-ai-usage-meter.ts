@@ -520,6 +520,24 @@ export async function retryBusyAdmission<D>(
 }
 
 /**
+ * The invocation key a gateway-tagged usage row may settle against, or `undefined`.
+ *
+ * The rows come back over HTTP, so the tag is not taken on trust: it must be another call index of
+ * the SAME `<companyId>#<attemptKey>#<stepKind>#<ordinal>` chain this seam enveloped. Without that
+ * fence one company's response could name another company's hold and close it with unrelated
+ * evidence — the invocation key is a GLOBAL unique index (ADR 0013 §11.1).
+ */
+function sameAttemptInvocationKey(envelopeKey: string, candidate: unknown): string | undefined {
+  if (typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 512) return undefined;
+  if (candidate === envelopeKey) return candidate;
+  const expected = envelopeKey.split('#');
+  const parts = candidate.split('#');
+  if (expected.length !== 4 || parts.length !== 4) return undefined;
+  if (parts[0] !== expected[0] || parts[1] !== expected[1] || parts[2] !== expected[2]) return undefined;
+  return /^\d{1,3}$/.test(parts[3]!) ? candidate : undefined;
+}
+
+/**
  * Writes one `AiUsageEvent` per reported model call and increments the monthly aggregate,
  * both inside ONE interactive transaction. The upsert is scalar-only against the unique
  * `[companyId, monthKey]`, so it compiles to a native `INSERT ... ON CONFLICT DO UPDATE` —
@@ -558,26 +576,40 @@ export async function recordCompanyAiUsage(
     return undefined;
   }
 
-  // SPLIT: the reservation engine owns the write for the enveloped invocation, so the hold is
+  // SPLIT: the reservation engine owns the write for every enveloped invocation, so the hold is
   // released by the SAME transaction that records the money and the fence makes a replay a no-op.
-  // A multi-call chain returns more entries than the one invocation this seam enveloped; until
-  // E1c has the gateway settle each of its own calls, the remainder is metered through the normal
-  // path below (never dropped — that would turn real provider spend into zero).
+  //
+  // Since Phase E1c the gateway stamps each usage row with the invocation it was held against, so
+  // each one settles against ITS OWN key — an idempotent duplicate of the evidence the gateway
+  // already posted to `budget-settle`. An entry with no key falls back to this seam's own
+  // invocation (an older gateway sends a whole chain untagged, and its first row is that
+  // invocation); anything left after that is metered unheld and still warned about, because
+  // dropping it would turn real provider spend into zero (spec §12.6).
   if (meta.invocationKey) {
-    const [first, ...rest] = priceable;
-    const settled = await settleAiBudgetStep(prisma, {
-      invocationKey: meta.invocationKey,
-      entry: first!,
-      meta: { sourceRoute: meta.sourceRoute, requestId: meta.requestId, requestKind: meta.requestKind },
-    });
-    // `settled-anomaly` DID record the money (the hold's status was wrong, not the evidence), and
-    // the engine already raised its own HIGH event; it is visible here but never a rejection.
-    if (settled !== 'settled' && settled !== 'duplicate' && settled !== 'settled-anomaly') {
-      logger.warn({ msg: 'ai.budget.settle_rejected', companyId: meta.companyId, sourceRoute: meta.sourceRoute, result: settled });
+    const unheld: AiUsageEntry[] = [];
+    let envelopeClaimed = false;
+    for (const entry of priceable) {
+      const tagged = sameAttemptInvocationKey(meta.invocationKey, entry.invocationKey);
+      const invocationKey: string | undefined = tagged ?? (envelopeClaimed ? undefined : meta.invocationKey);
+      if (!invocationKey) {
+        unheld.push(entry);
+        continue;
+      }
+      if (invocationKey === meta.invocationKey) envelopeClaimed = true;
+      const settled = await settleAiBudgetStep(prisma, {
+        invocationKey,
+        entry,
+        meta: { sourceRoute: meta.sourceRoute, requestId: meta.requestId, requestKind: meta.requestKind },
+      });
+      // `settled-anomaly` DID record the money (the hold's status was wrong, not the evidence), and
+      // the engine already raised its own HIGH event; it is visible here but never a rejection.
+      if (settled !== 'settled' && settled !== 'duplicate' && settled !== 'settled-anomaly') {
+        logger.warn({ msg: 'ai.budget.settle_rejected', companyId: meta.companyId, sourceRoute: meta.sourceRoute, result: settled });
+      }
     }
-    if (rest.length === 0) return undefined;
-    logger.warn({ msg: 'ai.budget.unenveloped_chain_usage', companyId: meta.companyId, sourceRoute: meta.sourceRoute, entries: rest.length });
-    return recordCompanyAiUsage(prisma, config, { ...meta, invocationKey: undefined }, rest);
+    if (unheld.length === 0) return undefined;
+    logger.warn({ msg: 'ai.budget.unenveloped_chain_usage', companyId: meta.companyId, sourceRoute: meta.sourceRoute, entries: unheld.length });
+    return recordCompanyAiUsage(prisma, config, { ...meta, invocationKey: undefined }, unheld);
   }
 
   const monthKey = meta.monthKey ?? bangkokMonthKey();

@@ -6,6 +6,10 @@ import {
   asIntakeClarificationFields, asIntakeFundingSource, asIntakeRouteIntent, asIntakeRouterCapabilities, asIntakeSemanticOutcome,
   LINE_INTAKE_FUNDING_SOURCES, LINE_INTAKE_ROUTE_INTENTS, LINE_INTAKE_SEMANTIC_OUTCOMES,
 } from './line-ai.js';
+import {
+  AI_BUDGET_DOCUMENT_MAX_PAGES, AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING, AI_BUDGET_STEP_ATTEMPTS,
+  AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey, parseAiBudgetEnvelope,
+} from './ai-budget-bounds.js';
 import type { LineAiPreparedPlan } from './line-ai.js';
 
 function validIntentPlan() {
@@ -481,5 +485,97 @@ describe('company AI money budget refusals', () => {
     assert.equal(failed('OCR_EMPTY_OUTPUT'), true);
     assert.equal(failed(), true);
     assert.equal(isReceiptOcrRetryableFailure({ status: 'ok' }), false);
+  });
+});
+
+/**
+ * ADR 0013 §6 / remediation spec §12.3 — the AI Gateway's receiver-boundary validation of the
+ * SPLIT budget envelope. Exercised here for the same reason as the refusal helpers above: the
+ * contracts `test` file list is fixed and this is the LINE-AI contract spec already on it.
+ */
+describe('parseAiBudgetEnvelope (E1c receiver boundary)', () => {
+  const bounds = AI_BUDGET_STEP_BOUNDS['receipt-ocr'];
+  const envelope = (over: Record<string, unknown> = {}) => ({
+    attemptKey: 'line-image:abc',
+    stepKind: 'receipt-ocr',
+    invocationKey: aiBudgetInvocationKey('co-1', 'line-image:abc', 'receipt-ocr', 0),
+    bucket: 'OCR',
+    monthKey: '2026-09',
+    modelId: 'apac.anthropic.claude-sonnet-4-5',
+    bounds: { ...bounds },
+    maxCalls: bounds.maxCalls,
+    ...over,
+  });
+
+  it('accepts what the API issues and rebuilds the bounds from the declared table', () => {
+    const parsed = parseAiBudgetEnvelope(envelope(), 'co-1');
+
+    assert.deepEqual(parsed, {
+      attemptKey: 'line-image:abc',
+      stepKind: 'receipt-ocr',
+      invocationKey: 'co-1#line-image:abc#receipt-ocr#0',
+      bucket: 'OCR',
+      monthKey: '2026-09',
+      modelId: 'apac.anthropic.claude-sonnet-4-5',
+      bounds: { maxInputTokens: 30_000, maxOutputTokens: 8_192, maxCalls: 4 },
+      maxCalls: 4,
+    });
+    // The returned bounds are a COPY of the table, so a caller cannot mutate the shared row.
+    parsed!.bounds.maxInputTokens = 1;
+    assert.equal(AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens, 30_000);
+  });
+
+  it('validates a budget-step answer at the ordinal it was asked for', () => {
+    const second = envelope({ invocationKey: aiBudgetInvocationKey('co-1', 'line-image:abc', 'receipt-ocr', 1) });
+
+    assert.ok(parseAiBudgetEnvelope(second, 'co-1', 1));
+    // The SAME body at the wrong call index is refused: an ordinal-1 hold cannot fund call 2.
+    assert.equal(parseAiBudgetEnvelope(second, 'co-1', 2), undefined);
+    assert.equal(parseAiBudgetEnvelope(envelope(), 'co-1', 1), undefined);
+    // Past the chain's declared ceiling there is no bound to prove at all.
+    assert.equal(parseAiBudgetEnvelope(second, 'co-1', bounds.maxCalls), undefined);
+  });
+
+  it('refuses every way a body could widen its own money', () => {
+    const table: Array<[string, unknown]> = [
+      ['not an object', 'AI_BUDGET'],
+      ['null', null],
+      ['an array', [envelope()]],
+      ['an undeclared step kind', envelope({ stepKind: 'line-summary' })],
+      ['a step kind that is an Object.prototype key', envelope({ stepKind: 'toString' })],
+      ['a widened input bound', envelope({ bounds: { ...bounds, maxInputTokens: 1_000_000 } })],
+      ['a widened output bound', envelope({ bounds: { ...bounds, maxOutputTokens: 99_999 } })],
+      ['a widened call ceiling', envelope({ bounds: { ...bounds, maxCalls: 40 } })],
+      ['maxCalls disagreeing with the bounds', envelope({ maxCalls: 40 })],
+      ['bounds of another step kind', envelope({ bounds: { ...AI_BUDGET_STEP_BOUNDS['line-turn'] } })],
+      ['missing bounds', envelope({ bounds: undefined })],
+      ['a bucket outside CHAT/OCR', envelope({ bucket: 'TOTAL' })],
+      ['a month key that is not YYYY-MM', envelope({ monthKey: '2026-9' })],
+      ['a month 13', envelope({ monthKey: '2026-13' })],
+      ['an empty model id', envelope({ modelId: '' })],
+      ['an empty attempt key', envelope({ attemptKey: '' })],
+      ['an invocation key that does not rebuild', envelope({ invocationKey: 'co-1#other#receipt-ocr#0' })],
+      ['an invocation key of ANOTHER company', envelope({
+        invocationKey: aiBudgetInvocationKey('co-2', 'line-image:abc', 'receipt-ocr', 0),
+      })],
+    ];
+    for (const [label, value] of table) {
+      assert.equal(parseAiBudgetEnvelope(value, 'co-1'), undefined, label);
+    }
+  });
+
+  it('refuses an envelope whose company is not the request tenant, in either direction', () => {
+    // The fence is a GLOBAL unique index (ADR 0013 §11.1): one tenant must never be able to name
+    // another's invocation, whichever side of the comparison it appears on.
+    assert.equal(parseAiBudgetEnvelope(envelope(), 'co-2'), undefined);
+    assert.equal(parseAiBudgetEnvelope(envelope(), ''), undefined);
+  });
+
+  it('pins the attempt count the reservation was priced for', () => {
+    assert.equal(AI_BUDGET_STEP_ATTEMPTS, 1);
+    // 8 pages x 3,000 tokens + instructions is what the 30,000 document bound admits (research §3).
+    assert.equal(AI_BUDGET_DOCUMENT_MAX_PAGES * AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING, 24_000);
+    assert.ok(AI_BUDGET_DOCUMENT_MAX_PAGES * AI_BUDGET_DOCUMENT_PAGE_TOKEN_CEILING
+      < AI_BUDGET_STEP_BOUNDS['receipt-ocr'].maxInputTokens);
   });
 });

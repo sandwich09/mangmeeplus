@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
+import type { CallHandler, ExecutionContext } from '@nestjs/common';
+import { defer, firstValueFrom } from 'rxjs';
+import { AI_BUDGET_STEP_BOUNDS, aiBudgetInvocationKey } from '@watchdog-bms/contracts';
+import { AiUsageInterceptor } from '../../../../common/usage/ai-usage.interceptor';
 import { BASE64_MEDIA_ROUTES, LineAiInternalController, parseReceiptOcrJson, receiptRereadImage, receiptItemsMismatch } from './line-ai-internal.controller';
 import { BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import type { BusinessDocumentClassification, LineAiTurnRequest } from '@watchdog-bms/contracts';
@@ -1624,5 +1628,214 @@ describe('receipt tax integrity evidence and recovery', () => {
       assert.equal(result.errorCode, 'OCR_OUTPUT_TRUNCATED');
       assert.equal(result.fields, undefined);
     } finally { (BedrockRuntimeClient.prototype as any).send = original; }
+  });
+});
+
+/**
+ * Phase E1c end to end: the real `receipt-ocr` route, through the real usage interceptor, with a
+ * real `createProvider` and the money decorator active. Everything outside the gateway is faked —
+ * Bedrock's transport and the API's two internal money seams — and nothing calls a real provider.
+ */
+describe('receipt-ocr under a SPLIT budget envelope (E1c)', () => {
+  const OCR_BOUNDS = AI_BUDGET_STEP_BOUNDS['receipt-ocr'];
+  const envelope = {
+    attemptKey: 'line-image:abc',
+    stepKind: 'receipt-ocr',
+    invocationKey: aiBudgetInvocationKey('company-1', 'line-image:abc', 'receipt-ocr', 0),
+    bucket: 'OCR',
+    monthKey: '2026-09',
+    modelId: 'test-model',
+    bounds: { ...OCR_BOUNDS },
+    maxCalls: OCR_BOUNDS.maxCalls,
+  };
+
+  const config = {
+    aiGatewayInternalSecret: 'secret',
+    aiToolTimeoutMs: 1000,
+    modelProvider: 'bedrock',
+    bedrockRegion: 'ap-southeast-1',
+    documentAiModelId: 'test-model',
+    erpCoreInternalUrl: 'http://api.test/v1',
+  } as any;
+
+  const request = {
+    requestId: 'req-e1c',
+    companyId: 'company-1',
+    userId: 'user-1',
+    attachment: { id: 'att-1', mimeType: 'image/jpeg' as const, purpose: 'receipt' as const, contentBase64: 'ZmFrZQ==' },
+  };
+
+  /** Fakes `POST /internal/ai/budget-step` and `/budget-settle` on the gateway's own transport. */
+  function stubMoneySeams(step: { ok: boolean; code?: string; budgetScope?: string }) {
+    const originalFetch = globalThis.fetch;
+    const seen: string[] = [];
+    globalThis.fetch = (async (url: any, init: any) => {
+      const requested = String(url);
+      const body = JSON.parse(init.body);
+      if (requested.endsWith('/internal/ai/budget-step')) {
+        seen.push(`step:${body.ordinal}:${body.monthKey}:${body.companyId}`);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (step.ok
+            ? {
+              ok: true,
+              envelope: {
+                ...envelope,
+                invocationKey: aiBudgetInvocationKey(body.companyId, body.attemptKey, body.stepKind, body.ordinal),
+              },
+            }
+            : { ok: false, code: step.code, budgetScope: step.budgetScope }),
+        };
+      }
+      if (requested.endsWith('/internal/ai/budget-settle')) {
+        seen.push(`settle:${body.invocationKey}:${body.sourceRoute}:${body.usage.tag}`);
+        return { ok: true, status: 200, json: async () => ({ result: 'settled' }) };
+      }
+      throw new Error(`unexpected fetch to ${requested}`);
+    }) as any;
+    return { seen, restore: () => { globalThis.fetch = originalFetch; } };
+  }
+
+  /** One Bedrock transport for the whole route: image blocks read, text blocks extract. */
+  function stubBedrockChain() {
+    const original = BedrockRuntimeClient.prototype.send;
+    const calls: string[] = [];
+    (BedrockRuntimeClient.prototype as any).send = async (command: any) => {
+      const content = command.input.messages.at(-1).content;
+      const isRead = content.some((block: any) => block.image);
+      calls.push(isRead ? 'read' : 'extract');
+      if (isRead) {
+        return {
+          usage: { inputTokens: 2_100, outputTokens: 400, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+          output: { message: { content: [{ text: JSON.stringify({ natural_text: '# Starbucks Coffee\nSub Total 195.00\nTotal Discount -15.00\nTotal Amount 180.00\nPayment 180.00' }) }] } },
+          stopReason: 'end_turn',
+        };
+      }
+      return {
+        usage: { inputTokens: 900, outputTokens: 120, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 },
+        output: {
+          message: {
+            content: [{
+              text: JSON.stringify({
+                classification: {
+                  contentKind: 'DOCUMENT', documentFamily: 'EXPENSE_EVIDENCE', documentKind: 'RECEIPT',
+                  businessDirection: 'PURCHASE_EXPENSE', transactionState: 'PAID',
+                  evidenceRoles: ['EXPENSE_SUPPORT'], confidence: 0.9,
+                  evidenceSignals: ['Starbucks Coffee'], amountSignals: ['Total Amount 180.00'],
+                  settlementSignals: ['Payment 180.00'], missingRequiredSignals: [],
+                  contradictionSignals: [], requiresClarification: false,
+                },
+                fields: { vendorName: 'Starbucks Coffee', grandTotalAmount: '180.00' },
+              }),
+            }],
+          },
+        },
+        stopReason: 'end_turn',
+      };
+    };
+    return { calls, restore: () => { (BedrockRuntimeClient.prototype as any).send = original; } };
+  }
+
+  /** Runs the route the way Nest does: inside the usage interceptor, with the envelope on the body. */
+  function routeWithEnvelope(body: unknown): Promise<any> {
+    const controller = new LineAiInternalController(config, { execute: async () => { throw new Error('unused'); } } as any);
+    const ctx = {
+      switchToHttp: () => ({ getRequest: () => ({ body, url: '/v1/internal/ai/receipt-ocr' }) }),
+    } as unknown as ExecutionContext;
+    return firstValueFrom(new AiUsageInterceptor().intercept(ctx, {
+      handle: () => defer(() => controller.receiptOcr('secret', body as any)),
+    } as CallHandler)) as Promise<any>;
+  }
+
+  it('steps before the extract call, settles both invocations, and tags the response rows', async () => {
+    const money = stubMoneySeams({ ok: true });
+    const bedrock = stubBedrockChain();
+    try {
+      const result = await routeWithEnvelope({ ...request, budgetEnvelope: envelope });
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields.grandTotalAmount, '180.00');
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
+      // Call 0 uses the invocation the API reserved; call 1 asks first, in the PINNED month.
+      assert.deepEqual(money.seen, [
+        'settle:company-1#line-image:abc#receipt-ocr#0:receipt-ocr:ocr.receipt.image-read',
+        'step:1:2026-09:company-1',
+        'settle:company-1#line-image:abc#receipt-ocr#1:receipt-ocr:ocr.receipt.extract',
+      ]);
+      // The rows on the response carry their own key, so the API's response path is a duplicate
+      // of the evidence path rather than a second charge (ADR 0013 §7).
+      assert.deepEqual(result.usage.map((u: any) => [u.tag, u.invocationKey]), [
+        ['ocr.receipt.image-read', 'company-1#line-image:abc#receipt-ocr#0'],
+        ['ocr.receipt.extract', 'company-1#line-image:abc#receipt-ocr#1'],
+      ]);
+    } finally {
+      bedrock.restore();
+      money.restore();
+    }
+  });
+
+  it('keeps the read it already paid for when the extract step cannot be funded', async () => {
+    const money = stubMoneySeams({ ok: false, code: 'AI_BUDGET_INSUFFICIENT', budgetScope: 'OCR' });
+    const bedrock = stubBedrockChain();
+    try {
+      const result = await routeWithEnvelope({ ...request, budgetEnvelope: envelope });
+
+      // Spec §12.3: the route answers with the money vocabulary and its scope — never "ok" with
+      // empty fields, and never a generic failure the caller would retry into the same gate.
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'AI_BUDGET_INSUFFICIENT');
+      assert.equal(result.budgetScope, 'OCR');
+      assert.equal(result.fields, undefined);
+      // The refused step never reached a provider, and the read that DID run is still billed.
+      assert.deepEqual(bedrock.calls, ['read']);
+      assert.deepEqual(money.seen, [
+        'settle:company-1#line-image:abc#receipt-ocr#0:receipt-ocr:ocr.receipt.image-read',
+        'step:1:2026-09:company-1',
+      ]);
+      assert.deepEqual(result.usage.map((u: any) => [u.tag, u.invocationKey]), [
+        ['ocr.receipt.image-read', 'company-1#line-image:abc#receipt-ocr#0'],
+      ]);
+    } finally {
+      bedrock.restore();
+      money.restore();
+    }
+  });
+
+  it('refuses the whole request when the envelope does not validate, before any provider call', async () => {
+    const money = stubMoneySeams({ ok: true });
+    const bedrock = stubBedrockChain();
+    try {
+      const result = await routeWithEnvelope({
+        ...request,
+        budgetEnvelope: { ...envelope, bounds: { ...OCR_BOUNDS, maxInputTokens: 900_000 } },
+      });
+
+      assert.equal(result.status, 'failed');
+      assert.equal(result.errorCode, 'AI_BUDGET_UNAVAILABLE');
+      assert.deepEqual(bedrock.calls, [], 'a request whose money cannot be proven never calls a provider');
+      assert.deepEqual(money.seen, []);
+      assert.equal(result.usage, undefined);
+    } finally {
+      bedrock.restore();
+      money.restore();
+    }
+  });
+
+  it('runs byte-for-byte as before when the same request carries no envelope', async () => {
+    const money = stubMoneySeams({ ok: true });
+    const bedrock = stubBedrockChain();
+    try {
+      const result = await routeWithEnvelope({ ...request });
+
+      assert.equal(result.status, 'ok');
+      assert.equal(result.fields.grandTotalAmount, '180.00');
+      assert.deepEqual(bedrock.calls, ['read', 'extract']);
+      assert.deepEqual(money.seen, [], 'no step, no settle: SHARED companies never touch the seams');
+      assert.deepEqual(result.usage.map((u: any) => u.invocationKey), [undefined, undefined]);
+    } finally {
+      bedrock.restore();
+      money.restore();
+    }
   });
 });

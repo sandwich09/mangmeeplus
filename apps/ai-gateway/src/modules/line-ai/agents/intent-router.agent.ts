@@ -479,7 +479,9 @@ export class IntentRouterAgent {
     });
 
     if (!result.ok) {
-      return unavailableIntakePlan(request.messageText, result.error.code);
+      // A money refusal keeps the seam's own code (`AI_BUDGET_*`), so the API can tell it from a
+      // provider outage instead of reporting "the router is temporarily down" (spec §9.1).
+      return unavailableIntakePlan(request.messageText, result.error.budgetCode ?? result.error.code);
     }
 
     const parsed = parseIntakePlan(

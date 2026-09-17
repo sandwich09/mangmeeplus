@@ -698,6 +698,14 @@ export type LineIntakeSubstituteContext = {
 
 export type LineIntakeRouteRequest = {
   requestId: string;
+  /**
+   * The ORIGINAL webhook event this intake belongs to (ADR 0013 §4). The transport `requestId` is
+   * minted fresh on every reclaim, so deriving a money attempt from it would let one redelivered
+   * LINE message buy a second hold. Optional and hashed before use: an older caller that omits it
+   * keeps the request-id fallback, and the gateway ignores the field entirely — it is not part of
+   * the model payload, so a request carrying it produces byte-identical prompts.
+   */
+  webhookEventId?: string;
   companyId: string;
   userId: string;
   locale: string;
@@ -1388,6 +1396,13 @@ export type ProviderError = {
   retryable: boolean;
   /** Set only with `PROVIDER_BUDGET_EXHAUSTED`, and only when the gate reported it. */
   budgetScope?: AiBudgetScope;
+  /**
+   * Set only with `PROVIDER_BUDGET_EXHAUSTED`: WHICH money answer stopped this invocation, so a
+   * chain that is refused mid-way surfaces the seam's own vocabulary (spec §9.1) instead of a
+   * generic provider failure. Every route maps `budgetCode ?? code` into its existing error
+   * envelope, which is what keeps "เหลือไม่พอ" from being reported as "ลองใหม่อีกครั้ง".
+   */
+  budgetCode?: AiBudgetRefusalCode;
 };
 
 export type AgentIntentItem = {
