@@ -14,7 +14,7 @@ import type { PrismaService } from '../../../common/database/prisma.service';
 import type { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { SECURITY_EVENT, emitSecurityEvent } from '../../../common/logger/security-event';
 import { resolveThbPerUsd } from './ai-fx-rate';
-import { computeCostSatang } from './ai-model-pricing';
+import { buildPricingSnapshot, computeCostSatang } from './ai-model-pricing';
 
 const logger = new Logger('CompanyAiUsageMeter');
 
@@ -24,7 +24,66 @@ export type CompanyAiUsageMeta = {
   requestId?: string;
   /** Pinned when budget admission starts so lock, spend read and ledger write cannot straddle months. */
   monthKey?: string;
+  /** Server-derived, from {@link classifyAiUsageRequest}; absent = the row reports UNKNOWN. */
+  requestKind?: AiRequestKind;
+  budgetBucket?: AiBudgetBucket;
 };
+
+// ── Server-derived classification (remediation spec §12.2) ───────────────────
+
+export type AiRequestKind = 'TEXT' | 'IMAGE' | 'OTHER';
+export type AiBudgetBucket = 'CHAT' | 'OCR';
+/** What the API put in the request it is about to send — never a model reading of it. */
+export type AiRequestContent = 'text' | 'image' | 'document';
+
+/** The two seams whose whole purpose is reading a document; both are OCR at any content type. */
+const OCR_SOURCE_ROUTES = new Set(['receipt-ocr', 'bank-statement-extract']);
+/** The one route whose bucket depends on the request: a picture puts it on the governed reader. */
+const IMAGE_GATED_SOURCE_ROUTE = 'line-intake-route';
+
+/**
+ * Decides the budget bucket and request kind of an AI call BEFORE the provider runs, from what the
+ * API itself assembled (spec §12.2). Never from model output, never from `usageTag.startsWith('ocr')`
+ * — the intake image path is tagged `line.intake-route` — and never from user text.
+ *
+ * A LINE intake carrying a picture is OCR for the WHOLE call, even if the picture later turns out
+ * not to be a receipt, because the route and the transcription happen in one provider call. A
+ * `line-turn` stays CHAT even with an attachment: attaching an image must not move the turn's ERP
+ * reasoning onto the document budget.
+ */
+export function classifyAiUsageRequest(
+  sourceRoute: string,
+  content: AiRequestContent,
+): { requestKind: AiRequestKind; budgetBucket: AiBudgetBucket } {
+  return {
+    requestKind: content === 'image' ? 'IMAGE' : content === 'text' ? 'TEXT' : 'OTHER',
+    budgetBucket:
+      OCR_SOURCE_ROUTES.has(sourceRoute) || (sourceRoute === IMAGE_GATED_SOURCE_ROUTE && content !== 'text')
+        ? 'OCR'
+        : 'CHAT',
+  };
+}
+
+/** The gateway response is untrusted wire JSON; only the two known values may reach the ledger. */
+function normalizeUsageBasis(value: unknown): string | null {
+  return value === 'PROVIDER_REPORTED' || value === 'CONSERVATIVE_ESTIMATE' ? value : null;
+}
+
+const nonNegativeCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const presentString = (value: unknown): boolean => typeof value === 'string' && value !== '';
+
+/**
+ * The gateway's `usage` array is parsed wire JSON, not a validated payload. An entry whose four
+ * counters are not non-negative safe integers is dropped BEFORE pricing: a negative or NaN counter
+ * must never be able to lower a company's month aggregate or poison the whole batch's write.
+ * `ok` is checked too, because a non-boolean would fail the insert for every sibling row.
+ */
+function isMeterableEntry(entry: AiUsageEntry | undefined): boolean {
+  return !!entry
+    && presentString(entry.modelId) && presentString(entry.tag) && typeof entry.ok === 'boolean'
+    && nonNegativeCount(entry.inputTokens) && nonNegativeCount(entry.outputTokens)
+    && nonNegativeCount(entry.cacheReadInputTokens) && nonNegativeCount(entry.cacheWriteInputTokens);
+}
 
 /** Month-to-date spend either side of this recording, so phase 4 can detect a threshold
  *  crossing exactly once (the unique aggregate row serializes concurrent increments). */
@@ -321,7 +380,20 @@ export async function recordCompanyAiUsage(
   meta: CompanyAiUsageMeta,
   entries: AiUsageEntry[] | undefined,
 ): Promise<CompanyAiUsageSpend | undefined> {
-  if (!entries || entries.length === 0) {
+  // Trust boundary: drop what cannot be priced, keep the rest. Counts and ids only in the warn —
+  // never the entry itself, which came off the wire (PDPA posture).
+  const priceable = (entries ?? []).filter((entry) => {
+    if (isMeterableEntry(entry)) return true;
+    logger.warn({
+      msg: 'ai.usage.malformed_entry',
+      sourceRoute: meta.sourceRoute,
+      requestId: meta.requestId,
+      companyId: meta.companyId,
+    });
+    return false;
+  });
+
+  if (priceable.length === 0) {
     // Artifact/gateway version skew is the usual cause; visible, never fatal (criterion 10).
     logger.warn({
       msg: 'ai.usage.absent',
@@ -337,7 +409,7 @@ export async function recordCompanyAiUsage(
   // rate and stamps it — plus where that rate came from, so a fallback leaves a mark on the row
   // and not only in a log line that rotates (spec §6.4 + addendum).
   const fx = await resolveThbPerUsd(prisma, config);
-  const rows = entries.map((entry) => {
+  const rows = priceable.map((entry) => {
     const { costSatang, unknownModel } = computeCostSatang(entry, fx.rate);
     if (unknownModel) {
       logger.warn({
@@ -363,6 +435,13 @@ export async function recordCompanyAiUsage(
       thbPerUsd: fx.rate, // Prisma Decimal accepts a JS number
       thbPerUsdSource: fx.source,
       requestId: meta.requestId,
+      // D1 metadata (spec §11.2). `null` where the seam or the gateway did not report one, so the
+      // console says UNKNOWN instead of inferring a bucket from a tag or a peer row.
+      requestKind: meta.requestKind ?? null,
+      budgetBucket: meta.budgetBucket ?? null,
+      usageBasis: normalizeUsageBasis((entry as { usageBasis?: unknown }).usageBasis),
+      eventKind: 'MODEL_CALL',
+      pricingSnapshot: buildPricingSnapshot(entry, fx.rate, costSatang),
     };
   });
 
@@ -416,4 +495,106 @@ export async function recordCompanyAiUsage(
   }
 
   return spend;
+}
+
+/** Signed deltas against one already-recorded MODEL_CALL row (spec §11.2). Omitted counters are 0. */
+export type CompanyAiCostAdjustment = {
+  /** The `AiUsageEvent.id` whose evidence changed. */
+  eventId: string;
+  /** Replay fence: the same identity applied twice is a no-op, never a second correction. */
+  correctionKey: string;
+  costSatang: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+};
+
+/**
+ * True only for a unique violation on `AiUsageEvent.correctionKey`. Prisma 7's pg driver adapter
+ * leaves `meta.target` undefined and reports the column through the driver-adapter cause, QUOTED
+ * (`"correctionKey"`) — verified against real PostgreSQL, not assumed. The legacy `meta.target`
+ * and a constraint/index NAME are accepted too, because which of the three a given adapter fills
+ * in is not something this module should depend on. Anything else is a real failure and keeps
+ * propagating.
+ */
+function isCorrectionKeyConflict(error: unknown): boolean {
+  const err = error as { code?: unknown; meta?: Record<string, any> } | null;
+  if (err?.code !== 'P2002') return false;
+  const constraint = err.meta?.['driverAdapterError']?.cause?.constraint;
+  const fields = constraint?.fields ?? err.meta?.['target'];
+  if ((Array.isArray(fields) ? fields : [fields])
+    .some((field) => typeof field === 'string' && field.replace(/"/g, '') === 'correctionKey')) return true;
+  const name = typeof constraint === 'string' ? constraint : constraint?.index ?? constraint?.name;
+  return typeof name === 'string' && name.includes('correctionKey');
+}
+
+/**
+ * Appends an audited `COST_ADJUSTMENT` row and moves the ORIGINAL row's month aggregate by the same
+ * signed deltas, in one transaction. It is never a provider call: `callCount` is untouched, so
+ * averages and `topTags.calls` keep counting model calls only.
+ *
+ * Phase E settles late actuals through this; there is deliberately no HTTP endpoint and no caller
+ * yet, so a public API cannot post adjustments. The aggregate move is a single conditional
+ * `updateMany` — it refuses atomically rather than read-then-write, so no total can go negative
+ * and no isolation level is required.
+ */
+export async function recordCompanyAiCostAdjustment(
+  prisma: PrismaService,
+  adjustment: CompanyAiCostAdjustment,
+): Promise<'applied' | 'duplicate' | 'unknown-event' | 'refused-negative'> {
+  const delta = {
+    costSatang: adjustment.costSatang,
+    inputTokens: adjustment.inputTokens ?? 0,
+    outputTokens: adjustment.outputTokens ?? 0,
+    cacheReadInputTokens: adjustment.cacheReadInputTokens ?? 0,
+    cacheWriteInputTokens: adjustment.cacheWriteInputTokens ?? 0,
+  };
+  try {
+    return await applyCompanyAiCostAdjustment(prisma, adjustment, delta);
+  } catch (err) {
+    // Concurrency: two callers can both pass the `findUnique` below, and the loser's INSERT hits
+    // the unique index. Its WHOLE transaction — including the aggregate move — is rolled back, so
+    // the observable outcome is exactly the fast-path replay: the correction applied once.
+    if (isCorrectionKeyConflict(err)) return 'duplicate';
+    throw err;
+  }
+}
+
+function applyCompanyAiCostAdjustment(
+  prisma: PrismaService,
+  adjustment: CompanyAiCostAdjustment,
+  delta: Record<string, number>,
+): Promise<'applied' | 'duplicate' | 'unknown-event' | 'refused-negative'> {
+  return prisma.client.$transaction(async (tx: any) => {
+    const replay = await tx.aiUsageEvent.findUnique({ where: { correctionKey: adjustment.correctionKey }, select: { id: true } });
+    if (replay) return 'duplicate';
+    const original = await tx.aiUsageEvent.findUnique({
+      where: { id: adjustment.eventId },
+      select: {
+        companyId: true, monthKey: true, sourceRoute: true, usageTag: true, modelId: true,
+        thbPerUsd: true, thbPerUsdSource: true, requestKind: true, budgetBucket: true,
+        usageBasis: true, requestId: true, eventKind: true,
+      },
+    });
+    if (!original || original.eventKind !== 'MODEL_CALL') return 'unknown-event';
+    const { eventKind: _eventKind, ...carried } = original;
+    // Guard inside the WHERE: a negative delta may only apply while every total stays >= 0.
+    const moved = await tx.companyAiMonthlyUsage.updateMany({
+      where: {
+        companyId: original.companyId,
+        monthKey: original.monthKey,
+        ...Object.fromEntries(Object.entries(delta).map(([field, value]) => [field, { gte: -value }])),
+      },
+      data: Object.fromEntries(Object.entries(delta).map(([field, value]) => [field, { increment: value }])),
+    });
+    if (moved.count === 0) return 'refused-negative';
+    await tx.aiUsageEvent.create({
+      data: {
+        ...carried, ...delta, ok: true, eventKind: 'COST_ADJUSTMENT',
+        adjustsEventId: adjustment.eventId, correctionKey: adjustment.correctionKey, pricingSnapshot: null,
+      },
+    });
+    return 'applied';
+  });
 }

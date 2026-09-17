@@ -11,7 +11,7 @@ import { AI_BANK_STATEMENT_MAX_PROVIDER_CALLS, aiGatewayClientTimeoutMs } from '
 import { RedisRateLimitService } from '../../../common/security/redis-rate-limit.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { resolveCompanyAiModelPolicy } from '../../line-ai/application/company-ai-model-policy';
-import { recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
+import { classifyAiUsageRequest, recordCompanyAiUsage, runWithCompanyAiBudgetAdmission } from '../../line-ai/application/company-ai-usage-meter';
 import {
   admitCompanyOcr,
   companyOcrErrorCode,
@@ -134,7 +134,11 @@ export class StatementAiExtractClient {
       await recordCompanyAiUsage(
         this.prisma,
         this.config,
-        { companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey },
+        {
+          companyId: request.companyId, sourceRoute: 'bank-statement-extract', requestId: request.requestId, monthKey: budgetMonthKey,
+          // The contract admits JPEG/PNG only, so this seam is always an image read.
+          ...classifyAiUsageRequest('bank-statement-extract', 'image'),
+        },
         result.usage,
       );
     } catch (err) {
