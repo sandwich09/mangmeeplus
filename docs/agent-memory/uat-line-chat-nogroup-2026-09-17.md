@@ -149,10 +149,12 @@ pnpm exec tsx --test --test-reporter=spec src/modules/line-ai/application/line-a
 pnpm exec tsx --test --test-reporter=dot src/modules/line-ai/application/use-cases/process-line-webhook.use-case.spec.ts src/modules/line-ai/application/use-cases/line-intake-dispatch.use-case.spec.ts
   → 694 pass, 0 fail
 LINE_AI_LEDGER_REDIS_TEST_URL='redis://127.0.0.1:6379/15' pnpm exec tsx --test --test-reporter=spec src/modules/line-ai/application/line-ai-ledger.service.spec.ts
-  → tests 33, pass 33, fail 0 (real local Redis, db 15; unset → the block SKIPs, tests 32)
+  → tests 37, pass 37, fail 0 (real local Redis 7.4.10, db 15; unset → the block SKIPs, tests 32)
 pnpm --filter @watchdog-bms/api typecheck   → rc=0
 git diff --check                            → clean
 ```
+
+The real-Redis block covers absent key → NOGROUP → `[]`, short-TTL expiry → `[]`, `XGROUP DESTROY` → `group_missing` with entries and group state untouched, group + empty PEL → `[]`, paging the real `XPENDING key group (<id> + 50` exclusive-start form (55 entries from another member then the asker's, found), `scan_incomplete` on a 201-entry PEL, a real `WRONGTYPE` from a plain string on a ledger key, and tenant/user/chat isolation. It runs on synthetic tagged keys, deletes only the exact keys it named, and never calls `claimOpenEntries` (its SCAN would reach other sessions' keys on a shared server). `DBSIZE` of db 15 was 0 before and after the run.
 
 Red→green (AC-09): with the HEAD sources restored and the faithful fake in place the ledger spec was `tests 32, pass 20, fail 12`, the first-message case failing with
 
@@ -166,10 +168,30 @@ Red→green (AC-09): with the HEAD sources restored and the faithful fake in pla
 
 which is the UAT incident reproduced in a unit test. After the fix the same file is 32/32 (33/33 with real Redis).
 
-Evidence class per ticked acceptance criterion: AC-01–AC-04 fake-Redis unit tests **and** the real local Redis run (AC-01's routing half from the dispatcher test); AC-05, AC-07, AC-08, AC-13 and R-11 fake-Redis unit tests; AC-06 ledger spec plus the dispatcher no-mutation test; AC-09 the saved red→green output above.
+Evidence class per ticked acceptance criterion (spec §14 forbids ticking from unit tests alone, so the fake-only parts are named explicitly):
+
+| AC | Evidence |
+| --- | --- |
+| AC-01 | Real Redis (absent key → NOGROUP → `[]`, nothing created) + dispatcher test for the routing half |
+| AC-02 | Real Redis (short-TTL expiry) + fake (a later append recreates stream and group) |
+| AC-03 | Real Redis (`XGROUP DESTROY`, `XLEN` and `XINFO GROUPS` unchanged) + fake |
+| AC-04 | Real Redis (group + ack-emptied PEL) + fake |
+| AC-05 | Real Redis (asker sees pendingMedia/source proof; other member, other chat, other company read `[]`) + fake |
+| AC-06 | Fake: marker present while the entry is STILL in the PEL (asserted), so the lost-XACK premise is real; marker-lookup failure throws `marker_unavailable`; dispatcher test proves no gateway call and no mutation |
+| AC-07 | **WRONGTYPE is real Redis** (a plain string on a ledger key). Connection error, failing `EXISTS` and a non-0/1 `EXISTS` reply are **fake-only**; a command timeout is not simulated separately — it takes the identical non-NOGROUP branch |
+| AC-08 | **Fake-only** — key expiry and creation between XPENDING and EXISTS need injected timing that a real server cannot be made to reproduce deterministically; asserts exactly one XPENDING and one EXISTS, so there is no retry loop |
+| AC-09 | The saved red→green output above (HEAD sources, faithful fake) |
+| AC-13 | **Fake-only** — asserts the captured log payloads, which is the only place log level and fields are observable |
+| R-11 | Pagination past the first page and `scan_incomplete` are **real Redis** (the exclusive `(<id>` start is our own invention, so it is proven against redis 7.4.10 locally; production is ElastiCache 7.1). Malformed XPENDING replies and the `claimOpenEntries` isolation cases are **fake-only** — a malformed reply cannot be produced by a correct server, and reclaim SCANs keys this process does not own |
 
 ### Remaining
 
 - AC-10, AC-11, AC-12, AC-14, AC-15, AC-16 stay open: they need a UAT real-LINE journey with terminal/delivery evidence, and AC-15 needs the signed production release protocol. Nothing here was deployed or promoted.
 - Phase A does not touch budget refusal, intake cost, dashboard or split caps (scopes B–E).
-- Observed and deliberately NOT changed: `ai.line.ledger.append_failed` and `ai.line.ledger.ack_failed` still log `(err as Error).message`, which could embed the raw key if a `NOGROUP` ever surfaces from `xreadgroup`/`xack` on those best-effort paths. Same privacy family as §6, outside this phase's changed lines.
+
+### Known residuals (not changed in this phase)
+
+1. **Context limit is applied before the consumption-marker filter.** `openWaitingUser` stops paginating at `limit` (3) and only then filters durable consumption markers, so three consumed-but-unacked entries from the same asker inside the 15-minute window can hide a fourth genuinely open question until the drain expires them. Pre-existing behaviour, unchanged here. Impact is bounded because durable intake state (`LineIntakeStateRepository`), not this stream, authorises financial continuation — the stream is a bounded reference only.
+2. **`append()` still recreates a vanished group at id 0.** It runs `XGROUP CREATE … 0 MKSTREAM` before every append, so the next append on an EXISTING stream whose group was destroyed (for example a media clarification arriving after the read already refused with `group_missing`) silently recreates the group at `0` and re-delivers up to 50 old entries into the PEL. The durable delivery/outcome stores are what stop duplicate sends. Spec §3 and §4.4 deliberately keep append/ack out of this phase, so the read path was fixed without touching it.
+3. **`ai.line.ledger.ack_failed` and `ai.line.ledger.append_failed` still log the raw provider message** (`line-ai-ledger.service.ts:322` and `:523`), which would embed the raw key if a `NOGROUP` ever surfaced from `xreadgroup`/`xack`. Same privacy family as §6, but they are unchanged best-effort lines outside this phase's diff.
+4. **A `null` XPENDING reply is now `malformed_response` (fail closed)** where the old code read it as an empty PEL. Deliberate — the reply shape is the absence proof — and a correct server never returns null for the extended `XPENDING key group - + count` form, but it is a behaviour change, not a pure bug fix.

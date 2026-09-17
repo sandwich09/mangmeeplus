@@ -144,6 +144,8 @@ Reclaim loop ต้อง isolate known missing/expired stream ต่อ key: ke
 - [ ] AC-15 Production promotion ใช้ protocol และ exact signed release evidence ตาม runbook; แยกผล incident ในภาพออกจากผล acceptance ของ fix
 - [ ] AC-16 Missing-ledger recovery ไม่ bypass monthly AI budget: เมื่อยอดใช้ถึงงบ effective ของบริษัท ต้องยังปฏิเสธ provider call และส่งการ์ดโควตาเต็มตาม contract เดิม; static menu greeting ไม่ reset งบ
 
+ข้อที่ติ๊กแล้วใช้หลักฐานตาม verification matrix ช่วง A คือ fake regression ร่วมกับ isolated real Redis (db index แยก, synthetic tagged keys, ลบเฉพาะ key ของตัวเอง) ไม่ใช่ unit test อย่างเดียวตาม §14; evidence class ต่อข้อและส่วนที่พิสูจน์ด้วย fake เท่านั้นบันทึกไว้ใน [task memory](../agent-memory/uat-line-chat-nogroup-2026-09-17.md) ส่วน AC-10, AC-11, AC-12, AC-14, AC-15 และ AC-16 ยังเปิด เพราะต้องใช้ UAT real-LINE journey, release protocol และผลรวมของช่วงอื่น
+
 ## 8. Production investigation ที่ต้องปิดแยก
 
 ผูกข้อความจริงกับวันเวลา/บัญชีที่ผู้รายงานระบุ → webhook receipt → buffer/identity/access/support outcome → intake/gateway → LINE delivery ตาม source/digest ที่รัน ณ เหตุการณ์นั้น
