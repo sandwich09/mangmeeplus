@@ -42,7 +42,12 @@ type Options = {
   memberIdentity?: any | null;
   ocrUsage?: { usedCount: number } | null;
   aiUsage?: { costSatang: number } | null;
-  aiConfig?: { monthlyBudgetSatang: number | null; ocrEnabled?: boolean; ocrMonthlyLimit?:number|null; receiptQuotaEnforced?:boolean|null } | null;
+  aiConfig?: { monthlyBudgetSatang: number | null; ocrEnabled?: boolean; ocrMonthlyLimit?:number|null; receiptQuotaEnforced?:boolean|null;
+    /** Split policy (spec §12.4). Absent on every pre-SPLIT case, which resolves to SHARED. */
+    budgetMode?:string|null; chatMonthlyBudgetSatang?:number|null; ocrMonthlyBudgetSatang?:number|null;
+    budgetConfigVersion?:number|null; pendingBudgetPolicy?:unknown } | null;
+  /** Per-bucket month-to-date spend, for the SPLIT readiness cases. Empty on every other case. */
+  aiBuckets?: Array<{ bucket: string; costSatang: number }>;
   platformBudget?: {monthlyBudgetSatang:number;ceilingSatang:number}|null;
   paidGrants?: any[];
   features?: Array<{featureKey:string;enabled:boolean}>;
@@ -99,6 +104,10 @@ function harness(options: Options = {}) {
       billingReceiptGrant:{findMany:async()=>options.paidGrants??[]},
       companyAiMonthlyUsage: { findUnique: async () => options.aiUsage ?? null },
       companyAiConfiguration: { findUnique: async () => options.aiConfig ?? null },
+      // The split-budget position (spec §12.3): empty for every SHARED case, which is exactly the
+      // answer the tolerant snapshot reader gave before these tables existed.
+      companyAiMonthlyBucketUsage: { findMany: async () => options.aiBuckets ?? [] },
+      aiBudgetReservation: { groupBy: async () => [], count: async () => 0 },
       user: { findUnique: async () => ({ displayName: 'พี่แอดมิน' }) },
       // line-support-request-spec-th §2.3: answering the shop closes its OPEN request, so the
       // operator does not have to remember a second button.
@@ -255,6 +264,52 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       }),
       undefined,
     );
+  });
+
+  // §11.4/R-10: this line used to compare TOTAL spend with the TOTAL budget, so a shop whose OCR
+  // share was gone still read as "AI is fine" — support would tell the owner to send the picture.
+  describe('a shop that split its budget (spec §11.4)', () => {
+    const split = (chat: number, ocr: number) => ({
+      monthlyBudgetSatang: 10000, budgetMode: 'SPLIT',
+      chatMonthlyBudgetSatang: chat, ocrMonthlyBudgetSatang: ocr, budgetConfigVersion: 1,
+    });
+    const line = async (options: Options) =>
+      (await harness(options).controller.partnerTimeline('co-1')).entries.find((e) => e.kind === 'ai_refusal');
+
+    it('says the document-reading share is gone while chat still works', async () => {
+      const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 7000 },
+        aiConfig: split(3000, 7000), aiBuckets: [{ bucket: 'OCR', costSatang: 7000 }] });
+
+      assert.equal(refusal?.label, 'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');
+      assert.equal(refusal?.detail, 'ใช้งบ AI ส่วนอ่านเอกสารของเดือนนี้ครบแล้ว แต่ส่วนแชตยังเหลือ');
+    });
+
+    it('says the chat share is gone while documents can still be read', async () => {
+      const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 3000 },
+        aiConfig: split(3000, 7000), aiBuckets: [{ bucket: 'CHAT', costSatang: 3000 }] });
+
+      assert.equal(refusal?.label, 'ตอนนี้ยังคุยกับ AI ไม่ได้');
+      assert.match(refusal!.detail!, /ส่วนแชต/);
+    });
+
+    it('still reports the TOTAL first when it is the ceiling that ran out', async () => {
+      const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 10000 },
+        aiConfig: split(3000, 7000), aiBuckets: [{ bucket: 'OCR', costSatang: 7000 }, { bucket: 'CHAT', costSatang: 3000 }] });
+
+      assert.equal(refusal?.detail, 'ใช้งบ AI ของเดือนนี้ครบแล้ว');
+    });
+
+    it('a cap that no longer fits the total is shown as a setting to fix, not as money spent', async () => {
+      const refusal = await line({ planTerm: liveTerm, aiConfig: split(9000, 7000) });
+
+      assert.equal(refusal?.label, 'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
+      assert.match(refusal!.detail!, /ตั้งค่างบ AI ของร้านไม่ถูกต้อง/);
+    });
+
+    it('leaves a funded split shop with no refusal line at all', async () => {
+      assert.equal(await line({ planTerm: liveTerm, aiConfig: split(3000, 7000),
+        aiBuckets: [{ bucket: 'OCR', costSatang: 10 }] }), undefined);
+    });
   });
 });
 

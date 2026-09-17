@@ -10,6 +10,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { receiptQuotaSnapshot } from '../../../line-ai/application/company-ocr-governance';
 import { bangkokMonthKey, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
+import { readAiBudgetReadiness } from '../../../line-ai/application/company-ai-budget-readiness';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 
 /** The audit rows that mean "somebody actually got into the web app for this shop" (§8). */
@@ -155,6 +156,7 @@ export class GetPartnerTimelineUseCase {
     now: Date,
   ): Promise<{label:string;detail:string} | null> {
     const all=(detail:string)=>({label:'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้',detail});
+    const chat=(detail:string)=>({label:'ตอนนี้ยังคุยกับ AI ไม่ได้',detail});
     const receipt=(detail:string)=>({label:'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้',detail});
     if(companyStatus!=='ACTIVE')return all(companyStatus==='DISABLED'?'ร้านถูกพักใช้งาน':companyStatus==='ARCHIVED'?'ร้านถูกเก็บเข้าประวัติแล้ว':'ร้านยังไม่พร้อมใช้งาน');
     if(term&&term.termEndsAt<=now)return all('แพ็กเกจหมดอายุแล้ว');
@@ -166,15 +168,21 @@ export class GetPartnerTimelineUseCase {
     const entitled=await loadEntitledFeatureKeys(this.prisma,companyId);
     if(entitled!==null&&!entitled.has('ai_line_assistant'))return {label:'ยังคุยกับ AI ผ่าน LINE ไม่ได้',detail:'ร้านยังไม่ได้เปิดสิทธิ์ผู้ช่วย AI'};
     const monthKey=bangkokMonthKey(now);
-    const [quota,aiUsage,aiConfig,ocrUsage,platform]=await Promise.all([
+    const [quota,aiConfig,ocrUsage,platform]=await Promise.all([
       receiptQuotaSnapshot(this.prisma,companyId,monthKey,now),
-      this.prisma.client.companyAiMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{costSatang:true}}),
-      this.prisma.client.companyAiConfiguration.findUnique({where:{companyId},select:{monthlyBudgetSatang:true,ocrEnabled:true,ocrMonthlyLimit:true,receiptQuotaEnforced:true}}),
+      this.prisma.client.companyAiConfiguration.findUnique({where:{companyId},select:{monthlyBudgetSatang:true,ocrEnabled:true,ocrMonthlyLimit:true,receiptQuotaEnforced:true,
+        budgetMode:true,chatMonthlyBudgetSatang:true,ocrMonthlyBudgetSatang:true,budgetConfigVersion:true,pendingBudgetPolicy:true}}),
       this.prisma.client.companyOcrMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}},select:{usedCount:true}}),
       resolvePlatformAiBudget(this.prisma,this.config,true),
     ]);
-    const budget=aiConfig?.monthlyBudgetSatang??platform.monthlyBudgetSatang;
-    if((aiUsage?.costSatang??0)>=budget)return all('ใช้งบ AI ของเดือนนี้ครบแล้ว');
+    // §11.4: the SAME projection admission uses, never `monthlyBudgetSatang` + total spend. Under
+    // SHARED every scope below IS the total answer, so this shop's story reads exactly as before.
+    const money=await readAiBudgetReadiness(this.prisma.client,{companyId,monthKey,row:aiConfig,
+      totalSatang:aiConfig?.monthlyBudgetSatang??platform.monthlyBudgetSatang});
+    if(money.policyInvalid)return all('ตั้งค่างบ AI ของร้านไม่ถูกต้อง ผู้ดูแลต้องแก้เพดานแชตและอ่านเอกสารให้รวมกันไม่เกินงบรวมก่อน');
+    if(money.total!=='OK')return all('ใช้งบ AI ของเดือนนี้ครบแล้ว');
+    if(money.chat!=='OK')return chat('ใช้งบ AI ส่วนแชตของเดือนนี้ครบแล้ว แต่ส่วนอ่านเอกสารยังเหลือ');
+    if(money.ocr!=='OK')return receipt('ใช้งบ AI ส่วนอ่านเอกสารของเดือนนี้ครบแล้ว แต่ส่วนแชตยังเหลือ');
     if(entitled!==null&&!entitled.has('expenses.upload'))return receipt('ร้านยังไม่ได้เปิดสิทธิ์อัปโหลดใบเสร็จ');
     if(aiConfig?.ocrEnabled===false)return receipt('ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
     if(aiConfig?.ocrMonthlyLimit!=null&&(ocrUsage?.usedCount??0)>=aiConfig.ocrMonthlyLimit)return receipt('ใช้จำนวนครั้งอ่านเอกสารของเดือนนี้ครบแล้ว');

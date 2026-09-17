@@ -5,7 +5,8 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { webLink } from '../../../common/http/web-link';
 import { PrismaOutboxRepository } from '../../data-model-core/infrastructure/repositories/prisma-outbox.repository';
 import { CreateOrUpdateNotificationEventUseCase } from '../../dashboard-notifications/application/use-cases/notification.use-cases';
-import { bangkokMonthKey } from '../../line-ai/application/company-ai-usage-meter';
+import { bangkokMonthKey, resolvePlatformAiBudget } from '../../line-ai/application/company-ai-usage-meter';
+import { readAiBudgetReadiness } from '../../line-ai/application/company-ai-budget-readiness';
 import { TRIAL_COUNTER_TIER_KEY } from '../../system-partner-management/domain/logic/receipt-quota.logic';
 import { bangkokDayKey } from '../domain/business-hours.logic';
 import { LINE_SIGNUP_PUSH_EVENT_TYPE } from './line-signup-notify.service';
@@ -177,25 +178,42 @@ export class SignupOpsAlertService {
     const companyIds = trials.map((trial) => trial.companyId);
     // From the caller's clock, not a second one: a sweep given `now` must count that month.
     const monthKey = bangkokMonthKey(now);
-    const [usage, overrides] = await Promise.all([
+    const [usage, configurations, platform] = await Promise.all([
       this.prisma.client.companyAiMonthlyUsage.findMany({
         where: { companyId: { in: companyIds }, monthKey },
         select: { companyId: true, costSatang: true },
       }),
       this.prisma.client.companyAiConfiguration.findMany({
         where: { companyId: { in: companyIds } },
-        select: { companyId: true, monthlyBudgetSatang: true },
+        // The split-policy columns too (spec §11.4): a company can be out of money in one bucket
+        // with its total still open, and this sweep used to be blind to that.
+        select: {
+          companyId: true, monthlyBudgetSatang: true, budgetMode: true, chatMonthlyBudgetSatang: true,
+          ocrMonthlyBudgetSatang: true, budgetConfigVersion: true, pendingBudgetPolicy: true,
+        },
       }),
+      // The DB settings row, which is what a company actually inherits — the ENV value is only the
+      // fallback when no row exists, and reading it directly made this sweep disagree with the five
+      // enforcement seams the moment an operator changed the platform default (§11.4).
+      resolvePlatformAiBudget(this.prisma, this.config, true),
     ]);
-    const budgetByCompany = new Map(
-      overrides
-        .filter((row) => row.monthlyBudgetSatang !== null)
-        .map((row) => [row.companyId, row.monthlyBudgetSatang!]),
-    );
-    const platformDefault = this.config.aiMonthlyBudgetSatang;
-    const exhausted = usage.filter(
-      (row) => row.costSatang >= (budgetByCompany.get(row.companyId) ?? platformDefault),
-    ).length;
+    const spentByCompany = new Map(usage.map((row) => [row.companyId, row.costSatang]));
+    const rowByCompany = new Map(configurations.map((row) => [row.companyId, row]));
+
+    let exhausted = 0;
+    for (const companyId of companyIds) {
+      const row = rowByCompany.get(companyId);
+      const totalSatang = row?.monthlyBudgetSatang ?? platform.monthlyBudgetSatang;
+      // ponytail: the TOTAL comparison stays right here, on the two bulk reads. This sweep looks at
+      // up to 500 trials every 15 minutes, and routing every one of them through the per-company
+      // projection would turn 3 queries into ~2000. Only a company whose stored policy is SPLIT, or
+      // whose pending policy might be unreadable, can be out of money with the total still open —
+      // those few pay for the projection. Batch the bucket aggregates if trial counts ever grow.
+      if ((spentByCompany.get(companyId) ?? 0) >= totalSatang) { exhausted += 1; continue; }
+      if ((row?.budgetMode ?? 'SHARED') === 'SHARED' && row?.pendingBudgetPolicy == null) continue;
+      const money = await readAiBudgetReadiness(this.prisma.client, { companyId, monthKey, row, totalSatang });
+      if (money.total !== 'OK' || money.chat !== 'OK' || money.ocr !== 'OK') exhausted += 1;
+    }
 
     if (exhausted < threshold) return { exhausted, raised: false };
     await this.raise('trial_budget_exhausted', now);

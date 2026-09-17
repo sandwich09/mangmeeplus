@@ -6,6 +6,7 @@ import type { BillingOperation, Prisma } from '../../../generated/prisma/client'
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AppConfigService } from '../../../common/config/app-config.service';
 import { bangkokMonthKey, resolvePlatformAiBudget } from '../../line-ai/application/company-ai-usage-meter';
+import { readAiBudgetReadiness } from '../../line-ai/application/company-ai-budget-readiness';
 import type { RequestContext } from '../../auth/domain/models/request-context.model';
 import { lockPlanTermCompany } from '../../system-partner-management/application/lock-plan-term-company';
 import { BillingService } from './billing.service';
@@ -28,11 +29,17 @@ export class BillingReceiptAdjustmentsService {
   private async readWarnings(companyId:string,tx:Prisma.TransactionClient):Promise<BillingReceiptReadWarning[]>{
     const monthKey=bangkokMonthKey(),configuration=await tx.companyAiConfiguration.findUnique({where:{companyId}});
     const reads=await tx.companyOcrMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}}});
-    const spend=await tx.companyAiMonthlyUsage.findUnique({where:{companyId_monthKey:{companyId,monthKey}}});
     const budget=configuration?.monthlyBudgetSatang??(await resolvePlatformAiBudget({client:tx} as PrismaService,this.config,true)).monthlyBudgetSatang;
+    // §11.4/R-10: the SAME projection admission uses, so this preview cannot say receipts are
+    // readable while a SPLIT company's OCR share is gone. Words only — no money reaches this list.
+    // A policy we cannot read closes every scope, which surfaces here as AI_BUDGET_REACHED; the
+    // exact reason is the red `invalidReason` notice on the partner AI budget page.
+    const money=await readAiBudgetReadiness(tx,{companyId,monthKey,row:configuration,totalSatang:budget});
     return [...configuration?.ocrEnabled===false?['OCR_DISABLED' as const]:[],
       ...configuration?.ocrMonthlyLimit!=null&&(reads?.usedCount??0)>=configuration.ocrMonthlyLimit?['OCR_LIMIT_REACHED' as const]:[],
-      ...(spend?.costSatang??0)>=budget?['AI_BUDGET_REACHED' as const]:[]];
+      ...money.total!=='OK'?['AI_BUDGET_REACHED' as const]:[],
+      // Under SHARED `ocr` IS `total`, so this can never double up with the line above.
+      ...money.total==='OK'&&money.ocr!=='OK'?['AI_OCR_BUDGET_REACHED' as const]:[]];
   }
   private async scope(context:RequestContext,companyId:string,tx:Prisma.TransactionClient=this.prisma.client){
     const result=await this.admin.scopedCompany(context,companyId,tx);

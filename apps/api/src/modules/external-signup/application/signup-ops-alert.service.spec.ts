@@ -16,7 +16,14 @@ function harness(options: {
   trials?: Array<{ companyId: string }>;
   stuckPushes?: number;
   usage?: Array<{ companyId: string; costSatang: number }>;
-  overrides?: Array<{ companyId: string; monthlyBudgetSatang: number | null }>;
+  overrides?: Array<{ companyId: string; monthlyBudgetSatang: number | null;
+    /** Split policy (spec §12.4). Absent on every pre-SPLIT case, which resolves to SHARED. */
+    budgetMode?: string; chatMonthlyBudgetSatang?: number; ocrMonthlyBudgetSatang?: number;
+    budgetConfigVersion?: number; pendingBudgetPolicy?: unknown }>;
+  /** Per-bucket month-to-date spend, for the SPLIT cases only. */
+  buckets?: Array<{ companyId: string; bucket: string; costSatang: number }>;
+  /** The platform settings ROW, which is what a company inherits when it has no override. */
+  platformBudget?: { monthlyBudgetSatang: number; ceilingSatang: number } | null;
   threshold?: number;
   notificationSkipped?: boolean;
   admins?: Array<{ companyId: string; userId: string }>;
@@ -35,11 +42,21 @@ function harness(options: {
       companyPlanTerm: {
         findMany: async (args: any) => { planTermQueries.push(args); return options.trials ?? []; },
       },
-      companyAiMonthlyUsage: { findMany: async () => options.usage ?? [] },
+      companyAiMonthlyUsage: {
+        findMany: async () => options.usage ?? [],
+        findUnique: async (args: any) => options.usage?.find(
+          (row) => row.companyId === args.where.companyId_monthKey.companyId) ?? null,
+      },
       outboxEvent: {
         count: async (args: any) => { outboxCounts.push(args); return options.stuckPushes ?? 0; },
       },
       companyAiConfiguration: { findMany: async () => options.overrides ?? [] },
+      // Only the SPLIT cases reach these: a SHARED trial is still decided by the two bulk reads.
+      companyAiMonthlyBucketUsage: {
+        findMany: async (args: any) => (options.buckets ?? []).filter((row) => row.companyId === args.where.companyId),
+      },
+      aiBudgetReservation: { groupBy: async () => [], count: async () => 0 },
+      platformAiBudgetConfig: { findUnique: async () => options.platformBudget ?? null },
     },
   } as any;
 
@@ -199,6 +216,54 @@ describe('SignupOpsAlertService.sweepTrialBudgets — §15.6 (d)', () => {
     await h.service.sweepTrialBudgets(EVENING);
     assert.equal(h.planTermQueries[0].where.tierKey, 'FREE_TRIAL_15');
     assert.deepEqual(h.planTermQueries[0].where.termEndsAt, { gt: EVENING });
+  });
+
+  // §11.4: the platform default a company inherits is the settings ROW, not the ENV value. Reading
+  // ENV made this sweep disagree with the five enforcement seams the moment an operator moved it.
+  it('inherits the platform default from the settings row, not from the environment', async () => {
+    const shared = { threshold: 1, trials: trials(1), usage: [{ companyId: 'co-0', costSatang: 9000 }] } as const;
+    // ENV says 8000 (exhausted); the row an operator raised says 20000 (not exhausted).
+    assert.deepEqual(
+      await harness({ ...shared, platformBudget: { monthlyBudgetSatang: 20000, ceilingSatang: 100000 } })
+        .service.sweepTrialBudgets(EVENING),
+      { exhausted: 0, raised: false },
+    );
+    assert.deepEqual(
+      await harness({ ...shared, platformBudget: { monthlyBudgetSatang: 8000, ceilingSatang: 100000 } })
+        .service.sweepTrialBudgets(EVENING),
+      { exhausted: 1, raised: true },
+    );
+  });
+
+  // R-10: a trial whose OCR share is gone has hit its AI budget, even though the total has money.
+  it('counts a SPLIT trial whose bucket is gone while its total still has money', async () => {
+    const splitRow = {
+      companyId: 'co-0', monthlyBudgetSatang: 10000, budgetMode: 'SPLIT',
+      chatMonthlyBudgetSatang: 3000, ocrMonthlyBudgetSatang: 7000, budgetConfigVersion: 1,
+    };
+    const h = harness({
+      threshold: 1, trials: trials(1), overrides: [splitRow],
+      usage: [{ companyId: 'co-0', costSatang: 7000 }],
+      buckets: [{ companyId: 'co-0', bucket: 'OCR', costSatang: 7000 }],
+    });
+    assert.deepEqual(await h.service.sweepTrialBudgets(EVENING), { exhausted: 1, raised: true });
+
+    // The same shop with money left in both buckets is not counted.
+    const funded = harness({
+      threshold: 1, trials: trials(1), overrides: [splitRow],
+      usage: [{ companyId: 'co-0', costSatang: 10 }],
+      buckets: [{ companyId: 'co-0', bucket: 'OCR', costSatang: 10 }],
+    });
+    assert.deepEqual(await funded.service.sweepTrialBudgets(EVENING), { exhausted: 0, raised: false });
+  });
+
+  it('counts a trial whose stored policy cannot be read — AI is refused, so it is exhausted', async () => {
+    const h = harness({
+      threshold: 1, trials: trials(1),
+      overrides: [{ companyId: 'co-0', monthlyBudgetSatang: 10000, pendingBudgetPolicy: { mode: 'WAT' } }],
+      usage: [{ companyId: 'co-0', costSatang: 10 }],
+    });
+    assert.deepEqual(await h.service.sweepTrialBudgets(EVENING), { exhausted: 1, raised: true });
   });
 });
 

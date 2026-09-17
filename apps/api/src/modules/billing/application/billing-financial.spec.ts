@@ -25,3 +25,81 @@ test('a stale financial observer cannot update an invoice or open a case', async
   await assert.rejects(observeBillingCharges(prisma as any, stripe as any, account as any, 'expired-worker'), /financial_lost_lease/);
   assert.equal(mutations, 0);
 });
+
+// ── Admin previews read the SAME budget projection as admission (spec §11.4, R-10) ────────────
+//
+// Both previews used to compare TOTAL spend with the TOTAL budget, so a `SPLIT` shop whose
+// document-reading share was gone still read as "AI has money" — and adding receipts would not
+// have helped. Neither method is public, so they are driven exactly like the support-tools spec
+// drives `PartnerController`: a prototype instance with only the collaborators the method reaches.
+// They live in this file because it is the registered spec of `billing/application`.
+
+const aiTx = (state: { total?: number; ocrSpent?: number; configuration?: unknown } = {}) => ({
+  companyAiConfiguration: { findUnique: async () => state.configuration ?? null },
+  companyOcrMonthlyUsage: { findUnique: async () => null },
+  companyAiMonthlyUsage: { findUnique: async () => ({ costSatang: state.total ?? 0 }) },
+  companyAiMonthlyBucketUsage: {
+    findMany: async () => (state.ocrSpent === undefined ? [] : [{ bucket: 'OCR', costSatang: state.ocrSpent }]),
+  },
+  aiBudgetReservation: { groupBy: async () => [], count: async () => 0 },
+  billingReceiptGrant: { findMany: async () => [] },
+  platformAiBudgetConfig: { findUnique: async () => null },
+});
+/** T=10000, C=3000, O=7000 — the spec §12.1 worked example, in satang. */
+const splitConfiguration = {
+  monthlyBudgetSatang: 10000, ocrEnabled: true, ocrMonthlyLimit: null, budgetMode: 'SPLIT',
+  chatMonthlyBudgetSatang: 3000, ocrMonthlyBudgetSatang: 7000, budgetConfigVersion: 1,
+};
+
+test('receipt-grant read warnings follow TOTAL-or-OCR, and never carry money', async () => {
+  const { BillingReceiptAdjustmentsService } = await import('./billing-receipt-adjustments.service');
+  const warn = (state: Parameters<typeof aiTx>[0]) => {
+    const service = Object.create(BillingReceiptAdjustmentsService.prototype) as any;
+    service.config = { aiMonthlyBudgetSatang: 8000, receiptQuotaEnforced: true };
+    return service.readWarnings('co-1', aiTx(state));
+  };
+
+  // SHARED, the whole population today: byte-for-byte the two outcomes this list always had.
+  assert.deepEqual(await warn({ total: 3000 }), []);
+  assert.deepEqual(await warn({ total: 8000 }), ['AI_BUDGET_REACHED']);
+  // SPLIT with the OCR share gone: the total still has 3000 satang, but not for reading documents.
+  assert.deepEqual(
+    await warn({ total: 7000, ocrSpent: 7000, configuration: splitConfiguration }),
+    ['AI_OCR_BUDGET_REACHED'],
+  );
+  // The total itself gone: ONE warning, never both — the OCR line is strictly the total-open case.
+  assert.deepEqual(
+    await warn({ total: 10000, ocrSpent: 7000, configuration: splitConfiguration }),
+    ['AI_BUDGET_REACHED'],
+  );
+  // Owner/operator copy is words only: no satang value may reach this list (spec §11.4).
+  for (const warning of await warn({ total: 7000, ocrSpent: 7000, configuration: splitConfiguration })) {
+    assert.doesNotMatch(warning, /[0-9]/);
+  }
+});
+
+test('the paid-plan "unchanged" panel flags an exhausted document-reading share', async () => {
+  const { BillingPlanAdjustmentsService } = await import('./billing-plan-adjustments.service');
+  const panel = (state: Parameters<typeof aiTx>[0]) => {
+    const service = Object.create(BillingPlanAdjustmentsService.prototype) as any;
+    service.config = { aiMonthlyBudgetSatang: 8000 };
+    const scope = {
+      account: { id: 'acct-1', nextChargeAt: null },
+      company: { id: 'co-1', planTerm: { termEndsAt: new Date('2026-12-01T00:00:00.000Z') } },
+    };
+    return service.unchanged(scope, aiTx(state));
+  };
+
+  // SHARED keeps exactly today's shape — the additive field is absent, not false.
+  const shared = await panel({ total: 3000 });
+  assert.equal('aiOcrBudgetReached' in shared, false);
+  assert.equal(shared.aiBudgetSatang, 8000);
+  assert.equal(shared.aiUsedSatang, 3000);
+
+  // SPLIT with 3000 satang left overall but nothing left for documents.
+  const split = await panel({ total: 7000, ocrSpent: 7000, configuration: splitConfiguration });
+  assert.equal(split.aiOcrBudgetReached, true);
+  // The money already on this panel is unchanged: the flag adds words, not a second money pair.
+  assert.equal(split.aiBudgetSatang, 10000);
+  assert.equal(split.aiUsedSatang, 7000);
+});
