@@ -100,7 +100,9 @@ output is a suggestion until deterministic validation and human confirmation pas
 
 ### LINE AI answer
 
-Join `line.ai.accepted` and `line.ai.terminal` by `webhookEventId`. Classify intentional no-op, permission refusal, and feature-disabled separately from provider/timeout/delivery failure. Preserve the permission-checked API/tool boundary.
+Join `line.ai.accepted` and `line.ai.terminal` by `webhookEventId`. Classify intentional no-op, permission refusal, feature-disabled, and `budget_refusal` separately from provider/timeout/delivery failure. Preserve the permission-checked API/tool boundary.
+
+`budget_refusal` is neutral, not an outage: the company's monthly AI money reached its cap (or could not cover the job) and the turn said so through delivery. `errorCode` carries the money code and `budgetScope` the ceiling that closed. Do not raise a provider incident, do not reset the meter, and do not change a company budget from here — a cap change is a separate authorised admin action with its own audit. If the same rows show `delivery_pending` instead, the refusal did NOT reach the customer and is a delivery problem, which outranks the money reason. `mediaState` says whether the customer's picture was kept (`retained`), turned away (`not_stored_open_question`, `not_stored_no_permission`) or lost (`save_failed`).
 
 ### Outbox worker drain
 
