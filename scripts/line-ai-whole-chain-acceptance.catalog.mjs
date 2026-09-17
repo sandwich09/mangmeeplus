@@ -377,6 +377,10 @@ export const LINE_AI_WHOLE_CHAIN_SUITES = [
       // per-package list does not name either file, so this runner is what executes them.
       'src/modules/line-ai/application/company-ai-budget-reservation.spec.ts',
       'src/modules/line-ai/presentation/http/internal-ai-budget.controller.spec.ts',
+      // Phase F: the COMBINED regression — ledger NOGROUP, split denial, receipt persistence,
+      // usage, reservations and delivery asserted together on one turn through the real webhook
+      // use case. Not in `apps/api/package.json`'s fixed list, so this runner is what executes it.
+      'src/modules/line-ai/application/use-cases/line-ai-combined-regression.spec.ts',
       'src/modules/line-ai/application/line-message-buffer.service.spec.ts',
       // §8.3 DB-backed neutral intake state: the four zero-write guarantees (outage, stale/expired,
       // cross-user, cross-chat/company). `pnpm test`'s per-package list does not name this file, so

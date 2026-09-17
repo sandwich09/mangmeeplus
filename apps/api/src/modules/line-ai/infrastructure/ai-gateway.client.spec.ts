@@ -6,6 +6,7 @@ import { AI_BUDGET_STEP_BOUNDS } from '@watchdog-bms/contracts';
 import { __resetCompanyAiBudgetCache } from '../application/company-ai-usage-meter';
 import { aiBudgetAttemptHash } from '../application/company-ai-budget-reservation';
 import { AiGatewayClient, AiGatewayRequestError } from './ai-gateway.client';
+import { splitPrisma, SPLIT_FIXTURE_MODEL_ID } from '../application/company-ai-budget-prisma.fixture';
 
 const baseTurnRequest: LineAiTurnRequest = {
   requestId: 'request-1',
@@ -683,7 +684,7 @@ describe('AiGatewayClient monthly budget', () => {
 // ── Phase E1b: SPLIT admission, envelopes and attempt identities ─────────────
 
 describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)', () => {
-  const HAIKU = 'apac.anthropic.claude-3-haiku-20240307-v1:0';
+  const HAIKU = SPLIT_FIXTURE_MODEL_ID;
   const splitConfig = (over: Record<string, unknown> = {}) => ({
     aiGatewayInternalUrl: 'http://ai-gateway.test/v1',
     aiGatewayInternalSecret: 'workload-secret',
@@ -694,78 +695,6 @@ describe('AiGatewayClient SPLIT admission (spec §12.3/§12.6, ADR 0013 §4/§6)
     ...over,
   }) as any;
   const delegation = { issue: () => 'signed' } as any;
-
-  /**
-   * Reservation-capable ledger fake. Only what the engine touches: a SPLIT config row, the two
-   * aggregates, and an in-memory reservation table with the unique invocation fence.
-   */
-  function splitPrisma(policy: { total: number; chat: number; ocr: number; spentChat?: number; spentOcr?: number }) {
-    const reservations = new Map<string, any>();
-    const events = new Map<string, any>();
-    const buckets = new Map<string, { costSatang: number; callCount: number }>();
-    const configRow = {
-      modelId: HAIKU, monthlyBudgetSatang: policy.total, budgetMode: 'SPLIT',
-      chatMonthlyBudgetSatang: policy.chat, ocrMonthlyBudgetSatang: policy.ocr,
-      budgetConfigVersion: 1, pendingBudgetPolicy: null,
-    };
-    buckets.set('CHAT', { costSatang: policy.spentChat ?? 0, callCount: 0 });
-    buckets.set('OCR', { costSatang: policy.spentOcr ?? 0, callCount: 0 });
-    const reservationDelegate = {
-      findUnique: async (args: any) => (args.where.invocationKey !== undefined
-        ? [...reservations.values()].find((r) => r.invocationKey === args.where.invocationKey) ?? null
-        : reservations.get(args.where.id) ?? null),
-      findFirst: async () => null,
-      groupBy: async () => [...new Set([...reservations.values()].map((r) => r.bucket))].map((bucket) => ({
-        bucket, status: 'RESERVED',
-        _sum: { upperBoundSatang: [...reservations.values()]
-          .filter((r) => r.bucket === bucket && ['RESERVED', 'DISPATCHED', 'UNRESOLVED'].includes(r.status))
-          .reduce((sum, r) => sum + r.upperBoundSatang, 0) },
-        _count: { _all: 1 },
-      })),
-      count: async () => 0,
-      create: async (args: any) => {
-        if ([...reservations.values()].some((r) => r.invocationKey === args.data.invocationKey)) throw new Error('unique');
-        const row = { id: `res-${reservations.size + 1}`, ...args.data };
-        reservations.set(row.id, row);
-        return { id: row.id };
-      },
-      update: async (args: any) => Object.assign(reservations.get(args.where.id), args.data),
-      updateMany: async (args: any) => {
-        const matched = [...reservations.values()].filter((r) =>
-          (args.where.id === undefined || r.id === args.where.id)
-          && (args.where.ownerToken === undefined || r.ownerToken === args.where.ownerToken)
-          && (args.where.status === undefined
-            || (typeof args.where.status === 'string' ? r.status === args.where.status : args.where.status.in.includes(r.status)))
-          && args.where.createdAt === undefined && args.where.dispatchedAt === undefined);
-        for (const row of matched) Object.assign(row, args.data);
-        return { count: matched.length };
-      },
-    };
-    const tx = {
-      $executeRaw: async () => 0,
-      companyAiConfiguration: { findUnique: async () => configRow },
-      platformAiBudgetConfig: { findUnique: async () => null },
-      aiBudgetReservation: reservationDelegate,
-      companyAiMonthlyUsage: {
-        findUnique: async () => ({ costSatang: (policy.spentChat ?? 0) + (policy.spentOcr ?? 0) }),
-        upsert: async () => ({ costSatang: 0 }),
-      },
-      companyAiMonthlyBucketUsage: {
-        findUnique: async (args: any) => buckets.get(args.where.companyId_monthKey_bucket.bucket) ?? null,
-        upsert: async () => ({}),
-      },
-      aiUsageEvent: {
-        findUnique: async (args: any) => events.get(args.where.invocationKey) ?? null,
-        create: async (args: any) => { events.set(args.data.invocationKey, args.data); return args.data; },
-        createMany: async (args: any) => ({ count: args.data.length }),
-      },
-    };
-    const client = {
-      ...tx,
-      $transaction: async (fn: (t: any) => Promise<any>) => fn(tx),
-    };
-    return { prisma: { client } as any, reservations, events };
-  }
 
   /** Captures the body the client actually puts on the wire. */
   function captureFetch(response: unknown, ok = true) {

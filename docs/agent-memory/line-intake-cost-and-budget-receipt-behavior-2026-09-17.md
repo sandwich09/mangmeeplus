@@ -347,3 +347,120 @@ Re-verification on the final tree: `pnpm --filter @watchdog-bms/ai-gateway test`
 test` **1752/1752**; contracts **253/253**; acceptance rc=0 (api-behavior **1472/1472**,
 gateway-behavior **369/369**); `pnpm test:harness` **17/17**; ai-gateway and api `tsc --noEmit`
 rc=0; `git diff --check` clean.
+
+## Phase F combined regression — 2026-09-18
+
+Branch `codex/line-ai-remediation-f-combined-regression-20260917` (worktree
+`/private/tmp/mangmee-line-ai-remediation-f-20260917`), on top of A + B + C + D1 + E1a/b/c. Closes
+the plan's D2 bullet "Regression รวม NOGROUP + split denial + receipt persistence …" and the §3
+"Combined" row. TESTS first; one production defect was found and fixed minimally (below).
+
+**What is real.** `apps/api/src/modules/line-ai/application/use-cases/line-ai-combined-regression.spec.ts`
+(9 tests) drives the real `ProcessLineWebhookUseCase` through both public entry points (`execute`
+for text, `executeReceiptUpload` for a picture), with:
+
+- the real `LineAiLedgerService` over Phase A's FAITHFUL `FakeRedis` (raises `NOGROUP` for an absent
+  stream), not a stub ledger — so the NOGROUP admission and the append/ack lifecycle are exercised;
+- the real `AiGatewayClient`, the real `company-ai-usage-meter` admission, the real
+  `company-ai-budget-reservation` engine and the real `company-ocr-governance` read-count admission
+  over the SPLIT-capable in-memory client the gateway client's own spec uses;
+- the real `InternalAiBudgetController`, so `POST /internal/ai/budget-step` and `budget-settle` are
+  the production seams — called in-process by the fake gateway exactly where E1c calls them;
+- the real receipt persistence seams the webhook uses (upload intent/complete, pending media,
+  expense draft, `receiptOcrApply`).
+
+**What is faked.** `fetch` only, standing in for the AI Gateway process and behaving the way E1c
+made it behave: it reads `budgetEnvelope` off the body, wins its own invocation through
+`budget-step` for every call after the first, posts each invocation's evidence to `budget-settle`
+from the gateway side, and returns usage rows stamped with their own `invocationKey`. Plus the usual
+tenant/expense repository doubles and the two monkey-patched media methods every spec in the module
+patches. No cloud, LINE, provider, Redis or Postgres access.
+
+**Every scenario asserts five things from the same run** — terminal state + terminal CLASS,
+what was persisted and how many, usage events + month/bucket aggregates, reservation rows (no live
+hold left behind), and delivery (exactly one customer-visible reply, its typed copy, no money
+figure):
+
+1. Direct text on a brand-new chat (SHARED): NOGROUP confirmed on the exact key (`xpending` then
+   `exists`, nothing created), the turn reaches routing and is answered, 2 provider calls metered
+   (month + CHAT bucket = 20 satang), ZERO reservation rows and no `budgetEnvelope` on the wire,
+   the ledger entry appended and acked (empty PEL), no `marker_unavailable`.
+2. SPLIT, CHAT exhausted / OCR funded: the text turn ends `ai_budget_exceeded` /
+   `AI_MONTHLY_BUDGET_EXCEEDED` / scope `CHAT` / class `budget_refusal`, zero provider calls, zero
+   holds, nothing appended to the ledger, one Flex card reading "งบ AI ส่วนแชตของเดือนนี้ครบแล้ว".
+   The same user's picture then reads in the OCR bucket: 3 invocations (image intake + receipt read
+   + extract, the second won through the real `budget-step`), exactly ONE expense draft, all three
+   holds `SETTLED`, OCR bucket +30 satang, CHAT untouched, one read counted once.
+3. SPLIT, OCR exhausted / CHAT funded: the picture is refused before any provider call, Phase B's
+   fallback persists the BYTES (`createUploadIntent` → upload → `completeAttachmentUpload` → one
+   `LineIntakePendingMedia` row) with terminal `clarification_required` + `mediaState: retained` +
+   scope `OCR`, no expense draft, no OCR read count even ADMITTED (money is reserved first, R-05);
+   a text turn in the same month then runs and settles on CHAT.
+4. TOTAL exhausted: both lanes refuse with scope `TOTAL`, nothing spent, nothing held.
+5. Mid-chain refusal (OCR cap 80 funds the read at ordinal 0 but not the extract at ordinal 1):
+   the read's hold is `SETTLED`, there is NO child hold, both invocations that ran are billed, the
+   reply says "งบ AI ที่เหลือไม่พอเริ่มอ่านรูปนี้" and never "เต็ม/ครบ", no expense is claimed, and the OCR
+   read count was admitted and then compensated while the money stayed spent (R-05).
+6. Unavailable stores, all three fail closed with no provider call: Redis down on the ledger read
+   (`marker_unavailable`, reason `redis_unavailable`); the month-aggregate read throwing and the
+   reservation INSERT throwing both answer `AI_BUDGET_UNAVAILABLE` with the "ยังตรวจสอบงบ AI …" copy,
+   no hold, no usage and NO ledger append.
+7. Redelivery: the same `webhookEventId` twice is stopped by `claimWebhookEvent` (the row already
+   left `received`) — no second draft, no second provider call, no second reply; the same picture
+   under a NEW webhook event id resumes the existing capture and names the same expense; and the
+   same evidence posted a second time answers `duplicate`, so one usage row per invocation and the
+   aggregate moves once.
+8. Unknown outcome: the transport times out with no response, the turn's hold stays `DISPATCHED`
+   (held at the declared 44-satang `line-turn` bound for this model, never auto-released), the
+   customer gets the existing timeout copy, the ledger entry stays in the PEL for the reclaim
+   drain, and an identical retry is refused `AI_BUDGET_BUSY` with no third hold and no extra call.
+
+**PRODUCT DEFECT found and fixed (1 line + comment).** `tryExtractReceiptFields`
+(`process-line-webhook.use-case.ts`, the `result.status !== 'ok'` branch) dropped
+`ReceiptOcrResponse.budgetScope`. Only the thrown-429 path carried the scope, so a money refusal the
+GATEWAY reported in its response body — which is exactly what E1c's mid-chain `budget-step` refusal
+looks like — reached the media budget branch, the durable terminal row and the `line.ai.terminal`
+line with `budgetScope` absent, making a CHAT/OCR/TOTAL refusal indistinguishable in telemetry
+(spec §9.1/B-01 require code AND scope to survive every hop). Fixed by carrying
+`result.budgetScope`; scenario 5 is its focused regression and was verified RED without the fix and
+green with it.
+
+**Reusable fixtures extracted (no logic change).** Importing a spec file from another spec re-runs
+its whole suite, so the two fakes the combined suite had to reuse were moved to shared fixture
+modules on the `line-messaging-credentials.fixture.ts` precedent, and their owning specs now import
+them: `line-ai-ledger-redis.fixture.ts` (`FakeRedis`, `cmpId` — out of
+`line-ai-ledger.service.spec.ts`) and `company-ai-budget-prisma.fixture.ts` (`splitPrisma`,
+`SPLIT_FIXTURE_MODEL_ID` — out of `ai-gateway.client.spec.ts`). `splitPrisma` gained an `extra`
+parameter (extra delegates merged into its transaction object) and its month/bucket aggregates are
+now LIVE, so a settlement really moves them — needed to assert "OCR moved, CHAT did not", and the
+gateway client spec stays 34/34.
+
+**Verification** (each heavy run behind the `/tmp/mangmee-heavy.lock` mkdir mutex):
+
+```
+apps/api  tsx --test line-ai-combined-regression.spec.ts                     9/9
+apps/api  tsx --test spec-suite-coverage + combined + ledger + gateway-client
+          + reservation + meter + internal-ai-budget.controller   268 tests, 266 pass, 2 skipped (real-PG)
+apps/api  tsx --test process-line-webhook + line-intake-dispatch
+          + drain-line-ledger + line-ai-terminal-outcome.logic              711/711
+node scripts/run-line-ai-whole-chain-acceptance.mjs   rc=0, 0 `not ok`
+          api-behavior 1481/1481 (1472 + the 9 new), gateway-behavior 369/369,
+          catalog-contract 4/4, controlled-image-harness 4/4
+pnpm test:harness                                                            17/17
+pnpm --filter @watchdog-bms/api test    rc=0, 10,519 dots, zero failure markers
+cd apps/api && NODE_OPTIONS=--max-old-space-size=8192 npx tsc --noEmit       rc=0
+git diff --check                                                             clean
+```
+
+The new spec is registered in `scripts/line-ai-whole-chain-acceptance.catalog.mjs` (`api-behavior`),
+which `src/spec-suite-coverage.spec.ts` requires; `package.json` was not touched. No `*.pg.spec.ts`
+was added (the money side of scenarios 2 and 7 is already covered against real PostgreSQL by
+`company-ai-budget-reservation.pg.spec.ts`, so `ci.yml` is unchanged).
+
+**Limits — what this does NOT prove.** It is one process: `fetch`, Redis and Postgres are fakes, so
+it is not a substitute for the real-Redis lifecycle block (Phase A), the real-PostgreSQL concurrency
+block (E1b) or the UAT real-LINE journey X-02 still demands. The identical-retry half of scenario 8
+is driven at the `AiGatewayClient` seam rather than through the webhook, because the live LINE lanes
+pass a 25-second busy-wait deadline and `busy` IS the correct answer for a live hold — through the
+webhook that assertion would be a 25-second sleep. Spec §13 acceptance lines are therefore all still
+unticked; X-01 carries an annotation naming exactly what is proven in-process and what is left.
