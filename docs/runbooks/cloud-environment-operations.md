@@ -752,3 +752,36 @@ the property tests for both directions.
 
 Known gap: `apps/web/app/api/auth/login/route.ts` has the same shape and does NOT forward the chain
 yet. It is in the production maintenance pins, so changing it needs a pin re-sync in the same PR.
+
+## LINE ledger incident readback — 2026-09-17
+
+UAT source `1468ea7088a961af81ebce173df9a5d4028c96bd`, operation
+`20260917T103812Z-23d4190c`, returned the generic temporary-error reply at19:12Bangkok because
+`openWaitingUser` received Redis NOGROUP and the newer read guard failed closed before AI. This
+does not by itself distinguish expired/absent stream from an existing stream with a missing group.
+Do not flush Redis or recreate consumer groups as an unreviewed recovery shortcut.
+
+Production's running API task `3ea062c2ef024284b23ae384ef5d5c9d` remains source
+`fc2838c4cb691033f41595c0d43587f10377d33c`, ledger enabled, serving mode live; actual task digest,
+ECR source tag and Express active configuration agree. That source still logs Redis read failures
+and continues, so UAT's failure must not be assumed to explain a Production report. A complete
+19:00–19:20Bangkok API log window confirms a menu greeting at19:06 and a casual free-text reply
+accepted by LINE at19:10 after13.27s, despite NOGROUP. The reported screenshot's exact failed message
+is not yet correlated. A successful menu greeting never proves the AI path: it is deterministic.
+
+Existing non-root `watchdog-bedrock` reader can use `DescribeLogStreams`/`GetLogEvents` for this
+inspection; `StartQuery` was denied. A broad filtered scan timed out. Use bounded actual task-stream
+reads and check pagination; an empty filtered page with a next token is not absence of incidents.
+No cloud state changed. [Diagnosis, source/digest, private-log location and pending correlation](../agent-memory/uat-line-chat-nogroup-2026-09-17.md)
+and [remediation spec](../specs/line-ai-ledger-lifecycle-remediation-spec-th.md).
+
+Later owner timezone clarification: the image uses Korea time. Requested18:00–22:00KST equals
+09:00–13:00UTC; at collection time the complete available range ended12:30:29UTC/21:30:29KST.
+All8paged windows reconcile16accepted LINE events to16terminal outcomes. At20:29:00 and20:29:11KST,
+two real text turns were refused by monthly AI budget admission: the same company's metered spend
+was8062satang against an explicit company override of8000satang. The preceding NOGROUP was nonfatal
+on this deployed source. Menu/promotion replies at20:28–20:29 bypass model admission by design and
+still succeeded. The later21:10casual success is a different company; do not claim it proves recovery
+for the capped company. Exact screenshot actor is unverified, but the event timing/menu sequence
+matches. No budget, usage history, Redis or runtime setting changed. `ai_budget_exceeded` currently
+maps to generic `failed_terminal`; distinguish policy refusal from outage when triaging these logs.
