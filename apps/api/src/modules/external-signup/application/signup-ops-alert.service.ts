@@ -197,11 +197,14 @@ export class SignupOpsAlertService {
       // enforcement seams the moment an operator changed the platform default (§11.4).
       resolvePlatformAiBudget(this.prisma, this.config, true),
     ]);
-    const spentByCompany = new Map(usage.map((row) => [row.companyId, row.costSatang]));
     const rowByCompany = new Map(configurations.map((row) => [row.companyId, row]));
 
     let exhausted = 0;
-    for (const companyId of companyIds) {
+    // The USAGE rows, not the trial list: a company with no usage row this month has spent nothing,
+    // so no share of its budget was "hit". Iterating the trials instead would count every trial the
+    // moment the platform default sat at 0 satang (`0 >= 0`) — a daily false alarm about shops that
+    // have not used AI at all.
+    for (const { companyId, costSatang } of usage) {
       const row = rowByCompany.get(companyId);
       const totalSatang = row?.monthlyBudgetSatang ?? platform.monthlyBudgetSatang;
       // ponytail: the TOTAL comparison stays right here, on the two bulk reads. This sweep looks at
@@ -209,10 +212,16 @@ export class SignupOpsAlertService {
       // projection would turn 3 queries into ~2000. Only a company whose stored policy is SPLIT, or
       // whose pending policy might be unreadable, can be out of money with the total still open —
       // those few pay for the projection. Batch the bucket aggregates if trial counts ever grow.
-      if ((spentByCompany.get(companyId) ?? 0) >= totalSatang) { exhausted += 1; continue; }
+      if (costSatang >= totalSatang) { exhausted += 1; continue; }
       if ((row?.budgetMode ?? 'SHARED') === 'SHARED' && row?.pendingBudgetPolicy == null) continue;
       const money = await readAiBudgetReadiness(this.prisma.client, { companyId, monthKey, row, totalSatang });
-      if (money.total !== 'OK' || money.chat !== 'OK' || money.ocr !== 'OK') exhausted += 1;
+      // `EXHAUSTED` is a budget that ran out — the condition §15.6 (d) is about. `CLOSED` is an
+      // operator's own cap of 0: a decision, not an incident, and announcing it daily would train
+      // them to ignore this alert. `policyInvalid` refuses AI for the WHOLE company, so it counts.
+      if (money.policyInvalid
+        || money.total === 'EXHAUSTED' || money.chat === 'EXHAUSTED' || money.ocr === 'EXHAUSTED') {
+        exhausted += 1;
+      }
     }
 
     if (exhausted < threshold) return { exhausted, raised: false };

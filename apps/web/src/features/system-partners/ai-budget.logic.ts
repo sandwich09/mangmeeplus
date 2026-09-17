@@ -386,6 +386,29 @@ export function aiBudgetScopeRows(
 export const aiBudgetCapLabel = (capSatang: number | null): string =>
   capSatang === null ? 'ยังไม่ตั้ง' : capSatang === 0 ? 'ปิดส่วนนี้ (0 บาท)' : satangToBaht(capSatang);
 
+/**
+ * Money LEFT, which is a real number even at zero — an exhausted bucket reads ฿0.00, never
+ * "ปิดส่วนนี้" (that is a CAP of 0, a different fact). `null` is a SHARED bucket with no separate
+ * cap: what is left there is simply the shared total, not a setting somebody forgot.
+ */
+export const aiBudgetAvailableLabel = (availableSatang: number | null): string =>
+  availableSatang === null ? 'ตามงบรวม' : satangToBaht(availableSatang);
+
+/**
+ * During a rolling deploy this page can be served by a pre-E1a API, whose `budget` carries neither
+ * `policy` nor `position`. The contract types stay required — the current API always sends them —
+ * but the split panel must simply not render instead of throwing and taking the whole card down
+ * with a load error (the same tolerance {@link hasAiUsageBreakdown} gives the D1 breakdown).
+ */
+export function hasAiBudgetPolicy(
+  usage: { budget?: { policy?: unknown; position?: unknown } } | null | undefined,
+): boolean {
+  const budget = usage?.budget;
+  if (!budget) return false;
+  const isObject = (value: unknown) => typeof value === 'object' && value !== null;
+  return isObject(budget.policy) && isObject(budget.position);
+}
+
 /** Says what to fix, not just that something is wrong — this state refuses every AI call. */
 export function aiBudgetInvalidNotice(invalidReason: string | undefined): string | null {
   if (!invalidReason) return null;

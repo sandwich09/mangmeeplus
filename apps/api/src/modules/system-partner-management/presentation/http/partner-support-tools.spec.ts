@@ -303,7 +303,42 @@ describe('the timeline last line: why the assistant is refusing right now', () =
       const refusal = await line({ planTerm: liveTerm, aiConfig: split(9000, 7000) });
 
       assert.equal(refusal?.label, 'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
-      assert.match(refusal!.detail!, /ตั้งค่างบ AI ของร้านไม่ถูกต้อง/);
+      assert.match(refusal!.detail!, /การตั้งค่างบ AI ของร้านไม่ถูกต้อง/);
+      // The reason can be any of three, so this line must not assert one of them; it points at the
+      // page where the exact red notice lives.
+      assert.doesNotMatch(refusal!.detail!, /รวมกันไม่เกินงบรวม/);
+      assert.match(refusal!.detail!, /AI และโควตา/);
+    });
+
+    it('says BOTH shares are gone rather than promising the other one is still there', async () => {
+      // `C + O < T` on purpose (3000 + 6000 of 10000): both buckets can be full while the total,
+      // which is what the legacy line compared, still has 1000 satang of unallocated money.
+      const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 9000 },
+        aiConfig: split(3000, 6000),
+        aiBuckets: [{ bucket: 'CHAT', costSatang: 3000 }, { bucket: 'OCR', costSatang: 6000 }] });
+
+      assert.equal(refusal?.label, 'ตอนนี้ AI ยังทำงานให้ร้านไม่ได้');
+      assert.match(refusal!.detail!, /ทั้งส่วนแชตและส่วนอ่านเอกสาร/);
+      // Neither single-share claim may appear; naming the TOTAL as still funded is correct and is
+      // exactly why this is not the legacy TOTAL line.
+      assert.doesNotMatch(refusal!.detail!, /ส่วนอ่านเอกสารยังเหลือ|ส่วนแชตยังเหลือ/);
+    });
+
+    it('a cap of 0 reads as a share the operator closed, not as money that ran out', async () => {
+      const closed = await line({ planTerm: liveTerm, aiConfig: split(10000, 0) });
+      assert.equal(closed?.label, 'ตอนนี้ยังอ่านใบเสร็จด้วย AI ไม่ได้');
+      assert.match(closed!.detail!, /ตั้งเพดานงบ AI ส่วนอ่านเอกสารไว้ 0 บาท/);
+      assert.doesNotMatch(closed!.detail!, /ครบแล้ว/);
+
+      const chatClosed = await line({ planTerm: liveTerm, aiConfig: split(0, 10000) });
+      assert.equal(chatClosed?.label, 'ตอนนี้ยังคุยกับ AI ไม่ได้');
+      assert.match(chatClosed!.detail!, /ส่วนแชตไว้ 0 บาท/);
+    });
+
+    it('keeps the TOTAL line byte-identical to the legacy one', async () => {
+      const refusal = await line({ planTerm: liveTerm, aiUsage: { costSatang: 10000 },
+        aiConfig: split(3000, 7000) });
+      assert.equal(refusal?.detail, 'ใช้งบ AI ของเดือนนี้ครบแล้ว');
     });
 
     it('leaves a funded split shop with no refusal line at all', async () => {

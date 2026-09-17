@@ -10,7 +10,7 @@ import { AppConfigService } from '../../../../common/config/app-config.service';
 import { AuditAction } from '../../../audit/domain/models/audit-action';
 import { receiptQuotaSnapshot } from '../../../line-ai/application/company-ocr-governance';
 import { bangkokMonthKey, resolvePlatformAiBudget } from '../../../line-ai/application/company-ai-usage-meter';
-import { readAiBudgetReadiness } from '../../../line-ai/application/company-ai-budget-readiness';
+import { readAiBudgetReadiness, type AiBudgetScopeReadiness } from '../../../line-ai/application/company-ai-budget-readiness';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
 
 /** The audit rows that mean "somebody actually got into the web app for this shop" (§8). */
@@ -179,10 +179,16 @@ export class GetPartnerTimelineUseCase {
     // SHARED every scope below IS the total answer, so this shop's story reads exactly as before.
     const money=await readAiBudgetReadiness(this.prisma.client,{companyId,monthKey,row:aiConfig,
       totalSatang:aiConfig?.monthlyBudgetSatang??platform.monthlyBudgetSatang});
-    if(money.policyInvalid)return all('ตั้งค่างบ AI ของร้านไม่ถูกต้อง ผู้ดูแลต้องแก้เพดานแชตและอ่านเอกสารให้รวมกันไม่เกินงบรวมก่อน');
+    // The reason can be any of three (`SPLIT_CAPS_MISSING`, `SPLIT_EXCEEDS_TOTAL`,
+    // `POLICY_MALFORMED`), so this line must not assert one of them. The exact red notice with what
+    // to fix lives on the partner page, which is where the operator is going anyway.
+    if(money.policyInvalid)return all('การตั้งค่างบ AI ของร้านไม่ถูกต้อง ระบบจึงปฏิเสธการเรียก AI ทุกช่องทาง ดูเหตุผลและแก้ได้ที่หมวด AI และโควตา ของร้านนี้');
     if(money.total!=='OK')return all('ใช้งบ AI ของเดือนนี้ครบแล้ว');
-    if(money.chat!=='OK')return chat('ใช้งบ AI ส่วนแชตของเดือนนี้ครบแล้ว แต่ส่วนอ่านเอกสารยังเหลือ');
-    if(money.ocr!=='OK')return receipt('ใช้งบ AI ส่วนอ่านเอกสารของเดือนนี้ครบแล้ว แต่ส่วนแชตยังเหลือ');
+    // Both shares gone while the total still has money: neither a chat-only nor a receipt-only line
+    // is true, and saying "the other share is still there" would be a lie.
+    if(money.chat!=='OK'&&money.ocr!=='OK')return all('ใช้ AI ทั้งส่วนแชตและส่วนอ่านเอกสารของเดือนนี้ไม่ได้แล้ว แม้งบรวมจะยังเหลือ ดูเพดานแต่ละส่วนได้ที่หมวด AI และโควตา');
+    if(money.chat!=='OK')return chat(shareDetail(money.chat,'แชต','ส่วนอ่านเอกสารยังเหลือ'));
+    if(money.ocr!=='OK')return receipt(shareDetail(money.ocr,'อ่านเอกสาร','ส่วนแชตยังเหลือ'));
     if(entitled!==null&&!entitled.has('expenses.upload'))return receipt('ร้านยังไม่ได้เปิดสิทธิ์อัปโหลดใบเสร็จ');
     if(aiConfig?.ocrEnabled===false)return receipt('ผู้ดูแลปิดการอ่านเอกสารด้วย AI ไว้');
     if(aiConfig?.ocrMonthlyLimit!=null&&(ocrUsage?.usedCount??0)>=aiConfig.ocrMonthlyLimit)return receipt('ใช้จำนวนครั้งอ่านเอกสารของเดือนนี้ครบแล้ว');
@@ -203,6 +209,16 @@ const PACKAGE_CHANGE_STATUS_TH: Record<string, string> = {
 
 function sourceLabel(source: string): string {
   return source === 'line-oa' ? 'สมัครจาก LINE' : 'สมัครจากเว็บ';
+}
+
+/**
+ * One share of a SPLIT budget, in the customer's terms. `CLOSED` is a cap of 0 that an operator
+ * chose — saying "ใช้ครบแล้ว" for it would send support hunting for spend that never happened.
+ */
+function shareDetail(state: AiBudgetScopeReadiness, share: string, rest: string): string {
+  return state === 'CLOSED'
+    ? `ผู้ดูแลตั้งเพดานงบ AI ส่วน${share}ไว้ 0 บาท จึงยังใช้ส่วนนี้ไม่ได้`
+    : `ใช้งบ AI ส่วน${share}ของเดือนนี้ครบแล้ว แต่${rest}`;
 }
 
 function latest(...dates: Array<Date | undefined>): Date | undefined {

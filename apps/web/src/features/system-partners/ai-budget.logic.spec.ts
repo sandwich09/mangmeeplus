@@ -6,6 +6,7 @@ import {
   AI_BUDGET_RESERVED_NOTE,
   AI_BUDGET_SPLIT_DISABLED_NOTE,
   AI_BUDGET_STALE_MESSAGE,
+  aiBudgetAvailableLabel,
   aiBudgetCapLabel,
   aiBudgetCurrentMonthKey,
   aiBudgetDraftChanged,
@@ -15,6 +16,7 @@ import {
   aiBudgetPendingText,
   aiBudgetScopeRows,
   canManageAiBudget,
+  hasAiBudgetPolicy,
   isAiBudgetPolicyConflict,
   nextAiBudgetMonthKey,
   parseAiBudgetCapInput,
@@ -337,6 +339,29 @@ describe('split AI budget policy helpers', () => {
     assert.equal(aiBudgetCapLabel(null), 'ยังไม่ตั้ง');
     assert.match(aiBudgetCapLabel(0), /ปิดส่วนนี้/);
     assert.equal(aiBudgetCapLabel(3000), '฿30.00');
+  });
+
+  it('shows money left as a number even at zero, and never as a missing setting', () => {
+    // An exhausted bucket has ฿0.00 LEFT. Rendering that through the CAP label read
+    // "ปิดส่วนนี้ (0 บาท)", which is a different fact (an admin's cap of 0).
+    assert.equal(aiBudgetAvailableLabel(0), '฿0.00');
+    assert.equal(aiBudgetAvailableLabel(3000), '฿30.00');
+    // A SHARED bucket has no separate cap, so what is left there IS the shared total.
+    assert.equal(aiBudgetAvailableLabel(null), 'ตามงบรวม');
+    assert.notEqual(aiBudgetAvailableLabel(null), aiBudgetCapLabel(null));
+    assert.notEqual(aiBudgetAvailableLabel(0), aiBudgetCapLabel(0));
+  });
+
+  it('drops the panel instead of throwing when a pre-E1a API serves the page', () => {
+    const position = { total: {}, chat: {}, ocr: {} };
+    assert.equal(hasAiBudgetPolicy({ budget: { policy: { mode: 'SHARED' }, position } }), true);
+    // A rolling deploy can serve this card from an API that predates the split policy entirely.
+    assert.equal(hasAiBudgetPolicy({ budget: {} }), false);
+    assert.equal(hasAiBudgetPolicy({ budget: { policy: { mode: 'SHARED' } } }), false);
+    assert.equal(hasAiBudgetPolicy({ budget: { position } }), false);
+    assert.equal(hasAiBudgetPolicy({ budget: { policy: null, position } }), false);
+    assert.equal(hasAiBudgetPolicy({}), false);
+    assert.equal(hasAiBudgetPolicy(null), false);
   });
 
   it('says what to fix for every invalid policy, and nothing when the policy is fine', () => {

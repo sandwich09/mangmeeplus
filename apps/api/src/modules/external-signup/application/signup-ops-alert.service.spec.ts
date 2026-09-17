@@ -235,6 +235,39 @@ describe('SignupOpsAlertService.sweepTrialBudgets — §15.6 (d)', () => {
     );
   });
 
+  // The legacy domain, which the D2 rewrite briefly lost: the old loop walked the month's USAGE
+  // rows, so a shop with no usage row was never counted. With a platform default of 0 satang a loop
+  // over trials counts EVERY trial (`0 >= 0`) — a daily false alarm about shops that never used AI.
+  it('never counts a trial with no usage row this month, even at a budget of 0', async () => {
+    const zeroBudget = { platformBudget: { monthlyBudgetSatang: 0, ceilingSatang: 100000 } };
+    assert.deepEqual(
+      await harness({ ...zeroBudget, threshold: 1, trials: trials(3), usage: [] })
+        .service.sweepTrialBudgets(EVENING),
+      { exhausted: 0, raised: false },
+    );
+    // ...but a shop that DID spend against that budget is still counted, exactly as before.
+    assert.deepEqual(
+      await harness({ ...zeroBudget, threshold: 1, trials: trials(3), usage: [{ companyId: 'co-0', costSatang: 0 }] })
+        .service.sweepTrialBudgets(EVENING),
+      { exhausted: 1, raised: true },
+    );
+  });
+
+  // An operator's own cap of 0 is a decision, not an incident: announcing it every day would train
+  // them to ignore this alert.
+  it('does not count a bucket the operator closed with a cap of 0', async () => {
+    const h = harness({
+      threshold: 1, trials: trials(1),
+      overrides: [{
+        companyId: 'co-0', monthlyBudgetSatang: 10000, budgetMode: 'SPLIT',
+        chatMonthlyBudgetSatang: 10000, ocrMonthlyBudgetSatang: 0, budgetConfigVersion: 1,
+      }],
+      usage: [{ companyId: 'co-0', costSatang: 10 }],
+      buckets: [{ companyId: 'co-0', bucket: 'CHAT', costSatang: 10 }],
+    });
+    assert.deepEqual(await h.service.sweepTrialBudgets(EVENING), { exhausted: 0, raised: false });
+  });
+
   // R-10: a trial whose OCR share is gone has hit its AI budget, even though the total has money.
   it('counts a SPLIT trial whose bucket is gone while its total still has money', async () => {
     const splitRow = {
