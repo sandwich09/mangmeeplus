@@ -661,3 +661,92 @@ describe('DrainLineLedgerUseCase finally-flush (mutation-proved)', () => {
     assert.equal(JSON.stringify(warns).includes('c1-secret'), false);
   });
 });
+
+/**
+ * Remediation spec §9.4 / impact review F-08, criterion R-09.
+ *
+ * A 429 from our own money gate used to escape into `execute`'s generic catch: the entry stayed
+ * unacked, was reclaimed until `lineAiLedgerDeliveryCap`, and ended as
+ * `LINE_LEDGER_DELIVERY_CAP_EXCEEDED` / `failed_terminal` — a permanent refusal retried as if it
+ * were transient, with its reason rewritten on the way out.
+ */
+describe('drain: a permanent money refusal is an answer, not a retry (§9.4)', () => {
+  const budgetThrow = (code: string) => () => {
+    const error: any = new Error(code);
+    error.getStatus = () => 429;
+    error.getResponse = () => ({ code, budgetScope: 'TOTAL' });
+    throw error;
+  };
+  /** Older than LINE_AI_CONTEXT_WINDOW_MINUTES, so nobody is still waiting on this turn. */
+  const STALE = new Date(NOW.getTime() - 60 * 60 * 1000).toISOString();
+
+  for (const code of ['AI_MONTHLY_BUDGET_EXCEEDED', 'AI_BUDGET_INSUFFICIENT']) {
+    it(`tells an in-window turn once and finishes it durably: ${code}`, async () => {
+      const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }], turnFn: budgetThrow(code) });
+
+      const result = await h.useCase.execute(20, NOW);
+
+      assert.equal(result.refused, 1);
+      assert.equal(h.pushes.length, 1, 'exactly one notice, not one per reclaim');
+      assert.match(h.pushes[0].text, code === 'AI_BUDGET_INSUFFICIENT' ? /งบ AI ที่เหลือของเดือนนี้ไม่พอ/ : /โควตา AI ของแพ็กเกจเดือนนี้ครบแล้ว/);
+      assert.deepEqual(h.acks, [{ id: '1-0', outcome: 'refused' }]);
+      assert.deepEqual(h.ackReasons, [code]);
+      // The durable event row keeps the money reason, not the delivery-cap story.
+      const errorCodes = h.eventUpdates.map((update: any) => update.data.errorCode);
+      assert.ok(errorCodes.includes(code), `expected ${code} in ${JSON.stringify(errorCodes)}`);
+      assert.equal(errorCodes.includes('LINE_LEDGER_DELIVERY_CAP_EXCEEDED'), false);
+      assert.equal(h.eventUpdates.at(-1).data.status, code === 'AI_BUDGET_INSUFFICIENT' ? 'ai_budget_insufficient' : 'ai_budget_exceeded');
+    });
+  }
+
+  it('never sends an unsolicited notice for a stale turn or a sub_request', async () => {
+    for (const claim of [entry({ kind: 'turn', createdAt: STALE }), entry({ kind: 'sub_request', createdAt: STALE })]) {
+      const h = makeUseCase({ claims: [{ entry: claim, deliveryCount: 1, idleMs: 10_000 }], turnFn: budgetThrow('AI_MONTHLY_BUDGET_EXCEEDED') });
+
+      const result = await h.useCase.execute(20, NOW);
+
+      assert.equal(result.refused, 1, `${claim.kind} must finish, not loop`);
+      assert.deepEqual(h.pushes, [], `${claim.kind}: nobody is waiting on this one`);
+      assert.deepEqual(h.ackReasons, ['AI_MONTHLY_BUDGET_EXCEEDED']);
+    }
+  });
+
+  it('does not revive itself on the next drain after the money is topped up', async () => {
+    const claims = [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }];
+    let refuse = true;
+    const h = makeUseCase({ claims, turnFn: (req: any) => {
+      if (refuse) budgetThrow('AI_MONTHLY_BUDGET_EXCEEDED')();
+      return { requestId: req.requestId, replyText: 'ยอดค้าง 5,000 บาท', sourceRefs: [], sourceLabels: [], webLinks: [],
+        intent: 'read_summary', agent: 'accounting', refused: false, toolsInvoked: [], durationMs: 5 };
+    } });
+
+    await h.useCase.execute(20, NOW);
+    refuse = false; // a top-up, or simply the next month
+    await h.useCase.execute(20, NOW);
+
+    assert.equal(h.turnRequests.length, 1, 'the finished refusal must not buy a second model execution');
+    assert.equal(h.pushes.length, 1, 'and must not answer the same turn twice');
+  });
+
+  for (const code of ['AI_BUDGET_BUSY', 'AI_BUDGET_UNAVAILABLE']) {
+    it(`still holds ${code} for the existing bounded reclaim`, async () => {
+      const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 1, idleMs: 10_000 }], turnFn: budgetThrow(code) });
+
+      const result = await h.useCase.execute(20, NOW);
+
+      assert.equal(result.refused, 0);
+      assert.deepEqual(h.acks, [], 'left unacked on purpose: the reclaim owns it, capped as before');
+      assert.deepEqual(h.pushes, []);
+      assert.equal(h.warnings.at(-1)?.msg, 'ai.line.ledger.follow_up_failed');
+    });
+  }
+
+  it('still parks a genuinely poisonous entry at the delivery cap', async () => {
+    const h = makeUseCase({ claims: [{ entry: entry({ kind: 'turn' }), deliveryCount: 9, idleMs: 10_000 }], turnFn: budgetThrow('AI_MONTHLY_BUDGET_EXCEEDED') });
+
+    const result = await h.useCase.execute(20, NOW);
+
+    assert.equal(result.parked, 1, 'the cap check runs before the model, exactly as before');
+    assert.equal(h.turnRequests.length, 0);
+  });
+});

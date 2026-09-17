@@ -179,7 +179,10 @@ export const CUSTOMER_JOURNEY_SIGNALS = [
     numerator: { name: 'line.ai.terminal', source: 'structured_log', selector: 'msg=line.ai.terminal AND terminalClass=delivered', timestampField: 'logTimestamp' },
     correlationKey: 'webhookEventId', terminalOutcomeField: 'terminalClass',
     successTerminalValues: ['delivered'],
-    neutralTerminalValues: ['clarification', 'intentional_noop', 'permission_refusal', 'feature_disabled'],
+    // `budget_refusal` is NEUTRAL: the company's monthly AI money ran out, the turn said so and the
+    // card was delivered. Counting it as a failure would page on a policy decision working exactly
+    // as designed; counting it as success would hide that the shop got no answer (spec §9.3).
+    neutralTerminalValues: ['clarification', 'intentional_noop', 'permission_refusal', 'feature_disabled', 'budget_refusal'],
     failureTerminalValues: ['provider_unavailable', 'timeout', 'delivery_pending', 'failed_terminal'],
     latencyClock: { start: 'line.ai.accepted.logTimestamp', end: 'line.ai.terminal.logTimestamp', coverage: 'LIVE' },
     severity: 'CRITICAL', runbook: `${RUNBOOK}#line-ai-answer`, target: null,

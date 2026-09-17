@@ -14,7 +14,7 @@ import { LineReadEvidenceService } from '../line-read-evidence.service';
 import { LineLedgerDeliveryService, lineLedgerDeliveryId, type LineLedgerClaim, type LineLedgerCompletion } from '../line-ledger-delivery.service';
 import { randomUUID } from 'node:crypto';
 import type { LineAiTurnRequest, LineUserContext } from '@watchdog-bms/contracts';
-import { LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, LINE_AI_CONTEXT_WINDOW_MINUTES, LINE_AI_ERROR_CODES, isAiBudgetPermanentRefusal, isAiBudgetRefusalCode, type AiBudgetRefusalCode } from '@watchdog-bms/contracts';
 import { Prisma } from '../../../../generated/prisma/client';
 import { PrismaService } from '../../../../common/database/prisma.service';
 import { AppConfigService } from '../../../../common/config/app-config.service';
@@ -27,9 +27,9 @@ import { buildLineBusinessAnswerMessage } from '../../domain/logic/line-business
 import { LineAiLedgerService, type LedgerEntry } from '../line-ai-ledger.service';
 import { formatLineReply, lineAssistantDisabledFor } from './process-line-webhook.use-case';
 import { loadEntitledFeatureKeys } from '../../../employee-access/application/entitlement.helper';
-import { formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
+import { formatAiBudgetRefusalNotice, formatRefusal } from '../../domain/logic/line-ai-formatter.logic';
 import { resolveCompanyAiModelPolicy } from '../company-ai-model-policy';
-import { emitLineAiTerminalOutcome, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
+import { emitLineAiTerminalOutcome, knownAiBudgetRefusal, terminalStatusForLineTurn } from '../../domain/logic/line-ai-terminal-outcome.logic';
 import { LineHandoffLinkService } from '../line-handoff-link.service';
 import { lineDeliveryAccessFingerprint, lineDeliveryRecipientHash } from '../line-delivery-access';
 
@@ -64,6 +64,17 @@ const LEDGER_FEATURE_KEY = 'ai_line_assistant';
  * of a chat with one open question looked like a delivery incident (UAT 2026-09-05, 11:47:00Z).
  */
 class LedgerEntryHeldError extends Error {}
+
+/** A refusal this drain can compose itself, with no model call and no read evidence. */
+type StaticRefusalReason = 'feature_disabled' | 'forbidden' | AiBudgetRefusalCode;
+
+const isStaticRefusalReason = (value: unknown): value is StaticRefusalReason =>
+  value === 'feature_disabled' || value === 'forbidden' || isAiBudgetRefusalCode(typeof value === 'string' ? value : undefined);
+
+/** The ONE place that says what a stored static refusal must contain, so the producer above and the
+ *  pre-send integrity check below can never disagree about its exact text. */
+const staticRefusalText = (reason: StaticRefusalReason): string =>
+  reason === 'feature_disabled' || reason === 'forbidden' ? formatRefusal(reason) : formatAiBudgetRefusalNotice(reason);
 
 @Injectable()
 export class DrainLineLedgerUseCase {
@@ -219,7 +230,30 @@ export class DrainLineLedgerUseCase {
       // business turn that lost it gets the "out of scope" answer the live turn would not have given.
       ...(entry.intakeIntent ? { intakeIntent: entry.intakeIntent } : {}),
     };
-    const response = await this.aiGateway.requestLineTurn(turnRequest);
+    let response: Awaited<ReturnType<AiGatewayClient['requestLineTurn']>>;
+    try {
+      response = await this.aiGateway.requestLineTurn(turnRequest);
+    } catch (err) {
+      // §9.4 / F-08: a PERMANENT money refusal is an answer, not a transient fault. It used to land
+      // in `execute`'s generic catch, stay unacked, be reclaimed until `lineAiLedgerDeliveryCap` and
+      // finish as LINE_LEDGER_DELIVERY_CAP_EXCEEDED / failed_terminal — a refusal retried as if
+      // waiting could help, with its reason rewritten on the way out. Finish it here through the
+      // SAME delivery owner every other terminal refusal uses. Busy/unavailable deliberately fall
+      // through to the existing hold+reclaim, bounded by that same cap, keeping their own reason.
+      const budget = knownAiBudgetRefusal(err);
+      if (!budget || !isAiBudgetPermanentRefusal(budget.code)) throw err;
+      const status = budget.code === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded';
+      // A `turn` still inside the reply window has a real person waiting: tell them once. A stale
+      // turn or a `sub_request` gets no unsolicited push — nobody is waiting on those.
+      if (entry.kind === 'turn' && this.inContextWindow(entry, now)) {
+        return this.sendStaticRefusal(entry, claim, deliveryCount, budget.code);
+      }
+      if (entry.kind === 'turn') await this.finalizeSourceEvent(entry, status, budget.code);
+      if (!await this.deliveryStore.finish(claim, 'REFUSED', budget.code)) throw new LedgerEntryHeldError('queued delivery lease changed');
+      // Terminal ack: topping the budget up or a new month must not revive this entry by itself.
+      await this.ledger.ack(entry, 'refused', { reason: budget.code });
+      return 'refused';
+    }
     const sourceIds = await this.readEvidence.forTurn(turnRequest, response).catch(() => null);
 
     const text = formatLineReply(response, this.config.webBaseUrl);
@@ -262,11 +296,20 @@ export class DrainLineLedgerUseCase {
     return true;
   }
 
-  private async sendStaticRefusal(entry: LedgerEntry, claim: LineLedgerClaim, deliveryCount: number, reason: 'feature_disabled' | 'forbidden'): Promise<'followedUp' | 'refused' | 'parked'> {
-    const text = formatRefusal(reason);
-    const completion: LineLedgerCompletion = { status: reason, refused: true,
-      errorCode: reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
-      replyPreview: text.slice(0, 240), toolCount: 0, outcome: 'refused', reason: reason === 'feature_disabled' ? reason : 'identity_or_permission_revoked' };
+  private async sendStaticRefusal(entry: LedgerEntry, claim: LineLedgerClaim, deliveryCount: number, reason: StaticRefusalReason): Promise<'followedUp' | 'refused' | 'parked'> {
+    const text = staticRefusalText(reason);
+    const budget = isAiBudgetRefusalCode(reason);
+    const completion: LineLedgerCompletion = {
+      status: budget
+        ? (reason === AI_BUDGET_REFUSAL_CODES.insufficient ? 'ai_budget_insufficient' : 'ai_budget_exceeded')
+        : reason,
+      refused: true,
+      // The money code IS the durable reason (spec §9.1); replaying this attempt must reuse it
+      // rather than re-derive an answer from whatever the budget says later.
+      errorCode: budget ? reason : reason === 'feature_disabled' ? LINE_AI_ERROR_CODES.UNSUPPORTED_MODULE : LINE_AI_ERROR_CODES.FORBIDDEN,
+      replyPreview: text.slice(0, 240), toolCount: 0, outcome: 'refused',
+      reason: budget ? reason : reason === 'feature_disabled' ? reason : 'identity_or_permission_revoked',
+    };
     if (!await this.saveDelivery(claim, [this.lineReply.buildTextMessage(text)], { v: 1, staticRefusal: reason }, completion)) throw new LedgerEntryHeldError('queued refusal producer lease expired');
     return this.sendSavedDelivery(entry, claim, deliveryCount);
   }
@@ -279,8 +322,8 @@ export class DrainLineLedgerUseCase {
     }
     const messages = parseOutcomeMessages(claim.row.messagesJson);
     const marker = (claim.row.authorizationJson as { staticRefusal?: string } | null)?.staticRefusal;
-    const staticRefusal = (marker === 'feature_disabled' || marker === 'forbidden') && messages?.length === 1
-      && messages[0].type === 'text' && messages[0].text === formatRefusal(marker) && !messages[0].quickReply;
+    const staticRefusal = isStaticRefusalReason(marker) && messages?.length === 1
+      && messages[0].type === 'text' && messages[0].text === staticRefusalText(marker) && !messages[0].quickReply;
     const current = messages && (freshlyVerified || staticRefusal || await this.readEvidence.verifyDelivery(claim.row.authorizationJson, {
       webhookEventId: entry.webhookEventId || entry.id, lineUserId: entry.chatKey, chatId: entry.chatKey,
       channelId: entry.messagingChannelId ?? this.config.lineMessagingChannelId ?? '',

@@ -4,6 +4,7 @@ import {
   CRM_AI_CUSTOMER_RISKS,
   CRM_AI_MAX_WINDOW,
   CRM_AI_SENTIMENTS,
+  isAiBudgetPermanentRefusal,
   type CrmAiCustomerRisk,
   type CrmAiSentiment,
   type CrmAiWindowMessage,
@@ -20,6 +21,7 @@ import { assertConversationInScope, conversationReadActorScope } from '../crm-in
 import { PrismaCrmInboxRepository } from '../../infrastructure/prisma-crm-inbox.repository';
 import { CrmAiContextRepository, type CrmAiWindowMessageRow } from '../../infrastructure/crm-ai-context.repository';
 import { CrmAiGatewayClient } from '../../infrastructure/crm-ai-gateway.client';
+import { knownAiBudgetRefusal } from '../../../line-ai/domain/logic/line-ai-terminal-outcome.logic';
 import type { CrmConversationRecord } from '../../domain/models/crm-inbox.model';
 import { trustTierOf } from '../../domain/logic/crm-ai-trust.logic';
 
@@ -61,7 +63,20 @@ async function callOrUnavailable<T>(
   try {
     return await fn();
   } catch (err) {
-    logger.warn({ msg: 'crm-ai assist degraded to unavailable', requestId, error: (err as Error).message });
+    // §9.4: the company's monthly AI MONEY is one of the things that lands here, and it is NOT a
+    // transient outage — offering "ลองใหม่ได้อีกครั้ง" for it invites the operator to keep pressing a
+    // button that cannot work this month. It keeps its own code and is never marked retryable.
+    const budget = knownAiBudgetRefusal(err);
+    logger.warn({ msg: 'crm-ai assist degraded to unavailable', requestId,
+      ...(budget ? { budgetErrorCode: budget.code } : {}), error: (err as Error).message });
+    if (budget && isAiBudgetPermanentRefusal(budget.code)) {
+      return {
+        requestId,
+        status: 'unavailable',
+        error: { code: 'PROVIDER_BUDGET_EXHAUSTED', message: budget.code, retryable: false,
+          ...(budget.budgetScope ? { budgetScope: budget.budgetScope } : {}) },
+      };
+    }
     return unavailable(requestId);
   }
 }
