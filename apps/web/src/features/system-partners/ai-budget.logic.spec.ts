@@ -2,6 +2,24 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AI_BUDGET_BUCKET_LABELS,
+  AI_BUDGET_MODE_LABELS,
+  AI_BUDGET_RESERVED_NOTE,
+  AI_BUDGET_SPLIT_DISABLED_NOTE,
+  AI_BUDGET_STALE_MESSAGE,
+  aiBudgetCapLabel,
+  aiBudgetCurrentMonthKey,
+  aiBudgetDraftChanged,
+  aiBudgetDraftFromPolicy,
+  aiBudgetInvalidNotice,
+  aiBudgetMonthOptions,
+  aiBudgetPendingText,
+  aiBudgetScopeRows,
+  canManageAiBudget,
+  isAiBudgetPolicyConflict,
+  nextAiBudgetMonthKey,
+  parseAiBudgetCapInput,
+  reloadAfterAiBudgetConflict,
+  validateAiBudgetDraft,
   AI_REQUEST_KIND_LABELS,
   AI_USAGE_BASIS_LABELS,
   aiAverageCostLabel,
@@ -221,5 +239,158 @@ describe('AI usage breakdown labels (remediation spec §11.1)', () => {
     assert.equal(hasAiUsageBreakdown({}), false);
     assert.equal(hasAiUsageBreakdown({ breakdown: null }), false);
     assert.equal(hasAiUsageBreakdown(null), false);
+  });
+});
+
+// ── Split CHAT/OCR budget policy (remediation spec §11.3, §12.4, §12.5) ──────
+
+describe('split AI budget policy helpers', () => {
+  const month = (monthKey: string) => `เดือน ${monthKey}`;
+  const shared = { mode: 'SHARED', chatCapSatang: null, ocrCapSatang: null, pending: null };
+  const split = { mode: 'SPLIT', chatCapSatang: 3000, ocrCapSatang: 7000, pending: null };
+
+  it('parses a cap in baht, where 0 closes the bucket and empty is not "unlimited"', () => {
+    assert.deepEqual(parseAiBudgetCapInput('30'), { ok: true, satang: 3000 });
+    // Satang survive exactly: '30.50' must not drift to 3049.999.
+    assert.deepEqual(parseAiBudgetCapInput('30.50'), { ok: true, satang: 3050 });
+    assert.deepEqual(parseAiBudgetCapInput(' 0 '), { ok: true, satang: 0 });
+    for (const bad of ['', '  ', '-5', '30.505', 'abc', '1e3']) {
+      assert.equal(parseAiBudgetCapInput(bad).ok, false, bad);
+    }
+    assert.match((parseAiBudgetCapInput('') as { notice: string }).notice, /ใส่ 0/);
+  });
+
+  it('offers this Bangkok month and the next, from the month the SERVER pinned', () => {
+    // Never the browser clock: it disagrees with the server around midnight and across time zones.
+    assert.equal(aiBudgetCurrentMonthKey({ breakdown: { monthKey: '2026-09' }, ocr: { current: { monthKey: '2026-08' } } }), '2026-09');
+    assert.equal(aiBudgetCurrentMonthKey({ ocr: { current: { monthKey: '2026-08' } } }), '2026-08');
+    assert.deepEqual(aiBudgetMonthOptions('2026-09'), [
+      { monthKey: '2026-09', current: true }, { monthKey: '2026-10', current: false },
+    ]);
+    // December rolls the year.
+    assert.equal(nextAiBudgetMonthKey('2026-12'), '2027-01');
+    assert.equal(nextAiBudgetMonthKey('2026-01'), '2026-02');
+  });
+
+  it('prefills the form from the SAVED policy, in baht, satang included', () => {
+    assert.deepEqual(aiBudgetDraftFromPolicy(shared, '2026-09'),
+      { mode: 'SHARED', chat: '', ocr: '', effectiveMonthKey: '2026-09' });
+    assert.deepEqual(aiBudgetDraftFromPolicy({ ...split, chatCapSatang: 3050 }, '2026-09'),
+      { mode: 'SPLIT', chat: '30.50', ocr: '70', effectiveMonthKey: '2026-09' });
+    // A cap of 0 is a real saved value, not an empty field.
+    assert.equal(aiBudgetDraftFromPolicy({ ...split, ocrCapSatang: 0 }, '2026-09').ocr, '0');
+  });
+
+  it('mirrors the server: SPLIT needs both caps, and C + O <= the SAVED total', () => {
+    const saved = { totalSatang: 10000, monthOptions: ['2026-09', '2026-10'] };
+    const draft = { mode: 'SPLIT' as const, chat: '30', ocr: '70', effectiveMonthKey: '2026-09' };
+
+    assert.deepEqual(validateAiBudgetDraft(draft, saved), {
+      ok: true,
+      policy: { mode: 'SPLIT', chatMonthlyBudgetSatang: 3000, ocrMonthlyBudgetSatang: 7000, effectiveMonthKey: '2026-09' },
+    });
+    // Exactly the total still fits; one satang more does not.
+    assert.equal(validateAiBudgetDraft({ ...draft, ocr: '70.01' }, saved).ok, false);
+    assert.match((validateAiBudgetDraft({ ...draft, ocr: '80' }, saved) as { notice: string }).notice, /เกินงบรวมที่บันทึกไว้/);
+    // Both caps are required — an empty one is never read as "no cap on that bucket".
+    assert.match((validateAiBudgetDraft({ ...draft, ocr: '' }, saved) as { notice: string }).notice, /เพดานอ่านเอกสาร/);
+    assert.match((validateAiBudgetDraft({ ...draft, chat: '' }, saved) as { notice: string }).notice, /เพดานแชต/);
+    // Only this month or the next.
+    assert.equal(validateAiBudgetDraft({ ...draft, effectiveMonthKey: '2026-11' }, saved).ok, false);
+    // SHARED clears both caps rather than sending whatever is still typed in the boxes.
+    assert.deepEqual(validateAiBudgetDraft({ ...draft, mode: 'SHARED' }, saved), {
+      ok: true,
+      policy: { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: '2026-09' },
+    });
+  });
+
+  it('keeps Save disabled until something actually changes, per target month', () => {
+    const current = { mode: 'SPLIT' as const, chat: '30', ocr: '70', effectiveMonthKey: '2026-09' };
+    assert.equal(aiBudgetDraftChanged(current, split, '2026-09'), false);
+    assert.equal(aiBudgetDraftChanged({ ...current, ocr: '69' }, split, '2026-09'), true);
+    assert.equal(aiBudgetDraftChanged({ ...current, mode: 'SHARED' }, split, '2026-09'), true);
+
+    // A draft aimed at NEXT month is compared with the pending policy, exactly as the writer does.
+    const scheduled = { ...current, effectiveMonthKey: '2026-10' };
+    assert.equal(aiBudgetDraftChanged(scheduled, split, '2026-09'), true);
+    const pending = { ...split, pending: { mode: 'SPLIT', chatMonthlyBudgetSatang: 3000, ocrMonthlyBudgetSatang: 7000, effectiveMonthKey: '2026-10' } };
+    assert.equal(aiBudgetDraftChanged(scheduled, pending, '2026-09'), false);
+    assert.equal(aiBudgetDraftChanged({ ...scheduled, ocr: '69' }, pending, '2026-09'), true);
+    // An unparseable draft is not "unchanged": the operator must be able to press Save and hear why.
+    assert.equal(aiBudgetDraftChanged({ ...current, ocr: 'x' }, split, '2026-09'), true);
+  });
+
+  it('builds the saved money position per scope, with SHARED buckets left unset', () => {
+    const position = {
+      total: { spentSatang: 4000, reservedSatang: 500, availableSatang: 5500 },
+      chat: { spentSatang: 1000, reservedSatang: 0, availableSatang: 2000 },
+      ocr: { spentSatang: 3000, reservedSatang: 500, availableSatang: 3500 },
+    };
+    const rows = aiBudgetScopeRows({ effectiveSatang: 10000, policy: split, position });
+    assert.deepEqual(rows.map((row) => row.capSatang), [10000, 3000, 7000]);
+    assert.deepEqual(rows.map((row) => row.key), ['total', 'chat', 'ocr']);
+    assert.equal(rows[2]!.reservedSatang, 500);
+
+    // Under SHARED a bucket has no cap to subtract from: "not set", never "unlimited" (§12.1).
+    const sharedRows = aiBudgetScopeRows({ effectiveSatang: 10000, policy: shared, position });
+    assert.deepEqual(sharedRows.map((row) => row.capSatang), [10000, null, null]);
+    assert.equal(aiBudgetCapLabel(null), 'ยังไม่ตั้ง');
+    assert.match(aiBudgetCapLabel(0), /ปิดส่วนนี้/);
+    assert.equal(aiBudgetCapLabel(3000), '฿30.00');
+  });
+
+  it('says what to fix for every invalid policy, and nothing when the policy is fine', () => {
+    assert.equal(aiBudgetInvalidNotice(undefined), null);
+    for (const reason of ['SPLIT_CAPS_MISSING', 'SPLIT_EXCEEDS_TOTAL', 'POLICY_MALFORMED']) {
+      const notice = aiBudgetInvalidNotice(reason)!;
+      assert.match(notice, /ปฏิเสธการเรียก AI/);
+      assert.match(notice, /บันทึก/);
+    }
+    // An unknown future reason still tells the operator what to do rather than rendering a code.
+    assert.doesNotMatch(aiBudgetInvalidNotice('SOMETHING_NEW')!, /SOMETHING_NEW/);
+  });
+
+  it('shows a scheduled policy as "เริ่มเดือน …", apart from what is in force', () => {
+    assert.equal(aiBudgetPendingText(null, month), null);
+    const scheduled = aiBudgetPendingText(
+      { mode: 'SPLIT', chatMonthlyBudgetSatang: 3000, ocrMonthlyBudgetSatang: 0, effectiveMonthKey: '2026-10' }, month)!;
+    assert.match(scheduled, /^เริ่มเดือน เดือน 2026-10/);
+    assert.match(scheduled, /฿30\.00/);
+    assert.match(scheduled, /ปิดส่วนนี้/);
+    const reverting = aiBudgetPendingText(
+      { mode: 'SHARED', chatMonthlyBudgetSatang: null, ocrMonthlyBudgetSatang: null, effectiveMonthKey: '2026-10' }, month)!;
+    assert.match(reverting, /งบรวมก้อนเดียว/);
+  });
+
+  it('treats only the two 409 fences as "reload and re-check"', async () => {
+    assert.equal(isAiBudgetPolicyConflict('partner_ai_budget_revision_conflict'), true);
+    assert.equal(isAiBudgetPolicyConflict('partner_ai_configuration_changed'), true);
+    for (const code of ['partner_ai_budget_split_not_enabled', 'ocr_config_version_conflict', null, undefined]) {
+      assert.equal(isAiBudgetPolicyConflict(code), false, String(code));
+    }
+    let reloads = 0;
+    const reload = async () => { reloads += 1; };
+    assert.equal(await reloadAfterAiBudgetConflict('partner_ai_budget_revision_conflict', reload), true);
+    assert.equal(reloads, 1);
+    // A refusal that is not a conflict must NOT silently reload and discard the operator's draft.
+    assert.equal(await reloadAfterAiBudgetConflict('partner_ai_budget_split_exceeds_total', reload), false);
+    assert.equal(reloads, 1);
+  });
+
+  it('keeps the form visible for a manager and hidden for a read-only operator', () => {
+    assert.equal(canManageAiBudget({ canManage: true }), true);
+    assert.equal(canManageAiBudget({ canManage: false }), false);
+    // A pre-D2 API omits the field: keep today's behaviour rather than hiding the form from everyone.
+    assert.equal(canManageAiBudget({}), true);
+    assert.equal(canManageAiBudget(null), true);
+  });
+
+  it('labels the two modes and the reserved column in Thai', () => {
+    assert.equal(AI_BUDGET_MODE_LABELS.SHARED, 'งบรวมก้อนเดียว');
+    assert.equal(AI_BUDGET_MODE_LABELS.SPLIT, 'แยกเพดานแชตและอ่านเอกสาร');
+    // Reserved money is not spend and adds no provider call; the label has to say so.
+    assert.equal(AI_BUDGET_RESERVED_NOTE, 'กันไว้ระหว่างเรียก AI');
+    assert.match(AI_BUDGET_SPLIT_DISABLED_NOTE, /ยังไม่เปิด/);
+    assert.match(AI_BUDGET_STALE_MESSAGE, /โหลดค่าล่าสุด/);
   });
 });

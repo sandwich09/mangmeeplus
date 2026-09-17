@@ -64,12 +64,29 @@ import type {
 } from './system-partners.api';
 import {
   AI_BUDGET_BUCKET_LABELS,
+  AI_BUDGET_MODE_LABELS,
+  AI_BUDGET_RESERVED_NOTE,
+  AI_BUDGET_SPLIT_DISABLED_NOTE,
+  AI_BUDGET_STALE_MESSAGE,
   AI_REQUEST_KIND_LABELS,
   AI_USAGE_BASIS_LABELS,
   aiAverageCostLabel,
+  aiBudgetCapLabel,
+  aiBudgetCurrentMonthKey,
+  aiBudgetDraftChanged,
+  aiBudgetDraftFromPolicy,
+  aiBudgetInvalidNotice,
+  aiBudgetMonthOptions,
+  aiBudgetPendingText,
+  aiBudgetScopeRows,
   aiCacheCostLabel,
   aiCoverageNotice,
   aiUsageBasisNote,
+  canManageAiBudget,
+  reloadAfterAiBudgetConflict,
+  validateAiBudgetDraft,
+  type AiBudgetDraft,
+  type AiBudgetPolicyRequest,
   budgetBarClass,
   budgetBarWidth,
   budgetPercent,
@@ -1384,6 +1401,164 @@ function AiUsageBreakdown({ usage }: { usage: PartnerAiUsageDto }) {
   );
 }
 
+/**
+ * Split CHAT/OCR budget policy (remediation spec §11.3, §12.4, §12.5).
+ *
+ * Everything above the form is the SAVED server state: the draft below can never move a number.
+ * Thin on purpose — every derivation (baht↔satang, month options, validation, labels, availability,
+ * conflict handling) lives in `ai-budget.logic.ts` with unit tests.
+ */
+function AiBudgetPolicyPanel({
+  usage, monthKey, draft, onDraft, reason, onReason, saving, busy, canManage, onSave, onCancelPending,
+}: {
+  usage: PartnerAiUsageDto;
+  monthKey: string;
+  draft: AiBudgetDraft;
+  onDraft: (next: AiBudgetDraft) => void;
+  reason: string;
+  onReason: (next: string) => void;
+  saving: boolean;
+  /** Another control on this card is mid-save, or the company is locked/read-only. */
+  busy: boolean;
+  canManage: boolean;
+  onSave: () => void;
+  onCancelPending: () => void;
+}) {
+  const { policy, position } = usage.budget;
+  const rows = aiBudgetScopeRows(usage.budget);
+  const invalidNotice = aiBudgetInvalidNotice(policy.invalidReason);
+  const pendingText = aiBudgetPendingText(policy.pending, formatThaiMonth);
+  const months = aiBudgetMonthOptions(monthKey);
+  const changed = aiBudgetDraftChanged(draft, policy, monthKey);
+  const splitBlocked = policy.splitActivationEnabled === false;
+
+  return (
+    <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ai-budget-policy-title">
+      <div>
+        <h3 id="ai-budget-policy-title" className="text-base font-bold text-gray-900">แยกเพดานงบ AI ของบริษัทนี้</h3>
+        <p className="mt-1 text-sm leading-6 text-gray-600">
+          ใช้อยู่: <strong className="font-bold text-gray-900">{AI_BUDGET_MODE_LABELS[policy.mode] ?? policy.mode}</strong>
+          {policy.source === 'PENDING_ACTIVATED' && ' · เริ่มมีผลแล้วตามที่ตั้งไว้ล่วงหน้า'}
+        </p>
+      </div>
+
+      {invalidNotice && (
+        <p role="alert" data-testid="ai-budget-invalid" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
+          {invalidNotice}
+        </p>
+      )}
+      {pendingText && (
+        <div className="flex flex-col gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p data-testid="ai-budget-pending" className="text-sm font-semibold leading-6 text-blue-900">{pendingText}</p>
+          {canManage && (
+            <button type="button" className="mangmee-btn mangmee-btn-secondary min-h-11 shrink-0 text-base"
+              disabled={saving || busy} aria-busy={saving} onClick={onCancelPending}>
+              ยกเลิกค่าที่ตั้งไว้
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Four money columns cannot be read at 390px; scroll inside this container, never the page. */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[520px] text-sm" data-testid="ai-budget-position">
+          <thead>
+            <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+              <th className="py-2 pr-4 font-medium">ส่วน</th>
+              <th className="py-2 pr-4 font-medium">เพดาน</th>
+              <th className="py-2 pr-4 font-medium">ใช้แล้ว</th>
+              <th className="py-2 pr-4 font-medium">{AI_BUDGET_RESERVED_NOTE}</th>
+              <th className="py-2 font-medium">เหลือใช้ได้</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key} className="border-b border-gray-100" data-testid={`ai-budget-scope-${row.key}`}>
+                <td className="py-2.5 pr-4 text-gray-700">{row.label}</td>
+                <td className="py-2.5 pr-4 tabular-nums text-gray-900">{aiBudgetCapLabel(row.capSatang)}</td>
+                <td className="py-2.5 pr-4 tabular-nums text-gray-800">{satangToBaht(row.spentSatang)}</td>
+                <td className="py-2.5 pr-4 tabular-nums text-gray-600">{satangToBaht(row.reservedSatang)}</td>
+                <td className="py-2.5 tabular-nums text-gray-900">{aiBudgetCapLabel(row.availableSatang)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs leading-5 text-gray-500">
+        “{AI_BUDGET_RESERVED_NOTE}” คือเงินที่ระบบกันไว้ให้งานที่กำลังเรียก AI อยู่ ยังไม่ใช่ค่าใช้จ่ายจริง
+        และยังไม่นับเป็นจำนวนครั้งที่เรียกโมเดล · เพดานที่ยังไม่ตั้งหมายถึงยังไม่กำหนด ไม่ใช่ไม่จำกัด
+      </p>
+      {position.unresolvedHolds > 0 && (
+        <p data-testid="ai-budget-unresolved" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          กำลังตรวจสอบยอดที่จอง {position.unresolvedHolds.toLocaleString('th-TH')} รายการ — ยังนับเป็นเงินที่กันไว้จนกว่าจะได้ผลจริงจากผู้ให้บริการ
+        </p>
+      )}
+      {position.breach && (
+        <p role="alert" data-testid="ai-budget-breach" className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold leading-6 text-red-900">
+          มีรายการที่ใช้เงินเกินยอดที่จองไว้ ระบบหยุดรับงานใหม่ของส่วนนั้นไว้แล้ว และบันทึกค่าใช้จ่ายจริงไว้ครบ กรุณาตรวจสอบก่อนปรับเพดาน
+        </p>
+      )}
+
+      {!canManage ? (
+        <p className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">
+          บัญชีของคุณดูข้อมูลได้ แต่ยังไม่มีสิทธิ์แก้โหมดหรือเพดานงบ AI
+        </p>
+      ) : (
+        <>
+          {splitBlocked && (
+            <p data-testid="ai-budget-split-disabled" className="rounded-xl border border-gray-300 bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-700">
+              {AI_BUDGET_SPLIT_DISABLED_NOTE}
+            </p>
+          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-mode">โหมดงบ AI
+              <select id="ai-budget-mode" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.mode}
+                disabled={saving || busy} onChange={(e) => onDraft({ ...draft, mode: e.target.value as AiBudgetDraft['mode'] })}>
+                <option value="SHARED">{AI_BUDGET_MODE_LABELS.SHARED}</option>
+                {/* ADR 0013 §9: SPLIT is offered but not savable until the server flag is on. */}
+                <option value="SPLIT" disabled={splitBlocked}>{AI_BUDGET_MODE_LABELS.SPLIT}</option>
+              </select>
+            </label>
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-month">เดือนที่เริ่มใช้
+              <select id="ai-budget-month" className={`${inputClass} mt-1 min-h-12 text-base`} value={draft.effectiveMonthKey}
+                disabled={saving || busy} onChange={(e) => onDraft({ ...draft, effectiveMonthKey: e.target.value })}>
+                {months.map((month) => (
+                  <option key={month.monthKey} value={month.monthKey}>
+                    {formatThaiMonth(month.monthKey)}{month.current ? ' (เดือนนี้)' : ' (เดือนถัดไป)'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-chat-cap">เพดานแชตและ AI ทั่วไป (บาท)
+              <input id="ai-budget-chat-cap" className={`${inputClass} mt-1 min-h-12 text-base`} type="text" inputMode="decimal"
+                placeholder="0 = ปิดส่วนนี้" value={draft.chat} disabled={saving || busy || draft.mode !== 'SPLIT'}
+                onChange={(e) => onDraft({ ...draft, chat: e.target.value })} />
+            </label>
+            <label className="block text-sm font-bold text-gray-700" htmlFor="ai-budget-ocr-cap">เพดาน AI อ่านเอกสาร (บาท)
+              <input id="ai-budget-ocr-cap" className={`${inputClass} mt-1 min-h-12 text-base`} type="text" inputMode="decimal"
+                placeholder="0 = ปิดส่วนนี้" value={draft.ocr} disabled={saving || busy || draft.mode !== 'SPLIT'}
+                onChange={(e) => onDraft({ ...draft, ocr: e.target.value })} />
+            </label>
+          </div>
+          <p className="text-xs leading-5 text-gray-500">
+            ผลรวมเพดานต้องไม่เกินงบรวมที่บันทึกไว้ {satangToBaht(usage.budget.effectiveSatang)} · ใส่ 0 เพื่อปิดส่วนนั้น
+            {' · '}งบรวมด้านบนต้องบันทึกก่อน ระบบตรวจกับค่าที่บันทึกแล้วเท่านั้น
+          </p>
+          <label className="block text-base">เหตุผลที่ปรับเพดานงบ AI
+            <textarea aria-label="เหตุผลที่ปรับเพดานงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500}
+              value={reason} disabled={saving || busy} onChange={(e) => onReason(e.target.value)} />
+          </label>
+          <button type="button" className={`${btnPrimary} min-h-12 min-w-32 text-base`}
+            data-testid="ai-budget-policy-save"
+            disabled={saving || busy || !changed} aria-busy={saving} onClick={onSave}>
+            {saving ? 'กำลังบันทึก…' : 'บันทึกเพดานงบ AI'}
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
 // -- AI usage meter + monthly budget override (metering spec §7.7)
 
 function AiUsageBudgetSection({
@@ -1407,6 +1582,11 @@ function AiUsageBudgetSection({
   const [ocrLimitInput, setOcrLimitInput] = useState('');
   const [ocrLoading, setOcrLoading] = useState(false);
   const [budgetReason,setBudgetReason]=useState(''),[ocrReason,setOcrReason]=useState('');
+  // Split policy (spec §12.4). The draft is prefilled from the SAVED policy on every load, so a
+  // company switch or a conflict reload can never leave the previous company's values in the form.
+  const [policyDraft,setPolicyDraft]=useState<AiBudgetDraft|null>(null);
+  const [policyReason,setPolicyReason]=useState('');
+  const [policyLoading,setPolicyLoading]=useState(false);
   const generation=useRef(0);
   const { confirm, confirmDialog } = useConfirm();
 
@@ -1417,6 +1597,7 @@ function AiUsageBudgetSection({
       const result = await getPartnerAiUsage(companyId);
       if(token!==generation.current)return;
       setUsage(result);
+      setPolicyDraft(aiBudgetDraftFromPolicy(result.budget.policy, aiBudgetCurrentMonthKey(result)));
       setBudgetInput(result.budget.overrideSatang === null ? '' : satangToBahtInput(result.budget.overrideSatang));
       setOcrEnabled(result.ocr.config.enabled);
       setReceiptQuotaMode(result.ocr.config.receiptQuotaEnforced == null ? 'inherit' : result.ocr.config.receiptQuotaEnforced ? 'enforce' : 'observe');
@@ -1435,7 +1616,7 @@ function AiUsageBudgetSection({
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBudgetSave = async () => {
-    if(!usage||fieldsLocked||budgetLoading||ocrLoading)return;
+    if(!usage||fieldsLocked||budgetLoading||ocrLoading||policyLoading)return;
     const reason=partnerAdjustmentReason(budgetReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับงบ AI','error');return;}
     const parsed=parseBudgetBahtInput(budgetInput);
@@ -1462,8 +1643,62 @@ function AiUsageBudgetSection({
   const savedOcrEnabled = usage?.ocr.config.enabled ?? true;
   const ocrTogglePendingMessage = ocrUnsavedToggleMessage(savedOcrEnabled, ocrEnabled);
 
+  /** One writer for both the policy save and the cancel-pending action (spec §12.4/§12.5). */
+  const savePolicy = async (
+    body: { budgetPolicy: AiBudgetPolicyRequest | null },
+    successMessage: string,
+  ) => {
+    if(!usage||fieldsLocked||policyLoading||budgetLoading||ocrLoading)return;
+    const reason=partnerAdjustmentReason(policyReason);
+    if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับเพดานงบ AI','error');return;}
+    const token=generation.current;
+    setPolicyLoading(true);
+    try {
+      await setPartnerAiModel(companyId,{reason,...body,expectedBudgetRevision:usage.budget.policy.revision});
+      if(token!==generation.current)return;
+      setPolicyReason('');onChanged();
+      showToast(successMessage,'success');
+      setPolicyLoading(false);
+      // The writer answers model/total fields only, so the saved policy, the revision and the money
+      // position all come back from a fresh read — never from a locally patched object.
+      await loadUsage();
+    }catch(err){
+      if(token!==generation.current)return;
+      setPolicyLoading(false);
+      // Same shape as the OCR-config fence: reload first, then say what to re-check.
+      if(await reloadAfterAiBudgetConflict(apiErrorCode(err),loadUsage)){showToast(AI_BUDGET_STALE_MESSAGE,'error');return;}
+      showToast(apiErrorMessage(err),'error');
+    }finally{if(token===generation.current)setPolicyLoading(false);}
+  };
+
+  const handlePolicySave = async () => {
+    if(!usage||!policyDraft)return;
+    const token=generation.current,monthKey=aiBudgetCurrentMonthKey(usage);
+    const validated=validateAiBudgetDraft(policyDraft,{
+      // The SAVED total, never the unsaved override draft above: it is the number the server compares.
+      totalSatang:usage.budget.effectiveSatang,
+      monthOptions:aiBudgetMonthOptions(monthKey).map(month=>month.monthKey),
+    });
+    if(!validated.ok){showToast(validated.notice,'error');return;}
+    const scheduled=validated.policy.effectiveMonthKey!==monthKey;
+    const accepted=await confirm({title:'ตรวจเพดานงบ AI ก่อนบันทึก',
+      message:`${AI_BUDGET_MODE_LABELS[validated.policy.mode]}${validated.policy.mode==='SPLIT'?` — แชต ${aiBudgetCapLabel(validated.policy.chatMonthlyBudgetSatang)} · อ่านเอกสาร ${aiBudgetCapLabel(validated.policy.ocrMonthlyBudgetSatang)}`:''}\n${scheduled?`เริ่มเดือน ${formatThaiMonth(validated.policy.effectiveMonthKey)} ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน`:'มีผลกับงานที่เริ่มหลังบันทึก งานที่เริ่มแล้วจะทำจนจบและนับค่าใช้จ่ายตามจริง'}\nเหตุผล: ${partnerAdjustmentReason(policyReason)??'—'}`,
+      confirmLabel:'ยืนยันบันทึก',cancelLabel:'กลับไปแก้'});
+    if(!accepted||token!==generation.current)return;
+    await savePolicy({budgetPolicy:validated.policy},scheduled?'ตั้งเพดานงบ AI ให้เริ่มเดือนถัดไปแล้ว':'บันทึกเพดานงบ AI แล้ว');
+  };
+
+  const handleCancelPending = async () => {
+    const token=generation.current;
+    const accepted=await confirm({title:'ยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไป',
+      message:'หลังยกเลิก เดือนถัดไปจะใช้โหมดและเพดานที่ใช้อยู่ตอนนี้ต่อไป ค่าที่ใช้อยู่เดือนนี้ไม่เปลี่ยน',
+      confirmLabel:'ยกเลิกค่าที่ตั้งไว้',cancelLabel:'เก็บไว้ก่อน'});
+    if(!accepted||token!==generation.current)return;
+    await savePolicy({budgetPolicy:null},'ยกเลิกค่าที่ตั้งให้เริ่มเดือนถัดไปแล้ว');
+  };
+
   const handleOcrSave = async () => {
-    if (!usage||fieldsLocked||ocrLoading||budgetLoading) return;
+    if (!usage||fieldsLocked||ocrLoading||budgetLoading||policyLoading) return;
     const reason=partnerAdjustmentReason(ocrReason);
     if(!reason){showToast('กรุณาระบุเหตุผลที่ปรับการอ่านเอกสาร','error');return;}
     const token=generation.current;
@@ -1623,7 +1858,7 @@ function AiUsageBudgetSection({
           )}
 
           <label className="block text-base">เหตุผลที่ปรับงบ AI
-            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||fieldsLocked} onChange={e=>setBudgetReason(e.target.value)} />
+            <textarea aria-label="เหตุผลที่ปรับงบ AI" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={budgetReason} disabled={budgetLoading||ocrLoading||policyLoading||fieldsLocked} onChange={e=>setBudgetReason(e.target.value)} />
           </label>
           <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-3">
             <div className="flex-1">
@@ -1636,13 +1871,13 @@ function AiUsageBudgetSection({
                 placeholder={satangToBahtInput(usage.budget.defaultSatang)}
                 value={budgetInput}
                 onChange={(e) => setBudgetInput(e.target.value)}
-                disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
+                disabled={budgetLoading || ocrLoading || policyLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               />
             </div>
             <button
               type="button"
               className={`${btnPrimary} min-h-11 text-base`}
-              disabled={budgetLoading || ocrLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
+              disabled={budgetLoading || ocrLoading || policyLoading || fieldsLocked} aria-busy={Boolean(budgetLoading)}
               onClick={() => void handleBudgetSave()}
             >
               {budgetLoading ? 'กำลังบันทึก…' : 'ตรวจงบก่อนบันทึก'}
@@ -1652,6 +1887,22 @@ function AiUsageBudgetSection({
           <p className="text-xs text-gray-400">
             เว้นว่างเพื่อใช้งบเริ่มต้น {satangToBaht(usage.budget.defaultSatang)} ตั้งได้ไม่เกิน {satangToBaht(usage.budget.ceilingSatang)}
           </p>
+
+          {policyDraft && (
+            <AiBudgetPolicyPanel
+              usage={usage}
+              monthKey={aiBudgetCurrentMonthKey(usage)}
+              draft={policyDraft}
+              onDraft={setPolicyDraft}
+              reason={policyReason}
+              onReason={setPolicyReason}
+              saving={policyLoading}
+              busy={budgetLoading || ocrLoading || usageLoading}
+              canManage={canManageAiBudget(usage) && !fieldsLocked}
+              onSave={() => void handlePolicySave()}
+              onCancelPending={() => void handleCancelPending()}
+            />
+          )}
 
           <section className="space-y-4 border-t-2 border-gray-100 pt-5" aria-labelledby="ocr-governance-title">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1664,7 +1915,7 @@ function AiUsageBudgetSection({
               <div className="flex min-h-12 items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3">
                 <EntitlementSwitch
                   checked={ocrEnabled}
-                  disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
+                  disabled={ocrLoading || budgetLoading || policyLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                   label="เปิดให้ AI อ่านเอกสาร"
                   onClick={() => setOcrEnabled((value) => !value)}
                 />
@@ -1747,7 +1998,7 @@ function AiUsageBudgetSection({
               <label htmlFor="receipt-quota-mode" className="block text-sm font-bold text-gray-700">บังคับโควตาใบเสร็จของแพ็กเกจทดลอง / กำหนดเอง</label>
               <select id="receipt-quota-mode" className={`${inputClass} min-h-12 text-base`} value={receiptQuotaMode}
                 onChange={(event) => setReceiptQuotaMode(event.target.value)}
-                disabled={ocrLoading || budgetLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
+                disabled={ocrLoading || budgetLoading || policyLoading || fieldsLocked || !usage.ocr.planQuota || usage.ocr.planQuota.source === 'PAID_GRANTS'}>
                 <option value="inherit">ตามค่าเริ่มต้นของระบบ</option>
                 <option value="enforce">บังคับ — ครบโควตาแล้วหยุดอ่านใบใหม่</option>
                 <option value="observe">นับอย่างเดียว — ยังอ่านต่อได้เมื่อครบโควตา</option>
@@ -1761,7 +2012,7 @@ function AiUsageBudgetSection({
             </div>
 
             <label className="block text-base">เหตุผลที่ปรับการอ่านเอกสาร
-              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={ocrLoading||budgetLoading||fieldsLocked} onChange={e=>setOcrReason(e.target.value)} />
+              <textarea aria-label="เหตุผลที่ปรับการอ่านเอกสาร" className={`${inputClass} mt-1 min-h-20 text-base`} maxLength={500} value={ocrReason} disabled={ocrLoading||budgetLoading||policyLoading||fieldsLocked} onChange={e=>setOcrReason(e.target.value)} />
             </label>
             <div className="grid gap-3 border-t border-gray-100 pt-4 sm:grid-cols-[1fr_auto] sm:items-end">
               <div>
@@ -1779,7 +2030,7 @@ function AiUsageBudgetSection({
                   placeholder="เว้นว่าง = ไม่จำกัด"
                   value={ocrLimitInput}
                   onChange={(event) => setOcrLimitInput(event.target.value)}
-                  disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
+                  disabled={ocrLoading || budgetLoading || policyLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 />
                 <p className="mt-1 text-xs leading-5 text-gray-500">
                   เปิด OCR: {savedOcrEnabled ? 'เปิด' : 'ปิด'} → {ocrEnabled ? 'เปิด' : 'ปิด'} · โควตา: {usage.ocr.config.monthlyLimit ?? 'ไม่จำกัด'} → {ocrLimitInput.trim() || 'ไม่จำกัด'} ครั้ง/เดือน
@@ -1791,7 +2042,7 @@ function AiUsageBudgetSection({
               <button
                 type="button"
                 className={`${btnPrimary} min-h-12 min-w-32 text-base`}
-                disabled={ocrLoading || budgetLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
+                disabled={ocrLoading || budgetLoading || policyLoading || fieldsLocked} aria-busy={Boolean(ocrLoading)}
                 onClick={() => void handleOcrSave()}
               >
                 {ocrLoading ? 'กำลังบันทึก…' : 'บันทึก OCR'}

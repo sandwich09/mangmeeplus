@@ -152,9 +152,13 @@ describe('PartnerController', () => {
   it('aiUsage() returns the meter for the partner company', async () => {
     let called: any;
     const ctrl = makeCtrl({ getAiUsage: { execute: async (companyId: string) => { called = companyId; return { current: null, previous: null, budget: { effectiveSatang: 1, overrideSatang: null, defaultSatang: 1, ceilingSatang: 2 }, topTags: [] }; } } as any });
-    const result = await ctrl.aiUsage('co-1') as any;
+    const result = await ctrl.aiUsage('co-1', makeReq(['system.partner_ai_model.manage'])) as any;
     assert.equal(called, 'co-1');
     assert.equal(result.budget.overrideSatang, null);
+    // The page needs to know whether THIS caller may write the card: reading it is
+    // `system.partner_dashboard.read`, every control on it is `system.partner_ai_model.manage`.
+    assert.equal(result.canManage, true);
+    assert.equal((await ctrl.aiUsage('co-1', makeReq(['system.partner_dashboard.read'])) as any).canManage, false);
   });
 
   it('setOcrConfiguration() passes absolute state and admin context to the use case', async () => {

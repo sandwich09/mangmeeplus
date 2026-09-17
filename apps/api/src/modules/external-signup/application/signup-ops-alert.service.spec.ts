@@ -221,7 +221,7 @@ describe('SignupOpsAlertService.sweepTrialBudgets — §15.6 (d)', () => {
   // §11.4: the platform default a company inherits is the settings ROW, not the ENV value. Reading
   // ENV made this sweep disagree with the five enforcement seams the moment an operator moved it.
   it('inherits the platform default from the settings row, not from the environment', async () => {
-    const shared = { threshold: 1, trials: trials(1), usage: [{ companyId: 'co-0', costSatang: 9000 }] } as const;
+    const shared = { threshold: 1, trials: trials(1), usage: [{ companyId: 'co-0', costSatang: 9000 }] };
     // ENV says 8000 (exhausted); the row an operator raised says 20000 (not exhausted).
     assert.deepEqual(
       await harness({ ...shared, platformBudget: { monthlyBudgetSatang: 20000, ceilingSatang: 100000 } })
