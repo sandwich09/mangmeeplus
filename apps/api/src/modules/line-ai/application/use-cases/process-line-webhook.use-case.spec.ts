@@ -4005,13 +4005,16 @@ function questionFixture(item: any, permissions: string[], extra = {}) {
 
 // ── Item 10F: turn ledger wiring (append → gateway → ack; coverage → sub_requests) ──
 
-import { LineAiLedgerService } from '../line-ai-ledger.service';
+import { LEDGER_GROUP, LineAiLedgerService } from '../line-ai-ledger.service';
+import { ConsumptionMarkerUnavailableError } from '../line-ai-consumption-marker';
 
 function makeLedgerUseCase(prisma: any, opts: {
   permissions?: string[];
   aiGatewayFn?: (req?: any) => any;
   intakeRouteFn?: (req?: any) => any;
   openWaiting?: any[];
+  /** Replaces the whole ledger read, so a test can drive the REAL service or throw a typed refusal. */
+  openWaitingUser?: (companyId: string, chatKey: string, userId: string) => Promise<any[]>;
   config?: Record<string, unknown>;
   deliveryResult?: 'ok' | 'failed_token' | 'failed_other' | 'skipped';
 } = {}) {
@@ -4025,7 +4028,7 @@ function makeLedgerUseCase(prisma: any, opts: {
   );
   const ledger = {
     enabled: true,
-    openWaitingUser: async () => waitingFixture,
+    openWaitingUser: opts.openWaitingUser ?? (async () => waitingFixture),
     appendTurn: async (input: any) => { events.push('appendTurn'); ledgerCalls.turns.push(input); return '10-0'; },
     appendSubRequests: async (input: any) => { events.push('appendSubRequests'); ledgerCalls.subs.push(input); },
     coverageToSubRequests: realLedger.coverageToSubRequests.bind(realLedger),
@@ -4254,6 +4257,69 @@ describe('ProcessLineWebhookUseCase – ledger wiring (item 10F)', () => {
     assert.equal(item?.state, 'waiting_user');
     assert.ok(item?.clarifyQuestion?.includes('2537'));
     assert.equal(item?.text, 'บันทึกบิล 9/11/37 หกสิบบาท');
+  });
+});
+
+/**
+ * Spec `line-ai-ledger-lifecycle-remediation-spec-th.md` §4.1 (AC-01). The UAT symptom was not
+ * confined to the ledger: on a brand-new chat `XPENDING` raises NOGROUP, every read error became
+ * unavailable, and the turn ended `marker_unavailable` BEFORE any routing — so typing the first
+ * message could not start a conversation at all, while the greeting button (no model) still worked.
+ *
+ * Driven through the REAL `LineAiLedgerService` over a Redis that answers what a never-created
+ * stream actually answers, so the dispatcher wiring is proven, not assumed.
+ */
+function absentStreamLedgerRead() {
+  const calls: string[] = [];
+  const service = new LineAiLedgerService(
+    { lineAiLedgerEnabled: true, redisUrl: 'redis://fake', lineAiLedgerMaxLen: 200, lineAiLedgerTtlSeconds: 3600 } as any,
+    { log: async () => undefined } as any,
+    { client: { outboxEvent: { findMany: async () => [], create: async () => undefined } } } as any,
+  );
+  service.attachClient({
+    xpending: async (key: string) => {
+      calls.push('xpending');
+      throw new Error(`NOGROUP No such key '${key}' or consumer group '${LEDGER_GROUP}' in XPENDING with GROUP option`);
+    },
+    exists: async () => { calls.push('exists'); return 0; },
+    xgroup: async () => { calls.push('xgroup'); return 'OK'; },
+    xrange: async () => { calls.push('xrange'); return []; },
+  } as any);
+  return { read: (companyId: string, chatKey: string, userId: string) => service.openWaitingUser(companyId, chatKey, userId), calls };
+}
+
+describe('ProcessLineWebhookUseCase – a new chat starts by typing (§4.1)', () => {
+  it('a first free-text message on an absent ledger stream reaches routing and is answered', async () => {
+    const { prisma, updates } = makePrisma();
+    const ledgerRead = absentStreamLedgerRead();
+    const h = makeLedgerUseCase(prisma, { openWaitingUser: ledgerRead.read, aiGatewayFn: () => LEDGER_TURN_RESPONSE });
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-fresh-chat', messageText: 'ว่าไง' });
+
+    assert.deepEqual(ledgerRead.calls, ['xpending', 'exists'], 'absence confirmed on the exact key, once, and nothing created');
+    assert.equal(h.aiGatewayRequests.length, 1, 'the turn reaches routing — no menu tap required');
+    assert.match(JSON.stringify(h.sentMessages), /ตอบแล้ว/, 'and the answer is delivered');
+    assert.notEqual((updates.at(-1) as any).data.status, 'marker_unavailable');
+  });
+
+  it('a missing consumer group still fails closed, with the reason recorded and no model call', async () => {
+    const { prisma, updates } = makePrisma();
+    const h = makeLedgerUseCase(prisma, {
+      openWaitingUser: async () => { throw new ConsumptionMarkerUnavailableError(new Error('group_missing'), 'group_missing'); },
+      aiGatewayFn: () => LEDGER_TURN_RESPONSE,
+    });
+    const warnings: any[] = [];
+    (h.useCase as any).logger.warn = (payload: any) => { warnings.push(payload); };
+
+    await h.useCase.execute({ ...BASE_EVENT, webhookEventId: 'evt-group-missing', messageText: 'ว่าไง' });
+
+    assert.equal((updates.at(-1) as any).data.status, 'marker_unavailable', 'terminal status is unchanged by this fix');
+    assert.equal((updates.at(-1) as any).data.errorCode, 'CONSUMPTION_MARKER_UNAVAILABLE');
+    assert.equal(h.aiGatewayRequests.length, 0, 'an unreadable question never reaches the model');
+    assert.deepEqual(h.ledgerCalls.subs, [], 'and mutates nothing');
+    assert.match(JSON.stringify(h.sentMessages), /ข้อผิดพลาดชั่วคราว/, 'the customer reply is unchanged');
+    assert.equal(warnings.find((w) => w?.msg === 'line_ai_marker_unavailable')?.reason, 'group_missing',
+      'operators can tell a corrupt group from an absent stream or a Redis outage');
   });
 });
 

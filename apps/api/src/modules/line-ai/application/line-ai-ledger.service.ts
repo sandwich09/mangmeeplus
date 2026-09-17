@@ -34,6 +34,7 @@ import { AppConfigService } from '../../../common/config/app-config.service';
 import { PrismaService } from '../../../common/database/prisma.service';
 import { AuditService } from '../../audit/application/audit.service';
 import { hashMessagePreview } from '../domain/logic/line-ai-classifier.logic';
+import { safeLineErrorDetails } from '../infrastructure/line-reply.adapter';
 import { ConsumptionMarkerUnavailableError, findConsumedClarificationIds, type MarkerTransactionClient } from './line-ai-consumption-marker';
 
 export const LEDGER_GROUP = 'lineai-turn';
@@ -41,6 +42,20 @@ export const LINE_CLARIFICATION_SOURCE_MAX_BYTES = 16384;
 const KEY_PREFIX = 'lineai:ledger:';
 const APPEND_CONSUMER = 'appender';
 const PENDING_SCAN_COUNT = 50;
+/** Scan budget for one read: 4 × 50 covers the whole PEL at the default `LINE_AI_LEDGER_MAXLEN`
+ *  (200). Exhausting it means absence is UNPROVEN, which is `scan_incomplete`, not "no question". */
+const PENDING_SCAN_MAX_PAGES = 4;
+
+/**
+ * Redis answers `NOGROUP No such key '<key>' or consumer group '<group>' ...` for a stream that
+ * does not exist AND for a stream whose group is gone — the two are only told apart by EXISTS.
+ * Matched on the code at the START of the message (or `err.code`), never a substring search: a
+ * loose test would let stored entry text or an unrelated error claim the absence exemption.
+ */
+function isNoGroupError(err: unknown): boolean {
+  const value = err as { message?: unknown; code?: unknown } | null;
+  return value?.code === 'NOGROUP' || (typeof value?.message === 'string' && value.message.startsWith('NOGROUP'));
+}
 
 /** The Redis surface the ledger uses — ioredis satisfies it; specs inject an in-memory fake. */
 export type LedgerRedis = {
@@ -51,6 +66,8 @@ export type LedgerRedis = {
   xautoclaim(...args: Array<string | number>): Promise<unknown>;
   xrange(key: string, start: string, end: string, ...args: Array<string | number>): Promise<Array<[string, string[]]>>;
   xpending(...args: Array<string | number>): Promise<unknown>;
+  /** Exact-key existence, the only thing that tells an absent stream from a missing group. */
+  exists(key: string): Promise<number>;
   expire(key: string, seconds: number): Promise<number>;
   scan(cursor: string, ...args: Array<string | number>): Promise<[string, string[]]>;
   quit(): Promise<unknown>;
@@ -318,42 +335,58 @@ export class LineAiLedgerService implements OnModuleDestroy {
   ): Promise<Array<LineAiOpenClarification & { entry: LedgerEntry }>> {
     const redis = this.redis();
     if (!redis) {
-      if (this.enabled) throw new ConsumptionMarkerUnavailableError(new Error('Clarification store unavailable'));
+      if (this.enabled) throw new ConsumptionMarkerUnavailableError(new Error('Clarification store unavailable'), 'redis_unavailable');
       return [];
     }
     const key = ledgerKey(companyId, chatKey);
     const windowMs = LINE_AI_CONTEXT_WINDOW_MINUTES * 60 * 1000;
-    let open: Array<LineAiOpenClarification & { entry: LedgerEntry }>;
+    const open: Array<LineAiOpenClarification & { entry: LedgerEntry }> = [];
     try {
-      const pending = await redis.xpending(key, LEDGER_GROUP, '-', '+', PENDING_SCAN_COUNT) as Array<[string, string, number, number]> | null;
-      if (!pending || pending.length === 0) return [];
-      open = [];
-      for (const [id] of pending) {
-        if (open.length >= limit) break;
-        const rows = await redis.xrange(key, id, id);
-        const row = rows?.[0];
-        if (!row) continue;
-        const entry = fieldsToEntry(key, row[0], row[1]);
-        if (!entry || entry.kind !== 'sub_request' || entry.state !== 'waiting_user' || !entry.clarifyQuestion) continue;
-        if (entry.userId !== userId) continue; // another member's question — never ours to answer
-        const created = Date.parse(entry.createdAt);
-        if (!Number.isFinite(created) || now.getTime() - created > windowMs) continue; // expired — drain acks it
-        open.push({
-          id: entry.id,
-          question: entry.clarifyQuestion,
-          text: entry.text,
-          ...(entry.subject ? { subject: entry.subject } : {}),
-          ...(entry.clarifyForIntent ? { clarifyForIntent: entry.clarifyForIntent } : {}),
-          ...(entry.candidateExpenseIds?.length ? { candidateExpenseIds: entry.candidateExpenseIds } : {}),
-          ...(entry.pendingMedia ? { pendingMedia: entry.pendingMedia } : {}),
-          askedAt: entry.createdAt,
-          entry,
-        });
+      // Bounded pagination by stream id: the PEL holds EVERY member's open entries, so stopping at
+      // the first page and then filtering by user would read "not in the first 50" as "no question".
+      let start = '-';
+      for (let page = 1; ; page++) {
+        const pending = await this.pendingPage(redis, key, start, chatKey);
+        if (pending === null) return []; // confirmed-absent stream: a new chat or an expired key
+        if (pending.length === 0) break;
+        for (const [id] of pending) {
+          if (open.length >= limit) break;
+          const rows = await redis.xrange(key, id, id);
+          const row = rows?.[0];
+          if (!row) continue; // MAXLEN-trimmed between the two reads — skipped, never reconstructed
+          const entry = fieldsToEntry(key, row[0], row[1]);
+          if (!entry || entry.kind !== 'sub_request' || entry.state !== 'waiting_user' || !entry.clarifyQuestion) continue;
+          if (entry.userId !== userId) continue; // another member's question — never ours to answer
+          const created = Date.parse(entry.createdAt);
+          if (!Number.isFinite(created) || now.getTime() - created > windowMs) continue; // expired — drain acks it
+          open.push({
+            id: entry.id,
+            question: entry.clarifyQuestion,
+            text: entry.text,
+            ...(entry.subject ? { subject: entry.subject } : {}),
+            ...(entry.clarifyForIntent ? { clarifyForIntent: entry.clarifyForIntent } : {}),
+            ...(entry.candidateExpenseIds?.length ? { candidateExpenseIds: entry.candidateExpenseIds } : {}),
+            ...(entry.pendingMedia ? { pendingMedia: entry.pendingMedia } : {}),
+            askedAt: entry.createdAt,
+            entry,
+          });
+        }
+        if (open.length >= limit) break; // context limit reached — the existing early stop
+        if (pending.length < PENDING_SCAN_COUNT) break; // PEL exhausted: absence is proven
+        if (page >= PENDING_SCAN_MAX_PAGES) {
+          throw new ConsumptionMarkerUnavailableError(new Error('pending scan budget exhausted'), 'scan_incomplete');
+        }
+        start = `(${pending[pending.length - 1][0]}`; // exclusive id — never re-reads a page
       }
     } catch (err) {
       // Preserve the distinction between no question and an unreadable question in every mode.
-      this.logger.warn({ msg: 'ai.line.ledger.read_failed', error: (err as Error).message });
-      throw new ConsumptionMarkerUnavailableError(err);
+      // Never log the raw key or provider message: a NOGROUP string embeds the LINE user/group id.
+      if (err instanceof ConsumptionMarkerUnavailableError) {
+        this.logger.warn({ msg: 'ai.line.ledger.read_failed', reason: err.reason, chatKeyHash: hashMessagePreview(chatKey) });
+        throw err;
+      }
+      this.logger.warn({ msg: 'ai.line.ledger.read_failed', reason: 'redis_unavailable', chatKeyHash: hashMessagePreview(chatKey), ...safeLineErrorDetails(err) });
+      throw new ConsumptionMarkerUnavailableError(err, 'redis_unavailable');
     }
     if (open.length === 0) return [];
     // Marker lookup does NOT fail open — it throws ConsumptionMarkerUnavailableError and the
@@ -366,23 +399,69 @@ export class LineAiLedgerService implements OnModuleDestroy {
     return open.filter((item) => !consumed.has(item.id));
   }
 
+  /**
+   * One XPENDING page, or `null` when the stream is CONFIRMED absent. The NOGROUP exemption is
+   * scoped to this single call: an error from XRANGE, entry parsing or the marker lookup can never
+   * reach it. EXISTS is read only AFTER a NOGROUP — checking it first would race a key that expires
+   * between the two commands, which is the bug this replaces.
+   */
+  private async pendingPage(redis: LedgerRedis, key: string, start: string, chatKey: string): Promise<Array<[string, string, number, number]> | null> {
+    let reply: unknown;
+    try {
+      reply = await redis.xpending(key, LEDGER_GROUP, start, '+', PENDING_SCAN_COUNT);
+    } catch (err) {
+      if (!isNoGroupError(err)) throw err;
+      const state = await this.streamStateAfterNoGroup(redis, key);
+      if (state === 'absent') {
+        // Normal lifecycle — a brand-new chat or a key past its TTL. Never a warning, never an outage.
+        this.logger.log({ msg: 'ai.line.ledger.stream_absent', reason: 'stream_absent', chatKeyHash: hashMessagePreview(chatKey) });
+        return null;
+      }
+      throw new ConsumptionMarkerUnavailableError(new Error(state), state === 'group_missing' ? 'group_missing' : 'redis_unavailable');
+    }
+    // The reply shape IS the absence proof, so a protocol-level oddity is not an empty PEL.
+    if (!Array.isArray(reply) || reply.some((row) => !Array.isArray(row) || typeof row[0] !== 'string')) {
+      throw new ConsumptionMarkerUnavailableError(new Error('malformed XPENDING reply'), 'malformed_response');
+    }
+    return reply as Array<[string, string, number, number]>;
+  }
+
+  /** After a NOGROUP, EXISTS on the EXACT key is the only thing that separates a stream that was
+   *  never created (or has expired) from one whose consumer group vanished. This only reports which
+   *  one it is — the read path never repairs either (no `XGROUP CREATE`, no replay, no delete). */
+  private async streamStateAfterNoGroup(redis: LedgerRedis, key: string): Promise<'absent' | 'group_missing' | 'unreadable'> {
+    let exists: number;
+    try {
+      exists = await redis.exists(key);
+    } catch {
+      return 'unreadable';
+    }
+    if (exists === 0) return 'absent';
+    return exists === 1 ? 'group_missing' : 'unreadable';
+  }
+
   /** Reclaim open entries across all ledger keys (drain path): XAUTOCLAIM stalled/new-ish
    *  entries older than min-idle, with per-entry delivery counts from XPENDING. */
   async claimOpenEntries(batchSize: number, minIdleMs: number): Promise<Array<{ entry: LedgerEntry; deliveryCount: number; idleMs: number }>> {
     const redis = this.redis();
     if (!redis) return [];
     const claimed: Array<{ entry: LedgerEntry; deliveryCount: number; idleMs: number }> = [];
+    const keys: string[] = [];
     try {
       let cursor = '0';
-      const keys: string[] = [];
       do {
         const [next, batch] = await redis.scan(cursor, 'MATCH', `${KEY_PREFIX}*`, 'COUNT', 100);
         cursor = next;
         keys.push(...batch);
       } while (cursor !== '0' && keys.length < 200);
+    } catch (err) {
+      this.logger.warn({ msg: 'ai.line.ledger.claim_failed', reason: 'redis_unavailable', ...safeLineErrorDetails(err) });
+      return claimed;
+    }
 
-      for (const key of keys) {
-        if (claimed.length >= batchSize) break;
+    for (const key of keys) {
+      if (claimed.length >= batchSize) break;
+      try {
         const res = await redis.xautoclaim(key, LEDGER_GROUP, 'drainer', minIdleMs, '0', 'COUNT', batchSize - claimed.length) as [string, Array<[string, string[]]>] | null;
         const entries = res?.[1] ?? [];
         if (entries.length === 0) continue;
@@ -394,12 +473,27 @@ export class LineAiLedgerService implements OnModuleDestroy {
           const meta = counts.get(id);
           claimed.push({ entry, deliveryCount: meta?.count ?? 1, idleMs: meta?.idle ?? minIdleMs });
         }
+      } catch (err) {
+        // Per-key isolation: a key that expired between SCAN and claim must not cost every later
+        // key its sweep. Anything else is an outage — stop the batch rather than grind through
+        // up to 200 keys at one command timeout each.
+        if (!isNoGroupError(err)) {
+          this.logger.warn({ msg: 'ai.line.ledger.claim_failed', reason: 'redis_unavailable', ...safeLineErrorDetails(err) });
+          return claimed;
+        }
+        const state = await this.streamStateAfterNoGroup(redis, key);
+        if (state === 'absent') continue; // expired mid-sweep — normal lifecycle, next key please
+        if (state === 'group_missing') {
+          // Existing stream whose group vanished: operator-visible corruption, distinct from expiry.
+          // Skipped, never recreated — pending/acked state cannot be inferred back into a new group.
+          this.logger.warn({ msg: 'ai.line.ledger.claim_group_missing', reason: 'group_missing', chatKeyHash: hashMessagePreview(parseLedgerKey(key)?.chatKey ?? key) });
+          continue;
+        }
+        this.logger.warn({ msg: 'ai.line.ledger.claim_failed', reason: 'redis_unavailable' });
+        return claimed;
       }
-      return claimed;
-    } catch (err) {
-      this.logger.warn({ msg: 'ai.line.ledger.claim_failed', error: (err as Error).message });
-      return claimed;
     }
+    return claimed;
   }
 
   private async append(companyId: string, chatKey: string, fields: Record<string, string>, now: Date, requestId: string): Promise<string | null> {
