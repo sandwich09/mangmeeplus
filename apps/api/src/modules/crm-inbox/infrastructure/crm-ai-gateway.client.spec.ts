@@ -199,7 +199,7 @@ describe('CrmAiGatewayClient monthly budget', () => {
 
     assert.ok(error instanceof HttpException);
     assert.equal(error.getStatus(), 429);
-    assert.deepEqual(error.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED' });
+    assert.deepEqual(error.getResponse(), { code: 'AI_MONTHLY_BUDGET_EXCEEDED', budgetScope: 'TOTAL' });
     assert.equal(calls, 0, 'a refused action must not spend');
   });
 
@@ -214,7 +214,7 @@ describe('CrmAiGatewayClient monthly budget', () => {
     const { error, calls } = await refusalFor(brokenMeter);
 
     assert.ok(error instanceof HttpException);
-    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE' }, 'an outage must not read as exhaustion');
+    assert.deepEqual(error.getResponse(), { code: 'AI_BUDGET_UNAVAILABLE', budgetScope: 'TOTAL' }, 'an outage must not read as exhaustion');
     assert.equal(calls, 0, 'fail closed: never an unmetered pass');
   });
 

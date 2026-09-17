@@ -18,6 +18,7 @@ import type {
   BankStatementExtractResult,
   BankStatementExtractionSourceKind,
 } from '@watchdog-bms/contracts';
+import { isAiBudgetPermanentRefusal, isAiBudgetRefusalCode } from '@watchdog-bms/contracts';
 import type { BankStatementImportRecord, BankStatementLineRecord, CreateStatementLineInput } from '../../domain/models/banking.model';
 import { normalizeStatementRow, statementLineHash, checkRunningBalanceContinuity } from '../../domain/logic/banking.logic';
 import { randomUUID } from 'crypto';
@@ -163,6 +164,18 @@ export class ExtractStatementFileUseCase {
       }
       if (response.errorCode === 'OCR_QUOTA_UNAVAILABLE') {
         throw new UnprocessableEntityException({ code: 'extract_ocr_quota_unavailable', message: 'extract_ocr_quota_unavailable' });
+      }
+      // §9.4: the company's monthly AI MONEY refused this read before any provider ran. Nothing was
+      // spent, no OCR read was counted and the uploaded bytes are untouched — but falling through to
+      // `extract_ocr_failed` told the user to photograph the page again, which cannot work. The
+      // distinct code keeps the reason (and the scope) for the import screen; there is no worker
+      // retry loop on this path, so nothing re-queues it.
+      if (isAiBudgetRefusalCode(response.errorCode)) {
+        throw new UnprocessableEntityException({
+          code: isAiBudgetPermanentRefusal(response.errorCode) ? 'extract_ai_budget_exhausted' : 'extract_ai_budget_unavailable',
+          message: response.errorCode,
+          ...(response.budgetScope ? { budgetScope: response.budgetScope } : {}),
+        });
       }
       if (response.status !== 'ok' || !response.rows) {
         throw new UnprocessableEntityException({ code: 'extract_ocr_failed', message: 'extract_ocr_failed' });

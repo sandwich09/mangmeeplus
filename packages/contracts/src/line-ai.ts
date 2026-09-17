@@ -430,15 +430,59 @@ export type ReceiptOcrResponse = {
   classification?: BusinessDocumentClassification;
   modelLineage?: AiModelLineage[];
   errorCode?: string;
+  /** Set only when `errorCode` is one of `AI_BUDGET_REFUSAL_CODES` (spec §9.1). */
+  budgetScope?: AiBudgetScope;
   /** One entry per model call the gateway made for this request; absent from an older gateway. */
   usage?: AiUsageEntry[];
 };
 
-/** Governance decisions cannot be retried as a new read. Empty/malformed OCR is an extraction failure. */
+// ─── Company AI money budget refusals (remediation spec §9.1) ────────────────
+// One vocabulary for every seam that meets the per-company monthly MONEY gate: LINE text, LINE
+// image, web receipt OCR, bank statement OCR, CRM and draft generation. Each seam still refuses in
+// its own existing envelope (HTTP 429 body, `{status:'failed'}`, or a provider-error result) — what
+// is shared is the CODE and the SCOPE, so no hop has to re-derive the reason from an error string.
+
+/** Which ceiling the money check hit. Only the API that actually read the money may set it. */
+export type AiBudgetScope = 'TOTAL' | 'CHAT' | 'OCR';
+
+export const AI_BUDGET_REFUSAL_CODES = {
+  /** The cap is reached: nothing more runs this Bangkok month. */
+  exceeded: 'AI_MONTHLY_BUDGET_EXCEEDED',
+  /** Money is left, but not enough to reserve this job's upper bound. NEVER "เต็ม/ครบ" (spec §12). */
+  insufficient: 'AI_BUDGET_INSUFFICIENT',
+  /** Another action owns the admission lease — bounded retry, never "out of quota". */
+  busy: 'AI_BUDGET_BUSY',
+  /** The budget/price/reservation could not be read. Stop, and say it could not be CHECKED. */
+  unavailable: 'AI_BUDGET_UNAVAILABLE',
+} as const;
+export type AiBudgetRefusalCode = (typeof AI_BUDGET_REFUSAL_CODES)[keyof typeof AI_BUDGET_REFUSAL_CODES];
+
+/** Waiting, retrying or re-uploading cannot change this answer this month. */
+export function isAiBudgetPermanentRefusal(code?: string | null): boolean {
+  return code === AI_BUDGET_REFUSAL_CODES.exceeded || code === AI_BUDGET_REFUSAL_CODES.insufficient;
+}
+
+/** Contention or an unreadable meter: the same request may succeed shortly, under the existing
+ *  bounded deadline. Must never be relabelled as exhaustion. */
+export function isAiBudgetTransient(code?: string | null): boolean {
+  return code === AI_BUDGET_REFUSAL_CODES.busy || code === AI_BUDGET_REFUSAL_CODES.unavailable;
+}
+
+/** Any refusal our own money gate emits — used to tell OUR 429 from a lookalike provider error. */
+export function isAiBudgetRefusalCode(code?: string | null): code is AiBudgetRefusalCode {
+  return isAiBudgetPermanentRefusal(code) || isAiBudgetTransient(code);
+}
+
+/** Governance decisions cannot be retried as a new read. Empty/malformed OCR is an extraction failure.
+ *  A money refusal joins them: `exceeded`/`insufficient` cannot pass this month, and `unavailable`
+ *  means the meter itself could not be read — a second read under a fresh request id only buys the
+ *  same answer plus another admission attempt. `busy` stays retryable: the lease frees between calls,
+ *  and the retry is the customer pressing the button, not a loop. */
 export function isReceiptOcrRetryableFailure(response: { status?: string; errorCode?: string }): boolean {
   return response.status === 'failed' && ![
     'OCR_FEATURE_DISABLED', 'OCR_MONTHLY_LIMIT_EXCEEDED', 'OCR_REQUEST_ALREADY_ADMITTED',
     'OCR_QUOTA_UNAVAILABLE', 'RECEIPT_QUOTA_EXCEEDED',
+    AI_BUDGET_REFUSAL_CODES.exceeded, AI_BUDGET_REFUSAL_CODES.insufficient, AI_BUDGET_REFUSAL_CODES.unavailable,
   ].includes(response.errorCode ?? '');
 }
 
@@ -1333,12 +1377,17 @@ export type ProviderErrorCode =
   | 'PROVIDER_THROTTLED'
   | 'PROVIDER_ACCESS_NOT_READY'
   | 'PROVIDER_TIMEOUT'
+  /** The company's monthly AI MONEY refused the call (spec §9.4). Distinct from `PROVIDER_THROTTLED`:
+   *  no amount of waiting opens it this month, so it is never offered as retryable. */
+  | 'PROVIDER_BUDGET_EXHAUSTED'
   | 'PROVIDER_UNKNOWN';
 
 export type ProviderError = {
   code: ProviderErrorCode;
   message: string;
   retryable: boolean;
+  /** Set only with `PROVIDER_BUDGET_EXHAUSTED`, and only when the gate reported it. */
+  budgetScope?: AiBudgetScope;
 };
 
 export type AgentIntentItem = {

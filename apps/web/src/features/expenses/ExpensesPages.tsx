@@ -42,7 +42,7 @@ export { reviewValues } from './expenses.model';
 import type { AiReviewField, ExpenseAiSuggestion, ExpenseSummary, ExpenseDetail, ExpenseDraftReviewValues, ExpenseCategorySummary, ExpenseLineChargeKind, ExpenseReviewStepKey, ExpenseCapabilities, ExpensesTab, ManualExpenseItem } from './expenses.model';
 import type { BusinessDocumentClassification, BuyerEntityKind, ExpenseExtractionResult, ExpenseLineVatTreatment, ExpenseVatSourceOverrideInput, ExpenseWhtInput } from '@watchdog-bms/contracts';
 import { useExpenseReviewTotals, type ExpenseReviewTotalsState } from './useExpenseReviewTotals';
-import { isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
+import { AI_BUDGET_REFUSAL_CODES, isCalculatedExpenseRounding, expenseVatReconciliationMessage, isBlockingExpenseVatReconciliation, isCheckBillClassification } from '@watchdog-bms/contracts';
 import { CategoryManagePanel, SignaturePanel, EvidencePanel, IconBtn } from './ExpensesWorkspacePanels';
 import { useBranchFilter } from '../web-core-workspace/WorkspaceScope';
 import { TransactionBranchField, useTransactionCreateBranchId } from '../web-core-workspace/TransactionBranchField';
@@ -231,6 +231,16 @@ export function extractionNotice(result: ExpenseExtractionResult, locale: Suppor
   if (result.errorCode === 'OCR_MONTHLY_LIMIT_EXCEEDED') return { tone: 'info', message: t('expenses.extract_ocr_limit', locale) };
   if (result.errorCode === 'OCR_REQUEST_ALREADY_ADMITTED') return { tone: 'info', message: t('expenses.extract_ocr_duplicate', locale) };
   if (result.errorCode === 'OCR_QUOTA_UNAVAILABLE') return { tone: 'error', message: t('expenses.extract_ocr_unavailable', locale) };
+  // Spec §9.2 (web): the company's monthly AI MONEY refused the read. Tone `info`, not `error` —
+  // nothing broke, the file and the draft are untouched, and the answer is to type it in. Each code
+  // keeps its own sentence: `insufficient` must never read as "used up", and `unavailable` must
+  // never claim the budget is full. No retry is offered or performed.
+  if (result.errorCode === AI_BUDGET_REFUSAL_CODES.exceeded) {
+    return { tone: 'info', message: t(result.budgetScope === 'OCR' ? 'expenses.extract_ai_budget_ocr_exceeded' : 'expenses.extract_ai_budget_exceeded', locale) };
+  }
+  if (result.errorCode === AI_BUDGET_REFUSAL_CODES.insufficient) return { tone: 'info', message: t('expenses.extract_ai_budget_insufficient', locale) };
+  if (result.errorCode === AI_BUDGET_REFUSAL_CODES.unavailable) return { tone: 'info', message: t('expenses.extract_ai_budget_unavailable', locale) };
+  if (result.errorCode === AI_BUDGET_REFUSAL_CODES.busy) return { tone: 'info', message: t('expenses.extract_ai_budget_busy', locale) };
   return { tone: 'error', message: t('expenses.extract_failed', locale) };
 }
 

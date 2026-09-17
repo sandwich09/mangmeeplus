@@ -11,6 +11,8 @@ import {
   hasToolFeature,
   hasToolPermissions,
   parseLineAiPreparedPlan,
+  type AiBudgetRefusalCode,
+  type AiBudgetScope,
   type AiUsageEntry,
   type LineAiTurnRequest,
   type LineAiTurnResponse,
@@ -26,6 +28,7 @@ import { PrismaService } from '../../../common/database/prisma.service';
 import {
   type AiRequestContent,
   classifyAiUsageRequest,
+  companyAiBudgetRefusal,
   recordCompanyAiUsage,
   retryBusyAdmission,
   runWithCompanyAiBudgetAdmission,
@@ -78,6 +81,13 @@ export type GovernedLineIntakeRoutePlan = LineIntakeRoutePlan & {
   ocrMonthKey?: string;
   /** Prevents a denied/uncertain intake route from making a second image-provider call downstream. */
   ocrErrorCode?: string;
+  /**
+   * Set ONLY when our own money gate refused this route (spec §9.1). The turn carries it instead of
+   * collapsing to `ROUTER_UNREACHABLE`, so the reply says why and nothing downstream retries the
+   * same closed gate. A provider error that merely looks similar never sets it.
+   */
+  budgetErrorCode?: AiBudgetRefusalCode;
+  budgetScope?: AiBudgetScope;
 };
 
 @Injectable()
@@ -356,10 +366,9 @@ export class AiGatewayClient {
       busyWaitDeadlineMs,
     );
     if (admission.allowed) return admission.value;
-    const body = admission.reason === 'busy'
-      ? { code: 'AI_BUDGET_BUSY', retryAfterSeconds: admission.retryAfterSeconds }
-      : { code: admission.reason === 'exceeded' ? 'AI_MONTHLY_BUDGET_EXCEEDED' : 'AI_BUDGET_UNAVAILABLE' };
-    throw new HttpException(body, HttpStatus.TOO_MANY_REQUESTS);
+    // The body carries the code AND the scope so callers never have to re-derive either from an
+    // error string (spec §9.1). `companyAiBudgetRefusal` is the single source for both.
+    throw new HttpException(companyAiBudgetRefusal(admission), HttpStatus.TOO_MANY_REQUESTS);
   }
 
   private async postInternal<T>(

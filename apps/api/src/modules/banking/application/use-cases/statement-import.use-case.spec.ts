@@ -186,6 +186,33 @@ describe('ExtractStatementFileUseCase', () => {
     }
   });
 
+  /**
+   * Remediation spec §9.4 / R-09. The company's AI MONEY is a different ceiling from the OCR read
+   * count, and it refused before any provider ran. Falling through to `extract_ocr_failed` told the
+   * user to photograph the page again — advice that cannot work — and lost the reason for support.
+   */
+  it('keeps a money refusal distinct from a failed read, with its scope', async () => {
+    for (const [errorCode, expected] of [
+      ['AI_MONTHLY_BUDGET_EXCEEDED', 'extract_ai_budget_exhausted'],
+      ['AI_BUDGET_INSUFFICIENT', 'extract_ai_budget_exhausted'],
+      ['AI_BUDGET_UNAVAILABLE', 'extract_ai_budget_unavailable'],
+      ['AI_BUDGET_BUSY', 'extract_ai_budget_unavailable'],
+    ] as const) {
+      const extract = mock.fn(async () => ({ status: 'failed', errorCode, budgetScope: 'TOTAL' }));
+      const { uc } = makeUc({ ai: { extract } });
+      await assert.rejects(
+        () => uc.execute(importCtx, { bankAccountId: 'ba-1', fileBase64: imageBase64, mimeType: 'image/jpeg', fileName: 'statement.jpg' }),
+        (error: unknown) => {
+          assert.ok(error instanceof UnprocessableEntityException);
+          assert.deepEqual(error.getResponse(), { code: expected, message: errorCode, budgetScope: 'TOTAL' });
+          return true;
+        },
+      );
+      // No worker loop on this path: one attempt, one answer.
+      assert.equal(extract.mock.callCount(), 1);
+    }
+  });
+
   it('rejects unsupported mime types', async () => {
     const { uc } = makeUc();
     await assert.rejects(

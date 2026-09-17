@@ -14,6 +14,7 @@ import type {
   CrmTrustFactor,
   CrmTrustReadResult,
   CrmTrustTier,
+  ProviderError,
 } from '@watchdog-bms/contracts';
 import {
   getAiTrust,
@@ -60,9 +61,14 @@ const RISK_LABEL: Record<CrmAiCustomerRisk, string> = {
   HIGH: 'เสี่ยงสูง',
 };
 
-function statusMessage(status: CrmAiStatus, retryable?: boolean): string {
+function statusMessage(status: CrmAiStatus, error?: ProviderError): string {
   if (status === 'uncertain') return 'AI ไม่แน่ใจ ลองใหม่อีกครั้ง';
-  if (status === 'unavailable') return retryable ? 'AI ไม่พร้อมใช้งานชั่วคราว ลองใหม่ได้อีกครั้ง' : 'AI ไม่พร้อมใช้งานชั่วคราว';
+  if (status === 'unavailable') {
+    // Spec §9.4: the company's monthly AI money, not an outage. "ชั่วคราว … ลองใหม่" would be false
+    // for the rest of this month, and each press spends another admission attempt.
+    if (error?.code === 'PROVIDER_BUDGET_EXHAUSTED') return 'งบ AI ของเดือนนี้ใช้ครบแล้ว — ตอบลูกค้าเองได้ตามปกติ หรือติดต่อผู้ดูแลเพื่อปรับแพ็กเกจ';
+    return error?.retryable ? 'AI ไม่พร้อมใช้งานชั่วคราว ลองใหม่ได้อีกครั้ง' : 'AI ไม่พร้อมใช้งานชั่วคราว';
+  }
   if (status === 'refused') return 'AI ไม่สามารถสร้างคำตอบนี้ได้';
   return '';
 }
@@ -234,7 +240,7 @@ export function InboxAiPanel({
       const result = await requestAiSummary(companyId, conversationId);
       setSummaryRequestId(result.requestId);
       if (result.status === 'ok') setSummary(result);
-      else setSummaryMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error.retryable : undefined));
+      else setSummaryMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error : undefined));
     } catch {
       setSummaryMessage('เรียก AI ไม่สำเร็จ กรุณาลองใหม่');
     } finally {
@@ -250,7 +256,7 @@ export function InboxAiPanel({
       const result = await requestAiReplyDraft(companyId, conversationId);
       setDraftRequestId(result.requestId);
       if (result.status === 'ok') setDraft(result);
-      else setDraftMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error.retryable : undefined));
+      else setDraftMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error : undefined));
     } catch {
       setDraftMessage('เรียก AI ไม่สำเร็จ กรุณาลองใหม่');
     } finally {
@@ -265,7 +271,7 @@ export function InboxAiPanel({
       const result = await requestAiInsights(companyId, conversationId);
       setInsightsRequestId(result.requestId);
       if (result.status === 'ok') setInsights(result);
-      else setInsightsMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error.retryable : undefined));
+      else setInsightsMessage(statusMessage(result.status, result.status === 'unavailable' ? result.error : undefined));
     } catch {
       setInsightsMessage('เรียก AI ไม่สำเร็จ กรุณาลองใหม่');
     } finally {
